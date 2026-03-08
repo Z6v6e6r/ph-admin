@@ -82,7 +82,7 @@ export class GamesService implements OnModuleDestroy {
 
   private readonly gameChatMongoUri =
     this.readEnv('GAMES_CHAT_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
-  private readonly gameChatMongoDbName = this.readEnv('GAMES_CHAT_MONGODB_DB') ?? 'games_chdt';
+  private readonly gameChatMongoDbName = this.readEnv('GAMES_CHAT_MONGODB_DB') ?? 'games_chat';
   private readonly gameChatMessagesCollectionName =
     this.readEnv('GAMES_CHAT_MESSAGES_COLLECTION') ?? 'chat_messages';
   private readonly gameChatAdminSenderName =
