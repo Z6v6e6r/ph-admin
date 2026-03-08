@@ -429,6 +429,9 @@
       .phab-admin-games-row:hover{
         background:rgba(255,232,145,.35) !important;
       }
+      .phab-admin-games-chat-btn{
+        min-width:88px;
+      }
       .phab-admin-games-sortable{
         cursor:pointer;
         user-select:none;
@@ -682,6 +685,21 @@
       .phab-admin-detail-span-2{
         grid-column:span 2;
       }
+      .phab-admin-game-chat-meta{
+        font-size:11px;
+        color:rgba(51,0,32,.76);
+      }
+      .phab-admin-game-chat-box{
+        min-height:280px;
+        max-height:52vh;
+      }
+      .phab-admin-game-chat-compose{
+        display:flex;
+        gap:8px;
+        padding:10px 12px 12px;
+        border-top:1px solid rgba(51,0,32,.12);
+        background:linear-gradient(90deg,rgba(255,232,145,.44) 0%,rgba(255,255,255,.95) 100%);
+      }
       @keyframes phab-cup-enter{
         from{opacity:.2;transform:translateY(8px)}
         to{opacity:1;transform:translateY(0)}
@@ -791,6 +809,9 @@
       },
       getGameById: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId), 'GET');
+      },
+      getGameChat: function (gameId) {
+        return request('/games/' + encodeURIComponent(gameId) + '/chat', 'GET');
       },
       getTournaments: function () {
         return request('/tournaments', 'GET');
@@ -1293,6 +1314,58 @@
     gameModalBody.className = 'phab-admin-modal-body';
     gameModalCard.appendChild(gameModalBody);
 
+    var gameChatModal = document.createElement('div');
+    gameChatModal.className = 'phab-admin-modal phab-admin-hidden';
+    root.appendChild(gameChatModal);
+
+    var gameChatCard = document.createElement('div');
+    gameChatCard.className = 'phab-admin-modal-card';
+    gameChatModal.appendChild(gameChatCard);
+
+    var gameChatHead = document.createElement('div');
+    gameChatHead.className = 'phab-admin-modal-head';
+    gameChatCard.appendChild(gameChatHead);
+
+    var gameChatTitleWrap = document.createElement('div');
+    gameChatHead.appendChild(gameChatTitleWrap);
+
+    var gameChatTitle = document.createElement('div');
+    gameChatTitle.className = 'phab-admin-modal-title';
+    gameChatTitle.textContent = 'Чат игры';
+    gameChatTitleWrap.appendChild(gameChatTitle);
+
+    var gameChatMeta = document.createElement('div');
+    gameChatMeta.className = 'phab-admin-game-chat-meta';
+    gameChatMeta.textContent = '-';
+    gameChatTitleWrap.appendChild(gameChatMeta);
+
+    var gameChatCloseBtn = document.createElement('button');
+    gameChatCloseBtn.className = 'phab-admin-modal-close';
+    gameChatCloseBtn.type = 'button';
+    gameChatCloseBtn.textContent = '×';
+    gameChatHead.appendChild(gameChatCloseBtn);
+
+    var gameChatBox = document.createElement('div');
+    gameChatBox.className = 'phab-admin-messages phab-admin-game-chat-box';
+    gameChatCard.appendChild(gameChatBox);
+
+    var gameChatCompose = document.createElement('div');
+    gameChatCompose.className = 'phab-admin-game-chat-compose';
+    gameChatCard.appendChild(gameChatCompose);
+
+    var gameChatInput = document.createElement('input');
+    gameChatInput.className = 'phab-admin-input';
+    gameChatInput.type = 'text';
+    gameChatInput.maxLength = 2000;
+    gameChatInput.placeholder = 'Ответ в чат игры...';
+    gameChatCompose.appendChild(gameChatInput);
+
+    var gameChatSendBtn = document.createElement('button');
+    gameChatSendBtn.className = 'phab-admin-btn';
+    gameChatSendBtn.type = 'button';
+    gameChatSendBtn.textContent = 'Отправить';
+    gameChatCompose.appendChild(gameChatSendBtn);
+
     return {
       root: root,
       status: status,
@@ -1318,6 +1391,14 @@
       gameModalTitle: gameModalTitle,
       gameModalBody: gameModalBody,
       gameModalCloseBtn: gameModalCloseBtn,
+      gameChatModal: gameChatModal,
+      gameChatCard: gameChatCard,
+      gameChatTitle: gameChatTitle,
+      gameChatMeta: gameChatMeta,
+      gameChatBox: gameChatBox,
+      gameChatCloseBtn: gameChatCloseBtn,
+      gameChatInput: gameChatInput,
+      gameChatSendBtn: gameChatSendBtn,
       gamesTable: gamesTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
@@ -1391,6 +1472,8 @@
       },
       selectedGameId: null,
       selectedGame: null,
+      gameChatGameId: null,
+      gameChatThreadId: null,
       selectedConnector: null,
       selectedStationId: null,
       selectedThreadId: null
@@ -1679,6 +1762,120 @@
           setStatus('Не удалось загрузить полные данные игры', true);
         }
         throw error;
+      }
+    }
+
+    function renderGameChatMessages(messages) {
+      clearNode(dom.gameChatBox);
+      if (!messages || messages.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Сообщений пока нет';
+        dom.gameChatBox.appendChild(empty);
+        return;
+      }
+
+      messages.forEach(function (message) {
+        var own = message.senderRole !== 'CLIENT';
+        var div = document.createElement('div');
+        div.className =
+          'phab-admin-message ' +
+          (own ? 'phab-admin-message-staff' : 'phab-admin-message-client');
+        div.textContent = message.text || '';
+
+        var meta = document.createElement('span');
+        meta.className = 'phab-admin-message-meta';
+        var sender = own ? (message.origin === 'AI' ? 'AI' : 'Сотрудник') : 'Клиент';
+        meta.textContent = sender + ' · ' + formatTime(message.createdAt);
+        div.appendChild(meta);
+
+        dom.gameChatBox.appendChild(div);
+      });
+
+      dom.gameChatBox.scrollTop = dom.gameChatBox.scrollHeight;
+    }
+
+    function closeGameChatModal() {
+      dom.gameChatModal.classList.add('phab-admin-hidden');
+      state.gameChatGameId = null;
+      state.gameChatThreadId = null;
+      dom.gameChatInput.value = '';
+      dom.gameChatInput.disabled = false;
+      dom.gameChatSendBtn.disabled = false;
+    }
+
+    async function reloadGameChatMessages() {
+      var threadId = state.gameChatThreadId;
+      if (!threadId) {
+        return;
+      }
+      var messages = (await api.getMessages(threadId)) || [];
+      if (threadId !== state.gameChatThreadId) {
+        return;
+      }
+      renderGameChatMessages(messages);
+    }
+
+    async function openGameChat(game) {
+      if (!game || !game.id) {
+        return;
+      }
+
+      state.gameChatGameId = game.id;
+      state.gameChatThreadId = null;
+      dom.gameChatModal.classList.remove('phab-admin-hidden');
+      dom.gameChatTitle.textContent = 'Чат игры ' + game.id;
+      dom.gameChatMeta.textContent = 'Подключение к чату...';
+      dom.gameChatInput.value = '';
+      dom.gameChatInput.disabled = true;
+      dom.gameChatSendBtn.disabled = true;
+      renderGameChatMessages([]);
+
+      try {
+        var payload = await api.getGameChat(game.id);
+        if (state.gameChatGameId !== game.id) {
+          return;
+        }
+        if (!payload || !payload.thread || !payload.thread.id) {
+          throw new Error('Не удалось открыть чат игры');
+        }
+
+        state.gameChatThreadId = payload.thread.id;
+        dom.gameChatMeta.textContent =
+          (payload.thread.stationName || payload.thread.stationId || '-') +
+          ' · ' +
+          (payload.thread.connector || '-') +
+          ' · thread ' +
+          payload.thread.id.slice(0, 8);
+        renderGameChatMessages(payload.messages || []);
+        dom.gameChatInput.disabled = false;
+        dom.gameChatSendBtn.disabled = false;
+        dom.gameChatInput.focus();
+      } catch (error) {
+        if (state.gameChatGameId === game.id) {
+          dom.gameChatMeta.textContent = 'Ошибка подключения к чату игры';
+          dom.gameChatInput.disabled = true;
+          dom.gameChatSendBtn.disabled = true;
+        }
+        throw error;
+      }
+    }
+
+    async function sendGameChatMessage() {
+      var text = String(dom.gameChatInput.value || '').trim();
+      var threadId = state.gameChatThreadId;
+      if (!text || !threadId) {
+        return;
+      }
+
+      dom.gameChatSendBtn.disabled = true;
+      try {
+        await api.sendMessage(threadId, text);
+        dom.gameChatInput.value = '';
+        await reloadGameChatMessages();
+        setStatus('Сообщение отправлено в чат игры', false);
+      } finally {
+        dom.gameChatSendBtn.disabled = false;
       }
     }
 
@@ -2033,6 +2230,7 @@
         { key: 'createdAt', label: 'Создана', sortField: 'createdAt', minWidth: 150 },
         { key: 'gameDate', label: 'Дата игры', sortField: 'gameDate', minWidth: 160 },
         { key: 'location', label: 'Локация', minWidth: 180 },
+        { key: 'chat', label: 'Чат', minWidth: 110 },
         { key: 'status', label: 'Статус', minWidth: 140 }
       ];
       var colgroup = document.createElement('colgroup');
@@ -2083,7 +2281,7 @@
       if (state.games.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 6;
+        td.colSpan = 7;
         td.textContent = 'Нет игр';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -2112,20 +2310,40 @@
           });
         }
 
-        [
-          game.organizerName || '-',
-          formatTime(game.createdAt),
-          gameDate || '-',
-          game.locationName || game.name || '-',
-          game.rawStatus || game.status || '-'
-        ].forEach(function (value, index) {
-          var td = document.createElement('td');
-          td.textContent = String(value || '-');
-          tr.appendChild(td);
-          if (index === 0) {
-            tr.appendChild(participantsCell);
-          }
+        var organizerCell = document.createElement('td');
+        organizerCell.textContent = String(game.organizerName || '-');
+        tr.appendChild(organizerCell);
+
+        tr.appendChild(participantsCell);
+
+        var createdCell = document.createElement('td');
+        createdCell.textContent = String(formatTime(game.createdAt));
+        tr.appendChild(createdCell);
+
+        var gameDateCell = document.createElement('td');
+        gameDateCell.textContent = String(gameDate || '-');
+        tr.appendChild(gameDateCell);
+
+        var locationCell = document.createElement('td');
+        locationCell.textContent = String(game.locationName || game.name || '-');
+        tr.appendChild(locationCell);
+
+        var chatCell = document.createElement('td');
+        var chatBtn = document.createElement('button');
+        chatBtn.type = 'button';
+        chatBtn.className = 'phab-admin-btn-secondary phab-admin-games-chat-btn';
+        chatBtn.textContent = 'Чат';
+        chatBtn.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openGameChat(game).catch(handleError);
         });
+        chatCell.appendChild(chatBtn);
+        tr.appendChild(chatCell);
+
+        var statusCell = document.createElement('td');
+        statusCell.textContent = String(game.rawStatus || game.status || '-');
+        tr.appendChild(statusCell);
 
         tbody.appendChild(tr);
       });
@@ -2623,8 +2841,32 @@
           closeGameModal();
         }
       });
+      dom.gameChatCloseBtn.addEventListener('click', function () {
+        closeGameChatModal();
+      });
+      dom.gameChatModal.addEventListener('click', function (event) {
+        if (event.target === dom.gameChatModal) {
+          closeGameChatModal();
+        }
+      });
+      dom.gameChatSendBtn.addEventListener('click', function () {
+        sendGameChatMessage().catch(handleError);
+      });
+      dom.gameChatInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          sendGameChatMessage().catch(handleError);
+        }
+      });
       documentKeydownHandler = function (event) {
-        if (event.key === 'Escape' && !dom.gameModal.classList.contains('phab-admin-hidden')) {
+        if (event.key !== 'Escape') {
+          return;
+        }
+        if (!dom.gameChatModal.classList.contains('phab-admin-hidden')) {
+          closeGameChatModal();
+          return;
+        }
+        if (!dom.gameModal.classList.contains('phab-admin-hidden')) {
           closeGameModal();
         }
       };
