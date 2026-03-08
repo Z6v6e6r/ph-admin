@@ -71,40 +71,89 @@ export class UiController {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PH Admin Login</title>
+    <title>ЦУП Дворотека - Вход</title>
     <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; min-height: 100%; background: #f1f5f3; }
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
-      .page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
-      .card {
-        width: 100%; max-width: 420px; background: #fff; border: 1px solid #d8e4df;
-        border-radius: 14px; padding: 18px; box-shadow: 0 12px 24px rgba(19,53,42,.08);
+      html, body { margin: 0; padding: 0; min-height: 100%; }
+      body {
+        font-family: "TT Neoris Trial Variable", "Manrope", "Helvetica Neue", sans-serif;
+        background:
+          radial-gradient(circle at 85% -10%, #ddc8fc 0, transparent 38%),
+          radial-gradient(circle at -5% 108%, #b6fdff 0, transparent 32%),
+          linear-gradient(122deg, #cfffb6 0%, #ffe891 100%);
+        color: #330020;
       }
-      .title { margin: 0 0 6px; font-size: 20px; color: #13352a; }
-      .meta { margin: 0 0 14px; font-size: 13px; color: #496b5f; }
-      .label { display: block; margin: 0 0 6px; font-size: 12px; color: #25473d; font-weight: 700; }
+      .page { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+      .card {
+        width: 100%;
+        max-width: 430px;
+        background: rgba(255,255,255,.92);
+        border: 2px solid rgba(51,0,32,.18);
+        border-radius: 18px;
+        padding: 20px;
+        box-shadow: 0 24px 48px rgba(51,0,32,.2);
+        backdrop-filter: blur(2px);
+      }
+      .title {
+        margin: 0 0 7px;
+        font-size: 22px;
+        color: #330020;
+        font-family: "Druk Wide", "Unbounded", "Arial Black", sans-serif;
+        letter-spacing: .02em;
+        text-transform: uppercase;
+      }
+      .meta { margin: 0 0 15px; font-size: 13px; color: rgba(51,0,32,.78); }
+      .label {
+        display: block;
+        margin: 0 0 6px;
+        font-size: 10px;
+        color: rgba(51,0,32,.82);
+        font-weight: 800;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+      }
       .input {
-        width: 100%; border: 1px solid #bfd1ca; border-radius: 10px;
-        padding: 10px 11px; font-size: 14px; margin-bottom: 12px;
+        width: 100%;
+        border: 1px solid rgba(51,0,32,.22);
+        border-radius: 11px;
+        padding: 10px 11px;
+        font-size: 14px;
+        margin-bottom: 12px;
+        background: #fff;
+        color: #330020;
+      }
+      .input:focus {
+        outline: none;
+        border-color: rgba(0,58,134,.52);
+        box-shadow: 0 0 0 3px rgba(182,253,255,.55);
       }
       .btn {
-        width: 100%; border: none; background: #0f6049; color: #fff; font-size: 14px;
-        font-weight: 700; border-radius: 10px; padding: 11px 12px; cursor: pointer;
+        width: 100%;
+        border: none;
+        background: linear-gradient(90deg, #ff464e 0%, #ff7158 100%);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 800;
+        border-radius: 11px;
+        padding: 11px 12px;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: .04em;
       }
       .btn:disabled { opacity: .65; cursor: default; }
-      .status { margin-top: 10px; font-size: 12px; color: #5e7c72; min-height: 16px; }
-      .status-error { color: #9b2f2f; }
-      .foot { margin-top: 12px; font-size: 11px; color: #5b766d; }
-      code { background: #eef4f1; border-radius: 6px; padding: 1px 5px; }
+      .status { margin-top: 10px; font-size: 12px; color: rgba(51,0,32,.74); min-height: 16px; }
+      .status-error { color: #9f1735; }
+      .foot { margin-top: 12px; font-size: 11px; color: rgba(51,0,32,.6); }
+      code { background: rgba(221,200,252,.46); border-radius: 6px; padding: 1px 5px; }
     </style>
   </head>
   <body>
     <main class="page">
       <section class="card">
-        <h1 class="title">Вход в PH Admin</h1>
-        <p class="meta">Введите логин и пароль администратора.</p>
+        <h1 class="title">ЦУП Дворотеки</h1>
+        <p class="meta">Вход в центр управления пространством.</p>
 
         <label class="label" for="login">Логин</label>
         <input id="login" class="input" type="text" autocomplete="username" maxlength="120" />
@@ -217,7 +266,7 @@ export class UiController {
       userId: authContext.user?.id || query.userId?.trim() || 'local-admin',
       roles,
       stationIds,
-      title: query.title?.trim() || 'PadelHub Admin',
+      title: query.title?.trim() || 'ЦУП Дворотека',
       pollIntervalMs:
         Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 8000,
       authToken: authToken || undefined
@@ -230,22 +279,34 @@ export class UiController {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PH Admin UI</title>
+    <title>ЦУП Дворотека</title>
     <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; background: #f1f5f3; }
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        font-family: "TT Neoris Trial Variable", "Manrope", "Helvetica Neue", sans-serif;
+        background:
+          radial-gradient(circle at 92% -4%, #ddc8fc 0, transparent 35%),
+          radial-gradient(circle at 4% 98%, #b6fdff 0, transparent 32%),
+          linear-gradient(126deg, #cfffb6 0%, #ffe891 100%);
+        color: #330020;
+      }
       .page {
         min-height: 100vh;
-        padding: 16px;
+        padding: 14px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
       }
       .hint {
-        font-size: 13px;
-        color: #345348;
+        font-size: 12px;
+        color: rgba(51,0,32,.74);
+        background: rgba(255,255,255,.66);
+        border: 1px solid rgba(51,0,32,.16);
+        border-radius: 12px;
+        padding: 8px 10px;
       }
       #phab-admin-root {
         width: 100%;
@@ -256,7 +317,7 @@ export class UiController {
   <body>
     <main class="page">
       <div class="hint">
-        Локальная страница панели. Настройки можно передавать query-параметрами:
+        Локальная страница ЦУП Дворотеки. Настройки можно передавать query-параметрами:
         <code>roles</code>, <code>stationIds</code>, <code>userId</code>, <code>apiBaseUrl</code>.
       </div>
       <div id="phab-admin-root"></div>

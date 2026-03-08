@@ -2,7 +2,7 @@
   var DEFAULTS = {
     apiBaseUrl: '',
     mountSelector: '',
-    title: 'PadelHub Admin',
+    title: 'ЦУП Дворотека',
     userId: '',
     roles: [],
     role: '',
@@ -60,60 +60,473 @@
 
     var style = document.createElement('style');
     style.id = STYLE_ID;
-    style.textContent =
-      '.phab-admin{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;background:#f8fbfa;color:#1d2f29;border:1px solid #d5e1dc;border-radius:14px;overflow:hidden}' +
-      '.phab-admin *{box-sizing:border-box}' +
-      '.phab-admin-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;background:#0d4f3e;color:#fff}' +
-      '.phab-admin-title{font-size:15px;font-weight:700}' +
-      '.phab-admin-subtitle{font-size:12px;opacity:.85}' +
-      '.phab-admin-toolbar{display:flex;gap:8px;align-items:center}' +
-      '.phab-admin-btn{border:none;background:#136d56;color:#fff;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600}' +
-      '.phab-admin-btn:disabled{opacity:.55;cursor:default}' +
-      '.phab-admin-tabs{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid #dde8e4;background:#fff}' +
-      '.phab-admin-tab{border:1px solid #c9d8d2;background:#f8fbfa;color:#204137;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:700}' +
-      '.phab-admin-tab-active{background:#0f5f49;color:#fff;border-color:#0f5f49}' +
-      '.phab-admin-content{padding:10px 12px;background:#f8fbfa;min-height:460px}' +
-      '.phab-admin-hidden{display:none!important}' +
-      '.phab-admin-msg-grid{display:grid;grid-template-columns:280px 1fr;gap:10px;min-height:440px}' +
-      '.phab-admin-pane{background:#fff;border:1px solid #d9e5e0;border-radius:10px;overflow:hidden}' +
-      '.phab-admin-pane-head{padding:9px 10px;border-bottom:1px solid #e7efeb;font-size:12px;font-weight:700;color:#24453b;background:#f7fbf9}' +
-      '.phab-admin-pane-body{padding:8px;overflow:auto;max-height:390px}' +
-      '.phab-admin-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}' +
-      '.phab-admin-list-btn{width:100%;text-align:left;border:1px solid #d8e5df;background:#fff;border-radius:8px;padding:7px 8px;cursor:pointer}' +
-      '.phab-admin-list-btn-active{background:#e7f5ef;border-color:#97ccb9}' +
-      '.phab-admin-list-title{font-size:12px;font-weight:700;color:#203d34}' +
-      '.phab-admin-list-meta{font-size:11px;color:#557269;margin-top:2px}' +
-      '.phab-admin-status{font-size:11px;padding:4px 8px;border-radius:999px;background:#e8f3ee;color:#245143}' +
-      '.phab-admin-status-error{background:#fceaea;color:#8e2c2c}' +
-      '.phab-admin-dialog-wrap{display:grid;grid-template-rows:auto 1fr auto;height:438px}' +
-      '.phab-admin-dialog-head{padding:9px 10px;border-bottom:1px solid #e7efeb;background:#f7fbf9}' +
-      '.phab-admin-dialog-title{font-size:13px;font-weight:700;color:#1f3b32}' +
-      '.phab-admin-dialog-meta{font-size:11px;color:#5d796f;margin-top:2px}' +
-      '.phab-admin-messages{padding:10px;overflow:auto;background:#fff}' +
-      '.phab-admin-message{max-width:80%;padding:8px 10px;border-radius:10px;margin:0 0 8px;font-size:12px;line-height:1.35;white-space:pre-wrap;word-break:break-word}' +
-      '.phab-admin-message-client{margin-right:auto;background:#edf3f0;color:#1e342d;border-bottom-left-radius:4px}' +
-      '.phab-admin-message-staff{margin-left:auto;background:#0f6a51;color:#fff;border-bottom-right-radius:4px}' +
-      '.phab-admin-message-meta{display:block;margin-top:3px;font-size:10px;opacity:.8}' +
-      '.phab-admin-compose{display:flex;gap:8px;padding:10px;border-top:1px solid #e7efeb;background:#fbfdfc}' +
-      '.phab-admin-input{flex:1;border:1px solid #c8d8d1;border-radius:8px;padding:8px 9px;font-size:12px}' +
-      '.phab-admin-games-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dae7e2;border-radius:10px;overflow:hidden}' +
-      '.phab-admin-games-table th,.phab-admin-games-table td{border-bottom:1px solid #e5efeb;padding:9px 10px;font-size:12px;text-align:left}' +
-      '.phab-admin-games-table th{background:#f2f8f5;color:#25473d;font-weight:700}' +
-      '.phab-admin-settings-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}' +
-      '.phab-admin-settings-card{background:#fff;border:1px solid #d9e5e0;border-radius:10px;display:grid;grid-template-rows:auto 1fr auto;min-height:390px}' +
-      '.phab-admin-settings-head{padding:9px 10px;border-bottom:1px solid #e7efeb;font-size:12px;font-weight:700;color:#24453b;background:#f7fbf9}' +
-      '.phab-admin-settings-list{padding:8px;overflow:auto;max-height:240px;border-bottom:1px solid #edf3f0}' +
-      '.phab-admin-settings-form{padding:8px;display:flex;flex-direction:column;gap:6px}' +
-      '.phab-admin-settings-label{font-size:11px;color:#32564a;font-weight:700}' +
-      '.phab-admin-settings-input{width:100%;border:1px solid #c8d8d1;border-radius:8px;padding:8px 9px;font-size:12px}' +
-      '.phab-admin-settings-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border:1px solid #d8e5df;border-radius:8px;background:#fff;margin-bottom:6px}' +
-      '.phab-admin-settings-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}' +
-      '.phab-admin-settings-row-title{font-size:12px;font-weight:700;color:#203d34;word-break:break-word}' +
-      '.phab-admin-settings-row-meta{font-size:11px;color:#557269;word-break:break-word}' +
-      '.phab-admin-btn-secondary{border:1px solid #b8cec5;background:#eef6f2;color:#184a3b;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700}' +
-      '.phab-admin-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#24453b}' +
-      '.phab-admin-empty{font-size:12px;color:#59756b;padding:12px}' +
-      '@media(max-width:980px){.phab-admin-msg-grid{grid-template-columns:1fr}.phab-admin-dialog-wrap{height:380px}.phab-admin-settings-grid{grid-template-columns:1fr}}';
+    style.textContent = `
+      @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;700;800&display=swap");
+      .phab-admin{
+        --cup-wine:#330020;
+        --cup-white:#ffffff;
+        --cup-cream:#ffe891;
+        --cup-lime:#cfffb6;
+        --cup-cyan:#b6fdff;
+        --cup-lilac:#ddc8fc;
+        --cup-red:#ff464e;
+        --cup-navy:#0a1433;
+        --cup-blue:#003a86;
+        --cup-violet:#610788;
+        --cup-green:#01433a;
+        --cup-shadow:0 28px 60px rgba(51,0,32,.22);
+        --cup-font-heading:"Druk Wide","Unbounded","Arial Black",sans-serif;
+        --cup-font-body:"TT Neoris Trial Variable","Manrope","Helvetica Neue",sans-serif;
+        position:relative;
+        overflow:hidden;
+        border-radius:20px;
+        border:2px solid rgba(51,0,32,.16);
+        color:var(--cup-wine);
+        background:
+          linear-gradient(132deg,rgba(207,255,182,.82) 0%,rgba(182,253,255,.84) 44%,rgba(221,200,252,.84) 100%);
+        font-family:var(--cup-font-body);
+        box-shadow:var(--cup-shadow);
+        animation:phab-cup-enter .5s cubic-bezier(.2,.8,.2,1);
+      }
+      .phab-admin::before,
+      .phab-admin::after{
+        content:"";
+        position:absolute;
+        pointer-events:none;
+        z-index:0;
+      }
+      .phab-admin::before{
+        width:340px;
+        height:340px;
+        top:-110px;
+        right:-70px;
+        border-radius:40px;
+        background:
+          linear-gradient(90deg,var(--cup-red) 0 24%,var(--cup-wine) 24% 48%,var(--cup-lilac) 48% 72%,var(--cup-cream) 72% 100%);
+        transform:rotate(16deg);
+        opacity:.5;
+      }
+      .phab-admin::after{
+        width:270px;
+        height:230px;
+        bottom:-94px;
+        left:-92px;
+        border-radius:30px;
+        background:
+          linear-gradient(135deg,var(--cup-blue) 0 26%,var(--cup-cyan) 26% 52%,var(--cup-green) 52% 76%,var(--cup-lime) 76% 100%);
+        transform:rotate(-16deg);
+        opacity:.5;
+      }
+      .phab-admin *{
+        box-sizing:border-box;
+        position:relative;
+        z-index:1;
+      }
+      .phab-admin-header{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap:10px;
+        padding:16px 18px 14px;
+        background:linear-gradient(94deg,var(--cup-wine) 0%,#5f0636 100%);
+        color:var(--cup-white);
+        border-bottom:2px solid rgba(255,255,255,.28);
+      }
+      .phab-admin-title{
+        font-family:var(--cup-font-heading);
+        font-size:18px;
+        letter-spacing:.02em;
+        font-weight:700;
+        text-transform:uppercase;
+      }
+      .phab-admin-subtitle{
+        margin-top:4px;
+        font-size:12px;
+        font-weight:500;
+        letter-spacing:.04em;
+        opacity:.9;
+      }
+      .phab-admin-toolbar{
+        display:flex;
+        gap:8px;
+        align-items:center;
+        flex-wrap:wrap;
+      }
+      .phab-admin-btn,
+      .phab-admin-btn-secondary{
+        border:none;
+        cursor:pointer;
+        font-family:var(--cup-font-body);
+        font-size:12px;
+        font-weight:700;
+        letter-spacing:.02em;
+        border-radius:12px;
+        padding:8px 12px;
+        transition:transform .16s ease, box-shadow .16s ease, background .16s ease, color .16s ease;
+      }
+      .phab-admin-btn{
+        background:linear-gradient(90deg,var(--cup-red) 0%,#ff7158 100%);
+        color:var(--cup-white);
+        box-shadow:0 8px 16px rgba(255,70,78,.28);
+      }
+      .phab-admin-btn:hover{
+        transform:translateY(-1px);
+        box-shadow:0 10px 20px rgba(255,70,78,.34);
+      }
+      .phab-admin-btn:disabled{
+        opacity:.55;
+        cursor:default;
+        transform:none;
+        box-shadow:none;
+      }
+      .phab-admin-btn-secondary{
+        border:1px solid rgba(51,0,32,.18);
+        background:rgba(255,255,255,.84);
+        color:var(--cup-wine);
+      }
+      .phab-admin-btn-secondary:hover{
+        background:var(--cup-lime);
+      }
+      .phab-admin-tabs{
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        padding:10px 12px;
+        border-bottom:1px solid rgba(51,0,32,.14);
+        background:linear-gradient(90deg,rgba(255,255,255,.78) 0%,rgba(255,255,255,.62) 100%);
+        backdrop-filter:blur(2px);
+      }
+      .phab-admin-tab{
+        border:1px solid rgba(51,0,32,.2);
+        background:rgba(255,255,255,.82);
+        color:var(--cup-wine);
+        padding:8px 12px;
+        border-radius:999px;
+        cursor:pointer;
+        font-size:11px;
+        font-weight:800;
+        font-family:var(--cup-font-heading);
+        letter-spacing:.03em;
+        text-transform:uppercase;
+        transition:all .2s ease;
+      }
+      .phab-admin-tab:hover{
+        transform:translateY(-1px);
+        border-color:rgba(51,0,32,.34);
+      }
+      .phab-admin-tab-active{
+        background:var(--cup-wine);
+        color:var(--cup-white);
+        border-color:var(--cup-wine);
+      }
+      .phab-admin-content{
+        padding:12px;
+        min-height:500px;
+      }
+      .phab-admin-hidden{
+        display:none !important;
+      }
+      .phab-admin-msg-grid{
+        display:grid;
+        grid-template-columns:310px 1fr;
+        gap:12px;
+        min-height:470px;
+      }
+      .phab-admin-pane{
+        background:rgba(255,255,255,.88);
+        border:1px solid rgba(51,0,32,.15);
+        border-radius:16px;
+        overflow:hidden;
+        box-shadow:0 12px 28px rgba(51,0,32,.09);
+      }
+      .phab-admin-pane-head{
+        padding:11px 12px;
+        border-bottom:1px solid rgba(51,0,32,.12);
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+        font-family:var(--cup-font-heading);
+        background:linear-gradient(90deg,rgba(255,232,145,.86) 0%,rgba(182,253,255,.76) 100%);
+      }
+      .phab-admin-pane-body{
+        padding:8px;
+        overflow:auto;
+        max-height:410px;
+      }
+      .phab-admin-list{
+        list-style:none;
+        margin:0;
+        padding:0;
+        display:flex;
+        flex-direction:column;
+        gap:7px;
+      }
+      .phab-admin-list-btn{
+        width:100%;
+        text-align:left;
+        border:1px solid rgba(51,0,32,.13);
+        background:rgba(255,255,255,.92);
+        border-radius:12px;
+        padding:8px 10px;
+        cursor:pointer;
+        transition:all .16s ease;
+      }
+      .phab-admin-list-btn:hover{
+        transform:translateX(1px);
+        border-color:rgba(51,0,32,.26);
+        box-shadow:0 8px 16px rgba(51,0,32,.08);
+      }
+      .phab-admin-list-btn-active{
+        background:linear-gradient(90deg,var(--cup-lime) 0%,rgba(182,253,255,.84) 100%);
+        border-color:rgba(0,58,134,.36);
+      }
+      .phab-admin-list-title{
+        font-size:12px;
+        font-weight:700;
+        color:var(--cup-wine);
+      }
+      .phab-admin-list-meta{
+        margin-top:3px;
+        font-size:11px;
+        color:rgba(51,0,32,.72);
+      }
+      .phab-admin-status{
+        font-size:11px;
+        font-weight:700;
+        padding:5px 9px;
+        border-radius:999px;
+        background:rgba(207,255,182,.92);
+        color:#0f5c3c;
+        border:1px solid rgba(1,67,58,.24);
+        animation:phab-cup-pulse 2.2s ease-in-out infinite;
+      }
+      .phab-admin-status-error{
+        background:rgba(255,70,78,.12);
+        border-color:rgba(255,70,78,.45);
+        color:#9f1735;
+      }
+      .phab-admin-dialog-wrap{
+        display:grid;
+        grid-template-rows:auto auto 1fr auto;
+        height:468px;
+      }
+      .phab-admin-dialog-head{
+        padding:10px 12px;
+        border-bottom:1px solid rgba(51,0,32,.12);
+        background:linear-gradient(90deg,rgba(207,255,182,.78) 0%,rgba(255,255,255,.96) 100%);
+      }
+      .phab-admin-dialog-title{
+        font-size:14px;
+        font-family:var(--cup-font-heading);
+        font-weight:700;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-dialog-meta{
+        margin-top:3px;
+        font-size:11px;
+        color:rgba(51,0,32,.72);
+      }
+      .phab-admin-messages{
+        padding:12px;
+        overflow:auto;
+        background:
+          linear-gradient(rgba(255,255,255,.82),rgba(255,255,255,.82)),
+          repeating-linear-gradient(0deg,transparent 0 19px,rgba(51,0,32,.04) 19px 20px);
+      }
+      .phab-admin-message{
+        max-width:84%;
+        padding:9px 11px;
+        border-radius:13px;
+        margin:0 0 8px;
+        font-size:12px;
+        line-height:1.4;
+        white-space:pre-wrap;
+        word-break:break-word;
+      }
+      .phab-admin-message-client{
+        margin-right:auto;
+        background:rgba(182,253,255,.72);
+        color:#16343f;
+        border:1px solid rgba(0,58,134,.22);
+        border-bottom-left-radius:4px;
+      }
+      .phab-admin-message-staff{
+        margin-left:auto;
+        background:linear-gradient(110deg,var(--cup-wine) 0%,#5f0636 100%);
+        color:var(--cup-white);
+        border:1px solid rgba(255,255,255,.3);
+        border-bottom-right-radius:4px;
+      }
+      .phab-admin-message-meta{
+        display:block;
+        margin-top:4px;
+        font-size:10px;
+        opacity:.78;
+      }
+      .phab-admin-compose{
+        display:flex;
+        gap:8px;
+        padding:10px;
+        border-top:1px solid rgba(51,0,32,.12);
+        background:linear-gradient(90deg,rgba(255,232,145,.55) 0%,rgba(255,255,255,.88) 100%);
+      }
+      .phab-admin-input,
+      .phab-admin-settings-input{
+        width:100%;
+        border:1px solid rgba(51,0,32,.2);
+        border-radius:10px;
+        padding:9px 10px;
+        font-size:12px;
+        font-family:var(--cup-font-body);
+        background:rgba(255,255,255,.92);
+        color:var(--cup-wine);
+      }
+      .phab-admin-input:focus,
+      .phab-admin-settings-input:focus{
+        outline:none;
+        border-color:rgba(0,58,134,.55);
+        box-shadow:0 0 0 3px rgba(182,253,255,.45);
+      }
+      .phab-admin-games-table{
+        width:100%;
+        border-collapse:separate;
+        border-spacing:0;
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(51,0,32,.15);
+        border-radius:16px;
+        overflow:hidden;
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-admin-games-table th,
+      .phab-admin-games-table td{
+        border-bottom:1px solid rgba(51,0,32,.1);
+        padding:10px 11px;
+        font-size:12px;
+        text-align:left;
+      }
+      .phab-admin-games-table th{
+        background:linear-gradient(90deg,rgba(255,232,145,.85) 0%,rgba(182,253,255,.72) 100%);
+        color:var(--cup-wine);
+        font-family:var(--cup-font-heading);
+        font-size:11px;
+        font-weight:700;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .phab-admin-games-table tbody tr:nth-child(even){
+        background:rgba(221,200,252,.2);
+      }
+      .phab-admin-settings-grid{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(250px,1fr));
+        gap:12px;
+      }
+      .phab-admin-settings-card{
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(51,0,32,.16);
+        border-radius:16px;
+        display:grid;
+        grid-template-rows:auto 1fr auto;
+        min-height:410px;
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-admin-settings-head{
+        padding:10px 12px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        font-size:11px;
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.05em;
+        font-family:var(--cup-font-heading);
+        color:var(--cup-wine);
+        background:linear-gradient(90deg,rgba(207,255,182,.82) 0%,rgba(255,255,255,.95) 100%);
+      }
+      .phab-admin-settings-list{
+        padding:9px;
+        overflow:auto;
+        max-height:248px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+      }
+      .phab-admin-settings-form{
+        padding:9px;
+        display:flex;
+        flex-direction:column;
+        gap:7px;
+      }
+      .phab-admin-settings-label{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.8);
+      }
+      .phab-admin-settings-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+        padding:8px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:10px;
+        background:rgba(255,255,255,.92);
+        margin-bottom:6px;
+      }
+      .phab-admin-settings-row-main{
+        display:flex;
+        flex-direction:column;
+        gap:2px;
+        min-width:0;
+      }
+      .phab-admin-settings-row-title{
+        font-size:12px;
+        font-weight:700;
+        color:var(--cup-wine);
+        word-break:break-word;
+      }
+      .phab-admin-settings-row-meta{
+        font-size:11px;
+        color:rgba(51,0,32,.72);
+        word-break:break-word;
+      }
+      .phab-admin-check{
+        display:flex;
+        align-items:center;
+        gap:6px;
+        font-size:12px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-empty{
+        font-size:12px;
+        color:rgba(51,0,32,.7);
+        padding:12px;
+      }
+      @keyframes phab-cup-enter{
+        from{opacity:.2;transform:translateY(8px)}
+        to{opacity:1;transform:translateY(0)}
+      }
+      @keyframes phab-cup-pulse{
+        0%,100%{box-shadow:0 0 0 0 rgba(15,92,60,.16)}
+        50%{box-shadow:0 0 0 4px rgba(15,92,60,.08)}
+      }
+      @media (max-width:980px){
+        .phab-admin-msg-grid{grid-template-columns:1fr}
+        .phab-admin-dialog-wrap{height:410px}
+        .phab-admin-settings-grid{grid-template-columns:1fr}
+        .phab-admin-header{padding:14px}
+      }
+      @media (max-width:640px){
+        .phab-admin{border-radius:14px}
+        .phab-admin-title{font-size:15px}
+        .phab-admin-subtitle{font-size:11px}
+        .phab-admin-content{padding:8px}
+        .phab-admin-tabs{padding:8px 8px 9px}
+        .phab-admin-tab{font-size:10px;padding:7px 10px}
+      }
+    `;
     document.head.appendChild(style);
   }
 
@@ -308,7 +721,7 @@
 
     var subtitle = document.createElement('div');
     subtitle.className = 'phab-admin-subtitle';
-    subtitle.textContent = 'Tilda embedded panel';
+    subtitle.textContent = 'Центр управления пространством';
     heading.appendChild(subtitle);
 
     var toolbar = document.createElement('div');
