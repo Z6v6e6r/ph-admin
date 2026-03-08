@@ -1,0 +1,331 @@
+[
+  {
+    "id": "d1b4c78f9a3e4b11",
+    "type": "subflow",
+    "name": "PHAB Telegram Outbox Worker",
+    "info": "Outbound worker for PHAB Telegram integration.\n\nInput: any trigger message (use Inject every 1-2 sec).\nFlow: pull outbox -> send to Telegram -> ack/fail.\n\nSubflow env vars:\n- PHAB_API_BASE (default: http://localhost:3000/api)\n- TELEGRAM_BOT_TOKEN\n- TELEGRAM_INTEGRATION_TOKEN (optional)",
+    "category": "PHAB",
+    "in": [
+      {
+        "x": 80,
+        "y": 120,
+        "wires": [
+          {
+            "id": "a901b8d8a4e24c4a"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "x": 1710,
+        "y": 120,
+        "wires": [
+          {
+            "id": "0bb7a06b33b84f85",
+            "port": 0
+          }
+        ]
+      }
+    ],
+    "env": [
+      {
+        "name": "PHAB_API_BASE",
+        "type": "str",
+        "value": "http://localhost:3000/api"
+      },
+      {
+        "name": "TELEGRAM_BOT_TOKEN",
+        "type": "str",
+        "value": ""
+      },
+      {
+        "name": "TELEGRAM_INTEGRATION_TOKEN",
+        "type": "str",
+        "value": ""
+      }
+    ],
+    "meta": {},
+    "color": "#D8BFD8",
+    "icon": "font-awesome/fa-paper-plane"
+  },
+  {
+    "id": "a901b8d8a4e24c4a",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "prepare pull request",
+    "func": "const base = (env.get(\"PHAB_API_BASE\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst token = env.get(\"TELEGRAM_INTEGRATION_TOKEN\") || \"\";\n\nmsg.method = \"GET\";\nmsg.url = `${base}/integrations/telegram/outbox/pull?limit=20&leaseSec=30`;\nmsg.headers = {};\nif (token) {\n  msg.headers[\"x-integration-token\"] = token;\n}\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 260,
+    "y": 120,
+    "wires": [
+      [
+        "c19f1ac6fcae4b00"
+      ]
+    ]
+  },
+  {
+    "id": "c19f1ac6fcae4b00",
+    "type": "http request",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "pull outbox",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 450,
+    "y": 120,
+    "wires": [
+      [
+        "b5b97ee76ea44766"
+      ]
+    ]
+  },
+  {
+    "id": "b5b97ee76ea44766",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "extract commands",
+    "func": "const commands = Array.isArray(msg.payload?.commands) ? msg.payload.commands : [];\nif (!commands.length) {\n  return null;\n}\nmsg.payload = commands;\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 650,
+    "y": 120,
+    "wires": [
+      [
+        "a4cde4f111f64a44"
+      ]
+    ]
+  },
+  {
+    "id": "a4cde4f111f64a44",
+    "type": "split",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "split commands[]",
+    "splt": "\\n",
+    "spltType": "str",
+    "arraySplt": 1,
+    "arraySpltType": "len",
+    "stream": false,
+    "addname": "",
+    "property": "payload",
+    "x": 850,
+    "y": 120,
+    "wires": [
+      [
+        "d1887f6f85d64ee4"
+      ]
+    ]
+  },
+  {
+    "id": "d1887f6f85d64ee4",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "prepare Telegram call",
+    "func": "const cmd = msg.payload || {};\nmsg.command = cmd;\nmsg.commandId = cmd.id;\n\nif (!msg.commandId) {\n  msg.failReason = \"Missing outbox command id\";\n  return msg;\n}\n\nconst method = String(cmd.method || \"\");\nif (method !== \"sendMessage\" && method !== \"answerCallbackQuery\") {\n  msg.failReason =     `Unsupported method: ${method || \"empty\"}`;\n  return msg;\n}\n\nconst botToken = env.get(\"TELEGRAM_BOT_TOKEN\") || \"\";\nif (!botToken) {\n  msg.failReason = \"TELEGRAM_BOT_TOKEN is empty\";\n  return msg;\n}\n\nmsg.method = \"POST\";\nmsg.url = `https://api.telegram.org/bot${botToken}/${method}`;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = cmd.payload || {};\nmsg.telegramMethod = method;\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1080,
+    "y": 120,
+    "wires": [
+      [
+        "f2bb70f7870c43d4"
+      ]
+    ]
+  },
+  {
+    "id": "f2bb70f7870c43d4",
+    "type": "switch",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "is valid command",
+    "property": "failReason",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "null"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 2,
+    "x": 1280,
+    "y": 100,
+    "wires": [
+      [
+        "bb6f59b2806d4e74"
+      ],
+      [
+        "cd5766879a7e41b1"
+      ]
+    ]
+  },
+  {
+    "id": "bb6f59b2806d4e74",
+    "type": "http request",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "send to Telegram",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1470,
+    "y": 100,
+    "wires": [
+      [
+        "f8c9f067be9b4d6f"
+      ]
+    ]
+  },
+  {
+    "id": "f8c9f067be9b4d6f",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "check Telegram result",
+    "func": "const status = Number(msg.statusCode || 0);\nconst body = msg.payload;\nconst okHttp = status >= 200 && status < 300;\nconst okApi = !(body && typeof body === \"object\" && body.ok === false);\n\nif (okHttp && okApi) {\n  if (body && typeof body === \"object\" && body.result && body.result.message_id !== undefined) {\n    msg.providerMessageId = String(body.result.message_id);\n  }\n  return [msg, null];\n}\n\nlet reason = `Telegram send failed (HTTP ${status || \"n/a\"})`;\nif (body && typeof body === \"object\" && body.description) {\n  reason = String(body.description);\n}\nmsg.failReason = reason;\nreturn [null, msg];",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1680,
+    "y": 100,
+    "wires": [
+      [
+        "e3554bdeacbe4555"
+      ],
+      [
+        "cd5766879a7e41b1"
+      ]
+    ]
+  },
+  {
+    "id": "e3554bdeacbe4555",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "prepare ack request",
+    "func": "if (!msg.commandId) {\n  return null;\n}\n\nconst base = (env.get(\"PHAB_API_BASE\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst token = env.get(\"TELEGRAM_INTEGRATION_TOKEN\") || \"\";\n\nmsg.method = \"POST\";\nmsg.url = `${base}/integrations/telegram/outbox/${encodeURIComponent(msg.commandId)}/ack`;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nif (token) {\n  msg.headers[\"x-integration-token\"] = token;\n}\nmsg.payload = msg.providerMessageId ? { providerMessageId: msg.providerMessageId } : {};\nmsg.outcome = \"acked\";\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1890,
+    "y": 80,
+    "wires": [
+      [
+        "f3a8bd34526b41cf"
+      ]
+    ]
+  },
+  {
+    "id": "cd5766879a7e41b1",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "prepare fail request",
+    "func": "const commandId = msg.commandId || msg.command?.id;\nif (!commandId) {\n  return null;\n}\n\nconst base = (env.get(\"PHAB_API_BASE\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst token = env.get(\"TELEGRAM_INTEGRATION_TOKEN\") || \"\";\n\nlet reason = msg.failReason;\nif (!reason && msg.error) {\n  reason = msg.error.message || String(msg.error);\n}\nif (!reason) {\n  reason = \"Telegram send failed\";\n}\n\nmsg.method = \"POST\";\nmsg.url = `${base}/integrations/telegram/outbox/${encodeURIComponent(commandId)}/fail`;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nif (token) {\n  msg.headers[\"x-integration-token\"] = token;\n}\nmsg.payload = { error: String(reason), requeue: true };\nmsg.outcome = \"failed_requeued\";\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1900,
+    "y": 160,
+    "wires": [
+      [
+        "f3a8bd34526b41cf"
+      ]
+    ]
+  },
+  {
+    "id": "7f9d2d83af8745ef",
+    "type": "catch",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "catch send-to-telegram errors",
+    "scope": [
+      "bb6f59b2806d4e74"
+    ],
+    "uncaught": false,
+    "x": 1650,
+    "y": 220,
+    "wires": [
+      [
+        "cd5766879a7e41b1"
+      ]
+    ]
+  },
+  {
+    "id": "f3a8bd34526b41cf",
+    "type": "http request",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "commit ack/fail",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 2120,
+    "y": 120,
+    "wires": [
+      [
+        "0bb7a06b33b84f85"
+      ]
+    ]
+  },
+  {
+    "id": "0bb7a06b33b84f85",
+    "type": "function",
+    "z": "d1b4c78f9a3e4b11",
+    "name": "normalize worker result",
+    "func": "msg.payload = {\n  statusCode: msg.statusCode || null,\n  outcome: msg.outcome || null,\n  commandId: msg.commandId || (msg.command && msg.command.id) || null,\n  apiResponse: msg.payload\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2330,
+    "y": 120,
+    "wires": [
+      []
+    ]
+  }
+]

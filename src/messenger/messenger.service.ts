@@ -1,0 +1,1433 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { RequestUser } from '../common/rbac/request-user.interface';
+import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
+import { AiConnectorService } from './ai/ai-connector.service';
+import { MessengerPersistenceService } from './messenger-persistence.service';
+import { CreateAccessRuleDto } from './dto/create-access-rule.dto';
+import { CreateConnectorConfigDto } from './dto/create-connector-config.dto';
+import { CreateMessageDto } from './dto/create-message.dto';
+import { CreateStationDto } from './dto/create-station.dto';
+import { CreateThreadDto } from './dto/create-thread.dto';
+import { UpdateAccessRuleDto } from './dto/update-access-rule.dto';
+import { UpdateConnectorConfigDto } from './dto/update-connector-config.dto';
+import { UpdateStationDto } from './dto/update-station.dto';
+import {
+  AiAssistMode,
+  AiReplySuggestion,
+  AiSuggestionStatus,
+  ChatMessage,
+  ChatThread,
+  ConnectorRoute,
+  ConnectorSummary,
+  DialogAiInsight,
+  MessageOrigin,
+  MessengerAccessRule,
+  MessengerConnectorConfig,
+  MessengerSettingsSnapshot,
+  MessengerStationConfig,
+  StaffResponseMetric,
+  StationDialogSummary,
+  StationSummary,
+  ThreadAiConfig,
+  ThreadStatus
+} from './messenger.types';
+
+interface ThreadFilters {
+  connector?: ConnectorRoute;
+  stationId?: string;
+}
+
+interface PendingStaffResponse {
+  clientMessageId: string;
+  startedAt: string;
+}
+
+type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Promise<void>;
+
+@Injectable()
+export class MessengerService implements OnModuleInit {
+  private readonly threads = new Map<string, ChatThread>();
+  private readonly messages = new Map<string, ChatMessage[]>();
+  private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
+  private readonly responseMetrics = new Map<string, StaffResponseMetric[]>();
+  private readonly aiConfigs = new Map<string, ThreadAiConfig>();
+  private readonly aiInsights = new Map<string, DialogAiInsight>();
+  private readonly aiSuggestions = new Map<string, AiReplySuggestion[]>();
+  private readonly stationConfigs = new Map<string, MessengerStationConfig>();
+  private readonly connectorConfigs = new Map<string, MessengerConnectorConfig>();
+  private readonly accessRules = new Map<string, MessengerAccessRule>();
+  private readonly messageObservers: MessageObserver[] = [];
+
+  constructor(
+    private readonly aiConnector: AiConnectorService,
+    private readonly persistence: MessengerPersistenceService
+  ) {
+    this.bootstrapSettingsDefaults();
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.hydrateFromPersistence();
+  }
+
+  registerMessageObserver(observer: MessageObserver): void {
+    this.messageObservers.push(observer);
+  }
+
+  private async hydrateFromPersistence(): Promise<void> {
+    if (!this.persistence.isEnabled()) {
+      return;
+    }
+
+    const state = await this.persistence.loadState();
+
+    if (state.stations.length > 0) {
+      this.stationConfigs.clear();
+      for (const station of state.stations) {
+        this.stationConfigs.set(station.stationId, station);
+      }
+    }
+
+    if (state.connectors.length > 0) {
+      this.connectorConfigs.clear();
+      for (const connector of state.connectors) {
+        this.connectorConfigs.set(connector.id, connector);
+      }
+    } else {
+      for (const connector of this.connectorConfigs.values()) {
+        this.persistence.persistConnector(connector);
+      }
+    }
+
+    if (state.accessRules.length > 0) {
+      this.accessRules.clear();
+      for (const rule of state.accessRules) {
+        this.accessRules.set(rule.id, rule);
+      }
+    } else {
+      for (const rule of this.accessRules.values()) {
+        this.persistence.persistAccessRule(rule);
+      }
+    }
+
+    if (state.threads.length > 0) {
+      this.threads.clear();
+      this.messages.clear();
+      this.pendingStaffResponses.clear();
+      this.responseMetrics.clear();
+      this.aiConfigs.clear();
+      this.aiInsights.clear();
+      this.aiSuggestions.clear();
+
+      for (const thread of state.threads) {
+        this.threads.set(thread.id, thread);
+        this.messages.set(thread.id, []);
+        this.pendingStaffResponses.set(thread.id, []);
+        this.responseMetrics.set(thread.id, []);
+        this.aiSuggestions.set(thread.id, []);
+      }
+
+      for (const message of state.messages) {
+        const existing = this.messages.get(message.threadId) ?? [];
+        existing.push(message);
+        this.messages.set(message.threadId, existing);
+      }
+
+      for (const [threadId, threadMessages] of this.messages.entries()) {
+        threadMessages.sort(
+          (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+        );
+        this.messages.set(threadId, threadMessages);
+      }
+
+      for (const metricEntry of state.metrics) {
+        this.responseMetrics.set(metricEntry.threadId, metricEntry.metrics ?? []);
+      }
+
+      for (const configEntry of state.aiConfigs) {
+        this.aiConfigs.set(configEntry.threadId, configEntry.config);
+      }
+
+      for (const insightEntry of state.aiInsights) {
+        this.aiInsights.set(insightEntry.threadId, insightEntry.insight);
+      }
+
+      for (const suggestion of state.aiSuggestions) {
+        const existing = this.aiSuggestions.get(suggestion.threadId) ?? [];
+        existing.push(suggestion);
+        this.aiSuggestions.set(suggestion.threadId, existing);
+      }
+
+      for (const [threadId, threadSuggestions] of this.aiSuggestions.entries()) {
+        threadSuggestions.sort(
+          (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+        );
+        this.aiSuggestions.set(threadId, threadSuggestions);
+      }
+    }
+  }
+
+  createThread(dto: CreateThreadDto, user: RequestUser): ChatThread {
+    const clientId = this.resolveClientId(dto, user);
+    const station = this.ensureStationConfig(dto.stationId, dto.stationName);
+    this.ensureConnectorConfig(dto.connector);
+    this.ensureThreadCreateAccess(dto.stationId, dto.connector, user);
+    const initialAiMode = this.resolveInitialAiMode(dto.aiMode, user);
+
+    const now = new Date().toISOString();
+    const thread: ChatThread = {
+      id: randomUUID(),
+      connector: dto.connector,
+      stationId: dto.stationId,
+      stationName: station.stationName,
+      clientId,
+      subject: dto.subject,
+      assignedSupportId: dto.assignedSupportId,
+      status: ThreadStatus.OPEN,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.threads.set(thread.id, thread);
+    this.messages.set(thread.id, []);
+    this.pendingStaffResponses.set(thread.id, []);
+    this.responseMetrics.set(thread.id, []);
+    this.aiSuggestions.set(thread.id, []);
+    this.aiConfigs.set(thread.id, {
+      mode: initialAiMode,
+      updatedAt: now,
+      updatedBy: user.id
+    });
+    const initialInsight = this.aiConnector.analyzeDialog(thread.id, []);
+    this.aiInsights.set(thread.id, initialInsight);
+    this.persistence.persistThread(thread);
+    this.persistence.persistAiConfig(thread.id, {
+      mode: initialAiMode,
+      updatedAt: now,
+      updatedBy: user.id
+    });
+    this.persistence.persistAiInsight(thread.id, initialInsight);
+
+    return thread;
+  }
+
+  listThreads(user: RequestUser, filters: ThreadFilters = {}): ChatThread[] {
+    return this.getFilteredAccessibleThreads(user, filters);
+  }
+
+  getThreadById(threadId: string, user: RequestUser): ChatThread {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    return thread;
+  }
+
+  listMessages(threadId: string, user: RequestUser): ChatMessage[] {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.markThreadRead(thread, user);
+    return this.messages.get(threadId) ?? [];
+  }
+
+  sendMessage(
+    threadId: string,
+    dto: CreateMessageDto,
+    user: RequestUser
+  ): ChatMessage {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    if (
+      this.isStaff(user) &&
+      !this.hasStaffAccess(user, thread.stationId, thread.connector, 'write')
+    ) {
+      throw new ForbiddenException('Staff cannot send message in this connector/station');
+    }
+
+    if (thread.status === ThreadStatus.CLOSED) {
+      throw new ForbiddenException('Thread is closed');
+    }
+
+    const senderRole = this.resolveSenderRole(user.roles);
+    const createdAt = new Date().toISOString();
+    const message: ChatMessage = {
+      id: randomUUID(),
+      threadId,
+      senderId: user.id,
+      senderRole,
+      origin: MessageOrigin.HUMAN,
+      text: dto.text,
+      createdAt
+    };
+
+    this.appendMessage(thread, message);
+
+    if (this.isStaffRole(senderRole)) {
+      thread.lastStaffReadAt = createdAt;
+      this.registerStaffResponseMetrics(thread, message, user.id);
+    } else {
+      thread.lastClientReadAt = createdAt;
+      this.registerPendingClientResponse(thread, message);
+    }
+
+    this.analyzeDialog(thread.id);
+
+    if (!this.isStaffRole(senderRole)) {
+      this.handleAiAssistantOnClientMessage(thread, message);
+    }
+
+    this.threads.set(thread.id, thread);
+    return message;
+  }
+
+  closeThread(threadId: string, user: RequestUser): ChatThread {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+
+    if (!this.isStaff(user)) {
+      throw new ForbiddenException('Only staff can close a thread');
+    }
+    if (!this.hasStaffAccess(user, thread.stationId, thread.connector, 'write')) {
+      throw new ForbiddenException('Staff cannot close thread in this connector/station');
+    }
+
+    const updated: ChatThread = {
+      ...thread,
+      status: ThreadStatus.CLOSED,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.threads.set(threadId, updated);
+    this.persistence.persistThread(updated);
+    return updated;
+  }
+
+  listConnectors(user: RequestUser): ConnectorSummary[] {
+    const visibleThreads = this.getFilteredAccessibleThreads(user);
+    const byConnector = new Map<ConnectorRoute, ChatThread[]>();
+
+    for (const thread of visibleThreads) {
+      const existing = byConnector.get(thread.connector) ?? [];
+      existing.push(thread);
+      byConnector.set(thread.connector, existing);
+    }
+
+    for (const connector of this.listConfiguredRoutesForUser(user)) {
+      if (!byConnector.has(connector)) {
+        byConnector.set(connector, []);
+      }
+    }
+
+    return Array.from(byConnector.entries())
+      .map(([connector, threads]) => {
+        const stationIds = new Set(
+          this.listAccessibleConfiguredStationIds(connector, user)
+        );
+        for (const thread of threads) {
+          stationIds.add(thread.stationId);
+        }
+        const unreadMessagesCount = threads.reduce(
+          (sum, thread) => sum + this.countUnreadMessagesForUser(thread, user),
+          0
+        );
+
+        return {
+          connector,
+          stationsCount: stationIds.size,
+          dialogsCount: threads.length,
+          unreadMessagesCount
+        };
+      })
+      .sort((left, right) => left.connector.localeCompare(right.connector));
+  }
+
+  listStationsByConnector(
+    connector: ConnectorRoute,
+    user: RequestUser
+  ): StationSummary[] {
+    const visibleThreads = this.getFilteredAccessibleThreads(user, { connector });
+    const byStation = new Map<string, ChatThread[]>();
+
+    for (const thread of visibleThreads) {
+      const existing = byStation.get(thread.stationId) ?? [];
+      existing.push(thread);
+      byStation.set(thread.stationId, existing);
+    }
+
+    for (const stationId of this.listAccessibleConfiguredStationIds(connector, user)) {
+      if (!byStation.has(stationId)) {
+        byStation.set(stationId, []);
+      }
+    }
+
+    return Array.from(byStation.entries())
+      .map(([stationId, threads]) => {
+        const unreadByThread = threads.map((thread) =>
+          this.countUnreadMessagesForUser(thread, user)
+        );
+        const unreadMessagesCount = unreadByThread.reduce((sum, value) => sum + value, 0);
+        const unreadDialogsCount = unreadByThread.filter((value) => value > 0).length;
+        const stationName =
+          threads.find((thread) => thread.stationName)?.stationName ??
+          this.stationConfigs.get(stationId)?.stationName;
+        const lastMessageAt = this.maxDate(
+          threads.map((thread) => thread.lastMessageAt ?? thread.updatedAt)
+        );
+
+        return {
+          connector,
+          stationId,
+          stationName,
+          dialogsCount: threads.length,
+          unreadDialogsCount,
+          unreadMessagesCount,
+          lastMessageAt
+        };
+      })
+      .sort((left, right) => left.stationId.localeCompare(right.stationId));
+  }
+
+  listDialogsByStation(
+    connector: ConnectorRoute,
+    stationId: string,
+    user: RequestUser
+  ): StationDialogSummary[] {
+    return this.getFilteredAccessibleThreads(user, { connector, stationId })
+      .map((thread) => {
+        const responseStats = this.getThreadResponseStats(thread.id);
+        const insight = this.aiInsights.get(thread.id);
+
+        return {
+          threadId: thread.id,
+          connector: thread.connector,
+          stationId: thread.stationId,
+          stationName: thread.stationName,
+          clientId: thread.clientId,
+          subject: thread.subject,
+          status: thread.status,
+          lastMessageAt: thread.lastMessageAt,
+          unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
+          averageStaffResponseTimeMs: responseStats.averageResponseTimeMs,
+          lastStaffResponseTimeMs: responseStats.lastResponseTimeMs,
+          aiTopic: insight?.topic,
+          aiUrgency: insight?.urgency,
+          aiQualityScore: insight?.qualityScore
+        };
+      })
+      .sort(
+        (left, right) => {
+          if (left.unreadMessagesCount !== right.unreadMessagesCount) {
+            if (left.unreadMessagesCount > 0 && right.unreadMessagesCount === 0) {
+              return -1;
+            }
+            if (left.unreadMessagesCount === 0 && right.unreadMessagesCount > 0) {
+              return 1;
+            }
+          }
+          return this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
+        }
+      );
+  }
+
+  getSettings(user: RequestUser): MessengerSettingsSnapshot {
+    this.ensureSettingsReadAccess(user);
+    return {
+      stations: this.listStationConfigs(user),
+      connectors: this.listConnectorConfigs(user),
+      accessRules: this.listAccessRules(user)
+    };
+  }
+
+  listStationConfigs(user: RequestUser): MessengerStationConfig[] {
+    this.ensureSettingsReadAccess(user);
+    return Array.from(this.stationConfigs.values()).sort((left, right) =>
+      left.stationId.localeCompare(right.stationId)
+    );
+  }
+
+  createStationConfig(
+    dto: CreateStationDto,
+    user: RequestUser
+  ): MessengerStationConfig {
+    this.ensureSettingsManageAccess(user);
+    const stationId = dto.stationId.trim();
+    if (this.stationConfigs.has(stationId)) {
+      throw new BadRequestException(`Station with id ${stationId} already exists`);
+    }
+
+    const now = new Date().toISOString();
+    const station: MessengerStationConfig = {
+      stationId,
+      stationName: dto.stationName?.trim() || stationId,
+      isActive: dto.isActive ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.stationConfigs.set(stationId, station);
+    this.persistence.persistStation(station);
+    return station;
+  }
+
+  updateStationConfig(
+    stationId: string,
+    dto: UpdateStationDto,
+    user: RequestUser
+  ): MessengerStationConfig {
+    this.ensureSettingsManageAccess(user);
+    const existing = this.stationConfigs.get(stationId);
+    if (!existing) {
+      throw new NotFoundException(`Station with id ${stationId} not found`);
+    }
+
+    const updated: MessengerStationConfig = {
+      ...existing,
+      stationName: dto.stationName?.trim() || existing.stationName,
+      isActive: dto.isActive ?? existing.isActive,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.stationConfigs.set(stationId, updated);
+    this.persistence.persistStation(updated);
+    return updated;
+  }
+
+  listConnectorConfigs(user: RequestUser): MessengerConnectorConfig[] {
+    this.ensureSettingsReadAccess(user);
+    return Array.from(this.connectorConfigs.values()).sort((left, right) =>
+      left.name.localeCompare(right.name)
+    );
+  }
+
+  createConnectorConfig(
+    dto: CreateConnectorConfigDto,
+    user: RequestUser
+  ): MessengerConnectorConfig {
+    this.ensureSettingsManageAccess(user);
+    this.ensureConnectorConfig(dto.route);
+    const stationIds = this.normalizeStationIds(dto.stationIds);
+    this.ensureConfiguredStationsExist(stationIds);
+
+    const now = new Date().toISOString();
+    const connector: MessengerConnectorConfig = {
+      id: randomUUID(),
+      name: dto.name.trim(),
+      route: dto.route,
+      stationIds,
+      isActive: dto.isActive ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.connectorConfigs.set(connector.id, connector);
+    this.persistence.persistConnector(connector);
+    return connector;
+  }
+
+  updateConnectorConfig(
+    connectorId: string,
+    dto: UpdateConnectorConfigDto,
+    user: RequestUser
+  ): MessengerConnectorConfig {
+    this.ensureSettingsManageAccess(user);
+    const existing = this.connectorConfigs.get(connectorId);
+    if (!existing) {
+      throw new NotFoundException(`Connector config with id ${connectorId} not found`);
+    }
+
+    const stationIds =
+      dto.stationIds === undefined
+        ? existing.stationIds
+        : this.normalizeStationIds(dto.stationIds);
+    this.ensureConfiguredStationsExist(stationIds);
+
+    const updated: MessengerConnectorConfig = {
+      ...existing,
+      name: dto.name?.trim() || existing.name,
+      stationIds,
+      isActive: dto.isActive ?? existing.isActive,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.connectorConfigs.set(connectorId, updated);
+    this.persistence.persistConnector(updated);
+    return updated;
+  }
+
+  listAccessRules(user: RequestUser): MessengerAccessRule[] {
+    this.ensureSettingsReadAccess(user);
+    return Array.from(this.accessRules.values()).sort((left, right) => {
+      if (left.role === right.role) {
+        return left.id.localeCompare(right.id);
+      }
+      return left.role.localeCompare(right.role);
+    });
+  }
+
+  createAccessRule(dto: CreateAccessRuleDto, user: RequestUser): MessengerAccessRule {
+    this.ensureSettingsManageAccess(user);
+    const stationIds = this.normalizeStationIds(dto.stationIds);
+    this.ensureConfiguredStationsExist(stationIds);
+    const connectorRoutes = this.normalizeConnectorRoutes(dto.connectorRoutes);
+    const canRead = dto.canRead ?? true;
+    const canWrite = dto.canWrite ?? false;
+    this.ensureNonEmptyRule(canRead, canWrite);
+
+    const now = new Date().toISOString();
+    const rule: MessengerAccessRule = {
+      id: randomUUID(),
+      role: dto.role,
+      stationIds,
+      connectorRoutes,
+      canRead,
+      canWrite,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.accessRules.set(rule.id, rule);
+    this.persistence.persistAccessRule(rule);
+    return rule;
+  }
+
+  updateAccessRule(
+    ruleId: string,
+    dto: UpdateAccessRuleDto,
+    user: RequestUser
+  ): MessengerAccessRule {
+    this.ensureSettingsManageAccess(user);
+    const existing = this.accessRules.get(ruleId);
+    if (!existing) {
+      throw new NotFoundException(`Access rule with id ${ruleId} not found`);
+    }
+
+    const stationIds =
+      dto.stationIds === undefined
+        ? existing.stationIds
+        : this.normalizeStationIds(dto.stationIds);
+    this.ensureConfiguredStationsExist(stationIds);
+    const connectorRoutes =
+      dto.connectorRoutes === undefined
+        ? existing.connectorRoutes
+        : this.normalizeConnectorRoutes(dto.connectorRoutes);
+    const canRead = dto.canRead ?? existing.canRead;
+    const canWrite = dto.canWrite ?? existing.canWrite;
+    this.ensureNonEmptyRule(canRead, canWrite);
+
+    const updated: MessengerAccessRule = {
+      ...existing,
+      role: dto.role ?? existing.role,
+      stationIds,
+      connectorRoutes,
+      canRead,
+      canWrite,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.accessRules.set(ruleId, updated);
+    this.persistence.persistAccessRule(updated);
+    return updated;
+  }
+
+  listResponseMetrics(threadId: string, user: RequestUser): StaffResponseMetric[] {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    return this.responseMetrics.get(threadId) ?? [];
+  }
+
+  getAiInsight(threadId: string, user: RequestUser): DialogAiInsight {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    return this.aiInsights.get(threadId) ?? this.analyzeDialog(threadId);
+  }
+
+  analyzeAiInsight(threadId: string, user: RequestUser): DialogAiInsight {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    return this.analyzeDialog(threadId);
+  }
+
+  listAiSuggestions(threadId: string, user: RequestUser): AiReplySuggestion[] {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    return this.aiSuggestions.get(threadId) ?? [];
+  }
+
+  generateAiSuggestion(threadId: string, user: RequestUser): AiReplySuggestion {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    const clientMessage = this.getLatestClientMessage(threadId);
+    if (!clientMessage) {
+      throw new BadRequestException('No client message found for suggestion');
+    }
+
+    const insight = this.analyzeDialog(threadId);
+    const suggestion = this.buildSuggestion(thread, clientMessage, insight);
+    this.storeSuggestion(threadId, suggestion);
+
+    return suggestion;
+  }
+
+  setAiMode(
+    threadId: string,
+    mode: AiAssistMode,
+    user: RequestUser
+  ): ThreadAiConfig {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    const config: ThreadAiConfig = {
+      mode,
+      updatedAt: new Date().toISOString(),
+      updatedBy: user.id
+    };
+
+    this.aiConfigs.set(threadId, config);
+    this.persistence.persistAiConfig(threadId, config);
+    return config;
+  }
+
+  getAiMode(threadId: string, user: RequestUser): ThreadAiConfig {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    return this.getThreadAiConfig(threadId);
+  }
+
+  private getThreadOrThrow(threadId: string): ChatThread {
+    const thread = this.threads.get(threadId);
+    if (!thread) {
+      throw new NotFoundException(`Thread with id ${threadId} not found`);
+    }
+    return thread;
+  }
+
+  private ensureThreadAccess(thread: ChatThread, user: RequestUser): void {
+    if (this.canAccessThread(thread, user)) {
+      return;
+    }
+
+    throw new ForbiddenException('Access to thread denied');
+  }
+
+  private ensureStaffAccess(user: RequestUser): void {
+    if (!this.isStaff(user)) {
+      throw new ForbiddenException('Only staff can access this resource');
+    }
+  }
+
+  private isStaff(user: RequestUser): boolean {
+    return user.roles.some((role) => STAFF_ROLES.includes(role));
+  }
+
+  private isSuperAdmin(user: RequestUser): boolean {
+    return user.roles.includes(Role.SUPER_ADMIN);
+  }
+
+  private isStaffRole(role: Role): boolean {
+    return STAFF_ROLES.includes(role);
+  }
+
+  private resolveSenderRole(roles: Role[]): Role {
+    if (roles.length === 0) {
+      throw new ForbiddenException('User must have at least one role');
+    }
+
+    const priority: Role[] = [
+      Role.SUPER_ADMIN,
+      Role.SUPPORT,
+      Role.STATION_ADMIN,
+      Role.MANAGER,
+      Role.TOURNAMENT_MANAGER,
+      Role.GAME_MANAGER,
+      Role.CLIENT
+    ];
+
+    for (const role of priority) {
+      if (roles.includes(role)) {
+        return role;
+      }
+    }
+
+    return roles[0];
+  }
+
+  private resolveClientId(dto: CreateThreadDto, user: RequestUser): string {
+    if (user.roles.includes(Role.CLIENT)) {
+      if (dto.clientId && dto.clientId !== user.id) {
+        throw new ForbiddenException('Client cannot create a thread for another client');
+      }
+      return dto.clientId ?? user.id;
+    }
+
+    if (!dto.clientId) {
+      throw new BadRequestException('clientId is required for non-client creators');
+    }
+
+    return dto.clientId;
+  }
+
+  private resolveInitialAiMode(
+    requestedMode: AiAssistMode | undefined,
+    user: RequestUser
+  ): AiAssistMode {
+    if (!requestedMode) {
+      return AiAssistMode.SUGGEST;
+    }
+
+    if (user.roles.includes(Role.CLIENT)) {
+      return AiAssistMode.SUGGEST;
+    }
+
+    return requestedMode;
+  }
+
+  private ensureThreadCreateAccess(
+    stationId: string,
+    connector: ConnectorRoute,
+    user: RequestUser
+  ): void {
+    if (!this.isStationActive(stationId)) {
+      throw new ForbiddenException(`Station ${stationId} is inactive`);
+    }
+    if (!this.isConnectorEnabledForStation(connector, stationId)) {
+      throw new ForbiddenException(
+        `Connector ${connector} is disabled for station ${stationId}`
+      );
+    }
+
+    if (user.roles.includes(Role.CLIENT)) {
+      return;
+    }
+
+    if (!this.isStaff(user)) {
+      throw new ForbiddenException('Only staff or client can create thread');
+    }
+
+    if (this.isSuperAdmin(user)) {
+      return;
+    }
+
+    if (user.stationIds.length === 0) {
+      if (!this.hasStaffAccess(user, stationId, connector, 'write')) {
+        throw new ForbiddenException(
+          'Staff cannot create thread in this connector/station by access rules'
+        );
+      }
+      return;
+    }
+
+    if (!user.stationIds.includes(stationId)) {
+      throw new ForbiddenException('Staff cannot create thread outside assigned stations');
+    }
+
+    if (!this.hasStaffAccess(user, stationId, connector, 'write')) {
+      throw new ForbiddenException(
+        'Staff cannot create thread in this connector/station by access rules'
+      );
+    }
+  }
+
+  private getFilteredAccessibleThreads(
+    user: RequestUser,
+    filters: ThreadFilters = {}
+  ): ChatThread[] {
+    return Array.from(this.threads.values())
+      .filter((thread) =>
+        filters.connector ? thread.connector === filters.connector : true
+      )
+      .filter((thread) => (filters.stationId ? thread.stationId === filters.stationId : true))
+      .filter((thread) => this.canAccessThread(thread, user))
+      .sort(
+        (left, right) =>
+          this.toTimestamp(right.lastMessageAt ?? right.updatedAt) -
+          this.toTimestamp(left.lastMessageAt ?? left.updatedAt)
+      );
+  }
+
+  private canAccessThread(thread: ChatThread, user: RequestUser): boolean {
+    if (user.roles.includes(Role.CLIENT)) {
+      return thread.clientId === user.id;
+    }
+
+    if (!this.isStaff(user)) {
+      return false;
+    }
+
+    if (this.isSuperAdmin(user)) {
+      return true;
+    }
+
+    if (user.stationIds.length > 0) {
+      if (!user.stationIds.includes(thread.stationId)) {
+        return false;
+      }
+    }
+
+    if (!this.isStationActive(thread.stationId)) {
+      return false;
+    }
+
+    if (!this.isConnectorEnabledForStation(thread.connector, thread.stationId)) {
+      return false;
+    }
+
+    return this.hasStaffAccess(user, thread.stationId, thread.connector, 'read');
+  }
+
+  private ensureSettingsReadAccess(user: RequestUser): void {
+    if (!this.isStaff(user)) {
+      throw new ForbiddenException('Only staff can access messenger settings');
+    }
+  }
+
+  private ensureSettingsManageAccess(user: RequestUser): void {
+    if (this.isSuperAdmin(user) || user.roles.includes(Role.MANAGER)) {
+      return;
+    }
+    throw new ForbiddenException('Only super admin or manager can modify settings');
+  }
+
+  private ensureStationConfig(
+    stationIdRaw: string,
+    stationNameRaw?: string
+  ): MessengerStationConfig {
+    const stationId = stationIdRaw.trim();
+    const existing = this.stationConfigs.get(stationId);
+    if (existing) {
+      if (stationNameRaw?.trim()) {
+        const updated: MessengerStationConfig = {
+          ...existing,
+          stationName: stationNameRaw.trim(),
+          updatedAt: new Date().toISOString()
+        };
+        this.stationConfigs.set(stationId, updated);
+        this.persistence.persistStation(updated);
+        return updated;
+      }
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const created: MessengerStationConfig = {
+      stationId,
+      stationName: stationNameRaw?.trim() || stationId,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.stationConfigs.set(stationId, created);
+    this.persistence.persistStation(created);
+    return created;
+  }
+
+  private ensureConnectorConfig(route: ConnectorRoute): void {
+    const hasRouteConfig = Array.from(this.connectorConfigs.values()).some(
+      (config) => config.route === route
+    );
+    if (hasRouteConfig) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const id = this.defaultConnectorId(route);
+    this.connectorConfigs.set(id, {
+      id,
+      name: route,
+      route,
+      stationIds: [],
+      isActive: true,
+      createdAt: now,
+      updatedAt: now
+    });
+    this.persistence.persistConnector(this.connectorConfigs.get(id)!);
+  }
+
+  private defaultConnectorId(route: ConnectorRoute): string {
+    return `default-${route.toLowerCase()}`;
+  }
+
+  private hasStaffAccess(
+    user: RequestUser,
+    stationId: string,
+    connector: ConnectorRoute,
+    operation: 'read' | 'write'
+  ): boolean {
+    if (!this.isStaff(user)) {
+      return false;
+    }
+    if (this.isSuperAdmin(user)) {
+      return true;
+    }
+
+    const roles = user.roles.filter((role) => STAFF_ROLES.includes(role));
+    if (roles.length === 0) {
+      return false;
+    }
+
+    for (const role of roles) {
+      const matchingRules = Array.from(this.accessRules.values()).filter(
+        (rule) =>
+          rule.role === role &&
+          (rule.stationIds.length === 0 || rule.stationIds.includes(stationId)) &&
+          (rule.connectorRoutes.length === 0 || rule.connectorRoutes.includes(connector))
+      );
+
+      if (operation === 'read') {
+        if (matchingRules.some((rule) => rule.canRead || rule.canWrite)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (matchingRules.some((rule) => rule.canWrite)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private isStationActive(stationId: string): boolean {
+    const station = this.stationConfigs.get(stationId);
+    if (!station) {
+      return true;
+    }
+    return station.isActive;
+  }
+
+  private isConnectorEnabledForStation(
+    connector: ConnectorRoute,
+    stationId: string
+  ): boolean {
+    const routeConfigs = Array.from(this.connectorConfigs.values()).filter(
+      (config) => config.route === connector
+    );
+    if (routeConfigs.length === 0) {
+      return true;
+    }
+
+    const activeRouteConfigs = routeConfigs.filter((config) => config.isActive);
+    if (activeRouteConfigs.length === 0) {
+      return false;
+    }
+
+    for (const config of activeRouteConfigs) {
+      if (config.stationIds.length === 0 || config.stationIds.includes(stationId)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private listConfiguredRoutesForUser(user: RequestUser): ConnectorRoute[] {
+    if (!this.isStaff(user)) {
+      return [];
+    }
+
+    const routes = new Set<ConnectorRoute>();
+    const configuredRoutes = Array.from(this.connectorConfigs.values())
+      .filter((config) => config.isActive)
+      .map((config) => config.route);
+
+    for (const route of configuredRoutes) {
+      if (this.isSuperAdmin(user)) {
+        routes.add(route);
+        continue;
+      }
+
+      if (this.listAccessibleConfiguredStationIds(route, user).length > 0) {
+        routes.add(route);
+      }
+    }
+
+    return Array.from(routes.values()).sort((left, right) =>
+      left.localeCompare(right)
+    );
+  }
+
+  private listAccessibleConfiguredStationIds(
+    route: ConnectorRoute,
+    user: RequestUser
+  ): string[] {
+    if (!this.isStaff(user)) {
+      return [];
+    }
+
+    const routeConfigs = Array.from(this.connectorConfigs.values()).filter(
+      (config) => config.route === route && config.isActive
+    );
+    if (routeConfigs.length === 0) {
+      return [];
+    }
+
+    const allActiveStations = Array.from(this.stationConfigs.values())
+      .filter((station) => station.isActive)
+      .map((station) => station.stationId);
+
+    const stationIds = new Set<string>();
+    for (const config of routeConfigs) {
+      if (config.stationIds.length === 0) {
+        for (const stationId of allActiveStations) {
+          stationIds.add(stationId);
+        }
+        continue;
+      }
+
+      for (const stationId of config.stationIds) {
+        if (this.isStationActive(stationId)) {
+          stationIds.add(stationId);
+        }
+      }
+    }
+
+    const filtered = Array.from(stationIds.values()).filter((stationId) => {
+      if (user.stationIds.length > 0 && !user.stationIds.includes(stationId)) {
+        return false;
+      }
+      return this.hasStaffAccess(user, stationId, route, 'read');
+    });
+
+    return filtered.sort((left, right) => left.localeCompare(right));
+  }
+
+  private normalizeStationIds(stationIds?: string[]): string[] {
+    if (!stationIds || stationIds.length === 0) {
+      return [];
+    }
+    return Array.from(
+      new Set(
+        stationIds
+          .map((stationId) => stationId.trim())
+          .filter((stationId) => stationId.length > 0)
+      )
+    );
+  }
+
+  private normalizeConnectorRoutes(routes?: ConnectorRoute[]): ConnectorRoute[] {
+    if (!routes || routes.length === 0) {
+      return [];
+    }
+    return Array.from(new Set(routes));
+  }
+
+  private ensureConfiguredStationsExist(stationIds: string[]): void {
+    for (const stationId of stationIds) {
+      if (!this.stationConfigs.has(stationId)) {
+        throw new BadRequestException(
+          `Station ${stationId} is not configured. Add station first.`
+        );
+      }
+    }
+  }
+
+  private ensureNonEmptyRule(canRead: boolean, canWrite: boolean): void {
+    if (canRead || canWrite) {
+      return;
+    }
+    throw new BadRequestException(
+      'At least one permission must be enabled: canRead or canWrite'
+    );
+  }
+
+  private bootstrapSettingsDefaults(): void {
+    const now = new Date().toISOString();
+    for (const route of Object.values(ConnectorRoute)) {
+      const id = this.defaultConnectorId(route);
+      this.connectorConfigs.set(id, {
+        id,
+        name: route,
+        route,
+        stationIds: [],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+
+    const defaults: Array<{
+      role: Role;
+      canRead: boolean;
+      canWrite: boolean;
+    }> = [
+      { role: Role.SUPER_ADMIN, canRead: true, canWrite: true },
+      { role: Role.MANAGER, canRead: true, canWrite: true },
+      { role: Role.STATION_ADMIN, canRead: true, canWrite: true },
+      { role: Role.SUPPORT, canRead: true, canWrite: true },
+      { role: Role.TOURNAMENT_MANAGER, canRead: true, canWrite: false },
+      { role: Role.GAME_MANAGER, canRead: true, canWrite: false }
+    ];
+
+    for (const item of defaults) {
+      const ruleId = `default-rule-${item.role.toLowerCase()}`;
+      this.accessRules.set(ruleId, {
+        id: ruleId,
+        role: item.role,
+        stationIds: [],
+        connectorRoutes: [],
+        canRead: item.canRead,
+        canWrite: item.canWrite,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+  }
+
+  private markThreadRead(thread: ChatThread, user: RequestUser): void {
+    const now = new Date().toISOString();
+    if (this.isStaff(user)) {
+      thread.lastStaffReadAt = now;
+      this.threads.set(thread.id, thread);
+      this.persistence.persistThread(thread);
+      return;
+    }
+
+    if (user.roles.includes(Role.CLIENT)) {
+      thread.lastClientReadAt = now;
+      this.threads.set(thread.id, thread);
+      this.persistence.persistThread(thread);
+    }
+  }
+
+  private countUnreadMessagesForUser(thread: ChatThread, user: RequestUser): number {
+    const threadMessages = this.messages.get(thread.id) ?? [];
+    if (threadMessages.length === 0) {
+      return 0;
+    }
+
+    if (this.isStaff(user)) {
+      const staffReadTs = this.toTimestamp(thread.lastStaffReadAt);
+      return threadMessages.filter((message) => {
+        const createdTs = this.toTimestamp(message.createdAt);
+        return !this.isStaffRole(message.senderRole) && createdTs > staffReadTs;
+      }).length;
+    }
+
+    if (user.roles.includes(Role.CLIENT)) {
+      const clientReadTs = this.toTimestamp(thread.lastClientReadAt);
+      return threadMessages.filter((message) => {
+        const createdTs = this.toTimestamp(message.createdAt);
+        return this.isStaffRole(message.senderRole) && createdTs > clientReadTs;
+      }).length;
+    }
+
+    return 0;
+  }
+
+  private registerPendingClientResponse(thread: ChatThread, message: ChatMessage): void {
+    const pending = this.pendingStaffResponses.get(thread.id) ?? [];
+    pending.push({
+      clientMessageId: message.id,
+      startedAt: message.createdAt
+    });
+    this.pendingStaffResponses.set(thread.id, pending);
+  }
+
+  private removePendingClientResponse(threadId: string, clientMessageId: string): void {
+    const pending = this.pendingStaffResponses.get(threadId) ?? [];
+    this.pendingStaffResponses.set(
+      threadId,
+      pending.filter((item) => item.clientMessageId !== clientMessageId)
+    );
+  }
+
+  private registerStaffResponseMetrics(
+    thread: ChatThread,
+    staffMessage: ChatMessage,
+    staffUserId: string
+  ): void {
+    const pending = this.pendingStaffResponses.get(thread.id) ?? [];
+    if (pending.length === 0) {
+      return;
+    }
+
+    const respondedAtMs = this.toTimestamp(staffMessage.createdAt);
+    const metrics = this.responseMetrics.get(thread.id) ?? [];
+
+    for (const pendingResponse of pending) {
+      const startedAtMs = this.toTimestamp(pendingResponse.startedAt);
+      metrics.push({
+        threadId: thread.id,
+        connector: thread.connector,
+        stationId: thread.stationId,
+        clientMessageId: pendingResponse.clientMessageId,
+        respondedByUserId: staffUserId,
+        startedAt: pendingResponse.startedAt,
+        respondedAt: staffMessage.createdAt,
+        responseTimeMs: Math.max(0, respondedAtMs - startedAtMs)
+      });
+    }
+
+    this.pendingStaffResponses.set(thread.id, []);
+    this.responseMetrics.set(thread.id, metrics);
+    this.persistence.persistResponseMetrics(thread.id, metrics);
+  }
+
+  private getThreadResponseStats(threadId: string): {
+    averageResponseTimeMs?: number;
+    lastResponseTimeMs?: number;
+  } {
+    const metrics = this.responseMetrics.get(threadId) ?? [];
+    if (metrics.length === 0) {
+      return {};
+    }
+
+    const total = metrics.reduce((sum, metric) => sum + metric.responseTimeMs, 0);
+    return {
+      averageResponseTimeMs: Math.round(total / metrics.length),
+      lastResponseTimeMs: metrics[metrics.length - 1].responseTimeMs
+    };
+  }
+
+  private appendMessage(thread: ChatThread, message: ChatMessage): void {
+    const existing = this.messages.get(thread.id) ?? [];
+    existing.push(message);
+    this.messages.set(thread.id, existing);
+
+    thread.lastMessageAt = message.createdAt;
+    thread.updatedAt = message.createdAt;
+    this.threads.set(thread.id, thread);
+    this.persistence.persistThread(thread);
+    this.persistence.persistMessage(message);
+    this.notifyMessageObservers(thread, message);
+  }
+
+  private notifyMessageObservers(thread: ChatThread, message: ChatMessage): void {
+    for (const observer of this.messageObservers) {
+      Promise.resolve(observer(thread, message)).catch((error: unknown) => {
+        if (console && console.error) {
+          console.error('[MessengerService] message observer failed', error);
+        }
+      });
+    }
+  }
+
+  private analyzeDialog(threadId: string): DialogAiInsight {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    const insight = this.aiConnector.analyzeDialog(threadId, threadMessages);
+    this.aiInsights.set(threadId, insight);
+    this.persistence.persistAiInsight(threadId, insight);
+    return insight;
+  }
+
+  private getLatestClientMessage(threadId: string): ChatMessage | null {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    for (let index = threadMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = threadMessages[index];
+      if (!this.isStaffRole(candidate.senderRole)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private getThreadAiConfig(threadId: string): ThreadAiConfig {
+    const existing = this.aiConfigs.get(threadId);
+    if (existing) {
+      return existing;
+    }
+
+    const fallback: ThreadAiConfig = {
+      mode: AiAssistMode.SUGGEST,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'system'
+    };
+    this.aiConfigs.set(threadId, fallback);
+    this.persistence.persistAiConfig(threadId, fallback);
+    return fallback;
+  }
+
+  private storeSuggestion(threadId: string, suggestion: AiReplySuggestion): void {
+    const existing = this.aiSuggestions.get(threadId) ?? [];
+    existing.push(suggestion);
+    this.aiSuggestions.set(threadId, existing);
+    this.persistence.persistAiSuggestion(suggestion);
+  }
+
+  private buildSuggestion(
+    thread: ChatThread,
+    clientMessage: ChatMessage,
+    insight: DialogAiInsight
+  ): AiReplySuggestion {
+    return {
+      id: randomUUID(),
+      threadId: thread.id,
+      basedOnClientMessageId: clientMessage.id,
+      text: this.aiConnector.buildSuggestion(insight, clientMessage.text),
+      status: AiSuggestionStatus.PENDING_STAFF,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  private handleAiAssistantOnClientMessage(
+    thread: ChatThread,
+    clientMessage: ChatMessage
+  ): void {
+    const config = this.getThreadAiConfig(thread.id);
+    if (config.mode === AiAssistMode.DISABLED) {
+      return;
+    }
+
+    const insight = this.aiInsights.get(thread.id) ?? this.analyzeDialog(thread.id);
+    const suggestion = this.buildSuggestion(thread, clientMessage, insight);
+
+    if (config.mode === AiAssistMode.AUTO_REPLY && this.aiConnector.canAutoReply(insight)) {
+      const sentAt = new Date().toISOString();
+      const aiMessage: ChatMessage = {
+        id: randomUUID(),
+        threadId: thread.id,
+        senderId: 'ai-assistant',
+        senderRole: Role.SUPPORT,
+        origin: MessageOrigin.AI,
+        text: suggestion.text,
+        createdAt: sentAt
+      };
+
+      this.appendMessage(thread, aiMessage);
+      suggestion.status = AiSuggestionStatus.SENT_TO_CLIENT;
+      suggestion.sentAt = sentAt;
+      this.removePendingClientResponse(thread.id, clientMessage.id);
+    }
+
+    this.storeSuggestion(thread.id, suggestion);
+  }
+
+  private toTimestamp(value?: string): number {
+    if (!value) {
+      return 0;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  private maxDate(values: Array<string | undefined>): string | undefined {
+    let maxValue: string | undefined;
+    let maxTs = 0;
+
+    for (const value of values) {
+      const ts = this.toTimestamp(value);
+      if (ts > maxTs) {
+        maxTs = ts;
+        maxValue = value;
+      }
+    }
+
+    return maxValue;
+  }
+}

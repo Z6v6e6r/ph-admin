@@ -1,0 +1,98 @@
+[
+  {
+    "id": "b3f7c12a6d904f41",
+    "type": "subflow",
+    "name": "PHAB Telegram Bridge In",
+    "info": "Bridge node for existing Telegram bot flows.\n\nInput: message from telegram receiver (msg.originalMessage preferred).\nAction: normalize to Telegram webhook-like update and POST to NestJS webhook /api/integrations/telegram/webhook.\n\nSubflow env vars:\n- PHAB_API_BASE (default http://localhost:3000/api)\n- PHAB_TG_WEBHOOK_SECRET (optional)",
+    "category": "PHAB",
+    "in": [
+      {
+        "x": 60,
+        "y": 80,
+        "wires": [
+          {
+            "id": "f6e6c77d1b7a42ee"
+          }
+        ]
+      }
+    ],
+    "out": [],
+    "env": [
+      {
+        "name": "PHAB_API_BASE",
+        "type": "str",
+        "value": "http://localhost:3000/api"
+      },
+      {
+        "name": "PHAB_TG_WEBHOOK_SECRET",
+        "type": "str",
+        "value": ""
+      }
+    ],
+    "meta": {},
+    "color": "#D8BFD8",
+    "icon": "font-awesome/fa-random"
+  },
+  {
+    "id": "f6e6c77d1b7a42ee",
+    "type": "function",
+    "z": "b3f7c12a6d904f41",
+    "name": "normalize + build webhook request",
+    "func": "const base = (env.get(\"PHAB_API_BASE\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst secret = env.get(\"PHAB_TG_WEBHOOK_SECRET\") || \"\";\n\nconst raw = (msg.originalMessage && typeof msg.originalMessage === \"object\")\n  ? msg.originalMessage\n  : ((msg.payload && typeof msg.payload === \"object\") ? msg.payload : {});\n\nlet update = raw;\n\nif (!raw.message && !raw.callback_query) {\n  const looksLikeCallback = raw && raw.from && raw.data !== undefined && (raw.message || raw.id);\n  const looksLikeMessage = raw && raw.chat && (raw.text !== undefined || raw.caption !== undefined || raw.contact !== undefined || raw.reply_to_message !== undefined || raw.message_id !== undefined);\n\n  if (looksLikeCallback) {\n    update = { callback_query: raw };\n  } else if (looksLikeMessage) {\n    update = { message: raw };\n  } else if (msg.payload && typeof msg.payload === \"object\" && (msg.payload.chatId !== undefined || msg.payload.content !== undefined)) {\n    const chatIdRaw = msg.payload.chatId;\n    const chatId = Number(chatIdRaw);\n    const text = typeof msg.payload.content === \"string\" ? msg.payload.content : undefined;\n\n    update = {\n      message: {\n        chat: { id: Number.isFinite(chatId) ? chatId : chatIdRaw, type: \"private\" },\n        text\n      }\n    };\n  }\n}\n\nmsg.method = \"POST\";\nmsg.url = `${base}/integrations/telegram/webhook`;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nif (secret) {\n  msg.headers[\"x-telegram-bot-api-secret-token\"] = secret;\n}\nmsg.payload = update;\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 300,
+    "y": 80,
+    "wires": [
+      [
+        "ec4a4f6d0d7b4f53"
+      ]
+    ]
+  },
+  {
+    "id": "ec4a4f6d0d7b4f53",
+    "type": "http request",
+    "z": "b3f7c12a6d904f41",
+    "name": "POST /integrations/telegram/webhook",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 590,
+    "y": 80,
+    "wires": [
+      [
+        "39f0a592af0b44e8"
+      ]
+    ]
+  },
+  {
+    "id": "39f0a592af0b44e8",
+    "type": "function",
+    "z": "b3f7c12a6d904f41",
+    "name": "log non-2xx",
+    "func": "const code = Number(msg.statusCode || 0);\nif (code < 200 || code >= 300) {\n  node.warn(`PHAB webhook response status: ${code || \"n/a\"}`);\n}\nreturn null;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 800,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  }
+]
