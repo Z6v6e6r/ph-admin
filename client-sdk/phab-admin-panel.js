@@ -420,6 +420,34 @@
       .phab-admin-games-table tbody tr:nth-child(even){
         background:rgba(221,200,252,.2);
       }
+      .phab-admin-games-toolbar{
+        display:flex;
+        flex-wrap:wrap;
+        align-items:center;
+        gap:8px;
+        margin:0 0 10px;
+        padding:8px 10px;
+        border-radius:12px;
+        border:1px solid rgba(51,0,32,.14);
+        background:rgba(255,255,255,.74);
+      }
+      .phab-admin-games-sort-label{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.75);
+      }
+      .phab-admin-games-sort-select{
+        min-width:170px;
+        border:1px solid rgba(51,0,32,.2);
+        border-radius:9px;
+        background:#fff;
+        color:var(--cup-wine);
+        font-size:12px;
+        font-family:var(--cup-font-body);
+        padding:7px 9px;
+      }
       .phab-admin-settings-grid{
         display:grid;
         grid-template-columns:repeat(3,minmax(250px,1fr));
@@ -871,6 +899,42 @@
 
     var gamesTable = document.createElement('table');
     gamesTable.className = 'phab-admin-games-table';
+    var gamesToolbar = document.createElement('div');
+    gamesToolbar.className = 'phab-admin-games-toolbar';
+    gamesSection.appendChild(gamesToolbar);
+
+    var gamesSortFieldLabel = document.createElement('span');
+    gamesSortFieldLabel.className = 'phab-admin-games-sort-label';
+    gamesSortFieldLabel.textContent = 'Сортировать по';
+    gamesToolbar.appendChild(gamesSortFieldLabel);
+
+    var gamesSortFieldInput = document.createElement('select');
+    gamesSortFieldInput.className = 'phab-admin-games-sort-select';
+    [
+      { value: 'createdAt', label: 'Дата создания' },
+      { value: 'gameDate', label: 'Дата игры' },
+      { value: 'organizer', label: 'Организатор' }
+    ].forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      gamesSortFieldInput.appendChild(option);
+    });
+    gamesToolbar.appendChild(gamesSortFieldInput);
+
+    var gamesSortDirectionInput = document.createElement('select');
+    gamesSortDirectionInput.className = 'phab-admin-games-sort-select';
+    [
+      { value: 'desc', label: 'По убыванию' },
+      { value: 'asc', label: 'По возрастанию' }
+    ].forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      gamesSortDirectionInput.appendChild(option);
+    });
+    gamesToolbar.appendChild(gamesSortDirectionInput);
+
     gamesSection.appendChild(gamesTable);
 
     var tournamentsTable = document.createElement('table');
@@ -1100,6 +1164,8 @@
       messagesBox: messagesBox,
       input: input,
       sendBtn: sendBtn,
+      gamesSortFieldInput: gamesSortFieldInput,
+      gamesSortDirectionInput: gamesSortDirectionInput,
       gamesTable: gamesTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
@@ -1160,6 +1226,8 @@
       dialogs: [],
       messages: [],
       games: [],
+      gamesSortField: 'createdAt',
+      gamesSortDirection: 'desc',
       tournaments: [],
       settings: {
         stations: [],
@@ -1352,6 +1420,88 @@
       dom.messagesBox.scrollTop = dom.messagesBox.scrollHeight;
     }
 
+    function parseDateValue(value) {
+      if (!value) {
+        return null;
+      }
+      var parsed = Date.parse(String(value));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function parseGameDateValue(game) {
+      var gameDate = String(game.gameDate || '').trim();
+      var gameTime = String(game.gameTime || '').trim();
+      if (gameDate) {
+        var hhmm = '00:00';
+        if (gameTime) {
+          var match = gameTime.match(/(\d{2}:\d{2})/);
+          if (match && match[1]) {
+            hhmm = match[1];
+          }
+        }
+        var ts = Date.parse(gameDate + 'T' + hhmm + ':00');
+        if (Number.isFinite(ts)) {
+          return ts;
+        }
+      }
+      return parseDateValue(game.startsAt);
+    }
+
+    function compareNullable(left, right) {
+      if (left == null && right == null) {
+        return 0;
+      }
+      if (left == null) {
+        return 1;
+      }
+      if (right == null) {
+        return -1;
+      }
+      if (left < right) {
+        return -1;
+      }
+      if (left > right) {
+        return 1;
+      }
+      return 0;
+    }
+
+    function sortGames(items) {
+      var list = Array.isArray(items) ? items.slice() : [];
+      var field = state.gamesSortField || 'createdAt';
+      var direction = state.gamesSortDirection === 'asc' ? 1 : -1;
+
+      list.sort(function (left, right) {
+        var result = 0;
+
+        if (field === 'createdAt') {
+          result = compareNullable(parseDateValue(left.createdAt), parseDateValue(right.createdAt));
+        } else if (field === 'gameDate') {
+          result = compareNullable(parseGameDateValue(left), parseGameDateValue(right));
+        } else {
+          var leftName = String(left.organizerName || '').trim().toLowerCase();
+          var rightName = String(right.organizerName || '').trim().toLowerCase();
+          if (!leftName && !rightName) {
+            result = 0;
+          } else if (!leftName) {
+            result = 1;
+          } else if (!rightName) {
+            result = -1;
+          } else {
+            result = leftName.localeCompare(rightName, 'ru');
+          }
+        }
+
+        if (result === 0) {
+          result = compareNullable(parseDateValue(left.createdAt), parseDateValue(right.createdAt));
+        }
+
+        return result * direction;
+      });
+
+      return list;
+    }
+
     function renderGames() {
       clearNode(dom.gamesTable);
 
@@ -1378,7 +1528,7 @@
         return;
       }
 
-      state.games.forEach(function (game) {
+      sortGames(state.games).forEach(function (game) {
         var tr = document.createElement('tr');
         var participants = Array.isArray(game.participantNames) && game.participantNames.length > 0
           ? game.participantNames.join(', ')
@@ -1832,6 +1982,14 @@
         switchTab('games');
         loadGames().catch(handleError);
       });
+      dom.gamesSortFieldInput.addEventListener('change', function () {
+        state.gamesSortField = String(dom.gamesSortFieldInput.value || 'createdAt');
+        renderGames();
+      });
+      dom.gamesSortDirectionInput.addEventListener('change', function () {
+        state.gamesSortDirection = String(dom.gamesSortDirectionInput.value || 'desc');
+        renderGames();
+      });
       dom.tabTournaments.addEventListener('click', function () {
         switchTab('tournaments');
         loadTournaments().catch(handleError);
@@ -1864,6 +2022,8 @@
     }
 
     async function init() {
+      dom.gamesSortFieldInput.value = state.gamesSortField;
+      dom.gamesSortDirectionInput.value = state.gamesSortDirection;
       bindEvents();
       await refreshMessageHierarchy();
       pollTimer = window.setInterval(function () {
