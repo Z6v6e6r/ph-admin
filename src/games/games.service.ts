@@ -17,6 +17,7 @@ interface MongoGameParticipant {
 }
 
 interface MongoGameDoc {
+  [key: string]: unknown;
   _id?: unknown;
   id?: unknown;
   status?: unknown;
@@ -28,6 +29,7 @@ interface MongoGameDoc {
   };
   participants?: MongoGameParticipant[];
   booking?: {
+    [key: string]: unknown;
     date?: unknown;
     timeFrom?: unknown;
     timeTo?: unknown;
@@ -120,26 +122,12 @@ export class GamesService implements OnModuleDestroy {
       filter.push({ _id: new ObjectId(id) });
     }
 
-    const doc = (await collection.findOne(
-      { $or: filter },
-      {
-        projection: {
-          id: 1,
-          status: 1,
-          archived: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          organizer: 1,
-          participants: 1,
-          booking: 1
-        }
-      }
-    )) as MongoGameDoc | null;
+    const doc = (await collection.findOne({ $or: filter })) as MongoGameDoc | null;
 
     if (!doc) {
       return null;
     }
-    return this.mapMongoGame(doc);
+    return this.mapMongoGame(doc, { includeDetails: true });
   }
 
   private async getMongoCollection() {
@@ -169,7 +157,7 @@ export class GamesService implements OnModuleDestroy {
     return this.mongoClient.db(this.mongoDbName).collection<MongoGameDoc>(this.mongoCollectionName);
   }
 
-  private mapMongoGame(doc: MongoGameDoc): Game | null {
+  private mapMongoGame(doc: MongoGameDoc, options?: { includeDetails?: boolean }): Game | null {
     const id = this.readString(doc.id) ?? this.readObjectId(doc._id);
     const studioName = this.readString(doc.booking?.studioName);
     const roomName = this.readString(doc.booking?.roomName);
@@ -214,8 +202,16 @@ export class GamesService implements OnModuleDestroy {
       participantDetails,
       gameDate: bookingDate ?? undefined,
       gameTime,
-      locationName: locationName || undefined
+      locationName: locationName || undefined,
+      details: options?.includeDetails ? this.normalizeForJson(doc) : undefined
     };
+  }
+
+  private normalizeForJson(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object') {
+      return {};
+    }
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
   }
 
   private normalizeMongoStatus(rawStatus: string | null, archived: unknown): GameStatus {

@@ -422,6 +422,13 @@
       .phab-admin-games-table tbody tr:nth-child(even){
         background:rgba(221,200,252,.2);
       }
+      .phab-admin-games-row{
+        cursor:pointer;
+        transition:background .18s ease;
+      }
+      .phab-admin-games-row:hover{
+        background:rgba(255,232,145,.35) !important;
+      }
       .phab-admin-games-sortable{
         cursor:pointer;
         user-select:none;
@@ -556,6 +563,125 @@
         color:rgba(51,0,32,.7);
         padding:12px;
       }
+      .phab-admin-modal{
+        position:fixed;
+        inset:0;
+        z-index:2147483600;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:18px;
+        background:rgba(24,10,22,.42);
+        backdrop-filter:blur(2px);
+      }
+      .phab-admin-modal-card{
+        width:min(980px,95vw);
+        max-height:90vh;
+        display:flex;
+        flex-direction:column;
+        border-radius:18px;
+        background:linear-gradient(180deg,rgba(255,255,255,.97) 0%,rgba(255,250,242,.97) 100%);
+        border:1px solid rgba(51,0,32,.2);
+        box-shadow:0 22px 52px rgba(28,4,24,.28);
+        overflow:hidden;
+      }
+      .phab-admin-modal-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:12px 14px;
+        border-bottom:1px solid rgba(51,0,32,.12);
+        background:linear-gradient(90deg,rgba(182,253,255,.72) 0%,rgba(255,232,145,.72) 100%);
+      }
+      .phab-admin-modal-title{
+        font-family:var(--cup-font-heading);
+        font-size:13px;
+        font-weight:800;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-modal-close{
+        width:32px;
+        height:32px;
+        border-radius:10px;
+        border:1px solid rgba(51,0,32,.2);
+        background:rgba(255,255,255,.92);
+        color:var(--cup-wine);
+        font-size:18px;
+        line-height:1;
+        cursor:pointer;
+      }
+      .phab-admin-modal-body{
+        padding:12px;
+        overflow:auto;
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:10px;
+      }
+      .phab-admin-detail-card{
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        background:rgba(255,255,255,.92);
+        overflow:hidden;
+      }
+      .phab-admin-detail-head{
+        padding:8px 10px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+        background:rgba(207,255,182,.44);
+      }
+      .phab-admin-detail-body{
+        padding:10px;
+        display:grid;
+        gap:7px;
+      }
+      .phab-admin-detail-row{
+        display:grid;
+        grid-template-columns:150px 1fr;
+        gap:8px;
+        font-size:12px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-detail-key{
+        color:rgba(51,0,32,.68);
+        font-weight:700;
+      }
+      .phab-admin-detail-value{
+        word-break:break-word;
+      }
+      .phab-admin-detail-list{
+        list-style:none;
+        margin:0;
+        padding:0;
+        display:grid;
+        gap:6px;
+      }
+      .phab-admin-detail-list-item{
+        padding:6px 8px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:9px;
+        background:rgba(255,255,255,.92);
+        font-size:12px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-detail-json{
+        font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;
+        font-size:11px;
+        line-height:1.4;
+        margin:0;
+        white-space:pre-wrap;
+        word-break:break-word;
+        color:#351726;
+      }
+      .phab-admin-detail-span-2{
+        grid-column:span 2;
+      }
       @keyframes phab-cup-enter{
         from{opacity:.2;transform:translateY(8px)}
         to{opacity:1;transform:translateY(0)}
@@ -568,6 +694,8 @@
         .phab-admin-msg-grid{grid-template-columns:1fr}
         .phab-admin-dialog-wrap{height:410px}
         .phab-admin-settings-grid{grid-template-columns:1fr}
+        .phab-admin-modal-body{grid-template-columns:1fr}
+        .phab-admin-detail-span-2{grid-column:auto}
         .phab-admin-header{padding:14px}
       }
       @media (max-width:640px){
@@ -577,6 +705,9 @@
         .phab-admin-content{padding:8px}
         .phab-admin-tabs{padding:8px 8px 9px}
         .phab-admin-tab{font-size:10px;padding:7px 10px}
+        .phab-admin-modal{padding:8px}
+        .phab-admin-modal-card{max-height:94vh}
+        .phab-admin-detail-row{grid-template-columns:1fr}
       }
     `;
     document.head.appendChild(style);
@@ -657,6 +788,9 @@
       },
       getGames: function () {
         return request('/games', 'GET');
+      },
+      getGameById: function (gameId) {
+        return request('/games/' + encodeURIComponent(gameId), 'GET');
       },
       getTournaments: function () {
         return request('/tournaments', 'GET');
@@ -1132,6 +1266,33 @@
     accessCreateBtn.textContent = 'Добавить правило';
     accessForm.appendChild(accessCreateBtn);
 
+    var gameModal = document.createElement('div');
+    gameModal.className = 'phab-admin-modal phab-admin-hidden';
+    root.appendChild(gameModal);
+
+    var gameModalCard = document.createElement('div');
+    gameModalCard.className = 'phab-admin-modal-card';
+    gameModal.appendChild(gameModalCard);
+
+    var gameModalHead = document.createElement('div');
+    gameModalHead.className = 'phab-admin-modal-head';
+    gameModalCard.appendChild(gameModalHead);
+
+    var gameModalTitle = document.createElement('div');
+    gameModalTitle.className = 'phab-admin-modal-title';
+    gameModalTitle.textContent = 'Игра';
+    gameModalHead.appendChild(gameModalTitle);
+
+    var gameModalCloseBtn = document.createElement('button');
+    gameModalCloseBtn.className = 'phab-admin-modal-close';
+    gameModalCloseBtn.type = 'button';
+    gameModalCloseBtn.textContent = '×';
+    gameModalHead.appendChild(gameModalCloseBtn);
+
+    var gameModalBody = document.createElement('div');
+    gameModalBody.className = 'phab-admin-modal-body';
+    gameModalCard.appendChild(gameModalBody);
+
     return {
       root: root,
       status: status,
@@ -1152,6 +1313,11 @@
       messagesBox: messagesBox,
       input: input,
       sendBtn: sendBtn,
+      gameModal: gameModal,
+      gameModalCard: gameModalCard,
+      gameModalTitle: gameModalTitle,
+      gameModalBody: gameModalBody,
+      gameModalCloseBtn: gameModalCloseBtn,
       gamesTable: gamesTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
@@ -1203,6 +1369,7 @@
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
     var pollTimer = null;
+    var documentKeydownHandler = null;
 
     var state = {
       activeTab: 'messages',
@@ -1222,6 +1389,8 @@
         connectors: [],
         accessRules: []
       },
+      selectedGameId: null,
+      selectedGame: null,
       selectedConnector: null,
       selectedStationId: null,
       selectedThreadId: null
@@ -1241,6 +1410,276 @@
         }
       }
       return null;
+    }
+
+    function formatDateTimeFull(value) {
+      if (!value) {
+        return '-';
+      }
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return String(value);
+      }
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      var dd = String(d.getDate()).padStart(2, '0');
+      var mo = String(d.getMonth() + 1).padStart(2, '0');
+      var yyyy = String(d.getFullYear());
+      return dd + '.' + mo + '.' + yyyy + ' ' + hh + ':' + mm;
+    }
+
+    function isObject(value) {
+      return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function toDisplayValue(value) {
+      if (value === null || value === undefined) {
+        return '-';
+      }
+      if (typeof value === 'boolean') {
+        return value ? 'Да' : 'Нет';
+      }
+      if (Array.isArray(value)) {
+        return value.length === 0 ? '-' : value.join(', ');
+      }
+      if (typeof value === 'object') {
+        return JSON.stringify(value);
+      }
+      var text = String(value).trim();
+      return text ? text : '-';
+    }
+
+    function normalizeObject(value) {
+      return isObject(value) ? value : {};
+    }
+
+    function normalizeArray(value) {
+      return Array.isArray(value) ? value : [];
+    }
+
+    function createDetailCard(title, spanTwo) {
+      var card = document.createElement('section');
+      card.className = 'phab-admin-detail-card' + (spanTwo ? ' phab-admin-detail-span-2' : '');
+
+      var head = document.createElement('div');
+      head.className = 'phab-admin-detail-head';
+      head.textContent = title;
+      card.appendChild(head);
+
+      var body = document.createElement('div');
+      body.className = 'phab-admin-detail-body';
+      card.appendChild(body);
+
+      return { card: card, body: body };
+    }
+
+    function appendDetailRow(container, label, value) {
+      var row = document.createElement('div');
+      row.className = 'phab-admin-detail-row';
+      container.appendChild(row);
+
+      var key = document.createElement('div');
+      key.className = 'phab-admin-detail-key';
+      key.textContent = label;
+      row.appendChild(key);
+
+      var val = document.createElement('div');
+      val.className = 'phab-admin-detail-value';
+      val.textContent = toDisplayValue(value);
+      row.appendChild(val);
+    }
+
+    function appendDetailList(container, items) {
+      if (!items || items.length === 0) {
+        appendDetailRow(container, 'Данные', '-');
+        return;
+      }
+      var list = document.createElement('ul');
+      list.className = 'phab-admin-detail-list';
+      container.appendChild(list);
+      items.forEach(function (item) {
+        var li = document.createElement('li');
+        li.className = 'phab-admin-detail-list-item';
+        li.textContent = String(item);
+        list.appendChild(li);
+      });
+    }
+
+    function appendJsonCard(title, payload) {
+      var card = createDetailCard(title, true);
+      var pre = document.createElement('pre');
+      pre.className = 'phab-admin-detail-json';
+      pre.textContent = JSON.stringify(payload || {}, null, 2);
+      card.body.appendChild(pre);
+      dom.gameModalBody.appendChild(card.card);
+    }
+
+    function closeGameModal() {
+      dom.gameModal.classList.add('phab-admin-hidden');
+      state.selectedGameId = null;
+      state.selectedGame = null;
+    }
+
+    function renderGameDetails(game) {
+      clearNode(dom.gameModalBody);
+      if (!game || !game.id) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Игра не найдена';
+        dom.gameModalBody.appendChild(empty);
+        return;
+      }
+
+      var details = normalizeObject(game.details);
+      var organizer = normalizeObject(details.organizer);
+      var booking = normalizeObject(details.booking);
+      var payment = normalizeObject(details.payment);
+      var invite = normalizeObject(details.invite);
+      var settings = normalizeObject(details.settings);
+      var metadata = normalizeObject(details.metadata);
+
+      dom.gameModalTitle.textContent = 'Игра ' + game.id;
+
+      var mainCard = createDetailCard('Основное');
+      appendDetailRow(mainCard.body, 'ID', game.id);
+      appendDetailRow(mainCard.body, 'Источник', game.source);
+      appendDetailRow(mainCard.body, 'Название', game.name);
+      appendDetailRow(mainCard.body, 'Статус', game.rawStatus || game.status);
+      appendDetailRow(mainCard.body, 'Создана', formatDateTimeFull(game.createdAt));
+      appendDetailRow(mainCard.body, 'Обновлена', formatDateTimeFull(game.updatedAt));
+      appendDetailRow(mainCard.body, 'Дата игры', game.gameDate);
+      appendDetailRow(mainCard.body, 'Время игры', game.gameTime);
+      appendDetailRow(mainCard.body, 'Старт (ISO)', game.startsAt);
+      appendDetailRow(mainCard.body, 'Локация', game.locationName || game.name);
+      dom.gameModalBody.appendChild(mainCard.card);
+
+      var organizerCard = createDetailCard('Организатор');
+      appendDetailRow(
+        organizerCard.body,
+        'Имя',
+        organizer.name || game.organizerName || '-'
+      );
+      appendDetailRow(organizerCard.body, 'Телефон', organizer.phone || '-');
+      appendDetailRow(organizerCard.body, 'Рейтинг', organizer.rating || '-');
+      appendDetailRow(organizerCard.body, 'ID', organizer.id || '-');
+      dom.gameModalBody.appendChild(organizerCard.card);
+
+      var participantsCard = createDetailCard('Состав');
+      var participants = normalizeArray(details.participants);
+      if (participants.length > 0) {
+        appendDetailList(
+          participantsCard.body,
+          participants.map(function (participant) {
+            var p = normalizeObject(participant);
+            var chunks = [];
+            if (p.name) {
+              chunks.push(String(p.name));
+            }
+            if (p.phone) {
+              chunks.push(String(p.phone));
+            }
+            if (p.rating) {
+              chunks.push('рейт. ' + String(p.rating));
+            }
+            if (p.status) {
+              chunks.push(String(p.status));
+            }
+            return chunks.join(' · ');
+          })
+        );
+      } else {
+        var fallbackParticipants = normalizeArray(game.participantDetails);
+        if (fallbackParticipants.length > 0) {
+          appendDetailList(
+            participantsCard.body,
+            fallbackParticipants.map(function (participant) {
+              return participant.phone
+                ? String(participant.name) + ' · ' + String(participant.phone)
+                : String(participant.name);
+            })
+          );
+        } else {
+          appendDetailList(participantsCard.body, normalizeArray(game.participantNames));
+        }
+      }
+      dom.gameModalBody.appendChild(participantsCard.card);
+
+      var bookingCard = createDetailCard('Бронирование');
+      appendDetailRow(
+        bookingCard.body,
+        'Студия / Корт',
+        [booking.studioName, booking.roomName].filter(Boolean).join(' · ')
+      );
+      appendDetailRow(bookingCard.body, 'Дата', booking.date || game.gameDate);
+      appendDetailRow(
+        bookingCard.body,
+        'Время',
+        booking.timeFrom && booking.timeTo
+          ? String(booking.timeFrom) + ' - ' + String(booking.timeTo)
+          : game.gameTime
+      );
+      appendDetailRow(bookingCard.body, 'Start TS', booking.startTs);
+      appendDetailRow(bookingCard.body, 'End TS', booking.endTs);
+      appendDetailRow(bookingCard.body, 'Slot ID', booking.slotId);
+      dom.gameModalBody.appendChild(bookingCard.card);
+
+      var paymentCard = createDetailCard('Оплата');
+      appendDetailRow(paymentCard.body, 'Сумма', payment.amount);
+      appendDetailRow(paymentCard.body, 'Оплачено', payment.paid);
+      appendDetailRow(paymentCard.body, 'Оплачено в', formatDateTimeFull(payment.paidAt));
+      appendDetailRow(paymentCard.body, 'Метод', payment.paymentMethod);
+      appendDetailRow(paymentCard.body, 'Ссылка', payment.paymentUrl);
+      dom.gameModalBody.appendChild(paymentCard.card);
+
+      var configCard = createDetailCard('Настройки и инвайт');
+      appendDetailRow(configCard.body, 'Рейтинговая игра', settings.ratingGame);
+      appendDetailRow(configCard.body, 'Мин рейтинг', settings.minRating);
+      appendDetailRow(configCard.body, 'Макс рейтинг', settings.maxRating);
+      appendDetailRow(configCard.body, 'Приватная', settings.isPrivate);
+      appendDetailRow(configCard.body, 'Pay mode', settings.payMode);
+      appendDetailRow(configCard.body, 'Макс игроков', invite.maxPlayers);
+      appendDetailRow(configCard.body, 'Waitlist', invite.waitlistEnabled);
+      appendDetailRow(configCard.body, 'Invite URL', invite.inviteUrl);
+      dom.gameModalBody.appendChild(configCard.card);
+
+      var phonesCard = createDetailCard('Телефоны');
+      appendDetailRow(phonesCard.body, 'Все связанные', normalizeArray(details.allRelatedPhones));
+      appendDetailRow(phonesCard.body, 'Участники', normalizeArray(details.participantPhones));
+      appendDetailRow(phonesCard.body, 'Приглашенные', normalizeArray(details.invitedPhones));
+      appendDetailRow(phonesCard.body, 'Лист ожидания', normalizeArray(details.waitlistPhones));
+      dom.gameModalBody.appendChild(phonesCard.card);
+
+      appendJsonCard('Metadata', metadata);
+      appendJsonCard(
+        'Raw game payload',
+        Object.keys(details).length > 0 ? details : game
+      );
+    }
+
+    async function openGameDetails(game) {
+      if (!game || !game.id) {
+        return;
+      }
+      state.selectedGameId = game.id;
+      state.selectedGame = game;
+      dom.gameModal.classList.remove('phab-admin-hidden');
+      renderGameDetails(game);
+
+      try {
+        var details = await api.getGameById(game.id);
+        if (state.selectedGameId !== game.id) {
+          return;
+        }
+        if (details && details.id) {
+          state.selectedGame = details;
+          renderGameDetails(details);
+        }
+      } catch (error) {
+        if (state.selectedGameId === game.id) {
+          setStatus('Не удалось загрузить полные данные игры', true);
+        }
+        throw error;
+      }
     }
 
     function renderConnectors() {
@@ -1653,6 +2092,10 @@
 
       sortGames(state.games).forEach(function (game) {
         var tr = document.createElement('tr');
+        tr.className = 'phab-admin-games-row';
+        tr.addEventListener('click', function () {
+          openGameDetails(game).catch(handleError);
+        });
         var gameDate = game.gameDate
           ? game.gameDate + (game.gameTime ? ' ' + game.gameTime : '')
           : formatTime(game.startsAt);
@@ -2172,6 +2615,20 @@
       dom.accessCreateBtn.addEventListener('click', function () {
         createAccessRule().catch(handleError);
       });
+      dom.gameModalCloseBtn.addEventListener('click', function () {
+        closeGameModal();
+      });
+      dom.gameModal.addEventListener('click', function (event) {
+        if (event.target === dom.gameModal) {
+          closeGameModal();
+        }
+      });
+      documentKeydownHandler = function (event) {
+        if (event.key === 'Escape' && !dom.gameModal.classList.contains('phab-admin-hidden')) {
+          closeGameModal();
+        }
+      };
+      document.addEventListener('keydown', documentKeydownHandler);
     }
 
     async function init() {
@@ -2188,6 +2645,9 @@
     function destroy() {
       if (pollTimer) {
         window.clearInterval(pollTimer);
+      }
+      if (documentKeydownHandler) {
+        document.removeEventListener('keydown', documentKeydownHandler);
       }
       if (!cfg.mountSelector) {
         root.remove();

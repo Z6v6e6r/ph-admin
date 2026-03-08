@@ -26,4 +26,5 @@ export interface Game {
   gameDate?: string;
   gameTime?: string;
   locationName?: string;
+  details?: Record<string, unknown>;
 }
