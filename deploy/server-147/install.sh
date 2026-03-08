@@ -53,7 +53,7 @@ $SUDO npm --prefix "$APP_DIR" run build
 
 if [ ! -f "$APP_DIR/.env" ]; then
   log "Creating .env from template"
-  $SUDO cp "$APP_DIR/deploy/server-147/.env.147.example" "$APP_DIR/.env"
+  $SUDO cp "$APP_DIR/deploy/server-147/env.147.example" "$APP_DIR/.env"
   $SUDO chown "$APP_USER":"$APP_USER" "$APP_DIR/.env" || true
   log "Edit $APP_DIR/.env before production launch"
 fi

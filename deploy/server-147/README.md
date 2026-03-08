@@ -17,6 +17,7 @@ The script will:
 - run `npm ci && npm run build`
 - create systemd unit `phab-api.service`
 - start service
+- create `/opt/ph-admin/.env` from `deploy/server-147/env.147.example` (if missing)
 
 ## 2) Configure env
 
