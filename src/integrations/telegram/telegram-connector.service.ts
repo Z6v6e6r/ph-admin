@@ -505,11 +505,13 @@ export class TelegramConnectorService implements OnModuleInit {
     }
 
     try {
-      const parsed = JSON.parse(raw) as TelegramStationMapping[];
+      const parsed = JSON.parse(raw) as Array<
+        Partial<TelegramStationMapping> & { callbackKey?: string }
+      >;
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed
           .map((item) => ({
-            key: String(item.key).trim(),
+            key: String(item.key ?? item.callbackKey ?? '').trim(),
             stationId: String(item.stationId).trim(),
             stationName: String(item.stationName).trim(),
             groupChatId: String(item.groupChatId).trim()

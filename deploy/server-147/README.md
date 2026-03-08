@@ -40,6 +40,8 @@ Required changes:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_INTEGRATION_TOKEN` (must match Node-RED)
 - keep `PORT=3000` and `HOST=0.0.0.0`
+- `TELEGRAM_STATION_MAPPINGS` уже заполнен всеми станциями из текущего TG PadlHub flow
+- в JSON поддерживаются оба поля: `key` и `callbackKey`
 
 After changes:
 
