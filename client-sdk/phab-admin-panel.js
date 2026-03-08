@@ -410,6 +410,7 @@
         vertical-align:top;
       }
       .phab-admin-games-table th{
+        position:relative;
         background:linear-gradient(90deg,rgba(255,232,145,.85) 0%,rgba(182,253,255,.72) 100%);
         color:var(--cup-wine);
         font-family:var(--cup-font-heading);
@@ -440,6 +441,36 @@
       }
       .phab-admin-games-cell-line + .phab-admin-games-cell-line{
         margin-top:4px;
+      }
+      .phab-admin-col-resizer{
+        position:absolute;
+        top:0;
+        right:-3px;
+        width:8px;
+        height:100%;
+        cursor:col-resize;
+        user-select:none;
+        touch-action:none;
+        z-index:2;
+      }
+      .phab-admin-col-resizer::after{
+        content:'';
+        position:absolute;
+        top:25%;
+        right:3px;
+        width:2px;
+        height:50%;
+        border-radius:2px;
+        background:rgba(51,0,32,.22);
+        transition:background .2s ease;
+      }
+      .phab-admin-col-resizer:hover::after{
+        background:rgba(51,0,32,.45);
+      }
+      .phab-admin-resizing,
+      .phab-admin-resizing *{
+        cursor:col-resize !important;
+        user-select:none !important;
       }
       .phab-admin-settings-grid{
         display:grid;
@@ -1183,7 +1214,9 @@
       games: [],
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
+      gamesColumnWidths: {},
       tournaments: [],
+      tournamentsColumnWidths: {},
       settings: {
         stations: [],
         connectors: [],
@@ -1503,21 +1536,82 @@
       return [];
     }
 
+    function applyColumnWidth(columnNode, width) {
+      if (!columnNode) {
+        return;
+      }
+      if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
+        columnNode.style.width = String(Math.round(width)) + 'px';
+      }
+    }
+
+    function attachColumnResizeHandle(headerNode, options) {
+      var handle = document.createElement('span');
+      handle.className = 'phab-admin-col-resizer';
+      handle.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      headerNode.appendChild(handle);
+
+      handle.addEventListener('mousedown', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        var startX = Number(event.clientX || 0);
+        var startWidth = headerNode.getBoundingClientRect().width;
+        var minWidth = options && options.minWidth ? options.minWidth : 90;
+
+        function onMouseMove(moveEvent) {
+          var nextWidth = Math.max(minWidth, startWidth + (Number(moveEvent.clientX || 0) - startX));
+          if (options && typeof options.onResize === 'function') {
+            options.onResize(nextWidth);
+          }
+        }
+
+        function onMouseUp() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          if (document.body) {
+            document.body.classList.remove('phab-admin-resizing');
+          }
+        }
+
+        if (document.body) {
+          document.body.classList.add('phab-admin-resizing');
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
     function renderGames() {
       clearNode(dom.gamesTable);
 
+      var columns = [
+        { key: 'organizer', label: 'Организатор', sortField: 'organizer', minWidth: 170 },
+        { key: 'participants', label: 'Состав', minWidth: 220 },
+        { key: 'createdAt', label: 'Создана', sortField: 'createdAt', minWidth: 150 },
+        { key: 'gameDate', label: 'Дата игры', sortField: 'gameDate', minWidth: 160 },
+        { key: 'location', label: 'Локация', minWidth: 180 },
+        { key: 'status', label: 'Статус', minWidth: 140 }
+      ];
+      var colgroup = document.createElement('colgroup');
+      var colRefs = {};
+      columns.forEach(function (column) {
+        var col = document.createElement('col');
+        colRefs[column.key] = col;
+        applyColumnWidth(col, state.gamesColumnWidths[column.key]);
+        colgroup.appendChild(col);
+      });
+      dom.gamesTable.appendChild(colgroup);
+
       var thead = document.createElement('thead');
       var headRow = document.createElement('tr');
-      [
-        { label: 'Организатор', sortField: 'organizer' },
-        { label: 'Состав' },
-        { label: 'Создана', sortField: 'createdAt' },
-        { label: 'Дата игры', sortField: 'gameDate' },
-        { label: 'Локация' },
-        { label: 'Статус' }
-      ].forEach(function (item) {
+      columns.forEach(function (item) {
         var th = document.createElement('th');
         th.textContent = item.label;
+        applyColumnWidth(th, state.gamesColumnWidths[item.key]);
         if (item.sortField) {
           th.className = 'phab-admin-games-sortable';
           var indicator = getGamesSortIndicator(item.sortField);
@@ -1531,6 +1625,14 @@
             setGamesSorting(item.sortField);
           });
         }
+        attachColumnResizeHandle(th, {
+          minWidth: item.minWidth,
+          onResize: function (nextWidth) {
+            state.gamesColumnWidths[item.key] = nextWidth;
+            applyColumnWidth(th, nextWidth);
+            applyColumnWidth(colRefs[item.key], nextWidth);
+          }
+        });
         headRow.appendChild(th);
       });
       thead.appendChild(headRow);
@@ -1589,11 +1691,38 @@
     function renderTournaments() {
       clearNode(dom.tournamentsTable);
 
+      var columns = [
+        { key: 'id', label: 'ID', minWidth: 130 },
+        { key: 'name', label: 'Название', minWidth: 180 },
+        { key: 'status', label: 'Статус', minWidth: 130 },
+        { key: 'gameId', label: 'Игра', minWidth: 130 },
+        { key: 'startsAt', label: 'Старт', minWidth: 150 },
+        { key: 'updatedAt', label: 'Обновлено', minWidth: 150 }
+      ];
+      var colgroup = document.createElement('colgroup');
+      var colRefs = {};
+      columns.forEach(function (column) {
+        var col = document.createElement('col');
+        colRefs[column.key] = col;
+        applyColumnWidth(col, state.tournamentsColumnWidths[column.key]);
+        colgroup.appendChild(col);
+      });
+      dom.tournamentsTable.appendChild(colgroup);
+
       var thead = document.createElement('thead');
       var headRow = document.createElement('tr');
-      ['ID', 'Название', 'Статус', 'Игра', 'Старт', 'Обновлено'].forEach(function (label) {
+      columns.forEach(function (column) {
         var th = document.createElement('th');
-        th.textContent = label;
+        th.textContent = column.label;
+        applyColumnWidth(th, state.tournamentsColumnWidths[column.key]);
+        attachColumnResizeHandle(th, {
+          minWidth: column.minWidth,
+          onResize: function (nextWidth) {
+            state.tournamentsColumnWidths[column.key] = nextWidth;
+            applyColumnWidth(th, nextWidth);
+            applyColumnWidth(colRefs[column.key], nextWidth);
+          }
+        });
         headRow.appendChild(th);
       });
       thead.appendChild(headRow);
