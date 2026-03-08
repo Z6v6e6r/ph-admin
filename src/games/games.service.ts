@@ -7,12 +7,13 @@ import {
 } from '@nestjs/common';
 import { Filter, MongoClient, ObjectId } from 'mongodb';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
-import { Game, GameStatus } from './games.types';
+import { Game, GameParticipantDetails, GameStatus } from './games.types';
 
 type GamesSourceMode = 'lk' | 'mongo';
 
 interface MongoGameParticipant {
   name?: unknown;
+  phone?: unknown;
 }
 
 interface MongoGameDoc {
@@ -183,11 +184,19 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const locationName = [studioName, roomName].filter(Boolean).join(' · ');
-    const participantNames = Array.isArray(doc.participants)
-      ? doc.participants
-          .map((participant) => this.readString(participant?.name))
-          .filter((value): value is string => Boolean(value))
+    const participantDetails = Array.isArray(doc.participants)
+      ? doc.participants.reduce((acc, participant) => {
+          const name = this.readString(participant?.name);
+          if (!name) {
+            return acc;
+          }
+          const phone = this.readString(participant?.phone);
+          const value: GameParticipantDetails = phone ? { name, phone } : { name };
+          acc.push(value);
+          return acc;
+        }, [] as GameParticipantDetails[])
       : [];
+    const participantNames = participantDetails.map((participant) => participant.name);
     const gameTime =
       bookingTimeFrom && bookingTimeTo ? `${bookingTimeFrom}-${bookingTimeTo}` : undefined;
 
@@ -202,6 +211,7 @@ export class GamesService implements OnModuleDestroy {
       updatedAt: this.readString(doc.updatedAt) ?? undefined,
       organizerName: this.readString(doc.organizer?.name) ?? undefined,
       participantNames,
+      participantDetails,
       gameDate: bookingDate ?? undefined,
       gameTime,
       locationName: locationName || undefined

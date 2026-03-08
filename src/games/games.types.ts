@@ -5,6 +5,11 @@ export enum GameStatus {
   UNKNOWN = 'UNKNOWN'
 }
 
+export interface GameParticipantDetails {
+  name: string;
+  phone?: string;
+}
+
 export interface Game {
   id: string;
   source: 'LK_PADELHUB' | 'LK_PADELHUB_MONGO';
@@ -17,6 +22,7 @@ export interface Game {
   updatedAt?: string;
   organizerName?: string;
   participantNames?: string[];
+  participantDetails?: GameParticipantDetails[];
   gameDate?: string;
   gameTime?: string;
   locationName?: string;
