@@ -1357,7 +1357,7 @@
 
       var thead = document.createElement('thead');
       var headRow = document.createElement('tr');
-      ['ID', 'Название', 'Статус', 'Турнир', 'Старт', 'Обновлено'].forEach(function (label) {
+      ['ID игры', 'Организатор', 'Состав', 'Создана', 'Дата игры', 'Локация', 'Статус'].forEach(function (label) {
         var th = document.createElement('th');
         th.textContent = label;
         headRow.appendChild(th);
@@ -1371,7 +1371,7 @@
       if (state.games.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 6;
+        td.colSpan = 7;
         td.textContent = 'Нет игр';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -1380,7 +1380,22 @@
 
       state.games.forEach(function (game) {
         var tr = document.createElement('tr');
-        [game.id, game.name, game.status, game.tournamentId || '-', formatTime(game.startsAt), formatTime(game.updatedAt)].forEach(function (value) {
+        var participants = Array.isArray(game.participantNames) && game.participantNames.length > 0
+          ? game.participantNames.join(', ')
+          : '-';
+        var gameDate = game.gameDate
+          ? game.gameDate + (game.gameTime ? ' ' + game.gameTime : '')
+          : formatTime(game.startsAt);
+
+        [
+          game.id,
+          game.organizerName || '-',
+          participants,
+          formatTime(game.createdAt),
+          gameDate || '-',
+          game.locationName || game.name || '-',
+          game.rawStatus || game.status || '-'
+        ].forEach(function (value) {
           var td = document.createElement('td');
           td.textContent = String(value || '-');
           tr.appendChild(td);

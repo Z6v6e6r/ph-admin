@@ -7,7 +7,7 @@ export enum GameStatus {
 
 export interface Game {
   id: string;
-  source: 'LK_PADELHUB';
+  source: 'LK_PADELHUB' | 'LK_PADELHUB_MONGO';
   name: string;
   status: GameStatus;
   rawStatus?: string;
@@ -15,4 +15,9 @@ export interface Game {
   startsAt?: string;
   createdAt?: string;
   updatedAt?: string;
+  organizerName?: string;
+  participantNames?: string[];
+  gameDate?: string;
+  gameTime?: string;
+  locationName?: string;
 }
