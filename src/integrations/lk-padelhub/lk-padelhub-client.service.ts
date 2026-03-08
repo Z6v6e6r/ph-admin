@@ -130,7 +130,17 @@ export class LkPadelHubClientService {
       tournamentId: this.readString(raw.tournamentId) ?? this.readString(raw.tournament_id),
       startsAt: this.readString(raw.startsAt) ?? this.readString(raw.starts_at),
       createdAt: this.readString(raw.createdAt) ?? this.readString(raw.created_at),
-      updatedAt: this.readString(raw.updatedAt) ?? this.readString(raw.updated_at)
+      updatedAt: this.readString(raw.updatedAt) ?? this.readString(raw.updated_at),
+      result:
+        this.readString(raw.result) ??
+        this.readString(raw.score) ??
+        this.readString(raw.matchResult) ??
+        this.readString(raw.match_result),
+      ratingDelta:
+        this.readString(raw.ratingDelta) ??
+        this.readString(raw.rating_delta) ??
+        this.readString(raw.ratingChange) ??
+        this.readString(raw.rating_change)
     };
   }
 

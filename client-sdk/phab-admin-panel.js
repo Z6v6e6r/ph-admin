@@ -1633,6 +1633,8 @@
       appendDetailRow(mainCard.body, 'Источник', game.source);
       appendDetailRow(mainCard.body, 'Название', game.name);
       appendDetailRow(mainCard.body, 'Статус', game.rawStatus || game.status);
+      appendDetailRow(mainCard.body, 'Результат', game.result);
+      appendDetailRow(mainCard.body, 'Δ рейтинг', game.ratingDelta);
       appendDetailRow(mainCard.body, 'Создана', formatDateTimeFull(game.createdAt));
       appendDetailRow(mainCard.body, 'Обновлена', formatDateTimeFull(game.updatedAt));
       appendDetailRow(mainCard.body, 'Дата игры', game.gameDate);
@@ -2239,6 +2241,8 @@
         { key: 'participants', label: 'Состав', minWidth: 220 },
         { key: 'createdAt', label: 'Создана', sortField: 'createdAt', minWidth: 150 },
         { key: 'gameDate', label: 'Дата игры', sortField: 'gameDate', minWidth: 160 },
+        { key: 'result', label: 'Результат', minWidth: 130 },
+        { key: 'ratingDelta', label: 'Δ рейтинг', minWidth: 120 },
         { key: 'location', label: 'Локация', minWidth: 180 },
         { key: 'chat', label: 'Чат', minWidth: 110 },
         { key: 'status', label: 'Статус', minWidth: 140 }
@@ -2291,7 +2295,7 @@
       if (state.games.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 7;
+        td.colSpan = 9;
         td.textContent = 'Нет игр';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -2333,6 +2337,14 @@
         var gameDateCell = document.createElement('td');
         gameDateCell.textContent = String(gameDate || '-');
         tr.appendChild(gameDateCell);
+
+        var resultCell = document.createElement('td');
+        resultCell.textContent = String(game.result || '-');
+        tr.appendChild(resultCell);
+
+        var ratingDeltaCell = document.createElement('td');
+        ratingDeltaCell.textContent = String(game.ratingDelta || '-');
+        tr.appendChild(ratingDeltaCell);
 
         var locationCell = document.createElement('td');
         locationCell.textContent = String(game.locationName || game.name || '-');

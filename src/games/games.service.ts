@@ -22,8 +22,14 @@ type GamesSourceMode = 'lk' | 'mongo';
 type StaffSide = 'CLIENT' | 'STAFF';
 
 interface MongoGameParticipant {
+  [key: string]: unknown;
   name?: unknown;
   phone?: unknown;
+  rating?: unknown;
+  ratingDelta?: unknown;
+  rating_change?: unknown;
+  ratingBefore?: unknown;
+  ratingAfter?: unknown;
 }
 
 interface MongoGameDoc {
@@ -38,6 +44,13 @@ interface MongoGameDoc {
     name?: unknown;
   };
   participants?: MongoGameParticipant[];
+  metadata?: Record<string, unknown>;
+  result?: unknown;
+  score?: unknown;
+  matchResult?: unknown;
+  gameResult?: unknown;
+  ratingDelta?: unknown;
+  ratingChanges?: unknown;
   booking?: {
     [key: string]: unknown;
     date?: unknown;
@@ -203,6 +216,13 @@ export class GamesService implements OnModuleDestroy {
             updatedAt: 1,
             organizer: 1,
             participants: 1,
+            metadata: 1,
+            result: 1,
+            score: 1,
+            matchResult: 1,
+            gameResult: 1,
+            ratingDelta: 1,
+            ratingChanges: 1,
             booking: 1
           }
         }
@@ -524,6 +544,8 @@ export class GamesService implements OnModuleDestroy {
     const participantNames = participantDetails.map((participant) => participant.name);
     const gameTime =
       bookingTimeFrom && bookingTimeTo ? `${bookingTimeFrom}-${bookingTimeTo}` : undefined;
+    const result = this.resolveGameResult(doc);
+    const ratingDelta = this.resolveGameRatingDelta(doc);
 
     return {
       id,
@@ -540,8 +562,269 @@ export class GamesService implements OnModuleDestroy {
       gameDate: bookingDate ?? undefined,
       gameTime,
       locationName: locationName || undefined,
+      result: result ?? undefined,
+      ratingDelta: ratingDelta ?? undefined,
       details: options?.includeDetails ? this.normalizeForJson(doc) : undefined
     };
+  }
+
+  private resolveGameResult(doc: MongoGameDoc): string | null {
+    const metadata = this.toRecord(doc.metadata);
+    const directCandidates = [
+      doc.result,
+      doc.score,
+      doc.matchResult,
+      doc.gameResult,
+      doc.finalResult,
+      doc.finalScore,
+      doc.matchScore,
+      metadata.result,
+      metadata.score,
+      metadata.matchResult,
+      metadata.gameResult,
+      metadata.finalResult,
+      metadata.finalScore,
+      metadata.matchScore
+    ];
+
+    for (const candidate of directCandidates) {
+      const fromString = this.readString(candidate);
+      if (fromString) {
+        return fromString;
+      }
+
+      const fromNumber = this.readNumber(candidate);
+      if (fromNumber !== null) {
+        return this.formatNumber(fromNumber);
+      }
+
+      const fromScoreObject = this.resolveScoreObject(candidate);
+      if (fromScoreObject) {
+        return fromScoreObject;
+      }
+    }
+
+    return null;
+  }
+
+  private resolveGameRatingDelta(doc: MongoGameDoc): string | null {
+    const metadata = this.toRecord(doc.metadata);
+    const scalarCandidates = [
+      doc.ratingDelta,
+      doc.ratingChange,
+      doc.ratingDiff,
+      metadata.ratingDelta,
+      metadata.ratingChange,
+      metadata.ratingDiff
+    ];
+
+    for (const candidate of scalarCandidates) {
+      const fromString = this.readString(candidate);
+      if (fromString) {
+        return fromString;
+      }
+      const fromNumber = this.readNumber(candidate);
+      if (fromNumber !== null) {
+        return this.formatSignedNumber(fromNumber);
+      }
+    }
+
+    const mapCandidates = [
+      doc.ratingChanges,
+      doc.ratingDeltas,
+      doc.ratingDeltaByPlayer,
+      doc.ratingDiffByPlayer,
+      metadata.ratingChanges,
+      metadata.ratingDeltas,
+      metadata.ratingDeltaByPlayer,
+      metadata.ratingDiffByPlayer
+    ];
+    for (const candidate of mapCandidates) {
+      const summary = this.summarizeRatingDeltaSet(this.extractNumericValues(candidate));
+      if (summary) {
+        return summary;
+      }
+    }
+
+    const participantSummary = this.summarizeParticipantRatingDeltas(doc.participants);
+    if (participantSummary) {
+      return participantSummary;
+    }
+
+    return null;
+  }
+
+  private summarizeParticipantRatingDeltas(participants: unknown): string | null {
+    if (!Array.isArray(participants)) {
+      return null;
+    }
+
+    const deltas: number[] = [];
+    participants.forEach((participant) => {
+      const entry = this.toRecord(participant);
+      const direct =
+        this.readNumber(entry.ratingDelta) ??
+        this.readNumber(entry.rating_change) ??
+        this.readNumber(entry.deltaRating) ??
+        this.readNumber(entry.ratingDiff) ??
+        this.readNumber(entry.ratingChange);
+      if (direct !== null) {
+        deltas.push(direct);
+        return;
+      }
+
+      const before =
+        this.readNumber(entry.ratingBefore) ??
+        this.readNumber(entry.rating_before) ??
+        this.readNumber(entry.oldRating) ??
+        this.readNumber(entry.prevRating);
+      const after =
+        this.readNumber(entry.ratingAfter) ??
+        this.readNumber(entry.rating_after) ??
+        this.readNumber(entry.newRating) ??
+        this.readNumber(entry.nextRating);
+
+      if (before !== null && after !== null) {
+        deltas.push(after - before);
+      }
+    });
+
+    return this.summarizeRatingDeltaSet(deltas);
+  }
+
+  private summarizeRatingDeltaSet(values: number[]): string | null {
+    if (!Array.isArray(values) || values.length === 0) {
+      return null;
+    }
+
+    const normalized = values.filter((value) => Number.isFinite(value));
+    if (normalized.length === 0) {
+      return null;
+    }
+    if (normalized.length === 1) {
+      return this.formatSignedNumber(normalized[0]);
+    }
+
+    const plus = normalized.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
+    const minus = normalized.filter((value) => value < 0).reduce((sum, value) => sum + value, 0);
+    const parts: string[] = [];
+    if (plus !== 0) {
+      parts.push(this.formatSignedNumber(plus));
+    }
+    if (minus !== 0) {
+      parts.push(this.formatSignedNumber(minus));
+    }
+    if (parts.length === 0) {
+      parts.push('0');
+    }
+
+    return `${parts.join(' / ')} (${normalized.length} чел.)`;
+  }
+
+  private extractNumericValues(value: unknown): number[] {
+    if (value == null) {
+      return [];
+    }
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => this.extractNumericValues(item));
+    }
+
+    const directNumber = this.readNumber(value);
+    if (directNumber !== null) {
+      return [directNumber];
+    }
+
+    if (typeof value !== 'object') {
+      return [];
+    }
+
+    const record = this.toRecord(value);
+    const preferredKeys = [
+      'delta',
+      'ratingDelta',
+      'rating_change',
+      'ratingDiff',
+      'ratingChange',
+      'change'
+    ];
+
+    const collected: number[] = [];
+    preferredKeys.forEach((key) => {
+      const parsed = this.readNumber(record[key]);
+      if (parsed !== null) {
+        collected.push(parsed);
+      }
+    });
+    if (collected.length > 0) {
+      return collected;
+    }
+
+    return Object.values(record)
+      .map((entry) => this.readNumber(entry))
+      .filter((entry): entry is number => entry !== null);
+  }
+
+  private resolveScoreObject(value: unknown): string | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    const record = this.toRecord(value);
+
+    const stringFirst = [
+      this.readString(record.score),
+      this.readString(record.result),
+      this.readString(record.matchScore),
+      this.readString(record.finalScore)
+    ].find((entry) => Boolean(entry));
+    if (stringFirst) {
+      return stringFirst;
+    }
+
+    const pairs: Array<[unknown, unknown]> = [
+      [record.home, record.away],
+      [record.left, record.right],
+      [record.teamA, record.teamB],
+      [record.team1, record.team2],
+      [record.scoreA, record.scoreB],
+      [record.score1, record.score2],
+      [record.a, record.b]
+    ];
+
+    for (const [left, right] of pairs) {
+      const leftValue = this.readString(left) ?? this.formatNumberOrNull(left);
+      const rightValue = this.readString(right) ?? this.formatNumberOrNull(right);
+      if (leftValue && rightValue) {
+        return `${leftValue}:${rightValue}`;
+      }
+    }
+
+    return null;
+  }
+
+  private formatNumberOrNull(value: unknown): string | null {
+    const parsed = this.readNumber(value);
+    if (parsed === null) {
+      return null;
+    }
+    return this.formatNumber(parsed);
+  }
+
+  private formatSignedNumber(value: number): string {
+    const abs = this.formatNumber(Math.abs(value));
+    if (value > 0) {
+      return `+${abs}`;
+    }
+    if (value < 0) {
+      return `-${abs}`;
+    }
+    return '0';
+  }
+
+  private formatNumber(value: number): string {
+    if (Number.isInteger(value)) {
+      return String(value);
+    }
+    return value.toFixed(2).replace(/\.?0+$/, '');
   }
 
   private normalizeForJson(value: unknown): Record<string, unknown> {
@@ -606,6 +889,21 @@ export class GamesService implements OnModuleDestroy {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!/^[+-]?\d+(\.\d+)?$/.test(trimmed)) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   private readObjectId(value: unknown): string | null {
