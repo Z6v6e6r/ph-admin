@@ -1,10 +1,18 @@
-import { Controller, Get, Param, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  UnauthorizedException
+} from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { GamesService } from './games.service';
-import { Game, GameChatContext } from './games.types';
+import { Game, GameChatContext, GameChatMessage } from './games.types';
 
 @Controller('games')
 @Roles(
@@ -32,6 +40,18 @@ export class GamesController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.gamesService.getGameChat(id, user);
+  }
+
+  @Post(':id/chat/messages')
+  sendGameChatMessage(
+    @Param('id') id: string,
+    @Body() dto: CreateGameChatMessageDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<GameChatMessage> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.gamesService.sendGameChatMessage(id, dto.text, user);
   }
 
   @Get(':id')

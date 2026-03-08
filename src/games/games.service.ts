@@ -10,11 +10,16 @@ import { Filter, MongoClient, ObjectId } from 'mongodb';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
-import { MessengerService } from '../messenger/messenger.service';
-import { ChatThread, ConnectorRoute, ThreadStatus } from '../messenger/messenger.types';
-import { Game, GameChatContext, GameParticipantDetails, GameStatus } from './games.types';
+import {
+  Game,
+  GameChatContext,
+  GameChatMessage,
+  GameParticipantDetails,
+  GameStatus
+} from './games.types';
 
 type GamesSourceMode = 'lk' | 'mongo';
+type StaffSide = 'CLIENT' | 'STAFF';
 
 interface MongoGameParticipant {
   name?: unknown;
@@ -44,6 +49,29 @@ interface MongoGameDoc {
   };
 }
 
+interface MongoGameChatSenderDoc {
+  [key: string]: unknown;
+  id?: unknown;
+  phoneNorm?: unknown;
+  name?: unknown;
+  role?: unknown;
+}
+
+interface MongoGameChatMessageDoc {
+  [key: string]: unknown;
+  _id?: ObjectId;
+  gameId?: unknown;
+  tenantKey?: unknown;
+  relatedPhones?: unknown;
+  sender?: MongoGameChatSenderDoc;
+  type?: unknown;
+  text?: unknown;
+  createdAt?: unknown;
+  createdTs?: unknown;
+  editedAt?: unknown;
+  deleted?: unknown;
+}
+
 @Injectable()
 export class GamesService implements OnModuleDestroy {
   private readonly logger = new Logger(GamesService.name);
@@ -51,14 +79,21 @@ export class GamesService implements OnModuleDestroy {
   private readonly mongoUri = this.readEnv('GAMES_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
   private readonly mongoDbName = this.readEnv('GAMES_MONGODB_DB') ?? 'games';
   private readonly mongoCollectionName = this.readEnv('GAMES_MONGODB_COLLECTION') ?? 'lk_games';
-  private readonly gameChatConnector = this.resolveGameChatConnector();
-  private readonly gameChatDefaultStationId = this.readEnv('GAMES_CHAT_DEFAULT_STATION_ID');
-  private mongoClient?: MongoClient;
 
-  constructor(
-    private readonly lkPadelHubClient: LkPadelHubClientService,
-    private readonly messengerService: MessengerService
-  ) {}
+  private readonly gameChatMongoUri =
+    this.readEnv('GAMES_CHAT_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
+  private readonly gameChatMongoDbName = this.readEnv('GAMES_CHAT_MONGODB_DB') ?? 'games_chdt';
+  private readonly gameChatMessagesCollectionName =
+    this.readEnv('GAMES_CHAT_MESSAGES_COLLECTION') ?? 'chat_messages';
+  private readonly gameChatAdminSenderName =
+    this.readEnv('GAMES_CHAT_ADMIN_SENDER_NAME') ?? 'Администратор станции';
+  private readonly gameChatAdminSenderRole =
+    this.readEnv('GAMES_CHAT_ADMIN_SENDER_ROLE') ?? 'STATION_ADMIN';
+
+  private mongoClient?: MongoClient;
+  private gameChatMongoClient?: MongoClient;
+
+  constructor(private readonly lkPadelHubClient: LkPadelHubClientService) {}
 
   async findAll(): Promise<Game[]> {
     if (this.sourceMode === 'mongo') {
@@ -83,23 +118,67 @@ export class GamesService implements OnModuleDestroy {
     return game;
   }
 
-  async getGameChat(id: string, user: RequestUser): Promise<GameChatContext> {
+  async getGameChat(id: string, _user: RequestUser): Promise<GameChatContext> {
     const game = await this.findById(id);
-    const station = this.resolveGameStation(game, user);
-    const thread = this.findOrCreateGameThread(game, station.stationId, station.stationName, user);
-    const messages = this.messengerService.listMessages(thread.id, user);
+    const chat = await this.loadGameChat(game);
     return {
       game,
-      thread,
-      messages
+      gameId: chat.gameId,
+      source: 'GAMES_CHAT_MONGO',
+      messages: chat.messages
     };
   }
 
-  async onModuleDestroy(): Promise<void> {
-    if (!this.mongoClient) {
-      return;
+  async sendGameChatMessage(
+    id: string,
+    text: string,
+    user: RequestUser
+  ): Promise<GameChatMessage> {
+    const game = await this.findById(id);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Message text cannot be empty');
     }
-    await this.mongoClient.close().catch(() => undefined);
+
+    const chat = await this.loadGameChat(game);
+    const now = new Date();
+    const doc: MongoGameChatMessageDoc = {
+      gameId: chat.gameId,
+      tenantKey: this.extractTenantKey(game),
+      relatedPhones: this.extractRelatedPhones(game),
+      sender: {
+        id: user.id,
+        name: this.resolveSenderName(user),
+        role: this.resolveSenderRole(user)
+      },
+      type: 'TEXT',
+      text: trimmed,
+      createdAt: now.toISOString(),
+      createdTs: now.getTime(),
+      editedAt: null,
+      deleted: false
+    };
+
+    const collection = await this.getGameChatMessagesCollection();
+    const inserted = await collection.insertOne(doc);
+    const mapped = this.mapGameChatMessage({
+      ...doc,
+      _id: inserted.insertedId
+    });
+
+    if (!mapped) {
+      throw new InternalServerErrorException('Failed to persist game chat message');
+    }
+    return mapped;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.mongoClient) {
+      await this.mongoClient.close().catch(() => undefined);
+    }
+    if (this.gameChatMongoClient && this.gameChatMongoClient !== this.mongoClient) {
+      await this.gameChatMongoClient.close().catch(() => undefined);
+    }
   }
 
   private resolveSourceMode(): GamesSourceMode {
@@ -145,7 +224,6 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const doc = (await collection.findOne({ $or: filter })) as MongoGameDoc | null;
-
     if (!doc) {
       return null;
     }
@@ -177,6 +255,243 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return this.mongoClient.db(this.mongoDbName).collection<MongoGameDoc>(this.mongoCollectionName);
+  }
+
+  private async getGameChatMessagesCollection() {
+    if (!this.gameChatMongoUri) {
+      throw new InternalServerErrorException(
+        'Game chat requires MONGODB_URI or GAMES_CHAT_MONGODB_URI'
+      );
+    }
+
+    if (!this.gameChatMongoClient) {
+      this.gameChatMongoClient = new MongoClient(this.gameChatMongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        maxPoolSize: 15
+      });
+      try {
+        await this.gameChatMongoClient.connect();
+        this.logger.log(
+          `MongoDB game chat enabled: db=${this.gameChatMongoDbName}, collection=${this.gameChatMessagesCollectionName}`
+        );
+      } catch (error) {
+        this.gameChatMongoClient = undefined;
+        this.logger.error(`Mongo connect failed for game chat source: ${String(error)}`);
+        throw new InternalServerErrorException('MongoDB connection failed for game chat source');
+      }
+    }
+
+    return this.gameChatMongoClient
+      .db(this.gameChatMongoDbName)
+      .collection<MongoGameChatMessageDoc>(this.gameChatMessagesCollectionName);
+  }
+
+  private async loadGameChat(
+    game: Game
+  ): Promise<{ gameId: string; messages: GameChatMessage[] }> {
+    const candidates = this.collectChatGameIdCandidates(game);
+    if (candidates.length === 0) {
+      throw new BadRequestException(
+        'Cannot resolve gameId for game chat. Add gameId in game payload.'
+      );
+    }
+
+    const collection = await this.getGameChatMessagesCollection();
+    const docs = (await collection
+      .find({
+        gameId: { $in: candidates },
+        deleted: { $ne: true }
+      })
+      .sort({ createdTs: 1, createdAt: 1, _id: 1 })
+      .limit(2000)
+      .toArray()) as MongoGameChatMessageDoc[];
+
+    const selectedGameId = this.pickSelectedChatGameId(docs, candidates);
+    const messages = docs
+      .filter((doc) => (this.readString(doc.gameId) ?? '') === selectedGameId)
+      .map((doc) => this.mapGameChatMessage(doc))
+      .filter((item): item is GameChatMessage => Boolean(item));
+
+    return { gameId: selectedGameId, messages };
+  }
+
+  private collectChatGameIdCandidates(game: Game): string[] {
+    const details = this.toRecord(game.details);
+    const metadata = this.toRecord(details.metadata);
+    const booking = this.toRecord(details.booking);
+    const payment = this.toRecord(details.payment);
+
+    const raw = [
+      this.readString(details.gameId),
+      this.readString(details.game_id),
+      this.readString(details.chatGameId),
+      this.readString(details.chat_game_id),
+      this.readString(metadata.gameId),
+      this.readString(metadata.game_id),
+      this.readString(metadata.chatGameId),
+      this.readString(metadata.chat_game_id),
+      this.readString(details.id),
+      this.readString(booking.slotId),
+      this.readString(booking.slot_id),
+      this.readString(details.slotId),
+      this.readString(details.slot_id),
+      this.readString(details.dedupeKey),
+      this.readString(payment.paymentRef),
+      game.id
+    ];
+
+    const deduped = new Set<string>();
+    for (const value of raw) {
+      const cleaned = (value ?? '').trim();
+      if (cleaned.length > 0) {
+        deduped.add(cleaned);
+      }
+    }
+    return Array.from(deduped);
+  }
+
+  private pickSelectedChatGameId(
+    docs: MongoGameChatMessageDoc[],
+    candidates: string[]
+  ): string {
+    if (docs.length === 0) {
+      return candidates[0];
+    }
+
+    const stats = new Map<string, { count: number; firstIndex: number }>();
+    docs.forEach((doc, index) => {
+      const key = this.readString(doc.gameId);
+      if (!key) {
+        return;
+      }
+      const entry = stats.get(key);
+      if (!entry) {
+        stats.set(key, { count: 1, firstIndex: index });
+        return;
+      }
+      entry.count += 1;
+      stats.set(key, entry);
+    });
+
+    let winner = candidates[0];
+    let winnerCount = -1;
+    let winnerIndex = Number.MAX_SAFE_INTEGER;
+
+    for (const [key, value] of stats.entries()) {
+      if (value.count > winnerCount) {
+        winner = key;
+        winnerCount = value.count;
+        winnerIndex = value.firstIndex;
+        continue;
+      }
+      if (value.count === winnerCount && value.firstIndex < winnerIndex) {
+        winner = key;
+        winnerIndex = value.firstIndex;
+      }
+    }
+
+    return winner;
+  }
+
+  private mapGameChatMessage(doc: MongoGameChatMessageDoc): GameChatMessage | null {
+    const id = this.readObjectId(doc._id) ?? this.readString(doc._id);
+    const gameId = this.readString(doc.gameId);
+    const text = this.readString(doc.text);
+    const createdAt = this.readString(doc.createdAt) ?? this.toIsoFromEpoch(doc.createdTs);
+
+    if (!id || !gameId || !text || !createdAt) {
+      return null;
+    }
+
+    const sender = this.toRecord(doc.sender);
+    const senderRoleRaw = this.readString(sender.role) ?? undefined;
+
+    return {
+      id,
+      gameId,
+      text,
+      createdAt,
+      senderId: this.readString(sender.id) ?? undefined,
+      senderName: this.readString(sender.name) ?? undefined,
+      senderRole: this.normalizeSenderRole(senderRoleRaw),
+      senderRoleRaw,
+      type: this.readString(doc.type) ?? undefined
+    };
+  }
+
+  private normalizeSenderRole(raw: string | undefined): StaffSide {
+    if (!raw) {
+      return 'STAFF';
+    }
+    const upper = raw.trim().toUpperCase();
+    if (
+      ['CLIENT', 'CUSTOMER', 'PLAYER', 'ORGANIZER', 'USER', 'VISITOR', 'MEMBER'].includes(upper)
+    ) {
+      return 'CLIENT';
+    }
+    return 'STAFF';
+  }
+
+  private resolveSenderName(user: RequestUser): string {
+    if (user.id && user.id !== 'anonymous') {
+      return user.id;
+    }
+    return this.gameChatAdminSenderName;
+  }
+
+  private resolveSenderRole(user: RequestUser): string {
+    const nonClientRole = user.roles.find((role) => role !== Role.CLIENT);
+    return nonClientRole ?? this.gameChatAdminSenderRole;
+  }
+
+  private extractTenantKey(game: Game): string | null {
+    const details = this.toRecord(game.details);
+    return this.readString(details.tenantKey) ?? this.readString(details.tenant_key);
+  }
+
+  private extractRelatedPhones(game: Game): string[] {
+    const details = this.toRecord(game.details);
+    const organizer = this.toRecord(details.organizer);
+    const phones = new Set<string>();
+
+    const addPhone = (value: unknown) => {
+      const cleaned = this.normalizePhone(value);
+      if (cleaned) {
+        phones.add(cleaned);
+      }
+    };
+
+    [
+      details.relatedPhones,
+      details.allRelatedPhones,
+      details.participantPhones,
+      details.invitedPhones,
+      details.waitlistPhones
+    ].forEach((value) => {
+      this.toStringArray(value).forEach((phone) => addPhone(phone));
+    });
+
+    addPhone(organizer.phone);
+
+    return Array.from(phones.values());
+  }
+
+  private normalizePhone(value: unknown): string | null {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return null;
+    }
+    const digits = text.replace(/\D+/g, '');
+    return digits.length > 0 ? digits : null;
+  }
+
+  private toStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter((item) => item.length > 0);
   }
 
   private mapMongoGame(doc: MongoGameDoc, options?: { includeDetails?: boolean }): Game | null {
@@ -265,177 +580,6 @@ export class GamesService implements OnModuleDestroy {
     return GameStatus.UNKNOWN;
   }
 
-  private resolveGameChatConnector(): ConnectorRoute {
-    const configured = (this.readEnv('GAMES_CHAT_CONNECTOR') ?? '').toUpperCase();
-    if ((Object.values(ConnectorRoute) as string[]).includes(configured)) {
-      return configured as ConnectorRoute;
-    }
-    if (configured) {
-      this.logger.warn(
-        `Unknown GAMES_CHAT_CONNECTOR="${configured}", fallback to ${ConnectorRoute.LK_WEB_MESSENGER}`
-      );
-    }
-    return ConnectorRoute.LK_WEB_MESSENGER;
-  }
-
-  private resolveGameStation(
-    game: Game,
-    user: RequestUser
-  ): { stationId: string; stationName?: string } {
-    const details = this.toRecord(game.details);
-    const booking = this.toRecord(details?.booking);
-    const metadata = this.toRecord(details?.metadata);
-
-    const stationIdFromPayload = this.firstNonEmpty([
-      this.readString(details?.stationId),
-      this.readString(details?.station_id),
-      this.readString(booking?.stationId),
-      this.readString(booking?.station_id),
-      this.readString(metadata?.stationId),
-      this.readString(metadata?.station_id),
-      this.readString(details?.tenantKey),
-      this.readString(details?.tenant_key),
-      this.gameChatDefaultStationId
-    ]);
-    const stationNameFromPayload = this.firstNonEmpty([
-      this.readString(details?.stationName),
-      this.readString(details?.station_name),
-      this.readString(booking?.studioName),
-      this.readString(booking?.studio_name),
-      this.readString(metadata?.stationName),
-      this.readString(metadata?.station_name),
-      game.locationName
-    ]);
-
-    const configuredStations = this.messengerService.listStationConfigs(this.buildSystemUser());
-
-    if (stationIdFromPayload) {
-      const exactById = configuredStations.find(
-        (station) => station.stationId === stationIdFromPayload
-      );
-      if (exactById) {
-        return {
-          stationId: exactById.stationId,
-          stationName: exactById.stationName
-        };
-      }
-      return {
-        stationId: stationIdFromPayload,
-        stationName: stationNameFromPayload ?? stationIdFromPayload
-      };
-    }
-
-    if (stationNameFromPayload) {
-      const normalizedSource = this.normalizeToken(stationNameFromPayload);
-      if (normalizedSource) {
-        const byName = configuredStations.find((station) => {
-          const stationIdToken = this.normalizeToken(station.stationId);
-          const stationNameToken = this.normalizeToken(station.stationName);
-          return stationIdToken === normalizedSource || stationNameToken === normalizedSource;
-        });
-        if (byName) {
-          return {
-            stationId: byName.stationId,
-            stationName: byName.stationName
-          };
-        }
-      }
-    }
-
-    if (this.gameChatDefaultStationId) {
-      return {
-        stationId: this.gameChatDefaultStationId,
-        stationName: stationNameFromPayload ?? this.gameChatDefaultStationId
-      };
-    }
-
-    if (configuredStations.length === 1) {
-      return {
-        stationId: configuredStations[0].stationId,
-        stationName: configuredStations[0].stationName
-      };
-    }
-
-    if (user.stationIds.length > 0) {
-      const normalizedSource = this.normalizeToken(stationNameFromPayload ?? '');
-      if (normalizedSource) {
-        const matched = user.stationIds.find(
-          (stationId) => this.normalizeToken(stationId) === normalizedSource
-        );
-        if (matched) {
-          return {
-            stationId: matched,
-            stationName: stationNameFromPayload ?? matched
-          };
-        }
-      }
-      return {
-        stationId: user.stationIds[0],
-        stationName: stationNameFromPayload ?? user.stationIds[0]
-      };
-    }
-
-    throw new BadRequestException(
-      'Cannot resolve station for game chat. Set GAMES_CHAT_DEFAULT_STATION_ID or include stationId in game payload.'
-    );
-  }
-
-  private findOrCreateGameThread(
-    game: Game,
-    stationId: string,
-    stationName: string | undefined,
-    user: RequestUser
-  ): ChatThread {
-    const clientId = this.buildGameClientId(game.id);
-    const candidates = this.messengerService
-      .listThreads(user, {
-        connector: this.gameChatConnector,
-        stationId
-      })
-      .filter((thread) => thread.clientId === clientId);
-
-    const openThread = candidates.find((thread) => thread.status === ThreadStatus.OPEN);
-    if (openThread) {
-      return openThread;
-    }
-    if (candidates.length > 0) {
-      return candidates[0];
-    }
-
-    const subject = this.buildGameThreadSubject(game);
-    return this.messengerService.createThread(
-      {
-        connector: this.gameChatConnector,
-        stationId,
-        stationName,
-        clientId,
-        subject
-      },
-      user
-    );
-  }
-
-  private buildGameClientId(gameId: string): string {
-    return `game:${gameId}`;
-  }
-
-  private buildGameThreadSubject(game: Game): string {
-    const raw = `Игра ${game.id}${game.gameDate ? ` · ${game.gameDate}` : ''}`;
-    return raw.length > 120 ? raw.slice(0, 120) : raw;
-  }
-
-  private buildSystemUser(): RequestUser {
-    return {
-      id: 'games-chat-system',
-      roles: [Role.SUPER_ADMIN],
-      stationIds: []
-    };
-  }
-
-  private normalizeToken(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '');
-  }
-
   private toRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
@@ -443,11 +587,14 @@ export class GamesService implements OnModuleDestroy {
     return value as Record<string, unknown>;
   }
 
-  private firstNonEmpty(values: Array<string | null | undefined>): string | null {
-    for (const value of values) {
-      const trimmed = (value ?? '').trim();
-      if (trimmed.length > 0) {
-        return trimmed;
+  private toIsoFromEpoch(value: unknown): string | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return new Date(value).toISOString();
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return new Date(parsed).toISOString();
       }
     }
     return null;

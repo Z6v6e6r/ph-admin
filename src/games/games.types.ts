@@ -1,5 +1,3 @@
-import { ChatMessage, ChatThread } from '../messenger/messenger.types';
-
 export enum GameStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
@@ -31,8 +29,21 @@ export interface Game {
   details?: Record<string, unknown>;
 }
 
+export interface GameChatMessage {
+  id: string;
+  gameId: string;
+  text: string;
+  createdAt: string;
+  senderId?: string;
+  senderName?: string;
+  senderRole?: string;
+  senderRoleRaw?: string;
+  type?: string;
+}
+
 export interface GameChatContext {
   game: Game;
-  thread: ChatThread;
-  messages: ChatMessage[];
+  gameId: string;
+  source: 'GAMES_CHAT_MONGO';
+  messages: GameChatMessage[];
 }

@@ -813,6 +813,11 @@
       getGameChat: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId) + '/chat', 'GET');
       },
+      sendGameChatMessage: function (gameId, text) {
+        return request('/games/' + encodeURIComponent(gameId) + '/chat/messages', 'POST', {
+          text: text
+        });
+      },
       getTournaments: function () {
         return request('/tournaments', 'GET');
       },
@@ -1776,7 +1781,7 @@
       }
 
       messages.forEach(function (message) {
-        var own = message.senderRole !== 'CLIENT';
+        var own = String(message.senderRole || '').toUpperCase() !== 'CLIENT';
         var div = document.createElement('div');
         div.className =
           'phab-admin-message ' +
@@ -1785,8 +1790,16 @@
 
         var meta = document.createElement('span');
         meta.className = 'phab-admin-message-meta';
-        var sender = own ? (message.origin === 'AI' ? 'AI' : 'Сотрудник') : 'Клиент';
-        meta.textContent = sender + ' · ' + formatTime(message.createdAt);
+        var sender = String(message.senderName || '').trim();
+        if (!sender) {
+          sender = own ? 'Сотрудник' : 'Клиент';
+        }
+        var roleRaw = String(message.senderRoleRaw || '').trim();
+        meta.textContent =
+          sender +
+          (roleRaw ? ' (' + roleRaw + ')' : '') +
+          ' · ' +
+          formatTime(message.createdAt);
         div.appendChild(meta);
 
         dom.gameChatBox.appendChild(div);
@@ -1805,15 +1818,16 @@
     }
 
     async function reloadGameChatMessages() {
-      var threadId = state.gameChatThreadId;
-      if (!threadId) {
+      var gameId = state.gameChatGameId;
+      if (!gameId) {
         return;
       }
-      var messages = (await api.getMessages(threadId)) || [];
-      if (threadId !== state.gameChatThreadId) {
+      var payload = await api.getGameChat(gameId);
+      if (gameId !== state.gameChatGameId) {
         return;
       }
-      renderGameChatMessages(messages);
+      state.gameChatThreadId = String(payload.gameId || '');
+      renderGameChatMessages(payload.messages || []);
     }
 
     async function openGameChat(game) {
@@ -1836,17 +1850,13 @@
         if (state.gameChatGameId !== game.id) {
           return;
         }
-        if (!payload || !payload.thread || !payload.thread.id) {
+        if (!payload || !payload.gameId) {
           throw new Error('Не удалось открыть чат игры');
         }
 
-        state.gameChatThreadId = payload.thread.id;
+        state.gameChatThreadId = String(payload.gameId || '');
         dom.gameChatMeta.textContent =
-          (payload.thread.stationName || payload.thread.stationId || '-') +
-          ' · ' +
-          (payload.thread.connector || '-') +
-          ' · thread ' +
-          payload.thread.id.slice(0, 8);
+          'Mongo chat · gameId ' + state.gameChatThreadId;
         renderGameChatMessages(payload.messages || []);
         dom.gameChatInput.disabled = false;
         dom.gameChatSendBtn.disabled = false;
@@ -1863,14 +1873,14 @@
 
     async function sendGameChatMessage() {
       var text = String(dom.gameChatInput.value || '').trim();
-      var threadId = state.gameChatThreadId;
-      if (!text || !threadId) {
+      var gameId = state.gameChatGameId;
+      if (!text || !gameId) {
         return;
       }
 
       dom.gameChatSendBtn.disabled = true;
       try {
-        await api.sendMessage(threadId, text);
+        await api.sendGameChatMessage(gameId, text);
         dom.gameChatInput.value = '';
         await reloadGameChatMessages();
         setStatus('Сообщение отправлено в чат игры', false);
