@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_USER="${APP_USER:-zver}"
+APP_USER="${APP_USER:-}"
 APP_DIR="${APP_DIR:-/opt/ph-admin}"
 REPO_URL="${REPO_URL:-https://github.com/Z6v6e6r/ph-admin.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
@@ -17,6 +17,25 @@ fi
 log() {
   printf '\n[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$*"
 }
+
+if [ -z "$APP_USER" ]; then
+  if [ "$(id -u)" -ne 0 ]; then
+    APP_USER="$(id -un)"
+  elif [ -n "${SUDO_USER:-}" ] && id "$SUDO_USER" >/dev/null 2>&1; then
+    APP_USER="$SUDO_USER"
+  elif id ubuntu >/dev/null 2>&1; then
+    APP_USER="ubuntu"
+  else
+    APP_USER="root"
+  fi
+fi
+
+if ! id "$APP_USER" >/dev/null 2>&1; then
+  log "User '${APP_USER}' not found, fallback to root"
+  APP_USER="root"
+fi
+
+log "Using APP_USER=${APP_USER}"
 
 log "Installing OS dependencies"
 $SUDO apt-get update -y

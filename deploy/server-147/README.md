@@ -11,6 +11,12 @@ cd ph-admin
 bash deploy/server-147/install.sh
 ```
 
+If you need a specific Linux user for systemd service:
+
+```bash
+APP_USER=ubuntu bash deploy/server-147/install.sh
+```
+
 The script will:
 - install Node.js 22 and build tools
 - clone/update app to `/opt/ph-admin`
