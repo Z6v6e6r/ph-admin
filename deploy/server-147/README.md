@@ -39,6 +39,7 @@ Required changes:
 - `MONGODB_URI`, `MONGODB_DB`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_INTEGRATION_TOKEN` (must match Node-RED)
+- keep `PORT=3000` and `HOST=0.0.0.0`
 
 After changes:
 
