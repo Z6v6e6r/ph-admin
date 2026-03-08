@@ -279,6 +279,11 @@ Outbound (Nest outbox -> Telegram -> ack/fail):
 
 - `client-sdk/phab-admin-panel.js`
 
+После `npm run build` копия доступна в:
+
+- `dist/phab-admin-panel.js`
+- `dist/client-sdk/phab-admin-panel.js`
+
 Сервер отдает его через:
 
 - `GET /api/client-script/admin-panel.js` (вставка через `<script src=...>`)

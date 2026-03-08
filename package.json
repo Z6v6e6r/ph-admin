@@ -4,7 +4,8 @@
   "private": true,
   "description": "Starter NestJS backend for games/tournaments admin panel with messenger and RBAC",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
+    "build:client-sdk": "node scripts/copy-client-sdk.mjs",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts"
   },
