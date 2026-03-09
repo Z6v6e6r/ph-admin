@@ -570,6 +570,13 @@ export class GamesService implements OnModuleDestroy {
 
   private resolveGameResult(doc: MongoGameDoc): string | null {
     const metadata = this.toRecord(doc.metadata);
+    const matchResultSummary = this.resolveMatchResultSummary(
+      metadata.matchResult ?? doc.matchResult
+    );
+    if (matchResultSummary) {
+      return matchResultSummary;
+    }
+
     const directCandidates = [
       doc.result,
       doc.score,
@@ -609,6 +616,13 @@ export class GamesService implements OnModuleDestroy {
 
   private resolveGameRatingDelta(doc: MongoGameDoc): string | null {
     const metadata = this.toRecord(doc.metadata);
+    const ratingImpactSummary = this.summarizeRatingDeltaSet(
+      this.extractRatingImpactDeltas(metadata.matchResult ?? doc.matchResult)
+    );
+    if (ratingImpactSummary) {
+      return ratingImpactSummary;
+    }
+
     const scalarCandidates = [
       doc.ratingDelta,
       doc.ratingChange,
@@ -652,6 +666,62 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return null;
+  }
+
+  private resolveMatchResultSummary(value: unknown): string | null {
+    const matchResult = this.toRecord(value);
+    const sets = matchResult.sets;
+    if (!Array.isArray(sets) || sets.length === 0) {
+      return null;
+    }
+
+    const normalizedSets = sets
+      .map((setEntry) => {
+        const setRecord = this.toRecord(setEntry);
+        const left = this.readString(setRecord.left) ?? this.formatNumberOrNull(setRecord.left);
+        const right =
+          this.readString(setRecord.right) ?? this.formatNumberOrNull(setRecord.right);
+        if (!left || !right) {
+          return null;
+        }
+        return `${left}:${right}`;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+
+    if (normalizedSets.length === 0) {
+      return null;
+    }
+    return normalizedSets.join(' ');
+  }
+
+  private extractRatingImpactDeltas(value: unknown): number[] {
+    const matchResult = this.toRecord(value);
+    const ratingImpact = matchResult.ratingImpact;
+    if (!Array.isArray(ratingImpact) || ratingImpact.length === 0) {
+      return [];
+    }
+
+    const deltas: number[] = [];
+    ratingImpact.forEach((impactEntry) => {
+      const impact = this.toRecord(impactEntry);
+      const delta =
+        this.readNumber(impact.delta) ??
+        this.readNumber(impact.ratingDelta) ??
+        this.readNumber(impact.rating_change) ??
+        this.readNumber(impact.change);
+      if (delta !== null) {
+        deltas.push(delta);
+        return;
+      }
+
+      const before = this.readNumber(impact.before);
+      const after = this.readNumber(impact.after);
+      if (before !== null && after !== null) {
+        deltas.push(after - before);
+      }
+    });
+
+    return deltas;
   }
 
   private summarizeParticipantRatingDeltas(participants: unknown): string | null {
