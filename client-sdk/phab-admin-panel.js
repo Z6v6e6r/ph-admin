@@ -87,6 +87,9 @@
         font-family:var(--cup-font-body);
         box-shadow:var(--cup-shadow);
         animation:phab-cup-enter .5s cubic-bezier(.2,.8,.2,1);
+        display:flex;
+        flex-direction:column;
+        height:100%;
       }
       .phab-admin::before,
       .phab-admin::after{
@@ -222,6 +225,9 @@
       .phab-admin-content{
         padding:12px;
         min-height:500px;
+        flex:1;
+        overflow:auto;
+        -webkit-overflow-scrolling:touch;
       }
       .phab-admin-hidden{
         display:none !important;
@@ -396,7 +402,7 @@
         align-items:center;
         justify-content:space-between;
         gap:10px;
-        margin-bottom:10px;
+        margin-top:10px;
         flex-wrap:wrap;
       }
       .phab-admin-games-pagesize{
@@ -418,6 +424,16 @@
         font-size:12px;
         font-weight:700;
         color:var(--cup-wine);
+      }
+      .phab-admin-games-table-wrap{
+        width:100%;
+        overflow-x:auto;
+        overflow-y:hidden;
+        -webkit-overflow-scrolling:touch;
+        touch-action:pan-x pan-y;
+      }
+      .phab-admin-games-table-wrap .phab-admin-games-table{
+        min-width:1320px;
       }
       .phab-admin-games-table{
         width:100%;
@@ -765,6 +781,12 @@
         .phab-admin-title{font-size:15px}
         .phab-admin-subtitle{font-size:11px}
         .phab-admin-content{padding:8px}
+        .phab-admin-games-controls{
+          justify-content:flex-start;
+        }
+        .phab-admin-games-page-info{
+          min-width:0;
+        }
         .phab-admin-tabs{padding:8px 8px 9px}
         .phab-admin-tab{font-size:10px;padding:7px 10px}
         .phab-admin-modal{padding:8px}
@@ -1127,7 +1149,6 @@
 
     var gamesControls = document.createElement('div');
     gamesControls.className = 'phab-admin-games-controls';
-    gamesSection.appendChild(gamesControls);
 
     var gamesPageSizeWrap = document.createElement('label');
     gamesPageSizeWrap.className = 'phab-admin-games-pagesize';
@@ -1167,9 +1188,15 @@
     gamesNextPageBtn.textContent = '→';
     gamesPagination.appendChild(gamesNextPageBtn);
 
+    var gamesTableWrap = document.createElement('div');
+    gamesTableWrap.className = 'phab-admin-games-table-wrap';
+    gamesSection.appendChild(gamesTableWrap);
+
     var gamesTable = document.createElement('table');
     gamesTable.className = 'phab-admin-games-table';
-    gamesSection.appendChild(gamesTable);
+    gamesTableWrap.appendChild(gamesTable);
+
+    gamesSection.appendChild(gamesControls);
 
     var tournamentsTable = document.createElement('table');
     tournamentsTable.className = 'phab-admin-games-table';
