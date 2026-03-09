@@ -1656,6 +1656,8 @@
       appendDetailRow(mainCard.body, 'Дата игры', game.gameDate);
       appendDetailRow(mainCard.body, 'Время игры', game.gameTime);
       appendDetailRow(mainCard.body, 'Старт (ISO)', game.startsAt);
+      appendDetailRow(mainCard.body, 'Станция', game.stationName);
+      appendDetailRow(mainCard.body, 'Корт', game.courtName);
       appendDetailRow(mainCard.body, 'Локация', game.locationName || game.name);
       dom.gameModalBody.appendChild(mainCard.card);
 
@@ -2251,6 +2253,31 @@
       return normalizeMultilineValue(game.ratingDelta);
     }
 
+    function getGameLocationParts(game) {
+      var station = String(game.stationName || '').trim();
+      var court = String(game.courtName || '').trim();
+      if (station || court) {
+        return { station: station || '-', court: court || '-' };
+      }
+
+      var location = String(game.locationName || '').trim();
+      if (location && location.indexOf('·') !== -1) {
+        var chunks = location
+          .split('·')
+          .map(function (chunk) {
+            return String(chunk || '').trim();
+          })
+          .filter(function (chunk) {
+            return Boolean(chunk);
+          });
+        if (chunks.length >= 2) {
+          return { station: chunks[0], court: chunks.slice(1).join(' · ') };
+        }
+      }
+
+      return { station: location || '-', court: '-' };
+    }
+
     function applyColumnWidth(columnNode, width) {
       if (!columnNode) {
         return;
@@ -2310,7 +2337,8 @@
         { key: 'gameDate', label: 'Дата игры', sortField: 'gameDate', minWidth: 160 },
         { key: 'result', label: 'Результат', minWidth: 130 },
         { key: 'ratingDelta', label: 'Δ рейтинг', minWidth: 120 },
-        { key: 'location', label: 'Локация', minWidth: 180 },
+        { key: 'station', label: 'Станция', minWidth: 150 },
+        { key: 'court', label: 'Корт', minWidth: 170 },
         { key: 'chat', label: 'Чат', minWidth: 110 },
         { key: 'status', label: 'Статус', minWidth: 140 }
       ];
@@ -2362,7 +2390,7 @@
       if (state.games.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 9;
+        td.colSpan = 10;
         td.textContent = 'Нет игр';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -2438,9 +2466,15 @@
         }
         tr.appendChild(ratingDeltaCell);
 
-        var locationCell = document.createElement('td');
-        locationCell.textContent = String(game.locationName || game.name || '-');
-        tr.appendChild(locationCell);
+        var locationParts = getGameLocationParts(game);
+
+        var stationCell = document.createElement('td');
+        stationCell.textContent = locationParts.station;
+        tr.appendChild(stationCell);
+
+        var courtCell = document.createElement('td');
+        courtCell.textContent = locationParts.court;
+        tr.appendChild(courtCell);
 
         var chatCell = document.createElement('td');
         var chatBtn = document.createElement('button');

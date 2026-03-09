@@ -25,6 +25,8 @@ export interface Game {
   participantDetails?: GameParticipantDetails[];
   gameDate?: string;
   gameTime?: string;
+  stationName?: string;
+  courtName?: string;
   locationName?: string;
   teamParticipantLines?: string[];
   result?: string;

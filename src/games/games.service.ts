@@ -568,6 +568,8 @@ export class GamesService implements OnModuleDestroy {
       participantDetails,
       gameDate: bookingDate ?? undefined,
       gameTime,
+      stationName: studioName ?? undefined,
+      courtName: roomName ?? undefined,
       locationName: locationName || undefined,
       teamParticipantLines,
       result: result ?? undefined,

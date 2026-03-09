@@ -121,6 +121,17 @@ export class LkPadelHubClientService {
     }
 
     const rawStatus = this.readString(raw.status) ?? this.readString(raw.state);
+    const stationName =
+      this.readString(raw.stationName) ??
+      this.readString(raw.station_name) ??
+      this.readString(raw.studioName) ??
+      this.readString(raw.studio_name);
+    const courtName =
+      this.readString(raw.courtName) ??
+      this.readString(raw.court_name) ??
+      this.readString(raw.roomName) ??
+      this.readString(raw.room_name);
+    const locationName = [stationName, courtName].filter(Boolean).join(' · ');
     return {
       id,
       source: 'LK_PADELHUB',
@@ -131,6 +142,9 @@ export class LkPadelHubClientService {
       startsAt: this.readString(raw.startsAt) ?? this.readString(raw.starts_at),
       createdAt: this.readString(raw.createdAt) ?? this.readString(raw.created_at),
       updatedAt: this.readString(raw.updatedAt) ?? this.readString(raw.updated_at),
+      stationName: stationName ?? undefined,
+      courtName: courtName ?? undefined,
+      locationName: locationName || undefined,
       result:
         this.readString(raw.result) ??
         this.readString(raw.score) ??
