@@ -391,6 +391,34 @@
         border-color:rgba(0,58,134,.55);
         box-shadow:0 0 0 3px rgba(182,253,255,.45);
       }
+      .phab-admin-games-controls{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        margin-bottom:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-games-pagesize{
+        display:flex;
+        align-items:center;
+        gap:6px;
+        font-size:12px;
+        font-weight:700;
+        color:var(--cup-wine);
+      }
+      .phab-admin-games-pagination{
+        display:flex;
+        align-items:center;
+        gap:6px;
+      }
+      .phab-admin-games-page-info{
+        min-width:160px;
+        text-align:center;
+        font-size:12px;
+        font-weight:700;
+        color:var(--cup-wine);
+      }
       .phab-admin-games-table{
         width:100%;
         border-collapse:separate;
@@ -1097,6 +1125,48 @@
     sendBtn.textContent = 'Отправить';
     compose.appendChild(sendBtn);
 
+    var gamesControls = document.createElement('div');
+    gamesControls.className = 'phab-admin-games-controls';
+    gamesSection.appendChild(gamesControls);
+
+    var gamesPageSizeWrap = document.createElement('label');
+    gamesPageSizeWrap.className = 'phab-admin-games-pagesize';
+    gamesPageSizeWrap.appendChild(document.createTextNode('Показывать'));
+    gamesControls.appendChild(gamesPageSizeWrap);
+
+    var gamesPageSizeSelect = document.createElement('select');
+    gamesPageSizeSelect.className = 'phab-admin-settings-input';
+    gamesPageSizeSelect.style.width = '84px';
+    [{ value: '15', label: '15' }, { value: '50', label: '50' }].forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = entry.label;
+      gamesPageSizeSelect.appendChild(option);
+    });
+    gamesPageSizeWrap.appendChild(gamesPageSizeSelect);
+    gamesPageSizeWrap.appendChild(document.createTextNode('игр'));
+
+    var gamesPagination = document.createElement('div');
+    gamesPagination.className = 'phab-admin-games-pagination';
+    gamesControls.appendChild(gamesPagination);
+
+    var gamesPrevPageBtn = document.createElement('button');
+    gamesPrevPageBtn.className = 'phab-admin-btn-secondary';
+    gamesPrevPageBtn.type = 'button';
+    gamesPrevPageBtn.textContent = '←';
+    gamesPagination.appendChild(gamesPrevPageBtn);
+
+    var gamesPageInfo = document.createElement('span');
+    gamesPageInfo.className = 'phab-admin-games-page-info';
+    gamesPageInfo.textContent = 'Страница 1 из 1';
+    gamesPagination.appendChild(gamesPageInfo);
+
+    var gamesNextPageBtn = document.createElement('button');
+    gamesNextPageBtn.className = 'phab-admin-btn-secondary';
+    gamesNextPageBtn.type = 'button';
+    gamesNextPageBtn.textContent = '→';
+    gamesPagination.appendChild(gamesNextPageBtn);
+
     var gamesTable = document.createElement('table');
     gamesTable.className = 'phab-admin-games-table';
     gamesSection.appendChild(gamesTable);
@@ -1420,6 +1490,10 @@
       gameChatCloseBtn: gameChatCloseBtn,
       gameChatInput: gameChatInput,
       gameChatSendBtn: gameChatSendBtn,
+      gamesPageSizeSelect: gamesPageSizeSelect,
+      gamesPrevPageBtn: gamesPrevPageBtn,
+      gamesNextPageBtn: gamesNextPageBtn,
+      gamesPageInfo: gamesPageInfo,
       gamesTable: gamesTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
@@ -1483,6 +1557,8 @@
       games: [],
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
+      gamesPageSize: 15,
+      gamesPage: 1,
       gamesColumnWidths: {},
       tournaments: [],
       tournamentsColumnWidths: {},
@@ -1499,6 +1575,7 @@
       selectedStationId: null,
       selectedThreadId: null
     };
+    dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
 
     function setStatus(text, isError) {
       dom.status.textContent = text;
@@ -2170,6 +2247,7 @@
         state.gamesSortField = field;
         state.gamesSortDirection = field === 'organizer' ? 'asc' : 'desc';
       }
+      state.gamesPage = 1;
       renderGames();
     }
 
@@ -2287,6 +2365,50 @@
       }
     }
 
+    function clampGamesPage(totalItems) {
+      var pageSize = Number(state.gamesPageSize || 15);
+      if (!Number.isFinite(pageSize) || pageSize <= 0) {
+        pageSize = 15;
+      }
+      var totalPages = Math.max(1, Math.ceil(Number(totalItems || 0) / pageSize));
+      var page = Number(state.gamesPage || 1);
+      if (!Number.isFinite(page) || page <= 0) {
+        page = 1;
+      }
+      if (page > totalPages) {
+        page = totalPages;
+      }
+      state.gamesPageSize = pageSize;
+      state.gamesPage = page;
+      return { pageSize: pageSize, totalPages: totalPages, page: page };
+    }
+
+    function updateGamesPaginationControls(totalItems, totalPages) {
+      if (totalItems === 0) {
+        dom.gamesPageInfo.textContent = 'Страница 1 из 1 · 0 игр';
+        dom.gamesPrevPageBtn.disabled = true;
+        dom.gamesNextPageBtn.disabled = true;
+        dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+        return;
+      }
+      var from = totalItems === 0 ? 0 : (state.gamesPage - 1) * state.gamesPageSize + 1;
+      var to = Math.min(totalItems, state.gamesPage * state.gamesPageSize);
+      dom.gamesPageInfo.textContent =
+        'Страница ' +
+        String(state.gamesPage) +
+        ' из ' +
+        String(totalPages) +
+        ' · ' +
+        String(from) +
+        '-' +
+        String(to) +
+        ' из ' +
+        String(totalItems);
+      dom.gamesPrevPageBtn.disabled = state.gamesPage <= 1;
+      dom.gamesNextPageBtn.disabled = state.gamesPage >= totalPages;
+      dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+    }
+
     function attachColumnResizeHandle(headerNode, options) {
       var handle = document.createElement('span');
       handle.className = 'phab-admin-col-resizer';
@@ -2329,6 +2451,11 @@
 
     function renderGames() {
       clearNode(dom.gamesTable);
+      var sortedGames = sortGames(state.games);
+      var pagination = clampGamesPage(sortedGames.length);
+      var startIndex = (pagination.page - 1) * pagination.pageSize;
+      var pageGames = sortedGames.slice(startIndex, startIndex + pagination.pageSize);
+      updateGamesPaginationControls(sortedGames.length, pagination.totalPages);
 
       var columns = [
         { key: 'organizer', label: 'Организатор', sortField: 'organizer', minWidth: 170 },
@@ -2397,7 +2524,7 @@
         return;
       }
 
-      sortGames(state.games).forEach(function (game) {
+      pageGames.forEach(function (game) {
         var tr = document.createElement('tr');
         tr.className = 'phab-admin-games-row';
         tr.addEventListener('click', function () {
@@ -2959,6 +3086,23 @@
       dom.tabSettings.addEventListener('click', function () {
         switchTab('settings');
         loadSettings().catch(handleError);
+      });
+      dom.gamesPageSizeSelect.addEventListener('change', function () {
+        var next = Number(dom.gamesPageSizeSelect.value || 15);
+        state.gamesPageSize = next === 50 ? 50 : 15;
+        state.gamesPage = 1;
+        renderGames();
+      });
+      dom.gamesPrevPageBtn.addEventListener('click', function () {
+        if (state.gamesPage <= 1) {
+          return;
+        }
+        state.gamesPage -= 1;
+        renderGames();
+      });
+      dom.gamesNextPageBtn.addEventListener('click', function () {
+        state.gamesPage += 1;
+        renderGames();
       });
       dom.refreshBtn.addEventListener('click', function () {
         refreshActiveTab().catch(handleError);
