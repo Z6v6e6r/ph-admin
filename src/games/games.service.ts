@@ -544,8 +544,15 @@ export class GamesService implements OnModuleDestroy {
     const participantNames = participantDetails.map((participant) => participant.name);
     const gameTime =
       bookingTimeFrom && bookingTimeTo ? `${bookingTimeFrom}-${bookingTimeTo}` : undefined;
-    const result = this.resolveGameResult(doc);
-    const ratingDelta = this.resolveGameRatingDelta(doc);
+    const teamParticipantLines = this.resolveTeamParticipantLines(doc);
+    const resultLines = this.resolveGameResultLines(doc);
+    const ratingDeltaLines = this.resolveGameRatingDeltaLines(doc);
+    const result =
+      resultLines.length > 0 ? resultLines.join('\n') : this.resolveGameResult(doc);
+    const ratingDelta =
+      ratingDeltaLines.length > 0
+        ? ratingDeltaLines.join('\n')
+        : this.resolveGameRatingDelta(doc);
 
     return {
       id,
@@ -562,10 +569,167 @@ export class GamesService implements OnModuleDestroy {
       gameDate: bookingDate ?? undefined,
       gameTime,
       locationName: locationName || undefined,
+      teamParticipantLines,
       result: result ?? undefined,
+      resultLines,
       ratingDelta: ratingDelta ?? undefined,
+      ratingDeltaLines,
       details: options?.includeDetails ? this.normalizeForJson(doc) : undefined
     };
+  }
+
+  private resolveTeamParticipantLines(doc: MongoGameDoc): string[] {
+    const metadata = this.toRecord(doc.metadata);
+    const ratingImpact = this.extractRatingImpactEntries(metadata.matchResult ?? doc.matchResult);
+    const teams = new Map<string, string[]>();
+    const dedupe = new Map<string, Set<string>>();
+
+    const pushToTeam = (teamNameRaw: string | null, playerLabel: string | null) => {
+      const player = String(playerLabel ?? '').trim();
+      if (!player) {
+        return;
+      }
+      const teamName = this.normalizeTeamName(teamNameRaw);
+      const teamSet = dedupe.get(teamName) ?? new Set<string>();
+      if (teamSet.has(player)) {
+        return;
+      }
+      teamSet.add(player);
+      dedupe.set(teamName, teamSet);
+
+      const lines = teams.get(teamName) ?? [];
+      lines.push(player);
+      teams.set(teamName, lines);
+    };
+
+    ratingImpact.forEach((entry) => {
+      const team = this.readString(entry.team);
+      const playerLabel = this.formatPlayerLabel(
+        this.readString(entry.name),
+        this.readString(entry.phoneNorm) ?? this.readString(entry.phone)
+      );
+      pushToTeam(team, playerLabel);
+    });
+
+    if (teams.size === 0) {
+      const teamSlots = Array.isArray(metadata.teamSlots) ? metadata.teamSlots : [];
+      if (teamSlots.length > 0) {
+        const midpoint = Math.ceil(teamSlots.length / 2);
+        teamSlots.forEach((slot, index) => {
+          const slotRecord = this.toRecord(slot);
+          const teamRaw =
+            this.readString(slotRecord.team) ??
+            this.readString(slotRecord.side) ??
+            this.readString(slotRecord.slotTeam);
+          const team = teamRaw ?? (index < midpoint ? 'A' : 'B');
+          const playerLabel = this.formatPlayerLabel(
+            this.readString(slotRecord.name),
+            this.readString(slotRecord.phone)
+          );
+          pushToTeam(team, playerLabel);
+        });
+      }
+    }
+
+    if (teams.size < 2) {
+      return [];
+    }
+
+    const orderedTeams = Array.from(teams.entries()).sort(([left], [right]) =>
+      this.teamSortKey(left).localeCompare(this.teamSortKey(right), 'ru')
+    );
+
+    const lines: string[] = [];
+    orderedTeams.forEach(([teamName, players]) => {
+      lines.push(`Команда ${teamName}`);
+      players.forEach((player) => {
+        lines.push(player);
+      });
+    });
+    return lines;
+  }
+
+  private normalizeTeamName(value: string | null): string {
+    const team = String(value ?? '').trim().toUpperCase();
+    if (!team) {
+      return 'A';
+    }
+    return team;
+  }
+
+  private teamSortKey(value: string): string {
+    const normalized = this.normalizeTeamName(value);
+    const directOrder = ['A', 'B', 'C', 'D'];
+    const index = directOrder.indexOf(normalized);
+    if (index >= 0) {
+      return `0${index}_${normalized}`;
+    }
+    return `1_${normalized}`;
+  }
+
+  private formatPlayerLabel(name: string | null, phone: string | null): string | null {
+    const normalizedName = String(name ?? '').trim();
+    const normalizedPhone = String(phone ?? '').trim();
+    if (!normalizedName && !normalizedPhone) {
+      return null;
+    }
+    if (normalizedName && normalizedPhone) {
+      return `${normalizedName} · ${normalizedPhone}`;
+    }
+    return normalizedName || normalizedPhone || null;
+  }
+
+  private resolveGameResultLines(doc: MongoGameDoc): string[] {
+    const metadata = this.toRecord(doc.metadata);
+    const lines = this.extractMatchResultSetLines(metadata.matchResult ?? doc.matchResult);
+    if (lines.length > 0) {
+      return lines;
+    }
+
+    const fallback = this.resolveGameResult(doc);
+    if (!fallback) {
+      return [];
+    }
+    return fallback
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private resolveGameRatingDeltaLines(doc: MongoGameDoc): string[] {
+    const metadata = this.toRecord(doc.metadata);
+    const ratingImpact = this.extractRatingImpactEntries(metadata.matchResult ?? doc.matchResult);
+    if (ratingImpact.length > 0) {
+      return ratingImpact
+        .map((entry) => {
+          const name =
+            this.readString(entry.name) ??
+            this.readString(entry.phoneNorm) ??
+            this.readString(entry.phone);
+          const before = this.readNumber(entry.before);
+          const after = this.readNumber(entry.after);
+          const delta =
+            this.readNumber(entry.delta) ??
+            (before !== null && after !== null ? after - before : null);
+
+          const beforeText = before !== null ? this.formatNumber(before) : '?';
+          const afterText = after !== null ? this.formatNumber(after) : '?';
+          const deltaText = delta !== null ? this.formatSignedNumber(delta) : '?';
+          const title = name ? `${name}: ` : '';
+
+          return `${title}${beforeText} -> ${afterText} (${deltaText})`;
+        })
+        .filter((line) => line.trim().length > 0);
+    }
+
+    const fallback = this.resolveGameRatingDelta(doc);
+    if (!fallback) {
+      return [];
+    }
+    return fallback
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
   }
 
   private resolveGameResult(doc: MongoGameDoc): string | null {
@@ -669,13 +833,21 @@ export class GamesService implements OnModuleDestroy {
   }
 
   private resolveMatchResultSummary(value: unknown): string | null {
+    const lines = this.extractMatchResultSetLines(value);
+    if (lines.length === 0) {
+      return null;
+    }
+    return lines.join(' ');
+  }
+
+  private extractMatchResultSetLines(value: unknown): string[] {
     const matchResult = this.toRecord(value);
     const sets = matchResult.sets;
     if (!Array.isArray(sets) || sets.length === 0) {
-      return null;
+      return [];
     }
 
-    const normalizedSets = sets
+    return sets
       .map((setEntry) => {
         const setRecord = this.toRecord(setEntry);
         const left = this.readString(setRecord.left) ?? this.formatNumberOrNull(setRecord.left);
@@ -687,11 +859,17 @@ export class GamesService implements OnModuleDestroy {
         return `${left}:${right}`;
       })
       .filter((entry): entry is string => Boolean(entry));
+  }
 
-    if (normalizedSets.length === 0) {
-      return null;
+  private extractRatingImpactEntries(value: unknown): Record<string, unknown>[] {
+    const matchResult = this.toRecord(value);
+    const ratingImpact = matchResult.ratingImpact;
+    if (!Array.isArray(ratingImpact)) {
+      return [];
     }
-    return normalizedSets.join(' ');
+    return ratingImpact
+      .map((entry) => this.toRecord(entry))
+      .filter((entry) => Object.keys(entry).length > 0);
   }
 
   private extractRatingImpactDeltas(value: unknown): number[] {

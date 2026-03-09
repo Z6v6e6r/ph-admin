@@ -26,8 +26,11 @@ export interface Game {
   gameDate?: string;
   gameTime?: string;
   locationName?: string;
+  teamParticipantLines?: string[];
   result?: string;
+  resultLines?: string[];
   ratingDelta?: string;
+  ratingDeltaLines?: string[];
   details?: Record<string, unknown>;
 }
 

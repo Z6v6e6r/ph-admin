@@ -452,6 +452,22 @@
       .phab-admin-games-cell-line + .phab-admin-games-cell-line{
         margin-top:4px;
       }
+      .phab-admin-games-team-title{
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.02em;
+        color:#2a0a2a;
+      }
+      .phab-admin-games-result-cell{
+        text-align:center !important;
+        vertical-align:middle !important;
+      }
+      .phab-admin-games-result-cell .phab-admin-games-cell-line{
+        text-align:center;
+      }
+      .phab-admin-games-rating-cell .phab-admin-games-cell-line{
+        white-space:pre-wrap;
+      }
       .phab-admin-col-resizer{
         position:absolute;
         top:0;
@@ -2156,6 +2172,16 @@
     }
 
     function getGameParticipantLines(game) {
+      if (Array.isArray(game.teamParticipantLines) && game.teamParticipantLines.length > 0) {
+        return game.teamParticipantLines
+          .map(function (line) {
+            return String(line || '').trim();
+          })
+          .filter(function (line) {
+            return Boolean(line);
+          });
+      }
+
       if (Array.isArray(game.participantDetails) && game.participantDetails.length > 0) {
         return game.participantDetails
           .map(function (participant) {
@@ -2182,6 +2208,47 @@
       }
 
       return [];
+    }
+
+    function normalizeMultilineValue(value) {
+      var text = String(value || '');
+      if (!text) {
+        return [];
+      }
+      return text
+        .split(/\r?\n/)
+        .map(function (line) {
+          return String(line || '').trim();
+        })
+        .filter(function (line) {
+          return Boolean(line);
+        });
+    }
+
+    function getGameResultLines(game) {
+      if (Array.isArray(game.resultLines) && game.resultLines.length > 0) {
+        return game.resultLines
+          .map(function (line) {
+            return String(line || '').trim();
+          })
+          .filter(function (line) {
+            return Boolean(line);
+          });
+      }
+      return normalizeMultilineValue(game.result);
+    }
+
+    function getGameRatingDeltaLines(game) {
+      if (Array.isArray(game.ratingDeltaLines) && game.ratingDeltaLines.length > 0) {
+        return game.ratingDeltaLines
+          .map(function (line) {
+            return String(line || '').trim();
+          })
+          .filter(function (line) {
+            return Boolean(line);
+          });
+      }
+      return normalizeMultilineValue(game.ratingDelta);
     }
 
     function applyColumnWidth(columnNode, width) {
@@ -2319,6 +2386,9 @@
           participantLines.forEach(function (line) {
             var lineNode = document.createElement('span');
             lineNode.className = 'phab-admin-games-cell-line';
+            if (line.indexOf('Команда ') === 0) {
+              lineNode.className += ' phab-admin-games-team-title';
+            }
             lineNode.textContent = line;
             participantsCell.appendChild(lineNode);
           });
@@ -2339,11 +2409,33 @@
         tr.appendChild(gameDateCell);
 
         var resultCell = document.createElement('td');
-        resultCell.textContent = String(game.result || '-');
+        resultCell.className = 'phab-admin-games-result-cell';
+        var resultLines = getGameResultLines(game);
+        if (resultLines.length === 0) {
+          resultCell.textContent = '-';
+        } else {
+          resultLines.forEach(function (line) {
+            var resultLineNode = document.createElement('span');
+            resultLineNode.className = 'phab-admin-games-cell-line';
+            resultLineNode.textContent = line;
+            resultCell.appendChild(resultLineNode);
+          });
+        }
         tr.appendChild(resultCell);
 
         var ratingDeltaCell = document.createElement('td');
-        ratingDeltaCell.textContent = String(game.ratingDelta || '-');
+        ratingDeltaCell.className = 'phab-admin-games-rating-cell';
+        var ratingDeltaLines = getGameRatingDeltaLines(game);
+        if (ratingDeltaLines.length === 0) {
+          ratingDeltaCell.textContent = '-';
+        } else {
+          ratingDeltaLines.forEach(function (line) {
+            var ratingLineNode = document.createElement('span');
+            ratingLineNode.className = 'phab-admin-games-cell-line';
+            ratingLineNode.textContent = line;
+            ratingDeltaCell.appendChild(ratingLineNode);
+          });
+        }
         tr.appendChild(ratingDeltaCell);
 
         var locationCell = document.createElement('td');
