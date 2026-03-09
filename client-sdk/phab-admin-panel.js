@@ -742,6 +742,47 @@
         word-break:break-word;
         color:#351726;
       }
+      .phab-admin-photo-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+        gap:10px;
+      }
+      .phab-admin-photo-card{
+        display:grid;
+        gap:8px;
+        padding:8px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:12px;
+        background:rgba(255,255,255,.95);
+      }
+      .phab-admin-photo-link{
+        display:block;
+        border-radius:10px;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.1);
+        background:rgba(51,0,32,.04);
+      }
+      .phab-admin-photo-thumb{
+        display:block;
+        width:100%;
+        aspect-ratio:4 / 3;
+        object-fit:cover;
+      }
+      .phab-admin-photo-meta{
+        display:grid;
+        gap:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.78);
+      }
+      .phab-admin-photo-name{
+        font-size:12px;
+        font-weight:700;
+        color:var(--cup-wine);
+        word-break:break-word;
+      }
+      .phab-admin-photo-sub{
+        word-break:break-word;
+      }
       .phab-admin-detail-span-2{
         grid-column:span 2;
       }
@@ -1665,6 +1706,142 @@
       return Array.isArray(value) ? value : [];
     }
 
+    function pickPhotoUrl(photo) {
+      var candidate = normalizeObject(photo);
+      var value =
+        candidate.dataUrl ||
+        candidate.url ||
+        candidate.fileUrl ||
+        candidate.src ||
+        candidate.href ||
+        '';
+      return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function formatFileSize(size) {
+      var bytes = Number(size);
+      if (!Number.isFinite(bytes) || bytes <= 0) {
+        return '-';
+      }
+      var units = ['Б', 'КБ', 'МБ', 'ГБ'];
+      var value = bytes;
+      var unitIndex = 0;
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+      }
+      var precision = unitIndex === 0 || value >= 10 ? 0 : 1;
+      return value.toFixed(precision).replace(/\.0$/, '') + ' ' + units[unitIndex];
+    }
+
+    function extractGamePhotos(game) {
+      var details = normalizeObject(game && game.details);
+      var metadata = normalizeObject(details.metadata);
+      var matchResult = normalizeObject(metadata.matchResult);
+      var buckets = [
+        normalizeArray(matchResult.photos),
+        normalizeArray(metadata.photos),
+        normalizeArray(details.photos)
+      ];
+      var seen = {};
+      var result = [];
+
+      buckets.forEach(function (items) {
+        items.forEach(function (item) {
+          var photo = normalizeObject(item);
+          var src = pickPhotoUrl(photo);
+          if (!src) {
+            return;
+          }
+          var key = String(photo.id || photo.name || src);
+          if (seen[key]) {
+            return;
+          }
+          seen[key] = true;
+          result.push(photo);
+        });
+      });
+
+      return result;
+    }
+
+    function appendGamePhotosCard(game) {
+      var photos = extractGamePhotos(game);
+      if (photos.length === 0) {
+        return;
+      }
+
+      var card = createDetailCard('Фото матча', true);
+      var grid = document.createElement('div');
+      grid.className = 'phab-admin-photo-grid';
+      card.body.appendChild(grid);
+
+      photos.forEach(function (item, index) {
+        var photo = normalizeObject(item);
+        var src = pickPhotoUrl(photo);
+        if (!src) {
+          return;
+        }
+
+        var photoCard = document.createElement('article');
+        photoCard.className = 'phab-admin-photo-card';
+        grid.appendChild(photoCard);
+
+        var link = document.createElement('a');
+        link.className = 'phab-admin-photo-link';
+        link.href = src;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        photoCard.appendChild(link);
+
+        var img = document.createElement('img');
+        img.className = 'phab-admin-photo-thumb';
+        img.src = src;
+        img.alt = photo.name ? String(photo.name) : 'Фото матча ' + String(index + 1);
+        img.loading = 'lazy';
+        link.appendChild(img);
+
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-photo-meta';
+        photoCard.appendChild(meta);
+
+        var name = document.createElement('div');
+        name.className = 'phab-admin-photo-name';
+        name.textContent = photo.name ? String(photo.name) : 'Фото ' + String(index + 1);
+        meta.appendChild(name);
+
+        var details = [];
+        if (photo.type) {
+          details.push(String(photo.type));
+        }
+        if (photo.size) {
+          details.push(formatFileSize(photo.size));
+        }
+        if (details.length > 0) {
+          var sizeRow = document.createElement('div');
+          sizeRow.className = 'phab-admin-photo-sub';
+          sizeRow.textContent = details.join(' · ');
+          meta.appendChild(sizeRow);
+        }
+
+        var sourceParts = [];
+        if (photo.source) {
+          sourceParts.push('Источник: ' + String(photo.source));
+        }
+        if (photo.createdAt) {
+          sourceParts.push(formatDateTimeFull(photo.createdAt));
+        }
+        if (sourceParts.length > 0) {
+          var createdRow = document.createElement('div');
+          createdRow.className = 'phab-admin-photo-sub';
+          createdRow.textContent = sourceParts.join(' · ');
+          meta.appendChild(createdRow);
+        }
+      });
+
+      dom.gameModalBody.appendChild(card.card);
+    }
+
     function createDetailCard(title, spanTwo) {
       var card = document.createElement('section');
       card.className = 'phab-admin-detail-card' + (spanTwo ? ' phab-admin-detail-span-2' : '');
@@ -1815,6 +1992,8 @@
         }
       }
       dom.gameModalBody.appendChild(participantsCard.card);
+
+      appendGamePhotosCard(game);
 
       var bookingCard = createDetailCard('Бронирование');
       appendDetailRow(
