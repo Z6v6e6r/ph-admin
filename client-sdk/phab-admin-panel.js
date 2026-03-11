@@ -711,6 +711,27 @@
         text-transform:uppercase;
         color:var(--cup-wine);
         background:rgba(207,255,182,.44);
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+      }
+      .phab-admin-detail-head-title{
+        min-width:0;
+        flex:1 1 auto;
+      }
+      .phab-admin-detail-copy-btn{
+        border:1px solid rgba(51,0,32,.18);
+        background:rgba(255,255,255,.92);
+        color:var(--cup-wine);
+        border-radius:8px;
+        padding:4px 8px;
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+        cursor:pointer;
+        flex:0 0 auto;
       }
       .phab-admin-detail-body{
         padding:10px;
@@ -763,7 +784,11 @@
         white-space:pre-wrap;
         word-break:break-word;
         color:#351726;
-        max-height:min(38vh,320px);
+        display:block;
+        min-width:0;
+      }
+      .phab-admin-detail-json-wrap{
+        max-height:min(60vh,560px);
         overflow-y:auto;
         overflow-x:hidden;
         overscroll-behavior:contain;
@@ -1944,14 +1969,44 @@
 
       var head = document.createElement('div');
       head.className = 'phab-admin-detail-head';
-      head.textContent = title;
       card.appendChild(head);
+
+      var headTitle = document.createElement('div');
+      headTitle.className = 'phab-admin-detail-head-title';
+      headTitle.textContent = title;
+      head.appendChild(headTitle);
 
       var body = document.createElement('div');
       body.className = 'phab-admin-detail-body';
       card.appendChild(body);
 
-      return { card: card, body: body };
+      return { card: card, head: head, headTitle: headTitle, body: body };
+    }
+
+    async function copyText(text) {
+      var value = String(text || '');
+      if (!value) {
+        return false;
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+      var textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'readonly');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      var copied = false;
+      try {
+        copied = document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      return copied;
     }
 
     function appendDetailRow(container, label, value) {
@@ -2017,10 +2072,40 @@
     function appendJsonCardTo(container, title, payload) {
       var card = createDetailCard(title, true);
       card.card.className += ' phab-admin-detail-card-json';
+      var payloadText = JSON.stringify(payload || {}, null, 2);
+
+      var copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'phab-admin-detail-copy-btn';
+      copyBtn.textContent = 'Скопировать';
+      copyBtn.addEventListener('click', function () {
+        copyBtn.disabled = true;
+        copyText(payloadText)
+          .then(function (copied) {
+            copyBtn.textContent = copied ? 'Скопировано' : 'Не удалось';
+            window.setTimeout(function () {
+              copyBtn.textContent = 'Скопировать';
+              copyBtn.disabled = false;
+            }, 1200);
+          })
+          .catch(function () {
+            copyBtn.textContent = 'Не удалось';
+            window.setTimeout(function () {
+              copyBtn.textContent = 'Скопировать';
+              copyBtn.disabled = false;
+            }, 1200);
+          });
+      });
+      card.head.appendChild(copyBtn);
+
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-detail-json-wrap';
+      card.body.appendChild(wrap);
+
       var pre = document.createElement('pre');
       pre.className = 'phab-admin-detail-json';
-      pre.textContent = JSON.stringify(payload || {}, null, 2);
-      card.body.appendChild(pre);
+      pre.textContent = payloadText;
+      wrap.appendChild(pre);
       container.appendChild(card.card);
     }
 
