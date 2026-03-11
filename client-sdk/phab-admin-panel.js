@@ -718,6 +718,15 @@
       .phab-admin-detail-value{
         word-break:break-word;
       }
+      .phab-admin-detail-link{
+        color:var(--cup-blue);
+        font-weight:700;
+        text-decoration:none;
+        word-break:break-word;
+      }
+      .phab-admin-detail-link:hover{
+        text-decoration:underline;
+      }
       .phab-admin-detail-list{
         list-style:none;
         margin:0;
@@ -1874,6 +1883,34 @@
       row.appendChild(val);
     }
 
+    function appendDetailLinkRow(container, label, href, text) {
+      if (!href) {
+        appendDetailRow(container, label, '-');
+        return;
+      }
+
+      var row = document.createElement('div');
+      row.className = 'phab-admin-detail-row';
+      container.appendChild(row);
+
+      var key = document.createElement('div');
+      key.className = 'phab-admin-detail-key';
+      key.textContent = label;
+      row.appendChild(key);
+
+      var val = document.createElement('div');
+      val.className = 'phab-admin-detail-value';
+      row.appendChild(val);
+
+      var link = document.createElement('a');
+      link.className = 'phab-admin-detail-link';
+      link.href = href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = text || href;
+      val.appendChild(link);
+    }
+
     function appendDetailList(container, items) {
       if (!items || items.length === 0) {
         appendDetailRow(container, 'Данные', '-');
@@ -1951,6 +1988,14 @@
       appendDetailRow(organizerCard.body, 'Телефон', organizer.phone || '-');
       appendDetailRow(organizerCard.body, 'Рейтинг', organizer.rating || '-');
       appendDetailRow(organizerCard.body, 'ID', organizer.id || '-');
+      if (organizer.id) {
+        appendDetailLinkRow(
+          organizerCard.body,
+          'Viva CRM',
+          'https://cabinet.vivacrm.ru/clients/' + encodeURIComponent(String(organizer.id)),
+          'cabinet.vivacrm.ru/clients/' + String(organizer.id)
+        );
+      }
       dom.gameModalBody.appendChild(organizerCard.card);
 
       var participantsCard = createDetailCard('Состав');
