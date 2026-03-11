@@ -405,6 +405,25 @@
         margin-top:10px;
         flex-wrap:wrap;
       }
+      .phab-admin-logs-controls{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        margin-bottom:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-logs-filters{
+        display:flex;
+        align-items:flex-end;
+        gap:8px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-logs-filter{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+      }
       .phab-admin-games-pagesize{
         display:flex;
         align-items:center;
@@ -879,6 +898,9 @@
         .phab-admin-games-controls{
           justify-content:flex-start;
         }
+        .phab-admin-logs-controls{
+          justify-content:flex-start;
+        }
         .phab-admin-games-page-info{
           min-width:0;
         }
@@ -983,7 +1005,22 @@
         });
       },
       getGameEvents: function () {
-        return request('/games/events', 'GET');
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.from) {
+          params.set('from', String(query.from));
+        }
+        if (query.to) {
+          params.set('to', String(query.to));
+        }
+        if (query.page) {
+          params.set('page', String(query.page));
+        }
+        if (query.pageSize) {
+          params.set('pageSize', String(query.pageSize));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/games/events' + suffix, 'GET');
       },
       getGameEventById: function (eventId) {
         return request('/games/events/' + encodeURIComponent(eventId), 'GET');
@@ -1315,6 +1352,77 @@
 
     var logsTableWrap = document.createElement('div');
     logsTableWrap.className = 'phab-admin-games-table-wrap';
+    var logsControls = document.createElement('div');
+    logsControls.className = 'phab-admin-logs-controls';
+    logsSection.appendChild(logsControls);
+
+    var logsFilters = document.createElement('div');
+    logsFilters.className = 'phab-admin-logs-filters';
+    logsControls.appendChild(logsFilters);
+
+    var logsFromWrap = document.createElement('label');
+    logsFromWrap.className = 'phab-admin-logs-filter';
+    logsFilters.appendChild(logsFromWrap);
+
+    var logsFromLabel = document.createElement('span');
+    logsFromLabel.className = 'phab-admin-settings-label';
+    logsFromLabel.textContent = 'С даты';
+    logsFromWrap.appendChild(logsFromLabel);
+
+    var logsFromInput = document.createElement('input');
+    logsFromInput.className = 'phab-admin-settings-input';
+    logsFromInput.type = 'date';
+    logsFromInput.style.width = '160px';
+    logsFromWrap.appendChild(logsFromInput);
+
+    var logsToWrap = document.createElement('label');
+    logsToWrap.className = 'phab-admin-logs-filter';
+    logsFilters.appendChild(logsToWrap);
+
+    var logsToLabel = document.createElement('span');
+    logsToLabel.className = 'phab-admin-settings-label';
+    logsToLabel.textContent = 'По дату';
+    logsToWrap.appendChild(logsToLabel);
+
+    var logsToInput = document.createElement('input');
+    logsToInput.className = 'phab-admin-settings-input';
+    logsToInput.type = 'date';
+    logsToInput.style.width = '160px';
+    logsToWrap.appendChild(logsToInput);
+
+    var logsApplyBtn = document.createElement('button');
+    logsApplyBtn.className = 'phab-admin-btn';
+    logsApplyBtn.type = 'button';
+    logsApplyBtn.textContent = 'Применить';
+    logsFilters.appendChild(logsApplyBtn);
+
+    var logsResetBtn = document.createElement('button');
+    logsResetBtn.className = 'phab-admin-btn-secondary';
+    logsResetBtn.type = 'button';
+    logsResetBtn.textContent = 'Сбросить';
+    logsFilters.appendChild(logsResetBtn);
+
+    var logsPagination = document.createElement('div');
+    logsPagination.className = 'phab-admin-games-pagination';
+    logsControls.appendChild(logsPagination);
+
+    var logsPrevPageBtn = document.createElement('button');
+    logsPrevPageBtn.className = 'phab-admin-btn-secondary';
+    logsPrevPageBtn.type = 'button';
+    logsPrevPageBtn.textContent = '←';
+    logsPagination.appendChild(logsPrevPageBtn);
+
+    var logsPageInfo = document.createElement('span');
+    logsPageInfo.className = 'phab-admin-games-page-info';
+    logsPageInfo.textContent = 'Страница 1 из 1';
+    logsPagination.appendChild(logsPageInfo);
+
+    var logsNextPageBtn = document.createElement('button');
+    logsNextPageBtn.className = 'phab-admin-btn-secondary';
+    logsNextPageBtn.type = 'button';
+    logsNextPageBtn.textContent = '→';
+    logsPagination.appendChild(logsNextPageBtn);
+
     logsSection.appendChild(logsTableWrap);
 
     var logsTable = document.createElement('table');
@@ -1679,6 +1787,13 @@
       gamesNextPageBtn: gamesNextPageBtn,
       gamesPageInfo: gamesPageInfo,
       gamesTable: gamesTable,
+      logsFromInput: logsFromInput,
+      logsToInput: logsToInput,
+      logsApplyBtn: logsApplyBtn,
+      logsResetBtn: logsResetBtn,
+      logsPrevPageBtn: logsPrevPageBtn,
+      logsNextPageBtn: logsNextPageBtn,
+      logsPageInfo: logsPageInfo,
       logsTable: logsTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
@@ -1747,6 +1862,12 @@
       gamesPage: 1,
       gamesColumnWidths: {},
       gameEventsColumnWidths: {},
+      gameEventsPageSize: 30,
+      gameEventsPage: 1,
+      gameEventsTotal: 0,
+      gameEventsTotalPages: 1,
+      gameEventsFilterFrom: '',
+      gameEventsFilterTo: '',
       tournaments: [],
       tournamentsColumnWidths: {},
       settings: {
@@ -1765,6 +1886,8 @@
       selectedThreadId: null
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+    dom.logsFromInput.value = state.gameEventsFilterFrom;
+    dom.logsToInput.value = state.gameEventsFilterTo;
 
     function setStatus(text, isError) {
       dom.status.textContent = text;
@@ -2990,6 +3113,30 @@
       dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     }
 
+    function updateGameEventsPaginationControls(totalItems, totalPages) {
+      if (totalItems === 0) {
+        dom.logsPageInfo.textContent = 'Страница 1 из 1 · 0 событий';
+        dom.logsPrevPageBtn.disabled = true;
+        dom.logsNextPageBtn.disabled = true;
+        return;
+      }
+      var from = (state.gameEventsPage - 1) * state.gameEventsPageSize + 1;
+      var to = Math.min(totalItems, state.gameEventsPage * state.gameEventsPageSize);
+      dom.logsPageInfo.textContent =
+        'Страница ' +
+        String(state.gameEventsPage) +
+        ' из ' +
+        String(totalPages) +
+        ' · ' +
+        String(from) +
+        '-' +
+        String(to) +
+        ' из ' +
+        String(totalItems);
+      dom.logsPrevPageBtn.disabled = state.gameEventsPage <= 1;
+      dom.logsNextPageBtn.disabled = state.gameEventsPage >= totalPages;
+    }
+
     function attachColumnResizeHandle(headerNode, options) {
       var handle = document.createElement('span');
       handle.className = 'phab-admin-col-resizer';
@@ -3256,6 +3403,7 @@
         emptyCell.textContent = 'Нет событий';
         emptyRow.appendChild(emptyCell);
         tbody.appendChild(emptyRow);
+        updateGameEventsPaginationControls(0, 1);
         return;
       }
 
@@ -3302,6 +3450,8 @@
 
         tbody.appendChild(tr);
       });
+
+      updateGameEventsPaginationControls(state.gameEventsTotal, state.gameEventsTotalPages);
     }
 
     function renderTournaments() {
@@ -3574,7 +3724,35 @@
     }
 
     async function loadGameEvents() {
-      state.gameEvents = (await api.getGameEvents()) || [];
+      var response =
+        (await api.getGameEvents({
+          from: state.gameEventsFilterFrom || undefined,
+          to: state.gameEventsFilterTo || undefined,
+          page: state.gameEventsPage,
+          pageSize: state.gameEventsPageSize
+        })) || [];
+
+      if (Array.isArray(response)) {
+        state.gameEvents = response;
+        state.gameEventsTotal = response.length;
+        state.gameEventsTotalPages = response.length > 0 ? 1 : 1;
+        state.gameEventsPage = 1;
+      } else {
+        state.gameEvents = Array.isArray(response.items) ? response.items : [];
+        state.gameEventsTotal = Number(response.total || 0);
+        state.gameEventsPage = Math.max(1, Number(response.page || state.gameEventsPage || 1));
+        state.gameEventsPageSize = Math.max(
+          1,
+          Number(response.pageSize || state.gameEventsPageSize || 30)
+        );
+        state.gameEventsTotalPages = Math.max(
+          1,
+          Number(response.totalPages || Math.ceil(state.gameEventsTotal / state.gameEventsPageSize) || 1)
+        );
+      }
+
+      dom.logsFromInput.value = state.gameEventsFilterFrom;
+      dom.logsToInput.value = state.gameEventsFilterTo;
       renderGameEvents();
     }
 
@@ -3797,6 +3975,45 @@
       dom.gamesNextPageBtn.addEventListener('click', function () {
         state.gamesPage += 1;
         renderGames();
+      });
+      dom.logsApplyBtn.addEventListener('click', function () {
+        state.gameEventsFilterFrom = String(dom.logsFromInput.value || '').trim();
+        state.gameEventsFilterTo = String(dom.logsToInput.value || '').trim();
+        state.gameEventsPage = 1;
+        loadGameEvents().catch(handleError);
+      });
+      dom.logsResetBtn.addEventListener('click', function () {
+        state.gameEventsFilterFrom = '';
+        state.gameEventsFilterTo = '';
+        state.gameEventsPage = 1;
+        dom.logsFromInput.value = '';
+        dom.logsToInput.value = '';
+        loadGameEvents().catch(handleError);
+      });
+      dom.logsPrevPageBtn.addEventListener('click', function () {
+        if (state.gameEventsPage <= 1) {
+          return;
+        }
+        state.gameEventsPage -= 1;
+        loadGameEvents().catch(handleError);
+      });
+      dom.logsNextPageBtn.addEventListener('click', function () {
+        if (state.gameEventsPage >= state.gameEventsTotalPages) {
+          return;
+        }
+        state.gameEventsPage += 1;
+        loadGameEvents().catch(handleError);
+      });
+      [dom.logsFromInput, dom.logsToInput].forEach(function (input) {
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            state.gameEventsFilterFrom = String(dom.logsFromInput.value || '').trim();
+            state.gameEventsFilterTo = String(dom.logsToInput.value || '').trim();
+            state.gameEventsPage = 1;
+            loadGameEvents().catch(handleError);
+          }
+        });
       });
       dom.refreshBtn.addEventListener('click', function () {
         refreshActiveTab().catch(handleError);

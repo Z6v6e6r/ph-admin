@@ -57,6 +57,21 @@ export interface GameEvent {
   details?: Record<string, unknown>;
 }
 
+export interface GameEventListFilters {
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface GameEventListResult {
+  items: GameEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface GameChatMessage {
   id: string;
   gameId: string;

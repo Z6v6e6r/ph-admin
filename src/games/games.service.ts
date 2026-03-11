@@ -15,6 +15,8 @@ import {
   GameChatContext,
   GameChatMessage,
   GameEvent,
+  GameEventListFilters,
+  GameEventListResult,
   GameParticipantDetails,
   GameStatus
 } from './games.types';
@@ -102,6 +104,9 @@ interface MongoGameEventDoc {
 
 @Injectable()
 export class GamesService implements OnModuleDestroy {
+  private static readonly GAME_EVENTS_DEFAULT_PAGE_SIZE = 30;
+  private static readonly GAME_EVENTS_MAX_PAGE_SIZE = 100;
+
   private readonly logger = new Logger(GamesService.name);
   private readonly sourceMode = this.resolveSourceMode();
   private readonly mongoUri = this.readEnv('GAMES_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
@@ -148,8 +153,8 @@ export class GamesService implements OnModuleDestroy {
     return game;
   }
 
-  async findEvents(): Promise<GameEvent[]> {
-    return this.findEventsFromMongo();
+  async findEvents(filters?: GameEventListFilters): Promise<GameEventListResult> {
+    return this.findEventsFromMongo(filters);
   }
 
   async findEventById(id: string): Promise<GameEvent> {
@@ -279,11 +284,16 @@ export class GamesService implements OnModuleDestroy {
     return this.mapMongoGame(doc, { includeDetails: true });
   }
 
-  private async findEventsFromMongo(): Promise<GameEvent[]> {
+  private async findEventsFromMongo(
+    filters?: GameEventListFilters
+  ): Promise<GameEventListResult> {
     const collection = await this.getMongoEventsCollection();
+    const pagination = this.normalizeGameEventsPagination(filters);
+    const mongoFilter = this.buildMongoEventFilter(filters);
+    const total = await collection.countDocuments(mongoFilter);
     const docs = (await collection
       .find(
-        {},
+        mongoFilter,
         {
           projection: {
             event: 1,
@@ -298,12 +308,21 @@ export class GamesService implements OnModuleDestroy {
         }
       )
       .sort({ timestamp: -1, _id: -1 })
-      .limit(500)
+      .skip((pagination.page - 1) * pagination.pageSize)
+      .limit(pagination.pageSize)
       .toArray()) as MongoGameEventDoc[];
 
-    return docs
+    const items = docs
       .map((doc) => this.mapMongoEvent(doc))
       .filter((event): event is GameEvent => event !== null);
+
+    return {
+      items,
+      total,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pagination.pageSize))
+    };
   }
 
   private async findEventByIdFromMongo(id: string): Promise<GameEvent | null> {
@@ -358,6 +377,69 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return this.mongoClient.db(this.mongoDbName);
+  }
+
+  private normalizeGameEventsPagination(
+    filters?: GameEventListFilters
+  ): { page: number; pageSize: number } {
+    const rawPage = Number(filters?.page);
+    const rawPageSize = Number(filters?.pageSize);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize =
+      Number.isFinite(rawPageSize) && rawPageSize > 0
+        ? Math.min(Math.floor(rawPageSize), GamesService.GAME_EVENTS_MAX_PAGE_SIZE)
+        : GamesService.GAME_EVENTS_DEFAULT_PAGE_SIZE;
+
+    return { page, pageSize };
+  }
+
+  private buildMongoEventFilter(filters?: GameEventListFilters): Filter<MongoGameEventDoc> {
+    const fromIso = this.normalizeDateFilterValue(filters?.from, false);
+    const toIso = this.normalizeDateFilterValue(filters?.to, true);
+    if (!fromIso && !toIso) {
+      return {};
+    }
+
+    const stringRange: Record<string, string> = {};
+    const dateRange: Record<string, Date> = {};
+    if (fromIso) {
+      stringRange.$gte = fromIso;
+      dateRange.$gte = new Date(fromIso);
+    }
+    if (toIso) {
+      stringRange.$lte = toIso;
+      dateRange.$lte = new Date(toIso);
+    }
+
+    return {
+      $or: [
+        { timestamp: stringRange },
+        { createdAt: stringRange },
+        { timestamp: dateRange },
+        { createdAt: dateRange }
+      ]
+    } as Filter<MongoGameEventDoc>;
+  }
+
+  private normalizeDateFilterValue(value: string | undefined, endOfDay: boolean): string | null {
+    const text = this.readString(value);
+    if (!text) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const normalized = endOfDay
+        ? `${text}T23:59:59.999Z`
+        : `${text}T00:00:00.000Z`;
+      const parsedDate = new Date(normalized);
+      return Number.isNaN(parsedDate.getTime()) ? null : parsedDate.toISOString();
+    }
+
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed.toISOString();
   }
 
   private async getGameChatMessagesCollection() {

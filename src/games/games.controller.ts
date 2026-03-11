@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UnauthorizedException
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -12,7 +13,14 @@ import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { GamesService } from './games.service';
-import { Game, GameChatContext, GameChatMessage, GameEvent } from './games.types';
+import {
+  Game,
+  GameChatContext,
+  GameChatMessage,
+  GameEvent,
+  GameEventListFilters,
+  GameEventListResult
+} from './games.types';
 
 @Controller('games')
 @Roles(
@@ -32,8 +40,19 @@ export class GamesController {
   }
 
   @Get('events')
-  findEvents(): Promise<GameEvent[]> {
-    return this.gamesService.findEvents();
+  findEvents(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string
+  ): Promise<GameEventListResult> {
+    const filters: GameEventListFilters = {
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined
+    };
+    return this.gamesService.findEvents(filters);
   }
 
   @Get('events/:id')
