@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -60,6 +61,12 @@ export class GamesController {
   @Get('events/:id')
   findEventById(@Param('id') id: string): Promise<GameEvent> {
     return this.gamesService.findEventById(id);
+  }
+
+  @Delete('events/:id')
+  @Roles(Role.SUPER_ADMIN)
+  deleteEvent(@Param('id') id: string): Promise<void> {
+    return this.gamesService.deleteEvent(id);
   }
 
   @Get(':id/chat')

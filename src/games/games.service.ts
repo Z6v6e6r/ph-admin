@@ -165,6 +165,14 @@ export class GamesService implements OnModuleDestroy {
     return event;
   }
 
+  async deleteEvent(id: string): Promise<void> {
+    const collection = await this.getMongoEventsCollection();
+    const result = await collection.deleteOne(this.buildMongoEventIdFilter(id));
+    if (!result.deletedCount) {
+      throw new NotFoundException(`Game event with id ${id} not found`);
+    }
+  }
+
   async getGameChat(id: string, _user: RequestUser): Promise<GameChatContext> {
     const game = await this.findById(id);
     const chat = await this.loadGameChat(game);
@@ -327,15 +335,9 @@ export class GamesService implements OnModuleDestroy {
 
   private async findEventByIdFromMongo(id: string): Promise<GameEvent | null> {
     const collection = await this.getMongoEventsCollection();
-    const filter: Record<string, unknown>[] = [];
-    if (ObjectId.isValid(id)) {
-      filter.push({ _id: new ObjectId(id) });
-    }
-    filter.push({ _id: id });
-
-    const doc = (await collection.findOne({
-      $or: filter
-    } as Filter<MongoGameEventDoc>)) as MongoGameEventDoc | null;
+    const doc = (await collection.findOne(
+      this.buildMongoEventIdFilter(id)
+    )) as MongoGameEventDoc | null;
     if (!doc) {
       return null;
     }
@@ -377,6 +379,17 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return this.mongoClient.db(this.mongoDbName);
+  }
+
+  private buildMongoEventIdFilter(id: string): Filter<MongoGameEventDoc> {
+    const variants: Record<string, unknown>[] = [];
+    if (ObjectId.isValid(id)) {
+      variants.push({ _id: new ObjectId(id) });
+    }
+    variants.push({ _id: id });
+    return {
+      $or: variants
+    } as Filter<MongoGameEventDoc>;
   }
 
   private normalizeGameEventsPagination(

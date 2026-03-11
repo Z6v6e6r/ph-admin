@@ -690,6 +690,11 @@
         text-transform:uppercase;
         color:var(--cup-wine);
       }
+      .phab-admin-modal-actions{
+        display:flex;
+        align-items:center;
+        gap:8px;
+      }
       .phab-admin-modal-close{
         width:32px;
         height:32px;
@@ -700,6 +705,20 @@
         font-size:18px;
         line-height:1;
         cursor:pointer;
+      }
+      .phab-admin-btn-danger{
+        border:1px solid rgba(138,0,42,.18);
+        background:linear-gradient(180deg,#fff 0%,#ffe6ea 100%);
+        color:#7b1433;
+        font-size:12px;
+        font-weight:700;
+        padding:8px 12px;
+        border-radius:10px;
+        cursor:pointer;
+      }
+      .phab-admin-btn-danger:disabled{
+        opacity:.6;
+        cursor:not-allowed;
       }
       .phab-admin-modal-body{
         padding:12px;
@@ -1027,6 +1046,9 @@
       },
       getGameEventById: function (eventId) {
         return request('/games/events/' + encodeURIComponent(eventId), 'GET');
+      },
+      deleteGameEvent: function (eventId) {
+        return request('/games/events/' + encodeURIComponent(eventId), 'DELETE');
       },
       getTournaments: function () {
         return request('/tournaments', 'GET');
@@ -1699,11 +1721,21 @@
     eventModalTitle.textContent = 'Событие';
     eventModalHead.appendChild(eventModalTitle);
 
+    var eventModalActions = document.createElement('div');
+    eventModalActions.className = 'phab-admin-modal-actions';
+    eventModalHead.appendChild(eventModalActions);
+
+    var eventDeleteBtn = document.createElement('button');
+    eventDeleteBtn.className = 'phab-admin-btn-danger';
+    eventDeleteBtn.type = 'button';
+    eventDeleteBtn.textContent = 'Удалить лог';
+    eventModalActions.appendChild(eventDeleteBtn);
+
     var eventModalCloseBtn = document.createElement('button');
     eventModalCloseBtn.className = 'phab-admin-modal-close';
     eventModalCloseBtn.type = 'button';
     eventModalCloseBtn.textContent = '×';
-    eventModalHead.appendChild(eventModalCloseBtn);
+    eventModalActions.appendChild(eventModalCloseBtn);
 
     var eventModalBody = document.createElement('div');
     eventModalBody.className = 'phab-admin-modal-body';
@@ -1792,6 +1824,7 @@
       eventModalCard: eventModalCard,
       eventModalTitle: eventModalTitle,
       eventModalBody: eventModalBody,
+      eventDeleteBtn: eventDeleteBtn,
       eventModalCloseBtn: eventModalCloseBtn,
       gameChatModal: gameChatModal,
       gameChatCard: gameChatCard,
@@ -1900,6 +1933,7 @@
       selectedGame: null,
       selectedGameEventId: null,
       selectedGameEvent: null,
+      deletingGameEvent: false,
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedConnector: null,
@@ -2312,6 +2346,9 @@
       dom.eventModal.classList.add('phab-admin-hidden');
       state.selectedGameEventId = null;
       state.selectedGameEvent = null;
+      state.deletingGameEvent = false;
+      dom.eventDeleteBtn.disabled = false;
+      dom.eventDeleteBtn.textContent = 'Удалить лог';
     }
 
     function renderGameEventDetails(event) {
@@ -2321,6 +2358,8 @@
         empty.className = 'phab-admin-empty';
         empty.textContent = 'Событие не найдено';
         dom.eventModalBody.appendChild(empty);
+        dom.eventDeleteBtn.disabled = true;
+        dom.eventDeleteBtn.textContent = 'Удалить лог';
         return;
       }
 
@@ -2331,6 +2370,8 @@
       var device = normalizeObject(details.device);
 
       dom.eventModalTitle.textContent = 'Событие ' + event.event;
+      dom.eventDeleteBtn.disabled = state.deletingGameEvent;
+      dom.eventDeleteBtn.textContent = state.deletingGameEvent ? 'Удаление...' : 'Удалить лог';
 
       var mainCard = createDetailCard('Основное');
       appendDetailRow(mainCard.body, 'ID', event.id);
@@ -2383,6 +2424,35 @@
         'Raw event payload',
         Object.keys(details).length > 0 ? details : event
       );
+    }
+
+    async function deleteSelectedGameEvent() {
+      var event = state.selectedGameEvent;
+      if (!event || !event.id || state.deletingGameEvent) {
+        return;
+      }
+
+      var eventLabel = String(event.event || event.id);
+      if (!window.confirm('Удалить лог "' + eventLabel + '" из базы?')) {
+        return;
+      }
+
+      state.deletingGameEvent = true;
+      renderGameEventDetails(event);
+      try {
+        await api.deleteGameEvent(event.id);
+        if (state.gameEvents.length === 1 && state.gameEventsPage > 1) {
+          state.gameEventsPage -= 1;
+        }
+        closeGameEventModal();
+        await loadGameEvents();
+        setStatus('Лог удален', false);
+      } finally {
+        state.deletingGameEvent = false;
+        if (state.selectedGameEvent && state.selectedGameEvent.id === event.id) {
+          renderGameEventDetails(state.selectedGameEvent);
+        }
+      }
     }
 
     async function openGameEventDetails(event) {
@@ -4074,6 +4144,9 @@
       });
       dom.eventModalCloseBtn.addEventListener('click', function () {
         closeGameEventModal();
+      });
+      dom.eventDeleteBtn.addEventListener('click', function () {
+        deleteSelectedGameEvent().catch(handleError);
       });
       dom.eventModal.addEventListener('click', function (event) {
         if (event.target === dom.eventModal) {
