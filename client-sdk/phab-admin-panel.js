@@ -631,16 +631,19 @@
         inset:0;
         z-index:2147483600;
         display:flex;
-        align-items:center;
+        align-items:flex-start;
         justify-content:center;
         padding:18px;
         background:rgba(24,10,22,.42);
         backdrop-filter:blur(2px);
-        overflow:auto;
+        overflow-y:auto;
+        overflow-x:hidden;
+        overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
       }
       .phab-admin-modal-card{
         width:min(980px,95vw);
-        max-height:90vh;
+        max-height:calc(100dvh - 36px);
         display:flex;
         flex-direction:column;
         border-radius:18px;
@@ -649,6 +652,7 @@
         box-shadow:0 22px 52px rgba(28,4,24,.28);
         overflow:hidden;
         min-height:0;
+        margin:auto 0;
       }
       .phab-admin-modal-head{
         display:flex;
@@ -680,9 +684,13 @@
       }
       .phab-admin-modal-body{
         padding:12px;
-        overflow:auto;
+        overflow-y:auto;
+        overflow-x:hidden;
         flex:1 1 auto;
         min-height:0;
+        overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
+        touch-action:pan-y;
         display:grid;
         grid-template-columns:repeat(2,minmax(0,1fr));
         gap:10px;
@@ -847,7 +855,7 @@
           padding:8px;
           align-items:flex-start;
         }
-        .phab-admin-modal-card{max-height:94vh}
+        .phab-admin-modal-card{max-height:calc(100dvh - 16px)}
         .phab-admin-detail-row{grid-template-columns:1fr}
       }
     `;
@@ -1047,6 +1055,7 @@
   function createLayout(root, cfg) {
     root.innerHTML = '';
     root.classList.add('phab-admin');
+    var overlayHost = document.body || root;
 
     var header = document.createElement('div');
     header.className = 'phab-admin-header';
@@ -1488,7 +1497,7 @@
 
     var gameModal = document.createElement('div');
     gameModal.className = 'phab-admin-modal phab-admin-hidden';
-    root.appendChild(gameModal);
+    overlayHost.appendChild(gameModal);
 
     var gameModalCard = document.createElement('div');
     gameModalCard.className = 'phab-admin-modal-card';
@@ -1515,7 +1524,7 @@
 
     var eventModal = document.createElement('div');
     eventModal.className = 'phab-admin-modal phab-admin-hidden';
-    root.appendChild(eventModal);
+    overlayHost.appendChild(eventModal);
 
     var eventModalCard = document.createElement('div');
     eventModalCard.className = 'phab-admin-modal-card';
@@ -1542,7 +1551,7 @@
 
     var gameChatModal = document.createElement('div');
     gameChatModal.className = 'phab-admin-modal phab-admin-hidden';
-    root.appendChild(gameChatModal);
+    overlayHost.appendChild(gameChatModal);
 
     var gameChatCard = document.createElement('div');
     gameChatCard.className = 'phab-admin-modal-card';
@@ -3786,6 +3795,11 @@
       if (documentKeydownHandler) {
         document.removeEventListener('keydown', documentKeydownHandler);
       }
+      [dom.gameModal, dom.eventModal, dom.gameChatModal].forEach(function (node) {
+        if (node && node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      });
       if (!cfg.mountSelector) {
         root.remove();
       } else {
