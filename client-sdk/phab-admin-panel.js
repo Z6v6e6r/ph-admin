@@ -636,6 +636,7 @@
         padding:18px;
         background:rgba(24,10,22,.42);
         backdrop-filter:blur(2px);
+        overflow:auto;
       }
       .phab-admin-modal-card{
         width:min(980px,95vw);
@@ -647,6 +648,7 @@
         border:1px solid rgba(51,0,32,.2);
         box-shadow:0 22px 52px rgba(28,4,24,.28);
         overflow:hidden;
+        min-height:0;
       }
       .phab-admin-modal-head{
         display:flex;
@@ -679,6 +681,8 @@
       .phab-admin-modal-body{
         padding:12px;
         overflow:auto;
+        flex:1 1 auto;
+        min-height:0;
         display:grid;
         grid-template-columns:repeat(2,minmax(0,1fr));
         gap:10px;
@@ -839,7 +843,10 @@
         }
         .phab-admin-tabs{padding:8px 8px 9px}
         .phab-admin-tab{font-size:10px;padding:7px 10px}
-        .phab-admin-modal{padding:8px}
+        .phab-admin-modal{
+          padding:8px;
+          align-items:flex-start;
+        }
         .phab-admin-modal-card{max-height:94vh}
         .phab-admin-detail-row{grid-template-columns:1fr}
       }
