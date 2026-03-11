@@ -528,22 +528,67 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const collection = await this.getGameChatMessagesCollection();
-    const docs = (await collection
-      .find({
-        gameId: { $in: candidates },
-        deleted: { $ne: true }
-      })
-      .sort({ createdTs: 1, createdAt: 1, _id: 1 })
-      .limit(2000)
-      .toArray()) as MongoGameChatMessageDoc[];
+    let docs = await this.findGameChatDocsByGameIds(collection, candidates);
+    let selectedGameId = this.pickSelectedChatGameId(docs, candidates);
 
-    const selectedGameId = this.pickSelectedChatGameId(docs, candidates);
+    if (docs.length === 0) {
+      const relatedPhones = this.extractRelatedPhones(game);
+      if (relatedPhones.length > 0) {
+        const discoveredDocs = await this.findGameChatDocsByRelatedPhones(collection, relatedPhones);
+        selectedGameId = this.pickSelectedChatGameId(discoveredDocs, candidates);
+        if (selectedGameId) {
+          docs = await this.findGameChatDocsByGameIds(collection, [selectedGameId]);
+        }
+      }
+    } else if (selectedGameId) {
+      docs = await this.findGameChatDocsByGameIds(collection, [selectedGameId]);
+    }
+
     const messages = docs
       .filter((doc) => (this.readString(doc.gameId) ?? '') === selectedGameId)
       .map((doc) => this.mapGameChatMessage(doc))
       .filter((item): item is GameChatMessage => Boolean(item));
 
     return { gameId: selectedGameId, messages };
+  }
+
+  private async findGameChatDocsByGameIds(
+    collection: Awaited<ReturnType<GamesService['getGameChatMessagesCollection']>>,
+    gameIds: string[]
+  ): Promise<MongoGameChatMessageDoc[]> {
+    if (!Array.isArray(gameIds) || gameIds.length === 0) {
+      return [];
+    }
+
+    return (await collection
+      .find({
+        gameId: { $in: gameIds },
+        deleted: { $ne: true }
+      })
+      .sort({ createdTs: 1, createdAt: 1, _id: 1 })
+      .limit(2000)
+      .toArray()) as MongoGameChatMessageDoc[];
+  }
+
+  private async findGameChatDocsByRelatedPhones(
+    collection: Awaited<ReturnType<GamesService['getGameChatMessagesCollection']>>,
+    phoneDigits: string[]
+  ): Promise<MongoGameChatMessageDoc[]> {
+    if (!Array.isArray(phoneDigits) || phoneDigits.length === 0) {
+      return [];
+    }
+
+    return (await collection
+      .find({
+        deleted: { $ne: true },
+        $or: [
+          { relatedPhones: { $in: phoneDigits } },
+          { 'sender.phoneNorm': { $in: phoneDigits } }
+        ]
+      })
+      .sort({ createdTs: 1, createdAt: 1, _id: 1 })
+      .limit(2000)
+      .toArray()) as MongoGameChatMessageDoc[];
   }
 
   private collectChatGameIdCandidates(game: Game): string[] {
@@ -575,10 +620,37 @@ export class GamesService implements OnModuleDestroy {
     for (const value of raw) {
       const cleaned = (value ?? '').trim();
       if (cleaned.length > 0) {
-        deduped.add(cleaned);
+        this.expandChatGameIdCandidateVariants(cleaned).forEach((variant) => deduped.add(variant));
       }
     }
     return Array.from(deduped);
+  }
+
+  private expandChatGameIdCandidateVariants(value: string): string[] {
+    const cleaned = String(value ?? '').trim();
+    if (!cleaned) {
+      return [];
+    }
+
+    const variants = new Set<string>([cleaned]);
+    variants.add(cleaned.toLowerCase());
+    variants.add(cleaned.toUpperCase());
+
+    if (cleaned.includes(':')) {
+      const underscored = cleaned.replace(/:/g, '_');
+      variants.add(underscored);
+      variants.add(underscored.toLowerCase());
+      variants.add(underscored.toUpperCase());
+    }
+
+    if (cleaned.includes('_')) {
+      const colonized = cleaned.replace(/_/g, ':');
+      variants.add(colonized);
+      variants.add(colonized.toLowerCase());
+      variants.add(colonized.toUpperCase());
+    }
+
+    return Array.from(variants).filter((item) => item.trim().length > 0);
   }
 
   private pickSelectedChatGameId(
@@ -589,6 +661,12 @@ export class GamesService implements OnModuleDestroy {
       return candidates[0];
     }
 
+    const exactCandidates = new Set(candidates);
+    const normalizedCandidates = new Set(
+      candidates
+        .map((candidate) => this.normalizeChatGameIdKey(candidate))
+        .filter((candidate): candidate is string => Boolean(candidate))
+    );
     const stats = new Map<string, { count: number; firstIndex: number }>();
     docs.forEach((doc, index) => {
       const key = this.readString(doc.gameId);
@@ -607,21 +685,49 @@ export class GamesService implements OnModuleDestroy {
     let winner = candidates[0];
     let winnerCount = -1;
     let winnerIndex = Number.MAX_SAFE_INTEGER;
+    let winnerMatchScore = -1;
 
     for (const [key, value] of stats.entries()) {
+      const normalizedKey = this.normalizeChatGameIdKey(key);
+      const matchScore = exactCandidates.has(key)
+        ? 2
+        : normalizedKey && normalizedCandidates.has(normalizedKey)
+          ? 1
+          : 0;
+
+      if (matchScore > winnerMatchScore) {
+        winner = key;
+        winnerCount = value.count;
+        winnerIndex = value.firstIndex;
+        winnerMatchScore = matchScore;
+        continue;
+      }
+      if (matchScore < winnerMatchScore) {
+        continue;
+      }
       if (value.count > winnerCount) {
         winner = key;
         winnerCount = value.count;
         winnerIndex = value.firstIndex;
+        winnerMatchScore = matchScore;
         continue;
       }
       if (value.count === winnerCount && value.firstIndex < winnerIndex) {
         winner = key;
         winnerIndex = value.firstIndex;
+        winnerMatchScore = matchScore;
       }
     }
 
     return winner;
+  }
+
+  private normalizeChatGameIdKey(value: unknown): string | null {
+    const cleaned = this.readString(value);
+    if (!cleaned) {
+      return null;
+    }
+    return cleaned.trim().toLowerCase().replace(/:/g, '_');
   }
 
   private mapGameChatMessage(doc: MongoGameChatMessageDoc): GameChatMessage | null {
@@ -683,6 +789,8 @@ export class GamesService implements OnModuleDestroy {
   private extractRelatedPhones(game: Game): string[] {
     const details = this.toRecord(game.details);
     const organizer = this.toRecord(details.organizer);
+    const metadata = this.toRecord(details.metadata);
+    const joinResponses = this.toRecord(metadata.joinResponses);
     const phones = new Set<string>();
 
     const addPhone = (value: unknown) => {
@@ -702,6 +810,23 @@ export class GamesService implements OnModuleDestroy {
       this.toStringArray(value).forEach((phone) => addPhone(phone));
     });
 
+    if (Array.isArray(details.participants)) {
+      details.participants.forEach((participant) => {
+        const participantRecord = this.toRecord(participant);
+        addPhone(participantRecord.phone);
+        addPhone(participantRecord.phoneNorm);
+      });
+    }
+
+    if (Array.isArray(metadata.teamSlots)) {
+      metadata.teamSlots.forEach((slot) => {
+        const slotRecord = this.toRecord(slot);
+        addPhone(slotRecord.phone);
+        addPhone(slotRecord.phoneNorm);
+      });
+    }
+
+    Object.keys(joinResponses).forEach((phone) => addPhone(phone));
     addPhone(organizer.phone);
 
     return Array.from(phones.values());
