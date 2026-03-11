@@ -58,6 +58,7 @@ export interface GameEvent {
 }
 
 export interface GameEventListFilters {
+  event?: string;
   from?: string;
   to?: string;
   page?: number;

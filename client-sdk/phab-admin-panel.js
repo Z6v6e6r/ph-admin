@@ -1007,6 +1007,9 @@
       getGameEvents: function () {
         var query = arguments[0] || {};
         var params = new URLSearchParams();
+        if (query.event) {
+          params.set('event', String(query.event));
+        }
         if (query.from) {
           params.set('from', String(query.from));
         }
@@ -1389,6 +1392,22 @@
     logsToInput.type = 'date';
     logsToInput.style.width = '160px';
     logsToWrap.appendChild(logsToInput);
+
+    var logsEventWrap = document.createElement('label');
+    logsEventWrap.className = 'phab-admin-logs-filter';
+    logsFilters.appendChild(logsEventWrap);
+
+    var logsEventLabel = document.createElement('span');
+    logsEventLabel.className = 'phab-admin-settings-label';
+    logsEventLabel.textContent = 'Событие';
+    logsEventWrap.appendChild(logsEventLabel);
+
+    var logsEventInput = document.createElement('input');
+    logsEventInput.className = 'phab-admin-settings-input';
+    logsEventInput.type = 'text';
+    logsEventInput.placeholder = 'client_error';
+    logsEventInput.style.width = '180px';
+    logsEventWrap.appendChild(logsEventInput);
 
     var logsApplyBtn = document.createElement('button');
     logsApplyBtn.className = 'phab-admin-btn';
@@ -1789,6 +1808,7 @@
       gamesTable: gamesTable,
       logsFromInput: logsFromInput,
       logsToInput: logsToInput,
+      logsEventInput: logsEventInput,
       logsApplyBtn: logsApplyBtn,
       logsResetBtn: logsResetBtn,
       logsPrevPageBtn: logsPrevPageBtn,
@@ -1866,6 +1886,7 @@
       gameEventsPage: 1,
       gameEventsTotal: 0,
       gameEventsTotalPages: 1,
+      gameEventsFilterEvent: '',
       gameEventsFilterFrom: '',
       gameEventsFilterTo: '',
       tournaments: [],
@@ -1886,6 +1907,7 @@
       selectedThreadId: null
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+    dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
     dom.logsToInput.value = state.gameEventsFilterTo;
 
@@ -3726,6 +3748,7 @@
     async function loadGameEvents() {
       var response =
         (await api.getGameEvents({
+          event: state.gameEventsFilterEvent || undefined,
           from: state.gameEventsFilterFrom || undefined,
           to: state.gameEventsFilterTo || undefined,
           page: state.gameEventsPage,
@@ -3751,6 +3774,7 @@
         );
       }
 
+      dom.logsEventInput.value = state.gameEventsFilterEvent;
       dom.logsFromInput.value = state.gameEventsFilterFrom;
       dom.logsToInput.value = state.gameEventsFilterTo;
       renderGameEvents();
@@ -3977,15 +4001,18 @@
         renderGames();
       });
       dom.logsApplyBtn.addEventListener('click', function () {
+        state.gameEventsFilterEvent = String(dom.logsEventInput.value || '').trim();
         state.gameEventsFilterFrom = String(dom.logsFromInput.value || '').trim();
         state.gameEventsFilterTo = String(dom.logsToInput.value || '').trim();
         state.gameEventsPage = 1;
         loadGameEvents().catch(handleError);
       });
       dom.logsResetBtn.addEventListener('click', function () {
+        state.gameEventsFilterEvent = '';
         state.gameEventsFilterFrom = '';
         state.gameEventsFilterTo = '';
         state.gameEventsPage = 1;
+        dom.logsEventInput.value = '';
         dom.logsFromInput.value = '';
         dom.logsToInput.value = '';
         loadGameEvents().catch(handleError);
@@ -4004,10 +4031,11 @@
         state.gameEventsPage += 1;
         loadGameEvents().catch(handleError);
       });
-      [dom.logsFromInput, dom.logsToInput].forEach(function (input) {
+      [dom.logsEventInput, dom.logsFromInput, dom.logsToInput].forEach(function (input) {
         input.addEventListener('keydown', function (event) {
           if (event.key === 'Enter') {
             event.preventDefault();
+            state.gameEventsFilterEvent = String(dom.logsEventInput.value || '').trim();
             state.gameEventsFilterFrom = String(dom.logsFromInput.value || '').trim();
             state.gameEventsFilterTo = String(dom.logsToInput.value || '').trim();
             state.gameEventsPage = 1;

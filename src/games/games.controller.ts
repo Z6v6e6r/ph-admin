@@ -41,12 +41,14 @@ export class GamesController {
 
   @Get('events')
   findEvents(
+    @Query('event') event?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string
   ): Promise<GameEventListResult> {
     const filters: GameEventListFilters = {
+      event,
       from,
       to,
       page: page ? Number(page) : undefined,

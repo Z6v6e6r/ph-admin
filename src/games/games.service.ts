@@ -394,10 +394,16 @@ export class GamesService implements OnModuleDestroy {
   }
 
   private buildMongoEventFilter(filters?: GameEventListFilters): Filter<MongoGameEventDoc> {
+    const eventName = this.readString(filters?.event);
     const fromIso = this.normalizeDateFilterValue(filters?.from, false);
     const toIso = this.normalizeDateFilterValue(filters?.to, true);
-    if (!fromIso && !toIso) {
+    if (!eventName && !fromIso && !toIso) {
       return {};
+    }
+
+    const clauses: Filter<MongoGameEventDoc>[] = [];
+    if (eventName) {
+      clauses.push({ event: eventName } as Filter<MongoGameEventDoc>);
     }
 
     const stringRange: Record<string, string> = {};
@@ -411,13 +417,23 @@ export class GamesService implements OnModuleDestroy {
       dateRange.$lte = new Date(toIso);
     }
 
+    if (fromIso || toIso) {
+      clauses.push({
+        $or: [
+          { timestamp: stringRange },
+          { createdAt: stringRange },
+          { timestamp: dateRange },
+          { createdAt: dateRange }
+        ]
+      } as Filter<MongoGameEventDoc>);
+    }
+
+    if (clauses.length === 1) {
+      return clauses[0];
+    }
+
     return {
-      $or: [
-        { timestamp: stringRange },
-        { createdAt: stringRange },
-        { timestamp: dateRange },
-        { createdAt: dateRange }
-      ]
+      $and: clauses
     } as Filter<MongoGameEventDoc>;
   }
 
