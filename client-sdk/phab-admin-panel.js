@@ -700,6 +700,7 @@
         border-radius:12px;
         background:rgba(255,255,255,.92);
         overflow:hidden;
+        min-width:0;
       }
       .phab-admin-detail-head{
         padding:8px 10px;
@@ -762,6 +763,13 @@
         white-space:pre-wrap;
         word-break:break-word;
         color:#351726;
+        max-height:min(38vh,320px);
+        overflow-y:auto;
+        overflow-x:hidden;
+        overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
+        touch-action:pan-y;
+        padding-right:4px;
       }
       .phab-admin-photo-grid{
         display:grid;
@@ -2008,6 +2016,7 @@
 
     function appendJsonCardTo(container, title, payload) {
       var card = createDetailCard(title, true);
+      card.card.className += ' phab-admin-detail-card-json';
       var pre = document.createElement('pre');
       pre.className = 'phab-admin-detail-json';
       pre.textContent = JSON.stringify(payload || {}, null, 2);
