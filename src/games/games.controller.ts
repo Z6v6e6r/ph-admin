@@ -12,7 +12,7 @@ import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { GamesService } from './games.service';
-import { Game, GameChatContext, GameChatMessage } from './games.types';
+import { Game, GameChatContext, GameChatMessage, GameEvent } from './games.types';
 
 @Controller('games')
 @Roles(
@@ -29,6 +29,16 @@ export class GamesController {
   @Get()
   findAll(): Promise<Game[]> {
     return this.gamesService.findAll();
+  }
+
+  @Get('events')
+  findEvents(): Promise<GameEvent[]> {
+    return this.gamesService.findEvents();
+  }
+
+  @Get('events/:id')
+  findEventById(@Param('id') id: string): Promise<GameEvent> {
+    return this.gamesService.findEventById(id);
   }
 
   @Get(':id/chat')

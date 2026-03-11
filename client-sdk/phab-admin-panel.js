@@ -934,6 +934,12 @@
           text: text
         });
       },
+      getGameEvents: function () {
+        return request('/games/events', 'GET');
+      },
+      getGameEventById: function (eventId) {
+        return request('/games/events/' + encodeURIComponent(eventId), 'GET');
+      },
       getTournaments: function () {
         return request('/tournaments', 'GET');
       },
@@ -1083,6 +1089,12 @@
     tabGames.textContent = 'Игры';
     tabs.appendChild(tabGames);
 
+    var tabLogs = document.createElement('button');
+    tabLogs.className = 'phab-admin-tab';
+    tabLogs.type = 'button';
+    tabLogs.textContent = 'Логи';
+    tabs.appendChild(tabLogs);
+
     var tabTournaments = document.createElement('button');
     tabTournaments.className = 'phab-admin-tab';
     tabTournaments.type = 'button';
@@ -1105,6 +1117,10 @@
     var gamesSection = document.createElement('div');
     gamesSection.className = 'phab-admin-hidden';
     content.appendChild(gamesSection);
+
+    var logsSection = document.createElement('div');
+    logsSection.className = 'phab-admin-hidden';
+    content.appendChild(logsSection);
 
     var tournamentsSection = document.createElement('div');
     tournamentsSection.className = 'phab-admin-hidden';
@@ -1247,6 +1263,14 @@
     gamesTableWrap.appendChild(gamesTable);
 
     gamesSection.appendChild(gamesControls);
+
+    var logsTableWrap = document.createElement('div');
+    logsTableWrap.className = 'phab-admin-games-table-wrap';
+    logsSection.appendChild(logsTableWrap);
+
+    var logsTable = document.createElement('table');
+    logsTable.className = 'phab-admin-games-table';
+    logsTableWrap.appendChild(logsTable);
 
     var tournamentsTable = document.createElement('table');
     tournamentsTable.className = 'phab-admin-games-table';
@@ -1482,6 +1506,33 @@
     gameModalBody.className = 'phab-admin-modal-body';
     gameModalCard.appendChild(gameModalBody);
 
+    var eventModal = document.createElement('div');
+    eventModal.className = 'phab-admin-modal phab-admin-hidden';
+    root.appendChild(eventModal);
+
+    var eventModalCard = document.createElement('div');
+    eventModalCard.className = 'phab-admin-modal-card';
+    eventModal.appendChild(eventModalCard);
+
+    var eventModalHead = document.createElement('div');
+    eventModalHead.className = 'phab-admin-modal-head';
+    eventModalCard.appendChild(eventModalHead);
+
+    var eventModalTitle = document.createElement('div');
+    eventModalTitle.className = 'phab-admin-modal-title';
+    eventModalTitle.textContent = 'Событие';
+    eventModalHead.appendChild(eventModalTitle);
+
+    var eventModalCloseBtn = document.createElement('button');
+    eventModalCloseBtn.className = 'phab-admin-modal-close';
+    eventModalCloseBtn.type = 'button';
+    eventModalCloseBtn.textContent = '×';
+    eventModalHead.appendChild(eventModalCloseBtn);
+
+    var eventModalBody = document.createElement('div');
+    eventModalBody.className = 'phab-admin-modal-body';
+    eventModalCard.appendChild(eventModalBody);
+
     var gameChatModal = document.createElement('div');
     gameChatModal.className = 'phab-admin-modal phab-admin-hidden';
     root.appendChild(gameChatModal);
@@ -1540,10 +1591,12 @@
       refreshBtn: refreshBtn,
       tabMessages: tabMessages,
       tabGames: tabGames,
+      tabLogs: tabLogs,
       tabTournaments: tabTournaments,
       tabSettings: tabSettings,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
+      logsSection: logsSection,
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
       connectorsList: connectorsList,
@@ -1559,6 +1612,11 @@
       gameModalTitle: gameModalTitle,
       gameModalBody: gameModalBody,
       gameModalCloseBtn: gameModalCloseBtn,
+      eventModal: eventModal,
+      eventModalCard: eventModalCard,
+      eventModalTitle: eventModalTitle,
+      eventModalBody: eventModalBody,
+      eventModalCloseBtn: eventModalCloseBtn,
       gameChatModal: gameChatModal,
       gameChatCard: gameChatCard,
       gameChatTitle: gameChatTitle,
@@ -1572,6 +1630,7 @@
       gamesNextPageBtn: gamesNextPageBtn,
       gamesPageInfo: gamesPageInfo,
       gamesTable: gamesTable,
+      logsTable: logsTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
       stationIdInput: stationIdInput,
@@ -1632,11 +1691,13 @@
       dialogs: [],
       messages: [],
       games: [],
+      gameEvents: [],
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
       gamesPageSize: 15,
       gamesPage: 1,
       gamesColumnWidths: {},
+      gameEventsColumnWidths: {},
       tournaments: [],
       tournamentsColumnWidths: {},
       settings: {
@@ -1646,6 +1707,8 @@
       },
       selectedGameId: null,
       selectedGame: null,
+      selectedGameEventId: null,
+      selectedGameEvent: null,
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedConnector: null,
@@ -1927,13 +1990,170 @@
       });
     }
 
-    function appendJsonCard(title, payload) {
+    function appendJsonCardTo(container, title, payload) {
       var card = createDetailCard(title, true);
       var pre = document.createElement('pre');
       pre.className = 'phab-admin-detail-json';
       pre.textContent = JSON.stringify(payload || {}, null, 2);
       card.body.appendChild(pre);
-      dom.gameModalBody.appendChild(card.card);
+      container.appendChild(card.card);
+    }
+
+    function appendJsonCard(title, payload) {
+      appendJsonCardTo(dom.gameModalBody, title, payload);
+    }
+
+    function buildEventUserLines(event) {
+      var lines = [];
+      if (event.userName) {
+        lines.push(String(event.userName));
+      }
+      if (event.userPhone) {
+        lines.push(String(event.userPhone));
+      }
+      if (event.userClientId) {
+        lines.push('clientId: ' + String(event.userClientId));
+      }
+      return lines;
+    }
+
+    function buildEventSummaryLines(event) {
+      var lines = [];
+      if (event.payloadLabel) {
+        lines.push(String(event.payloadLabel));
+      }
+      if (event.payloadModule) {
+        lines.push('Модуль: ' + String(event.payloadModule));
+      }
+      if (event.payloadSource) {
+        lines.push('Источник: ' + String(event.payloadSource));
+      }
+      if (event.payloadStatus) {
+        lines.push('Статус: ' + String(event.payloadStatus));
+      }
+      if (event.payloadMessage) {
+        lines.push(String(event.payloadMessage));
+      }
+      if (event.payloadError) {
+        lines.push('Ошибка: ' + String(event.payloadError));
+      }
+      return lines;
+    }
+
+    function renderCellLines(container, lines, emptyText) {
+      if (!lines || lines.length === 0) {
+        container.textContent = emptyText || '-';
+        return;
+      }
+      lines.forEach(function (line) {
+        var node = document.createElement('span');
+        node.className = 'phab-admin-games-cell-line';
+        node.textContent = String(line);
+        container.appendChild(node);
+      });
+    }
+
+    function closeGameEventModal() {
+      dom.eventModal.classList.add('phab-admin-hidden');
+      state.selectedGameEventId = null;
+      state.selectedGameEvent = null;
+    }
+
+    function renderGameEventDetails(event) {
+      clearNode(dom.eventModalBody);
+      if (!event || !event.id) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Событие не найдено';
+        dom.eventModalBody.appendChild(empty);
+        return;
+      }
+
+      var details = normalizeObject(event.details);
+      var page = normalizeObject(details.page);
+      var payload = normalizeObject(details.payload);
+      var user = normalizeObject(details.user);
+      var device = normalizeObject(details.device);
+
+      dom.eventModalTitle.textContent = 'Событие ' + event.event;
+
+      var mainCard = createDetailCard('Основное');
+      appendDetailRow(mainCard.body, 'ID', event.id);
+      appendDetailRow(mainCard.body, 'Тип', event.event);
+      appendDetailRow(mainCard.body, 'Время', formatDateTimeFull(event.timestamp));
+      appendDetailRow(mainCard.body, 'Источник', event.source);
+      appendDetailRow(mainCard.body, 'Tenant', event.tenantKey);
+      appendDetailRow(mainCard.body, 'Session ID', event.sessionId);
+      dom.eventModalBody.appendChild(mainCard.card);
+
+      var userCard = createDetailCard('Пользователь');
+      appendDetailRow(userCard.body, 'Имя', event.userName);
+      appendDetailRow(userCard.body, 'Телефон', event.userPhone);
+      appendDetailRow(userCard.body, 'Client ID', event.userClientId);
+      dom.eventModalBody.appendChild(userCard.card);
+
+      var pageCard = createDetailCard('Страница');
+      appendDetailRow(pageCard.body, 'Path', event.pagePath || page.path);
+      appendDetailLinkRow(
+        pageCard.body,
+        'URL',
+        event.pageHref || page.href,
+        event.pageHref || page.href || '-'
+      );
+      dom.eventModalBody.appendChild(pageCard.card);
+
+      var payloadCard = createDetailCard('Payload');
+      appendDetailRow(payloadCard.body, 'Label', event.payloadLabel || payload.label);
+      appendDetailRow(payloadCard.body, 'Module', event.payloadModule || payload.module);
+      appendDetailRow(payloadCard.body, 'Source', event.payloadSource || payload.source);
+      appendDetailRow(payloadCard.body, 'Status', event.payloadStatus || payload.status);
+      appendDetailRow(payloadCard.body, 'Message', event.payloadMessage);
+      appendDetailRow(payloadCard.body, 'Error', event.payloadError);
+      dom.eventModalBody.appendChild(payloadCard.card);
+
+      if (Object.keys(user).length > 0) {
+        appendJsonCardTo(dom.eventModalBody, 'User', user);
+      }
+      if (Object.keys(page).length > 0) {
+        appendJsonCardTo(dom.eventModalBody, 'Page', page);
+      }
+      if (Object.keys(payload).length > 0) {
+        appendJsonCardTo(dom.eventModalBody, 'Payload JSON', payload);
+      }
+      if (Object.keys(device).length > 0) {
+        appendJsonCardTo(dom.eventModalBody, 'Device', device);
+      }
+      appendJsonCardTo(
+        dom.eventModalBody,
+        'Raw event payload',
+        Object.keys(details).length > 0 ? details : event
+      );
+    }
+
+    async function openGameEventDetails(event) {
+      if (!event || !event.id) {
+        return;
+      }
+      state.selectedGameEventId = event.id;
+      state.selectedGameEvent = event;
+      dom.eventModal.classList.remove('phab-admin-hidden');
+      renderGameEventDetails(event);
+
+      try {
+        var details = await api.getGameEventById(event.id);
+        if (state.selectedGameEventId !== event.id) {
+          return;
+        }
+        if (details && details.id) {
+          state.selectedGameEvent = details;
+          renderGameEventDetails(details);
+        }
+      } catch (error) {
+        if (state.selectedGameEventId === event.id) {
+          setStatus('Не удалось загрузить событие', true);
+        }
+        throw error;
+      }
     }
 
     function closeGameModal() {
@@ -2875,6 +3095,105 @@
       });
     }
 
+    function renderGameEvents() {
+      clearNode(dom.logsTable);
+
+      var columns = [
+        { key: 'timestamp', label: 'Время', minWidth: 150 },
+        { key: 'event', label: 'Событие', minWidth: 160 },
+        { key: 'source', label: 'Источник', minWidth: 120 },
+        { key: 'user', label: 'Пользователь', minWidth: 190 },
+        { key: 'page', label: 'Страница', minWidth: 180 },
+        { key: 'summary', label: 'Payload', minWidth: 260 },
+        { key: 'sessionId', label: 'Session', minWidth: 170 }
+      ];
+      var colgroup = document.createElement('colgroup');
+      var colRefs = {};
+      columns.forEach(function (column) {
+        var col = document.createElement('col');
+        colRefs[column.key] = col;
+        applyColumnWidth(col, state.gameEventsColumnWidths[column.key]);
+        colgroup.appendChild(col);
+      });
+      dom.logsTable.appendChild(colgroup);
+
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      columns.forEach(function (column) {
+        var th = document.createElement('th');
+        th.textContent = column.label;
+        applyColumnWidth(th, state.gameEventsColumnWidths[column.key]);
+        attachColumnResizeHandle(th, {
+          minWidth: column.minWidth,
+          onResize: function (nextWidth) {
+            state.gameEventsColumnWidths[column.key] = nextWidth;
+            applyColumnWidth(th, nextWidth);
+            applyColumnWidth(colRefs[column.key], nextWidth);
+          }
+        });
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      dom.logsTable.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      dom.logsTable.appendChild(tbody);
+
+      if (state.gameEvents.length === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 7;
+        emptyCell.textContent = 'Нет событий';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        return;
+      }
+
+      state.gameEvents.forEach(function (event) {
+        var tr = document.createElement('tr');
+        tr.className = 'phab-admin-games-row';
+        tr.addEventListener('click', function () {
+          openGameEventDetails(event).catch(handleError);
+        });
+
+        var timestampCell = document.createElement('td');
+        timestampCell.textContent = formatTime(event.timestamp);
+        tr.appendChild(timestampCell);
+
+        var eventCell = document.createElement('td');
+        renderCellLines(eventCell, [event.event, event.tenantKey ? 'tenant: ' + event.tenantKey : null].filter(Boolean), '-');
+        tr.appendChild(eventCell);
+
+        var sourceCell = document.createElement('td');
+        sourceCell.textContent = String(event.source || '-');
+        tr.appendChild(sourceCell);
+
+        var userCell = document.createElement('td');
+        renderCellLines(userCell, buildEventUserLines(event), '-');
+        tr.appendChild(userCell);
+
+        var pageCell = document.createElement('td');
+        renderCellLines(
+          pageCell,
+          [event.pagePath, event.pageHref].filter(function (value, index, list) {
+            return Boolean(value) && list.indexOf(value) === index;
+          }),
+          '-'
+        );
+        tr.appendChild(pageCell);
+
+        var summaryCell = document.createElement('td');
+        renderCellLines(summaryCell, buildEventSummaryLines(event), '-');
+        tr.appendChild(summaryCell);
+
+        var sessionCell = document.createElement('td');
+        renderCellLines(sessionCell, [event.sessionId], '-');
+        tr.appendChild(sessionCell);
+
+        tbody.appendChild(tr);
+      });
+    }
+
     function renderTournaments() {
       clearNode(dom.tournamentsTable);
 
@@ -3144,6 +3463,11 @@
       renderGames();
     }
 
+    async function loadGameEvents() {
+      state.gameEvents = (await api.getGameEvents()) || [];
+      renderGameEvents();
+    }
+
     async function loadTournaments() {
       state.tournaments = (await api.getTournaments()) || [];
       renderTournaments();
@@ -3282,17 +3606,20 @@
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
+      var isLogs = nextTab === 'logs';
       var isTournaments = nextTab === 'tournaments';
       var isSettings = nextTab === 'settings';
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
+      dom.tabLogs.className = 'phab-admin-tab' + (isLogs ? ' phab-admin-tab-active' : '');
       dom.tabTournaments.className =
         'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '');
       dom.tabSettings.className =
         'phab-admin-tab' + (isSettings ? ' phab-admin-tab-active' : '');
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
+      dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
     }
@@ -3311,6 +3638,8 @@
           await refreshMessageHierarchy();
         } else if (state.activeTab === 'games') {
           await loadGames();
+        } else if (state.activeTab === 'logs') {
+          await loadGameEvents();
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
         } else {
@@ -3329,6 +3658,10 @@
       dom.tabGames.addEventListener('click', function () {
         switchTab('games');
         loadGames().catch(handleError);
+      });
+      dom.tabLogs.addEventListener('click', function () {
+        switchTab('logs');
+        loadGameEvents().catch(handleError);
       });
       dom.tabTournaments.addEventListener('click', function () {
         switchTab('tournaments');
@@ -3384,6 +3717,14 @@
           closeGameModal();
         }
       });
+      dom.eventModalCloseBtn.addEventListener('click', function () {
+        closeGameEventModal();
+      });
+      dom.eventModal.addEventListener('click', function (event) {
+        if (event.target === dom.eventModal) {
+          closeGameEventModal();
+        }
+      });
       dom.gameChatCloseBtn.addEventListener('click', function () {
         closeGameChatModal();
       });
@@ -3407,6 +3748,10 @@
         }
         if (!dom.gameChatModal.classList.contains('phab-admin-hidden')) {
           closeGameChatModal();
+          return;
+        }
+        if (!dom.eventModal.classList.contains('phab-admin-hidden')) {
+          closeGameEventModal();
           return;
         }
         if (!dom.gameModal.classList.contains('phab-admin-hidden')) {

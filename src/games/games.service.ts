@@ -14,6 +14,7 @@ import {
   Game,
   GameChatContext,
   GameChatMessage,
+  GameEvent,
   GameParticipantDetails,
   GameStatus
 } from './games.types';
@@ -85,6 +86,20 @@ interface MongoGameChatMessageDoc {
   deleted?: unknown;
 }
 
+interface MongoGameEventDoc {
+  [key: string]: unknown;
+  _id?: unknown;
+  event?: unknown;
+  timestamp?: unknown;
+  sessionId?: unknown;
+  source?: unknown;
+  tenantKey?: unknown;
+  page?: Record<string, unknown>;
+  user?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+  device?: Record<string, unknown>;
+}
+
 @Injectable()
 export class GamesService implements OnModuleDestroy {
   private readonly logger = new Logger(GamesService.name);
@@ -92,6 +107,8 @@ export class GamesService implements OnModuleDestroy {
   private readonly mongoUri = this.readEnv('GAMES_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
   private readonly mongoDbName = this.readEnv('GAMES_MONGODB_DB') ?? 'games';
   private readonly mongoCollectionName = this.readEnv('GAMES_MONGODB_COLLECTION') ?? 'lk_games';
+  private readonly mongoEventsCollectionName =
+    this.readEnv('GAMES_EVENTS_MONGODB_COLLECTION') ?? 'events';
 
   private readonly gameChatMongoUri =
     this.readEnv('GAMES_CHAT_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
@@ -129,6 +146,18 @@ export class GamesService implements OnModuleDestroy {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
     return game;
+  }
+
+  async findEvents(): Promise<GameEvent[]> {
+    return this.findEventsFromMongo();
+  }
+
+  async findEventById(id: string): Promise<GameEvent> {
+    const event = await this.findEventByIdFromMongo(id);
+    if (!event) {
+      throw new NotFoundException(`Game event with id ${id} not found`);
+    }
+    return event;
   }
 
   async getGameChat(id: string, _user: RequestUser): Promise<GameChatContext> {
@@ -250,10 +279,64 @@ export class GamesService implements OnModuleDestroy {
     return this.mapMongoGame(doc, { includeDetails: true });
   }
 
+  private async findEventsFromMongo(): Promise<GameEvent[]> {
+    const collection = await this.getMongoEventsCollection();
+    const docs = (await collection
+      .find(
+        {},
+        {
+          projection: {
+            event: 1,
+            timestamp: 1,
+            sessionId: 1,
+            source: 1,
+            tenantKey: 1,
+            page: 1,
+            user: 1,
+            payload: 1
+          }
+        }
+      )
+      .sort({ timestamp: -1, _id: -1 })
+      .limit(500)
+      .toArray()) as MongoGameEventDoc[];
+
+    return docs
+      .map((doc) => this.mapMongoEvent(doc))
+      .filter((event): event is GameEvent => event !== null);
+  }
+
+  private async findEventByIdFromMongo(id: string): Promise<GameEvent | null> {
+    const collection = await this.getMongoEventsCollection();
+    const filter: Record<string, unknown>[] = [];
+    if (ObjectId.isValid(id)) {
+      filter.push({ _id: new ObjectId(id) });
+    }
+    filter.push({ _id: id });
+
+    const doc = (await collection.findOne({
+      $or: filter
+    } as Filter<MongoGameEventDoc>)) as MongoGameEventDoc | null;
+    if (!doc) {
+      return null;
+    }
+    return this.mapMongoEvent(doc, { includeDetails: true });
+  }
+
   private async getMongoCollection() {
+    const db = await this.getMongoDatabase();
+    return db.collection<MongoGameDoc>(this.mongoCollectionName);
+  }
+
+  private async getMongoEventsCollection() {
+    const db = await this.getMongoDatabase();
+    return db.collection<MongoGameEventDoc>(this.mongoEventsCollectionName);
+  }
+
+  private async getMongoDatabase() {
     if (!this.mongoUri) {
       throw new InternalServerErrorException(
-        'GAMES_SOURCE=mongo requires MONGODB_URI or GAMES_MONGODB_URI'
+        'Games MongoDB access requires MONGODB_URI or GAMES_MONGODB_URI'
       );
     }
 
@@ -274,7 +357,7 @@ export class GamesService implements OnModuleDestroy {
       }
     }
 
-    return this.mongoClient.db(this.mongoDbName).collection<MongoGameDoc>(this.mongoCollectionName);
+    return this.mongoClient.db(this.mongoDbName);
   }
 
   private async getGameChatMessagesCollection() {
@@ -1084,6 +1167,99 @@ export class GamesService implements OnModuleDestroy {
     return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
   }
 
+  private mapMongoEvent(
+    doc: MongoGameEventDoc,
+    options?: { includeDetails?: boolean }
+  ): GameEvent | null {
+    const id = this.readObjectId(doc._id) ?? this.readScalarString(doc._id);
+    if (!id) {
+      return null;
+    }
+
+    const event = this.readFieldString(doc, ['event']) ?? 'unknown';
+    const timestamp =
+      this.readIsoDateValue(this.getValueByPath(doc, 'timestamp')) ??
+      this.readIsoDateValue(this.getValueByPath(doc, 'createdAt')) ??
+      this.toIsoFromEpoch(this.getValueByPath(doc, 'timestampTs')) ??
+      this.toIsoFromEpoch(this.getValueByPath(doc, 'createdTs')) ??
+      undefined;
+    const payloadMessage =
+      this.readFieldString(doc, [
+        'payload.message',
+        'payload.context.message',
+        'payload.reason',
+        'payload.status'
+      ]) ?? undefined;
+    const payloadError =
+      this.readFieldString(doc, ['payload.errorMessage', 'payload.errorName']) ?? undefined;
+
+    return {
+      id,
+      event,
+      timestamp,
+      sessionId: this.readFieldString(doc, ['sessionId']) ?? undefined,
+      source: this.readFieldString(doc, ['source']) ?? undefined,
+      tenantKey: this.readFieldString(doc, ['tenantKey']) ?? undefined,
+      pagePath: this.readFieldString(doc, ['page.path']) ?? undefined,
+      pageHref: this.readFieldString(doc, ['page.href']) ?? undefined,
+      userPhone: this.readFieldString(doc, ['user.phone', 'payload.context.phone']) ?? undefined,
+      userClientId:
+        this.readFieldString(doc, ['user.clientId', 'payload.clientId', 'payload.context.clientId']) ??
+        undefined,
+      userName: this.buildEventUserName(doc) ?? undefined,
+      payloadLabel: this.readFieldString(doc, ['payload.label']) ?? undefined,
+      payloadModule: this.readFieldString(doc, ['payload.module']) ?? undefined,
+      payloadSource: this.readFieldString(doc, ['payload.source']) ?? undefined,
+      payloadStatus: this.readFieldString(doc, ['payload.status']) ?? undefined,
+      payloadMessage,
+      payloadError,
+      details: options?.includeDetails ? this.normalizeForJson(doc) : undefined
+    };
+  }
+
+  private buildEventUserName(doc: MongoGameEventDoc): string | null {
+    const parts = [
+      this.readFieldString(doc, ['user.firstName']),
+      this.readFieldString(doc, ['user.lastName'])
+    ].filter((item): item is string => Boolean(item));
+    if (parts.length > 0) {
+      return parts.join(' ');
+    }
+    return this.readFieldString(doc, ['user.email', 'user.clientId', 'user.phone']);
+  }
+
+  private getValueByPath(source: unknown, path: string): unknown {
+    if (!source || typeof source !== 'object') {
+      return undefined;
+    }
+
+    const record = source as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(record, path)) {
+      return record[path];
+    }
+
+    const parts = path.split('.');
+    let current: unknown = record;
+    for (const part of parts) {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[part];
+    }
+    return current;
+  }
+
+  private readFieldString(source: unknown, paths: string[]): string | null {
+    for (const path of paths) {
+      const value = this.getValueByPath(source, path);
+      const text = this.readScalarString(value);
+      if (text) {
+        return text;
+      }
+    }
+    return null;
+  }
+
   private normalizeMongoStatus(rawStatus: string | null, archived: unknown): GameStatus {
     if (archived === true) {
       return GameStatus.ARCHIVED;
@@ -1139,6 +1315,29 @@ export class GamesService implements OnModuleDestroy {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private readScalarString(value: unknown): string | null {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return value.toISOString();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false';
+    }
+    return this.readString(value);
+  }
+
+  private readIsoDateValue(value: unknown): string | null {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return value.toISOString();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return new Date(value).toISOString();
+    }
+    return this.readString(value);
   }
 
   private readNumber(value: unknown): number | null {
