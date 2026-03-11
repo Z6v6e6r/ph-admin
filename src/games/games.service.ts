@@ -408,15 +408,25 @@ export class GamesService implements OnModuleDestroy {
 
   private buildMongoEventFilter(filters?: GameEventListFilters): Filter<MongoGameEventDoc> {
     const eventName = this.readString(filters?.event);
+    const phoneDigits = this.normalizePhone(filters?.phone);
     const fromIso = this.normalizeDateFilterValue(filters?.from, false);
     const toIso = this.normalizeDateFilterValue(filters?.to, true);
-    if (!eventName && !fromIso && !toIso) {
+    if (!eventName && !phoneDigits && !fromIso && !toIso) {
       return {};
     }
 
     const clauses: Filter<MongoGameEventDoc>[] = [];
     if (eventName) {
       clauses.push({ event: eventName } as Filter<MongoGameEventDoc>);
+    }
+    if (phoneDigits) {
+      const phonePattern = this.buildLoosePhoneRegex(phoneDigits);
+      clauses.push({
+        $or: [
+          { 'user.phone': { $regex: phonePattern } },
+          { 'payload.context.phone': { $regex: phonePattern } }
+        ]
+      } as Filter<MongoGameEventDoc>);
     }
 
     const stringRange: Record<string, string> = {};
@@ -448,6 +458,13 @@ export class GamesService implements OnModuleDestroy {
     return {
       $and: clauses
     } as Filter<MongoGameEventDoc>;
+  }
+
+  private buildLoosePhoneRegex(phoneDigits: string): string {
+    return phoneDigits
+      .split('')
+      .map((digit) => digit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\D*');
   }
 
   private normalizeDateFilterValue(value: string | undefined, endOfDay: boolean): string | null {

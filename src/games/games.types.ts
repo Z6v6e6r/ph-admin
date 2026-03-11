@@ -59,6 +59,7 @@ export interface GameEvent {
 
 export interface GameEventListFilters {
   event?: string;
+  phone?: string;
   from?: string;
   to?: string;
   page?: number;

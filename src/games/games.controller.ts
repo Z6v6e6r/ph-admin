@@ -43,6 +43,7 @@ export class GamesController {
   @Get('events')
   findEvents(
     @Query('event') event?: string,
+    @Query('phone') phone?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
@@ -50,6 +51,7 @@ export class GamesController {
   ): Promise<GameEventListResult> {
     const filters: GameEventListFilters = {
       event,
+      phone,
       from,
       to,
       page: page ? Number(page) : undefined,
