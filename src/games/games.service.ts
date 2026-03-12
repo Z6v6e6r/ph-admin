@@ -12,6 +12,8 @@ import { Role } from '../common/rbac/role.enum';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import {
   Game,
+  GameAnalyticsFilters,
+  GameAnalyticsResult,
   GameChatContext,
   GameChatMessage,
   GameEvent,
@@ -26,8 +28,10 @@ type StaffSide = 'CLIENT' | 'STAFF';
 
 interface MongoGameParticipant {
   [key: string]: unknown;
+  id?: unknown;
   name?: unknown;
   phone?: unknown;
+  phoneNorm?: unknown;
   rating?: unknown;
   ratingDelta?: unknown;
   rating_change?: unknown;
@@ -44,9 +48,13 @@ interface MongoGameDoc {
   createdAt?: unknown;
   updatedAt?: unknown;
   organizer?: {
+    id?: unknown;
     name?: unknown;
+    phone?: unknown;
+    phoneNorm?: unknown;
   };
   participants?: MongoGameParticipant[];
+  participantPhones?: unknown;
   metadata?: Record<string, unknown>;
   result?: unknown;
   score?: unknown;
@@ -54,6 +62,13 @@ interface MongoGameDoc {
   gameResult?: unknown;
   ratingDelta?: unknown;
   ratingChanges?: unknown;
+  payment?: {
+    [key: string]: unknown;
+    amount?: unknown;
+    paid?: unknown;
+    paidAt?: unknown;
+    status?: unknown;
+  };
   booking?: {
     [key: string]: unknown;
     date?: unknown;
@@ -151,6 +166,10 @@ export class GamesService implements OnModuleDestroy {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
     return game;
+  }
+
+  async findAnalytics(filters?: GameAnalyticsFilters): Promise<GameAnalyticsResult> {
+    return this.findAnalyticsFromMongo(filters);
   }
 
   async findEvents(filters?: GameEventListFilters): Promise<GameEventListResult> {
@@ -333,6 +352,96 @@ export class GamesService implements OnModuleDestroy {
     };
   }
 
+  private async findAnalyticsFromMongo(filters?: GameAnalyticsFilters): Promise<GameAnalyticsResult> {
+    const collection = await this.getMongoCollection();
+    const normalizedFrom = this.normalizeAnalyticsDateValue(filters?.from);
+    const normalizedTo = this.normalizeAnalyticsDateValue(filters?.to);
+    const docs = (await collection
+      .find(
+        {},
+        {
+          projection: {
+            booking: 1,
+            stationName: 1,
+            organizer: 1,
+            participants: 1,
+            participantPhones: 1,
+            payment: 1,
+            metadata: 1,
+            createdAt: 1
+          }
+        }
+      )
+      .toArray()) as MongoGameDoc[];
+
+    const stationMap = new Map<
+      string,
+      {
+        stationName: string;
+        gamesCount: number;
+        playersAddedCount: number;
+        paymentsAmount: number;
+      }
+    >();
+
+    docs.forEach((doc) => {
+      const gameDate = this.resolveAnalyticsGameDate(doc);
+      if (normalizedFrom && (!gameDate || gameDate < normalizedFrom)) {
+        return;
+      }
+      if (normalizedTo && (!gameDate || gameDate > normalizedTo)) {
+        return;
+      }
+
+      const stationName = this.resolveAnalyticsStationName(doc);
+      const bucket = stationMap.get(stationName) ?? {
+        stationName,
+        gamesCount: 0,
+        playersAddedCount: 0,
+        paymentsAmount: 0
+      };
+
+      bucket.gamesCount += 1;
+      bucket.playersAddedCount += this.calculateAnalyticsPlayersAdded(doc);
+      bucket.paymentsAmount += this.calculateAnalyticsPaymentsAmount(doc);
+      stationMap.set(stationName, bucket);
+    });
+
+    const items = Array.from(stationMap.values()).sort((left, right) => {
+      if (right.gamesCount !== left.gamesCount) {
+        return right.gamesCount - left.gamesCount;
+      }
+      if (right.playersAddedCount !== left.playersAddedCount) {
+        return right.playersAddedCount - left.playersAddedCount;
+      }
+      if (right.paymentsAmount !== left.paymentsAmount) {
+        return right.paymentsAmount - left.paymentsAmount;
+      }
+      return left.stationName.localeCompare(right.stationName, 'ru');
+    });
+
+    const totals = items.reduce(
+      (acc, item) => {
+        acc.gamesCount += item.gamesCount;
+        acc.playersAddedCount += item.playersAddedCount;
+        acc.paymentsAmount += item.paymentsAmount;
+        return acc;
+      },
+      {
+        gamesCount: 0,
+        playersAddedCount: 0,
+        paymentsAmount: 0
+      }
+    );
+
+    return {
+      from: normalizedFrom ?? undefined,
+      to: normalizedTo ?? undefined,
+      items,
+      totals
+    };
+  }
+
   private async findEventByIdFromMongo(id: string): Promise<GameEvent | null> {
     const collection = await this.getMongoEventsCollection();
     const doc = (await collection.findOne(
@@ -486,6 +595,141 @@ export class GamesService implements OnModuleDestroy {
       return null;
     }
     return parsed.toISOString();
+  }
+
+  private normalizeAnalyticsDateValue(value: string | undefined): string | null {
+    const text = this.readString(value);
+    if (!text) {
+      return null;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return text;
+    }
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private resolveAnalyticsStationName(doc: MongoGameDoc): string {
+    return (
+      this.readString(doc.booking?.studioName) ??
+      this.readString(doc.booking?.stationName) ??
+      this.readString(doc.stationName) ??
+      'Без станции'
+    );
+  }
+
+  private resolveAnalyticsGameDate(doc: MongoGameDoc): string | null {
+    const bookingDate = this.readString(doc.booking?.date);
+    if (bookingDate && /^\d{4}-\d{2}-\d{2}$/.test(bookingDate)) {
+      return bookingDate;
+    }
+
+    const timeFromIso = this.readString(doc.booking?.timeFromIso);
+    if (timeFromIso && timeFromIso.length >= 10) {
+      return timeFromIso.slice(0, 10);
+    }
+
+    const createdAt = this.readIsoDateValue(doc.createdAt);
+    if (createdAt && createdAt.length >= 10) {
+      return createdAt.slice(0, 10);
+    }
+
+    return null;
+  }
+
+  private calculateAnalyticsPlayersAdded(doc: MongoGameDoc): number {
+    const organizer = this.toRecord(doc.organizer);
+    const organizerKeys = [
+      this.normalizeParticipantAnalyticsKey(organizer.id),
+      this.normalizeParticipantAnalyticsKey(organizer.phoneNorm),
+      this.normalizeParticipantAnalyticsKey(organizer.phone)
+    ].filter((key): key is string => Boolean(key));
+
+    const participantKeys = new Set<string>();
+    const pushParticipantKey = (value: unknown) => {
+      const key = this.normalizeParticipantAnalyticsKey(value);
+      if (key) {
+        participantKeys.add(key);
+      }
+    };
+
+    if (Array.isArray(doc.participants) && doc.participants.length > 0) {
+      doc.participants.forEach((participant) => {
+        pushParticipantKey(participant.id);
+        pushParticipantKey(participant.phoneNorm);
+        pushParticipantKey(participant.phone);
+        pushParticipantKey(participant.name);
+      });
+    } else {
+      const metadata = this.toRecord(doc.metadata);
+      if (Array.isArray(metadata.teamSlots)) {
+        metadata.teamSlots.forEach((slot) => {
+          const slotRecord = this.toRecord(slot);
+          pushParticipantKey(slotRecord.id);
+          pushParticipantKey(slotRecord.phoneNorm);
+          pushParticipantKey(slotRecord.phone);
+          pushParticipantKey(slotRecord.name);
+        });
+      }
+      this.toStringArray(doc.participantPhones).forEach((phone) => pushParticipantKey(phone));
+    }
+
+    if (participantKeys.size === 0) {
+      return 0;
+    }
+
+    let removedOrganizer = false;
+    organizerKeys.forEach((key) => {
+      if (participantKeys.delete(key)) {
+        removedOrganizer = true;
+      }
+    });
+
+    if (!removedOrganizer && participantKeys.size > 0) {
+      return Math.max(0, participantKeys.size - 1);
+    }
+
+    return participantKeys.size;
+  }
+
+  private normalizeParticipantAnalyticsKey(value: unknown): string | null {
+    const asPhone = this.normalizePhone(value);
+    if (asPhone) {
+      return `phone:${asPhone}`;
+    }
+
+    const text = this.readString(value);
+    if (!text) {
+      return null;
+    }
+    return `text:${text.trim().toLowerCase()}`;
+  }
+
+  private calculateAnalyticsPaymentsAmount(doc: MongoGameDoc): number {
+    const payment = this.toRecord(doc.payment);
+    if (Object.keys(payment).length === 0) {
+      return 0;
+    }
+
+    const amount = this.readNumber(payment.amount);
+    if (amount === null) {
+      return 0;
+    }
+
+    const paid = payment.paid === true;
+    const paidAt = this.readString(payment.paidAt);
+    const status = (this.readString(payment.status) ?? '').trim().toUpperCase();
+    if (paid || paidAt || status === 'PAID') {
+      return amount;
+    }
+
+    return 0;
   }
 
   private async getGameChatMessagesCollection() {

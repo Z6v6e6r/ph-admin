@@ -16,6 +16,8 @@ import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { GamesService } from './games.service';
 import {
   Game,
+  GameAnalyticsFilters,
+  GameAnalyticsResult,
   GameChatContext,
   GameChatMessage,
   GameEvent,
@@ -38,6 +40,18 @@ export class GamesController {
   @Get()
   findAll(): Promise<Game[]> {
     return this.gamesService.findAll();
+  }
+
+  @Get('analytics')
+  findAnalytics(
+    @Query('from') from?: string,
+    @Query('to') to?: string
+  ): Promise<GameAnalyticsResult> {
+    const filters: GameAnalyticsFilters = {
+      from,
+      to
+    };
+    return this.gamesService.findAnalytics(filters);
   }
 
   @Get('events')

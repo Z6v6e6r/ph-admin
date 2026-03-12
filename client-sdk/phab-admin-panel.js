@@ -1047,6 +1047,18 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/games/events' + suffix, 'GET');
       },
+      getGameAnalytics: function () {
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.from) {
+          params.set('from', String(query.from));
+        }
+        if (query.to) {
+          params.set('to', String(query.to));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/games/analytics' + suffix, 'GET');
+      },
       getGameEventById: function (eventId) {
         return request('/games/events/' + encodeURIComponent(eventId), 'GET');
       },
@@ -1098,6 +1110,44 @@
     var dd = String(d.getDate()).padStart(2, '0');
     var mo = String(d.getMonth() + 1).padStart(2, '0');
     return dd + '.' + mo + ' ' + hh + ':' + mm;
+  }
+
+  function formatDateInputValue(value) {
+    if (!value) {
+      return '';
+    }
+    var d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      return '';
+    }
+    var year = String(d.getFullYear());
+    var month = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return year + '-' + month + '-' + day;
+  }
+
+  function getTodayDateInputValue() {
+    return formatDateInputValue(new Date());
+  }
+
+  function getMonthStartDateInputValue() {
+    var d = new Date();
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return formatDateInputValue(d);
+  }
+
+  function formatMoney(value) {
+    var amount = Number(value);
+    if (!Number.isFinite(amount)) {
+      amount = 0;
+    }
+    return (
+      new Intl.NumberFormat('ru-RU', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }).format(amount) + ' ₽'
+    );
   }
 
   function clearNode(node) {
@@ -1209,6 +1259,12 @@
     tabLogs.textContent = 'Логи';
     tabs.appendChild(tabLogs);
 
+    var tabAnalytics = document.createElement('button');
+    tabAnalytics.className = 'phab-admin-tab';
+    tabAnalytics.type = 'button';
+    tabAnalytics.textContent = 'Аналитика';
+    tabs.appendChild(tabAnalytics);
+
     var tabTournaments = document.createElement('button');
     tabTournaments.className = 'phab-admin-tab';
     tabTournaments.type = 'button';
@@ -1235,6 +1291,10 @@
     var logsSection = document.createElement('div');
     logsSection.className = 'phab-admin-hidden';
     content.appendChild(logsSection);
+
+    var analyticsSection = document.createElement('div');
+    analyticsSection.className = 'phab-admin-hidden';
+    content.appendChild(analyticsSection);
 
     var tournamentsSection = document.createElement('div');
     tournamentsSection.className = 'phab-admin-hidden';
@@ -1488,6 +1548,64 @@
     var logsTable = document.createElement('table');
     logsTable.className = 'phab-admin-games-table';
     logsTableWrap.appendChild(logsTable);
+
+    var analyticsControls = document.createElement('div');
+    analyticsControls.className = 'phab-admin-logs-controls';
+    analyticsSection.appendChild(analyticsControls);
+
+    var analyticsFilters = document.createElement('div');
+    analyticsFilters.className = 'phab-admin-logs-filters';
+    analyticsControls.appendChild(analyticsFilters);
+
+    var analyticsFromWrap = document.createElement('label');
+    analyticsFromWrap.className = 'phab-admin-logs-filter';
+    analyticsFilters.appendChild(analyticsFromWrap);
+
+    var analyticsFromLabel = document.createElement('span');
+    analyticsFromLabel.className = 'phab-admin-settings-label';
+    analyticsFromLabel.textContent = 'С даты';
+    analyticsFromWrap.appendChild(analyticsFromLabel);
+
+    var analyticsFromInput = document.createElement('input');
+    analyticsFromInput.className = 'phab-admin-settings-input';
+    analyticsFromInput.type = 'date';
+    analyticsFromInput.style.width = '160px';
+    analyticsFromWrap.appendChild(analyticsFromInput);
+
+    var analyticsToWrap = document.createElement('label');
+    analyticsToWrap.className = 'phab-admin-logs-filter';
+    analyticsFilters.appendChild(analyticsToWrap);
+
+    var analyticsToLabel = document.createElement('span');
+    analyticsToLabel.className = 'phab-admin-settings-label';
+    analyticsToLabel.textContent = 'По дату';
+    analyticsToWrap.appendChild(analyticsToLabel);
+
+    var analyticsToInput = document.createElement('input');
+    analyticsToInput.className = 'phab-admin-settings-input';
+    analyticsToInput.type = 'date';
+    analyticsToInput.style.width = '160px';
+    analyticsToWrap.appendChild(analyticsToInput);
+
+    var analyticsApplyBtn = document.createElement('button');
+    analyticsApplyBtn.className = 'phab-admin-btn';
+    analyticsApplyBtn.type = 'button';
+    analyticsApplyBtn.textContent = 'Применить';
+    analyticsFilters.appendChild(analyticsApplyBtn);
+
+    var analyticsResetBtn = document.createElement('button');
+    analyticsResetBtn.className = 'phab-admin-btn-secondary';
+    analyticsResetBtn.type = 'button';
+    analyticsResetBtn.textContent = 'Сбросить';
+    analyticsFilters.appendChild(analyticsResetBtn);
+
+    var analyticsTableWrap = document.createElement('div');
+    analyticsTableWrap.className = 'phab-admin-games-table-wrap';
+    analyticsSection.appendChild(analyticsTableWrap);
+
+    var analyticsTable = document.createElement('table');
+    analyticsTable.className = 'phab-admin-games-table';
+    analyticsTableWrap.appendChild(analyticsTable);
 
     var tournamentsTable = document.createElement('table');
     tournamentsTable.className = 'phab-admin-games-table';
@@ -1819,11 +1937,13 @@
       tabMessages: tabMessages,
       tabGames: tabGames,
       tabLogs: tabLogs,
+      tabAnalytics: tabAnalytics,
       tabTournaments: tabTournaments,
       tabSettings: tabSettings,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
       logsSection: logsSection,
+      analyticsSection: analyticsSection,
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
       connectorsList: connectorsList,
@@ -1868,6 +1988,11 @@
       logsNextPageBtn: logsNextPageBtn,
       logsPageInfo: logsPageInfo,
       logsTable: logsTable,
+      analyticsFromInput: analyticsFromInput,
+      analyticsToInput: analyticsToInput,
+      analyticsApplyBtn: analyticsApplyBtn,
+      analyticsResetBtn: analyticsResetBtn,
+      analyticsTable: analyticsTable,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
       stationIdInput: stationIdInput,
@@ -1929,12 +2054,19 @@
       messages: [],
       games: [],
       gameEvents: [],
+      analytics: [],
+      analyticsTotals: {
+        gamesCount: 0,
+        playersAddedCount: 0,
+        paymentsAmount: 0
+      },
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
       gamesPageSize: 15,
       gamesPage: 1,
       gamesColumnWidths: {},
       gameEventsColumnWidths: {},
+      analyticsColumnWidths: {},
       gameEventsPageSize: 30,
       gameEventsPage: 1,
       gameEventsTotal: 0,
@@ -1943,6 +2075,8 @@
       gameEventsFilterPhone: '',
       gameEventsFilterFrom: '',
       gameEventsFilterTo: '',
+      analyticsFilterFrom: getMonthStartDateInputValue(),
+      analyticsFilterTo: getTodayDateInputValue(),
       tournaments: [],
       tournamentsColumnWidths: {},
       settings: {
@@ -1966,6 +2100,8 @@
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
     dom.logsToInput.value = state.gameEventsFilterTo;
+    dom.analyticsFromInput.value = state.analyticsFilterFrom;
+    dom.analyticsToInput.value = state.analyticsFilterTo;
 
     function setStatus(text, isError) {
       dom.status.textContent = text;
@@ -3568,6 +3704,89 @@
       updateGameEventsPaginationControls(state.gameEventsTotal, state.gameEventsTotalPages);
     }
 
+    function renderAnalytics() {
+      clearNode(dom.analyticsTable);
+
+      var columns = [
+        { key: 'stationName', label: 'Станция', minWidth: 220 },
+        { key: 'gamesCount', label: 'Игр организовано', minWidth: 140 },
+        { key: 'playersAddedCount', label: 'Игроков добавилось', minWidth: 170 },
+        { key: 'paymentsAmount', label: 'Сумма оплат', minWidth: 160 }
+      ];
+      var colgroup = document.createElement('colgroup');
+      var colRefs = {};
+      columns.forEach(function (column) {
+        var col = document.createElement('col');
+        colRefs[column.key] = col;
+        applyColumnWidth(col, state.analyticsColumnWidths[column.key]);
+        colgroup.appendChild(col);
+      });
+      dom.analyticsTable.appendChild(colgroup);
+
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      columns.forEach(function (column) {
+        var th = document.createElement('th');
+        th.textContent = column.label;
+        applyColumnWidth(th, state.analyticsColumnWidths[column.key]);
+        attachColumnResizeHandle(th, {
+          minWidth: column.minWidth,
+          onResize: function (nextWidth) {
+            state.analyticsColumnWidths[column.key] = nextWidth;
+            applyColumnWidth(th, nextWidth);
+            applyColumnWidth(colRefs[column.key], nextWidth);
+          }
+        });
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      dom.analyticsTable.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      dom.analyticsTable.appendChild(tbody);
+
+      if (state.analytics.length === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 4;
+        emptyCell.textContent = 'Нет данных за период';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        return;
+      }
+
+      state.analytics.forEach(function (item) {
+        var tr = document.createElement('tr');
+        [
+          item.stationName || 'Без станции',
+          String(Number(item.gamesCount || 0)),
+          String(Number(item.playersAddedCount || 0)),
+          formatMoney(item.paymentsAmount || 0)
+        ].forEach(function (value) {
+          var td = document.createElement('td');
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+
+      var tfoot = document.createElement('tfoot');
+      var totalRow = document.createElement('tr');
+      [
+        'Итого',
+        String(Number(state.analyticsTotals.gamesCount || 0)),
+        String(Number(state.analyticsTotals.playersAddedCount || 0)),
+        formatMoney(state.analyticsTotals.paymentsAmount || 0)
+      ].forEach(function (value) {
+        var td = document.createElement('td');
+        td.textContent = value;
+        td.style.fontWeight = '700';
+        totalRow.appendChild(td);
+      });
+      tfoot.appendChild(totalRow);
+      dom.analyticsTable.appendChild(tfoot);
+    }
+
     function renderTournaments() {
       clearNode(dom.tournamentsTable);
 
@@ -3874,6 +4093,31 @@
       renderGameEvents();
     }
 
+    async function loadGameAnalytics() {
+      var response =
+        (await api.getGameAnalytics({
+          from: state.analyticsFilterFrom || undefined,
+          to: state.analyticsFilterTo || undefined
+        })) || {};
+
+      state.analytics = Array.isArray(response.items) ? response.items : [];
+      state.analyticsTotals = isObject(response.totals)
+        ? {
+            gamesCount: Number(response.totals.gamesCount || 0),
+            playersAddedCount: Number(response.totals.playersAddedCount || 0),
+            paymentsAmount: Number(response.totals.paymentsAmount || 0)
+          }
+        : {
+            gamesCount: 0,
+            playersAddedCount: 0,
+            paymentsAmount: 0
+          };
+
+      dom.analyticsFromInput.value = state.analyticsFilterFrom;
+      dom.analyticsToInput.value = state.analyticsFilterTo;
+      renderAnalytics();
+    }
+
     async function loadTournaments() {
       state.tournaments = (await api.getTournaments()) || [];
       renderTournaments();
@@ -4013,12 +4257,15 @@
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
       var isLogs = nextTab === 'logs';
+      var isAnalytics = nextTab === 'analytics';
       var isTournaments = nextTab === 'tournaments';
       var isSettings = nextTab === 'settings';
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
       dom.tabLogs.className = 'phab-admin-tab' + (isLogs ? ' phab-admin-tab-active' : '');
+      dom.tabAnalytics.className =
+        'phab-admin-tab' + (isAnalytics ? ' phab-admin-tab-active' : '');
       dom.tabTournaments.className =
         'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '');
       dom.tabSettings.className =
@@ -4026,6 +4273,7 @@
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
+      dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
     }
@@ -4046,6 +4294,8 @@
           await loadGames();
         } else if (state.activeTab === 'logs') {
           await loadGameEvents();
+        } else if (state.activeTab === 'analytics') {
+          await loadGameAnalytics();
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
         } else {
@@ -4068,6 +4318,10 @@
       dom.tabLogs.addEventListener('click', function () {
         switchTab('logs');
         loadGameEvents().catch(handleError);
+      });
+      dom.tabAnalytics.addEventListener('click', function () {
+        switchTab('analytics');
+        loadGameAnalytics().catch(handleError);
       });
       dom.tabTournaments.addEventListener('click', function () {
         switchTab('tournaments');
@@ -4128,6 +4382,18 @@
         state.gameEventsPage += 1;
         loadGameEvents().catch(handleError);
       });
+      dom.analyticsApplyBtn.addEventListener('click', function () {
+        state.analyticsFilterFrom = String(dom.analyticsFromInput.value || '').trim();
+        state.analyticsFilterTo = String(dom.analyticsToInput.value || '').trim();
+        loadGameAnalytics().catch(handleError);
+      });
+      dom.analyticsResetBtn.addEventListener('click', function () {
+        state.analyticsFilterFrom = getMonthStartDateInputValue();
+        state.analyticsFilterTo = getTodayDateInputValue();
+        dom.analyticsFromInput.value = state.analyticsFilterFrom;
+        dom.analyticsToInput.value = state.analyticsFilterTo;
+        loadGameAnalytics().catch(handleError);
+      });
       [dom.logsEventInput, dom.logsPhoneInput, dom.logsFromInput, dom.logsToInput].forEach(function (input) {
         input.addEventListener('keydown', function (event) {
           if (event.key === 'Enter') {
@@ -4138,6 +4404,16 @@
             state.gameEventsFilterTo = String(dom.logsToInput.value || '').trim();
             state.gameEventsPage = 1;
             loadGameEvents().catch(handleError);
+          }
+        });
+      });
+      [dom.analyticsFromInput, dom.analyticsToInput].forEach(function (input) {
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            state.analyticsFilterFrom = String(dom.analyticsFromInput.value || '').trim();
+            state.analyticsFilterTo = String(dom.analyticsToInput.value || '').trim();
+            loadGameAnalytics().catch(handleError);
           }
         });
       });

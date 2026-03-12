@@ -74,6 +74,31 @@ export interface GameEventListResult {
   totalPages: number;
 }
 
+export interface GameAnalyticsFilters {
+  from?: string;
+  to?: string;
+}
+
+export interface GameAnalyticsStationRow {
+  stationName: string;
+  gamesCount: number;
+  playersAddedCount: number;
+  paymentsAmount: number;
+}
+
+export interface GameAnalyticsTotals {
+  gamesCount: number;
+  playersAddedCount: number;
+  paymentsAmount: number;
+}
+
+export interface GameAnalyticsResult {
+  from?: string;
+  to?: string;
+  items: GameAnalyticsStationRow[];
+  totals: GameAnalyticsTotals;
+}
+
 export interface GameChatMessage {
   id: string;
   gameId: string;
