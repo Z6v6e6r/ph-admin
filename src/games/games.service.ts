@@ -724,16 +724,12 @@ export class GamesService implements OnModuleDestroy {
       'payment.price',
       'booking.totalAmount',
       'booking.fullAmount',
-      'booking.amount',
       'booking.price',
       'metadata.payment.totalAmount',
       'metadata.payment.fullAmount',
-      'metadata.payment.amount',
       'metadata.totalAmount',
       'metadata.paymentAmount',
-      'metadata.amount',
-      'metadata.price',
-      'payment.amount'
+      'metadata.price'
     ];
 
     let fallback: number | null = null;
