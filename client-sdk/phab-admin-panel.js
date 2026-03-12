@@ -3709,7 +3709,7 @@
 
       var columns = [
         { key: 'stationName', label: 'Станция', minWidth: 220 },
-        { key: 'gamesCount', label: 'Игр организовано', minWidth: 140 },
+        { key: 'gamesCount', label: 'Игр создано', minWidth: 140 },
         { key: 'playersAddedCount', label: 'Игроков добавилось', minWidth: 170 },
         { key: 'paymentsAmount', label: 'Сумма оплат', minWidth: 160 }
       ];

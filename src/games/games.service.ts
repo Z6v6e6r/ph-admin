@@ -385,7 +385,7 @@ export class GamesService implements OnModuleDestroy {
     >();
 
     docs.forEach((doc) => {
-      const gameDate = this.resolveAnalyticsGameDate(doc);
+      const gameDate = this.resolveAnalyticsCreatedDate(doc);
       if (normalizedFrom && (!gameDate || gameDate < normalizedFrom)) {
         return;
       }
@@ -624,17 +624,7 @@ export class GamesService implements OnModuleDestroy {
     );
   }
 
-  private resolveAnalyticsGameDate(doc: MongoGameDoc): string | null {
-    const bookingDate = this.readString(doc.booking?.date);
-    if (bookingDate && /^\d{4}-\d{2}-\d{2}$/.test(bookingDate)) {
-      return bookingDate;
-    }
-
-    const timeFromIso = this.readString(doc.booking?.timeFromIso);
-    if (timeFromIso && timeFromIso.length >= 10) {
-      return timeFromIso.slice(0, 10);
-    }
-
+  private resolveAnalyticsCreatedDate(doc: MongoGameDoc): string | null {
     const createdAt = this.readIsoDateValue(doc.createdAt);
     if (createdAt && createdAt.length >= 10) {
       return createdAt.slice(0, 10);
