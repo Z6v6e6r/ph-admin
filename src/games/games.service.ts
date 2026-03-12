@@ -703,23 +703,54 @@ export class GamesService implements OnModuleDestroy {
 
   private calculateAnalyticsPaymentsAmount(doc: MongoGameDoc): number {
     const payment = this.toRecord(doc.payment);
-    if (Object.keys(payment).length === 0) {
-      return 0;
-    }
-
-    const amount = this.readNumber(payment.amount);
-    if (amount === null) {
-      return 0;
-    }
-
     const paid = payment.paid === true;
     const paidAt = this.readString(payment.paidAt);
     const status = (this.readString(payment.status) ?? '').trim().toUpperCase();
-    if (paid || paidAt || status === 'PAID') {
-      return amount;
+    if (!(paid || paidAt || status === 'PAID')) {
+      return 0;
     }
 
-    return 0;
+    const amount = this.extractAnalyticsPaymentAmount(doc);
+    return amount !== null ? amount : 0;
+  }
+
+  private extractAnalyticsPaymentAmount(doc: MongoGameDoc): number | null {
+    const candidatePaths = [
+      'payment.totalAmount',
+      'payment.fullAmount',
+      'payment.amountTotal',
+      'payment.sum',
+      'payment.total',
+      'payment.price',
+      'booking.totalAmount',
+      'booking.fullAmount',
+      'booking.amount',
+      'booking.price',
+      'metadata.payment.totalAmount',
+      'metadata.payment.fullAmount',
+      'metadata.payment.amount',
+      'metadata.totalAmount',
+      'metadata.paymentAmount',
+      'metadata.amount',
+      'metadata.price',
+      'payment.amount'
+    ];
+
+    let fallback: number | null = null;
+    for (const path of candidatePaths) {
+      const value = this.readFlexibleNumber(this.getValueByPath(doc, path));
+      if (value === null) {
+        continue;
+      }
+      if (fallback === null) {
+        fallback = value;
+      }
+      if (value > 0) {
+        return value;
+      }
+    }
+
+    return fallback;
   }
 
   private async getGameChatMessagesCollection() {
@@ -1839,6 +1870,32 @@ export class GamesService implements OnModuleDestroy {
       return null;
     }
     const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private readFlexibleNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const normalized = trimmed
+      .replace(/\s+/g, '')
+      .replace(/,/g, '.')
+      .replace(/[^\d.+-]/g, '');
+
+    if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : null;
   }
 
