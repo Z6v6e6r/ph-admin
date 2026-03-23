@@ -38,30 +38,46 @@ export class GamesController {
   constructor(private readonly gamesService: GamesService) {}
 
   @Get()
-  findAll(): Promise<Game[]> {
-    return this.gamesService.findAll();
+  findAll(@CurrentUser() user?: RequestUser): Promise<Game[]> {
+    return this.gamesService.findAll(user);
   }
 
   @Get('analytics')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
   findAnalytics(
     @Query('from') from?: string,
-    @Query('to') to?: string
+    @Query('to') to?: string,
+    @CurrentUser() user?: RequestUser
   ): Promise<GameAnalyticsResult> {
     const filters: GameAnalyticsFilters = {
       from,
       to
     };
-    return this.gamesService.findAnalytics(filters);
+    return this.gamesService.findAnalytics(filters, user);
   }
 
   @Get('events')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
   findEvents(
     @Query('event') event?: string,
     @Query('phone') phone?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string
+    @Query('pageSize') pageSize?: string,
+    @CurrentUser() user?: RequestUser
   ): Promise<GameEventListResult> {
     const filters: GameEventListFilters = {
       event,
@@ -71,12 +87,19 @@ export class GamesController {
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined
     };
-    return this.gamesService.findEvents(filters);
+    return this.gamesService.findEvents(filters, user);
   }
 
   @Get('events/:id')
-  findEventById(@Param('id') id: string): Promise<GameEvent> {
-    return this.gamesService.findEventById(id);
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
+  findEventById(@Param('id') id: string, @CurrentUser() user?: RequestUser): Promise<GameEvent> {
+    return this.gamesService.findEventById(id, user);
   }
 
   @Delete('events/:id')
@@ -86,6 +109,7 @@ export class GamesController {
   }
 
   @Get(':id/chat')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.GAME_MANAGER, Role.MANAGER, Role.TOURNAMENT_MANAGER)
   getGameChat(
     @Param('id') id: string,
     @CurrentUser() user?: RequestUser
@@ -97,6 +121,7 @@ export class GamesController {
   }
 
   @Post(':id/chat/messages')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.GAME_MANAGER, Role.MANAGER, Role.TOURNAMENT_MANAGER)
   sendGameChatMessage(
     @Param('id') id: string,
     @Body() dto: CreateGameChatMessageDto,
@@ -109,7 +134,7 @@ export class GamesController {
   }
 
   @Get(':id')
-  findById(@Param('id') id: string): Promise<Game> {
-    return this.gamesService.findById(id);
+  findById(@Param('id') id: string, @CurrentUser() user?: RequestUser): Promise<Game> {
+    return this.gamesService.findById(id, user);
   }
 }

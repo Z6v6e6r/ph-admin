@@ -58,7 +58,7 @@ export class AuthController {
   }
 
   @Get('admin-users')
-  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
   async adminUsers(@CurrentUser() user?: RequestUser): Promise<{ users: AdminUserSummary[] }> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');

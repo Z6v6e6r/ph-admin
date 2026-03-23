@@ -26,7 +26,6 @@ export const ROLE_PERMISSIONS: Record<Role, string[]> = {
     'messenger:read',
     'messenger:write',
     'messenger:stations:read',
-    'messenger:settings:read',
     'messenger:response-metrics:read',
     'messenger:ai:read',
     'messenger:ai:write',

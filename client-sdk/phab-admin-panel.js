@@ -2206,6 +2206,32 @@
     return role;
   }
 
+  function hasRole(cfg, role) {
+    return Boolean(cfg && Array.isArray(cfg.roles) && cfg.roles.indexOf(role) >= 0);
+  }
+
+  function hasAnyRole(cfg, roles) {
+    return Array.isArray(roles)
+      ? roles.some(function (role) {
+          return hasRole(cfg, role);
+        })
+      : false;
+  }
+
+  function isRestrictedStationAdminConfig(cfg) {
+    if (!hasRole(cfg, 'STATION_ADMIN')) {
+      return false;
+    }
+
+    return !hasAnyRole(cfg, [
+      'SUPER_ADMIN',
+      'MANAGER',
+      'SUPPORT',
+      'GAME_MANAGER',
+      'TOURNAMENT_MANAGER'
+    ]);
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -2215,6 +2241,7 @@
     var api = createApi(cfg);
     var pollTimer = null;
     var documentKeydownHandler = null;
+    var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
 
     var state = {
       activeTab: 'messages',
@@ -2860,6 +2887,7 @@
       var invite = normalizeObject(details.invite);
       var settings = normalizeObject(details.settings);
       var metadata = normalizeObject(details.metadata);
+      var restrictedGameView = isRestrictedStationAdmin;
 
       dom.gameModalTitle.textContent = 'Игра ' + game.id;
 
@@ -2886,10 +2914,12 @@
         'Имя',
         organizer.name || game.organizerName || '-'
       );
-      appendDetailRow(organizerCard.body, 'Телефон', organizer.phone || '-');
-      appendDetailRow(organizerCard.body, 'Рейтинг', organizer.rating || '-');
-      appendDetailRow(organizerCard.body, 'ID', organizer.id || '-');
-      if (organizer.id) {
+      if (!restrictedGameView) {
+        appendDetailRow(organizerCard.body, 'Телефон', organizer.phone || '-');
+        appendDetailRow(organizerCard.body, 'Рейтинг', organizer.rating || '-');
+        appendDetailRow(organizerCard.body, 'ID', organizer.id || '-');
+      }
+      if (!restrictedGameView && organizer.id) {
         appendDetailLinkRow(
           organizerCard.body,
           'Viva CRM',
@@ -2941,56 +2971,58 @@
 
       appendGamePhotosCard(game);
 
-      var bookingCard = createDetailCard('Бронирование');
-      appendDetailRow(
-        bookingCard.body,
-        'Студия / Корт',
-        [booking.studioName, booking.roomName].filter(Boolean).join(' · ')
-      );
-      appendDetailRow(bookingCard.body, 'Дата', booking.date || game.gameDate);
-      appendDetailRow(
-        bookingCard.body,
-        'Время',
-        booking.timeFrom && booking.timeTo
-          ? String(booking.timeFrom) + ' - ' + String(booking.timeTo)
-          : game.gameTime
-      );
-      appendDetailRow(bookingCard.body, 'Start TS', booking.startTs);
-      appendDetailRow(bookingCard.body, 'End TS', booking.endTs);
-      appendDetailRow(bookingCard.body, 'Slot ID', booking.slotId);
-      dom.gameModalBody.appendChild(bookingCard.card);
+      if (!restrictedGameView) {
+        var bookingCard = createDetailCard('Бронирование');
+        appendDetailRow(
+          bookingCard.body,
+          'Студия / Корт',
+          [booking.studioName, booking.roomName].filter(Boolean).join(' · ')
+        );
+        appendDetailRow(bookingCard.body, 'Дата', booking.date || game.gameDate);
+        appendDetailRow(
+          bookingCard.body,
+          'Время',
+          booking.timeFrom && booking.timeTo
+            ? String(booking.timeFrom) + ' - ' + String(booking.timeTo)
+            : game.gameTime
+        );
+        appendDetailRow(bookingCard.body, 'Start TS', booking.startTs);
+        appendDetailRow(bookingCard.body, 'End TS', booking.endTs);
+        appendDetailRow(bookingCard.body, 'Slot ID', booking.slotId);
+        dom.gameModalBody.appendChild(bookingCard.card);
 
-      var paymentCard = createDetailCard('Оплата');
-      appendDetailRow(paymentCard.body, 'Сумма', payment.amount);
-      appendDetailRow(paymentCard.body, 'Оплачено', payment.paid);
-      appendDetailRow(paymentCard.body, 'Оплачено в', formatDateTimeFull(payment.paidAt));
-      appendDetailRow(paymentCard.body, 'Метод', payment.paymentMethod);
-      appendDetailRow(paymentCard.body, 'Ссылка', payment.paymentUrl);
-      dom.gameModalBody.appendChild(paymentCard.card);
+        var paymentCard = createDetailCard('Оплата');
+        appendDetailRow(paymentCard.body, 'Сумма', payment.amount);
+        appendDetailRow(paymentCard.body, 'Оплачено', payment.paid);
+        appendDetailRow(paymentCard.body, 'Оплачено в', formatDateTimeFull(payment.paidAt));
+        appendDetailRow(paymentCard.body, 'Метод', payment.paymentMethod);
+        appendDetailRow(paymentCard.body, 'Ссылка', payment.paymentUrl);
+        dom.gameModalBody.appendChild(paymentCard.card);
 
-      var configCard = createDetailCard('Настройки и инвайт');
-      appendDetailRow(configCard.body, 'Рейтинговая игра', settings.ratingGame);
-      appendDetailRow(configCard.body, 'Мин рейтинг', settings.minRating);
-      appendDetailRow(configCard.body, 'Макс рейтинг', settings.maxRating);
-      appendDetailRow(configCard.body, 'Приватная', settings.isPrivate);
-      appendDetailRow(configCard.body, 'Pay mode', settings.payMode);
-      appendDetailRow(configCard.body, 'Макс игроков', invite.maxPlayers);
-      appendDetailRow(configCard.body, 'Waitlist', invite.waitlistEnabled);
-      appendDetailRow(configCard.body, 'Invite URL', invite.inviteUrl);
-      dom.gameModalBody.appendChild(configCard.card);
+        var configCard = createDetailCard('Настройки и инвайт');
+        appendDetailRow(configCard.body, 'Рейтинговая игра', settings.ratingGame);
+        appendDetailRow(configCard.body, 'Мин рейтинг', settings.minRating);
+        appendDetailRow(configCard.body, 'Макс рейтинг', settings.maxRating);
+        appendDetailRow(configCard.body, 'Приватная', settings.isPrivate);
+        appendDetailRow(configCard.body, 'Pay mode', settings.payMode);
+        appendDetailRow(configCard.body, 'Макс игроков', invite.maxPlayers);
+        appendDetailRow(configCard.body, 'Waitlist', invite.waitlistEnabled);
+        appendDetailRow(configCard.body, 'Invite URL', invite.inviteUrl);
+        dom.gameModalBody.appendChild(configCard.card);
 
-      var phonesCard = createDetailCard('Телефоны');
-      appendDetailRow(phonesCard.body, 'Все связанные', normalizeArray(details.allRelatedPhones));
-      appendDetailRow(phonesCard.body, 'Участники', normalizeArray(details.participantPhones));
-      appendDetailRow(phonesCard.body, 'Приглашенные', normalizeArray(details.invitedPhones));
-      appendDetailRow(phonesCard.body, 'Лист ожидания', normalizeArray(details.waitlistPhones));
-      dom.gameModalBody.appendChild(phonesCard.card);
+        var phonesCard = createDetailCard('Телефоны');
+        appendDetailRow(phonesCard.body, 'Все связанные', normalizeArray(details.allRelatedPhones));
+        appendDetailRow(phonesCard.body, 'Участники', normalizeArray(details.participantPhones));
+        appendDetailRow(phonesCard.body, 'Приглашенные', normalizeArray(details.invitedPhones));
+        appendDetailRow(phonesCard.body, 'Лист ожидания', normalizeArray(details.waitlistPhones));
+        dom.gameModalBody.appendChild(phonesCard.card);
 
-      appendJsonCard('Metadata', metadata);
-      appendJsonCard(
-        'Raw game payload',
-        Object.keys(details).length > 0 ? details : game
-      );
+        appendJsonCard('Metadata', metadata);
+        appendJsonCard(
+          'Raw game payload',
+          Object.keys(details).length > 0 ? details : game
+        );
+      }
     }
 
     async function openGameDetails(game) {
@@ -3080,6 +3112,10 @@
     }
 
     async function openGameChat(game) {
+      if (isRestrictedStationAdmin) {
+        setStatus('Администратору станции чат игры недоступен', true);
+        return;
+      }
       if (!game || !game.id) {
         return;
       }
@@ -3946,9 +3982,11 @@
         { key: 'ratingDelta', label: 'Δ рейтинг', minWidth: 120 },
         { key: 'station', label: 'Станция', minWidth: 150 },
         { key: 'court', label: 'Корт', minWidth: 170 },
-        { key: 'chat', label: 'Чат', minWidth: 110 },
         { key: 'status', label: 'Статус', minWidth: 140 }
       ];
+      if (!isRestrictedStationAdmin) {
+        columns.splice(columns.length - 1, 0, { key: 'chat', label: 'Чат', minWidth: 110 });
+      }
       var colgroup = document.createElement('colgroup');
       var colRefs = {};
       columns.forEach(function (column) {
@@ -3997,7 +4035,7 @@
       if (state.games.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 10;
+        td.colSpan = columns.length;
         td.textContent = 'Нет игр';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -4083,18 +4121,20 @@
         courtCell.textContent = locationParts.court;
         tr.appendChild(courtCell);
 
-        var chatCell = document.createElement('td');
-        var chatBtn = document.createElement('button');
-        chatBtn.type = 'button';
-        chatBtn.className = 'phab-admin-btn-secondary phab-admin-games-chat-btn';
-        chatBtn.textContent = 'Чат';
-        chatBtn.addEventListener('click', function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-          openGameChat(game).catch(handleError);
-        });
-        chatCell.appendChild(chatBtn);
-        tr.appendChild(chatCell);
+        if (!isRestrictedStationAdmin) {
+          var chatCell = document.createElement('td');
+          var chatBtn = document.createElement('button');
+          chatBtn.type = 'button';
+          chatBtn.className = 'phab-admin-btn-secondary phab-admin-games-chat-btn';
+          chatBtn.textContent = 'Чат';
+          chatBtn.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            openGameChat(game).catch(handleError);
+          });
+          chatCell.appendChild(chatBtn);
+          tr.appendChild(chatCell);
+        }
 
         var statusCell = document.createElement('td');
         statusCell.textContent = String(game.rawStatus || game.status || '-');
@@ -4663,6 +4703,16 @@
     }
 
     async function loadSettings() {
+      if (isRestrictedStationAdmin) {
+        state.settings = {
+          stations: [],
+          connectors: [],
+          accessRules: [],
+          adminUsers: []
+        };
+        renderSettings();
+        return;
+      }
       var settings = (await api.getSettings()) || {};
       var adminUsersResponse = (await api.getAdminUsers()) || {};
       state.settings = {
@@ -4787,6 +4837,9 @@
     }
 
     function switchTab(nextTab) {
+      if (isRestrictedStationAdmin && ['logs', 'analytics', 'settings'].indexOf(nextTab) >= 0) {
+        nextTab = 'messages';
+      }
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
@@ -4842,6 +4895,11 @@
     }
 
     function bindEvents() {
+      if (isRestrictedStationAdmin) {
+        dom.tabLogs.classList.add('phab-admin-hidden');
+        dom.tabAnalytics.classList.add('phab-admin-hidden');
+        dom.tabSettings.classList.add('phab-admin-hidden');
+      }
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
         refreshDialogsView().catch(handleError);

@@ -157,7 +157,7 @@ export class MessengerController {
   }
 
   @Get('settings')
-  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
   getSettings(@CurrentUser() user?: RequestUser): MessengerSettingsSnapshot {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
@@ -166,7 +166,7 @@ export class MessengerController {
   }
 
   @Get('settings/stations')
-  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
   listStationConfigs(@CurrentUser() user?: RequestUser): MessengerStationConfig[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
@@ -200,7 +200,7 @@ export class MessengerController {
   }
 
   @Get('settings/connectors')
-  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
   listConnectorConfigs(@CurrentUser() user?: RequestUser): MessengerConnectorConfig[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
@@ -234,7 +234,7 @@ export class MessengerController {
   }
 
   @Get('settings/access-rules')
-  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
   listAccessRules(@CurrentUser() user?: RequestUser): MessengerAccessRule[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');

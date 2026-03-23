@@ -71,6 +71,7 @@ interface MongoGameDoc {
   };
   booking?: {
     [key: string]: unknown;
+    studioId?: unknown;
     date?: unknown;
     timeFrom?: unknown;
     timeTo?: unknown;
@@ -121,6 +122,16 @@ interface MongoGameEventDoc {
 export class GamesService implements OnModuleDestroy {
   private static readonly GAME_EVENTS_DEFAULT_PAGE_SIZE = 30;
   private static readonly GAME_EVENTS_MAX_PAGE_SIZE = 100;
+  private static readonly STATION_ALIAS_GROUPS: Record<string, string[]> = {
+    yas: ['yas', 'yasenevo', 'ясенево'],
+    nagat: ['nagat', 'nagatinskaya', 'нагатинская'],
+    nagat_p: ['nagat_p', 'nagatinskayap', 'нагатинскаяпремиум', 'нагатинская премиум'],
+    tereh: ['tereh', 'terehovo', 'терехово'],
+    kuncev: ['kuncev', 'skolkovo', 'сколково'],
+    seleger: ['seleger', 'селигерская'],
+    sochi: ['sochi', 'сочи'],
+    't-sbora': ['t-sbora', 'care_service', 'точкасбора', 'точка сбора']
+  };
 
   private readonly logger = new Logger(GamesService.name);
   private readonly sourceMode = this.resolveSourceMode();
@@ -145,38 +156,49 @@ export class GamesService implements OnModuleDestroy {
 
   constructor(private readonly lkPadelHubClient: LkPadelHubClientService) {}
 
-  async findAll(): Promise<Game[]> {
+  async findAll(user?: RequestUser): Promise<Game[]> {
     if (this.sourceMode === 'mongo') {
-      return this.findAllFromMongo();
+      return this.filterGamesForUser(await this.findAllFromMongo(), user);
     }
-    return this.lkPadelHubClient.listGames();
+    return this.filterGamesForUser(await this.lkPadelHubClient.listGames(), user);
   }
 
-  async findById(id: string): Promise<Game> {
+  async findById(id: string, user?: RequestUser): Promise<Game> {
+    let game: Game | null = null;
     if (this.sourceMode === 'mongo') {
-      const fromMongo = await this.findByIdFromMongo(id);
-      if (!fromMongo) {
+      game = await this.findByIdFromMongo(id);
+      if (!game) {
         throw new NotFoundException(`Game with id ${id} not found`);
       }
-      return fromMongo;
+    } else {
+      game = await this.lkPadelHubClient.getGameById(id);
+      if (!game) {
+        throw new NotFoundException(`Game with id ${id} not found`);
+      }
     }
 
-    const game = await this.lkPadelHubClient.getGameById(id);
-    if (!game) {
-      throw new NotFoundException(`Game with id ${id} not found`);
-    }
-    return game;
+    this.ensureGameVisibleForUser(game, user);
+    return this.sanitizeGameForUser(game, user);
   }
 
-  async findAnalytics(filters?: GameAnalyticsFilters): Promise<GameAnalyticsResult> {
+  async findAnalytics(
+    filters?: GameAnalyticsFilters,
+    user?: RequestUser
+  ): Promise<GameAnalyticsResult> {
+    this.ensureNonStationAdminGamePrivilege(user);
     return this.findAnalyticsFromMongo(filters);
   }
 
-  async findEvents(filters?: GameEventListFilters): Promise<GameEventListResult> {
+  async findEvents(
+    filters?: GameEventListFilters,
+    user?: RequestUser
+  ): Promise<GameEventListResult> {
+    this.ensureNonStationAdminGamePrivilege(user);
     return this.findEventsFromMongo(filters);
   }
 
-  async findEventById(id: string): Promise<GameEvent> {
+  async findEventById(id: string, user?: RequestUser): Promise<GameEvent> {
+    this.ensureNonStationAdminGamePrivilege(user);
     const event = await this.findEventByIdFromMongo(id);
     if (!event) {
       throw new NotFoundException(`Game event with id ${id} not found`);
@@ -193,7 +215,7 @@ export class GamesService implements OnModuleDestroy {
   }
 
   async getGameChat(id: string, _user: RequestUser): Promise<GameChatContext> {
-    const game = await this.findById(id);
+    const game = await this.findById(id, _user);
     const chat = await this.loadGameChat(game);
     return {
       game,
@@ -208,7 +230,7 @@ export class GamesService implements OnModuleDestroy {
     text: string,
     user: RequestUser
   ): Promise<GameChatMessage> {
-    const game = await this.findById(id);
+    const game = await this.findById(id, user);
     const trimmed = text.trim();
     if (!trimmed) {
       throw new BadRequestException('Message text cannot be empty');
@@ -295,6 +317,144 @@ export class GamesService implements OnModuleDestroy {
     return docs
       .map((doc) => this.mapMongoGame(doc))
       .filter((game): game is Game => game !== null);
+  }
+
+  private ensureNonStationAdminGamePrivilege(user?: RequestUser): void {
+    if (this.isRestrictedStationAdmin(user)) {
+      throw new NotFoundException('Resource not found');
+    }
+  }
+
+  private filterGamesForUser(games: Game[], user?: RequestUser): Game[] {
+    if (!Array.isArray(games) || games.length === 0) {
+      return [];
+    }
+
+    return games
+      .filter((game) => this.canViewGame(game, user))
+      .map((game) => this.sanitizeGameForUser(game, user));
+  }
+
+  private ensureGameVisibleForUser(game: Game, user?: RequestUser): void {
+    if (!this.canViewGame(game, user)) {
+      throw new NotFoundException(`Game with id ${game.id} not found`);
+    }
+  }
+
+  private canViewGame(game: Game, user?: RequestUser): boolean {
+    if (!this.isRestrictedStationAdmin(user)) {
+      return true;
+    }
+
+    const userStationKeys = this.normalizeUserStationKeys(user);
+    if (userStationKeys.length === 0) {
+      return false;
+    }
+
+    const gameStationKeys = this.extractGameStationKeys(game);
+    if (gameStationKeys.length === 0) {
+      return false;
+    }
+
+    return userStationKeys.some((key) => gameStationKeys.includes(key));
+  }
+
+  private sanitizeGameForUser(game: Game, user?: RequestUser): Game {
+    if (!this.isRestrictedStationAdmin(user)) {
+      return game;
+    }
+
+    const participantNames = Array.isArray(game.participantNames)
+      ? game.participantNames
+          .map((item) => String(item ?? '').trim())
+          .filter((item) => item.length > 0)
+      : [];
+
+    return {
+      ...game,
+      participantDetails: participantNames.map((name) => ({ name })),
+      details: undefined
+    };
+  }
+
+  private isRestrictedStationAdmin(user?: RequestUser): boolean {
+    if (!user || !Array.isArray(user.roles) || user.roles.indexOf(Role.STATION_ADMIN) < 0) {
+      return false;
+    }
+
+    return !user.roles.some((role) =>
+      [
+        Role.SUPER_ADMIN,
+        Role.MANAGER,
+        Role.SUPPORT,
+        Role.GAME_MANAGER,
+        Role.TOURNAMENT_MANAGER
+      ].includes(role)
+    );
+  }
+
+  private normalizeUserStationKeys(user?: RequestUser): string[] {
+    if (!user || !Array.isArray(user.stationIds)) {
+      return [];
+    }
+
+    const keys = new Set<string>();
+    user.stationIds.forEach((stationId) => {
+      this.expandStationAliases(stationId).forEach((key) => keys.add(key));
+    });
+    return Array.from(keys.values());
+  }
+
+  private extractGameStationKeys(game: Game): string[] {
+    const details = this.toRecord(game.details);
+    const booking = this.toRecord(details.booking);
+    const rawValues = [
+      booking.studioId,
+      booking.studioName,
+      booking.stationName,
+      details.stationId,
+      details.stationName,
+      game.stationName,
+      game.locationName,
+      game.name
+    ];
+
+    const keys = new Set<string>();
+    rawValues.forEach((value) => {
+      this.expandStationAliases(value).forEach((key) => keys.add(key));
+    });
+    return Array.from(keys.values());
+  }
+
+  private expandStationAliases(value: unknown): string[] {
+    const normalized = this.normalizeStationKey(value);
+    if (!normalized) {
+      return [];
+    }
+
+    const keys = new Set<string>([normalized]);
+    Object.keys(GamesService.STATION_ALIAS_GROUPS).forEach((canonical) => {
+      const aliases = GamesService.STATION_ALIAS_GROUPS[canonical];
+      if (aliases.includes(normalized)) {
+        aliases.forEach((alias) => keys.add(alias));
+        keys.add(canonical);
+      }
+    });
+
+    return Array.from(keys.values());
+  }
+
+  private normalizeStationKey(value: unknown): string | null {
+    const text = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (!text) {
+      return null;
+    }
+
+    return text
+      .replace(/[ё]/g, 'е')
+      .replace(/[^\p{L}\p{N}]+/gu, '');
   }
 
   private async findByIdFromMongo(id: string): Promise<Game | null> {
