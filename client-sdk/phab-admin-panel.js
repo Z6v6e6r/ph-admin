@@ -264,6 +264,33 @@
         font-family:var(--cup-font-heading);
         background:linear-gradient(90deg,rgba(255,232,145,.86) 0%,rgba(182,253,255,.76) 100%);
       }
+      .phab-admin-dialog-filters-wrap{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+        padding:8px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        background:rgba(255,255,255,.74);
+      }
+      .phab-admin-dialog-filter{
+        border:1px solid rgba(51,0,32,.16);
+        background:rgba(255,255,255,.92);
+        color:var(--cup-wine);
+        border-radius:999px;
+        padding:6px 10px;
+        font-size:10px;
+        font-weight:700;
+        cursor:pointer;
+        transition:all .16s ease;
+      }
+      .phab-admin-dialog-filter:hover{
+        transform:translateY(-1px);
+        border-color:rgba(51,0,32,.28);
+      }
+      .phab-admin-dialog-filter-active{
+        background:linear-gradient(90deg,var(--cup-lime) 0%,rgba(182,253,255,.84) 100%);
+        border-color:rgba(0,58,134,.34);
+      }
       .phab-admin-pane-body{
         padding:8px;
         overflow:auto;
@@ -1505,6 +1532,13 @@
     leftHead.textContent = 'Чаты';
     leftPane.appendChild(leftHead);
 
+    var dialogFiltersWrap = document.createElement('div');
+    dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
+    leftPane.appendChild(dialogFiltersWrap);
+
+    var dialogFilters = document.createElement('div');
+    dialogFiltersWrap.appendChild(dialogFilters);
+
     var leftBody = document.createElement('div');
     leftBody.className = 'phab-admin-pane-body phab-admin-chat-list-wrap';
     leftPane.appendChild(leftBody);
@@ -2158,6 +2192,8 @@
       analyticsSection: analyticsSection,
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
+      dialogFiltersWrap: dialogFiltersWrap,
+      dialogFilters: dialogFilters,
       dialogsList: dialogsList,
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
@@ -2299,6 +2335,9 @@
     ]);
   }
 
+  var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
+  var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -2312,10 +2351,13 @@
 
     var state = {
       activeTab: 'messages',
+      allDialogs: [],
       loading: false,
       dialogs: [],
       dialogsSignature: '',
       dialogsHydrated: false,
+      dialogStationFilters: [],
+      dialogFilterOptions: [],
       messages: [],
       messagesSignature: '',
       messagesThreadId: null,
@@ -2596,7 +2638,7 @@
 
       dom.dialogTitle.textContent =
         (dialog.clientDisplayName || dialog.subject || 'Чат') +
-        (dialog.primaryPhone ? ' · ' + dialog.primaryPhone : '');
+        (getDialogPrimaryPhone(dialog) ? ' · ' + getDialogPrimaryPhone(dialog) : '');
       dom.dialogMeta.textContent =
         (dialog.stationName || dialog.stationId || 'Без станции') +
         ' · ' +
@@ -3489,6 +3531,178 @@
         .toLowerCase();
     }
 
+    function canFilterDialogsByStation() {
+      return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+    }
+
+    function getDialogPrimaryPhone(dialog) {
+      if (!dialog) {
+        return '';
+      }
+      if (dialog.primaryPhone) {
+        return String(dialog.primaryPhone).trim();
+      }
+      if (Array.isArray(dialog.phones)) {
+        for (var i = 0; i < dialog.phones.length; i += 1) {
+          var value = String(dialog.phones[i] || '').trim();
+          if (value) {
+            return value;
+          }
+        }
+      }
+      return '';
+    }
+
+    function getDialogCurrentStationInfo(dialog) {
+      var currentStationId = String(dialog && dialog.currentStationId || '').trim();
+      var currentStationName = String(dialog && dialog.currentStationName || '').trim();
+      var fallbackStationId = String(dialog && dialog.stationId || '').trim();
+      var fallbackStationName = String(dialog && dialog.stationName || '').trim();
+
+      if (!currentStationId && !currentStationName) {
+        if (fallbackStationId && fallbackStationId.toUpperCase() !== 'UNASSIGNED') {
+          currentStationId = fallbackStationId;
+          currentStationName = fallbackStationName;
+        } else if (fallbackStationName && normalizeDialogLabel(fallbackStationName) !== 'без станции') {
+          currentStationName = fallbackStationName;
+        }
+      }
+
+      if (!currentStationId && !currentStationName) {
+        return null;
+      }
+
+      var rawKey = currentStationId || normalizeDialogLabel(currentStationName) || 'station';
+      return {
+        key: 'station:' + rawKey,
+        label: currentStationName || currentStationId
+      };
+    }
+
+    function buildDialogFilterOptions(dialogs) {
+      var stationMap = {};
+      var noStationCount = 0;
+      var noPhoneCount = 0;
+
+      (Array.isArray(dialogs) ? dialogs : []).forEach(function (dialog) {
+        var stationInfo = getDialogCurrentStationInfo(dialog);
+        if (stationInfo) {
+          if (!stationMap[stationInfo.key]) {
+            stationMap[stationInfo.key] = {
+              key: stationInfo.key,
+              label: stationInfo.label,
+              count: 0
+            };
+          }
+          stationMap[stationInfo.key].count += 1;
+        } else {
+          noStationCount += 1;
+        }
+
+        if (!getDialogPrimaryPhone(dialog)) {
+          noPhoneCount += 1;
+        }
+      });
+
+      var options = Object.keys(stationMap)
+        .map(function (key) {
+          return stationMap[key];
+        })
+        .sort(function (left, right) {
+          return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
+        });
+
+      if (noStationCount > 0) {
+        options.unshift({
+          key: DIALOG_FILTER_NO_STATION,
+          label: 'Без станции',
+          count: noStationCount
+        });
+      }
+
+      if (noPhoneCount > 0) {
+        options.splice(noStationCount > 0 ? 1 : 0, 0, {
+          key: DIALOG_FILTER_NO_PHONE,
+          label: 'Без номера',
+          count: noPhoneCount
+        });
+      }
+
+      return options;
+    }
+
+    function dialogMatchesStationFilters(dialog, filters) {
+      var activeFilters = Array.isArray(filters) ? filters : [];
+      if (activeFilters.length === 0) {
+        return true;
+      }
+
+      var stationInfo = getDialogCurrentStationInfo(dialog);
+      var primaryPhone = getDialogPrimaryPhone(dialog);
+
+      return activeFilters.some(function (filterKey) {
+        if (filterKey === DIALOG_FILTER_NO_STATION) {
+          return !stationInfo;
+        }
+        if (filterKey === DIALOG_FILTER_NO_PHONE) {
+          return !primaryPhone;
+        }
+        return Boolean(stationInfo && stationInfo.key === filterKey);
+      });
+    }
+
+    function renderDialogFilters() {
+      clearNode(dom.dialogFilters);
+
+      if (!canFilterDialogsByStation()) {
+        dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
+        return;
+      }
+
+      var options = Array.isArray(state.dialogFilterOptions) ? state.dialogFilterOptions : [];
+      if (options.length === 0) {
+        dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
+        return;
+      }
+
+      dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap';
+
+      var allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className =
+        'phab-admin-dialog-filter' +
+        ((state.dialogStationFilters || []).length === 0 ? ' phab-admin-dialog-filter-active' : '');
+      allBtn.textContent = 'Все';
+      allBtn.addEventListener('click', function () {
+        setDialogStationFilters([]).catch(handleError);
+      });
+      dom.dialogFilters.appendChild(allBtn);
+
+      options.forEach(function (option) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+          'phab-admin-dialog-filter' +
+          ((state.dialogStationFilters || []).indexOf(option.key) >= 0
+            ? ' phab-admin-dialog-filter-active'
+            : '');
+        btn.textContent = option.label + ' · ' + option.count;
+        btn.addEventListener('click', function () {
+          var nextFilters = Array.isArray(state.dialogStationFilters)
+            ? state.dialogStationFilters.slice()
+            : [];
+          var idx = nextFilters.indexOf(option.key);
+          if (idx >= 0) {
+            nextFilters.splice(idx, 1);
+          } else {
+            nextFilters.push(option.key);
+          }
+          setDialogStationFilters(nextFilters).catch(handleError);
+        });
+        dom.dialogFilters.appendChild(btn);
+      });
+    }
+
     function getDialogDisplayTitle(dialog) {
       var candidate = String(dialog && dialog.clientDisplayName || '').trim();
       var reserved = [
@@ -3506,7 +3720,7 @@
         return candidate;
       }
       return (
-        (dialog && dialog.primaryPhone) ||
+        getDialogPrimaryPhone(dialog) ||
         (dialog && dialog.subject) ||
         ('Диалог ' + String(dialog && dialog.dialogId || '').slice(0, 8))
       );
@@ -3515,12 +3729,16 @@
     function renderDialogs() {
       var previousScrollTop = dom.dialogsList.scrollTop;
       clearNode(dom.dialogsList);
+      renderDialogFilters();
       renderDialogHeader();
 
       if (state.dialogs.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'phab-admin-empty';
-        empty.textContent = 'Нет доступных чатов';
+        empty.textContent =
+          state.allDialogs.length > 0
+            ? 'Нет чатов по выбранному фильтру'
+            : 'Нет доступных чатов';
         dom.dialogsList.appendChild(empty);
         dom.dialogTitle.textContent = 'Чат не выбран';
         dom.dialogMeta.textContent = 'Список слева сортируется по дате последнего сообщения';
@@ -3589,7 +3807,7 @@
         meta.textContent =
           stationLabel +
           ' · ' +
-          (item.primaryPhone || 'без номера') +
+          (getDialogPrimaryPhone(item) || 'без номера') +
           ' · ' +
           formatTime(item.lastMessageAt) +
           (item.isActiveForUser === false ? ' · неактивен' : '');
@@ -3672,7 +3890,7 @@
             String(dialog && dialog.currentStationId || ''),
             String(dialog && dialog.currentStationName || ''),
             String(dialog && dialog.clientDisplayName || ''),
-            String(dialog && dialog.primaryPhone || ''),
+            String(getDialogPrimaryPhone(dialog) || ''),
             String(dialog && dialog.subject || ''),
             String(dialog && dialog.status || ''),
             Number(dialog && dialog.unreadCount || 0),
@@ -3705,8 +3923,22 @@
 
     function applyDialogs(nextDialogs, options) {
       var opts = options || {};
-      var list = sortDialogsByLastMessage((Array.isArray(nextDialogs) ? nextDialogs : []).filter(Boolean));
+      var fullList = sortDialogsByLastMessage(
+        (Array.isArray(nextDialogs) ? nextDialogs : []).filter(Boolean)
+      );
       var previousDialogs = Array.isArray(state.dialogs) ? state.dialogs.slice() : [];
+      var nextFilterOptions = buildDialogFilterOptions(fullList);
+      var allowedFilterKeys = nextFilterOptions.map(function (option) {
+        return option.key;
+      });
+      var nextFilters = (Array.isArray(state.dialogStationFilters) ? state.dialogStationFilters : []).filter(
+        function (filterKey) {
+          return allowedFilterKeys.indexOf(filterKey) >= 0;
+        }
+      );
+      var list = fullList.filter(function (dialog) {
+        return dialogMatchesStationFilters(dialog, nextFilters);
+      });
       var nextSelectedThreadId = state.selectedThreadId;
       if (list.length > 0) {
         var selectedExists = list.some(function (dialog) {
@@ -3721,10 +3953,16 @@
 
       var nextSignature = buildDialogsSignature(list);
       var dialogsChanged = nextSignature !== state.dialogsSignature;
+      var filtersChanged =
+        JSON.stringify(nextFilters) !== JSON.stringify(state.dialogStationFilters) ||
+        JSON.stringify(nextFilterOptions) !== JSON.stringify(state.dialogFilterOptions);
       var selectionChanged = nextSelectedThreadId !== state.selectedThreadId;
 
+      state.allDialogs = fullList;
       state.dialogs = list;
       state.dialogsSignature = nextSignature;
+      state.dialogStationFilters = nextFilters;
+      state.dialogFilterOptions = nextFilterOptions;
       state.selectedThreadId = nextSelectedThreadId;
       if (!state.dialogsHydrated) {
         state.dialogsHydrated = true;
@@ -3732,14 +3970,32 @@
         playIncomingMessageSound();
       }
 
-      if (opts.forceRender || dialogsChanged || selectionChanged) {
+      if (opts.forceRender || dialogsChanged || selectionChanged || filtersChanged) {
         renderDialogs();
       }
 
       return {
         dialogsChanged: dialogsChanged,
-        selectionChanged: selectionChanged
+        selectionChanged: selectionChanged,
+        filtersChanged: filtersChanged
       };
+    }
+
+    async function setDialogStationFilters(nextFilters) {
+      state.dialogStationFilters = Array.isArray(nextFilters) ? nextFilters.slice() : [];
+      var dialogsResult = applyDialogs(state.allDialogs, {
+        forceRender: true,
+        silent: true
+      });
+
+      if (!state.selectedThreadId) {
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
+        return;
+      }
+
+      if (dialogsResult && dialogsResult.selectionChanged) {
+        await openSelectedDialog();
+      }
     }
 
     function applyMessages(nextMessages, options) {
