@@ -1385,7 +1385,7 @@
     var tabMessages = document.createElement('button');
     tabMessages.className = 'phab-admin-tab phab-admin-tab-active';
     tabMessages.type = 'button';
-    tabMessages.textContent = 'Переписка';
+    tabMessages.textContent = 'Диалоги';
     tabs.appendChild(tabMessages);
 
     var tabGames = document.createElement('button');
