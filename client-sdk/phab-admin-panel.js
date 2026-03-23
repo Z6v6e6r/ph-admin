@@ -433,15 +433,39 @@
         margin-top:7px;
       }
       .phab-admin-dialog-link-status{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
         font-size:11px;
         font-weight:700;
         color:rgba(51,0,32,.78);
       }
+      .phab-admin-dialog-link-status::before{
+        content:"";
+        width:8px;
+        height:8px;
+        border-radius:999px;
+        background:#9aa1ac;
+        box-shadow:0 0 0 1px rgba(51,0,32,.1);
+        flex:0 0 auto;
+      }
       .phab-admin-dialog-link-status-ok{
         color:#0f5c3c;
       }
-      .phab-admin-dialog-link-status-warn{
+      .phab-admin-dialog-link-status-ok::before{
+        background:#27b36a;
+      }
+      .phab-admin-dialog-link-status-missing{
         color:#7c5200;
+      }
+      .phab-admin-dialog-link-status-missing::before{
+        background:#f0b323;
+      }
+      .phab-admin-dialog-link-status-disabled{
+        color:#5f6570;
+      }
+      .phab-admin-dialog-link-status-disabled::before{
+        background:#9aa1ac;
       }
       .phab-admin-dialog-link{
         display:inline-flex;
@@ -2678,10 +2702,11 @@
       } else if (vivaStatus === 'DISABLED') {
         dom.vivaCabinetStatus.textContent = 'Viva не настроен';
         dom.vivaCabinetStatus.className =
-          'phab-admin-dialog-link-status phab-admin-dialog-link-status-warn';
+          'phab-admin-dialog-link-status phab-admin-dialog-link-status-disabled';
       } else {
         dom.vivaCabinetStatus.textContent = 'Viva не найден';
-        dom.vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
+        dom.vivaCabinetStatus.className =
+          'phab-admin-dialog-link-status phab-admin-dialog-link-status-missing';
       }
 
       if (vivaCabinetUrl) {
