@@ -2210,7 +2210,10 @@
       activeTab: 'messages',
       loading: false,
       dialogs: [],
+      dialogsSignature: '',
       messages: [],
+      messagesSignature: '',
+      messagesThreadId: null,
       games: [],
       gameEvents: [],
       analytics: [],
@@ -3155,6 +3158,7 @@
     }
 
     function renderDialogs() {
+      var previousScrollTop = dom.dialogsList.scrollTop;
       clearNode(dom.dialogsList);
       renderDialogHeader();
 
@@ -3239,6 +3243,8 @@
         preview.textContent = String(item.lastMessageText || 'Сообщений пока нет');
         btn.appendChild(preview);
       });
+
+      dom.dialogsList.scrollTop = previousScrollTop;
     }
 
     function normalizeSupportDialog(item) {
@@ -3297,6 +3303,104 @@
       });
     }
 
+    function buildDialogsSignature(dialogs) {
+      return JSON.stringify(
+        (Array.isArray(dialogs) ? dialogs : []).map(function (dialog) {
+          return [
+            String(dialog && dialog.dialogId || ''),
+            String(dialog && dialog.stationId || ''),
+            String(dialog && dialog.stationName || ''),
+            String(dialog && dialog.currentStationId || ''),
+            String(dialog && dialog.currentStationName || ''),
+            String(dialog && dialog.clientDisplayName || ''),
+            String(dialog && dialog.primaryPhone || ''),
+            String(dialog && dialog.subject || ''),
+            String(dialog && dialog.status || ''),
+            Number(dialog && dialog.unreadCount || 0),
+            Number(dialog && dialog.pendingClientMessagesCount || 0),
+            String(dialog && dialog.lastMessageAt || ''),
+            String(dialog && dialog.lastMessageText || ''),
+            String(dialog && dialog.lastMessageSenderRole || ''),
+            String(dialog && dialog.lastInboundConnector || '')
+          ];
+        })
+      );
+    }
+
+    function buildMessagesSignature(messages) {
+      return JSON.stringify(
+        (Array.isArray(messages) ? messages : []).map(function (message) {
+          return [
+            String(message && message.id || ''),
+            String(message && message.text || ''),
+            String(message && message.createdAt || ''),
+            String(message && message.direction || ''),
+            String(message && message.senderRole || ''),
+            String(message && message.senderName || ''),
+            String(message && message.connector || ''),
+            String(message && message.kind || '')
+          ];
+        })
+      );
+    }
+
+    function applyDialogs(nextDialogs, options) {
+      var opts = options || {};
+      var list = sortDialogsByLastMessage((Array.isArray(nextDialogs) ? nextDialogs : []).filter(Boolean));
+      var nextSelectedThreadId = state.selectedThreadId;
+      if (list.length > 0) {
+        var selectedExists = list.some(function (dialog) {
+          return dialog.dialogId === nextSelectedThreadId;
+        });
+        if (!selectedExists) {
+          nextSelectedThreadId = list[0].dialogId;
+        }
+      } else {
+        nextSelectedThreadId = null;
+      }
+
+      var nextSignature = buildDialogsSignature(list);
+      var dialogsChanged = nextSignature !== state.dialogsSignature;
+      var selectionChanged = nextSelectedThreadId !== state.selectedThreadId;
+
+      state.dialogs = list;
+      state.dialogsSignature = nextSignature;
+      state.selectedThreadId = nextSelectedThreadId;
+
+      if (opts.forceRender || dialogsChanged || selectionChanged) {
+        renderDialogs();
+      }
+
+      return {
+        dialogsChanged: dialogsChanged,
+        selectionChanged: selectionChanged
+      };
+    }
+
+    function applyMessages(nextMessages, options) {
+      var opts = options || {};
+      var list = Array.isArray(nextMessages) ? nextMessages : [];
+      var nextSignature = buildMessagesSignature(list);
+      var nextThreadId = state.selectedThreadId || null;
+      var messagesChanged =
+        nextSignature !== state.messagesSignature || nextThreadId !== state.messagesThreadId;
+
+      state.messages = list;
+      state.messagesSignature = nextSignature;
+      state.messagesThreadId = nextThreadId;
+
+      if (opts.forceRender || messagesChanged) {
+        renderMessages(state.messages, {
+          preserveScroll: Boolean(opts.preserveScroll),
+          forceScrollBottom: Boolean(opts.forceScrollBottom)
+        });
+      }
+
+      return {
+        messagesChanged: messagesChanged
+      };
+    }
+
     function normalizeSupportMessages(messages) {
       return (Array.isArray(messages) ? messages : []).map(function (message) {
         return Object.assign({ dataSource: 'support' }, message);
@@ -3329,7 +3433,14 @@
       });
     }
 
-    function renderMessages(messages) {
+    function renderMessages(messages, options) {
+      var opts = options || {};
+      var previousScrollTop = dom.messagesBox.scrollTop;
+      var previousClientHeight = dom.messagesBox.clientHeight;
+      var previousScrollHeight = dom.messagesBox.scrollHeight;
+      var distanceFromBottom = previousScrollHeight - previousScrollTop - previousClientHeight;
+      var shouldStickToBottom = opts.forceScrollBottom || distanceFromBottom <= 24;
+
       clearNode(dom.messagesBox);
       clearNode(dom.dialogTags);
       var selectedDialog = getSelectedDialog();
@@ -3449,7 +3560,20 @@
         dom.messagesBox.appendChild(div);
       });
 
-      dom.messagesBox.scrollTop = dom.messagesBox.scrollHeight;
+      if (shouldStickToBottom) {
+        dom.messagesBox.scrollTop = dom.messagesBox.scrollHeight;
+        return;
+      }
+
+      if (opts.preserveScroll) {
+        dom.messagesBox.scrollTop = Math.max(
+          0,
+          dom.messagesBox.scrollHeight - dom.messagesBox.clientHeight - Math.max(0, distanceFromBottom)
+        );
+        return;
+      }
+
+      dom.messagesBox.scrollTop = previousScrollTop;
     }
 
     function parseDateValue(value) {
@@ -4392,58 +4516,47 @@
       renderSettingsAdminUsers();
     }
 
-    async function loadDialogs() {
+    async function loadDialogs(options) {
       var legacyDialogs = (await api.getLegacyDialogs()) || [];
-      state.dialogs = sortDialogsByLastMessage(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean));
-      if (state.dialogs.length > 0) {
-        var exists = state.dialogs.some(function (dialog) {
-          return dialog.dialogId === state.selectedThreadId;
-        });
-        if (!exists) {
-          state.selectedThreadId = state.dialogs[0].dialogId;
-        }
-      } else {
-        state.selectedThreadId = null;
-      }
-      renderDialogs();
+      return applyDialogs(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean), options);
     }
 
     async function openSelectedDialog() {
+      renderDialogs();
       if (!state.selectedThreadId) {
-        state.messages = [];
-        renderMessages([]);
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
-      await loadMessages();
-      await loadDialogs();
+      await loadMessages({ forceRender: true, forceScrollBottom: true });
       if (!getSelectedDialog()) {
-        state.messages = [];
-        renderMessages([]);
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
       renderDialogHeader();
     }
 
     async function refreshDialogsView() {
-      await loadDialogs();
+      var dialogsResult = await loadDialogs();
       if (!state.selectedThreadId) {
-        state.messages = [];
-        renderMessages([]);
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
-      await openSelectedDialog();
+      await loadMessages(
+        dialogsResult && dialogsResult.selectionChanged
+          ? { forceRender: true, forceScrollBottom: true }
+          : { preserveScroll: true }
+      );
     }
 
-    async function loadMessages() {
+    async function loadMessages(options) {
       if (!state.selectedThreadId) {
-        state.messages = [];
-        renderMessages([]);
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
-      state.messages = normalizeLegacyMessages(
-        (await api.getLegacyMessages(state.selectedThreadId)) || []
+      applyMessages(
+        normalizeLegacyMessages((await api.getLegacyMessages(state.selectedThreadId)) || []),
+        options
       );
-      renderMessages(state.messages);
     }
 
     async function loadGames() {
@@ -4635,7 +4748,7 @@
         await api.sendLegacyMessage(state.selectedThreadId, text);
         dom.input.value = '';
         await loadDialogs();
-        await loadMessages();
+        await loadMessages({ forceRender: true, forceScrollBottom: true });
         setStatus('Сообщение отправлено', false);
       } finally {
         dom.sendBtn.disabled = false;
