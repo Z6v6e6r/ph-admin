@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  NotFoundException,
   Param,
   ParseEnumPipe,
   Patch,
@@ -13,6 +14,15 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { SupportService } from '../support/support.service';
+import {
+  SupportAiInsight,
+  SupportConnectorRoute,
+  SupportDialogStatus,
+  SupportDialogSummary,
+  SupportMessage,
+  SupportMessageDirection
+} from '../support/support.types';
 import { CreateAccessRuleDto } from './dto/create-access-rule.dto';
 import { CreateConnectorConfigDto } from './dto/create-connector-config.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -24,12 +34,15 @@ import { UpdateAccessRuleDto } from './dto/update-access-rule.dto';
 import { UpdateConnectorConfigDto } from './dto/update-connector-config.dto';
 import { UpdateStationDto } from './dto/update-station.dto';
 import {
+  AiDialogTopic,
   AiReplySuggestion,
+  AiUrgency,
   ChatMessage,
   ChatThread,
   ConnectorRoute,
   ConnectorSummary,
   DialogAiInsight,
+  MessageOrigin,
   MessengerAccessRule,
   MessengerConnectorConfig,
   MessengerSettingsSnapshot,
@@ -37,6 +50,7 @@ import {
   StaffResponseMetric,
   StationDialogSummary,
   StationSummary,
+  ThreadStatus,
   ThreadAiConfig
 } from './messenger.types';
 import { MessengerService } from './messenger.service';
@@ -52,7 +66,10 @@ import { MessengerService } from './messenger.service';
   Role.CLIENT
 )
 export class MessengerController {
-  constructor(private readonly messengerService: MessengerService) {}
+  constructor(
+    private readonly messengerService: MessengerService,
+    private readonly supportService: SupportService
+  ) {}
 
   @Get('threads')
   listThreads(
@@ -136,7 +153,7 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.messengerService.listDialogs(user, query);
+    return this.listCompatibleDialogs(user, query);
   }
 
   @Get('settings')
@@ -258,7 +275,14 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.messengerService.getThreadById(threadId, user);
+    try {
+      return this.messengerService.getThreadById(threadId, user);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      return this.getSupportThread(threadId, user);
+    }
   }
 
   @Post('threads')
@@ -280,7 +304,16 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.messengerService.listMessages(threadId, user);
+    try {
+      return this.messengerService.listMessages(threadId, user);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      return this.supportService
+        .listMessages(threadId, user)
+        .map((message) => this.mapSupportMessageToLegacy(message));
+    }
   }
 
   @Post('threads/:threadId/messages')
@@ -292,7 +325,154 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.messengerService.sendMessage(threadId, dto, user);
+    try {
+      return this.messengerService.sendMessage(threadId, dto, user);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      const result = this.supportService.replyToDialog(threadId, { text: dto.text }, user);
+      return this.mapSupportMessageToLegacy(result.message);
+    }
+  }
+
+  private listCompatibleDialogs(
+    user: RequestUser,
+    query: ListThreadsDto = {}
+  ): StationDialogSummary[] {
+    const legacy = this.messengerService.listDialogs(user, query);
+    const mappedSupport = this.supportService
+      .listDialogs(user)
+      .map((dialog) => this.mapSupportDialogToLegacy(dialog))
+      .filter((dialog) => (query.connector ? dialog.connector === query.connector : true))
+      .filter((dialog) => (query.stationId ? dialog.stationId === query.stationId : true));
+
+    const merged = new Map<string, StationDialogSummary>();
+    legacy.forEach((dialog) => merged.set(dialog.threadId, dialog));
+    mappedSupport.forEach((dialog) => merged.set(dialog.threadId, dialog));
+
+    return Array.from(merged.values()).sort((left, right) => {
+      const leftTs = Date.parse(left.lastMessageAt || '') || 0;
+      const rightTs = Date.parse(right.lastMessageAt || '') || 0;
+      return rightTs - leftTs;
+    });
+  }
+
+  private getSupportThread(threadId: string, user: RequestUser): ChatThread {
+    const dialog = this.supportService
+      .listDialogs(user)
+      .find((item) => item.dialogId === threadId);
+    if (!dialog) {
+      throw new NotFoundException(`Thread with id ${threadId} not found`);
+    }
+    return this.mapSupportDialogToThread(dialog);
+  }
+
+  private mapSupportDialogToLegacy(dialog: SupportDialogSummary): StationDialogSummary {
+    return {
+      threadId: dialog.dialogId,
+      connector: this.mapSupportConnector(dialog.connector),
+      stationId: dialog.stationId,
+      stationName: dialog.currentStationName || dialog.stationName,
+      clientId: dialog.clientId,
+      subject: dialog.clientDisplayName || dialog.subject,
+      status:
+        dialog.status === SupportDialogStatus.CLOSED ? ThreadStatus.CLOSED : ThreadStatus.OPEN,
+      lastMessageAt: dialog.lastMessageAt,
+      unreadMessagesCount: dialog.unreadCount,
+      pendingClientMessagesCount: dialog.pendingClientMessagesCount,
+      lastMessageText: dialog.lastMessageText,
+      lastMessageSenderRole: this.mapSupportSenderRole(dialog.lastMessageSenderRole),
+      averageStaffResponseTimeMs: dialog.averageFirstResponseMs,
+      lastStaffResponseTimeMs: dialog.lastFirstResponseMs,
+      aiTopic: dialog.ai ? this.mapSupportTopic(dialog.ai.topic) : undefined,
+      aiUrgency: dialog.ai ? this.mapSupportPriority(dialog.ai.priority) : undefined,
+      aiQualityScore:
+        dialog.ai && typeof dialog.ai.confidence === 'number'
+          ? Math.round(dialog.ai.confidence * 100)
+          : undefined
+    };
+  }
+
+  private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {
+    const timestamp = dialog.lastMessageAt || new Date().toISOString();
+    return {
+      id: dialog.dialogId,
+      connector: this.mapSupportConnector(dialog.connector),
+      stationId: dialog.stationId,
+      stationName: dialog.currentStationName || dialog.stationName,
+      clientId: dialog.clientId,
+      subject: dialog.clientDisplayName || dialog.subject,
+      status:
+        dialog.status === SupportDialogStatus.CLOSED ? ThreadStatus.CLOSED : ThreadStatus.OPEN,
+      lastMessageAt: dialog.lastMessageAt,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  private mapSupportMessageToLegacy(message: SupportMessage): ChatMessage {
+    return {
+      id: message.id,
+      threadId: message.dialogId,
+      senderId: message.senderId,
+      senderRole: this.mapSupportSenderRole(message.senderRole) || Role.SUPPORT,
+      origin: MessageOrigin.HUMAN,
+      text: message.text || '',
+      createdAt: message.createdAt
+    };
+  }
+
+  private mapSupportConnector(connector: SupportConnectorRoute): ConnectorRoute {
+    switch (connector) {
+      case SupportConnectorRoute.TG_BOT:
+        return ConnectorRoute.TG_BOT;
+      case SupportConnectorRoute.LK_WEB_MESSENGER:
+        return ConnectorRoute.LK_WEB_MESSENGER;
+      case SupportConnectorRoute.MAX_BOT:
+      case SupportConnectorRoute.EMAIL:
+      case SupportConnectorRoute.PHONE_CALL:
+      case SupportConnectorRoute.BITRIX:
+      default:
+        return ConnectorRoute.MAX_BOT;
+    }
+  }
+
+  private mapSupportSenderRole(role?: SupportMessage['senderRole']): Role | undefined {
+    if (!role || role === 'SYSTEM') {
+      return Role.SUPPORT;
+    }
+    return role;
+  }
+
+  private mapSupportTopic(topic?: SupportAiInsight['topic']): AiDialogTopic | undefined {
+    switch (topic) {
+      case 'BOOKING':
+        return AiDialogTopic.BOOKING;
+      case 'PAYMENT':
+        return AiDialogTopic.PAYMENT;
+      case 'TECHNICAL':
+        return AiDialogTopic.TECHNICAL;
+      case 'COMPLAINT':
+        return AiDialogTopic.COMPLAINT;
+      default:
+        return topic ? AiDialogTopic.GENERAL : undefined;
+    }
+  }
+
+  private mapSupportPriority(
+    priority?: SupportAiInsight['priority']
+  ): AiUrgency | undefined {
+    switch (priority) {
+      case 'CRITICAL':
+      case 'IMPORTANT':
+        return AiUrgency.HIGH;
+      case 'MEDIUM':
+        return AiUrgency.MEDIUM;
+      case 'RECOMMENDATION':
+      default:
+        return priority ? AiUrgency.LOW : undefined;
+    }
   }
 
   @Get('threads/:threadId/response-metrics')
