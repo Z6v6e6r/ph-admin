@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnApplicationBootstrap,
   OnModuleInit
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -67,7 +68,7 @@ interface SupportStationMapping {
 }
 
 @Injectable()
-export class SupportService implements OnModuleInit {
+export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
   private readonly messages = new Map<string, SupportMessage[]>();
@@ -78,6 +79,11 @@ export class SupportService implements OnModuleInit {
   constructor(private readonly persistence: SupportPersistenceService) {}
 
   async onModuleInit(): Promise<void> {
+    await this.hydrateFromPersistence();
+    this.reconcileState();
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
     await this.hydrateFromPersistence();
     this.reconcileState();
   }

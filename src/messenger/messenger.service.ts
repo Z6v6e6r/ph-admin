@@ -1,4 +1,5 @@
 import {
+  OnApplicationBootstrap,
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -52,7 +53,7 @@ interface PendingStaffResponse {
 type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Promise<void>;
 
 @Injectable()
-export class MessengerService implements OnModuleInit {
+export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   private readonly threads = new Map<string, ChatThread>();
   private readonly messages = new Map<string, ChatMessage[]>();
   private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
@@ -73,6 +74,10 @@ export class MessengerService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    await this.hydrateFromPersistence();
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
     await this.hydrateFromPersistence();
   }
 
