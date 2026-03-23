@@ -1195,6 +1195,9 @@
       getAdminUsers: function () {
         return request('/auth/admin-users', 'GET');
       },
+      logout: function () {
+        return request('/auth/logout', 'POST');
+      },
       createStation: function (payload) {
         return request('/messenger/settings/stations', 'POST', payload);
       },
@@ -1371,6 +1374,12 @@
     status.className = 'phab-admin-status';
     status.textContent = 'Готово';
     toolbar.appendChild(status);
+
+    var logoutBtn = document.createElement('button');
+    logoutBtn.className = 'phab-admin-btn-secondary';
+    logoutBtn.type = 'button';
+    logoutBtn.textContent = 'Разлогиниться';
+    toolbar.appendChild(logoutBtn);
 
     var refreshBtn = document.createElement('button');
     refreshBtn.className = 'phab-admin-btn';
@@ -2081,6 +2090,7 @@
     return {
       root: root,
       status: status,
+      logoutBtn: logoutBtn,
       refreshBtn: refreshBtn,
       tabMessages: tabMessages,
       tabGames: tabGames,
@@ -4891,6 +4901,28 @@
       }
     }
 
+    async function logout() {
+      dom.logoutBtn.disabled = true;
+      dom.refreshBtn.disabled = true;
+      setStatus('Выходим...', false);
+      try {
+        await api.logout();
+      } catch (error) {
+        if (!(error && /Требуется авторизация/i.test(String(error.message || '')))) {
+          throw error;
+        }
+      } finally {
+        cfg.authToken = '';
+        try {
+          window.localStorage.removeItem('phab_admin_token');
+        } catch (_error) {
+          // ignore localStorage errors
+        }
+      }
+
+      window.location.href = '/api/ui/admin/login?next=' + encodeURIComponent('/api/ui/admin');
+    }
+
     async function refreshActiveTab() {
       try {
         setStatus('Обновление...', false);
@@ -5031,6 +5063,13 @@
       });
       dom.refreshBtn.addEventListener('click', function () {
         refreshActiveTab().catch(handleError);
+      });
+      dom.logoutBtn.addEventListener('click', function () {
+        logout().catch(function (error) {
+          dom.logoutBtn.disabled = false;
+          dom.refreshBtn.disabled = false;
+          handleError(error);
+        });
       });
       dom.sendBtn.addEventListener('click', function () {
         sendMessage().catch(handleError);
