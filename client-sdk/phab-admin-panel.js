@@ -401,8 +401,20 @@
       .phab-admin-dialog-links{
         display:flex;
         flex-wrap:wrap;
+        align-items:center;
         gap:8px;
         margin-top:7px;
+      }
+      .phab-admin-dialog-link-status{
+        font-size:11px;
+        font-weight:700;
+        color:rgba(51,0,32,.78);
+      }
+      .phab-admin-dialog-link-status-ok{
+        color:#0f5c3c;
+      }
+      .phab-admin-dialog-link-status-warn{
+        color:#7c5200;
       }
       .phab-admin-dialog-link{
         display:inline-flex;
@@ -1528,6 +1540,10 @@
     dialogLinks.style.display = 'none';
     dialogHead.appendChild(dialogLinks);
 
+    var vivaCabinetStatus = document.createElement('span');
+    vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
+    dialogLinks.appendChild(vivaCabinetStatus);
+
     var vivaCabinetLink = document.createElement('a');
     vivaCabinetLink.className = 'phab-admin-dialog-link';
     vivaCabinetLink.target = '_blank';
@@ -2146,6 +2162,7 @@
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
       dialogLinks: dialogLinks,
+      vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
       dialogTags: dialogTags,
       messagesBox: messagesBox,
@@ -2594,18 +2611,45 @@
     }
 
     function renderDialogLinks(dialog) {
+      var vivaStatus =
+        dialog && typeof dialog.vivaStatus === 'string'
+          ? String(dialog.vivaStatus).trim().toUpperCase()
+          : '';
       var vivaCabinetUrl =
         dialog && typeof dialog.vivaCabinetUrl === 'string'
           ? String(dialog.vivaCabinetUrl).trim()
           : '';
 
-      if (!vivaCabinetUrl) {
+      if (!vivaStatus && !vivaCabinetUrl) {
         dom.dialogLinks.style.display = 'none';
+        dom.vivaCabinetStatus.textContent = '';
+        dom.vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
         dom.vivaCabinetLink.removeAttribute('href');
+        dom.vivaCabinetLink.style.display = 'none';
         return;
       }
 
-      dom.vivaCabinetLink.href = vivaCabinetUrl;
+      if (vivaStatus === 'FOUND') {
+        dom.vivaCabinetStatus.textContent = 'Viva найден';
+        dom.vivaCabinetStatus.className =
+          'phab-admin-dialog-link-status phab-admin-dialog-link-status-ok';
+      } else if (vivaStatus === 'DISABLED') {
+        dom.vivaCabinetStatus.textContent = 'Viva не настроен';
+        dom.vivaCabinetStatus.className =
+          'phab-admin-dialog-link-status phab-admin-dialog-link-status-warn';
+      } else {
+        dom.vivaCabinetStatus.textContent = 'Viva не найден';
+        dom.vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
+      }
+
+      if (vivaCabinetUrl) {
+        dom.vivaCabinetLink.href = vivaCabinetUrl;
+        dom.vivaCabinetLink.style.display = 'inline-flex';
+      } else {
+        dom.vivaCabinetLink.removeAttribute('href');
+        dom.vivaCabinetLink.style.display = 'none';
+      }
+
       dom.dialogLinks.style.display = 'flex';
     }
 

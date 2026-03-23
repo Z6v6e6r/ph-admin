@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+export type VivaClientCabinetStatus = 'FOUND' | 'NOT_FOUND' | 'DISABLED';
+
 export interface VivaClientCabinetLookup {
   phone: string;
+  status: VivaClientCabinetStatus;
   vivaClientId?: string;
   vivaCabinetUrl?: string;
 }
@@ -55,7 +58,7 @@ export class VivaAdminService {
         this.logger.warn(
           `Failed to resolve Viva client cabinet url for ${normalizedPhone}: ${String(error)}`
         );
-        return { phone: normalizedPhone };
+        return { phone: normalizedPhone, status: 'NOT_FOUND' as const };
       })
       .then((result) => {
         this.cache.set(normalizedPhone, {
@@ -80,7 +83,7 @@ export class VivaAdminService {
           'VIVA_ADMIN_API_TOKEN is empty. Viva CRM cabinet links are disabled.'
         );
       }
-      return { phone };
+      return { phone, status: 'DISABLED' };
     }
 
     const url = new URL('/api/v1/clients', `${this.baseUrl}/`);
@@ -100,17 +103,18 @@ export class VivaAdminService {
       this.logger.warn(
         `Viva CRM lookup failed for ${phone}: ${response.status} ${response.statusText}`
       );
-      return { phone };
+      return { phone, status: 'NOT_FOUND' };
     }
 
     const payload = (await response.json().catch(() => null)) as VivaClientsSearchResponse | null;
     const vivaClientId = this.extractClientId(payload);
     if (!vivaClientId) {
-      return { phone };
+      return { phone, status: 'NOT_FOUND' };
     }
 
     return {
       phone,
+      status: 'FOUND',
       vivaClientId,
       vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`
     };

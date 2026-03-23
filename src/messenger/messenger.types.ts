@@ -1,4 +1,5 @@
 import { Role } from '../common/rbac/role.enum';
+import { VivaClientCabinetStatus } from '../integrations/viva/viva-admin.service';
 
 export enum ConnectorRoute {
   TG_BOT = 'TG_BOT',
@@ -119,6 +120,7 @@ export interface StationDialogSummary {
   currentStationName?: string;
   clientId: string;
   clientDisplayName?: string;
+  vivaStatus?: VivaClientCabinetStatus;
   vivaClientId?: string;
   vivaCabinetUrl?: string;
   primaryPhone?: string;

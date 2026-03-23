@@ -453,16 +453,17 @@ export class MessengerController {
     return dialogs.map((dialog) => {
       const phone = this.normalizePhone(dialog.primaryPhone ?? dialog.phones?.[0]);
       if (!phone) {
-        return dialog;
+        return {
+          ...dialog,
+          vivaStatus: 'NOT_FOUND'
+        };
       }
       const lookup = lookupByPhone.get(phone);
-      if (!lookup?.vivaCabinetUrl) {
-        return dialog;
-      }
       return {
         ...dialog,
-        vivaClientId: lookup.vivaClientId,
-        vivaCabinetUrl: lookup.vivaCabinetUrl
+        vivaStatus: lookup?.status ?? 'NOT_FOUND',
+        vivaClientId: lookup?.vivaClientId,
+        vivaCabinetUrl: lookup?.vivaCabinetUrl
       };
     });
   }
