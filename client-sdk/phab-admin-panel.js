@@ -1078,6 +1078,9 @@
       getAllDialogs: function () {
         return request('/support/dialogs', 'GET');
       },
+      getLegacyDialogs: function () {
+        return request('/messenger/dialogs', 'GET');
+      },
       getConnectors: function () {
         return request('/support/connectors', 'GET');
       },
@@ -1097,8 +1100,16 @@
       getMessages: function (dialogId) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/messages', 'GET');
       },
+      getLegacyMessages: function (threadId) {
+        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'GET');
+      },
       sendMessage: function (dialogId, text) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
+          text: text
+        });
+      },
+      sendLegacyMessage: function (threadId, text) {
+        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'POST', {
           text: text
         });
       },
@@ -3205,6 +3216,94 @@
       });
     }
 
+    function normalizeSupportDialog(item) {
+      if (!item || !item.dialogId) {
+        return null;
+      }
+      var copy = Object.assign({}, item);
+      copy.dialogId = String(item.dialogId);
+      copy.dataSource = 'support';
+      return copy;
+    }
+
+    function normalizeLegacyDialog(item) {
+      if (!item || !item.threadId) {
+        return null;
+      }
+      return {
+        dialogId: String(item.threadId),
+        dataSource: 'messenger',
+        connector: item.connector || '',
+        stationId: item.stationId || '',
+        stationName: item.stationName || item.stationId || 'Без станции',
+        currentStationId: undefined,
+        currentStationName: undefined,
+        clientId: item.clientId || '',
+        clientDisplayName: undefined,
+        authStatus: 'VERIFIED',
+        primaryPhone: undefined,
+        phones: [],
+        emails: [],
+        subject: item.subject || '',
+        status: item.status || 'OPEN',
+        unreadCount: Number(item.unreadMessagesCount || 0),
+        waitingForStaffSince: undefined,
+        pendingClientMessagesCount: Number(item.pendingClientMessagesCount || 0),
+        averageFirstResponseMs: item.averageStaffResponseTimeMs,
+        lastFirstResponseMs: item.lastStaffResponseTimeMs,
+        lastMessageAt: item.lastMessageAt,
+        lastMessageText: item.lastMessageText || '',
+        lastMessageSenderRole: item.lastMessageSenderRole || '',
+        lastInboundConnector: item.connector || '',
+        ai:
+          item.aiTopic || item.aiUrgency || typeof item.aiQualityScore === 'number'
+            ? {
+                topic: item.aiTopic || '',
+                sentiment: '',
+                priority: item.aiUrgency || ''
+              }
+            : undefined
+      };
+    }
+
+    function sortDialogsByLastMessage(items) {
+      return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
+        return compareNullable(parseDateValue(right.lastMessageAt), parseDateValue(left.lastMessageAt));
+      });
+    }
+
+    function normalizeSupportMessages(messages) {
+      return (Array.isArray(messages) ? messages : []).map(function (message) {
+        return Object.assign({ dataSource: 'support' }, message);
+      });
+    }
+
+    function normalizeLegacyMessages(messages) {
+      return (Array.isArray(messages) ? messages : []).map(function (message) {
+        var senderRole = String(message.senderRole || '').toUpperCase();
+        return {
+          id: message.id,
+          dataSource: 'messenger',
+          text: message.text || '',
+          createdAt: message.createdAt,
+          connector: '',
+          kind: 'TEXT',
+          direction: senderRole === 'CLIENT' ? 'INBOUND' : 'OUTBOUND',
+          senderRole: senderRole,
+          senderName:
+            senderRole === 'CLIENT'
+              ? 'Клиент'
+              : senderRole === 'SUPER_ADMIN'
+                ? 'Суперадмин'
+                : senderRole === 'STATION_ADMIN'
+                  ? 'Администратор станции'
+                  : senderRole === 'MANAGER'
+                    ? 'Менеджер'
+                    : 'Сотрудник'
+        };
+      });
+    }
+
     function renderMessages(messages) {
       clearNode(dom.messagesBox);
       clearNode(dom.dialogTags);
@@ -4266,7 +4365,18 @@
     }
 
     async function loadDialogs() {
-      state.dialogs = (await api.getAllDialogs()) || [];
+      var results = await Promise.allSettled([api.getAllDialogs(), api.getLegacyDialogs()]);
+      var supportDialogs =
+        results[0] && results[0].status === 'fulfilled' ? results[0].value || [] : [];
+      var legacyDialogs =
+        results[1] && results[1].status === 'fulfilled' ? results[1].value || [] : [];
+
+      state.dialogs = sortDialogsByLastMessage(
+        supportDialogs
+          .map(normalizeSupportDialog)
+          .filter(Boolean)
+          .concat(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean))
+      );
       if (state.dialogs.length > 0) {
         var exists = state.dialogs.some(function (dialog) {
           return dialog.dialogId === state.selectedThreadId;
@@ -4312,7 +4422,16 @@
         renderMessages([]);
         return;
       }
-      state.messages = (await api.getMessages(state.selectedThreadId)) || [];
+      var selectedDialog = getSelectedDialog();
+      if (selectedDialog && selectedDialog.dataSource === 'messenger') {
+        state.messages = normalizeLegacyMessages(
+          (await api.getLegacyMessages(state.selectedThreadId)) || []
+        );
+      } else {
+        state.messages = normalizeSupportMessages(
+          (await api.getMessages(state.selectedThreadId)) || []
+        );
+      }
       renderMessages(state.messages);
     }
 
@@ -4502,7 +4621,12 @@
 
       dom.sendBtn.disabled = true;
       try {
-        await api.sendMessage(state.selectedThreadId, text);
+        var selectedDialog = getSelectedDialog();
+        if (selectedDialog && selectedDialog.dataSource === 'messenger') {
+          await api.sendLegacyMessage(state.selectedThreadId, text);
+        } else {
+          await api.sendMessage(state.selectedThreadId, text);
+        }
         dom.input.value = '';
         await loadDialogs();
         await loadMessages();
