@@ -445,12 +445,6 @@
         white-space:pre-wrap;
         word-break:break-word;
       }
-      .phab-admin-message-title{
-        display:block;
-        margin-bottom:6px;
-        font-size:12px;
-        font-weight:800;
-      }
       .phab-admin-message-text{
         display:block;
       }
@@ -3632,13 +3626,6 @@
             : own
               ? 'phab-admin-message-staff'
               : 'phab-admin-message-client');
-        if (own && !isSystem) {
-          var title = document.createElement('strong');
-          title.className = 'phab-admin-message-title';
-          title.textContent = String(message.senderTitle || message.senderName || '').trim() || 'Сотрудник';
-          div.appendChild(title);
-        }
-
         var text = document.createElement('span');
         text.className = 'phab-admin-message-text';
         text.textContent = message.text || '';

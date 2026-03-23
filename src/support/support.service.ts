@@ -1045,7 +1045,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       dialogId: dialog.id,
       clientId: dialog.clientId,
       connector,
-      text: message.text ?? '',
+      text: this.buildOutboundClientText(message, connector),
       createdAt: message.createdAt,
       status: SupportOutboxStatus.PENDING,
       targetExternalUserId: identity?.externalUserId,
@@ -1061,6 +1061,25 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         phones: client.phones
       }
     };
+  }
+
+  private buildOutboundClientText(
+    message: SupportMessage,
+    connector: SupportConnectorRoute
+  ): string {
+    const text = String(message.text ?? '').trim();
+    if (!text) {
+      return '';
+    }
+
+    if (connector === SupportConnectorRoute.MAX_BOT) {
+      const sender = String(message.senderName ?? '').trim();
+      if (sender) {
+        return `${sender}:\n${text}`;
+      }
+    }
+
+    return text;
   }
 
   private pickIdentityForConnector(
