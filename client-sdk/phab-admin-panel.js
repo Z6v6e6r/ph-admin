@@ -3130,6 +3130,17 @@
       }
 
       state.dialogs.forEach(function (item) {
+        var stationLabel = String(item.stationName || item.stationId || 'Без станции');
+        var currentStationLabel = String(
+          item.currentStationName || item.currentStationId || ''
+        ).trim();
+        if (
+          currentStationLabel &&
+          String(item.stationId || '').trim().toUpperCase() === 'UNASSIGNED' &&
+          currentStationLabel !== stationLabel
+        ) {
+          stationLabel += ' → ' + currentStationLabel;
+        }
         var li = document.createElement('li');
         dom.dialogsList.appendChild(li);
 
@@ -3180,7 +3191,7 @@
         var meta = document.createElement('div');
         meta.className = 'phab-admin-list-meta';
         meta.textContent =
-          (item.stationName || item.stationId || 'Без станции') +
+          stationLabel +
           ' · ' +
           (item.primaryPhone || 'без номера') +
           ' · ' +
@@ -3211,11 +3222,17 @@
       }
 
       if (selectedDialog) {
+        var dialogStationLabel = String(
+          selectedDialog.stationName || selectedDialog.stationId || 'Без станции'
+        );
+        var selectedStationLabel = String(
+          selectedDialog.currentStationName || selectedDialog.currentStationId || ''
+        ).trim();
         dom.dialogTitle.textContent =
           (selectedDialog.clientDisplayName || 'Диалог') +
           (selectedDialog.primaryPhone ? ' · ' + selectedDialog.primaryPhone : '');
         dom.dialogMeta.textContent =
-          selectedDialog.stationName +
+          dialogStationLabel +
           ' · ' +
           (selectedDialog.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер') +
           ' · ответ: ' +
@@ -3244,6 +3261,17 @@
             chip.textContent = String(value);
             dom.dialogTags.appendChild(chip);
           });
+
+        if (
+          selectedStationLabel &&
+          String(selectedDialog.stationId || '').trim().toUpperCase() === 'UNASSIGNED' &&
+          selectedStationLabel !== dialogStationLabel
+        ) {
+          var stationChip = document.createElement('span');
+          stationChip.className = 'phab-admin-chip phab-admin-chip-warn';
+          stationChip.textContent = 'выбрана станция: ' + selectedStationLabel;
+          dom.dialogTags.appendChild(stationChip);
+        }
 
         if (selectedDialog.phones && selectedDialog.phones.length > 1) {
           var phonesChip = document.createElement('span');

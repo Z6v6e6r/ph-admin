@@ -178,6 +178,8 @@ export interface SupportDialogSummary {
   connector: SupportConnectorRoute;
   stationId: string;
   stationName: string;
+  currentStationId?: string;
+  currentStationName?: string;
   clientId: string;
   clientDisplayName?: string;
   authStatus: SupportClientAuthStatus;

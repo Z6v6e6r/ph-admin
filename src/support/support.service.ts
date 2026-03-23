@@ -648,6 +648,7 @@ export class SupportService implements OnModuleInit {
     normalizedEmail: string | undefined,
     createdAt: string
   ): SupportClientProfile {
+    const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     const matchingIds = new Set<string>();
 
     const byPhone = normalizedPhone
@@ -684,7 +685,7 @@ export class SupportService implements OnModuleInit {
     if (matchingIds.size === 0) {
       client = {
         id: randomUUID(),
-        displayName: this.normalizeDisplayName(dto.displayName),
+        displayName: resolvedDisplayName,
         authStatus: normalizedPhone
           ? SupportClientAuthStatus.VERIFIED
           : SupportClientAuthStatus.UNVERIFIED,
@@ -700,8 +701,7 @@ export class SupportService implements OnModuleInit {
       this.clients.set(client.id, client);
     } else {
       client = this.mergeClients(Array.from(matchingIds.values()));
-      client.displayName =
-        this.normalizeDisplayName(dto.displayName) ?? client.displayName;
+      client.displayName = resolvedDisplayName ?? client.displayName;
       client.updatedAt = createdAt;
     }
 
@@ -898,6 +898,7 @@ export class SupportService implements OnModuleInit {
   ): SupportMessage {
     const text = String(dto.text ?? '').trim() || undefined;
     const ai = this.buildAiInsight(dto, text);
+    const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     return {
       id: randomUUID(),
       dialogId: context.dialog.id,
@@ -913,7 +914,7 @@ export class SupportService implements OnModuleInit {
           : dto.externalUserId?.trim() || context.client.id,
       senderRole: context.senderRole,
       senderName:
-        this.normalizeDisplayName(dto.displayName) ??
+        resolvedDisplayName ??
         (context.senderRole === 'SYSTEM' ? 'Система' : context.client.displayName),
       externalUserId: this.normalizeIdentityValue(dto.externalUserId),
       externalChatId: this.normalizeIdentityValue(dto.externalChatId),
@@ -1224,6 +1225,8 @@ export class SupportService implements OnModuleInit {
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
       stationId: dialog.stationId,
       stationName: dialog.stationName,
+      currentStationId: client?.currentStationId,
+      currentStationName: client?.currentStationName,
       clientId: dialog.clientId,
       clientDisplayName: client?.displayName,
       authStatus: dialog.authStatus,
@@ -1409,7 +1412,7 @@ export class SupportService implements OnModuleInit {
       externalChatId,
       externalThreadId: undefined,
       username: this.normalizeIdentityValue(dto.username),
-      displayName: this.normalizeDisplayName(dto.displayName),
+      displayName: this.resolveIncomingDisplayName(dto),
       linkedAt: createdAt,
       lastSeenAt: createdAt
     };
@@ -1731,12 +1734,35 @@ export class SupportService implements OnModuleInit {
     return `${stationName}: ${label}`;
   }
 
+  private resolveIncomingDisplayName(dto: IngestSupportEventDto): string | undefined {
+    const candidate = this.normalizeDisplayName(dto.displayName);
+    if (!candidate) {
+      return undefined;
+    }
+
+    const normalizedCandidate = candidate.toLowerCase();
+    const reservedStationValues = [
+      this.normalizeStationId(dto.selectedStationId),
+      this.normalizeStationId(dto.stationId),
+      this.normalizeDisplayName(dto.selectedStationName),
+      this.normalizeDisplayName(dto.stationName)
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.toLowerCase());
+
+    if (reservedStationValues.includes(normalizedCandidate)) {
+      return undefined;
+    }
+
+    return candidate;
+  }
+
   private buildClientDisplayName(
     client: SupportClientProfile,
     dto: IngestSupportEventDto
   ): string {
     return (
-      this.normalizeDisplayName(dto.displayName) ??
+      this.resolveIncomingDisplayName(dto) ??
       client.primaryPhone ??
       client.emails[0] ??
       dto.username?.trim() ??
