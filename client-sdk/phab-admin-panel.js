@@ -2261,6 +2261,7 @@
       loading: false,
       dialogs: [],
       dialogsSignature: '',
+      dialogsHydrated: false,
       messages: [],
       messagesSignature: '',
       messagesThreadId: null,
@@ -2307,6 +2308,12 @@
       gameChatThreadId: null,
       selectedThreadId: null
     };
+    var incomingSoundState = {
+      context: null,
+      unlockBound: false,
+      unlocked: false,
+      lastPlayAt: 0
+    };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
@@ -2320,6 +2327,188 @@
       dom.status.className = isError
         ? 'phab-admin-status phab-admin-status-error'
         : 'phab-admin-status';
+    }
+
+    function getAudioContextConstructor() {
+      return window.AudioContext || window.webkitAudioContext || null;
+    }
+
+    function getIncomingSoundContext() {
+      if (incomingSoundState.context) {
+        return incomingSoundState.context;
+      }
+      var AudioContextCtor = getAudioContextConstructor();
+      if (!AudioContextCtor) {
+        return null;
+      }
+      try {
+        incomingSoundState.context = new AudioContextCtor();
+      } catch (_error) {
+        incomingSoundState.context = null;
+      }
+      return incomingSoundState.context;
+    }
+
+    function markIncomingSoundUnlocked(context) {
+      incomingSoundState.unlocked = Boolean(context && context.state === 'running');
+      return incomingSoundState.unlocked;
+    }
+
+    function tryUnlockIncomingSound() {
+      var context = getIncomingSoundContext();
+      if (!context) {
+        return;
+      }
+      if (context.state === 'running') {
+        markIncomingSoundUnlocked(context);
+        return;
+      }
+      if (typeof context.resume !== 'function') {
+        return;
+      }
+      context
+        .resume()
+        .then(function () {
+          markIncomingSoundUnlocked(context);
+        })
+        .catch(function () {
+          // ignore unlock errors
+        });
+    }
+
+    function bindIncomingSoundUnlock() {
+      if (incomingSoundState.unlockBound) {
+        return;
+      }
+      incomingSoundState.unlockBound = true;
+      ['pointerdown', 'touchstart', 'keydown'].forEach(function (eventName) {
+        document.addEventListener(eventName, tryUnlockIncomingSound, {
+          passive: true
+        });
+      });
+    }
+
+    function createNoiseBuffer(context, durationSec) {
+      var frameCount = Math.max(1, Math.floor(context.sampleRate * durationSec));
+      var buffer = context.createBuffer(1, frameCount, context.sampleRate);
+      var data = buffer.getChannelData(0);
+      for (var index = 0; index < frameCount; index += 1) {
+        data[index] = Math.random() * 2 - 1;
+      }
+      return buffer;
+    }
+
+    function playIncomingMessageSound() {
+      var nowTs = Date.now();
+      if (nowTs - incomingSoundState.lastPlayAt < 1200) {
+        return;
+      }
+
+      var context = getIncomingSoundContext();
+      if (!context) {
+        return;
+      }
+      if (!incomingSoundState.unlocked && context.state !== 'running') {
+        return;
+      }
+      if (context.state === 'suspended') {
+        tryUnlockIncomingSound();
+        return;
+      }
+
+      incomingSoundState.lastPlayAt = nowTs;
+
+      var startAt = context.currentTime + 0.01;
+      var master = context.createGain();
+      master.gain.setValueAtTime(0.18, startAt);
+      master.connect(context.destination);
+
+      var bodyOsc = context.createOscillator();
+      var bodyGain = context.createGain();
+      bodyOsc.type = 'triangle';
+      bodyOsc.frequency.setValueAtTime(240, startAt);
+      bodyOsc.frequency.exponentialRampToValueAtTime(105, startAt + 0.08);
+      bodyGain.gain.setValueAtTime(0.0001, startAt);
+      bodyGain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.004);
+      bodyGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
+      bodyOsc.connect(bodyGain);
+      bodyGain.connect(master);
+      bodyOsc.start(startAt);
+      bodyOsc.stop(startAt + 0.1);
+
+      var snapOsc = context.createOscillator();
+      var snapGain = context.createGain();
+      snapOsc.type = 'square';
+      snapOsc.frequency.setValueAtTime(1200, startAt);
+      snapOsc.frequency.exponentialRampToValueAtTime(360, startAt + 0.03);
+      snapGain.gain.setValueAtTime(0.0001, startAt);
+      snapGain.gain.exponentialRampToValueAtTime(0.09, startAt + 0.002);
+      snapGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.035);
+      snapOsc.connect(snapGain);
+      snapGain.connect(master);
+      snapOsc.start(startAt);
+      snapOsc.stop(startAt + 0.04);
+
+      var noise = context.createBufferSource();
+      var noiseFilter = context.createBiquadFilter();
+      var noiseGain = context.createGain();
+      noise.buffer = createNoiseBuffer(context, 0.05);
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.setValueAtTime(1400, startAt);
+      noiseFilter.Q.setValueAtTime(0.8, startAt);
+      noiseGain.gain.setValueAtTime(0.0001, startAt);
+      noiseGain.gain.exponentialRampToValueAtTime(0.06, startAt + 0.001);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.05);
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(master);
+      noise.start(startAt);
+      noise.stop(startAt + 0.05);
+    }
+
+    function shouldPlayIncomingDialogsSound(previousDialogs, nextDialogs) {
+      if (!state.dialogsHydrated) {
+        return false;
+      }
+
+      var prevMap = {};
+      (Array.isArray(previousDialogs) ? previousDialogs : []).forEach(function (dialog) {
+        if (dialog && dialog.dialogId) {
+          prevMap[dialog.dialogId] = dialog;
+        }
+      });
+
+      return (Array.isArray(nextDialogs) ? nextDialogs : []).some(function (dialog) {
+        if (!dialog || !dialog.dialogId) {
+          return false;
+        }
+
+        var previous = prevMap[dialog.dialogId];
+        var senderRole = String(dialog.lastMessageSenderRole || '').toUpperCase();
+
+        if (!previous) {
+          return (
+            senderRole === 'CLIENT' ||
+            Number(dialog.unreadCount || 0) > 0 ||
+            Number(dialog.pendingClientMessagesCount || 0) > 0
+          );
+        }
+
+        var lastMessageChanged =
+          String(dialog.lastMessageAt || '') !== String(previous.lastMessageAt || '') ||
+          String(dialog.lastMessageText || '') !== String(previous.lastMessageText || '');
+        if (!lastMessageChanged) {
+          return false;
+        }
+
+        var unreadIncreased =
+          Number(dialog.unreadCount || 0) > Number(previous.unreadCount || 0);
+        var pendingIncreased =
+          Number(dialog.pendingClientMessagesCount || 0) >
+          Number(previous.pendingClientMessagesCount || 0);
+
+        return senderRole === 'CLIENT' || unreadIncreased || pendingIncreased;
+      });
     }
 
     function getSelectedDialog() {
@@ -3409,6 +3598,7 @@
     function applyDialogs(nextDialogs, options) {
       var opts = options || {};
       var list = sortDialogsByLastMessage((Array.isArray(nextDialogs) ? nextDialogs : []).filter(Boolean));
+      var previousDialogs = Array.isArray(state.dialogs) ? state.dialogs.slice() : [];
       var nextSelectedThreadId = state.selectedThreadId;
       if (list.length > 0) {
         var selectedExists = list.some(function (dialog) {
@@ -3428,6 +3618,11 @@
       state.dialogs = list;
       state.dialogsSignature = nextSignature;
       state.selectedThreadId = nextSelectedThreadId;
+      if (!state.dialogsHydrated) {
+        state.dialogsHydrated = true;
+      } else if (!opts.silent && shouldPlayIncomingDialogsSound(previousDialogs, list)) {
+        playIncomingMessageSound();
+      }
 
       if (opts.forceRender || dialogsChanged || selectionChanged) {
         renderDialogs();
@@ -4956,6 +5151,7 @@
     }
 
     function bindEvents() {
+      bindIncomingSoundUnlock();
       if (isRestrictedStationAdmin) {
         dom.tabLogs.classList.add('phab-admin-hidden');
         dom.tabAnalytics.classList.add('phab-admin-hidden');
