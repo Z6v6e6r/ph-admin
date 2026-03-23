@@ -179,6 +179,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       this.clients().createIndex({ phones: 1 }),
       this.clients().createIndex({ emails: 1 }),
       this.clients().createIndex({ 'identities.connector': 1, 'identities.externalUserId': 1 }),
+      this.clients().createIndex({ 'identities.connector': 1, 'identities.externalChatId': 1 }),
       this.dialogs().createIndex({ id: 1 }, { unique: true }),
       this.dialogs().createIndex({ stationId: 1, updatedAt: -1 }),
       this.dialogs().createIndex({ clientId: 1, stationId: 1, status: 1 }),

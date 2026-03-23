@@ -86,7 +86,7 @@ export interface SupportAiInsight {
 
 export interface SupportClientIdentity {
   connector: SupportConnectorRoute;
-  externalUserId: string;
+  externalUserId?: string;
   externalChatId?: string;
   externalThreadId?: string;
   username?: string;

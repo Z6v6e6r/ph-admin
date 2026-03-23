@@ -62,6 +62,7 @@ export class SupportService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.hydrateFromPersistence();
+    this.reconcileState();
   }
 
   async hydrateFromPersistence(): Promise<void> {
@@ -130,6 +131,11 @@ export class SupportService implements OnModuleInit {
       this.toDialogSummary(dialog, dialog.lastInboundConnector ?? dialog.connectors[0])
     );
     return { client, dialogs };
+  }
+
+  private reconcileState(): void {
+    this.reconcileDuplicateClients();
+    this.reconcileDuplicateDialogs();
   }
 
   ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
@@ -612,16 +618,12 @@ export class SupportService implements OnModuleInit {
       }
       if (connector && normalizedExternalUserId) {
         return client.identities.some(
-          (identity) =>
-            identity.connector === connector &&
-            this.normalizeIdentityValue(identity.externalUserId) === normalizedExternalUserId
+          (identity) => this.identityMatchesQuery(identity, connector, normalizedExternalUserId)
         );
       }
       if (connector && normalizedExternalChatId) {
         return client.identities.some(
-          (identity) =>
-            identity.connector === connector &&
-            this.normalizeIdentityValue(identity.externalChatId) === normalizedExternalChatId
+          (identity) => this.identityMatchesQuery(identity, connector, undefined, normalizedExternalChatId)
         );
       }
       return false;
@@ -653,8 +655,20 @@ export class SupportService implements OnModuleInit {
       externalUserId: dto.externalUserId,
       externalChatId: dto.externalChatId
     });
+    const byExternalUserId = dto.externalUserId
+      ? this.findClientByQuery({
+          connector: dto.connector,
+          externalUserId: dto.externalUserId
+        })
+      : null;
+    const byExternalChatId = dto.externalChatId
+      ? this.findClientByQuery({
+          connector: dto.connector,
+          externalChatId: dto.externalChatId
+        })
+      : null;
 
-    [byPhone, byEmail, byIdentity].forEach((client) => {
+    [byPhone, byEmail, byIdentity, byExternalUserId, byExternalChatId].forEach((client) => {
       if (client) {
         matchingIds.add(client.id);
       }
@@ -705,6 +719,7 @@ export class SupportService implements OnModuleInit {
     }
 
     this.persistClient(client);
+    this.collapseOpenDialogsForClient(client.id);
     return client;
   }
 
@@ -779,6 +794,7 @@ export class SupportService implements OnModuleInit {
     canonical.updatedAt = new Date().toISOString();
     this.clients.set(canonical.id, canonical);
     this.persistClient(canonical);
+    this.collapseOpenDialogsForClient(canonical.id);
     return canonical;
   }
 
@@ -789,86 +805,14 @@ export class SupportService implements OnModuleInit {
     subject: string | undefined,
     createdAt: string
   ): SupportDialog {
-    const existing = this.findOpenDialog(client.id, stationId);
+    const existing = this.collapseOpenDialogs(client.id, stationId);
     const unassigned =
       stationId !== SUPPORT_UNASSIGNED_STATION_ID
-        ? this.findOpenDialog(client.id, SUPPORT_UNASSIGNED_STATION_ID)
+        ? this.collapseOpenDialogs(client.id, SUPPORT_UNASSIGNED_STATION_ID)
         : undefined;
 
     if (existing && unassigned && existing.id !== unassigned.id) {
-      const movedMessages = this.messages.get(unassigned.id) ?? [];
-      const targetMessages = this.messages.get(existing.id) ?? [];
-      const mergedMessages = [...targetMessages];
-      for (const message of movedMessages) {
-        const updatedMessage: SupportMessage = { ...message, dialogId: existing.id };
-        mergedMessages.push(updatedMessage);
-        this.persistence.persistMessage(updatedMessage);
-      }
-      mergedMessages.sort(
-        (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
-      );
-      this.messages.set(existing.id, mergedMessages);
-      this.messages.delete(unassigned.id);
-
-      const movedMetrics = this.responseMetrics.get(unassigned.id) ?? [];
-      const targetMetrics = this.responseMetrics.get(existing.id) ?? [];
-      for (const metric of movedMetrics) {
-        const updatedMetric: SupportResponseMetric = { ...metric, dialogId: existing.id };
-        targetMetrics.push(updatedMetric);
-        this.persistence.persistResponseMetric(updatedMetric);
-      }
-      targetMetrics.sort(
-        (left, right) => this.toTimestamp(left.startedAt) - this.toTimestamp(right.startedAt)
-      );
-      this.responseMetrics.set(existing.id, targetMetrics);
-      this.responseMetrics.delete(unassigned.id);
-
-      for (const [commandId, command] of this.outbox.entries()) {
-        if (command.dialogId !== unassigned.id) {
-          continue;
-        }
-        const updatedCommand: SupportOutboxCommand = { ...command, dialogId: existing.id };
-        this.outbox.set(commandId, updatedCommand);
-        this.persistence.persistOutboxCommand(updatedCommand);
-      }
-
-      existing.unreadCount += unassigned.unreadCount;
-      existing.pendingClientMessageIds = this.mergeIds(
-        existing.pendingClientMessageIds,
-        unassigned.pendingClientMessageIds
-      );
-      existing.waitingForStaffSince =
-        this.toTimestamp(existing.waitingForStaffSince) > 0 &&
-        this.toTimestamp(unassigned.waitingForStaffSince) > 0
-          ? new Date(
-              Math.min(
-                this.toTimestamp(existing.waitingForStaffSince),
-                this.toTimestamp(unassigned.waitingForStaffSince)
-              )
-            ).toISOString()
-          : existing.waitingForStaffSince ?? unassigned.waitingForStaffSince;
-      existing.responseTimeTotalMs += unassigned.responseTimeTotalMs;
-      existing.responseCount += unassigned.responseCount;
-      existing.averageFirstResponseMs =
-        existing.responseCount > 0
-          ? Math.round(existing.responseTimeTotalMs / existing.responseCount)
-          : undefined;
-      existing.lastFirstResponseMs = existing.lastFirstResponseMs ?? unassigned.lastFirstResponseMs;
-      existing.lastMessageAt = this.maxDate([existing.lastMessageAt, unassigned.lastMessageAt]);
-      existing.lastClientMessageAt = this.maxDate([
-        existing.lastClientMessageAt,
-        unassigned.lastClientMessageAt
-      ]);
-      existing.lastStaffMessageAt = this.maxDate([
-        existing.lastStaffMessageAt,
-        unassigned.lastStaffMessageAt
-      ]);
-      existing.connectors = this.mergeConnectors(existing.connectors, unassigned.connectors);
-      existing.phones = this.mergeStrings(existing.phones, unassigned.phones);
-      existing.emails = this.mergeStrings(existing.emails, unassigned.emails);
-      existing.ai = existing.ai ?? unassigned.ai;
-      this.dialogs.delete(unassigned.id);
-      this.persistence.deleteDialog(unassigned.id);
+      this.mergeDialogInto(existing, unassigned);
     }
 
     if (existing) {
@@ -1080,6 +1024,187 @@ export class SupportService implements OnModuleInit {
     return identities[0];
   }
 
+  private identityMatchesQuery(
+    identity: SupportClientIdentity,
+    connector: SupportConnectorRoute,
+    externalUserId?: string,
+    externalChatId?: string
+  ): boolean {
+    if (identity.connector !== connector) {
+      return false;
+    }
+
+    const identityKeys = this.getIdentityKeys(identity);
+    if (externalUserId && identityKeys.includes(externalUserId)) {
+      return true;
+    }
+    if (externalChatId && identityKeys.includes(externalChatId)) {
+      return true;
+    }
+    return false;
+  }
+
+  private getIdentityKeys(identity: SupportClientIdentity): string[] {
+    return this.mergeStrings(
+      [],
+      [
+        this.normalizeIdentityValue(identity.externalUserId),
+        this.normalizeIdentityValue(identity.externalChatId)
+      ].filter((value): value is string => Boolean(value))
+    );
+  }
+
+  private identitiesOverlap(
+    left: SupportClientIdentity,
+    right: SupportClientIdentity
+  ): boolean {
+    if (left.connector !== right.connector) {
+      return false;
+    }
+
+    const rightKeys = new Set(this.getIdentityKeys(right));
+    return this.getIdentityKeys(left).some((value) => rightKeys.has(value));
+  }
+
+  private areClientsMergeable(
+    left: SupportClientProfile,
+    right: SupportClientProfile
+  ): boolean {
+    if (left.id === right.id) {
+      return false;
+    }
+
+    if (left.phones.some((phone) => right.phones.includes(phone))) {
+      return true;
+    }
+    if (left.emails.some((email) => right.emails.includes(email))) {
+      return true;
+    }
+
+    return left.identities.some((leftIdentity) =>
+      right.identities.some((rightIdentity) => this.identitiesOverlap(leftIdentity, rightIdentity))
+    );
+  }
+
+  private reconcileDuplicateClients(): void {
+    let merged = true;
+    while (merged) {
+      merged = false;
+      const clients = Array.from(this.clients.values()).sort(
+        (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+      );
+      for (let leftIndex = 0; leftIndex < clients.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < clients.length; rightIndex += 1) {
+          if (!this.areClientsMergeable(clients[leftIndex], clients[rightIndex])) {
+            continue;
+          }
+          this.mergeClients([clients[leftIndex].id, clients[rightIndex].id]);
+          merged = true;
+          break;
+        }
+        if (merged) {
+          break;
+        }
+      }
+    }
+  }
+
+  private reconcileDuplicateDialogs(): void {
+    const pairs = Array.from(this.dialogs.values())
+      .filter((dialog) => dialog.status === SupportDialogStatus.OPEN)
+      .map((dialog) => `${dialog.clientId}::${dialog.stationId}`);
+    for (const pair of Array.from(new Set(pairs))) {
+      const [clientId, stationId] = pair.split('::');
+      if (!clientId || !stationId) {
+        continue;
+      }
+      this.collapseOpenDialogs(clientId, stationId);
+    }
+  }
+
+  private mergeDialogInto(target: SupportDialog, source: SupportDialog): void {
+    if (target.id === source.id) {
+      return;
+    }
+
+    const movedMessages = this.messages.get(source.id) ?? [];
+    const targetMessages = this.messages.get(target.id) ?? [];
+    const mergedMessages = [...targetMessages];
+    for (const message of movedMessages) {
+      const updatedMessage: SupportMessage = { ...message, dialogId: target.id };
+      mergedMessages.push(updatedMessage);
+      this.persistence.persistMessage(updatedMessage);
+    }
+    mergedMessages.sort(
+      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+    );
+    this.messages.set(target.id, mergedMessages);
+    this.messages.delete(source.id);
+
+    const movedMetrics = this.responseMetrics.get(source.id) ?? [];
+    const targetMetrics = this.responseMetrics.get(target.id) ?? [];
+    for (const metric of movedMetrics) {
+      const updatedMetric: SupportResponseMetric = { ...metric, dialogId: target.id };
+      targetMetrics.push(updatedMetric);
+      this.persistence.persistResponseMetric(updatedMetric);
+    }
+    targetMetrics.sort(
+      (left, right) => this.toTimestamp(left.startedAt) - this.toTimestamp(right.startedAt)
+    );
+    this.responseMetrics.set(target.id, targetMetrics);
+    this.responseMetrics.delete(source.id);
+
+    for (const [commandId, command] of this.outbox.entries()) {
+      if (command.dialogId !== source.id) {
+        continue;
+      }
+      const updatedCommand: SupportOutboxCommand = { ...command, dialogId: target.id };
+      this.outbox.set(commandId, updatedCommand);
+      this.persistence.persistOutboxCommand(updatedCommand);
+    }
+
+    target.unreadCount += source.unreadCount;
+    target.pendingClientMessageIds = this.mergeIds(
+      target.pendingClientMessageIds,
+      source.pendingClientMessageIds
+    );
+    target.waitingForStaffSince =
+      this.toTimestamp(target.waitingForStaffSince) > 0 &&
+      this.toTimestamp(source.waitingForStaffSince) > 0
+        ? new Date(
+            Math.min(
+              this.toTimestamp(target.waitingForStaffSince),
+              this.toTimestamp(source.waitingForStaffSince)
+            )
+          ).toISOString()
+        : target.waitingForStaffSince ?? source.waitingForStaffSince;
+    target.responseTimeTotalMs += source.responseTimeTotalMs;
+    target.responseCount += source.responseCount;
+    target.averageFirstResponseMs =
+      target.responseCount > 0
+        ? Math.round(target.responseTimeTotalMs / target.responseCount)
+        : undefined;
+    target.lastFirstResponseMs = target.lastFirstResponseMs ?? source.lastFirstResponseMs;
+    target.lastMessageAt = this.maxDate([target.lastMessageAt, source.lastMessageAt]);
+    target.lastClientMessageAt = this.maxDate([
+      target.lastClientMessageAt,
+      source.lastClientMessageAt
+    ]);
+    target.lastStaffMessageAt = this.maxDate([
+      target.lastStaffMessageAt,
+      source.lastStaffMessageAt
+    ]);
+    target.connectors = this.mergeConnectors(target.connectors, source.connectors);
+    target.phones = this.mergeStrings(target.phones, source.phones);
+    target.emails = this.mergeStrings(target.emails, source.emails);
+    target.ai = target.ai ?? source.ai;
+    target.updatedAt = this.maxDate([target.updatedAt, source.updatedAt]) ?? target.updatedAt;
+
+    this.persistDialog(target);
+    this.dialogs.delete(source.id);
+    this.persistence.deleteDialog(source.id);
+  }
+
   private toDialogSummary(
     dialog: SupportDialog,
     connector?: SupportConnectorRoute
@@ -1185,6 +1310,46 @@ export class SupportService implements OnModuleInit {
     );
   }
 
+  private findOpenDialogs(clientId: string, stationId: string): SupportDialog[] {
+    return Array.from(this.dialogs.values())
+      .filter(
+        (dialog) =>
+          dialog.clientId === clientId &&
+          dialog.stationId === stationId &&
+          dialog.status === SupportDialogStatus.OPEN
+      )
+      .sort((left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt));
+  }
+
+  private collapseOpenDialogs(clientId: string, stationId: string): SupportDialog | undefined {
+    const duplicates = this.findOpenDialogs(clientId, stationId);
+    if (duplicates.length === 0) {
+      return undefined;
+    }
+
+    const [canonical, ...rest] = duplicates;
+    for (const dialog of rest) {
+      this.mergeDialogInto(canonical, dialog);
+    }
+    return canonical;
+  }
+
+  private collapseOpenDialogsForClient(clientId: string): void {
+    const stationIds = Array.from(
+      new Set(
+        Array.from(this.dialogs.values())
+          .filter(
+            (dialog) => dialog.clientId === clientId && dialog.status === SupportDialogStatus.OPEN
+          )
+          .map((dialog) => dialog.stationId)
+      )
+    );
+
+    for (const stationId of stationIds) {
+      this.collapseOpenDialogs(clientId, stationId);
+    }
+  }
+
   private buildIdentity(
     dto: IngestSupportEventDto,
     createdAt: string
@@ -1196,7 +1361,7 @@ export class SupportService implements OnModuleInit {
     }
     return {
       connector: dto.connector,
-      externalUserId: externalUserId ?? externalChatId ?? '',
+      externalUserId,
       externalChatId,
       externalThreadId: undefined,
       username: this.normalizeIdentityValue(dto.username),
@@ -1211,9 +1376,7 @@ export class SupportService implements OnModuleInit {
     nextIdentity: SupportClientIdentity
   ): SupportClientIdentity[] {
     const existingIndex = identities.findIndex(
-      (identity) =>
-        identity.connector === nextIdentity.connector &&
-        identity.externalUserId === nextIdentity.externalUserId
+      (identity) => this.identitiesOverlap(identity, nextIdentity)
     );
     if (existingIndex < 0) {
       return [...identities, nextIdentity];
