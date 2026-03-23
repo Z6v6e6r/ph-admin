@@ -52,7 +52,7 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
       return;
     }
 
-    const dbName = String(process.env.MONGODB_DB ?? 'ph_admin').trim() || 'ph_admin';
+    const dbName = String(process.env.MONGODB_DB ?? 'default_db').trim() || 'default_db';
     this.client = new MongoClient(uri, {
       serverSelectionTimeoutMS: 5000,
       maxPoolSize: 20
