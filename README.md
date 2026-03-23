@@ -53,6 +53,7 @@ API работает на `http://localhost:3000/api`.
 - `LK_PADELHUB_GAMES_URL=https://...`
 - `LK_PADELHUB_TOURNAMENTS_URL=https://...`
 - `LK_PADELHUB_API_TOKEN=<token>` (опционально, передается как Bearer)
+- `MONGODB_DB=dialog` (опционально; база для диалогов/чатов, по умолчанию `dialog`)
 - `GAMES_SOURCE=lk|mongo` (по умолчанию `lk`; для Mongo-источника игр укажите `mongo`)
 - `GAMES_MONGODB_URI=mongodb://...` (опционально; если не задано, используется `MONGODB_URI`)
 - `GAMES_MONGODB_DB=games` (опционально; по умолчанию `games`)

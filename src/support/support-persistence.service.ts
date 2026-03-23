@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
+import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import {
   SupportClientProfile,
   SupportDialog,
@@ -29,7 +30,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
-    const dbName = String(process.env.MONGODB_DB ?? 'default_db').trim() || 'default_db';
+    const dbName =
+      String(process.env.MONGODB_DB ?? DEFAULT_DIALOGS_MONGODB_DB).trim() ||
+      DEFAULT_DIALOGS_MONGODB_DB;
     this.client = new MongoClient(uri, {
       serverSelectionTimeoutMS: 5000,
       maxPoolSize: 20
