@@ -99,6 +99,7 @@ export interface SupportClientProfile {
   id: string;
   displayName?: string;
   authStatus: SupportClientAuthStatus;
+  unverifiedTextAttempts?: number;
   primaryPhone?: string;
   phones: string[];
   emails: string[];
@@ -297,5 +298,6 @@ export interface SupportIngestEventResult {
   dialog: SupportDialog;
   message?: SupportMessage;
   requiredAction?: 'REQUEST_CONTACT' | 'REQUEST_STATION';
+  contactReminderStage?: 1 | 2;
   canReplyToClient: boolean;
 }

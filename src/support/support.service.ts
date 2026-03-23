@@ -101,7 +101,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     this.outbox.clear();
 
     for (const client of state.clients) {
-      this.clients.set(client.id, client);
+      this.clients.set(client.id, this.normalizeLoadedClient(client));
     }
 
     for (const dialog of state.dialogs) {
@@ -213,6 +213,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         })
       : undefined;
 
+    const contactReminderStage = this.updateContactReminderStage(
+      client,
+      direction,
+      kind,
+      createdAt
+    );
+
     dialog.authStatus = client.authStatus;
     dialog.currentPhone = client.primaryPhone;
     dialog.phones = [...client.phones];
@@ -255,6 +262,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
           : dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID
             ? 'REQUEST_STATION'
             : undefined,
+      contactReminderStage,
       canReplyToClient: this.canReplyToDialog(dialog)
     };
   }
@@ -739,6 +747,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         authStatus: normalizedPhone
           ? SupportClientAuthStatus.VERIFIED
           : SupportClientAuthStatus.UNVERIFIED,
+        unverifiedTextAttempts: 0,
         primaryPhone: normalizedPhone,
         phones: normalizedPhone ? [normalizedPhone] : [],
         emails: normalizedEmail ? [normalizedEmail] : [],
@@ -755,8 +764,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       client.updatedAt = createdAt;
     }
 
+    client.unverifiedTextAttempts = client.unverifiedTextAttempts ?? 0;
+
     if (normalizedPhone) {
       client.authStatus = SupportClientAuthStatus.VERIFIED;
+      client.unverifiedTextAttempts = 0;
       client.phones = this.mergeStrings(client.phones, [normalizedPhone]);
       client.primaryPhone = client.primaryPhone ?? normalizedPhone;
     }
@@ -815,6 +827,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       canonical.identities = this.upsertIdentities(canonical.identities, current.identities);
       canonical.currentStationId = canonical.currentStationId ?? current.currentStationId;
       canonical.currentStationName = canonical.currentStationName ?? current.currentStationName;
+      canonical.unverifiedTextAttempts = Math.max(
+        canonical.unverifiedTextAttempts ?? 0,
+        current.unverifiedTextAttempts ?? 0
+      );
       if (current.authStatus === SupportClientAuthStatus.VERIFIED) {
         canonical.authStatus = SupportClientAuthStatus.VERIFIED;
       }
@@ -861,6 +877,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     canonical.updatedAt = new Date().toISOString();
+    canonical.unverifiedTextAttempts = canonical.unverifiedTextAttempts ?? 0;
     this.clients.set(canonical.id, canonical);
     this.persistClient(canonical);
     this.collapseOpenDialogsForClient(canonical.id);
@@ -1360,6 +1377,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
   }
 
+  private normalizeLoadedClient(client: SupportClientProfile): SupportClientProfile {
+    return {
+      ...client,
+      unverifiedTextAttempts: client.unverifiedTextAttempts ?? 0
+    };
+  }
+
   private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
     return {
       ...dialog,
@@ -1460,8 +1484,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private persistClient(client: SupportClientProfile): void {
-    this.clients.set(client.id, client);
-    this.persistence.persistClient(client);
+    const normalized = this.normalizeLoadedClient(client);
+    this.clients.set(normalized.id, normalized);
+    this.persistence.persistClient(normalized);
   }
 
   private persistDialog(dialog: SupportDialog): void {
@@ -1498,6 +1523,37 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
 
   private collapseOpenDialogsForClient(clientId: string): void {
     this.collapseOpenDialogs(clientId);
+  }
+
+  private updateContactReminderStage(
+    client: SupportClientProfile,
+    direction: SupportMessageDirection,
+    kind: SupportMessageKind,
+    createdAt: string
+  ): 1 | 2 | undefined {
+    const currentAttempts = client.unverifiedTextAttempts ?? 0;
+
+    if (client.authStatus === SupportClientAuthStatus.VERIFIED) {
+      if (currentAttempts !== 0) {
+        client.unverifiedTextAttempts = 0;
+        client.updatedAt = createdAt;
+        this.persistClient(client);
+      }
+      return undefined;
+    }
+
+    if (direction !== SupportMessageDirection.INBOUND || kind !== SupportMessageKind.TEXT) {
+      return undefined;
+    }
+
+    const nextAttempts = Math.min(currentAttempts + 1, 2);
+    if (nextAttempts !== currentAttempts) {
+      client.unverifiedTextAttempts = nextAttempts;
+      client.updatedAt = createdAt;
+      this.persistClient(client);
+    }
+
+    return nextAttempts === 1 ? 1 : 2;
   }
 
   private buildIdentity(

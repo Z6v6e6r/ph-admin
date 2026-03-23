@@ -119,6 +119,8 @@ export interface StationDialogSummary {
   currentStationName?: string;
   clientId: string;
   clientDisplayName?: string;
+  vivaClientId?: string;
+  vivaCabinetUrl?: string;
   primaryPhone?: string;
   phones?: string[];
   subject?: string;

@@ -14,6 +14,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import {
+  VivaAdminService,
+  VivaClientCabinetLookup
+} from '../integrations/viva/viva-admin.service';
 import { SupportService } from '../support/support.service';
 import {
   SupportAiInsight,
@@ -68,7 +72,8 @@ import { MessengerService } from './messenger.service';
 export class MessengerController {
   constructor(
     private readonly messengerService: MessengerService,
-    private readonly supportService: SupportService
+    private readonly supportService: SupportService,
+    private readonly vivaAdminService: VivaAdminService
   ) {}
 
   @Get('threads')
@@ -149,11 +154,30 @@ export class MessengerController {
   listDialogs(
     @CurrentUser() user?: RequestUser,
     @Query() query: ListThreadsDto = {}
-  ): StationDialogSummary[] {
+  ): Promise<StationDialogSummary[]> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
     return this.listCompatibleDialogs(user, query);
+  }
+
+  @Get('viva/client-cabinet')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  async getVivaClientCabinet(
+    @Query('phone') phone: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<VivaClientCabinetLookup | null> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.vivaAdminService.lookupClientCabinetByPhone(phone);
   }
 
   @Get('settings')
@@ -336,10 +360,10 @@ export class MessengerController {
     }
   }
 
-  private listCompatibleDialogs(
+  private async listCompatibleDialogs(
     user: RequestUser,
     query: ListThreadsDto = {}
-  ): StationDialogSummary[] {
+  ): Promise<StationDialogSummary[]> {
     const legacy = this.messengerService.listDialogs(user, query);
     const mappedSupport = this.supportService
       .listDialogs(user)
@@ -351,11 +375,13 @@ export class MessengerController {
     legacy.forEach((dialog) => merged.set(dialog.threadId, dialog));
     mappedSupport.forEach((dialog) => merged.set(dialog.threadId, dialog));
 
-    return Array.from(merged.values()).sort((left, right) => {
+    const dialogs = Array.from(merged.values()).sort((left, right) => {
       const leftTs = Date.parse(left.lastMessageAt || '') || 0;
       const rightTs = Date.parse(right.lastMessageAt || '') || 0;
       return rightTs - leftTs;
     });
+
+    return this.attachVivaCabinetUrls(dialogs);
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {
@@ -399,6 +425,60 @@ export class MessengerController {
           ? Math.round(dialog.ai.confidence * 100)
           : undefined
     };
+  }
+
+  private async attachVivaCabinetUrls(
+    dialogs: StationDialogSummary[]
+  ): Promise<StationDialogSummary[]> {
+    const phoneToDialogs = new Map<string, StationDialogSummary[]>();
+
+    dialogs.forEach((dialog) => {
+      const phone = this.normalizePhone(dialog.primaryPhone ?? dialog.phones?.[0]);
+      if (!phone) {
+        return;
+      }
+      const existing = phoneToDialogs.get(phone) ?? [];
+      existing.push(dialog);
+      phoneToDialogs.set(phone, existing);
+    });
+
+    const lookupEntries = await Promise.all(
+      Array.from(phoneToDialogs.keys()).map(async (phone) => [
+        phone,
+        await this.vivaAdminService.lookupClientCabinetByPhone(phone)
+      ] as const)
+    );
+    const lookupByPhone = new Map<string, VivaClientCabinetLookup | null>(lookupEntries);
+
+    return dialogs.map((dialog) => {
+      const phone = this.normalizePhone(dialog.primaryPhone ?? dialog.phones?.[0]);
+      if (!phone) {
+        return dialog;
+      }
+      const lookup = lookupByPhone.get(phone);
+      if (!lookup?.vivaCabinetUrl) {
+        return dialog;
+      }
+      return {
+        ...dialog,
+        vivaClientId: lookup.vivaClientId,
+        vivaCabinetUrl: lookup.vivaCabinetUrl
+      };
+    });
+  }
+
+  private normalizePhone(phone?: string): string | undefined {
+    const digits = String(phone ?? '').replace(/\D/g, '');
+    if (!digits) {
+      return undefined;
+    }
+    if (digits.length === 10) {
+      return `7${digits}`;
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `7${digits.slice(1)}`;
+    }
+    return digits;
   }
 
   private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {

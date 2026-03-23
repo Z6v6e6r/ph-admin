@@ -40,7 +40,8 @@ export class SupportController {
     @Query('email') email?: string,
     @Query('connector') connector?: SupportConnectorRoute,
     @Query('externalUserId') externalUserId?: string,
-    @Query('externalChatId') externalChatId?: string
+    @Query('externalChatId') externalChatId?: string,
+    @Query('username') username?: string
   ) {
     this.assertIntegrationToken(token);
     return this.supportService.resolveClient({
@@ -48,7 +49,8 @@ export class SupportController {
       email,
       connector,
       externalUserId,
-      externalChatId
+      externalChatId,
+      username
     });
   }
 

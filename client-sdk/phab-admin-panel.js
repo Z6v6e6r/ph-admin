@@ -398,6 +398,29 @@
         font-size:11px;
         color:rgba(51,0,32,.72);
       }
+      .phab-admin-dialog-links{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:7px;
+      }
+      .phab-admin-dialog-link{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:4px 9px;
+        border-radius:999px;
+        background:rgba(255,255,255,.92);
+        border:1px solid rgba(51,0,32,.14);
+        color:var(--cup-wine);
+        font-size:11px;
+        font-weight:700;
+        text-decoration:none;
+      }
+      .phab-admin-dialog-link:hover{
+        background:rgba(255,255,255,.98);
+        border-color:rgba(51,0,32,.28);
+      }
       .phab-admin-dialog-tags{
         display:flex;
         flex-wrap:wrap;
@@ -1500,6 +1523,18 @@
     dialogMeta.textContent = 'Выберите чат, чтобы открыть переписку и будущую ленту действий';
     dialogHead.appendChild(dialogMeta);
 
+    var dialogLinks = document.createElement('div');
+    dialogLinks.className = 'phab-admin-dialog-links';
+    dialogLinks.style.display = 'none';
+    dialogHead.appendChild(dialogLinks);
+
+    var vivaCabinetLink = document.createElement('a');
+    vivaCabinetLink.className = 'phab-admin-dialog-link';
+    vivaCabinetLink.target = '_blank';
+    vivaCabinetLink.rel = 'noopener noreferrer';
+    vivaCabinetLink.textContent = 'ЛК клиента в Viva CRM';
+    dialogLinks.appendChild(vivaCabinetLink);
+
     var dialogTags = document.createElement('div');
     dialogTags.className = 'phab-admin-dialog-tags';
     dialogHead.appendChild(dialogTags);
@@ -2110,6 +2145,8 @@
       dialogsList: dialogsList,
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
+      dialogLinks: dialogLinks,
+      vivaCabinetLink: vivaCabinetLink,
       dialogTags: dialogTags,
       messagesBox: messagesBox,
       input: input,
@@ -2420,7 +2457,7 @@
 
       var startAt = context.currentTime + 0.01;
       var master = context.createGain();
-      master.gain.setValueAtTime(0.18, startAt);
+      master.gain.setValueAtTime(0.36, startAt);
       master.connect(context.destination);
 
       var bodyOsc = context.createOscillator();
@@ -2524,9 +2561,19 @@
       var dialog = getSelectedDialog();
       clearNode(dom.dialogTags);
       if (!dialog) {
+        applyDialogHeader(null);
+        return;
+      }
+
+      applyDialogHeader(dialog);
+    }
+
+    function applyDialogHeader(dialog) {
+      if (!dialog) {
         dom.dialogTitle.textContent = 'Чат не выбран';
         dom.dialogMeta.textContent =
           'Выберите чат слева, чтобы открыть переписку. Позже здесь появится единая лента действий клиента из CRM, Битрикс, Mango Office и чатов.';
+        renderDialogLinks(null);
         return;
       }
 
@@ -2543,6 +2590,23 @@
         formatDurationMs(dialog.averageFirstResponseMs) +
         ' · последнее сообщение: ' +
         formatDateTimeFull(dialog.lastMessageAt);
+      renderDialogLinks(dialog);
+    }
+
+    function renderDialogLinks(dialog) {
+      var vivaCabinetUrl =
+        dialog && typeof dialog.vivaCabinetUrl === 'string'
+          ? String(dialog.vivaCabinetUrl).trim()
+          : '';
+
+      if (!vivaCabinetUrl) {
+        dom.dialogLinks.style.display = 'none';
+        dom.vivaCabinetLink.removeAttribute('href');
+        return;
+      }
+
+      dom.vivaCabinetLink.href = vivaCabinetUrl;
+      dom.dialogLinks.style.display = 'flex';
     }
 
     function formatDateTimeFull(value) {
@@ -3740,20 +3804,22 @@
         var selectedStationLabel = String(
           selectedDialog.currentStationName || selectedDialog.currentStationId || ''
         ).trim();
-        var dialogTitle = getDialogDisplayTitle(selectedDialog);
-        dom.dialogTitle.textContent =
-          dialogTitle +
-          (selectedDialog.primaryPhone && dialogTitle !== selectedDialog.primaryPhone
-            ? ' · ' + selectedDialog.primaryPhone
-            : '');
-        dom.dialogMeta.textContent =
-          dialogStationLabel +
-          ' · ' +
-          (selectedDialog.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер') +
-          ' · ответ: ' +
-          formatDurationMs(selectedDialog.averageFirstResponseMs) +
-          ' · последнее сообщение: ' +
-          formatTime(selectedDialog.lastMessageAt);
+        applyDialogHeader({
+          clientDisplayName: getDialogDisplayTitle(selectedDialog),
+          subject: selectedDialog.subject,
+          primaryPhone:
+            selectedDialog.primaryPhone &&
+            getDialogDisplayTitle(selectedDialog) !== selectedDialog.primaryPhone
+              ? selectedDialog.primaryPhone
+              : undefined,
+          stationName: dialogStationLabel,
+          stationId: selectedDialog.stationId,
+          connector: selectedDialog.lastInboundConnector || selectedDialog.connector,
+          authStatus: selectedDialog.authStatus,
+          averageFirstResponseMs: selectedDialog.averageFirstResponseMs,
+          lastMessageAt: selectedDialog.lastMessageAt,
+          vivaCabinetUrl: selectedDialog.vivaCabinetUrl
+        });
 
         [
           selectedDialog.lastInboundConnector,
