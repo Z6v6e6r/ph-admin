@@ -105,9 +105,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     for (const dialog of state.dialogs) {
-      this.dialogs.set(dialog.id, dialog);
-      this.messages.set(dialog.id, []);
-      this.responseMetrics.set(dialog.id, []);
+      const normalizedDialog = this.normalizeLoadedDialog(dialog);
+      this.dialogs.set(normalizedDialog.id, normalizedDialog);
+      this.messages.set(normalizedDialog.id, []);
+      this.responseMetrics.set(normalizedDialog.id, []);
     }
 
     for (const message of state.messages) {
@@ -197,7 +198,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     const dialog = this.resolveDialog(client, stationId, stationName, normalizedDto.subject, createdAt);
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
     const direction = normalizedDto.direction ?? SupportMessageDirection.INBOUND;
-    const senderRole = this.resolveIncomingSenderRole(direction);
+    const senderRole = this.resolveIncomingSenderRole(direction, kind);
 
     const message = this.shouldCreateMessage(normalizedDto, kind, normalizedPhone, normalizedEmail)
       ? this.buildMessage(normalizedDto, {
@@ -343,14 +344,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
 
   listDialogs(user: RequestUser): SupportDialogSummary[] {
     return this.listAccessibleDialogs(user)
-      .map((dialog) => this.toDialogSummary(dialog))
+      .map((dialog) => this.toDialogSummary(dialog, undefined, user))
       .sort((left, right) => this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt));
   }
 
   listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
-    if (this.isStaff(user)) {
+    if (this.isStaff(user) && this.isDialogActiveForUser(dialog, user)) {
       dialog.unreadCount = 0;
       this.persistDialog(dialog);
     }
@@ -365,6 +366,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
     this.ensureStaff(user);
+    if (!this.isDialogActiveForUser(dialog, user)) {
+      throw new ForbiddenException('Dialog is inactive for your station');
+    }
 
     if (dialog.status === SupportDialogStatus.CLOSED) {
       throw new ForbiddenException('Dialog is closed');
@@ -870,40 +874,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     subject: string | undefined,
     createdAt: string
   ): SupportDialog {
-    const existing = this.collapseOpenDialogs(client.id, stationId);
-    const unassigned =
-      stationId !== SUPPORT_UNASSIGNED_STATION_ID
-        ? this.collapseOpenDialogs(client.id, SUPPORT_UNASSIGNED_STATION_ID)
-        : undefined;
-
-    if (existing && unassigned && existing.id !== unassigned.id) {
-      this.mergeDialogInto(existing, unassigned);
-    }
+    const existing = this.collapseOpenDialogs(client.id);
 
     if (existing) {
+      existing.stationId = stationId;
       existing.stationName = stationName;
+      existing.accessStationIds = this.mergeStationAccessIds(existing.accessStationIds, [stationId]);
       existing.subject = subject?.trim() || existing.subject;
       existing.authStatus = client.authStatus;
       existing.currentPhone = client.primaryPhone;
       existing.phones = [...client.phones];
       existing.emails = [...client.emails];
       existing.updatedAt = createdAt;
+      this.persistDialog(existing);
       return existing;
-    }
-
-    if (stationId !== SUPPORT_UNASSIGNED_STATION_ID) {
-      if (unassigned) {
-        unassigned.stationId = stationId;
-        unassigned.stationName = stationName;
-        unassigned.subject = subject?.trim() || unassigned.subject;
-        unassigned.authStatus = client.authStatus;
-        unassigned.currentPhone = client.primaryPhone;
-        unassigned.phones = [...client.phones];
-        unassigned.emails = [...client.emails];
-        unassigned.updatedAt = createdAt;
-        this.persistDialog(unassigned);
-        return unassigned;
-      }
     }
 
     const dialog: SupportDialog = {
@@ -911,6 +895,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       clientId: client.id,
       stationId,
       stationName,
+      accessStationIds: this.mergeStationAccessIds([], [stationId]),
       status: SupportDialogStatus.OPEN,
       authStatus: client.authStatus,
       currentPhone: client.primaryPhone,
@@ -1174,15 +1159,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private reconcileDuplicateDialogs(): void {
-    const pairs = Array.from(this.dialogs.values())
+    const clientIds = Array.from(this.dialogs.values())
       .filter((dialog) => dialog.status === SupportDialogStatus.OPEN)
-      .map((dialog) => `${dialog.clientId}::${dialog.stationId}`);
-    for (const pair of Array.from(new Set(pairs))) {
-      const [clientId, stationId] = pair.split('::');
-      if (!clientId || !stationId) {
+      .map((dialog) => dialog.clientId);
+    for (const clientId of Array.from(new Set(clientIds))) {
+      if (!clientId) {
         continue;
       }
-      this.collapseOpenDialogs(clientId, stationId);
+      this.collapseOpenDialogs(clientId);
     }
   }
 
@@ -1259,6 +1243,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       source.lastStaffMessageAt
     ]);
     target.connectors = this.mergeConnectors(target.connectors, source.connectors);
+    target.accessStationIds = this.mergeStationAccessIds(target.accessStationIds, [
+      target.stationId,
+      source.stationId,
+      ...(source.accessStationIds ?? [])
+    ]);
     target.phones = this.mergeStrings(target.phones, source.phones);
     target.emails = this.mergeStrings(target.emails, source.emails);
     target.ai = target.ai ?? source.ai;
@@ -1271,7 +1260,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
 
   private toDialogSummary(
     dialog: SupportDialog,
-    connector?: SupportConnectorRoute
+    connector?: SupportConnectorRoute,
+    user?: RequestUser
   ): SupportDialogSummary {
     const client = this.clients.get(dialog.clientId);
     const dialogMessages = this.messages.get(dialog.id) ?? [];
@@ -1282,6 +1272,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
       stationId: dialog.stationId,
       stationName: dialog.stationName,
+      accessStationIds: this.getDialogAccessStationIds(dialog),
+      isActiveForUser: user ? this.isDialogActiveForUser(dialog, user) : true,
       currentStationId: client?.currentStationId,
       currentStationName: client?.currentStationName,
       clientId: dialog.clientId,
@@ -1337,6 +1329,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
   }
 
+  private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
+    return {
+      ...dialog,
+      accessStationIds: this.getDialogAccessStationIds(dialog)
+    };
+  }
+
+  private getDialogAccessStationIds(dialog: Pick<SupportDialog, 'stationId' | 'accessStationIds'>): string[] {
+    return this.mergeStationAccessIds(dialog.accessStationIds ?? [], [dialog.stationId]);
+  }
+
+  private mergeStationAccessIds(existing: string[], values: Array<string | undefined>): string[] {
+    return this.mergeStrings(
+      existing,
+      values
+        .map((value) => this.normalizeStationId(value))
+        .filter(
+          (value): value is string =>
+            Boolean(value) && value !== SUPPORT_UNASSIGNED_STATION_ID
+        )
+    );
+  }
+
+  private isDialogActiveForUser(dialog: SupportDialog, user: RequestUser): boolean {
+    if (
+      user.roles.includes(Role.SUPER_ADMIN) ||
+      user.roles.includes(Role.SUPPORT) ||
+      user.stationIds.length === 0
+    ) {
+      return true;
+    }
+    if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
+      return true;
+    }
+    return user.stationIds.includes(dialog.stationId);
+  }
+
   private listAccessibleDialogs(user: RequestUser): SupportDialog[] {
     return Array.from(this.dialogs.values())
       .filter((dialog) => this.canAccessDialog(dialog, user))
@@ -1358,7 +1387,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     if (user.stationIds.length === 0) {
       return true;
     }
-    return user.stationIds.includes(dialog.stationId);
+    if (user.stationIds.includes(dialog.stationId)) {
+      return true;
+    }
+    const accessStationIds = this.getDialogAccessStationIds(dialog);
+    return user.stationIds.some((stationId) => accessStationIds.includes(stationId));
   }
 
   private ensureDialogAccess(dialog: SupportDialog, user: RequestUser): void {
@@ -1405,28 +1438,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     this.persistence.persistDialog(dialog);
   }
 
-  private findOpenDialog(clientId: string, stationId: string): SupportDialog | undefined {
+  private findOpenDialog(clientId: string): SupportDialog | undefined {
     return Array.from(this.dialogs.values()).find(
-      (dialog) =>
-        dialog.clientId === clientId &&
-        dialog.stationId === stationId &&
-        dialog.status === SupportDialogStatus.OPEN
+      (dialog) => dialog.clientId === clientId && dialog.status === SupportDialogStatus.OPEN
     );
   }
 
-  private findOpenDialogs(clientId: string, stationId: string): SupportDialog[] {
+  private findOpenDialogs(clientId: string): SupportDialog[] {
     return Array.from(this.dialogs.values())
       .filter(
-        (dialog) =>
-          dialog.clientId === clientId &&
-          dialog.stationId === stationId &&
-          dialog.status === SupportDialogStatus.OPEN
+        (dialog) => dialog.clientId === clientId && dialog.status === SupportDialogStatus.OPEN
       )
       .sort((left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt));
   }
 
-  private collapseOpenDialogs(clientId: string, stationId: string): SupportDialog | undefined {
-    const duplicates = this.findOpenDialogs(clientId, stationId);
+  private collapseOpenDialogs(clientId: string): SupportDialog | undefined {
+    const duplicates = this.findOpenDialogs(clientId);
     if (duplicates.length === 0) {
       return undefined;
     }
@@ -1439,19 +1466,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private collapseOpenDialogsForClient(clientId: string): void {
-    const stationIds = Array.from(
-      new Set(
-        Array.from(this.dialogs.values())
-          .filter(
-            (dialog) => dialog.clientId === clientId && dialog.status === SupportDialogStatus.OPEN
-          )
-          .map((dialog) => dialog.stationId)
-      )
-    );
-
-    for (const stationId of stationIds) {
-      this.collapseOpenDialogs(clientId, stationId);
-    }
+    this.collapseOpenDialogs(clientId);
   }
 
   private buildIdentity(
@@ -1881,10 +1896,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     return Role.SUPPORT;
   }
 
-  private resolveIncomingSenderRole(direction: SupportMessageDirection): SupportSenderRole {
+  private resolveIncomingSenderRole(
+    direction: SupportMessageDirection,
+    kind: SupportMessageKind
+  ): SupportSenderRole {
     if (
       direction === SupportMessageDirection.SYSTEM ||
-      direction === SupportMessageDirection.OUTBOUND
+      direction === SupportMessageDirection.OUTBOUND ||
+      kind === SupportMessageKind.STATION_SELECTION
     ) {
       return 'SYSTEM';
     }

@@ -374,6 +374,8 @@ export class MessengerController {
       connector: this.mapSupportConnector(dialog.connector),
       stationId: dialog.stationId,
       stationName: dialog.currentStationName || dialog.stationName,
+      accessStationIds: [...dialog.accessStationIds],
+      isActiveForUser: dialog.isActiveForUser,
       currentStationId: dialog.currentStationId,
       currentStationName: dialog.currentStationName,
       clientId: dialog.clientId,

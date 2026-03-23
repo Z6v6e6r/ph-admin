@@ -110,6 +110,8 @@ export interface StationDialogSummary {
   connector: ConnectorRoute;
   stationId: string;
   stationName?: string;
+  accessStationIds?: string[];
+  isActiveForUser?: boolean;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;

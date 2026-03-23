@@ -114,6 +114,7 @@ export interface SupportDialog {
   clientId: string;
   stationId: string;
   stationName: string;
+  accessStationIds: string[];
   status: SupportDialogStatus;
   authStatus: SupportClientAuthStatus;
   currentPhone?: string;
@@ -178,6 +179,8 @@ export interface SupportDialogSummary {
   connector: SupportConnectorRoute;
   stationId: string;
   stationName: string;
+  accessStationIds: string[];
+  isActiveForUser: boolean;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;

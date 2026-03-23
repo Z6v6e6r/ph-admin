@@ -300,6 +300,16 @@
         background:linear-gradient(90deg,var(--cup-lime) 0%,rgba(182,253,255,.84) 100%);
         border-color:rgba(0,58,134,.36);
       }
+      .phab-admin-list-btn-inactive{
+        background:rgba(243,243,246,.96);
+        border-color:rgba(51,0,32,.08);
+        opacity:.7;
+      }
+      .phab-admin-list-btn-inactive .phab-admin-list-title,
+      .phab-admin-list-btn-inactive .phab-admin-list-meta,
+      .phab-admin-list-btn-inactive .phab-admin-chat-preview{
+        color:rgba(51,0,32,.58);
+      }
       .phab-admin-chat-item-top{
         display:flex;
         align-items:flex-start;
@@ -3192,6 +3202,7 @@
         btn.type = 'button';
         btn.className =
           'phab-admin-list-btn phab-admin-chat-item' +
+          (item.isActiveForUser === false ? ' phab-admin-list-btn-inactive' : '') +
           (state.selectedThreadId === item.dialogId ? ' phab-admin-list-btn-active' : '');
         btn.addEventListener('click', function () {
           if (state.selectedThreadId === item.dialogId) {
@@ -3235,7 +3246,8 @@
           ' · ' +
           (item.primaryPhone || 'без номера') +
           ' · ' +
-          formatTime(item.lastMessageAt);
+          formatTime(item.lastMessageAt) +
+          (item.isActiveForUser === false ? ' · неактивен' : '');
         btn.appendChild(meta);
 
         var preview = document.createElement('div');
@@ -3269,6 +3281,8 @@
         stationName: item.stationName || item.stationId || 'Без станции',
         currentStationId: item.currentStationId || undefined,
         currentStationName: item.currentStationName || undefined,
+        accessStationIds: Array.isArray(item.accessStationIds) ? item.accessStationIds.slice() : [],
+        isActiveForUser: item.isActiveForUser !== false,
         clientId: item.clientId || '',
         clientDisplayName: item.clientDisplayName || undefined,
         authStatus: 'VERIFIED',
@@ -3445,6 +3459,9 @@
       clearNode(dom.dialogTags);
       var selectedDialog = getSelectedDialog();
       if (!state.selectedThreadId) {
+        dom.input.disabled = true;
+        dom.sendBtn.disabled = true;
+        dom.input.placeholder = 'Выберите чат слева...';
         var hint = document.createElement('div');
         hint.className = 'phab-admin-empty';
         hint.textContent = 'Выберите чат слева, чтобы открыть переписку';
@@ -3457,6 +3474,13 @@
       }
 
       if (selectedDialog) {
+        var dialogIsActiveForUser = selectedDialog.isActiveForUser !== false;
+        dom.input.disabled = !dialogIsActiveForUser;
+        dom.sendBtn.disabled = !dialogIsActiveForUser;
+        dom.input.placeholder = dialogIsActiveForUser
+          ? 'Ответ сотрудника...'
+          : 'Чат неактивен для вашей станции';
+
         var dialogStationLabel = String(
           selectedDialog.stationName || selectedDialog.stationId || 'Без станции'
         );
@@ -3516,6 +3540,13 @@
           phonesChip.className = 'phab-admin-chip';
           phonesChip.textContent = 'телефоны: ' + selectedDialog.phones.join(', ');
           dom.dialogTags.appendChild(phonesChip);
+        }
+
+        if (selectedDialog.isActiveForUser === false) {
+          var inactiveChip = document.createElement('span');
+          inactiveChip.className = 'phab-admin-chip phab-admin-chip-warn';
+          inactiveChip.textContent = 'неактивный чат для вашей станции';
+          dom.dialogTags.appendChild(inactiveChip);
         }
       }
 
