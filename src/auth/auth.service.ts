@@ -17,6 +17,7 @@ interface TokenPayload {
   sub: string;
   login: string;
   title?: string;
+  maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
   iat: number;
@@ -62,6 +63,7 @@ export class AuthService implements OnModuleInit {
         id: user.id,
         login: user.login,
         title: user.title,
+        maxPublicUrl: user.maxPublicUrl,
         roles: user.roles.slice(),
         stationIds: user.stationIds.slice()
       }))
@@ -87,6 +89,7 @@ export class AuthService implements OnModuleInit {
       sub: user.id,
       login: user.login,
       title: user.title,
+      maxPublicUrl: user.maxPublicUrl,
       roles: user.roles,
       stationIds: user.stationIds,
       iat: issuedAtSeconds,
@@ -103,6 +106,7 @@ export class AuthService implements OnModuleInit {
         id: user.id,
         login: user.login,
         title: user.title,
+        maxPublicUrl: user.maxPublicUrl,
         roles: user.roles,
         stationIds: user.stationIds,
         authSource: 'token'
@@ -206,6 +210,7 @@ export class AuthService implements OnModuleInit {
       id: String(payload.sub),
       login: String(payload.login ?? '').trim() || undefined,
       title: String(payload.title ?? '').trim() || undefined,
+      maxPublicUrl: String(payload.maxPublicUrl ?? '').trim() || undefined,
       roles,
       stationIds: payload.stationIds
         .map((stationId) => String(stationId).trim())
@@ -327,6 +332,7 @@ export class AuthService implements OnModuleInit {
       login: 'admin',
       password: 'admin12345',
       title: 'Суперадмин',
+      maxPublicUrl: undefined,
       roles: [Role.SUPER_ADMIN],
       stationIds: []
     };
@@ -356,6 +362,7 @@ export class AuthService implements OnModuleInit {
           const login = String(entry?.login ?? '').trim();
           const password = String(entry?.password ?? '').trim();
           const title = String(entry?.title ?? '').trim() || undefined;
+          const maxPublicUrl = String(entry?.maxPublicUrl ?? '').trim() || undefined;
           const id = String(entry?.id ?? `admin-${index + 1}`).trim() || `admin-${index + 1}`;
           const roles = this.parseRoles(entry?.roles ?? []);
           const stationIds = Array.isArray(entry?.stationIds)
@@ -378,6 +385,9 @@ export class AuthService implements OnModuleInit {
 
           if (title) {
             user.title = title;
+          }
+          if (maxPublicUrl) {
+            user.maxPublicUrl = maxPublicUrl;
           }
 
           return user;

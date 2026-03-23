@@ -401,7 +401,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       createdAt,
       senderId: user.id,
       senderRole,
-      senderName: this.buildStaffSenderName(user, senderRole)
+      senderName: this.buildStaffSenderName(user, senderRole),
+      meta: this.buildStaffMessageMeta(user)
     };
 
     this.appendMessage(dialog, message);
@@ -1095,11 +1096,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
 
     if (connector === SupportConnectorRoute.MAX_BOT) {
       const sender = String(message.senderName ?? '').trim();
+      const senderLinkUrl = this.readSenderLinkUrl(message);
       if (sender) {
+        const escapedSender = this.escapeMarkdown(sender);
+        const formattedSender = senderLinkUrl
+          ? `[**${escapedSender}**](${this.escapeMarkdownUrl(senderLinkUrl)})`
+          : `**${escapedSender}**`;
         return {
           text: `${sender}:\n${text}`,
           format: 'markdown',
-          formattedText: `**${this.escapeMarkdown(sender)}**:\n${text}`
+          formattedText: `${formattedSender}:\n${text}`
         };
       }
     }
@@ -1109,6 +1115,25 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
 
   private escapeMarkdown(value: string): string {
     return String(value).replace(/([\\`*_{}\[\]()#+\-.!|>~])/g, '\\$1');
+  }
+
+  private escapeMarkdownUrl(value: string): string {
+    return String(value).replace(/([()\\])/g, '\\$1');
+  }
+
+  private readSenderLinkUrl(message: SupportMessage): string | undefined {
+    const rawValue =
+      message.meta && typeof message.meta['senderMaxPublicUrl'] === 'string'
+        ? message.meta['senderMaxPublicUrl']
+        : undefined;
+    const normalized = String(rawValue ?? '').trim();
+    if (!normalized) {
+      return undefined;
+    }
+    if (!/^https?:\/\//i.test(normalized)) {
+      return undefined;
+    }
+    return normalized;
   }
 
   private pickIdentityForConnector(
@@ -1972,6 +1997,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
     const login = String(user?.login ?? '').trim();
     return login || this.buildStaffLabel(role);
+  }
+
+  private buildStaffMessageMeta(user: RequestUser): Record<string, unknown> | undefined {
+    const senderMaxPublicUrl = String(user?.maxPublicUrl ?? '').trim();
+    if (!senderMaxPublicUrl) {
+      return undefined;
+    }
+    return {
+      senderMaxPublicUrl
+    };
   }
 
   private resolveSenderRole(roles: Role[]): Role {

@@ -20,6 +20,7 @@ export interface AdminUserConfig {
   login: string;
   password: string;
   title?: string;
+  maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
 }
@@ -29,6 +30,7 @@ export interface AdminUserRecord {
   login: string;
   password: string;
   title?: string;
+  maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
 }
@@ -37,6 +39,7 @@ export interface AdminUserSummary {
   id: string;
   login: string;
   title?: string;
+  maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
 }

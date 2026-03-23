@@ -56,6 +56,7 @@ export const resolveRequestUser = (headers: IncomingHttpHeaders): RequestUser =>
   const id = String(headers['x-user-id'] ?? 'anonymous');
   const login = String(headers['x-user-login'] ?? '').trim() || undefined;
   const title = String(headers['x-user-title'] ?? '').trim() || undefined;
+  const maxPublicUrl = String(headers['x-user-max-public-url'] ?? '').trim() || undefined;
   const fromRoles = parseRolesHeader(headers['x-user-roles']);
   const fromRole = parseRolesHeader(headers['x-user-role']);
   const roles = Array.from(new Set([...fromRoles, ...fromRole]));
@@ -64,8 +65,8 @@ export const resolveRequestUser = (headers: IncomingHttpHeaders): RequestUser =>
   const stationIds = Array.from(new Set([...fromStationIds, ...fromStationId]));
 
   if (roles.length === 0 && id !== 'anonymous') {
-    return { id, login, title, roles: [Role.CLIENT], stationIds };
+    return { id, login, title, maxPublicUrl, roles: [Role.CLIENT], stationIds };
   }
 
-  return { id, login, title, roles, stationIds };
+  return { id, login, title, maxPublicUrl, roles, stationIds };
 };

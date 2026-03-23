@@ -5,6 +5,7 @@ export interface RequestUser {
   id: string;
   login?: string;
   title?: string;
+  maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
   authSource?: 'token' | 'headers' | 'anonymous';
