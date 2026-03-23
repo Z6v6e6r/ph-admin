@@ -393,7 +393,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       createdAt,
       senderId: user.id,
       senderRole,
-      senderName: this.buildStaffLabel(senderRole)
+      senderName: this.buildStaffSenderName(user, senderRole)
     };
 
     this.appendMessage(dialog, message);
@@ -1876,6 +1876,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       default:
         return 'Сотрудник';
     }
+  }
+
+  private buildStaffSenderName(user: RequestUser, role: Role): string {
+    const login = String(user?.login ?? '').trim();
+    return login || this.buildStaffLabel(role);
   }
 
   private resolveSenderRole(roles: Role[]): Role {

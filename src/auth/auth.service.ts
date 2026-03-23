@@ -98,6 +98,7 @@ export class AuthService implements OnModuleInit {
       expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
       user: {
         id: user.id,
+        login: user.login,
         roles: user.roles,
         stationIds: user.stationIds,
         authSource: 'token'
@@ -199,6 +200,7 @@ export class AuthService implements OnModuleInit {
 
     return {
       id: String(payload.sub),
+      login: String(payload.login ?? '').trim() || undefined,
       roles,
       stationIds: payload.stationIds
         .map((stationId) => String(stationId).trim())

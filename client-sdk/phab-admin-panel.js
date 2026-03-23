@@ -462,9 +462,9 @@
       .phab-admin-message-system{
         margin-left:auto;
         margin-right:auto;
-        background:rgba(255,232,145,.58);
-        color:#6a5200;
-        border:1px solid rgba(160,120,0,.24);
+        background:rgba(223,228,235,.82);
+        color:#39424e;
+        border:1px solid rgba(83,95,111,.2);
         max-width:92%;
       }
       .phab-admin-message-meta{
@@ -3460,6 +3460,10 @@
     function normalizeLegacyMessages(messages) {
       return (Array.isArray(messages) ? messages : []).map(function (message) {
         var senderRole = String(message.senderRole || '').toUpperCase();
+        var senderRoleRaw = String(message.senderRoleRaw || senderRole || '').toUpperCase();
+        var direction = String(message.direction || '').toUpperCase();
+        var isSystem = direction === 'SYSTEM' || senderRoleRaw === 'SYSTEM';
+        var senderName = String(message.senderName || '').trim();
         return {
           id: message.id,
           dataSource: 'messenger',
@@ -3467,18 +3471,23 @@
           createdAt: message.createdAt,
           connector: '',
           kind: 'TEXT',
-          direction: senderRole === 'CLIENT' ? 'INBOUND' : 'OUTBOUND',
-          senderRole: senderRole,
+          direction: isSystem ? 'SYSTEM' : (senderRole === 'CLIENT' ? 'INBOUND' : 'OUTBOUND'),
+          senderRole: isSystem ? 'SYSTEM' : senderRole,
+          senderRoleRaw: senderRoleRaw,
           senderName:
-            senderRole === 'CLIENT'
-              ? 'Клиент'
-              : senderRole === 'SUPER_ADMIN'
-                ? 'Суперадмин'
-                : senderRole === 'STATION_ADMIN'
-                  ? 'Администратор станции'
-                  : senderRole === 'MANAGER'
-                    ? 'Менеджер'
-                    : 'Сотрудник'
+            isSystem
+              ? (senderName || 'Система')
+              : senderName || (
+                senderRole === 'CLIENT'
+                  ? 'Клиент'
+                  : senderRole === 'SUPER_ADMIN'
+                    ? 'Суперадмин'
+                    : senderRole === 'STATION_ADMIN'
+                      ? 'Администратор станции'
+                      : senderRole === 'MANAGER'
+                        ? 'Менеджер'
+                        : 'Сотрудник'
+              )
         };
       });
     }
@@ -3609,6 +3618,7 @@
 
         var meta = document.createElement('span');
         meta.className = 'phab-admin-message-meta';
+        var roleLabel = formatRoleLabel(String(message.senderRoleRaw || message.senderRole || '').toUpperCase());
         var sender = isSystem
           ? 'Система'
           : own
@@ -3616,6 +3626,7 @@
             : (message.senderName || 'Клиент');
         meta.textContent =
           sender +
+          (!isSystem && own && roleLabel && sender !== roleLabel ? ' · ' + roleLabel : '') +
           ' · ' +
           (message.connector || '-') +
           ' · ' +

@@ -424,7 +424,10 @@ export class MessengerController {
       threadId: message.dialogId,
       senderId: message.senderId,
       senderRole: this.mapSupportSenderRole(message.senderRole) || Role.SUPPORT,
+      senderRoleRaw: message.senderRole,
+      senderName: message.senderName,
       origin: MessageOrigin.HUMAN,
+      direction: message.direction,
       text: message.text || '',
       createdAt: message.createdAt
     };

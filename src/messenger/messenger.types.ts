@@ -37,7 +37,10 @@ export interface ChatMessage {
   threadId: string;
   senderId: string;
   senderRole: Role;
+  senderRoleRaw?: string;
+  senderName?: string;
   origin: MessageOrigin;
+  direction?: string;
   text: string;
   createdAt: string;
 }
