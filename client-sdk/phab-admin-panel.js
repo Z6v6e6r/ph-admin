@@ -3125,6 +3125,35 @@
       }
     }
 
+    function normalizeDialogLabel(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase();
+    }
+
+    function getDialogDisplayTitle(dialog) {
+      var candidate = String(dialog && dialog.clientDisplayName || '').trim();
+      var reserved = [
+        dialog && dialog.stationName,
+        dialog && dialog.stationId,
+        dialog && dialog.currentStationName,
+        dialog && dialog.currentStationId,
+        'Без станции',
+        'UNASSIGNED'
+      ]
+        .map(normalizeDialogLabel)
+        .filter(Boolean);
+
+      if (candidate && reserved.indexOf(candidate.toLowerCase()) < 0) {
+        return candidate;
+      }
+      return (
+        (dialog && dialog.primaryPhone) ||
+        (dialog && dialog.subject) ||
+        ('Диалог ' + String(dialog && dialog.dialogId || '').slice(0, 8))
+      );
+    }
+
     function renderDialogs() {
       clearNode(dom.dialogsList);
       renderDialogHeader();
@@ -3175,11 +3204,7 @@
 
         var titleEl = document.createElement('div');
         titleEl.className = 'phab-admin-list-title';
-        titleEl.textContent =
-          item.clientDisplayName ||
-          item.primaryPhone ||
-          item.subject ||
-          ('Диалог ' + item.dialogId.slice(0, 8));
+        titleEl.textContent = getDialogDisplayTitle(item);
         top.appendChild(titleEl);
 
         var badgeCount = Number(item.unreadCount || 0);
@@ -3327,9 +3352,12 @@
         var selectedStationLabel = String(
           selectedDialog.currentStationName || selectedDialog.currentStationId || ''
         ).trim();
+        var dialogTitle = getDialogDisplayTitle(selectedDialog);
         dom.dialogTitle.textContent =
-          (selectedDialog.clientDisplayName || 'Диалог') +
-          (selectedDialog.primaryPhone ? ' · ' + selectedDialog.primaryPhone : '');
+          dialogTitle +
+          (selectedDialog.primaryPhone && dialogTitle !== selectedDialog.primaryPhone
+            ? ' · ' + selectedDialog.primaryPhone
+            : '');
         dom.dialogMeta.textContent =
           dialogStationLabel +
           ' · ' +

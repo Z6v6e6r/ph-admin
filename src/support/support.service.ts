@@ -48,6 +48,7 @@ interface ResolveClientQuery {
   connector?: SupportConnectorRoute;
   externalUserId?: string;
   externalChatId?: string;
+  username?: string;
 }
 
 @Injectable()
@@ -168,8 +169,7 @@ export class SupportService implements OnModuleInit {
     const dialog = this.resolveDialog(client, stationId, stationName, dto.subject, createdAt);
     const kind = this.resolveMessageKind(dto, normalizedPhone, normalizedEmail);
     const direction = dto.direction ?? SupportMessageDirection.INBOUND;
-    const senderRole: SupportSenderRole =
-      direction === SupportMessageDirection.SYSTEM ? 'SYSTEM' : Role.CLIENT;
+    const senderRole = this.resolveIncomingSenderRole(direction);
 
     const message = this.shouldCreateMessage(dto, kind, normalizedPhone, normalizedEmail)
       ? this.buildMessage(dto, {
@@ -613,6 +613,7 @@ export class SupportService implements OnModuleInit {
     const normalizedEmail = this.normalizeEmail(query.email);
     const normalizedExternalUserId = this.normalizeIdentityValue(query.externalUserId);
     const normalizedExternalChatId = this.normalizeIdentityValue(query.externalChatId);
+    const normalizedUsername = this.normalizeIdentityValue(query.username);
     const connector = query.connector;
 
     const matches = Array.from(this.clients.values()).filter((client) => {
@@ -630,6 +631,13 @@ export class SupportService implements OnModuleInit {
       if (connector && normalizedExternalChatId) {
         return client.identities.some(
           (identity) => this.identityMatchesQuery(identity, connector, undefined, normalizedExternalChatId)
+        );
+      }
+      if (connector && normalizedUsername) {
+        return client.identities.some(
+          (identity) =>
+            identity.connector === connector &&
+            this.normalizeIdentityValue(identity.username) === normalizedUsername
         );
       }
       return false;
@@ -674,12 +682,20 @@ export class SupportService implements OnModuleInit {
           externalChatId: dto.externalChatId
         })
       : null;
+    const byUsername = dto.username
+      ? this.findClientByQuery({
+          connector: dto.connector,
+          username: dto.username
+        })
+      : null;
 
-    [byPhone, byEmail, byIdentity, byExternalUserId, byExternalChatId].forEach((client) => {
-      if (client) {
-        matchingIds.add(client.id);
+    [byPhone, byEmail, byIdentity, byExternalUserId, byExternalChatId, byUsername].forEach(
+      (client) => {
+        if (client) {
+          matchingIds.add(client.id);
+        }
       }
-    });
+    );
 
     let client: SupportClientProfile;
     if (matchingIds.size === 0) {
@@ -718,6 +734,19 @@ export class SupportService implements OnModuleInit {
     const nextIdentity = this.buildIdentity(dto, createdAt);
     if (nextIdentity) {
       client.identities = this.upsertIdentity(client.identities, nextIdentity);
+    }
+
+    if (
+      !resolvedDisplayName &&
+      this.isReservedClientDisplayName(
+        client.displayName,
+        dto.selectedStationId ?? dto.stationId,
+        dto.selectedStationName ?? dto.stationName,
+        client.currentStationId,
+        client.currentStationName
+      )
+    ) {
+      client.displayName = undefined;
     }
 
     if (!client.displayName) {
@@ -908,14 +937,12 @@ export class SupportService implements OnModuleInit {
       kind: context.kind,
       text: this.buildMessageText(context.kind, text, context.normalizedPhone, context.normalizedEmail, dto),
       createdAt: context.createdAt,
-      senderId:
-        context.direction === SupportMessageDirection.SYSTEM
-          ? 'system'
-          : dto.externalUserId?.trim() || context.client.id,
+      senderId: context.senderRole === 'SYSTEM' ? 'system' : dto.externalUserId?.trim() || context.client.id,
       senderRole: context.senderRole,
       senderName:
-        resolvedDisplayName ??
-        (context.senderRole === 'SYSTEM' ? 'Система' : context.client.displayName),
+        context.senderRole === 'SYSTEM'
+          ? 'Система'
+          : resolvedDisplayName ?? context.client.displayName,
       externalUserId: this.normalizeIdentityValue(dto.externalUserId),
       externalChatId: this.normalizeIdentityValue(dto.externalChatId),
       externalMessageId: this.normalizeIdentityValue(dto.externalMessageId),
@@ -1228,7 +1255,7 @@ export class SupportService implements OnModuleInit {
       currentStationId: client?.currentStationId,
       currentStationName: client?.currentStationName,
       clientId: dialog.clientId,
-      clientDisplayName: client?.displayName,
+      clientDisplayName: this.buildSummaryClientDisplayName(client, dialog),
       authStatus: dialog.authStatus,
       primaryPhone: dialog.currentPhone,
       phones: [...dialog.phones],
@@ -1734,23 +1761,40 @@ export class SupportService implements OnModuleInit {
     return `${stationName}: ${label}`;
   }
 
+  private buildSummaryClientDisplayName(
+    client: SupportClientProfile | undefined,
+    dialog: SupportDialog
+  ): string | undefined {
+    if (!client?.displayName) {
+      return undefined;
+    }
+    if (
+      this.isReservedClientDisplayName(
+        client.displayName,
+        dialog.stationId,
+        dialog.stationName,
+        client.currentStationId,
+        client.currentStationName
+      )
+    ) {
+      return undefined;
+    }
+    return client.displayName;
+  }
+
   private resolveIncomingDisplayName(dto: IngestSupportEventDto): string | undefined {
     const candidate = this.normalizeDisplayName(dto.displayName);
     if (!candidate) {
       return undefined;
     }
 
-    const normalizedCandidate = candidate.toLowerCase();
-    const reservedStationValues = [
-      this.normalizeStationId(dto.selectedStationId),
-      this.normalizeStationId(dto.stationId),
-      this.normalizeDisplayName(dto.selectedStationName),
-      this.normalizeDisplayName(dto.stationName)
-    ]
-      .filter((value): value is string => Boolean(value))
-      .map((value) => value.toLowerCase());
-
-    if (reservedStationValues.includes(normalizedCandidate)) {
+    if (
+      this.isReservedClientDisplayName(
+        candidate,
+        dto.selectedStationId ?? dto.stationId,
+        dto.selectedStationName ?? dto.stationName
+      )
+    ) {
       return undefined;
     }
 
@@ -1805,6 +1849,42 @@ export class SupportService implements OnModuleInit {
       }
     }
     return Role.SUPPORT;
+  }
+
+  private resolveIncomingSenderRole(direction: SupportMessageDirection): SupportSenderRole {
+    if (
+      direction === SupportMessageDirection.SYSTEM ||
+      direction === SupportMessageDirection.OUTBOUND
+    ) {
+      return 'SYSTEM';
+    }
+    return Role.CLIENT;
+  }
+
+  private isReservedClientDisplayName(
+    value: string | undefined,
+    stationId?: string,
+    stationName?: string,
+    currentStationId?: string,
+    currentStationName?: string
+  ): boolean {
+    const normalizedValue = this.normalizeDisplayName(value)?.toLowerCase();
+    if (!normalizedValue) {
+      return false;
+    }
+
+    const reservedStationValues = [
+      this.normalizeStationId(stationId),
+      this.normalizeDisplayName(stationName),
+      this.normalizeStationId(currentStationId),
+      this.normalizeDisplayName(currentStationName),
+      SUPPORT_UNASSIGNED_STATION_ID,
+      SUPPORT_UNASSIGNED_STATION_NAME
+    ]
+      .filter((item): item is string => Boolean(item))
+      .map((item) => item.toLowerCase());
+
+    return reservedStationValues.includes(normalizedValue);
   }
 
   private mergeStrings(left: string[], right: string[]): string[] {
