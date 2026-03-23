@@ -1,11 +1,13 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Request } from 'express';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { resolveRequestUser } from '../common/rbac/request-user.util';
+import { AuthPersistenceService } from './auth-persistence.service';
 import {
   AdminUserConfig,
+  AdminUserRecord,
   AdminUserSummary,
   AuthLoginResult,
   AuthResolvedUser
@@ -21,16 +23,8 @@ interface TokenPayload {
   typ: 'admin';
 }
 
-interface AdminUserRecord {
-  id: string;
-  login: string;
-  password: string;
-  roles: Role[];
-  stationIds: string[];
-}
-
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
   private readonly authEnabled = this.readBooleanEnv('ADMIN_AUTH_ENABLED', true);
   private readonly requireStaffToken = this.readBooleanEnv(
@@ -40,7 +34,13 @@ export class AuthService {
   private readonly tokenTtlHours = this.readNumberEnv('ADMIN_AUTH_TTL_HOURS', 12);
   private readonly secret =
     String(process.env.ADMIN_AUTH_SECRET ?? '').trim() || 'dev-insecure-admin-auth-secret';
-  private readonly usersByLogin = this.loadUsers();
+  private readonly usersByLogin = new Map<string, AdminUserRecord>();
+
+  constructor(private readonly persistence: AuthPersistenceService) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.initializeUsers();
+  }
 
   isEnabled(): boolean {
     return this.authEnabled;
@@ -54,7 +54,8 @@ export class AuthService {
     return roles.some((role) => STAFF_ROLES.includes(role));
   }
 
-  listAdminUsers(): AdminUserSummary[] {
+  async listAdminUsers(): Promise<AdminUserSummary[]> {
+    await this.refreshUsersFromPersistence();
     return Array.from(this.usersByLogin.values())
       .map((user) => ({
         id: user.id,
@@ -65,10 +66,12 @@ export class AuthService {
       .sort((left, right) => left.login.localeCompare(right.login));
   }
 
-  login(login: string, password: string): AuthLoginResult {
+  async login(login: string, password: string): Promise<AuthLoginResult> {
     if (!this.authEnabled) {
       throw new UnauthorizedException('Auth is disabled');
     }
+
+    await this.refreshUsersFromPersistence();
 
     const normalizedLogin = login.trim().toLowerCase();
     const user = this.usersByLogin.get(normalizedLogin);
@@ -251,35 +254,81 @@ export class AuthService {
     return null;
   }
 
-  private loadUsers(): Map<string, AdminUserRecord> {
+  private async initializeUsers(): Promise<void> {
     if (!this.authEnabled) {
-      return new Map();
+      this.usersByLogin.clear();
+      return;
     }
 
-    const users = this.parseUsers();
-    if (users.length === 0) {
-      if (this.authEnabled && process.env.NODE_ENV === 'production') {
-        throw new Error('ADMIN_AUTH_ENABLED=true but ADMIN_AUTH_USERS_JSON is empty');
+    const envUsers = this.parseUsers();
+    if (this.persistence.isEnabled()) {
+      const persistedUsers = await this.persistence.loadUsers();
+      if (persistedUsers.length > 0) {
+        this.setUsers(persistedUsers);
+        this.logger.log(`Loaded admin users from MongoDB: ${persistedUsers.length}`);
+        return;
       }
 
-      const fallbackUser: AdminUserRecord = {
-        id: 'superadmin-local',
-        login: 'admin',
-        password: 'admin12345',
-        roles: [Role.SUPER_ADMIN],
-        stationIds: []
-      };
-      this.logger.warn(
-        'Using default admin credentials login=admin password=admin12345. Configure ADMIN_AUTH_USERS_JSON.'
-      );
-      return new Map([[fallbackUser.login, fallbackUser]]);
+      if (envUsers.length > 0) {
+        await this.persistence.seedUsers(envUsers);
+        this.setUsers(envUsers);
+        this.logger.warn(
+          `Seeded admin users to MongoDB from ADMIN_AUTH_USERS_JSON: ${envUsers.length}`
+        );
+        return;
+      }
     }
 
-    const map = new Map<string, AdminUserRecord>();
-    for (const user of users) {
-      map.set(user.login.toLowerCase(), user);
+    if (envUsers.length > 0) {
+      this.setUsers(envUsers);
+      return;
     }
-    return map;
+
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'ADMIN_AUTH_ENABLED=true but no admin users found in MongoDB or ADMIN_AUTH_USERS_JSON'
+      );
+    }
+
+    const fallbackUser = this.buildFallbackUser();
+    if (this.persistence.isEnabled()) {
+      await this.persistence.seedUsers([fallbackUser]);
+    }
+    this.setUsers([fallbackUser]);
+    this.logger.warn(
+      'Using default admin credentials login=admin password=admin12345. Configure MongoDB admin_users or ADMIN_AUTH_USERS_JSON.'
+    );
+  }
+
+  private async refreshUsersFromPersistence(): Promise<void> {
+    if (!this.persistence.isEnabled()) {
+      return;
+    }
+    const persistedUsers = await this.persistence.loadUsers();
+    if (persistedUsers.length > 0) {
+      this.setUsers(persistedUsers);
+      return;
+    }
+    if (this.usersByLogin.size > 0) {
+      await this.persistence.seedUsers(Array.from(this.usersByLogin.values()));
+    }
+  }
+
+  private buildFallbackUser(): AdminUserRecord {
+    return {
+      id: 'superadmin-local',
+      login: 'admin',
+      password: 'admin12345',
+      roles: [Role.SUPER_ADMIN],
+      stationIds: []
+    };
+  }
+
+  private setUsers(users: AdminUserRecord[]): void {
+    this.usersByLogin.clear();
+    for (const user of users) {
+      this.usersByLogin.set(user.login.toLowerCase(), user);
+    }
   }
 
   private parseUsers(): AdminUserRecord[] {

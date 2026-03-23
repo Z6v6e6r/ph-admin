@@ -14,12 +14,12 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
-  login(
+  async login(
     @Body() dto: LoginDto,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response
-  ): AuthLoginResult {
-    const result = this.authService.login(dto.login, dto.password);
+  ): Promise<AuthLoginResult> {
+    const result = await this.authService.login(dto.login, dto.password);
     response.setHeader(
       'Set-Cookie',
       this.authService.buildAuthCookie(result.accessToken, this.isSecureRequest(request))
@@ -59,11 +59,11 @@ export class AuthController {
 
   @Get('admin-users')
   @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
-  adminUsers(@CurrentUser() user?: RequestUser): { users: AdminUserSummary[] } {
+  async adminUsers(@CurrentUser() user?: RequestUser): Promise<{ users: AdminUserSummary[] }> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return { users: this.authService.listAdminUsers() };
+    return { users: await this.authService.listAdminUsers() };
   }
 
   private isSecureRequest(request: Request): boolean {

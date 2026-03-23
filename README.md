@@ -64,6 +64,8 @@ API работает на `http://localhost:3000/api`.
 - `ADMIN_AUTH_TTL_HOURS=12`
 - `ADMIN_AUTH_USERS_JSON=<json-array>` (логины админов/сотрудников)
   - пример: `[{"id":"superadmin-1","login":"superadmin","password":"change_me","roles":["SUPER_ADMIN"],"stationIds":[]}]`
+- `ADMIN_AUTH_MONGODB_DB=dialog` (опционально; по умолчанию используется `MONGODB_DB`, затем `dialog`)
+- `ADMIN_AUTH_MONGODB_COLLECTION=admin_users` (опционально; коллекция админ-учеток)
 - `TELEGRAM_BOT_TOKEN=<bot_token>` (для отправки сообщений в TG из коннектора)
 - `TELEGRAM_WEBHOOK_SECRET=<secret>` (опционально, проверка вебхука)
 - `TELEGRAM_STATION_MAPPINGS=<json>` (опционально, mapping station<->groupChat)
@@ -88,11 +90,17 @@ API работает на `http://localhost:3000/api`.
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 
+Источник staff-учеток:
+
+- если доступен `MONGODB_URI`, auth читает учетки из Mongo-коллекции `admin_users`
+- если Mongo-коллекция пуста, но задан `ADMIN_AUTH_USERS_JSON`, пользователи автоматически сидируются в Mongo при старте
+- если Mongo недоступен, используется `ADMIN_AUTH_USERS_JSON`
+
 Dev fallback:
 
-- если `ADMIN_AUTH_USERS_JSON` пуст и `NODE_ENV != production`, создается временный пользователь:
+- если в Mongo нет учеток, `ADMIN_AUTH_USERS_JSON` пуст и `NODE_ENV != production`, создается временный пользователь:
   `login=admin`, `password=admin12345`
-- в production при пустом `ADMIN_AUTH_USERS_JSON` приложение завершается с ошибкой запуска
+- в production при отсутствии учеток и в Mongo, и в `ADMIN_AUTH_USERS_JSON` приложение завершается с ошибкой запуска
 
 Для обратной совместимости пользователь может передаваться заголовками:
 
