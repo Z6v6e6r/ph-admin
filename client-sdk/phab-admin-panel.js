@@ -3261,13 +3261,13 @@
         connector: item.connector || '',
         stationId: item.stationId || '',
         stationName: item.stationName || item.stationId || 'Без станции',
-        currentStationId: undefined,
-        currentStationName: undefined,
+        currentStationId: item.currentStationId || undefined,
+        currentStationName: item.currentStationName || undefined,
         clientId: item.clientId || '',
-        clientDisplayName: undefined,
+        clientDisplayName: item.clientDisplayName || undefined,
         authStatus: 'VERIFIED',
-        primaryPhone: undefined,
-        phones: [],
+        primaryPhone: item.primaryPhone || undefined,
+        phones: Array.isArray(item.phones) ? item.phones.slice() : [],
         emails: [],
         subject: item.subject || '',
         status: item.status || 'OPEN',
@@ -4393,18 +4393,8 @@
     }
 
     async function loadDialogs() {
-      var results = await Promise.allSettled([api.getAllDialogs(), api.getLegacyDialogs()]);
-      var supportDialogs =
-        results[0] && results[0].status === 'fulfilled' ? results[0].value || [] : [];
-      var legacyDialogs =
-        results[1] && results[1].status === 'fulfilled' ? results[1].value || [] : [];
-
-      state.dialogs = sortDialogsByLastMessage(
-        supportDialogs
-          .map(normalizeSupportDialog)
-          .filter(Boolean)
-          .concat(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean))
-      );
+      var legacyDialogs = (await api.getLegacyDialogs()) || [];
+      state.dialogs = sortDialogsByLastMessage(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean));
       if (state.dialogs.length > 0) {
         var exists = state.dialogs.some(function (dialog) {
           return dialog.dialogId === state.selectedThreadId;
@@ -4450,16 +4440,9 @@
         renderMessages([]);
         return;
       }
-      var selectedDialog = getSelectedDialog();
-      if (selectedDialog && selectedDialog.dataSource === 'messenger') {
-        state.messages = normalizeLegacyMessages(
-          (await api.getLegacyMessages(state.selectedThreadId)) || []
-        );
-      } else {
-        state.messages = normalizeSupportMessages(
-          (await api.getMessages(state.selectedThreadId)) || []
-        );
-      }
+      state.messages = normalizeLegacyMessages(
+        (await api.getLegacyMessages(state.selectedThreadId)) || []
+      );
       renderMessages(state.messages);
     }
 
@@ -4649,12 +4632,7 @@
 
       dom.sendBtn.disabled = true;
       try {
-        var selectedDialog = getSelectedDialog();
-        if (selectedDialog && selectedDialog.dataSource === 'messenger') {
-          await api.sendLegacyMessage(state.selectedThreadId, text);
-        } else {
-          await api.sendMessage(state.selectedThreadId, text);
-        }
+        await api.sendLegacyMessage(state.selectedThreadId, text);
         dom.input.value = '';
         await loadDialogs();
         await loadMessages();

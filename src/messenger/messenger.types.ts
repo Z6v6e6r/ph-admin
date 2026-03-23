@@ -110,7 +110,12 @@ export interface StationDialogSummary {
   connector: ConnectorRoute;
   stationId: string;
   stationName?: string;
+  currentStationId?: string;
+  currentStationName?: string;
   clientId: string;
+  clientDisplayName?: string;
+  primaryPhone?: string;
+  phones?: string[];
   subject?: string;
   status: ThreadStatus;
   lastMessageAt?: string;
