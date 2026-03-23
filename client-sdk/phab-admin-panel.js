@@ -14,6 +14,14 @@
 
   var STYLE_ID = 'phab-admin-panel-style';
   var CONNECTOR_ROUTES = ['TG_BOT', 'MAX_BOT', 'LK_WEB_MESSENGER'];
+  var SUPPORT_CONNECTOR_ROUTES = [
+    'TG_BOT',
+    'MAX_BOT',
+    'LK_WEB_MESSENGER',
+    'EMAIL',
+    'PHONE_CALL',
+    'BITRIX'
+  ];
   var ROLE_OPTIONS = [
     'SUPER_ADMIN',
     'TOURNAMENT_MANAGER',
@@ -336,6 +344,35 @@
         font-size:11px;
         color:rgba(51,0,32,.72);
       }
+      .phab-admin-dialog-tags{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+        margin-top:8px;
+      }
+      .phab-admin-chip{
+        display:inline-flex;
+        align-items:center;
+        padding:3px 8px;
+        border-radius:999px;
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(51,0,32,.14);
+        color:var(--cup-wine);
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+      }
+      .phab-admin-chip-alert{
+        background:rgba(255,70,78,.12);
+        border-color:rgba(255,70,78,.45);
+        color:#9f1735;
+      }
+      .phab-admin-chip-warn{
+        background:rgba(255,232,145,.58);
+        border-color:rgba(160,120,0,.32);
+        color:#7c5200;
+      }
       .phab-admin-messages{
         padding:12px;
         overflow:auto;
@@ -366,6 +403,14 @@
         color:var(--cup-white);
         border:1px solid rgba(255,255,255,.3);
         border-bottom-right-radius:4px;
+      }
+      .phab-admin-message-system{
+        margin-left:auto;
+        margin-right:auto;
+        background:rgba(255,232,145,.58);
+        color:#6a5200;
+        border:1px solid rgba(160,120,0,.24);
+        max-width:92%;
       }
       .phab-admin-message-meta{
         display:block;
@@ -986,14 +1031,14 @@
 
     return {
       getConnectors: function () {
-        return request('/messenger/connectors', 'GET');
+        return request('/support/connectors', 'GET');
       },
       getStations: function (connector) {
-        return request('/messenger/connectors/' + encodeURIComponent(connector) + '/stations', 'GET');
+        return request('/support/connectors/' + encodeURIComponent(connector) + '/stations', 'GET');
       },
       getDialogs: function (connector, stationId) {
         return request(
-          '/messenger/connectors/' +
+          '/support/connectors/' +
             encodeURIComponent(connector) +
             '/stations/' +
             encodeURIComponent(stationId) +
@@ -1001,13 +1046,20 @@
           'GET'
         );
       },
-      getMessages: function (threadId) {
-        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'GET');
+      getMessages: function (dialogId) {
+        return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/messages', 'GET');
       },
-      sendMessage: function (threadId, text) {
-        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'POST', {
+      sendMessage: function (dialogId, text) {
+        return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
           text: text
         });
+      },
+      getAnalytics: function (date) {
+        var path = '/support/analytics/daily';
+        if (date) {
+          path += '?date=' + encodeURIComponent(date);
+        }
+        return request(path, 'GET');
       },
       getGames: function () {
         return request('/games', 'GET');
@@ -1150,6 +1202,23 @@
     );
   }
 
+  function formatDurationMs(value) {
+    if (value == null || Number.isNaN(Number(value))) {
+      return '-';
+    }
+    var totalSeconds = Math.max(0, Math.round(Number(value) / 1000));
+    var hours = Math.floor(totalSeconds / 3600);
+    var minutes = Math.floor((totalSeconds % 3600) / 60);
+    var seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return hours + 'ч ' + minutes + 'м';
+    }
+    if (minutes > 0) {
+      return minutes + 'м ' + seconds + 'с';
+    }
+    return seconds + 'с';
+  }
+
   function clearNode(node) {
     while (node.firstChild) {
       node.removeChild(node.firstChild);
@@ -1259,17 +1328,17 @@
     tabLogs.textContent = 'Логи';
     tabs.appendChild(tabLogs);
 
-    var tabAnalytics = document.createElement('button');
-    tabAnalytics.className = 'phab-admin-tab';
-    tabAnalytics.type = 'button';
-    tabAnalytics.textContent = 'Аналитика';
-    tabs.appendChild(tabAnalytics);
-
     var tabTournaments = document.createElement('button');
     tabTournaments.className = 'phab-admin-tab';
     tabTournaments.type = 'button';
     tabTournaments.textContent = 'Турниры';
     tabs.appendChild(tabTournaments);
+
+    var tabAnalytics = document.createElement('button');
+    tabAnalytics.className = 'phab-admin-tab';
+    tabAnalytics.type = 'button';
+    tabAnalytics.textContent = 'Аналитика';
+    tabs.appendChild(tabAnalytics);
 
     var tabSettings = document.createElement('button');
     tabSettings.className = 'phab-admin-tab';
@@ -1361,6 +1430,10 @@
     dialogMeta.className = 'phab-admin-dialog-meta';
     dialogMeta.textContent = 'Выберите станцию';
     dialogHead.appendChild(dialogMeta);
+
+    var dialogTags = document.createElement('div');
+    dialogTags.className = 'phab-admin-dialog-tags';
+    dialogHead.appendChild(dialogTags);
 
     var dialogsList = document.createElement('ul');
     dialogsList.className = 'phab-admin-list phab-admin-pane-body';
@@ -1951,6 +2024,7 @@
       dialogsList: dialogsList,
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
+      dialogTags: dialogTags,
       messagesBox: messagesBox,
       input: input,
       sendBtn: sendBtn,
@@ -2079,6 +2153,7 @@
       analyticsFilterTo: getTodayDateInputValue(),
       tournaments: [],
       tournamentsColumnWidths: {},
+      tournamentsColumnWidths: {},
       settings: {
         stations: [],
         connectors: [],
@@ -2112,7 +2187,7 @@
 
     function getSelectedDialog() {
       for (var i = 0; i < state.dialogs.length; i += 1) {
-        if (state.dialogs[i].threadId === state.selectedThreadId) {
+        if (state.dialogs[i].dialogId === state.selectedThreadId) {
           return state.dialogs[i];
         }
       }
@@ -2959,7 +3034,9 @@
               ' · Диалогов: ' +
               item.dialogsCount +
               ' · Непрочитано: ' +
-              item.unreadMessagesCount,
+              item.unreadMessagesCount +
+              ' · Без номера: ' +
+              (item.unverifiedDialogsCount || 0),
             function () {
               if (state.selectedConnector === item.connector) {
                 return;
@@ -2999,6 +3076,8 @@
           item.dialogsCount +
           ' · Непрочит. диалогов: ' +
           item.unreadDialogsCount +
+          ' · Без номера: ' +
+          (item.unverifiedDialogsCount || 0) +
           ' · Сообщений: ' +
           item.unreadMessagesCount +
           ' · ' +
@@ -3024,6 +3103,7 @@
 
     function renderDialogs() {
       clearNode(dom.dialogsList);
+      clearNode(dom.dialogTags);
       if (!state.selectedStationId) {
         dom.dialogTitle.textContent = 'Диалоги';
         dom.dialogMeta.textContent = 'Выберите станцию';
@@ -3042,26 +3122,30 @@
       }
 
       state.dialogs.forEach(function (item) {
-        var title = item.subject || 'Диалог ' + item.threadId;
+        var phonePart =
+          item.primaryPhone || (item.phones && item.phones.length ? item.phones[0] : 'без номера');
+        var title =
+          item.clientDisplayName || item.subject || ('Диалог ' + item.dialogId.slice(0, 8));
         var meta =
-          'client=' +
-          item.clientId +
+          phonePart +
           ' · unread=' +
-          item.unreadMessagesCount +
+          item.unreadCount +
           ' · last=' +
           formatTime(item.lastMessageAt) +
           ' · avgRT=' +
-          (item.averageStaffResponseTimeMs != null ? item.averageStaffResponseTimeMs + 'ms' : '-');
+          formatDurationMs(item.averageFirstResponseMs) +
+          ' · ' +
+          (item.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер');
 
         dom.dialogsList.appendChild(
           createListButton(
             title,
             meta,
             function () {
-              state.selectedThreadId = item.threadId;
+              state.selectedThreadId = item.dialogId;
               loadMessages().catch(handleError);
             },
-            state.selectedThreadId === item.threadId
+            state.selectedThreadId === item.dialogId
           )
         );
       });
@@ -3069,12 +3153,56 @@
 
     function renderMessages(messages) {
       clearNode(dom.messagesBox);
+      clearNode(dom.dialogTags);
+      var selectedDialog = getSelectedDialog();
       if (!state.selectedThreadId) {
         var hint = document.createElement('div');
         hint.className = 'phab-admin-empty';
         hint.textContent = 'Выберите диалог, чтобы видеть сообщения';
         dom.messagesBox.appendChild(hint);
         return;
+      }
+
+      if (selectedDialog) {
+        dom.dialogTitle.textContent =
+          (selectedDialog.clientDisplayName || 'Диалог') +
+          (selectedDialog.primaryPhone ? ' · ' + selectedDialog.primaryPhone : '');
+        dom.dialogMeta.textContent =
+          selectedDialog.stationName +
+          ' · ' +
+          (selectedDialog.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер') +
+          ' · ответ: ' +
+          formatDurationMs(selectedDialog.averageFirstResponseMs) +
+          ' · последнее сообщение: ' +
+          formatTime(selectedDialog.lastMessageAt);
+
+        [
+          selectedDialog.lastInboundConnector,
+          selectedDialog.ai && selectedDialog.ai.topic,
+          selectedDialog.ai && selectedDialog.ai.sentiment,
+          selectedDialog.ai && selectedDialog.ai.priority
+        ]
+          .filter(Boolean)
+          .forEach(function (value, index) {
+            var chip = document.createElement('span');
+            var lower = String(value).toLowerCase();
+            chip.className =
+              'phab-admin-chip' +
+              (lower.indexOf('critical') >= 0 || lower.indexOf('distressed') >= 0
+                ? ' phab-admin-chip-alert'
+                : lower.indexOf('important') >= 0 || lower.indexOf('negative') >= 0
+                  ? ' phab-admin-chip-warn'
+                  : '');
+            chip.textContent = String(value);
+            dom.dialogTags.appendChild(chip);
+          });
+
+        if (selectedDialog.phones && selectedDialog.phones.length > 1) {
+          var phonesChip = document.createElement('span');
+          phonesChip.className = 'phab-admin-chip';
+          phonesChip.textContent = 'телефоны: ' + selectedDialog.phones.join(', ');
+          dom.dialogTags.appendChild(phonesChip);
+        }
       }
 
       if (!messages || messages.length === 0) {
@@ -3086,17 +3214,33 @@
       }
 
       messages.forEach(function (message) {
-        var own = message.senderRole !== 'CLIENT';
+        var isSystem = message.direction === 'SYSTEM' || message.senderRole === 'SYSTEM';
+        var own = !isSystem && message.direction !== 'INBOUND' && message.senderRole !== 'CLIENT';
         var div = document.createElement('div');
         div.className =
           'phab-admin-message ' +
-          (own ? 'phab-admin-message-staff' : 'phab-admin-message-client');
+          (isSystem
+            ? 'phab-admin-message-system'
+            : own
+              ? 'phab-admin-message-staff'
+              : 'phab-admin-message-client');
         div.textContent = message.text || '';
 
         var meta = document.createElement('span');
         meta.className = 'phab-admin-message-meta';
-        var sender = own ? (message.origin === 'AI' ? 'AI' : 'Сотрудник') : 'Клиент';
-        meta.textContent = sender + ' · ' + formatTime(message.createdAt);
+        var sender = isSystem
+          ? 'Система'
+          : own
+            ? (message.senderName || 'Сотрудник')
+            : (message.senderName || 'Клиент');
+        meta.textContent =
+          sender +
+          ' · ' +
+          (message.connector || '-') +
+          ' · ' +
+          (message.kind || '-') +
+          ' · ' +
+          formatTime(message.createdAt);
         div.appendChild(meta);
 
         dom.messagesBox.appendChild(div);
@@ -4029,10 +4173,10 @@
         (await api.getDialogs(state.selectedConnector, state.selectedStationId)) || [];
       if (state.dialogs.length > 0) {
         var exists = state.dialogs.some(function (dialog) {
-          return dialog.threadId === state.selectedThreadId;
+          return dialog.dialogId === state.selectedThreadId;
         });
         if (!exists) {
-          state.selectedThreadId = state.dialogs[0].threadId;
+          state.selectedThreadId = state.dialogs[0].dialogId;
         }
       } else {
         state.selectedThreadId = null;
