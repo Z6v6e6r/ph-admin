@@ -1,4 +1,12 @@
-import { IsEnum, IsObject, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength
+} from 'class-validator';
 import {
   SupportConnectorRoute,
   SupportMessageDirection,
@@ -39,6 +47,37 @@ export class IngestSupportEventDto {
   @IsString()
   @MaxLength(160)
   username?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  action?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  recipientExternalUserId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  recipientExternalChatId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  recipientDisplayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  recipientUsername?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  senderIsBot?: boolean;
 
   @IsOptional()
   @IsString()

@@ -51,6 +51,21 @@ interface ResolveClientQuery {
   username?: string;
 }
 
+interface NormalizedIngestSupportEventDto extends IngestSupportEventDto {
+  externalUserId?: string;
+  externalChatId?: string;
+  displayName?: string;
+  username?: string;
+  selectedStationId?: string;
+  selectedStationName?: string;
+}
+
+interface SupportStationMapping {
+  key: string;
+  stationId: string;
+  stationName: string;
+}
+
 @Injectable()
 export class SupportService implements OnModuleInit {
   private readonly clients = new Map<string, SupportClientProfile>();
@@ -58,6 +73,7 @@ export class SupportService implements OnModuleInit {
   private readonly messages = new Map<string, SupportMessage[]>();
   private readonly responseMetrics = new Map<string, SupportResponseMetric[]>();
   private readonly outbox = new Map<string, SupportOutboxCommand>();
+  private readonly stationMappings = this.parseStationMappings();
 
   constructor(private readonly persistence: SupportPersistenceService) {}
 
@@ -140,13 +156,19 @@ export class SupportService implements OnModuleInit {
   }
 
   ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
-    const createdAt = this.resolveEventTimestamp(dto.timestamp);
-    const normalizedPhone = this.normalizePhone(dto.phone);
-    const normalizedEmail = this.normalizeEmail(dto.email);
-    const client = this.resolveOrCreateClient(dto, normalizedPhone, normalizedEmail, createdAt);
+    const normalizedDto = this.normalizeIncomingEvent(dto);
+    const createdAt = this.resolveEventTimestamp(normalizedDto.timestamp);
+    const normalizedPhone = this.normalizePhone(normalizedDto.phone);
+    const normalizedEmail = this.normalizeEmail(normalizedDto.email);
+    const client = this.resolveOrCreateClient(
+      normalizedDto,
+      normalizedPhone,
+      normalizedEmail,
+      createdAt
+    );
 
     const selectedStationId = this.normalizeStationId(
-      dto.selectedStationId ?? dto.stationId
+      normalizedDto.selectedStationId ?? normalizedDto.stationId
     );
     const stationId =
       selectedStationId ??
@@ -154,7 +176,7 @@ export class SupportService implements OnModuleInit {
       SUPPORT_UNASSIGNED_STATION_ID;
     const stationName =
       this.resolveStationName(
-        dto.selectedStationName ?? dto.stationName,
+        normalizedDto.selectedStationName ?? normalizedDto.stationName,
         client.currentStationName,
         stationId
       ) ?? SUPPORT_UNASSIGNED_STATION_NAME;
@@ -166,13 +188,13 @@ export class SupportService implements OnModuleInit {
       this.persistClient(client);
     }
 
-    const dialog = this.resolveDialog(client, stationId, stationName, dto.subject, createdAt);
-    const kind = this.resolveMessageKind(dto, normalizedPhone, normalizedEmail);
-    const direction = dto.direction ?? SupportMessageDirection.INBOUND;
+    const dialog = this.resolveDialog(client, stationId, stationName, normalizedDto.subject, createdAt);
+    const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
+    const direction = normalizedDto.direction ?? SupportMessageDirection.INBOUND;
     const senderRole = this.resolveIncomingSenderRole(direction);
 
-    const message = this.shouldCreateMessage(dto, kind, normalizedPhone, normalizedEmail)
-      ? this.buildMessage(dto, {
+    const message = this.shouldCreateMessage(normalizedDto, kind, normalizedPhone, normalizedEmail)
+      ? this.buildMessage(normalizedDto, {
           dialog,
           client,
           createdAt,
@@ -188,9 +210,11 @@ export class SupportService implements OnModuleInit {
     dialog.currentPhone = client.primaryPhone;
     dialog.phones = [...client.phones];
     dialog.emails = [...client.emails];
-    dialog.connectors = this.mergeConnectors(dialog.connectors, [dto.connector]);
+    dialog.connectors = this.mergeConnectors(dialog.connectors, [normalizedDto.connector]);
     dialog.lastInboundConnector =
-      direction === SupportMessageDirection.INBOUND ? dto.connector : dialog.lastInboundConnector;
+      direction === SupportMessageDirection.INBOUND
+        ? normalizedDto.connector
+        : dialog.lastInboundConnector;
     dialog.subject = dialog.subject ?? this.buildDialogSubject(client, stationName);
     dialog.updatedAt = createdAt;
 
@@ -1900,6 +1924,130 @@ export class SupportService implements OnModuleInit {
     right: SupportConnectorRoute[]
   ): SupportConnectorRoute[] {
     return Array.from(new Set([...left, ...right]));
+  }
+
+  private normalizeIncomingEvent(dto: IngestSupportEventDto): NormalizedIngestSupportEventDto {
+    const senderIsBot = this.resolveSenderIsBot(dto);
+    const recipientExternalUserId =
+      this.normalizeIdentityValue(dto.recipientExternalUserId) ??
+      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'user_id']);
+    const recipientExternalChatId =
+      this.normalizeIdentityValue(dto.recipientExternalChatId) ??
+      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'chat_id']);
+    const recipientUsername =
+      this.normalizeIdentityValue(dto.recipientUsername) ??
+      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'username']);
+
+    const selectedStation =
+      this.resolveStationMappingFromAction(dto.action) ??
+      this.resolveStationMappingFromAction(this.extractMetaPathString(dto.meta, ['action']));
+
+    return {
+      ...dto,
+      externalUserId:
+        senderIsBot && recipientExternalUserId
+          ? recipientExternalUserId
+          : this.normalizeIdentityValue(dto.externalUserId),
+      externalChatId:
+        senderIsBot && recipientExternalChatId
+          ? recipientExternalChatId
+          : this.normalizeIdentityValue(dto.externalChatId),
+      displayName: senderIsBot
+        ? undefined
+        : this.normalizeDisplayName(dto.displayName),
+      username: senderIsBot
+        ? recipientUsername
+        : this.normalizeIdentityValue(dto.username),
+      selectedStationId:
+        this.normalizeStationId(dto.selectedStationId) ??
+        selectedStation?.stationId,
+      selectedStationName:
+        this.normalizeDisplayName(dto.selectedStationName) ??
+        selectedStation?.stationName
+    };
+  }
+
+  private resolveSenderIsBot(dto: IngestSupportEventDto): boolean {
+    if (typeof dto.senderIsBot === 'boolean') {
+      return dto.senderIsBot;
+    }
+    const metaValue = this.extractMetaPath(dto.meta, ['data', 'sender', 'is_bot']);
+    return metaValue === true;
+  }
+
+  private resolveStationMappingFromAction(action?: string): SupportStationMapping | undefined {
+    const normalizedAction = this.normalizeIdentityValue(action)?.toLowerCase();
+    if (!normalizedAction) {
+      return undefined;
+    }
+    return this.stationMappings.find((mapping) => mapping.key === normalizedAction);
+  }
+
+  private parseStationMappings(): SupportStationMapping[] {
+    const raw = String(process.env.TELEGRAM_STATION_MAPPINGS ?? '').trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Array<
+          Partial<SupportStationMapping> & { callbackKey?: string }
+        >;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed
+            .map((item) => ({
+              key: String(item.key ?? item.callbackKey ?? '').trim().toLowerCase(),
+              stationId: String(item.stationId ?? '').trim(),
+              stationName: String(item.stationName ?? '').trim()
+            }))
+            .filter(
+              (item) =>
+                item.key.length > 0 &&
+                item.stationId.length > 0 &&
+                item.stationName.length > 0
+            );
+        }
+      } catch (_error) {
+        // ignore invalid env and fallback to defaults
+      }
+    }
+
+    return [
+      { key: 'yas', stationId: 'Yasenevo', stationName: 'Ясенево' },
+      { key: 'nagat', stationId: 'Nagatinskaya', stationName: 'Нагатинская' },
+      { key: 'nagat_p', stationId: 'NagatinskayaP', stationName: 'Нагатинская Премиум' },
+      { key: 'tereh', stationId: 'Terehovo', stationName: 'Терехово' },
+      { key: 'kuncev', stationId: 'Skolkovo', stationName: 'Сколково' },
+      { key: 'sochi', stationId: 'Sochi', stationName: 'Сочи' },
+      { key: 'seleger', stationId: 'seleger', stationName: 'Селигерская' },
+      { key: 't-sbora', stationId: 'care_service', stationName: 'Точка сбора' }
+    ];
+  }
+
+  private extractMetaPathString(
+    meta: Record<string, unknown> | undefined,
+    path: string[]
+  ): string | undefined {
+    const value = this.extractMetaPath(meta, path);
+    if (typeof value === 'number') {
+      return String(value);
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed || undefined;
+    }
+    return undefined;
+  }
+
+  private extractMetaPath(
+    meta: Record<string, unknown> | undefined,
+    path: string[]
+  ): unknown {
+    let current: unknown = meta;
+    for (const key of path) {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) {
+        return undefined;
+      }
+      current = (current as Record<string, unknown>)[key];
+    }
+    return current;
   }
 
   private includesAny(text: string, probes: string[]): boolean {
