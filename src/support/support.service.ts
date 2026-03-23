@@ -311,6 +311,12 @@ export class SupportService implements OnModuleInit {
       });
   }
 
+  listDialogs(user: RequestUser): SupportDialogSummary[] {
+    return this.listAccessibleDialogs(user)
+      .map((dialog) => this.toDialogSummary(dialog))
+      .sort((left, right) => this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt));
+  }
+
   listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
@@ -1210,6 +1216,9 @@ export class SupportService implements OnModuleInit {
     connector?: SupportConnectorRoute
   ): SupportDialogSummary {
     const client = this.clients.get(dialog.clientId);
+    const dialogMessages = this.messages.get(dialog.id) ?? [];
+    const lastMessage =
+      dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
     return {
       dialogId: dialog.id,
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
@@ -1225,12 +1234,47 @@ export class SupportService implements OnModuleInit {
       status: dialog.status,
       unreadCount: dialog.unreadCount,
       waitingForStaffSince: dialog.waitingForStaffSince,
+      pendingClientMessagesCount: dialog.pendingClientMessageIds.length,
       averageFirstResponseMs: dialog.averageFirstResponseMs,
       lastFirstResponseMs: dialog.lastFirstResponseMs,
       lastMessageAt: dialog.lastMessageAt,
+      lastMessageText: this.formatDialogPreview(lastMessage),
+      lastMessageSenderRole: lastMessage?.senderRole,
       lastInboundConnector: dialog.lastInboundConnector,
       ai: dialog.ai
     };
+  }
+
+  private formatDialogPreview(message?: SupportMessage): string | undefined {
+    if (!message) {
+      return undefined;
+    }
+
+    const text = String(message.text ?? '').trim();
+    if (text) {
+      return text;
+    }
+
+    switch (message.kind) {
+      case SupportMessageKind.CONTACT:
+        return message.phone ? `Контакт: ${message.phone}` : 'Передан контакт';
+      case SupportMessageKind.STATION_SELECTION:
+        return message.stationName || message.stationId
+          ? `Станция: ${message.stationName ?? message.stationId}`
+          : 'Выбрана станция';
+      case SupportMessageKind.EMAIL:
+        return message.email ? `Email: ${message.email}` : 'Email-сообщение';
+      case SupportMessageKind.CALL:
+        return 'Звонок';
+      case SupportMessageKind.MEDIA:
+        return 'Медиа';
+      case SupportMessageKind.COMMAND:
+        return 'Команда';
+      case SupportMessageKind.SYSTEM:
+        return 'Системное событие';
+      default:
+        return undefined;
+    }
   }
 
   private listAccessibleDialogs(user: RequestUser): SupportDialog[] {

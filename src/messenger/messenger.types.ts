@@ -115,6 +115,9 @@ export interface StationDialogSummary {
   status: ThreadStatus;
   lastMessageAt?: string;
   unreadMessagesCount: number;
+  pendingClientMessagesCount: number;
+  lastMessageText?: string;
+  lastMessageSenderRole?: Role;
   averageStaffResponseTimeMs?: number;
   lastStaffResponseTimeMs?: number;
   aiTopic?: AiDialogTopic;

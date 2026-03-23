@@ -118,6 +118,22 @@ export class SupportController {
     return this.supportService.listDialogsByStation(connector, stationId, user);
   }
 
+  @Get('dialogs')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  listDialogs(@CurrentUser() user?: RequestUser): SupportDialogSummary[] {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.supportService.listDialogs(user);
+  }
+
   @Get('dialogs/:dialogId/messages')
   @Roles(
     Role.SUPER_ADMIN,

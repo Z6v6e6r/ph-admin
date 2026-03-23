@@ -269,6 +269,10 @@
         overflow:auto;
         max-height:410px;
       }
+      .phab-admin-chat-list-wrap{
+        height:468px;
+        max-height:none;
+      }
       .phab-admin-list{
         list-style:none;
         margin:0;
@@ -295,6 +299,46 @@
       .phab-admin-list-btn-active{
         background:linear-gradient(90deg,var(--cup-lime) 0%,rgba(182,253,255,.84) 100%);
         border-color:rgba(0,58,134,.36);
+      }
+      .phab-admin-chat-item-top{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:8px;
+      }
+      .phab-admin-chat-badge{
+        min-width:20px;
+        height:20px;
+        padding:0 6px;
+        border-radius:999px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        font-size:11px;
+        font-weight:800;
+        line-height:1;
+        flex:0 0 auto;
+      }
+      .phab-admin-chat-badge-unread{
+        background:#ff5a63;
+        color:#fff;
+        border:1px solid rgba(123,20,51,.18);
+      }
+      .phab-admin-chat-badge-pending{
+        background:rgba(51,0,32,.12);
+        color:var(--cup-wine);
+        border:1px solid rgba(51,0,32,.12);
+      }
+      .phab-admin-chat-preview{
+        margin-top:6px;
+        font-size:11px;
+        line-height:1.35;
+        color:rgba(51,0,32,.82);
+        display:-webkit-box;
+        -webkit-line-clamp:2;
+        -webkit-box-orient:vertical;
+        overflow:hidden;
+        word-break:break-word;
       }
       .phab-admin-list-title{
         font-size:12px;
@@ -323,7 +367,7 @@
       }
       .phab-admin-dialog-wrap{
         display:grid;
-        grid-template-rows:auto auto 1fr auto;
+        grid-template-rows:auto 1fr auto;
         height:468px;
       }
       .phab-admin-dialog-head{
@@ -376,6 +420,7 @@
       .phab-admin-messages{
         padding:12px;
         overflow:auto;
+        min-height:0;
         background:
           linear-gradient(rgba(255,255,255,.82),rgba(255,255,255,.82)),
           repeating-linear-gradient(0deg,transparent 0 19px,rgba(51,0,32,.04) 19px 20px);
@@ -1030,6 +1075,9 @@
     }
 
     return {
+      getAllDialogs: function () {
+        return request('/support/dialogs', 'GET');
+      },
       getConnectors: function () {
         return request('/support/connectors', 'GET');
       },
@@ -1122,6 +1170,9 @@
       },
       getSettings: function () {
         return request('/messenger/settings', 'GET');
+      },
+      getAdminUsers: function () {
+        return request('/auth/admin-users', 'GET');
       },
       createStation: function (payload) {
         return request('/messenger/settings/stations', 'POST', payload);
@@ -1383,31 +1434,16 @@
 
     var leftHead = document.createElement('div');
     leftHead.className = 'phab-admin-pane-head';
-    leftHead.textContent = 'Маршруты и станции';
+    leftHead.textContent = 'Чаты';
     leftPane.appendChild(leftHead);
 
     var leftBody = document.createElement('div');
-    leftBody.className = 'phab-admin-pane-body';
+    leftBody.className = 'phab-admin-pane-body phab-admin-chat-list-wrap';
     leftPane.appendChild(leftBody);
 
-    var connectorsTitle = document.createElement('div');
-    connectorsTitle.className = 'phab-admin-list-title';
-    connectorsTitle.textContent = 'Коннекторы';
-    leftBody.appendChild(connectorsTitle);
-
-    var connectorsList = document.createElement('ul');
-    connectorsList.className = 'phab-admin-list';
-    leftBody.appendChild(connectorsList);
-
-    var stationsTitle = document.createElement('div');
-    stationsTitle.className = 'phab-admin-list-title';
-    stationsTitle.style.marginTop = '10px';
-    stationsTitle.textContent = 'Станции';
-    leftBody.appendChild(stationsTitle);
-
-    var stationsList = document.createElement('ul');
-    stationsList.className = 'phab-admin-list';
-    leftBody.appendChild(stationsList);
+    var dialogsList = document.createElement('ul');
+    dialogsList.className = 'phab-admin-list';
+    leftBody.appendChild(dialogsList);
 
     var rightPane = document.createElement('div');
     rightPane.className = 'phab-admin-pane';
@@ -1428,17 +1464,12 @@
 
     var dialogMeta = document.createElement('div');
     dialogMeta.className = 'phab-admin-dialog-meta';
-    dialogMeta.textContent = 'Выберите станцию';
+    dialogMeta.textContent = 'Выберите чат, чтобы открыть переписку и будущую ленту действий';
     dialogHead.appendChild(dialogMeta);
 
     var dialogTags = document.createElement('div');
     dialogTags.className = 'phab-admin-dialog-tags';
     dialogHead.appendChild(dialogTags);
-
-    var dialogsList = document.createElement('ul');
-    dialogsList.className = 'phab-admin-list phab-admin-pane-body';
-    dialogWrap.appendChild(dialogsList);
-
     var messagesBox = document.createElement('div');
     messagesBox.className = 'phab-admin-messages';
     dialogWrap.appendChild(messagesBox);
@@ -1887,6 +1918,29 @@
     accessCreateBtn.textContent = 'Добавить правило';
     accessForm.appendChild(accessCreateBtn);
 
+    var staffCard = document.createElement('div');
+    staffCard.className = 'phab-admin-settings-card';
+    settingsGrid.appendChild(staffCard);
+
+    var staffHead = document.createElement('div');
+    staffHead.className = 'phab-admin-settings-head';
+    staffHead.textContent = 'Админы и управляющие';
+    staffCard.appendChild(staffHead);
+
+    var staffList = document.createElement('div');
+    staffList.className = 'phab-admin-settings-list';
+    staffCard.appendChild(staffList);
+
+    var staffNote = document.createElement('div');
+    staffNote.className = 'phab-admin-settings-form';
+    staffCard.appendChild(staffNote);
+
+    var staffInfo = document.createElement('div');
+    staffInfo.className = 'phab-admin-settings-row-meta';
+    staffInfo.textContent =
+      'Список собран из текущей auth-конфигурации. Здесь видны суперадмины, управляющие и админы станций с их зонами доступа.';
+    staffNote.appendChild(staffInfo);
+
     var gameModal = document.createElement('div');
     gameModal.className = 'phab-admin-modal phab-admin-hidden';
     overlayHost.appendChild(gameModal);
@@ -2019,8 +2073,6 @@
       analyticsSection: analyticsSection,
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
-      connectorsList: connectorsList,
-      stationsList: stationsList,
       dialogsList: dialogsList,
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
@@ -2085,7 +2137,8 @@
       accessRoutesInput: accessRoutesInput,
       accessReadInput: accessReadInput,
       accessWriteInput: accessWriteInput,
-      accessCreateBtn: accessCreateBtn
+      accessCreateBtn: accessCreateBtn,
+      staffList: staffList
     };
   }
 
@@ -2109,6 +2162,29 @@
     return li;
   }
 
+  function formatStationScope(stationIds) {
+    if (!Array.isArray(stationIds) || stationIds.length === 0) {
+      return 'все станции';
+    }
+    return stationIds.join(', ');
+  }
+
+  function formatRoleLabel(role) {
+    if (role === 'SUPER_ADMIN') {
+      return 'Суперадмин';
+    }
+    if (role === 'MANAGER') {
+      return 'Управляющий';
+    }
+    if (role === 'STATION_ADMIN') {
+      return 'Админ станции';
+    }
+    if (role === 'SUPPORT') {
+      return 'Поддержка';
+    }
+    return role;
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -2122,8 +2198,6 @@
     var state = {
       activeTab: 'messages',
       loading: false,
-      connectors: [],
-      stations: [],
       dialogs: [],
       messages: [],
       games: [],
@@ -2157,7 +2231,8 @@
       settings: {
         stations: [],
         connectors: [],
-        accessRules: []
+        accessRules: [],
+        adminUsers: []
       },
       selectedGameId: null,
       selectedGame: null,
@@ -2166,8 +2241,6 @@
       deletingGameEvent: false,
       gameChatGameId: null,
       gameChatThreadId: null,
-      selectedConnector: null,
-      selectedStationId: null,
       selectedThreadId: null
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
@@ -2192,6 +2265,32 @@
         }
       }
       return null;
+    }
+
+    function renderDialogHeader() {
+      var dialog = getSelectedDialog();
+      clearNode(dom.dialogTags);
+      if (!dialog) {
+        dom.dialogTitle.textContent = 'Чат не выбран';
+        dom.dialogMeta.textContent =
+          'Выберите чат слева, чтобы открыть переписку. Позже здесь появится единая лента действий клиента из CRM, Битрикс, Mango Office и чатов.';
+        return;
+      }
+
+      dom.dialogTitle.textContent =
+        (dialog.clientDisplayName || dialog.subject || 'Чат') +
+        (dialog.primaryPhone ? ' · ' + dialog.primaryPhone : '');
+      dom.dialogMeta.textContent =
+        (dialog.stationName || dialog.stationId || 'Без станции') +
+        ' · ' +
+        dialog.connector +
+        ' · ' +
+        (dialog.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер') +
+        ' · ответ: ' +
+        formatDurationMs(dialog.averageFirstResponseMs) +
+        ' · последнее сообщение: ' +
+        formatDateTimeFull(dialog.lastMessageAt) +
+        ' · пока в ленте показываем сообщения чата';
     }
 
     function formatDateTimeFull(value) {
@@ -3015,139 +3114,83 @@
       }
     }
 
-    function renderConnectors() {
-      clearNode(dom.connectorsList);
-      if (state.connectors.length === 0) {
-        var empty = document.createElement('div');
-        empty.className = 'phab-admin-empty';
-        empty.textContent = 'Нет доступных коннекторов';
-        dom.connectorsList.appendChild(empty);
-        return;
-      }
-
-      state.connectors.forEach(function (item) {
-        dom.connectorsList.appendChild(
-          createListButton(
-            item.connector,
-            'Станций: ' +
-              item.stationsCount +
-              ' · Диалогов: ' +
-              item.dialogsCount +
-              ' · Непрочитано: ' +
-              item.unreadMessagesCount +
-              ' · Без номера: ' +
-              (item.unverifiedDialogsCount || 0),
-            function () {
-              if (state.selectedConnector === item.connector) {
-                return;
-              }
-              state.selectedConnector = item.connector;
-              state.selectedStationId = null;
-              state.selectedThreadId = null;
-              refreshMessageHierarchy().catch(handleError);
-            },
-            state.selectedConnector === item.connector
-          )
-        );
-      });
-    }
-
-    function renderStations() {
-      clearNode(dom.stationsList);
-      if (!state.selectedConnector) {
-        var hint = document.createElement('div');
-        hint.className = 'phab-admin-empty';
-        hint.textContent = 'Выберите коннектор';
-        dom.stationsList.appendChild(hint);
-        return;
-      }
-      if (state.stations.length === 0) {
-        var empty = document.createElement('div');
-        empty.className = 'phab-admin-empty';
-        empty.textContent = 'Нет станций';
-        dom.stationsList.appendChild(empty);
-        return;
-      }
-
-      state.stations.forEach(function (item) {
-        var title = item.stationName ? item.stationName + ' (' + item.stationId + ')' : item.stationId;
-        var meta =
-          'Диалогов: ' +
-          item.dialogsCount +
-          ' · Непрочит. диалогов: ' +
-          item.unreadDialogsCount +
-          ' · Без номера: ' +
-          (item.unverifiedDialogsCount || 0) +
-          ' · Сообщений: ' +
-          item.unreadMessagesCount +
-          ' · ' +
-          formatTime(item.lastMessageAt);
-
-        dom.stationsList.appendChild(
-          createListButton(
-            title,
-            meta,
-            function () {
-              if (state.selectedStationId === item.stationId) {
-                return;
-              }
-              state.selectedStationId = item.stationId;
-              state.selectedThreadId = null;
-              loadDialogs().catch(handleError);
-            },
-            state.selectedStationId === item.stationId
-          )
-        );
-      });
-    }
-
     function renderDialogs() {
       clearNode(dom.dialogsList);
-      clearNode(dom.dialogTags);
-      if (!state.selectedStationId) {
-        dom.dialogTitle.textContent = 'Диалоги';
-        dom.dialogMeta.textContent = 'Выберите станцию';
-      } else {
-        dom.dialogTitle.textContent = 'Диалоги станции';
-        dom.dialogMeta.textContent = state.selectedConnector + ' · ' + state.selectedStationId;
-      }
+      renderDialogHeader();
 
       if (state.dialogs.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'phab-admin-empty';
-        empty.textContent = 'Нет диалогов';
+        empty.textContent = 'Нет доступных чатов';
         dom.dialogsList.appendChild(empty);
+        dom.dialogTitle.textContent = 'Чат не выбран';
+        dom.dialogMeta.textContent = 'Список слева сортируется по дате последнего сообщения';
         renderMessages([]);
         return;
       }
 
       state.dialogs.forEach(function (item) {
-        var phonePart =
-          item.primaryPhone || (item.phones && item.phones.length ? item.phones[0] : 'без номера');
-        var title =
-          item.clientDisplayName || item.subject || ('Диалог ' + item.dialogId.slice(0, 8));
-        var meta =
-          phonePart +
-          ' · unread=' +
-          item.unreadCount +
-          ' · last=' +
-          formatTime(item.lastMessageAt) +
-          ' · avgRT=' +
-          formatDurationMs(item.averageFirstResponseMs) +
-          ' · ' +
-          (item.authStatus === 'VERIFIED' ? 'авторизован' : 'ждет номер');
+        var li = document.createElement('li');
+        dom.dialogsList.appendChild(li);
 
-        dom.dialogsList.appendChild(
-          createListButton(
-            title,
-            meta,
-            function () {
-              state.selectedThreadId = item.dialogId;
-              loadMessages().catch(handleError);
-            },
-            state.selectedThreadId === item.dialogId
-          )
-        );
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+          'phab-admin-list-btn phab-admin-chat-item' +
+          (state.selectedThreadId === item.dialogId ? ' phab-admin-list-btn-active' : '');
+        btn.addEventListener('click', function () {
+          if (state.selectedThreadId === item.dialogId) {
+            return;
+          }
+          state.selectedThreadId = item.dialogId;
+          openSelectedDialog().catch(handleError);
+        });
+        li.appendChild(btn);
+
+        var top = document.createElement('div');
+        top.className = 'phab-admin-chat-item-top';
+        btn.appendChild(top);
+
+        var titleEl = document.createElement('div');
+        titleEl.className = 'phab-admin-list-title';
+        titleEl.textContent =
+          item.clientDisplayName ||
+          item.primaryPhone ||
+          item.subject ||
+          ('Диалог ' + item.dialogId.slice(0, 8));
+        top.appendChild(titleEl);
+
+        var badgeCount = Number(item.unreadCount || 0);
+        var badgeTone = 'red';
+        if (badgeCount <= 0) {
+          badgeCount = Number(item.pendingClientMessagesCount || 0);
+          badgeTone = 'gray';
+        }
+        if (badgeCount > 0) {
+          var badge = document.createElement('span');
+          badge.className =
+            'phab-admin-chat-badge ' +
+            (badgeTone === 'red'
+              ? 'phab-admin-chat-badge-unread'
+              : 'phab-admin-chat-badge-pending');
+          badge.textContent = String(badgeCount);
+          top.appendChild(badge);
+        }
+
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-list-meta';
+        meta.textContent =
+          (item.stationName || item.stationId || 'Без станции') +
+          ' · ' +
+          (item.primaryPhone || 'без номера') +
+          ' · ' +
+          formatTime(item.lastMessageAt);
+        btn.appendChild(meta);
+
+        var preview = document.createElement('div');
+        preview.className = 'phab-admin-chat-preview';
+        preview.textContent = String(item.lastMessageText || 'Сообщений пока нет');
+        btn.appendChild(preview);
       });
     }
 
@@ -3158,9 +3201,13 @@
       if (!state.selectedThreadId) {
         var hint = document.createElement('div');
         hint.className = 'phab-admin-empty';
-        hint.textContent = 'Выберите диалог, чтобы видеть сообщения';
+        hint.textContent = 'Выберите чат слева, чтобы открыть переписку';
         dom.messagesBox.appendChild(hint);
         return;
+      }
+
+      if (!selectedDialog) {
+        renderDialogHeader();
       }
 
       if (selectedDialog) {
@@ -3174,7 +3221,8 @@
           ' · ответ: ' +
           formatDurationMs(selectedDialog.averageFirstResponseMs) +
           ' · последнее сообщение: ' +
-          formatTime(selectedDialog.lastMessageAt);
+          formatTime(selectedDialog.lastMessageAt) +
+          ' · пока в ленте показываем сообщения чата';
 
         [
           selectedDialog.lastInboundConnector,
@@ -4128,49 +4176,69 @@
       });
     }
 
+    function renderSettingsAdminUsers() {
+      clearNode(dom.staffList);
+      var users = state.settings.adminUsers || [];
+      if (users.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Сотрудники в auth-конфигурации не найдены';
+        dom.staffList.appendChild(empty);
+        return;
+      }
+
+      [
+        { role: 'SUPER_ADMIN', title: 'Суперадмины' },
+        { role: 'MANAGER', title: 'Управляющие' },
+        { role: 'STATION_ADMIN', title: 'Админы станций' }
+      ].forEach(function (group) {
+        var groupUsers = users.filter(function (user) {
+          return Array.isArray(user.roles) && user.roles.indexOf(group.role) >= 0;
+        });
+        if (groupUsers.length === 0) {
+          return;
+        }
+
+        var groupTitle = document.createElement('div');
+        groupTitle.className = 'phab-admin-settings-label';
+        groupTitle.style.marginBottom = '6px';
+        groupTitle.textContent = group.title;
+        dom.staffList.appendChild(groupTitle);
+
+        groupUsers.forEach(function (user) {
+          var row = document.createElement('div');
+          row.className = 'phab-admin-settings-row';
+          dom.staffList.appendChild(row);
+
+          var main = document.createElement('div');
+          main.className = 'phab-admin-settings-row-main';
+          row.appendChild(main);
+
+          var title = document.createElement('div');
+          title.className = 'phab-admin-settings-row-title';
+          title.textContent = user.login;
+          main.appendChild(title);
+
+          var meta = document.createElement('div');
+          meta.className = 'phab-admin-settings-row-meta';
+          meta.textContent =
+            user.roles.map(formatRoleLabel).join(', ') +
+            ' · станции: ' +
+            formatStationScope(user.stationIds);
+          main.appendChild(meta);
+        });
+      });
+    }
+
     function renderSettings() {
       renderSettingsStations();
       renderSettingsConnectors();
       renderSettingsAccessRules();
-    }
-
-    async function loadConnectors() {
-      state.connectors = (await api.getConnectors()) || [];
-      if (!state.selectedConnector && state.connectors.length > 0) {
-        state.selectedConnector = state.connectors[0].connector;
-      }
-      renderConnectors();
-    }
-
-    async function loadStations() {
-      if (!state.selectedConnector) {
-        state.stations = [];
-        renderStations();
-        return;
-      }
-      state.stations = (await api.getStations(state.selectedConnector)) || [];
-      if (state.stations.length > 0) {
-        var exists = state.stations.some(function (station) {
-          return station.stationId === state.selectedStationId;
-        });
-        if (!exists) {
-          state.selectedStationId = state.stations[0].stationId;
-        }
-      } else {
-        state.selectedStationId = null;
-      }
-      renderStations();
+      renderSettingsAdminUsers();
     }
 
     async function loadDialogs() {
-      if (!state.selectedConnector || !state.selectedStationId) {
-        state.dialogs = [];
-        state.selectedThreadId = null;
-        renderDialogs();
-        return;
-      }
-      state.dialogs =
-        (await api.getDialogs(state.selectedConnector, state.selectedStationId)) || [];
+      state.dialogs = (await api.getAllDialogs()) || [];
       if (state.dialogs.length > 0) {
         var exists = state.dialogs.some(function (dialog) {
           return dialog.dialogId === state.selectedThreadId;
@@ -4182,7 +4250,32 @@
         state.selectedThreadId = null;
       }
       renderDialogs();
+    }
+
+    async function openSelectedDialog() {
+      if (!state.selectedThreadId) {
+        state.messages = [];
+        renderMessages([]);
+        return;
+      }
       await loadMessages();
+      await loadDialogs();
+      if (!getSelectedDialog()) {
+        state.messages = [];
+        renderMessages([]);
+        return;
+      }
+      renderDialogHeader();
+    }
+
+    async function refreshDialogsView() {
+      await loadDialogs();
+      if (!state.selectedThreadId) {
+        state.messages = [];
+        renderMessages([]);
+        return;
+      }
+      await openSelectedDialog();
     }
 
     async function loadMessages() {
@@ -4269,18 +4362,14 @@
 
     async function loadSettings() {
       var settings = (await api.getSettings()) || {};
+      var adminUsersResponse = (await api.getAdminUsers()) || {};
       state.settings = {
         stations: settings.stations || [],
         connectors: settings.connectors || [],
-        accessRules: settings.accessRules || []
+        accessRules: settings.accessRules || [],
+        adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : []
       };
       renderSettings();
-    }
-
-    async function refreshMessageHierarchy() {
-      await loadConnectors();
-      await loadStations();
-      await loadDialogs();
     }
 
     async function createStation() {
@@ -4301,7 +4390,7 @@
         dom.stationNameInput.value = '';
         dom.stationActiveInput.checked = true;
         await loadSettings();
-        await refreshMessageHierarchy();
+        await refreshDialogsView();
         setStatus('Станция добавлена', false);
       } finally {
         dom.stationCreateBtn.disabled = false;
@@ -4311,7 +4400,7 @@
     async function toggleStation(station) {
       await api.updateStation(station.stationId, { isActive: !station.isActive });
       await loadSettings();
-      await refreshMessageHierarchy();
+      await refreshDialogsView();
       setStatus('Станция обновлена', false);
     }
 
@@ -4334,7 +4423,7 @@
         dom.connectorStationsInput.value = '';
         dom.connectorActiveInput.checked = true;
         await loadSettings();
-        await refreshMessageHierarchy();
+        await refreshDialogsView();
         setStatus('Коннектор добавлен', false);
       } finally {
         dom.connectorCreateBtn.disabled = false;
@@ -4344,7 +4433,7 @@
     async function toggleConnector(connector) {
       await api.updateConnector(connector.id, { isActive: !connector.isActive });
       await loadSettings();
-      await refreshMessageHierarchy();
+      await refreshDialogsView();
       setStatus('Коннектор обновлен', false);
     }
 
@@ -4370,7 +4459,7 @@
         dom.accessReadInput.checked = true;
         dom.accessWriteInput.checked = false;
         await loadSettings();
-        await refreshMessageHierarchy();
+        await refreshDialogsView();
         setStatus('Правило доступа добавлено', false);
       } finally {
         dom.accessCreateBtn.disabled = false;
@@ -4387,9 +4476,8 @@
       try {
         await api.sendMessage(state.selectedThreadId, text);
         dom.input.value = '';
-        await loadMessages();
         await loadDialogs();
-        await loadStations();
+        await loadMessages();
         setStatus('Сообщение отправлено', false);
       } finally {
         dom.sendBtn.disabled = false;
@@ -4433,7 +4521,7 @@
       try {
         setStatus('Обновление...', false);
         if (state.activeTab === 'messages') {
-          await refreshMessageHierarchy();
+          await refreshDialogsView();
         } else if (state.activeTab === 'games') {
           await loadGames();
         } else if (state.activeTab === 'logs') {
@@ -4454,6 +4542,7 @@
     function bindEvents() {
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
+        refreshDialogsView().catch(handleError);
       });
       dom.tabGames.addEventListener('click', function () {
         switchTab('games');
@@ -4639,10 +4728,10 @@
 
     async function init() {
       bindEvents();
-      await refreshMessageHierarchy();
+      await refreshDialogsView();
       pollTimer = window.setInterval(function () {
         if (state.activeTab === 'messages') {
-          refreshMessageHierarchy().catch(handleError);
+          refreshDialogsView().catch(handleError);
         }
       }, cfg.pollIntervalMs);
       setStatus('Готово', false);

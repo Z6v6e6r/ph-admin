@@ -139,6 +139,13 @@ export class MessengerService implements OnModuleInit {
         this.messages.set(message.threadId, existing);
       }
 
+      for (const thread of state.threads) {
+        this.pendingStaffResponses.set(
+          thread.id,
+          this.rebuildPendingResponsesForThread(thread.id)
+        );
+      }
+
       for (const [threadId, threadMessages] of this.messages.entries()) {
         threadMessages.sort(
           (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
@@ -396,41 +403,13 @@ export class MessengerService implements OnModuleInit {
     stationId: string,
     user: RequestUser
   ): StationDialogSummary[] {
-    return this.getFilteredAccessibleThreads(user, { connector, stationId })
-      .map((thread) => {
-        const responseStats = this.getThreadResponseStats(thread.id);
-        const insight = this.aiInsights.get(thread.id);
+    return this.listDialogs(user, { connector, stationId });
+  }
 
-        return {
-          threadId: thread.id,
-          connector: thread.connector,
-          stationId: thread.stationId,
-          stationName: thread.stationName,
-          clientId: thread.clientId,
-          subject: thread.subject,
-          status: thread.status,
-          lastMessageAt: thread.lastMessageAt,
-          unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
-          averageStaffResponseTimeMs: responseStats.averageResponseTimeMs,
-          lastStaffResponseTimeMs: responseStats.lastResponseTimeMs,
-          aiTopic: insight?.topic,
-          aiUrgency: insight?.urgency,
-          aiQualityScore: insight?.qualityScore
-        };
-      })
-      .sort(
-        (left, right) => {
-          if (left.unreadMessagesCount !== right.unreadMessagesCount) {
-            if (left.unreadMessagesCount > 0 && right.unreadMessagesCount === 0) {
-              return -1;
-            }
-            if (left.unreadMessagesCount === 0 && right.unreadMessagesCount > 0) {
-              return 1;
-            }
-          }
-          return this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
-        }
-      );
+  listDialogs(user: RequestUser, filters: ThreadFilters = {}): StationDialogSummary[] {
+    return this.getFilteredAccessibleThreads(user, filters).map((thread) =>
+      this.buildDialogSummary(thread, user)
+    );
   }
 
   getSettings(user: RequestUser): MessengerSettingsSnapshot {
@@ -860,6 +839,37 @@ export class MessengerService implements OnModuleInit {
       );
   }
 
+  private buildDialogSummary(
+    thread: ChatThread,
+    user: RequestUser
+  ): StationDialogSummary {
+    const responseStats = this.getThreadResponseStats(thread.id);
+    const insight = this.aiInsights.get(thread.id);
+    const threadMessages = this.messages.get(thread.id) ?? [];
+    const lastMessage =
+      threadMessages.length > 0 ? threadMessages[threadMessages.length - 1] : undefined;
+
+    return {
+      threadId: thread.id,
+      connector: thread.connector,
+      stationId: thread.stationId,
+      stationName: thread.stationName,
+      clientId: thread.clientId,
+      subject: thread.subject,
+      status: thread.status,
+      lastMessageAt: thread.lastMessageAt,
+      unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
+      pendingClientMessagesCount: this.countPendingClientMessages(thread.id),
+      lastMessageText: lastMessage?.text,
+      lastMessageSenderRole: lastMessage?.senderRole,
+      averageStaffResponseTimeMs: responseStats.averageResponseTimeMs,
+      lastStaffResponseTimeMs: responseStats.lastResponseTimeMs,
+      aiTopic: insight?.topic,
+      aiUrgency: insight?.urgency,
+      aiQualityScore: insight?.qualityScore
+    };
+  }
+
   private canAccessThread(thread: ChatThread, user: RequestUser): boolean {
     if (user.roles.includes(Role.CLIENT)) {
       return thread.clientId === user.id;
@@ -1230,6 +1240,10 @@ export class MessengerService implements OnModuleInit {
     return 0;
   }
 
+  private countPendingClientMessages(threadId: string): number {
+    return (this.pendingStaffResponses.get(threadId) ?? []).length;
+  }
+
   private registerPendingClientResponse(thread: ChatThread, message: ChatMessage): void {
     const pending = this.pendingStaffResponses.get(thread.id) ?? [];
     pending.push({
@@ -1277,6 +1291,25 @@ export class MessengerService implements OnModuleInit {
     this.pendingStaffResponses.set(thread.id, []);
     this.responseMetrics.set(thread.id, metrics);
     this.persistence.persistResponseMetrics(thread.id, metrics);
+  }
+
+  private rebuildPendingResponsesForThread(threadId: string): PendingStaffResponse[] {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    const pending: PendingStaffResponse[] = [];
+
+    for (const message of threadMessages) {
+      if (this.isStaffRole(message.senderRole)) {
+        pending.length = 0;
+        continue;
+      }
+
+      pending.push({
+        clientMessageId: message.id,
+        startedAt: message.createdAt
+      });
+    }
+
+    return pending;
   }
 
   private getThreadResponseStats(threadId: string): {

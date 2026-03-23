@@ -188,9 +188,12 @@ export interface SupportDialogSummary {
   status: SupportDialogStatus;
   unreadCount: number;
   waitingForStaffSince?: string;
+  pendingClientMessagesCount: number;
   averageFirstResponseMs?: number;
   lastFirstResponseMs?: number;
   lastMessageAt?: string;
+  lastMessageText?: string;
+  lastMessageSenderRole?: SupportSenderRole;
   lastInboundConnector?: SupportConnectorRoute;
   ai?: SupportAiInsight;
 }

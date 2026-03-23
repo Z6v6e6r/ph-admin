@@ -120,6 +120,25 @@ export class MessengerController {
     return this.messengerService.listDialogsByStation(connector, stationId, user);
   }
 
+  @Get('dialogs')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  listDialogs(
+    @CurrentUser() user?: RequestUser,
+    @Query() query: ListThreadsDto = {}
+  ): StationDialogSummary[] {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.messengerService.listDialogs(user, query);
+  }
+
   @Get('settings')
   @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.STATION_ADMIN, Role.SUPPORT)
   getSettings(@CurrentUser() user?: RequestUser): MessengerSettingsSnapshot {

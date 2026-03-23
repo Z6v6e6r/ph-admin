@@ -4,7 +4,12 @@ import { Request } from 'express';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { resolveRequestUser } from '../common/rbac/request-user.util';
-import { AuthLoginResult, AuthResolvedUser, AdminUserConfig } from './auth.types';
+import {
+  AdminUserConfig,
+  AdminUserSummary,
+  AuthLoginResult,
+  AuthResolvedUser
+} from './auth.types';
 
 interface TokenPayload {
   sub: string;
@@ -47,6 +52,17 @@ export class AuthService {
 
   hasStaffRole(roles: Role[]): boolean {
     return roles.some((role) => STAFF_ROLES.includes(role));
+  }
+
+  listAdminUsers(): AdminUserSummary[] {
+    return Array.from(this.usersByLogin.values())
+      .map((user) => ({
+        id: user.id,
+        login: user.login,
+        roles: user.roles.slice(),
+        stationIds: user.stationIds.slice()
+      }))
+      .sort((left, right) => left.login.localeCompare(right.login));
   }
 
   login(login: string, password: string): AuthLoginResult {

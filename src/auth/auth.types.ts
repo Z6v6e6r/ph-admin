@@ -22,3 +22,10 @@ export interface AdminUserConfig {
   roles: Role[];
   stationIds: string[];
 }
+
+export interface AdminUserSummary {
+  id: string;
+  login: string;
+  roles: Role[];
+  stationIds: string[];
+}
