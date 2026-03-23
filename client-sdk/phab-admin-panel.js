@@ -2340,8 +2340,7 @@
         ' · ответ: ' +
         formatDurationMs(dialog.averageFirstResponseMs) +
         ' · последнее сообщение: ' +
-        formatDateTimeFull(dialog.lastMessageAt) +
-        ' · пока в ленте показываем сообщения чата';
+        formatDateTimeFull(dialog.lastMessageAt);
     }
 
     function formatDateTimeFull(value) {
@@ -3545,8 +3544,7 @@
           ' · ответ: ' +
           formatDurationMs(selectedDialog.averageFirstResponseMs) +
           ' · последнее сообщение: ' +
-          formatTime(selectedDialog.lastMessageAt) +
-          ' · пока в ленте показываем сообщения чата';
+          formatTime(selectedDialog.lastMessageAt);
 
         [
           selectedDialog.lastInboundConnector,
