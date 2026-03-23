@@ -445,6 +445,15 @@
         white-space:pre-wrap;
         word-break:break-word;
       }
+      .phab-admin-message-title{
+        display:block;
+        margin-bottom:6px;
+        font-size:12px;
+        font-weight:800;
+      }
+      .phab-admin-message-text{
+        display:block;
+      }
       .phab-admin-message-client{
         margin-right:auto;
         background:rgba(182,253,255,.72);
@@ -3483,6 +3492,7 @@
           direction: isSystem ? 'SYSTEM' : (senderRole === 'CLIENT' ? 'INBOUND' : 'OUTBOUND'),
           senderRole: isSystem ? 'SYSTEM' : senderRole,
           senderRoleRaw: senderRoleRaw,
+          senderTitle: senderName || undefined,
           senderName:
             isSystem
               ? (senderName || 'Система')
@@ -3622,7 +3632,17 @@
             : own
               ? 'phab-admin-message-staff'
               : 'phab-admin-message-client');
-        div.textContent = message.text || '';
+        if (own && !isSystem) {
+          var title = document.createElement('strong');
+          title.className = 'phab-admin-message-title';
+          title.textContent = String(message.senderTitle || message.senderName || '').trim() || 'Сотрудник';
+          div.appendChild(title);
+        }
+
+        var text = document.createElement('span');
+        text.className = 'phab-admin-message-text';
+        text.textContent = message.text || '';
+        div.appendChild(text);
 
         var meta = document.createElement('span');
         meta.className = 'phab-admin-message-meta';
@@ -4585,12 +4605,15 @@
 
           var title = document.createElement('div');
           title.className = 'phab-admin-settings-row-title';
-          title.textContent = user.login;
+          title.textContent = user.title || user.login;
           main.appendChild(title);
 
           var meta = document.createElement('div');
           meta.className = 'phab-admin-settings-row-meta';
           meta.textContent =
+            'логин: ' +
+            user.login +
+            ' · ' +
             user.roles.map(formatRoleLabel).join(', ') +
             ' · станции: ' +
             formatStationScope(user.stationIds);

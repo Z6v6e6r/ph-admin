@@ -1879,6 +1879,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private buildStaffSenderName(user: RequestUser, role: Role): string {
+    const title = String(user?.title ?? '').trim();
+    if (title) {
+      return title;
+    }
     const login = String(user?.login ?? '').trim();
     return login || this.buildStaffLabel(role);
   }

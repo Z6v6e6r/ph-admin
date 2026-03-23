@@ -16,6 +16,7 @@ import {
 interface TokenPayload {
   sub: string;
   login: string;
+  title?: string;
   roles: Role[];
   stationIds: string[];
   iat: number;
@@ -60,6 +61,7 @@ export class AuthService implements OnModuleInit {
       .map((user) => ({
         id: user.id,
         login: user.login,
+        title: user.title,
         roles: user.roles.slice(),
         stationIds: user.stationIds.slice()
       }))
@@ -84,6 +86,7 @@ export class AuthService implements OnModuleInit {
     const payload: TokenPayload = {
       sub: user.id,
       login: user.login,
+      title: user.title,
       roles: user.roles,
       stationIds: user.stationIds,
       iat: issuedAtSeconds,
@@ -99,6 +102,7 @@ export class AuthService implements OnModuleInit {
       user: {
         id: user.id,
         login: user.login,
+        title: user.title,
         roles: user.roles,
         stationIds: user.stationIds,
         authSource: 'token'
@@ -201,6 +205,7 @@ export class AuthService implements OnModuleInit {
     return {
       id: String(payload.sub),
       login: String(payload.login ?? '').trim() || undefined,
+      title: String(payload.title ?? '').trim() || undefined,
       roles,
       stationIds: payload.stationIds
         .map((stationId) => String(stationId).trim())
@@ -321,6 +326,7 @@ export class AuthService implements OnModuleInit {
       id: 'superadmin-local',
       login: 'admin',
       password: 'admin12345',
+      title: 'Суперадмин',
       roles: [Role.SUPER_ADMIN],
       stationIds: []
     };
@@ -349,6 +355,7 @@ export class AuthService implements OnModuleInit {
         .map((entry, index) => {
           const login = String(entry?.login ?? '').trim();
           const password = String(entry?.password ?? '').trim();
+          const title = String(entry?.title ?? '').trim() || undefined;
           const id = String(entry?.id ?? `admin-${index + 1}`).trim() || `admin-${index + 1}`;
           const roles = this.parseRoles(entry?.roles ?? []);
           const stationIds = Array.isArray(entry?.stationIds)
@@ -361,13 +368,19 @@ export class AuthService implements OnModuleInit {
             return null;
           }
 
-          return {
+          const user: AdminUserRecord = {
             id,
             login: login.toLowerCase(),
             password,
             roles,
             stationIds: Array.from(new Set(stationIds))
-          } satisfies AdminUserRecord;
+          };
+
+          if (title) {
+            user.title = title;
+          }
+
+          return user;
         })
         .filter((entry): entry is AdminUserRecord => entry !== null);
     } catch (error) {

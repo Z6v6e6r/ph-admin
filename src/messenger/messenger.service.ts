@@ -271,6 +271,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       threadId,
       senderId: user.id,
       senderRole,
+      senderName: this.buildStaffSenderName(user, senderRole),
       origin: MessageOrigin.HUMAN,
       text: dto.text,
       createdAt
@@ -749,6 +750,34 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     return roles[0];
+  }
+
+  private buildStaffSenderName(user: RequestUser, role: Role): string {
+    const title = String(user?.title ?? '').trim();
+    if (title) {
+      return title;
+    }
+    const login = String(user?.login ?? '').trim();
+    return login || this.formatRoleLabel(role);
+  }
+
+  private formatRoleLabel(role: Role): string {
+    switch (role) {
+      case Role.SUPER_ADMIN:
+        return 'Суперадмин';
+      case Role.SUPPORT:
+        return 'Сотрудник поддержки';
+      case Role.STATION_ADMIN:
+        return 'Администратор станции';
+      case Role.MANAGER:
+        return 'Управляющий';
+      case Role.TOURNAMENT_MANAGER:
+        return 'Менеджер турниров';
+      case Role.GAME_MANAGER:
+        return 'Менеджер игр';
+      default:
+        return 'Сотрудник';
+    }
   }
 
   private resolveClientId(dto: CreateThreadDto, user: RequestUser): string {
