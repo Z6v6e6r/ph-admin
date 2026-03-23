@@ -4858,16 +4858,26 @@
       var isAnalytics = nextTab === 'analytics';
       var isTournaments = nextTab === 'tournaments';
       var isSettings = nextTab === 'settings';
+      var hideLogsTab = isRestrictedStationAdmin;
+      var hideAnalyticsTab = isRestrictedStationAdmin;
+      var hideSettingsTab = isRestrictedStationAdmin;
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
-      dom.tabLogs.className = 'phab-admin-tab' + (isLogs ? ' phab-admin-tab-active' : '');
+      dom.tabLogs.className =
+        'phab-admin-tab' +
+        (isLogs ? ' phab-admin-tab-active' : '') +
+        (hideLogsTab ? ' phab-admin-hidden' : '');
       dom.tabAnalytics.className =
-        'phab-admin-tab' + (isAnalytics ? ' phab-admin-tab-active' : '');
+        'phab-admin-tab' +
+        (isAnalytics ? ' phab-admin-tab-active' : '') +
+        (hideAnalyticsTab ? ' phab-admin-hidden' : '');
       dom.tabTournaments.className =
         'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '');
       dom.tabSettings.className =
-        'phab-admin-tab' + (isSettings ? ' phab-admin-tab-active' : '');
+        'phab-admin-tab' +
+        (isSettings ? ' phab-admin-tab-active' : '') +
+        (hideSettingsTab ? ' phab-admin-hidden' : '');
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
