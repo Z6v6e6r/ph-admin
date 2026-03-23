@@ -1040,12 +1040,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       return undefined;
     }
 
+    const outboundPayload = this.buildOutboundClientPayload(message, connector);
+
     return {
       id: randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
       connector,
-      text: this.buildOutboundClientText(message, connector),
+      text: outboundPayload.text,
+      format: outboundPayload.format,
       createdAt: message.createdAt,
       status: SupportOutboxStatus.PENDING,
       targetExternalUserId: identity?.externalUserId,
@@ -1058,28 +1061,37 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       meta: {
         dialogId: dialog.id,
         clientDisplayName: client.displayName,
-        phones: client.phones
+        phones: client.phones,
+        formattedText: outboundPayload.formattedText
       }
     };
   }
 
-  private buildOutboundClientText(
+  private buildOutboundClientPayload(
     message: SupportMessage,
     connector: SupportConnectorRoute
-  ): string {
+  ): { text: string; format?: 'markdown'; formattedText?: string } {
     const text = String(message.text ?? '').trim();
     if (!text) {
-      return '';
+      return { text: '' };
     }
 
     if (connector === SupportConnectorRoute.MAX_BOT) {
       const sender = String(message.senderName ?? '').trim();
       if (sender) {
-        return `${sender}:\n${text}`;
+        return {
+          text: `${sender}:\n${text}`,
+          format: 'markdown',
+          formattedText: `**${this.escapeMarkdown(sender)}**:\n${text}`
+        };
       }
     }
 
-    return text;
+    return { text };
+  }
+
+  private escapeMarkdown(value: string): string {
+    return String(value).replace(/([\\`*_{}\[\]()#+\-.!|>~])/g, '\\$1');
   }
 
   private pickIdentityForConnector(

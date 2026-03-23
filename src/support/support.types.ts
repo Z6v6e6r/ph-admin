@@ -277,6 +277,7 @@ export interface SupportOutboxCommand {
   clientId: string;
   connector: SupportConnectorRoute;
   text: string;
+  format?: 'markdown' | 'html';
   createdAt: string;
   status: SupportOutboxStatus;
   targetExternalUserId?: string;
