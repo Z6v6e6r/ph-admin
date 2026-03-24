@@ -1152,7 +1152,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       message.senderRole === 'SYSTEM'
     ) {
       const stripped = text.replace(
-        /^Служебное\s+сообщение\s+Viva\s*CRM\s*\([^)]*\):\s*/i,
+        /^Служебное\s+сообщение(?:\s+Viva\s*CRM)?(?:\s*\([^)]*\))?\s*[:\-—]\s*/i,
         '',
       ).trim();
       return stripped || text;
