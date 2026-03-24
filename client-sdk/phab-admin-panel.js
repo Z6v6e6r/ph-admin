@@ -234,6 +234,9 @@
         padding:12px;
         min-height:500px;
         flex:1;
+        display:flex;
+        flex-direction:column;
+        min-height:0;
         overflow:auto;
         -webkit-overflow-scrolling:touch;
       }
@@ -244,7 +247,9 @@
         display:grid;
         grid-template-columns:310px 1fr;
         gap:12px;
-        min-height:470px;
+        flex:1;
+        min-height:0;
+        height:100%;
       }
       .phab-admin-pane{
         background:rgba(255,255,255,.88);
@@ -252,6 +257,9 @@
         border-radius:16px;
         overflow:hidden;
         box-shadow:0 12px 28px rgba(51,0,32,.09);
+        display:flex;
+        flex-direction:column;
+        min-height:0;
       }
       .phab-admin-pane-head{
         padding:11px 12px;
@@ -294,10 +302,12 @@
       .phab-admin-pane-body{
         padding:8px;
         overflow:auto;
-        max-height:410px;
+        flex:1;
+        min-height:0;
       }
       .phab-admin-chat-list-wrap{
-        height:468px;
+        height:100%;
+        min-height:0;
         max-height:none;
       }
       .phab-admin-list{
@@ -404,8 +414,9 @@
       }
       .phab-admin-dialog-wrap{
         display:grid;
-        grid-template-rows:auto 1fr auto;
-        height:468px;
+        grid-template-rows:auto minmax(0,1fr) auto;
+        height:100%;
+        min-height:0;
       }
       .phab-admin-dialog-head{
         padding:10px 12px;
@@ -1091,8 +1102,11 @@
         50%{box-shadow:0 0 0 4px rgba(15,92,60,.08)}
       }
       @media (max-width:980px){
-        .phab-admin-msg-grid{grid-template-columns:1fr}
-        .phab-admin-dialog-wrap{height:410px}
+        .phab-admin-msg-grid{
+          grid-template-columns:1fr;
+          grid-template-rows:minmax(220px,32dvh) minmax(0,1fr);
+        }
+        .phab-admin-dialog-wrap{height:100%}
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -1521,6 +1535,10 @@
     root.appendChild(content);
 
     var messagesSection = document.createElement('div');
+    messagesSection.style.flex = '1';
+    messagesSection.style.minHeight = '0';
+    messagesSection.style.display = 'flex';
+    messagesSection.style.flexDirection = 'column';
     content.appendChild(messagesSection);
 
     var gamesSection = document.createElement('div');
