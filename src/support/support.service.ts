@@ -1111,7 +1111,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     message: SupportMessage,
     connector: SupportConnectorRoute
   ): { text: string; format?: 'markdown'; formattedText?: string } {
-    const text = String(message.text ?? '').trim();
+    const text = this.normalizeClientOutboundText(message, connector);
     if (!text) {
       return { text: '' };
     }
@@ -1136,6 +1136,29 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     return { text };
+  }
+
+  private normalizeClientOutboundText(
+    message: SupportMessage,
+    connector: SupportConnectorRoute
+  ): string {
+    const text = String(message.text ?? '').trim();
+    if (!text) {
+      return '';
+    }
+
+    if (
+      connector === SupportConnectorRoute.MAX_BOT &&
+      message.senderRole === 'SYSTEM'
+    ) {
+      const stripped = text.replace(
+        /^Служебное\s+сообщение\s+Viva\s*CRM\s*\([^)]*\):\s*/i,
+        '',
+      ).trim();
+      return stripped || text;
+    }
+
+    return text;
   }
 
   private escapeMarkdown(value: string): string {
