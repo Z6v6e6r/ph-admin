@@ -507,6 +507,7 @@
         display:grid;
         grid-template-rows:auto minmax(0,1fr);
         min-height:0;
+        grid-column:2;
         border:1px solid rgba(51,0,32,.12);
         border-radius:16px;
         overflow:hidden;
@@ -586,6 +587,7 @@
         padding:12px;
         overflow:auto;
         min-height:0;
+        grid-column:1;
         border:1px solid rgba(51,0,32,.12);
         border-radius:16px;
         box-shadow:0 10px 22px rgba(51,0,32,.06);
@@ -1172,6 +1174,8 @@
           grid-template-columns:1fr;
           grid-template-rows:minmax(240px,34dvh) minmax(0,1fr);
         }
+        .phab-admin-messages{grid-column:auto;grid-row:1}
+        .phab-admin-dialog-cabinet{grid-column:auto;grid-row:2}
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -2901,7 +2905,7 @@
       if (typeof dialog.vivaCabinetEmbedUrl === 'string') {
         return String(dialog.vivaCabinetEmbedUrl).trim();
       }
-      return getDialogCabinetUrl(dialog);
+      return '';
     }
 
     function renderDialogHeader() {
@@ -3008,7 +3012,7 @@
 
       if (vivaCabinetWebviewUrl) {
         dom.cabinetMeta.textContent =
-          'Слева открыт вебвью кабинета клиента. Если Viva CRM не встраивается, откройте кабинет по ссылке выше.';
+          'Справа открыт вебвью кабинета клиента. Если Viva CRM не встраивается, откройте кабинет по ссылке выше.';
         if (dom.cabinetFrame.getAttribute('src') !== vivaCabinetWebviewUrl) {
           dom.cabinetFrame.src = vivaCabinetWebviewUrl;
         }
@@ -4239,7 +4243,7 @@
         vivaClientId: item.vivaClientId || undefined,
         vivaCabinetUrl: item.vivaCabinetUrl || undefined,
         vivaCabinetWebviewUrl:
-          item.vivaCabinetWebviewUrl || item.vivaCabinetEmbedUrl || item.vivaCabinetUrl || undefined,
+          item.vivaCabinetWebviewUrl || item.vivaCabinetEmbedUrl || undefined,
         authStatus: 'VERIFIED',
         primaryPhone: item.primaryPhone || undefined,
         phones: Array.isArray(item.phones) ? item.phones.slice() : [],
