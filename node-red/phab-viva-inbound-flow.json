@@ -1,0 +1,289 @@
+[
+  {
+    "id": "7b8d1f28f7df4ce1",
+    "type": "tab",
+    "label": "PHAB Viva Inbound",
+    "disabled": false,
+    "info": "PHAB inbound flow: Viva CRM webhook -> immediate 200 OK -> fanout to Telegram relay and NestJS support ingest.\n\nIncoming endpoint:\n- POST /vivatest\n\nNode-RED env vars:\n- PHAB_API_BASE (default: http://localhost:3000/api)\n- SUPPORT_INTEGRATION_TOKEN (optional)\n\nSupport ingest explicitly requests normal client delivery via support outbox (`deliverToClient=true`)."
+  },
+  {
+    "id": "c92af8647f374772",
+    "type": "comment",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "Env vars",
+    "info": "Set in Node-RED settings/env:\nPHAB_API_BASE=http://localhost:3000/api\nSUPPORT_INTEGRATION_TOKEN=<optional>\n\nPublic webhook path for Viva:\nPOST /vivatest",
+    "x": 180,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "3e44a343bc98453d",
+    "type": "http in",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "Viva webhook (/vivatest)",
+    "url": "/vivatest",
+    "method": "post",
+    "upload": true,
+    "swaggerDoc": "",
+    "x": 190,
+    "y": 140,
+    "wires": [
+      [
+        "2f489b87b4aa4ec4",
+        "7ec84629d7c1486e",
+        "dc9b3f7a5407454a"
+      ]
+    ]
+  },
+  {
+    "id": "2f489b87b4aa4ec4",
+    "type": "debug",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "Viva inbound raw",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 430,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "7ec84629d7c1486e",
+    "type": "function",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "reply 200 to Viva",
+    "func": "msg.statusCode = 200;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = {\n  ok: true,\n  accepted: true\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 140,
+    "wires": [
+      [
+        "5e2bb0db76d4496c"
+      ]
+    ]
+  },
+  {
+    "id": "5e2bb0db76d4496c",
+    "type": "http response",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "HTTP 200 response",
+    "statusCode": "",
+    "headers": {},
+    "x": 680,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "dc9b3f7a5407454a",
+    "type": "function",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "fanout Viva",
+    "func": "const base = (env.get(\"PHAB_API_BASE\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst token = env.get(\"SUPPORT_INTEGRATION_TOKEN\") || \"\";\n\nconst envelope = (msg.payload && typeof msg.payload === \"object\") ? msg.payload : {};\nconst raw = (\n  envelope.payload &&\n  typeof envelope.payload === \"object\" &&\n  envelope.phone === undefined &&\n  envelope.content === undefined\n)\n  ? envelope.payload\n  : envelope;\n\nfunction normalizeEmpty(value) {\n  const text = String(value ?? \"\").trim();\n  if (!text) {\n    return undefined;\n  }\n\n  const lowered = text.toLowerCase();\n  if (lowered === \"null\" || lowered === \"undefined\") {\n    return undefined;\n  }\n\n  return text;\n}\n\nconst phone = normalizeEmpty(raw.phone);\nconst emailRaw = normalizeEmpty(raw.email);\nconst email = emailRaw ? emailRaw.toLowerCase() : undefined;\nconst content = normalizeEmpty(raw.content);\nconst notificationType = normalizeEmpty(raw.notificationType) || \"VIVA\";\nconst externalUserId = normalizeEmpty(raw.externalUserId);\nconst externalChatId = normalizeEmpty(raw.externalChatId);\n\nif (!phone && !email && !externalUserId && !externalChatId) {\n  node.warn(\"Viva payload without identifiers\");\n  return [null, null];\n}\n\nconst tgMsg = {\n  method: \"POST\",\n  url: \"http://80.78.255.203:2606/api/viva_msg\",\n  headers: {\n    \"Content-Type\": \"application/json\"\n  },\n  payload: raw\n};\n\nconst supportHeaders = {\n  \"Content-Type\": \"application/json\"\n};\n\nif (token) {\n  supportHeaders[\"x-integration-token\"] = token;\n}\n\nconst supportMsg = {\n  method: \"POST\",\n  url: `${base}/support/dialogs/events`,\n  headers: supportHeaders,\n  payload: {\n    connector: \"MAX_BOT\",\n    phone,\n    email,\n    externalUserId,\n    externalChatId,\n    displayName: \"Viva CRM\",\n    direction: \"SYSTEM\",\n    kind: \"SYSTEM\",\n    deliverToClient: true,\n    text: content\n      ? `Служебное сообщение Viva CRM (${notificationType}): ${content}`\n      : `Служебное сообщение Viva CRM (${notificationType})`,\n    meta: {\n      source: \"viva_crm\",\n      notificationType,\n      receivedAt: new Date().toISOString(),\n      vivaPayload: raw\n    }\n  }\n};\n\nreturn [tgMsg, supportMsg];",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 240,
+    "wires": [
+      [
+        "afc486e0bcd84ca8"
+      ],
+      [
+        "aa3cdf70b8d14c49"
+      ]
+    ]
+  },
+  {
+    "id": "afc486e0bcd84ca8",
+    "type": "http request",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "POST TG relay",
+    "method": "use",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 670,
+    "y": 220,
+    "wires": [
+      [
+        "1a56ec60328645fc"
+      ]
+    ]
+  },
+  {
+    "id": "1a56ec60328645fc",
+    "type": "function",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "log TG result",
+    "func": "const code = Number(msg.statusCode || 0);\n\nif (code < 200 || code >= 300) {\n  node.warn(`TG endpoint failed: HTTP ${code || \"n/a\"}; body=${typeof msg.payload === \"string\" ? msg.payload : JSON.stringify(msg.payload)}`);\n} else {\n  node.log(`TG endpoint OK: HTTP ${code}`);\n}\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 900,
+    "y": 220,
+    "wires": [
+      [
+        "8979a919e5414238"
+      ]
+    ]
+  },
+  {
+    "id": "8979a919e5414238",
+    "type": "debug",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "TG relay result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1120,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "aa3cdf70b8d14c49",
+    "type": "http request",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "POST /support/dialogs/events",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 700,
+    "y": 280,
+    "wires": [
+      [
+        "b2d83b711293418d"
+      ]
+    ]
+  },
+  {
+    "id": "b2d83b711293418d",
+    "type": "function",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "log support result",
+    "func": "const code = Number(msg.statusCode || 0);\n\nif (code < 200 || code >= 300) {\n  node.warn(`Support ingest failed: HTTP ${code || \"n/a\"}; body=${typeof msg.payload === \"string\" ? msg.payload : JSON.stringify(msg.payload)}`);\n} else {\n  node.log(`Support ingest OK: HTTP ${code}`);\n}\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 910,
+    "y": 280,
+    "wires": [
+      [
+        "eb5447d11c88494a"
+      ]
+    ]
+  },
+  {
+    "id": "eb5447d11c88494a",
+    "type": "debug",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "Support ingest result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1130,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "badc99a7cfe440df",
+    "type": "catch",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "unexpected Viva flow error",
+    "scope": [
+      "dc9b3f7a5407454a",
+      "afc486e0bcd84ca8",
+      "1a56ec60328645fc",
+      "aa3cdf70b8d14c49",
+      "b2d83b711293418d"
+    ],
+    "uncaught": false,
+    "x": 210,
+    "y": 340,
+    "wires": [
+      [
+        "ddceb1f2fe044c3e"
+      ]
+    ]
+  },
+  {
+    "id": "ddceb1f2fe044c3e",
+    "type": "function",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "log unexpected error",
+    "func": "const error = msg.error || {};\nnode.error(String(error.message || \"Unhandled Viva flow error\"), msg);\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 460,
+    "y": 340,
+    "wires": [
+      [
+        "7a6778d26f2746d2"
+      ]
+    ]
+  },
+  {
+    "id": "7a6778d26f2746d2",
+    "type": "debug",
+    "z": "7b8d1f28f7df4ce1",
+    "name": "Unexpected Viva error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 700,
+    "y": 340,
+    "wires": []
+  }
+]

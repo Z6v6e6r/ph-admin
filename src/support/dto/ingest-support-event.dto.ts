@@ -80,6 +80,10 @@ export class IngestSupportEventDto {
   senderIsBot?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  deliverToClient?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(40)
   phone?: string;

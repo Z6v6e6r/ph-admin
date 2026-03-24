@@ -71,6 +71,7 @@ API работает на `http://localhost:3000/api`.
 - `TELEGRAM_STATION_MAPPINGS=<json>` (опционально, mapping station<->groupChat)
 - `TELEGRAM_DELIVERY_MODE=outbox|direct` (по умолчанию `outbox`; рекомендован для Node-RED)
 - `TELEGRAM_INTEGRATION_TOKEN=<token>` (опционально, защита outbox API для Node-RED)
+- `SUPPORT_INTEGRATION_TOKEN=<token>` (опционально, защита `support` integration endpoint'ов для Node-RED/внешних коннекторов)
 - `VIVA_ADMIN_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva Admin API)
 - `VIVA_ADMIN_API_TOKEN=<token>` (опционально; если задан, используется как статический Bearer token)
 - `VIVA_ADMIN_TOKEN_URL=https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token` (опционально; URL получения access token)
@@ -169,6 +170,8 @@ curl http://localhost:3000/api/games \
 - `POST /api/integrations/telegram/outbox/:id/ack`
 - `POST /api/integrations/telegram/outbox/:id/fail`
 - `GET /api/integrations/telegram/outbox?limit=100`
+- `GET /api/support/clients/resolve?connector=MAX_BOT&phone=79991234567`
+- `POST /api/support/dialogs/events`
 
 ## Коннекторы мессенджера
 
@@ -265,6 +268,55 @@ Outbound (Nest outbox -> Telegram -> ack/fail):
 Если задан `TELEGRAM_INTEGRATION_TOKEN`, добавляйте его в заголовок:
 
 - `x-integration-token: <token>`
+
+## Viva CRM -> Support (через Node-RED)
+
+Для входящих служебных событий из Viva CRM добавлен готовый flow:
+
+- `node-red/phab-viva-inbound-flow.json`
+
+Что делает flow:
+
+- поднимает входящий webhook `POST /vivatest` в Node-RED
+- принимает payload от Viva вида `{ phone, email, content, notificationType }`
+- очищает `email: "null"`
+- отправляет событие в `POST /api/support/dialogs/events`
+- пишет сообщение в диалог как служебное (`direction=SYSTEM`, `kind=SYSTEM`)
+- дополнительно включает `deliverToClient=true`, поэтому сообщение уходит клиенту штатно через `support outbox -> MAX bridge`
+- использует `connector=MAX_BOT`, чтобы событие ложилось в MAX-контур клиента
+
+Node-RED env vars:
+
+- `PHAB_API_BASE=http://localhost:3000/api`
+- `SUPPORT_INTEGRATION_TOKEN=<optional>`
+
+Пример payload от Viva:
+
+```json
+{
+  "phone": "79104303190",
+  "email": "null",
+  "content": "2515",
+  "notificationType": "OTP"
+}
+```
+
+Что будет отправлено из Node-RED в backend:
+
+```json
+{
+  "connector": "MAX_BOT",
+  "phone": "79104303190",
+  "displayName": "Viva CRM",
+  "direction": "SYSTEM",
+  "kind": "SYSTEM",
+  "deliverToClient": true,
+  "text": "Служебное сообщение Viva CRM (OTP): 2515",
+  "meta": {
+    "source": "viva_crm"
+  }
+}
+```
 
 ## Клиентский скачиваемый скрипт
 

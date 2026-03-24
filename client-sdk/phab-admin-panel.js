@@ -4011,6 +4011,7 @@
         averageFirstResponseMs: item.averageStaffResponseTimeMs,
         lastFirstResponseMs: item.lastStaffResponseTimeMs,
         lastMessageAt: item.lastMessageAt,
+        lastRankingMessageAt: item.lastRankingMessageAt || item.lastMessageAt,
         lastMessageText: item.lastMessageText || '',
         lastMessageSenderRole: item.lastMessageSenderRole || '',
         lastInboundConnector: item.connector || '',
@@ -4027,6 +4028,13 @@
 
     function sortDialogsByLastMessage(items) {
       return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
+        var byRank = compareNullable(
+          parseDateValue(right.lastRankingMessageAt || right.lastMessageAt),
+          parseDateValue(left.lastRankingMessageAt || left.lastMessageAt)
+        );
+        if (byRank !== 0) {
+          return byRank;
+        }
         return compareNullable(parseDateValue(right.lastMessageAt), parseDateValue(left.lastMessageAt));
       });
     }
@@ -4047,6 +4055,7 @@
             Number(dialog && dialog.unreadCount || 0),
             Number(dialog && dialog.pendingClientMessagesCount || 0),
             String(dialog && dialog.lastMessageAt || ''),
+            String(dialog && dialog.lastRankingMessageAt || ''),
             String(dialog && dialog.lastMessageText || ''),
             String(dialog && dialog.lastMessageSenderRole || ''),
             String(dialog && dialog.lastInboundConnector || '')

@@ -84,6 +84,7 @@ Files in repo:
 - `/opt/ph-ab/node-red/phab-telegram-bridge-subflow.json`
 - `/opt/ph-ab/node-red/phab-telegram-outbox-subflow.json`
 - `/opt/ph-ab/node-red/phab-telegram-outbox-flow.json` (full standalone tab)
+- `/opt/ph-ab/node-red/phab-viva-inbound-flow.json` (Viva CRM -> Support standalone tab)
 
 Recommended for existing bot flow:
 1. Import `phab-telegram-bridge-subflow.json`

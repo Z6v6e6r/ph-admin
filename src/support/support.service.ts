@@ -59,6 +59,7 @@ interface NormalizedIngestSupportEventDto extends IngestSupportEventDto {
   username?: string;
   selectedStationId?: string;
   selectedStationName?: string;
+  deliverToClient?: boolean;
 }
 
 interface SupportStationMapping {
@@ -232,6 +233,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     dialog.subject = dialog.subject ?? this.buildDialogSubject(client, stationName);
     dialog.updatedAt = createdAt;
 
+    let outbox: SupportOutboxCommand | undefined;
+
     if (message) {
       this.appendMessage(dialog, message);
       if (direction === SupportMessageDirection.INBOUND) {
@@ -248,6 +251,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       if (message.ai) {
         dialog.ai = message.ai;
       }
+
+      if (
+        this.shouldDeliverIncomingEventToClient(normalizedDto, direction) &&
+        this.canReplyToDialog(dialog)
+      ) {
+        outbox = this.createOutboxCommand(dialog, message, normalizedDto.connector);
+        if (outbox) {
+          this.outbox.set(outbox.id, outbox);
+          this.persistence.persistOutboxCommand(outbox);
+          dialog.lastReplyConnector = normalizedDto.connector;
+        }
+      }
     }
 
     this.persistDialog(dialog);
@@ -256,6 +271,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       client,
       dialog,
       message,
+      outbox,
       requiredAction:
         client.authStatus !== SupportClientAuthStatus.VERIFIED
           ? 'REQUEST_CONTACT'
@@ -346,14 +362,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         if (left.unreadCount === 0 && right.unreadCount > 0) {
           return 1;
         }
-        return this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
+        return this.compareDialogSummaryRank(left, right);
       });
   }
 
   listDialogs(user: RequestUser): SupportDialogSummary[] {
     return this.listAccessibleDialogs(user)
       .map((dialog) => this.toDialogSummary(dialog, undefined, user))
-      .sort((left, right) => this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt));
+      .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
   listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
@@ -1094,7 +1110,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       return { text: '' };
     }
 
-    if (connector === SupportConnectorRoute.MAX_BOT) {
+    if (
+      connector === SupportConnectorRoute.MAX_BOT &&
+      message.senderRole !== 'SYSTEM'
+    ) {
       const sender = String(message.senderName ?? '').trim();
       const senderLinkUrl = this.readSenderLinkUrl(message);
       if (sender) {
@@ -1340,6 +1359,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     const dialogMessages = this.messages.get(dialog.id) ?? [];
     const lastMessage =
       dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
+    const lastRankingMessage = this.findLastRankingMessage(dialogMessages);
     return {
       dialogId: dialog.id,
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
@@ -1363,11 +1383,45 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       averageFirstResponseMs: dialog.averageFirstResponseMs,
       lastFirstResponseMs: dialog.lastFirstResponseMs,
       lastMessageAt: dialog.lastMessageAt,
+      lastRankingMessageAt: lastRankingMessage?.createdAt,
       lastMessageText: this.formatDialogPreview(lastMessage),
       lastMessageSenderRole: lastMessage?.senderRole,
       lastInboundConnector: dialog.lastInboundConnector,
       ai: dialog.ai
     };
+  }
+
+  private compareDialogSummaryRank(
+    left: SupportDialogSummary,
+    right: SupportDialogSummary
+  ): number {
+    const byRankingMessage =
+      this.toTimestamp(right.lastRankingMessageAt) - this.toTimestamp(left.lastRankingMessageAt);
+    if (byRankingMessage !== 0) {
+      return byRankingMessage;
+    }
+    return this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
+  }
+
+  private findLastRankingMessage(messages: SupportMessage[]): SupportMessage | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (!message) {
+        continue;
+      }
+      if (!this.isSystemDialogMessage(message)) {
+        return message;
+      }
+    }
+    return undefined;
+  }
+
+  private isSystemDialogMessage(message: SupportMessage): boolean {
+    return (
+      message.direction === SupportMessageDirection.SYSTEM ||
+      message.senderRole === 'SYSTEM' ||
+      message.kind === SupportMessageKind.SYSTEM
+    );
   }
 
   private formatDialogPreview(message?: SupportMessage): string | undefined {
@@ -2119,8 +2173,30 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         selectedStation?.stationId,
       selectedStationName:
         this.normalizeDisplayName(dto.selectedStationName) ??
-        selectedStation?.stationName
+        selectedStation?.stationName,
+      deliverToClient: this.resolveDeliverToClient(dto)
     };
+  }
+
+  private resolveDeliverToClient(dto: IngestSupportEventDto): boolean {
+    if (typeof dto.deliverToClient === 'boolean') {
+      return dto.deliverToClient;
+    }
+
+    const metaDeliverToClient = this.extractMetaPath(dto.meta, ['deliverToClient']);
+    if (typeof metaDeliverToClient === 'boolean') {
+      return metaDeliverToClient;
+    }
+
+    const source = this.extractMetaPathString(dto.meta, ['source'])?.toLowerCase();
+    return source === 'viva_crm';
+  }
+
+  private shouldDeliverIncomingEventToClient(
+    dto: NormalizedIngestSupportEventDto,
+    direction: SupportMessageDirection
+  ): boolean {
+    return Boolean(dto.deliverToClient) && direction === SupportMessageDirection.SYSTEM;
   }
 
   private resolveSenderIsBot(dto: IngestSupportEventDto): boolean {

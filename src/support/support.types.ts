@@ -198,6 +198,7 @@ export interface SupportDialogSummary {
   averageFirstResponseMs?: number;
   lastFirstResponseMs?: number;
   lastMessageAt?: string;
+  lastRankingMessageAt?: string;
   lastMessageText?: string;
   lastMessageSenderRole?: SupportSenderRole;
   lastInboundConnector?: SupportConnectorRoute;
@@ -297,6 +298,7 @@ export interface SupportIngestEventResult {
   client: SupportClientProfile;
   dialog: SupportDialog;
   message?: SupportMessage;
+  outbox?: SupportOutboxCommand;
   requiredAction?: 'REQUEST_CONTACT' | 'REQUEST_STATION';
   contactReminderStage?: 1 | 2;
   canReplyToClient: boolean;
