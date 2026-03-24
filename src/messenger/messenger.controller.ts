@@ -443,6 +443,7 @@ export class MessengerController {
       status:
         dialog.status === SupportDialogStatus.CLOSED ? ThreadStatus.CLOSED : ThreadStatus.OPEN,
       lastMessageAt: dialog.lastMessageAt,
+      lastRankingMessageAt: dialog.lastRankingMessageAt,
       unreadMessagesCount: dialog.unreadCount,
       pendingClientMessagesCount: dialog.pendingClientMessagesCount,
       lastMessageText: dialog.lastMessageText,
@@ -525,6 +526,7 @@ export class MessengerController {
       status:
         dialog.status === SupportDialogStatus.CLOSED ? ThreadStatus.CLOSED : ThreadStatus.OPEN,
       lastMessageAt: dialog.lastMessageAt,
+      lastRankingMessageAt: dialog.lastRankingMessageAt,
       createdAt: timestamp,
       updatedAt: timestamp
     };

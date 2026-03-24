@@ -1366,6 +1366,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     const lastMessage =
       dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
     const lastRankingMessage = this.findLastRankingMessage(dialogMessages);
+    const previewMessage = lastRankingMessage ?? lastMessage;
     return {
       dialogId: dialog.id,
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
@@ -1390,8 +1391,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       lastFirstResponseMs: dialog.lastFirstResponseMs,
       lastMessageAt: dialog.lastMessageAt,
       lastRankingMessageAt: lastRankingMessage?.createdAt,
-      lastMessageText: this.formatDialogPreview(lastMessage),
-      lastMessageSenderRole: lastMessage?.senderRole,
+      lastMessageText: this.formatDialogPreview(previewMessage),
+      lastMessageSenderRole: previewMessage?.senderRole,
       lastInboundConnector: dialog.lastInboundConnector,
       ai: dialog.ai
     };

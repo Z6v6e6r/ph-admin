@@ -27,6 +27,7 @@ export interface ChatThread {
   assignedSupportId?: string;
   status: ThreadStatus;
   lastMessageAt?: string;
+  lastRankingMessageAt?: string;
   lastStaffReadAt?: string;
   lastClientReadAt?: string;
   createdAt: string;
@@ -128,6 +129,7 @@ export interface StationDialogSummary {
   subject?: string;
   status: ThreadStatus;
   lastMessageAt?: string;
+  lastRankingMessageAt?: string;
   unreadMessagesCount: number;
   pendingClientMessagesCount: number;
   lastMessageText?: string;
