@@ -418,6 +418,14 @@
         height:100%;
         min-height:0;
       }
+      .phab-admin-dialog-body{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+        gap:12px;
+        padding:12px;
+        min-height:0;
+        overflow:hidden;
+      }
       .phab-admin-dialog-head{
         padding:10px 12px;
         border-bottom:1px solid rgba(51,0,32,.12);
@@ -495,6 +503,56 @@
         background:rgba(255,255,255,.98);
         border-color:rgba(51,0,32,.28);
       }
+      .phab-admin-dialog-cabinet{
+        display:grid;
+        grid-template-rows:auto minmax(0,1fr);
+        min-height:0;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:16px;
+        overflow:hidden;
+        background:linear-gradient(180deg,rgba(255,255,255,.96) 0%,rgba(242,248,255,.94) 100%);
+        box-shadow:0 10px 22px rgba(51,0,32,.06);
+      }
+      .phab-admin-dialog-cabinet-head{
+        padding:12px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        background:linear-gradient(90deg,rgba(182,253,255,.3) 0%,rgba(255,255,255,.85) 100%);
+      }
+      .phab-admin-dialog-cabinet-title{
+        font-size:12px;
+        font-family:var(--cup-font-heading);
+        font-weight:700;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-dialog-cabinet-meta{
+        margin-top:5px;
+        font-size:11px;
+        color:rgba(51,0,32,.68);
+      }
+      .phab-admin-dialog-cabinet-frame-wrap{
+        min-height:0;
+        position:relative;
+        background:
+          linear-gradient(rgba(255,255,255,.88),rgba(255,255,255,.88)),
+          linear-gradient(135deg,rgba(207,255,182,.22) 0%,rgba(182,253,255,.2) 50%,rgba(221,200,252,.24) 100%);
+      }
+      .phab-admin-dialog-webview{
+        display:block;
+        width:100%;
+        height:100%;
+        border:0;
+        background:#fff;
+      }
+      .phab-admin-dialog-cabinet-empty{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        height:100%;
+        text-align:center;
+        padding:18px;
+      }
       .phab-admin-dialog-tags{
         display:flex;
         flex-wrap:wrap;
@@ -528,6 +586,9 @@
         padding:12px;
         overflow:auto;
         min-height:0;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:16px;
+        box-shadow:0 10px 22px rgba(51,0,32,.06);
         background:
           linear-gradient(rgba(255,255,255,.82),rgba(255,255,255,.82)),
           repeating-linear-gradient(0deg,transparent 0 19px,rgba(51,0,32,.04) 19px 20px);
@@ -1107,6 +1168,10 @@
           grid-template-rows:minmax(220px,32dvh) minmax(0,1fr);
         }
         .phab-admin-dialog-wrap{height:100%}
+        .phab-admin-dialog-body{
+          grid-template-columns:1fr;
+          grid-template-rows:minmax(240px,34dvh) minmax(0,1fr);
+        }
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -1629,10 +1694,36 @@
     dialogMeta.textContent = 'Выберите чат, чтобы открыть переписку и будущую ленту действий';
     dialogHead.appendChild(dialogMeta);
 
+    var dialogTags = document.createElement('div');
+    dialogTags.className = 'phab-admin-dialog-tags';
+    dialogHead.appendChild(dialogTags);
+
+    var dialogBody = document.createElement('div');
+    dialogBody.className = 'phab-admin-dialog-body';
+    dialogWrap.appendChild(dialogBody);
+
+    var cabinetPane = document.createElement('div');
+    cabinetPane.className = 'phab-admin-dialog-cabinet';
+    dialogBody.appendChild(cabinetPane);
+
+    var cabinetHead = document.createElement('div');
+    cabinetHead.className = 'phab-admin-dialog-cabinet-head';
+    cabinetPane.appendChild(cabinetHead);
+
+    var cabinetTitle = document.createElement('div');
+    cabinetTitle.className = 'phab-admin-dialog-cabinet-title';
+    cabinetTitle.textContent = 'Личный кабинет';
+    cabinetHead.appendChild(cabinetTitle);
+
+    var cabinetMeta = document.createElement('div');
+    cabinetMeta.className = 'phab-admin-dialog-cabinet-meta';
+    cabinetMeta.textContent = 'Выберите чат, чтобы открыть кабинет клиента и встроенное окно Viva CRM.';
+    cabinetHead.appendChild(cabinetMeta);
+
     var dialogLinks = document.createElement('div');
     dialogLinks.className = 'phab-admin-dialog-links';
     dialogLinks.style.display = 'none';
-    dialogHead.appendChild(dialogLinks);
+    cabinetHead.appendChild(dialogLinks);
 
     var vivaCabinetStatus = document.createElement('span');
     vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
@@ -1645,12 +1736,25 @@
     vivaCabinetLink.textContent = 'ЛК клиента в Viva CRM';
     dialogLinks.appendChild(vivaCabinetLink);
 
-    var dialogTags = document.createElement('div');
-    dialogTags.className = 'phab-admin-dialog-tags';
-    dialogHead.appendChild(dialogTags);
+    var cabinetFrameWrap = document.createElement('div');
+    cabinetFrameWrap.className = 'phab-admin-dialog-cabinet-frame-wrap';
+    cabinetPane.appendChild(cabinetFrameWrap);
+
+    var cabinetEmpty = document.createElement('div');
+    cabinetEmpty.className = 'phab-admin-empty phab-admin-dialog-cabinet-empty';
+    cabinetEmpty.textContent = 'Выберите чат слева, чтобы открыть кабинет клиента.';
+    cabinetFrameWrap.appendChild(cabinetEmpty);
+
+    var cabinetFrame = document.createElement('iframe');
+    cabinetFrame.className = 'phab-admin-dialog-webview';
+    cabinetFrame.loading = 'lazy';
+    cabinetFrame.style.display = 'none';
+    cabinetFrame.setAttribute('title', 'Личный кабинет клиента Viva CRM');
+    cabinetFrameWrap.appendChild(cabinetFrame);
+
     var messagesBox = document.createElement('div');
     messagesBox.className = 'phab-admin-messages';
-    dialogWrap.appendChild(messagesBox);
+    dialogBody.appendChild(messagesBox);
 
     var compose = document.createElement('div');
     compose.className = 'phab-admin-compose';
@@ -2346,6 +2450,9 @@
       dialogLinks: dialogLinks,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
+      cabinetMeta: cabinetMeta,
+      cabinetEmpty: cabinetEmpty,
+      cabinetFrame: cabinetFrame,
       dialogTags: dialogTags,
       messagesBox: messagesBox,
       input: input,
@@ -2778,6 +2885,25 @@
       return null;
     }
 
+    function getDialogCabinetUrl(dialog) {
+      return dialog && typeof dialog.vivaCabinetUrl === 'string'
+        ? String(dialog.vivaCabinetUrl).trim()
+        : '';
+    }
+
+    function getDialogCabinetWebviewUrl(dialog) {
+      if (!dialog) {
+        return '';
+      }
+      if (typeof dialog.vivaCabinetWebviewUrl === 'string') {
+        return String(dialog.vivaCabinetWebviewUrl).trim();
+      }
+      if (typeof dialog.vivaCabinetEmbedUrl === 'string') {
+        return String(dialog.vivaCabinetEmbedUrl).trim();
+      }
+      return getDialogCabinetUrl(dialog);
+    }
+
     function renderDialogHeader() {
       var dialog = getSelectedDialog();
       clearNode(dom.dialogTags);
@@ -2823,25 +2949,44 @@
         dialog && typeof dialog.vivaStatus === 'string'
           ? String(dialog.vivaStatus).trim().toUpperCase()
           : '';
-      var vivaCabinetUrl =
-        dialog && typeof dialog.vivaCabinetUrl === 'string'
-          ? String(dialog.vivaCabinetUrl).trim()
-          : '';
+      var vivaCabinetUrl = getDialogCabinetUrl(dialog);
+      var vivaCabinetWebviewUrl = getDialogCabinetWebviewUrl(dialog);
+      var effectiveStatus = vivaStatus || (vivaCabinetUrl ? 'FOUND' : '');
 
-      if (!vivaStatus && !vivaCabinetUrl) {
+      if (!dialog) {
         dom.dialogLinks.style.display = 'none';
         dom.vivaCabinetStatus.textContent = '';
         dom.vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
         dom.vivaCabinetLink.removeAttribute('href');
         dom.vivaCabinetLink.style.display = 'none';
+        dom.cabinetMeta.textContent =
+          'Выберите чат, чтобы открыть кабинет клиента и встроенное окно Viva CRM.';
+        dom.cabinetFrame.removeAttribute('src');
+        dom.cabinetFrame.style.display = 'none';
+        dom.cabinetEmpty.style.display = 'flex';
+        dom.cabinetEmpty.textContent = 'Выберите чат слева, чтобы открыть кабинет клиента.';
         return;
       }
 
-      if (vivaStatus === 'FOUND') {
+      if (!effectiveStatus && !vivaCabinetUrl) {
+        dom.dialogLinks.style.display = 'none';
+        dom.vivaCabinetStatus.textContent = '';
+        dom.vivaCabinetStatus.className = 'phab-admin-dialog-link-status';
+        dom.vivaCabinetLink.removeAttribute('href');
+        dom.vivaCabinetLink.style.display = 'none';
+        dom.cabinetMeta.textContent = 'Сведения о личном кабинете клиента пока недоступны.';
+        dom.cabinetFrame.removeAttribute('src');
+        dom.cabinetFrame.style.display = 'none';
+        dom.cabinetEmpty.style.display = 'flex';
+        dom.cabinetEmpty.textContent = 'По этому чату ещё нет ссылки на личный кабинет Viva CRM.';
+        return;
+      }
+
+      if (effectiveStatus === 'FOUND') {
         dom.vivaCabinetStatus.textContent = 'Viva найден';
         dom.vivaCabinetStatus.className =
           'phab-admin-dialog-link-status phab-admin-dialog-link-status-ok';
-      } else if (vivaStatus === 'DISABLED') {
+      } else if (effectiveStatus === 'DISABLED') {
         dom.vivaCabinetStatus.textContent = 'Viva не настроен';
         dom.vivaCabinetStatus.className =
           'phab-admin-dialog-link-status phab-admin-dialog-link-status-disabled';
@@ -2860,6 +3005,34 @@
       }
 
       dom.dialogLinks.style.display = 'flex';
+
+      if (vivaCabinetWebviewUrl) {
+        dom.cabinetMeta.textContent =
+          'Слева открыт вебвью кабинета клиента. Если Viva CRM не встраивается, откройте кабинет по ссылке выше.';
+        if (dom.cabinetFrame.getAttribute('src') !== vivaCabinetWebviewUrl) {
+          dom.cabinetFrame.src = vivaCabinetWebviewUrl;
+        }
+        dom.cabinetFrame.style.display = 'block';
+        dom.cabinetEmpty.style.display = 'none';
+        return;
+      }
+
+      dom.cabinetFrame.removeAttribute('src');
+      dom.cabinetFrame.style.display = 'none';
+      dom.cabinetEmpty.style.display = 'flex';
+      if (effectiveStatus === 'DISABLED') {
+        dom.cabinetMeta.textContent = 'Интеграция Viva CRM сейчас не настроена.';
+        dom.cabinetEmpty.textContent =
+          'Вебвью кабинета недоступно, потому что интеграция Viva CRM не настроена.';
+      } else if (effectiveStatus === 'FOUND') {
+        dom.cabinetMeta.textContent =
+          'Ссылка на кабинет найдена, но отдельный webview URL не передан. Используйте кнопку выше.';
+        dom.cabinetEmpty.textContent =
+          'Встроенное окно кабинета пока недоступно. Откройте личный кабинет клиента по ссылке выше.';
+      } else {
+        dom.cabinetMeta.textContent = 'Клиент пока не найден в Viva CRM.';
+        dom.cabinetEmpty.textContent = 'Viva CRM не вернул личный кабинет для этого клиента.';
+      }
     }
 
     function formatDateTimeFull(value) {
@@ -4065,6 +4238,8 @@
         vivaStatus: item.vivaStatus || undefined,
         vivaClientId: item.vivaClientId || undefined,
         vivaCabinetUrl: item.vivaCabinetUrl || undefined,
+        vivaCabinetWebviewUrl:
+          item.vivaCabinetWebviewUrl || item.vivaCabinetEmbedUrl || item.vivaCabinetUrl || undefined,
         authStatus: 'VERIFIED',
         primaryPhone: item.primaryPhone || undefined,
         phones: Array.isArray(item.phones) ? item.phones.slice() : [],
@@ -4370,7 +4545,9 @@
           authStatus: selectedDialog.authStatus,
           averageFirstResponseMs: selectedDialog.averageFirstResponseMs,
           lastMessageAt: selectedDialog.lastMessageAt,
-          vivaCabinetUrl: selectedDialog.vivaCabinetUrl
+          vivaStatus: selectedDialog.vivaStatus,
+          vivaCabinetUrl: selectedDialog.vivaCabinetUrl,
+          vivaCabinetWebviewUrl: selectedDialog.vivaCabinetWebviewUrl
         });
 
         [
