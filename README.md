@@ -311,7 +311,7 @@ Node-RED env vars:
   "direction": "SYSTEM",
   "kind": "SYSTEM",
   "deliverToClient": true,
-  "text": "Служебное сообщение Viva CRM (OTP): 2515",
+  "text": "⬇️ код для входа в личный кабинет: 2515",
   "meta": {
     "source": "viva_crm"
   }
