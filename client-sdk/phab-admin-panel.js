@@ -2663,7 +2663,7 @@
   }
 
   function canToggleSystemMessages(cfg) {
-    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER', 'STATION_ADMIN']);
   }
 
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
