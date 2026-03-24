@@ -134,6 +134,7 @@ export interface StationDialogSummary {
   pendingClientMessagesCount: number;
   lastMessageText?: string;
   lastMessageSenderRole?: Role;
+  lastMessageSenderRoleRaw?: string;
   averageStaffResponseTimeMs?: number;
   lastStaffResponseTimeMs?: number;
   aiTopic?: AiDialogTopic;

@@ -448,6 +448,7 @@ export class MessengerController {
       pendingClientMessagesCount: dialog.pendingClientMessagesCount,
       lastMessageText: dialog.lastMessageText,
       lastMessageSenderRole: this.mapSupportSenderRole(dialog.lastMessageSenderRole),
+      lastMessageSenderRoleRaw: dialog.lastMessageSenderRole,
       averageStaffResponseTimeMs: dialog.averageFirstResponseMs,
       lastStaffResponseTimeMs: dialog.lastFirstResponseMs,
       aiTopic: dialog.ai ? this.mapSupportTopic(dialog.ai.topic) : undefined,

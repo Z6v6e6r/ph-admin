@@ -1668,6 +1668,29 @@
     dialogSearchInput.style.width = '100%';
     dialogSearchWrap.appendChild(dialogSearchInput);
 
+    var dialogListOptions = document.createElement('div');
+    dialogListOptions.style.display = 'none';
+    dialogListOptions.style.padding = '0 12px 8px';
+    leftPane.appendChild(dialogListOptions);
+
+    var dialogListSystemToggleLabel = document.createElement('label');
+    dialogListSystemToggleLabel.style.display = 'inline-flex';
+    dialogListSystemToggleLabel.style.alignItems = 'center';
+    dialogListSystemToggleLabel.style.gap = '8px';
+    dialogListSystemToggleLabel.style.cursor = 'pointer';
+    dialogListSystemToggleLabel.style.fontSize = '13px';
+    dialogListSystemToggleLabel.style.fontWeight = '600';
+    dialogListOptions.appendChild(dialogListSystemToggleLabel);
+
+    var dialogListSystemToggle = document.createElement('input');
+    dialogListSystemToggle.type = 'checkbox';
+    dialogListSystemToggle.checked = true;
+    dialogListSystemToggleLabel.appendChild(dialogListSystemToggle);
+
+    var dialogListSystemToggleText = document.createElement('span');
+    dialogListSystemToggleText.textContent = 'Показывать системные сообщения и диалоги';
+    dialogListSystemToggleLabel.appendChild(dialogListSystemToggleText);
+
     var dialogFiltersWrap = document.createElement('div');
     dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
     leftPane.appendChild(dialogFiltersWrap);
@@ -2476,6 +2499,8 @@
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
       dialogSearchInput: dialogSearchInput,
+      dialogListOptions: dialogListOptions,
+      dialogListSystemToggle: dialogListSystemToggle,
       dialogFiltersWrap: dialogFiltersWrap,
       dialogFilters: dialogFilters,
       dialogsList: dialogsList,
@@ -2746,6 +2771,7 @@
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
+    dom.dialogListSystemToggle.checked = state.showSystemMessages;
     dom.systemMessagesToggle.checked = state.showSystemMessages;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
@@ -3985,11 +4011,35 @@
       return direction === 'SYSTEM' || senderRole === 'SYSTEM' || kind === 'SYSTEM';
     }
 
+    function isSystemDialog(dialog) {
+      var senderRole = String(
+        dialog && (dialog.lastMessageSenderRoleRaw || dialog.lastMessageSenderRole) || ''
+      ).toUpperCase();
+      var preview = String(dialog && dialog.lastMessageText || '').trim().toLowerCase();
+      return (
+        senderRole === 'SYSTEM' ||
+        preview === 'системное событие' ||
+        preview.indexOf('служебное сообщение') === 0
+      );
+    }
+
     function isVivaOtpSystemMessage(message) {
       if (!isSystemMessage(message)) {
         return false;
       }
       var text = String(message && message.text || '').toLowerCase();
+      return (
+        text.indexOf('viva crm') >= 0 &&
+        (
+          text.indexOf('otp') >= 0 ||
+          text.indexOf('код авторизации') >= 0 ||
+          /\b\d{4,8}\b/.test(text)
+        )
+      );
+    }
+
+    function isVivaOtpSystemDialog(dialog) {
+      var text = String(dialog && dialog.lastMessageText || '').toLowerCase();
       return (
         text.indexOf('viva crm') >= 0 &&
         (
@@ -4013,6 +4063,19 @@
       return false;
     }
 
+    function shouldHideDialog(dialog) {
+      if (!dialog) {
+        return false;
+      }
+      if (canToggleSystemMessages(cfg) && !state.showSystemMessages && isSystemDialog(dialog)) {
+        return true;
+      }
+      if (isRestrictedStationAdmin && isVivaOtpSystemDialog(dialog)) {
+        return true;
+      }
+      return false;
+    }
+
     function getVisibleMessages(messages) {
       return (Array.isArray(messages) ? messages : []).filter(function (message) {
         return !shouldHideSystemMessage(message);
@@ -4022,10 +4085,13 @@
     function renderSystemMessagesToggle() {
       if (!canToggleSystemMessages(cfg)) {
         dom.dialogOptions.style.display = 'none';
+        dom.dialogListOptions.style.display = 'none';
         return;
       }
       dom.systemMessagesToggle.checked = state.showSystemMessages;
+      dom.dialogListSystemToggle.checked = state.showSystemMessages;
       dom.dialogOptions.style.display = 'block';
+      dom.dialogListOptions.style.display = 'block';
     }
 
     function canFilterDialogsByStation() {
@@ -4242,7 +4308,7 @@
         empty.className = 'phab-admin-empty';
         empty.textContent =
           state.allDialogs.length > 0
-            ? 'Нет чатов по выбранному фильтру или поиску'
+            ? 'Нет чатов по выбранному фильтру, поиску или настройкам показа'
             : 'Нет доступных чатов';
         dom.dialogsList.appendChild(empty);
         dom.dialogTitle.textContent = 'Чат не выбран';
@@ -4373,6 +4439,7 @@
         lastRankingMessageAt: item.lastRankingMessageAt || item.lastMessageAt,
         lastMessageText: item.lastMessageText || '',
         lastMessageSenderRole: item.lastMessageSenderRole || '',
+        lastMessageSenderRoleRaw: item.lastMessageSenderRoleRaw || item.lastMessageSenderRole || '',
         lastInboundConnector: item.connector || '',
         ai:
           item.aiTopic || item.aiUrgency || typeof item.aiQualityScore === 'number'
@@ -4448,9 +4515,12 @@
 
     function applyDialogs(nextDialogs, options) {
       var opts = options || {};
-      var fullList = sortDialogsByLastMessage(
+      var rawList = sortDialogsByLastMessage(
         (Array.isArray(nextDialogs) ? nextDialogs : []).filter(Boolean)
       );
+      var fullList = rawList.filter(function (dialog) {
+        return !shouldHideDialog(dialog);
+      });
       var previousDialogs = Array.isArray(state.dialogs) ? state.dialogs.slice() : [];
       var nextFilterOptions = buildDialogFilterOptions(fullList);
       var allowedFilterKeys = nextFilterOptions.map(function (option) {
@@ -4486,7 +4556,7 @@
         JSON.stringify(nextFilterOptions) !== JSON.stringify(state.dialogFilterOptions);
       var selectionChanged = nextSelectedThreadId !== state.selectedThreadId;
 
-      state.allDialogs = fullList;
+      state.allDialogs = rawList;
       state.dialogs = list;
       state.dialogsSignature = nextSignature;
       state.dialogStationFilters = nextFilters;
@@ -4541,6 +4611,30 @@
       if (dialogsResult && dialogsResult.selectionChanged) {
         await openSelectedDialog();
       }
+    }
+
+    async function setShowSystemMessages(nextValue) {
+      state.showSystemMessages = Boolean(nextValue);
+      saveStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, state.showSystemMessages);
+      var dialogsResult = applyDialogs(state.allDialogs, {
+        forceRender: true,
+        silent: true
+      });
+
+      if (!state.selectedThreadId) {
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
+        return;
+      }
+
+      if (dialogsResult && dialogsResult.selectionChanged) {
+        await openSelectedDialog();
+        return;
+      }
+
+      applyMessages(state.rawMessages, {
+        forceRender: true,
+        preserveScroll: true
+      });
     }
 
     function markSelectedDialogAsReadLocally() {
@@ -6196,12 +6290,10 @@
         loadSettings().catch(handleError);
       });
       dom.systemMessagesToggle.addEventListener('change', function () {
-        state.showSystemMessages = Boolean(dom.systemMessagesToggle.checked);
-        saveStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, state.showSystemMessages);
-        applyMessages(state.rawMessages, {
-          forceRender: true,
-          preserveScroll: true
-        });
+        setShowSystemMessages(dom.systemMessagesToggle.checked).catch(handleError);
+      });
+      dom.dialogListSystemToggle.addEventListener('change', function () {
+        setShowSystemMessages(dom.dialogListSystemToggle.checked).catch(handleError);
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
