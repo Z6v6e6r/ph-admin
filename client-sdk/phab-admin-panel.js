@@ -1580,6 +1580,18 @@
     leftHead.textContent = 'Чаты';
     leftPane.appendChild(leftHead);
 
+    var dialogSearchWrap = document.createElement('div');
+    dialogSearchWrap.style.padding = '0 12px 8px';
+    leftPane.appendChild(dialogSearchWrap);
+
+    var dialogSearchInput = document.createElement('input');
+    dialogSearchInput.className = 'phab-admin-input';
+    dialogSearchInput.type = 'search';
+    dialogSearchInput.placeholder = 'Поиск по имени или номеру...';
+    dialogSearchInput.setAttribute('aria-label', 'Поиск диалогов');
+    dialogSearchInput.style.width = '100%';
+    dialogSearchWrap.appendChild(dialogSearchInput);
+
     var dialogFiltersWrap = document.createElement('div');
     dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
     leftPane.appendChild(dialogFiltersWrap);
@@ -2325,6 +2337,7 @@
       analyticsSection: analyticsSection,
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
+      dialogSearchInput: dialogSearchInput,
       dialogFiltersWrap: dialogFiltersWrap,
       dialogFilters: dialogFilters,
       dialogsList: dialogsList,
@@ -2502,6 +2515,7 @@
       dialogs: [],
       dialogsSignature: '',
       dialogsHydrated: false,
+      dialogSearchQuery: '',
       dialogStationFilters: [],
       dialogFilterOptions: [],
       messages: [],
@@ -2558,6 +2572,7 @@
       lastPlayAt: 0
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+    dom.dialogSearchInput.value = state.dialogSearchQuery;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
@@ -3696,6 +3711,32 @@
       return subject;
     }
 
+    function getDialogSearchHaystack(dialog) {
+      var values = [];
+      values.push(String(dialog && dialog.clientDisplayName || ''));
+      values.push(getDialogSubjectLabel(dialog));
+      values.push(getDialogPrimaryPhone(dialog));
+      if (Array.isArray(dialog && dialog.phones)) {
+        dialog.phones.forEach(function (phone) {
+          values.push(String(phone || ''));
+        });
+      }
+      return values
+        .join(' ')
+        .trim()
+        .toLowerCase();
+    }
+
+    function dialogMatchesSearch(dialog, query) {
+      var normalizedQuery = String(query || '')
+        .trim()
+        .toLowerCase();
+      if (!normalizedQuery) {
+        return true;
+      }
+      return getDialogSearchHaystack(dialog).indexOf(normalizedQuery) >= 0;
+    }
+
     function canFilterDialogsByStation() {
       return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
     }
@@ -3910,7 +3951,7 @@
         empty.className = 'phab-admin-empty';
         empty.textContent =
           state.allDialogs.length > 0
-            ? 'Нет чатов по выбранному фильтру'
+            ? 'Нет чатов по выбранному фильтру или поиску'
             : 'Нет доступных чатов';
         dom.dialogsList.appendChild(empty);
         dom.dialogTitle.textContent = 'Чат не выбран';
@@ -4128,7 +4169,10 @@
         }
       );
       var list = fullList.filter(function (dialog) {
-        return dialogMatchesStationFilters(dialog, nextFilters);
+        return (
+          dialogMatchesStationFilters(dialog, nextFilters) &&
+          dialogMatchesSearch(dialog, state.dialogSearchQuery)
+        );
       });
       var nextSelectedThreadId = state.selectedThreadId;
       if (list.length > 0) {
@@ -4174,6 +4218,23 @@
 
     async function setDialogStationFilters(nextFilters) {
       state.dialogStationFilters = Array.isArray(nextFilters) ? nextFilters.slice() : [];
+      var dialogsResult = applyDialogs(state.allDialogs, {
+        forceRender: true,
+        silent: true
+      });
+
+      if (!state.selectedThreadId) {
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
+        return;
+      }
+
+      if (dialogsResult && dialogsResult.selectionChanged) {
+        await openSelectedDialog();
+      }
+    }
+
+    async function setDialogSearchQuery(nextQuery) {
+      state.dialogSearchQuery = String(nextQuery || '').trim();
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
         silent: true
@@ -5820,6 +5881,9 @@
       dom.tabSettings.addEventListener('click', function () {
         switchTab('settings');
         loadSettings().catch(handleError);
+      });
+      dom.dialogSearchInput.addEventListener('input', function () {
+        setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
       });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
