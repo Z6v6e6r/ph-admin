@@ -4028,13 +4028,19 @@
 
     function sortDialogsByLastMessage(items) {
       return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
-        var byRank = compareNullable(
-          parseDateValue(right.lastRankingMessageAt || right.lastMessageAt),
-          parseDateValue(left.lastRankingMessageAt || left.lastMessageAt)
-        );
-        if (byRank !== 0) {
-          return byRank;
+        var leftRank = parseDateValue(left.lastRankingMessageAt);
+        var rightRank = parseDateValue(right.lastRankingMessageAt);
+
+        if (leftRank != null && rightRank == null) {
+          return -1;
         }
+        if (leftRank == null && rightRank != null) {
+          return 1;
+        }
+        if (leftRank != null && rightRank != null && leftRank !== rightRank) {
+          return rightRank - leftRank;
+        }
+
         return compareNullable(parseDateValue(right.lastMessageAt), parseDateValue(left.lastMessageAt));
       });
     }
