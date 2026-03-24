@@ -376,7 +376,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
-    if (this.isStaff(user) && this.isDialogActiveForUser(dialog, user)) {
+    if (this.isStaff(user)) {
       dialog.unreadCount = 0;
       this.persistDialog(dialog);
     }

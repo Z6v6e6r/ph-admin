@@ -4436,6 +4436,18 @@
       }
     }
 
+    function markSelectedDialogAsReadLocally() {
+      var dialog = getSelectedDialog();
+      if (!dialog || Number(dialog.unreadCount || 0) <= 0) {
+        return;
+      }
+      dialog.unreadCount = 0;
+      applyDialogs(state.allDialogs, {
+        forceRender: true,
+        silent: true
+      });
+    }
+
     function applyMessages(nextMessages, options) {
       var opts = options || {};
       var list = Array.isArray(nextMessages) ? nextMessages : [];
@@ -5676,6 +5688,7 @@
         return;
       }
       await loadMessages({ forceRender: true, forceScrollBottom: true });
+      markSelectedDialogAsReadLocally();
       if (!getSelectedDialog()) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
