@@ -463,56 +463,8 @@ export class MessengerController {
   private async attachVivaCabinetUrls(
     dialogs: StationDialogSummary[]
   ): Promise<StationDialogSummary[]> {
-    const phoneToDialogs = new Map<string, StationDialogSummary[]>();
-
-    dialogs.forEach((dialog) => {
-      const phone = this.normalizePhone(dialog.primaryPhone ?? dialog.phones?.[0]);
-      if (!phone) {
-        return;
-      }
-      const existing = phoneToDialogs.get(phone) ?? [];
-      existing.push(dialog);
-      phoneToDialogs.set(phone, existing);
-    });
-
-    const lookupEntries = await Promise.all(
-      Array.from(phoneToDialogs.keys()).map(async (phone) => [
-        phone,
-        await this.vivaAdminService.lookupClientCabinetByPhone(phone)
-      ] as const)
-    );
-    const lookupByPhone = new Map<string, VivaClientCabinetLookup | null>(lookupEntries);
-
-    return dialogs.map((dialog) => {
-      const phone = this.normalizePhone(dialog.primaryPhone ?? dialog.phones?.[0]);
-      if (!phone) {
-        return {
-          ...dialog,
-          vivaStatus: 'NOT_FOUND'
-        };
-      }
-      const lookup = lookupByPhone.get(phone);
-      return {
-        ...dialog,
-        vivaStatus: lookup?.status ?? 'NOT_FOUND',
-        vivaClientId: lookup?.vivaClientId,
-        vivaCabinetUrl: lookup?.vivaCabinetUrl
-      };
-    });
-  }
-
-  private normalizePhone(phone?: string): string | undefined {
-    const digits = String(phone ?? '').replace(/\D/g, '');
-    if (!digits) {
-      return undefined;
-    }
-    if (digits.length === 10) {
-      return `7${digits}`;
-    }
-    if (digits.length === 11 && digits.startsWith('8')) {
-      return `7${digits.slice(1)}`;
-    }
-    return digits;
+    // Dialog listing no longer resolves Viva cabinet links to avoid expensive CRM phone LIKE lookups.
+    return dialogs;
   }
 
   private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {
