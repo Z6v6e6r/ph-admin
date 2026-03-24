@@ -421,9 +421,12 @@
       .phab-admin-dialog-body{
         display:grid;
         grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+        grid-template-rows:minmax(0,1fr);
         gap:12px;
         padding:12px;
+        height:100%;
         min-height:0;
+        align-items:stretch;
         overflow:hidden;
       }
       .phab-admin-dialog-head{
@@ -508,6 +511,8 @@
         grid-template-rows:auto minmax(0,1fr);
         min-height:0;
         grid-column:2;
+        grid-row:1;
+        height:100%;
         border:1px solid rgba(51,0,32,.12);
         border-radius:16px;
         overflow:hidden;
@@ -588,6 +593,8 @@
         overflow:auto;
         min-height:0;
         grid-column:1;
+        grid-row:1;
+        height:100%;
         border:1px solid rgba(51,0,32,.12);
         border-radius:16px;
         box-shadow:0 10px 22px rgba(51,0,32,.06);
