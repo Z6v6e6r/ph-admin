@@ -71,6 +71,20 @@ API работает на `http://localhost:3000/api`.
 - `TELEGRAM_STATION_MAPPINGS=<json>` (опционально, mapping station<->groupChat)
 - `TELEGRAM_DELIVERY_MODE=outbox|direct` (по умолчанию `outbox`; рекомендован для Node-RED)
 - `TELEGRAM_INTEGRATION_TOKEN=<token>` (опционально, защита outbox API для Node-RED)
+- `VIVA_ADMIN_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva Admin API)
+- `VIVA_ADMIN_API_TOKEN=<token>` (опционально; если задан, используется как статический Bearer token)
+- `VIVA_ADMIN_TOKEN_URL=https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token` (опционально; URL получения access token)
+- `VIVA_ADMIN_CLIENT_ID=React-auth-dev` (опционально; client_id для password grant)
+- `VIVA_ADMIN_USERNAME=<login>` (опционально; логин Viva для получения access token)
+- `VIVA_ADMIN_PASSWORD=<password>` (опционально; пароль Viva для получения access token)
+- `VIVA_ADMIN_CACHE_TTL_MS=600000` (опционально; TTL кэша ссылок на ЛК клиентов)
+- `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
+
+Для Viva CRM поддерживаются два режима:
+
+- статический токен через `VIVA_ADMIN_API_TOKEN`
+- автоматическое получение access token через password grant:
+  `VIVA_ADMIN_TOKEN_URL + VIVA_ADMIN_CLIENT_ID + VIVA_ADMIN_USERNAME + VIVA_ADMIN_PASSWORD`
 
 ## Аутентификация в MVP
 

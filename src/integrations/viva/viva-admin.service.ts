@@ -13,9 +13,19 @@ interface VivaClientsSearchResponse {
   content?: Array<Record<string, unknown>>;
 }
 
+interface VivaTokenResponse {
+  access_token?: string;
+  expires_in?: number | string;
+}
+
 interface VivaLookupCacheEntry {
   expiresAt: number;
   value: VivaClientCabinetLookup;
+}
+
+interface VivaAccessTokenCacheEntry {
+  value: string;
+  expiresAt: number;
 }
 
 @Injectable()
@@ -24,7 +34,14 @@ export class VivaAdminService {
   private readonly baseUrl = (
     String(process.env.VIVA_ADMIN_API_BASE_URL ?? '').trim() || 'https://api.vivacrm.ru'
   ).replace(/\/+$/, '');
-  private readonly token = String(process.env.VIVA_ADMIN_API_TOKEN ?? '').trim();
+  private readonly staticToken = String(process.env.VIVA_ADMIN_API_TOKEN ?? '').trim();
+  private readonly tokenUrl =
+    String(process.env.VIVA_ADMIN_TOKEN_URL ?? '').trim() ||
+    'https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token';
+  private readonly tokenClientId =
+    String(process.env.VIVA_ADMIN_CLIENT_ID ?? '').trim() || 'React-auth-dev';
+  private readonly tokenUsername = String(process.env.VIVA_ADMIN_USERNAME ?? '').trim();
+  private readonly tokenPassword = String(process.env.VIVA_ADMIN_PASSWORD ?? '').trim();
   private readonly cacheTtlMs = this.readPositiveNumberEnv(
     'VIVA_ADMIN_CACHE_TTL_MS',
     10 * 60 * 1000
@@ -35,6 +52,8 @@ export class VivaAdminService {
   );
   private readonly cache = new Map<string, VivaLookupCacheEntry>();
   private readonly inflight = new Map<string, Promise<VivaClientCabinetLookup>>();
+  private tokenCache: VivaAccessTokenCacheEntry | null = null;
+  private tokenInflight: Promise<string | null> | null = null;
   private missingConfigLogged = false;
 
   async lookupClientCabinetByPhone(phone?: string): Promise<VivaClientCabinetLookup | null> {
@@ -76,13 +95,8 @@ export class VivaAdminService {
   }
 
   private async fetchClientCabinetByPhone(phone: string): Promise<VivaClientCabinetLookup> {
-    if (!this.token) {
-      if (!this.missingConfigLogged) {
-        this.missingConfigLogged = true;
-        this.logger.log(
-          'VIVA_ADMIN_API_TOKEN is empty. Viva CRM cabinet links are disabled.'
-        );
-      }
+    const token = await this.resolveAccessToken();
+    if (!token) {
       return { phone, status: 'DISABLED' };
     }
 
@@ -94,7 +108,7 @@ export class VivaAdminService {
     const response = await fetch(url.toString(), {
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${this.token}`
+        Authorization: `Bearer ${token}`
       },
       signal: this.buildAbortSignal()
     });
@@ -118,6 +132,87 @@ export class VivaAdminService {
       vivaClientId,
       vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`
     };
+  }
+
+  private async resolveAccessToken(): Promise<string | null> {
+    if (this.staticToken) {
+      return this.staticToken;
+    }
+
+    const now = Date.now();
+    if (this.tokenCache && this.tokenCache.expiresAt > now + 30_000) {
+      return this.tokenCache.value;
+    }
+
+    if (this.tokenInflight) {
+      return this.tokenInflight;
+    }
+
+    if (!this.hasDynamicTokenConfig()) {
+      if (!this.missingConfigLogged) {
+        this.missingConfigLogged = true;
+        this.logger.log(
+          'Viva CRM token config is empty. Set VIVA_ADMIN_API_TOKEN or VIVA_ADMIN_TOKEN_URL + VIVA_ADMIN_CLIENT_ID + VIVA_ADMIN_USERNAME + VIVA_ADMIN_PASSWORD.'
+        );
+      }
+      return null;
+    }
+
+    this.tokenInflight = this.fetchAccessToken()
+      .catch((error) => {
+        this.logger.warn(`Failed to fetch Viva CRM access token: ${String(error)}`);
+        return null;
+      })
+      .finally(() => {
+        this.tokenInflight = null;
+      });
+
+    return this.tokenInflight;
+  }
+
+  private async fetchAccessToken(): Promise<string | null> {
+    const body = new URLSearchParams();
+    body.set('grant_type', 'password');
+    body.set('client_id', this.tokenClientId);
+    body.set('username', this.tokenUsername);
+    body.set('password', this.tokenPassword);
+
+    const response = await fetch(this.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json'
+      },
+      body: body.toString(),
+      signal: this.buildAbortSignal()
+    });
+
+    if (!response.ok) {
+      this.logger.warn(
+        `Viva CRM token request failed: ${response.status} ${response.statusText}`
+      );
+      return null;
+    }
+
+    const payload = (await response.json().catch(() => null)) as VivaTokenResponse | null;
+    const accessToken = String(payload?.access_token ?? '').trim();
+    if (!accessToken) {
+      this.logger.warn('Viva CRM token response does not contain access_token');
+      return null;
+    }
+
+    const expiresInSeconds = this.parseExpiresInSeconds(payload?.expires_in);
+    this.tokenCache = {
+      value: accessToken,
+      expiresAt: Date.now() + expiresInSeconds * 1000
+    };
+    return accessToken;
+  }
+
+  private hasDynamicTokenConfig(): boolean {
+    return Boolean(
+      this.tokenUrl && this.tokenClientId && this.tokenUsername && this.tokenPassword
+    );
   }
 
   private extractClientId(payload: VivaClientsSearchResponse | null): string | undefined {
@@ -164,5 +259,13 @@ export class VivaAdminService {
       return fallback;
     }
     return Math.trunc(raw);
+  }
+
+  private parseExpiresInSeconds(value: number | string | undefined): number {
+    const parsed = Number(value ?? '');
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 5 * 60;
+    }
+    return Math.max(60, Math.trunc(parsed));
   }
 }
