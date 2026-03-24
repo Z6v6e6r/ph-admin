@@ -284,7 +284,12 @@ export class UiController {
       @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
-      html, body { margin: 0; padding: 0; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
       body {
         font-family: "TT Neoris Trial Variable", "Manrope", "Helvetica Neue", sans-serif;
         background:
@@ -292,34 +297,30 @@ export class UiController {
           radial-gradient(circle at 4% 98%, #b6fdff 0, transparent 32%),
           linear-gradient(126deg, #cfffb6 0%, #ffe891 100%);
         color: #330020;
+        min-height: 100dvh;
+        overflow: hidden;
       }
       .page {
-        min-height: 100vh;
+        height: 100dvh;
+        min-height: 100dvh;
         padding: 14px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
-      }
-      .hint {
-        font-size: 12px;
-        color: rgba(51,0,32,.74);
-        background: rgba(255,255,255,.66);
-        border: 1px solid rgba(51,0,32,.16);
-        border-radius: 12px;
-        padding: 8px 10px;
+        overflow: hidden;
       }
       #phab-admin-root {
         width: 100%;
-        min-height: 760px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+      @media (max-width: 640px) {
+        .page { padding: 8px; }
       }
     </style>
   </head>
   <body>
     <main class="page">
-      <div class="hint">
-        Локальная страница ЦУП Дворотеки. Настройки можно передавать query-параметрами:
-        <code>roles</code>, <code>stationIds</code>, <code>userId</code>, <code>apiBaseUrl</code>.
-      </div>
       <div id="phab-admin-root"></div>
     </main>
 
