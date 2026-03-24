@@ -16,6 +16,7 @@ import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import {
   VivaAdminService,
+  VivaAdminSettingsSnapshot,
   VivaClientCabinetLookup
 } from '../integrations/viva/viva-admin.service';
 import { SupportService } from '../support/support.service';
@@ -37,6 +38,7 @@ import { SetAiModeDto } from './dto/set-ai-mode.dto';
 import { UpdateAccessRuleDto } from './dto/update-access-rule.dto';
 import { UpdateConnectorConfigDto } from './dto/update-connector-config.dto';
 import { UpdateStationDto } from './dto/update-station.dto';
+import { UpdateVivaSettingsDto } from './dto/update-viva-settings.dto';
 import {
   AiDialogTopic,
   AiReplySuggestion,
@@ -187,6 +189,35 @@ export class MessengerController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.messengerService.getSettings(user);
+  }
+
+  @Get('settings/viva')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  async getVivaSettings(@CurrentUser() user?: RequestUser): Promise<VivaAdminSettingsSnapshot> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.vivaAdminService.getSettings();
+  }
+
+  @Patch('settings/viva')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  async updateVivaSettings(
+    @Body() dto: UpdateVivaSettingsDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<VivaAdminSettingsSnapshot> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.vivaAdminService.updateSettings({
+      baseUrl: dto.baseUrl,
+      tokenUrl: dto.tokenUrl,
+      clientId: dto.clientId,
+      username: dto.username,
+      staticToken: dto.staticToken,
+      password: dto.password,
+      updatedBy: user.id
+    });
   }
 
   @Get('settings/stations')

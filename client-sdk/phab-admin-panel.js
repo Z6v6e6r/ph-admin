@@ -1295,6 +1295,12 @@
       getSettings: function () {
         return request('/messenger/settings', 'GET');
       },
+      getVivaSettings: function () {
+        return request('/messenger/settings/viva', 'GET');
+      },
+      updateVivaSettings: function (payload) {
+        return request('/messenger/settings/viva', 'PATCH', payload);
+      },
       getAdminUsers: function () {
         return request('/auth/admin-users', 'GET');
       },
@@ -2078,6 +2084,91 @@
     accessCreateBtn.textContent = 'Добавить правило';
     accessForm.appendChild(accessCreateBtn);
 
+    var vivaCard = document.createElement('div');
+    vivaCard.className = 'phab-admin-settings-card';
+    settingsGrid.appendChild(vivaCard);
+
+    var vivaHead = document.createElement('div');
+    vivaHead.className = 'phab-admin-settings-head';
+    vivaHead.textContent = 'Viva CRM';
+    vivaCard.appendChild(vivaHead);
+
+    var vivaList = document.createElement('div');
+    vivaList.className = 'phab-admin-settings-list';
+    vivaCard.appendChild(vivaList);
+
+    var vivaForm = document.createElement('div');
+    vivaForm.className = 'phab-admin-settings-form';
+    vivaCard.appendChild(vivaForm);
+
+    var vivaBaseUrlLabel = document.createElement('label');
+    vivaBaseUrlLabel.className = 'phab-admin-settings-label';
+    vivaBaseUrlLabel.textContent = 'API Base URL';
+    vivaForm.appendChild(vivaBaseUrlLabel);
+
+    var vivaBaseUrlInput = document.createElement('input');
+    vivaBaseUrlInput.className = 'phab-admin-settings-input';
+    vivaBaseUrlInput.placeholder = 'https://api.vivacrm.ru';
+    vivaForm.appendChild(vivaBaseUrlInput);
+
+    var vivaTokenUrlLabel = document.createElement('label');
+    vivaTokenUrlLabel.className = 'phab-admin-settings-label';
+    vivaTokenUrlLabel.textContent = 'Token URL';
+    vivaForm.appendChild(vivaTokenUrlLabel);
+
+    var vivaTokenUrlInput = document.createElement('input');
+    vivaTokenUrlInput.className = 'phab-admin-settings-input';
+    vivaTokenUrlInput.placeholder = 'https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token';
+    vivaForm.appendChild(vivaTokenUrlInput);
+
+    var vivaClientIdLabel = document.createElement('label');
+    vivaClientIdLabel.className = 'phab-admin-settings-label';
+    vivaClientIdLabel.textContent = 'Client ID';
+    vivaForm.appendChild(vivaClientIdLabel);
+
+    var vivaClientIdInput = document.createElement('input');
+    vivaClientIdInput.className = 'phab-admin-settings-input';
+    vivaClientIdInput.placeholder = 'React-auth-dev';
+    vivaForm.appendChild(vivaClientIdInput);
+
+    var vivaUsernameLabel = document.createElement('label');
+    vivaUsernameLabel.className = 'phab-admin-settings-label';
+    vivaUsernameLabel.textContent = 'Username';
+    vivaForm.appendChild(vivaUsernameLabel);
+
+    var vivaUsernameInput = document.createElement('input');
+    vivaUsernameInput.className = 'phab-admin-settings-input';
+    vivaUsernameInput.placeholder = 'it@example.com';
+    vivaForm.appendChild(vivaUsernameInput);
+
+    var vivaStaticTokenLabel = document.createElement('label');
+    vivaStaticTokenLabel.className = 'phab-admin-settings-label';
+    vivaStaticTokenLabel.textContent = 'Статический token';
+    vivaForm.appendChild(vivaStaticTokenLabel);
+
+    var vivaStaticTokenInput = document.createElement('input');
+    vivaStaticTokenInput.className = 'phab-admin-settings-input';
+    vivaStaticTokenInput.type = 'password';
+    vivaStaticTokenInput.placeholder = 'Оставьте пустым, чтобы не менять';
+    vivaForm.appendChild(vivaStaticTokenInput);
+
+    var vivaPasswordLabel = document.createElement('label');
+    vivaPasswordLabel.className = 'phab-admin-settings-label';
+    vivaPasswordLabel.textContent = 'Password grant password';
+    vivaForm.appendChild(vivaPasswordLabel);
+
+    var vivaPasswordInput = document.createElement('input');
+    vivaPasswordInput.className = 'phab-admin-settings-input';
+    vivaPasswordInput.type = 'password';
+    vivaPasswordInput.placeholder = 'Оставьте пустым, чтобы не менять';
+    vivaForm.appendChild(vivaPasswordInput);
+
+    var vivaSaveBtn = document.createElement('button');
+    vivaSaveBtn.className = 'phab-admin-btn';
+    vivaSaveBtn.type = 'button';
+    vivaSaveBtn.textContent = 'Сохранить Viva';
+    vivaForm.appendChild(vivaSaveBtn);
+
     var staffCard = document.createElement('div');
     staffCard.className = 'phab-admin-settings-card';
     settingsGrid.appendChild(staffCard);
@@ -2304,6 +2395,15 @@
       accessReadInput: accessReadInput,
       accessWriteInput: accessWriteInput,
       accessCreateBtn: accessCreateBtn,
+      vivaCard: vivaCard,
+      vivaList: vivaList,
+      vivaBaseUrlInput: vivaBaseUrlInput,
+      vivaTokenUrlInput: vivaTokenUrlInput,
+      vivaClientIdInput: vivaClientIdInput,
+      vivaUsernameInput: vivaUsernameInput,
+      vivaStaticTokenInput: vivaStaticTokenInput,
+      vivaPasswordInput: vivaPasswordInput,
+      vivaSaveBtn: vivaSaveBtn,
       staffList: staffList
     };
   }
@@ -2377,6 +2477,10 @@
     ]);
   }
 
+  function canManageVivaSettings(cfg) {
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
   var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
 
@@ -2435,7 +2539,8 @@
         stations: [],
         connectors: [],
         accessRules: [],
-        adminUsers: []
+        adminUsers: [],
+        viva: null
       },
       selectedGameId: null,
       selectedGame: null,
@@ -5159,6 +5264,52 @@
       });
     }
 
+    function renderSettingsViva() {
+      clearNode(dom.vivaList);
+
+      if (!canManageVivaSettings(cfg)) {
+        dom.vivaCard.className = 'phab-admin-settings-card phab-admin-hidden';
+        return;
+      }
+
+      dom.vivaCard.className = 'phab-admin-settings-card';
+
+      var viva = state.settings.viva || null;
+      var summary = document.createElement('div');
+      summary.className = 'phab-admin-settings-row';
+      dom.vivaList.appendChild(summary);
+
+      var main = document.createElement('div');
+      main.className = 'phab-admin-settings-row-main';
+      summary.appendChild(main);
+
+      var title = document.createElement('div');
+      title.className = 'phab-admin-settings-row-title';
+      title.textContent = 'Конфигурация Viva Admin API';
+      main.appendChild(title);
+
+      var meta = document.createElement('div');
+      meta.className = 'phab-admin-settings-row-meta';
+      meta.textContent = viva
+        ? 'источник: ' +
+          (viva.source || 'defaults') +
+          ' · статический token: ' +
+          (viva.hasStaticToken ? 'настроен' : 'нет') +
+          ' · password grant: ' +
+          (viva.username && viva.hasPassword ? 'настроен' : 'неполный') +
+          (viva.updatedAt ? ' · обновлено: ' + formatDateTimeFull(viva.updatedAt) : '') +
+          (viva.updatedBy ? ' · кем: ' + viva.updatedBy : '')
+        : 'Настройки Viva пока не загружены';
+      main.appendChild(meta);
+
+      dom.vivaBaseUrlInput.value = viva && viva.baseUrl ? viva.baseUrl : '';
+      dom.vivaTokenUrlInput.value = viva && viva.tokenUrl ? viva.tokenUrl : '';
+      dom.vivaClientIdInput.value = viva && viva.clientId ? viva.clientId : '';
+      dom.vivaUsernameInput.value = viva && viva.username ? viva.username : '';
+      dom.vivaStaticTokenInput.value = '';
+      dom.vivaPasswordInput.value = '';
+    }
+
     function renderSettingsAdminUsers() {
       clearNode(dom.staffList);
       var users = state.settings.adminUsers || [];
@@ -5220,6 +5371,7 @@
       renderSettingsStations();
       renderSettingsConnectors();
       renderSettingsAccessRules();
+      renderSettingsViva();
       renderSettingsAdminUsers();
     }
 
@@ -5344,20 +5496,56 @@
           stations: [],
           connectors: [],
           accessRules: [],
-          adminUsers: []
+          adminUsers: [],
+          viva: null
         };
         renderSettings();
         return;
       }
       var settings = (await api.getSettings()) || {};
       var adminUsersResponse = (await api.getAdminUsers()) || {};
+      var vivaSettings =
+        canManageVivaSettings(cfg) ? (await api.getVivaSettings()) || null : null;
       state.settings = {
         stations: settings.stations || [],
         connectors: settings.connectors || [],
         accessRules: settings.accessRules || [],
-        adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : []
+        adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : [],
+        viva: vivaSettings
       };
       renderSettings();
+    }
+
+    async function saveVivaSettings() {
+      if (!canManageVivaSettings(cfg)) {
+        return;
+      }
+
+      dom.vivaSaveBtn.disabled = true;
+      try {
+        var payload = {
+          baseUrl: String(dom.vivaBaseUrlInput.value || '').trim(),
+          tokenUrl: String(dom.vivaTokenUrlInput.value || '').trim(),
+          clientId: String(dom.vivaClientIdInput.value || '').trim(),
+          username: String(dom.vivaUsernameInput.value || '').trim()
+        };
+
+        var staticToken = String(dom.vivaStaticTokenInput.value || '').trim();
+        var password = String(dom.vivaPasswordInput.value || '').trim();
+        if (staticToken) {
+          payload.staticToken = staticToken;
+        }
+        if (password) {
+          payload.password = password;
+        }
+
+        await api.updateVivaSettings(payload);
+        await loadSettings();
+        await refreshDialogsView();
+        setStatus('Настройки Viva сохранены', false);
+      } finally {
+        dom.vivaSaveBtn.disabled = false;
+      }
     }
 
     async function createStation() {
@@ -5706,6 +5894,9 @@
       });
       dom.accessCreateBtn.addEventListener('click', function () {
         createAccessRule().catch(handleError);
+      });
+      dom.vivaSaveBtn.addEventListener('click', function () {
+        saveVivaSettings().catch(handleError);
       });
       dom.gameModalCloseBtn.addEventListener('click', function () {
         closeGameModal();

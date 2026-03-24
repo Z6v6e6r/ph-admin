@@ -152,6 +152,8 @@ curl http://localhost:3000/api/games \
 - `GET /api/messenger/connectors/:connector/stations`
 - `GET /api/messenger/connectors/:connector/stations/:stationId/dialogs`
 - `GET /api/messenger/settings`
+- `GET /api/messenger/settings/viva`
+- `PATCH /api/messenger/settings/viva`
 - `GET /api/messenger/settings/stations`
 - `POST /api/messenger/settings/stations`
 - `PATCH /api/messenger/settings/stations/:stationId`
