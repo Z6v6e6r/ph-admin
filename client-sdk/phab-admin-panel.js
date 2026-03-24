@@ -1709,6 +1709,29 @@
     dialogTags.className = 'phab-admin-dialog-tags';
     dialogHead.appendChild(dialogTags);
 
+    var dialogOptions = document.createElement('div');
+    dialogOptions.style.display = 'none';
+    dialogOptions.style.marginTop = '8px';
+    dialogHead.appendChild(dialogOptions);
+
+    var systemMessagesToggleLabel = document.createElement('label');
+    systemMessagesToggleLabel.style.display = 'inline-flex';
+    systemMessagesToggleLabel.style.alignItems = 'center';
+    systemMessagesToggleLabel.style.gap = '8px';
+    systemMessagesToggleLabel.style.cursor = 'pointer';
+    systemMessagesToggleLabel.style.fontSize = '13px';
+    systemMessagesToggleLabel.style.fontWeight = '600';
+    dialogOptions.appendChild(systemMessagesToggleLabel);
+
+    var systemMessagesToggle = document.createElement('input');
+    systemMessagesToggle.type = 'checkbox';
+    systemMessagesToggle.checked = true;
+    systemMessagesToggleLabel.appendChild(systemMessagesToggle);
+
+    var systemMessagesToggleText = document.createElement('span');
+    systemMessagesToggleText.textContent = 'Показывать системные сообщения';
+    systemMessagesToggleLabel.appendChild(systemMessagesToggleText);
+
     var dialogBody = document.createElement('div');
     dialogBody.className = 'phab-admin-dialog-body';
     dialogWrap.appendChild(dialogBody);
@@ -2459,6 +2482,8 @@
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
       dialogLinks: dialogLinks,
+      dialogOptions: dialogOptions,
+      systemMessagesToggle: systemMessagesToggle,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
       cabinetMeta: cabinetMeta,
@@ -2612,8 +2637,36 @@
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
   }
 
+  function canToggleSystemMessages(cfg) {
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
   var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
+  var STORAGE_KEY_SHOW_SYSTEM_MESSAGES = 'phab_admin_show_system_messages';
+
+  function loadStoredBoolean(key, fallbackValue) {
+    try {
+      var raw = window.localStorage.getItem(key);
+      if (raw === 'true' || raw === '1') {
+        return true;
+      }
+      if (raw === 'false' || raw === '0') {
+        return false;
+      }
+    } catch (_error) {
+      // ignore storage errors
+    }
+    return fallbackValue;
+  }
+
+  function saveStoredBoolean(key, value) {
+    try {
+      window.localStorage.setItem(key, value ? 'true' : 'false');
+    } catch (_error) {
+      // ignore storage errors
+    }
+  }
 
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
@@ -2636,6 +2689,7 @@
       dialogSearchQuery: '',
       dialogStationFilters: [],
       dialogFilterOptions: [],
+      rawMessages: [],
       messages: [],
       messagesSignature: '',
       messagesThreadId: null,
@@ -2681,7 +2735,8 @@
       deletingGameEvent: false,
       gameChatGameId: null,
       gameChatThreadId: null,
-      selectedThreadId: null
+      selectedThreadId: null,
+      showSystemMessages: loadStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, true)
     };
     var incomingSoundState = {
       context: null,
@@ -2691,6 +2746,7 @@
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
+    dom.systemMessagesToggle.checked = state.showSystemMessages;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
@@ -2927,6 +2983,7 @@
     }
 
     function applyDialogHeader(dialog) {
+      renderSystemMessagesToggle();
       if (!dialog) {
         dom.dialogTitle.textContent = 'Чат не выбран';
         dom.dialogMeta.textContent =
@@ -3921,6 +3978,56 @@
       return getDialogSearchHaystack(dialog).indexOf(normalizedQuery) >= 0;
     }
 
+    function isSystemMessage(message) {
+      var direction = String(message && message.direction || '').toUpperCase();
+      var senderRole = String(message && (message.senderRoleRaw || message.senderRole) || '').toUpperCase();
+      var kind = String(message && message.kind || '').toUpperCase();
+      return direction === 'SYSTEM' || senderRole === 'SYSTEM' || kind === 'SYSTEM';
+    }
+
+    function isVivaOtpSystemMessage(message) {
+      if (!isSystemMessage(message)) {
+        return false;
+      }
+      var text = String(message && message.text || '').toLowerCase();
+      return (
+        text.indexOf('viva crm') >= 0 &&
+        (
+          text.indexOf('otp') >= 0 ||
+          text.indexOf('код авторизации') >= 0 ||
+          /\b\d{4,8}\b/.test(text)
+        )
+      );
+    }
+
+    function shouldHideSystemMessage(message) {
+      if (!message) {
+        return false;
+      }
+      if (canToggleSystemMessages(cfg) && !state.showSystemMessages && isSystemMessage(message)) {
+        return true;
+      }
+      if (isRestrictedStationAdmin && isVivaOtpSystemMessage(message)) {
+        return true;
+      }
+      return false;
+    }
+
+    function getVisibleMessages(messages) {
+      return (Array.isArray(messages) ? messages : []).filter(function (message) {
+        return !shouldHideSystemMessage(message);
+      });
+    }
+
+    function renderSystemMessagesToggle() {
+      if (!canToggleSystemMessages(cfg)) {
+        dom.dialogOptions.style.display = 'none';
+        return;
+      }
+      dom.systemMessagesToggle.checked = state.showSystemMessages;
+      dom.dialogOptions.style.display = 'block';
+    }
+
     function canFilterDialogsByStation() {
       return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
     }
@@ -4450,12 +4557,14 @@
 
     function applyMessages(nextMessages, options) {
       var opts = options || {};
-      var list = Array.isArray(nextMessages) ? nextMessages : [];
+      var rawList = Array.isArray(nextMessages) ? nextMessages : [];
+      var list = getVisibleMessages(rawList);
       var nextSignature = buildMessagesSignature(list);
       var nextThreadId = state.selectedThreadId || null;
       var messagesChanged =
         nextSignature !== state.messagesSignature || nextThreadId !== state.messagesThreadId;
 
+      state.rawMessages = rawList;
       state.messages = list;
       state.messagesSignature = nextSignature;
       state.messagesThreadId = nextThreadId;
@@ -4623,7 +4732,10 @@
       if (!messages || messages.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'phab-admin-empty';
-        empty.textContent = 'Сообщений пока нет';
+        empty.textContent =
+          state.rawMessages && state.rawMessages.length > 0
+            ? 'Сообщения скрыты текущими настройками'
+            : 'Сообщений пока нет';
         dom.messagesBox.appendChild(empty);
         return;
       }
@@ -6082,6 +6194,14 @@
       dom.tabSettings.addEventListener('click', function () {
         switchTab('settings');
         loadSettings().catch(handleError);
+      });
+      dom.systemMessagesToggle.addEventListener('change', function () {
+        state.showSystemMessages = Boolean(dom.systemMessagesToggle.checked);
+        saveStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, state.showSystemMessages);
+        applyMessages(state.rawMessages, {
+          forceRender: true,
+          preserveScroll: true
+        });
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
