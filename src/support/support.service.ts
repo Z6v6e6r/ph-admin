@@ -230,7 +230,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       direction === SupportMessageDirection.INBOUND
         ? normalizedDto.connector
         : dialog.lastInboundConnector;
-    dialog.subject = dialog.subject ?? this.buildDialogSubject(client, stationName);
+    dialog.subject =
+      this.normalizeDialogSubject(dialog.subject) ?? this.buildDialogSubject(client, stationName);
     dialog.updatedAt = createdAt;
 
     let outbox: SupportOutboxCommand | undefined;
@@ -909,12 +910,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     createdAt: string
   ): SupportDialog {
     const existing = this.collapseOpenDialogs(client.id);
+    const normalizedSubject =
+      this.normalizeDialogSubject(subject) ?? this.buildDialogSubject(client, stationName);
 
     if (existing) {
       existing.stationId = stationId;
       existing.stationName = stationName;
       existing.accessStationIds = this.mergeStationAccessIds(existing.accessStationIds, [stationId]);
-      existing.subject = subject?.trim() || existing.subject;
+      existing.subject =
+        this.normalizeDialogSubject(subject) ??
+        this.normalizeDialogSubject(existing.subject) ??
+        normalizedSubject;
       existing.authStatus = client.authStatus;
       existing.currentPhone = client.primaryPhone;
       existing.phones = [...client.phones];
@@ -938,7 +944,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       connectors: [],
       lastInboundConnector: undefined,
       lastReplyConnector: undefined,
-      subject: subject?.trim() || this.buildDialogSubject(client, stationName),
+      subject: normalizedSubject,
       unreadCount: 0,
       waitingForStaffSince: undefined,
       pendingClientMessageIds: [],
@@ -1375,7 +1381,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       primaryPhone: dialog.currentPhone,
       phones: [...dialog.phones],
       emails: [...dialog.emails],
-      subject: dialog.subject,
+      subject: this.buildSummaryDialogSubject(client, dialog),
       status: dialog.status,
       unreadCount: dialog.unreadCount,
       waitingForStaffSince: dialog.waitingForStaffSince,
@@ -1968,29 +1974,40 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private buildDialogSubject(client: SupportClientProfile, stationName: string): string {
-    const label = client.displayName ?? client.primaryPhone ?? client.emails[0] ?? client.id;
-    return `${stationName}: ${label}`;
+    return (
+      this.selectDialogTitleCandidate(
+        undefined,
+        client.displayName,
+        client.primaryPhone,
+        client.emails[0]
+      ) ??
+      stationName ??
+      client.id
+    );
   }
 
   private buildSummaryClientDisplayName(
     client: SupportClientProfile | undefined,
     dialog: SupportDialog
   ): string | undefined {
-    if (!client?.displayName) {
-      return undefined;
-    }
-    if (
-      this.isReservedClientDisplayName(
-        client.displayName,
-        dialog.stationId,
-        dialog.stationName,
-        client.currentStationId,
-        client.currentStationName
-      )
-    ) {
-      return undefined;
-    }
-    return client.displayName;
+    return this.selectDialogTitleCandidate(
+      undefined,
+      client?.displayName,
+      client?.primaryPhone,
+      client?.emails[0]
+    );
+  }
+
+  private buildSummaryDialogSubject(
+    client: SupportClientProfile | undefined,
+    dialog: SupportDialog
+  ): string | undefined {
+    return this.selectDialogTitleCandidate(
+      dialog.subject,
+      client?.displayName,
+      client?.primaryPhone,
+      client?.emails[0]
+    );
   }
 
   private resolveIncomingDisplayName(dto: IngestSupportEventDto): string | undefined {
@@ -2023,6 +2040,24 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       dto.username?.trim() ??
       `Клиент ${client.id.slice(0, 8)}`
     );
+  }
+
+  private selectDialogTitleCandidate(
+    primary: string | undefined,
+    fallbackName?: string,
+    fallbackPhone?: string,
+    fallbackEmail?: string
+  ): string | undefined {
+    const candidates = [primary, fallbackName, fallbackPhone, fallbackEmail];
+
+    for (const candidate of candidates) {
+      const normalized = this.normalizeDialogSubject(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return undefined;
   }
 
   private buildStaffLabel(role: Role): string {
@@ -2107,6 +2142,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       return false;
     }
 
+    if (this.isTechnicalDialogTitle(normalizedValue)) {
+      return true;
+    }
+
     const reservedStationValues = [
       this.normalizeStationId(stationId),
       this.normalizeDisplayName(stationName),
@@ -2119,6 +2158,25 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       .map((item) => item.toLowerCase());
 
     return reservedStationValues.includes(normalizedValue);
+  }
+
+  private normalizeDialogSubject(raw?: string): string | undefined {
+    const value = this.normalizeDisplayName(raw);
+    if (!value) {
+      return undefined;
+    }
+    if (this.isTechnicalDialogTitle(value)) {
+      return undefined;
+    }
+    return value;
+  }
+
+  private isTechnicalDialogTitle(value?: string): boolean {
+    const normalized = this.normalizeDisplayName(value)?.toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return normalized === 'viva crm' || normalized === 'vivacrm';
   }
 
   private mergeStrings(left: string[], right: string[]): string[] {

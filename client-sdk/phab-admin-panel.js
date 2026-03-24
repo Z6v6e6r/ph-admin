@@ -2783,9 +2783,13 @@
         return;
       }
 
+      var title = getDialogDisplayTitle(dialog);
+      var phone = getDialogPrimaryPhone(dialog);
       dom.dialogTitle.textContent =
-        (dialog.clientDisplayName || dialog.subject || 'Чат') +
-        (getDialogPrimaryPhone(dialog) ? ' · ' + getDialogPrimaryPhone(dialog) : '');
+        title +
+        (phone && normalizeDialogLabel(title) !== normalizeDialogLabel(phone)
+          ? ' · ' + phone
+          : '');
       dom.dialogMeta.textContent =
         (dialog.stationName || dialog.stationId || 'Без станции') +
         ' · ' +
@@ -3679,6 +3683,19 @@
         .toLowerCase();
     }
 
+    function isTechnicalDialogLabel(value) {
+      var normalized = normalizeDialogLabel(value);
+      return normalized === 'viva crm' || normalized === 'vivacrm';
+    }
+
+    function getDialogSubjectLabel(dialog) {
+      var subject = String(dialog && dialog.subject || '').trim();
+      if (!subject || isTechnicalDialogLabel(subject)) {
+        return '';
+      }
+      return subject;
+    }
+
     function canFilterDialogsByStation() {
       return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
     }
@@ -3852,6 +3869,7 @@
     }
 
     function getDialogDisplayTitle(dialog) {
+      var subjectCandidate = getDialogSubjectLabel(dialog);
       var candidate = String(dialog && dialog.clientDisplayName || '').trim();
       var reserved = [
         dialog && dialog.stationName,
@@ -3864,12 +3882,19 @@
         .map(normalizeDialogLabel)
         .filter(Boolean);
 
-      if (candidate && reserved.indexOf(candidate.toLowerCase()) < 0) {
+      if (subjectCandidate && reserved.indexOf(normalizeDialogLabel(subjectCandidate)) < 0) {
+        return subjectCandidate;
+      }
+      if (
+        candidate &&
+        !isTechnicalDialogLabel(candidate) &&
+        reserved.indexOf(candidate.toLowerCase()) < 0
+      ) {
         return candidate;
       }
       return (
         getDialogPrimaryPhone(dialog) ||
-        (dialog && dialog.subject) ||
+        subjectCandidate ||
         ('Диалог ' + String(dialog && dialog.dialogId || '').slice(0, 8))
       );
     }
