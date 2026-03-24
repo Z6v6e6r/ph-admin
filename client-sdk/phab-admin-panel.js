@@ -262,6 +262,10 @@
         min-height:0;
       }
       .phab-admin-pane-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
         padding:11px 12px;
         border-bottom:1px solid rgba(51,0,32,.12);
         font-size:11px;
@@ -271,6 +275,22 @@
         color:var(--cup-wine);
         font-family:var(--cup-font-heading);
         background:linear-gradient(90deg,rgba(255,232,145,.86) 0%,rgba(182,253,255,.76) 100%);
+      }
+      .phab-admin-pane-head-title{
+        flex:0 0 auto;
+      }
+      .phab-admin-pane-head-search{
+        flex:1 1 auto;
+        min-width:0;
+        max-width:198px;
+        width:auto !important;
+        padding:8px 10px;
+        font-size:12px;
+        font-weight:500;
+        letter-spacing:normal;
+        text-transform:none;
+        font-family:var(--cup-font-body);
+        background:rgba(255,255,255,.94);
       }
       .phab-admin-dialog-filters-wrap{
         display:flex;
@@ -1653,20 +1673,19 @@
 
     var leftHead = document.createElement('div');
     leftHead.className = 'phab-admin-pane-head';
-    leftHead.textContent = 'Чаты';
     leftPane.appendChild(leftHead);
 
-    var dialogSearchWrap = document.createElement('div');
-    dialogSearchWrap.style.padding = '0 12px 8px';
-    leftPane.appendChild(dialogSearchWrap);
+    var leftHeadTitle = document.createElement('span');
+    leftHeadTitle.className = 'phab-admin-pane-head-title';
+    leftHeadTitle.textContent = 'Чаты';
+    leftHead.appendChild(leftHeadTitle);
 
     var dialogSearchInput = document.createElement('input');
-    dialogSearchInput.className = 'phab-admin-input';
+    dialogSearchInput.className = 'phab-admin-input phab-admin-pane-head-search';
     dialogSearchInput.type = 'search';
     dialogSearchInput.placeholder = 'Поиск по имени или номеру...';
     dialogSearchInput.setAttribute('aria-label', 'Поиск диалогов');
-    dialogSearchInput.style.width = '100%';
-    dialogSearchWrap.appendChild(dialogSearchInput);
+    leftHead.appendChild(dialogSearchInput);
 
     var dialogListOptions = document.createElement('div');
     dialogListOptions.style.display = 'none';
