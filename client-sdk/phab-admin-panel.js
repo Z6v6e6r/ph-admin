@@ -31,19 +31,6 @@
     'SUPPORT',
     'CLIENT'
   ];
-  var MOBILE_DIALOG_MEDIA = '(max-width:760px)';
-  var HEADER_ICON_MARKUP = {
-    refresh:
-      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    logout:
-      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 8V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3M10 12h11m0 0-3-3m3 3-3 3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    connection:
-      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16a6 6 0 0 1 7 0M12 19h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    delivery:
-      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m21 3-9.5 9.5M21 3l-6 18-3.5-8.5L3 9l18-6Z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    back:
-      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 18-6-6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  };
 
   function normalizeConfig(raw) {
     var cfg = Object.assign({}, DEFAULTS, raw || {});
@@ -156,19 +143,6 @@
         color:var(--cup-white);
         border-bottom:2px solid rgba(255,255,255,.28);
       }
-      .phab-admin-heading{
-        display:flex;
-        flex-direction:column;
-        gap:4px;
-        min-width:0;
-        flex:1 1 auto;
-      }
-      .phab-admin-title-row{
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:12px;
-      }
       .phab-admin-title{
         font-family:var(--cup-font-heading);
         font-size:18px;
@@ -183,97 +157,11 @@
         letter-spacing:.04em;
         opacity:.9;
       }
-      .phab-admin-sr-only{
-        position:absolute;
-        width:1px;
-        height:1px;
-        padding:0;
-        margin:-1px;
-        overflow:hidden;
-        clip:rect(0,0,0,0);
-        white-space:nowrap;
-        border:0;
-      }
       .phab-admin-toolbar{
         display:flex;
-        gap:6px;
+        gap:8px;
         align-items:center;
-        flex-wrap:nowrap;
-        margin-left:auto;
-      }
-      .phab-admin-icon-btn,
-      .phab-admin-status-icon{
-        width:38px;
-        height:38px;
-        border-radius:12px;
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        border:1px solid rgba(255,255,255,.22);
-        flex:0 0 auto;
-        backdrop-filter:blur(6px);
-        transition:transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease, color .16s ease;
-      }
-      .phab-admin-icon-btn{
-        cursor:pointer;
-        background:rgba(255,255,255,.12);
-        color:var(--cup-white);
-      }
-      .phab-admin-icon-btn:hover{
-        transform:translateY(-1px);
-        box-shadow:0 10px 18px rgba(10,20,51,.16);
-        background:rgba(255,255,255,.2);
-        border-color:rgba(255,255,255,.34);
-      }
-      .phab-admin-icon-btn:disabled{
-        opacity:.55;
-        cursor:default;
-        transform:none;
-        box-shadow:none;
-      }
-      .phab-admin-icon-btn svg,
-      .phab-admin-status-icon svg{
-        width:17px;
-        height:17px;
-        display:block;
-      }
-      .phab-admin-icon-btn-refresh{
-        background:rgba(255,255,255,.14);
-      }
-      .phab-admin-icon-btn-logout{
-        background:rgba(255,120,134,.16);
-        border-color:rgba(255,196,205,.28);
-      }
-      .phab-admin-status-icon{
-        background:rgba(255,255,255,.12);
-        color:rgba(255,255,255,.9);
-        pointer-events:none;
-      }
-      .phab-admin-status-icon[data-state="ready"]{
-        background:rgba(207,255,182,.18);
-        border-color:rgba(207,255,182,.42);
-        color:#dfffd1;
-      }
-      .phab-admin-status-icon[data-state="busy"]{
-        background:rgba(255,232,145,.2);
-        border-color:rgba(255,232,145,.4);
-        color:#fff3c0;
-      }
-      .phab-admin-status-icon[data-state="sent"]{
-        background:rgba(182,253,255,.2);
-        border-color:rgba(182,253,255,.42);
-        color:#e5fcff;
-      }
-      .phab-admin-status-icon[data-state="error"],
-      .phab-admin-status-icon[data-state="offline"]{
-        background:rgba(255,70,78,.18);
-        border-color:rgba(255,149,156,.44);
-        color:#ffe6e8;
-      }
-      .phab-admin-status-icon[data-state="idle"]{
-        background:rgba(255,255,255,.12);
-        border-color:rgba(255,255,255,.22);
-        color:rgba(255,255,255,.84);
+        flex-wrap:wrap;
       }
       .phab-admin-btn,
       .phab-admin-btn-secondary{
@@ -318,21 +206,6 @@
         border-bottom:1px solid rgba(51,0,32,.14);
         background:linear-gradient(90deg,rgba(255,255,255,.78) 0%,rgba(255,255,255,.62) 100%);
         backdrop-filter:blur(2px);
-      }
-      .phab-admin-tabs-select-wrap{
-        display:none;
-        width:100%;
-      }
-      .phab-admin-tabs-select{
-        width:100%;
-        border:1px solid rgba(51,0,32,.18);
-        border-radius:12px;
-        padding:10px 12px;
-        font-size:12px;
-        font-weight:800;
-        font-family:var(--cup-font-body);
-        color:var(--cup-wine);
-        background:rgba(255,255,255,.92);
       }
       .phab-admin-tab{
         border:1px solid rgba(51,0,32,.2);
@@ -418,29 +291,6 @@
         text-transform:none;
         font-family:var(--cup-font-body);
         background:rgba(255,255,255,.94);
-      .phab-admin-dialog-tools{
-        display:grid;
-        gap:8px;
-        padding:10px 12px 8px;
-        background:rgba(255,255,255,.52);
-        border-bottom:1px solid rgba(51,0,32,.08);
-      }
-      .phab-admin-dialog-tools-row{
-        display:flex;
-        align-items:center;
-        gap:8px;
-      }
-      .phab-admin-dialog-filter-select{
-        display:none;
-        max-width:190px;
-        flex:0 0 180px;
-      }
-      .phab-admin-dialog-list-options{
-        display:none;
-      }
-      .phab-admin-dialog-options{
-        display:none;
-        margin-top:8px;
       }
       .phab-admin-dialog-filters-wrap{
         display:flex;
@@ -498,12 +348,6 @@
         cursor:pointer;
         transition:all .16s ease;
       }
-      .phab-admin-chat-item{
-        display:flex;
-        gap:12px;
-        align-items:flex-start;
-        padding:12px 12px 10px;
-      }
       .phab-admin-list-btn:hover{
         transform:translateX(1px);
         border-color:rgba(51,0,32,.26);
@@ -528,49 +372,6 @@
         align-items:flex-start;
         justify-content:space-between;
         gap:8px;
-      }
-      .phab-admin-chat-avatar{
-        width:44px;
-        height:44px;
-        border-radius:14px;
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        background:linear-gradient(135deg,var(--cup-lime) 0%,rgba(182,253,255,.88) 100%);
-        border:1px solid rgba(0,58,134,.16);
-        color:var(--cup-wine);
-        font-size:13px;
-        font-weight:800;
-        letter-spacing:.04em;
-        text-transform:uppercase;
-        flex:0 0 auto;
-      }
-      .phab-admin-chat-main{
-        min-width:0;
-        flex:1 1 auto;
-      }
-      .phab-admin-chat-topline{
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:8px;
-      }
-      .phab-admin-chat-title-group{
-        min-width:0;
-        flex:1 1 auto;
-      }
-      .phab-admin-chat-side{
-        display:flex;
-        flex-direction:column;
-        align-items:flex-end;
-        gap:6px;
-        flex:0 0 auto;
-      }
-      .phab-admin-chat-time{
-        font-size:10px;
-        font-weight:700;
-        color:rgba(51,0,32,.56);
-        white-space:nowrap;
       }
       .phab-admin-chat-badge{
         min-width:20px;
@@ -652,18 +453,6 @@
         padding:10px 12px;
         border-bottom:1px solid rgba(51,0,32,.12);
         background:linear-gradient(90deg,rgba(207,255,182,.78) 0%,rgba(255,255,255,.96) 100%);
-      }
-      .phab-admin-dialog-head-top{
-        display:flex;
-        align-items:flex-start;
-        gap:10px;
-      }
-      .phab-admin-dialog-head-main{
-        min-width:0;
-        flex:1 1 auto;
-      }
-      .phab-admin-mobile-back{
-        display:none;
       }
       .phab-admin-dialog-title{
         font-size:14px;
@@ -1419,105 +1208,6 @@
         .phab-admin-detail-span-2{grid-column:auto}
         .phab-admin-header{padding:14px}
       }
-      @media (max-width:760px){
-        .phab-admin-header{
-          padding:12px 14px;
-        }
-        .phab-admin-toolbar{
-          gap:5px;
-        }
-        .phab-admin-icon-btn,
-        .phab-admin-status-icon{
-          width:34px;
-          height:34px;
-          border-radius:11px;
-        }
-        .phab-admin-tabs{
-          padding:8px 10px;
-        }
-        .phab-admin-tabs-select-wrap{
-          display:block;
-        }
-        .phab-admin-tabs .phab-admin-tab{
-          display:none;
-        }
-        .phab-admin-msg-grid{
-          display:block;
-          height:100%;
-        }
-        .phab-admin-pane-list,
-        .phab-admin-pane-detail{
-          height:100%;
-        }
-        .phab-admin.phab-admin-mobile-list .phab-admin-pane-detail{
-          display:none;
-        }
-        .phab-admin.phab-admin-mobile-detail .phab-admin-pane-list{
-          display:none;
-        }
-        .phab-admin-dialog-tools{
-          padding:10px 10px 8px;
-        }
-        .phab-admin-dialog-tools-row{
-          flex-direction:column;
-          align-items:stretch;
-        }
-        .phab-admin-pane-head-search{
-          width:100% !important;
-          max-width:none;
-        }
-        .phab-admin-dialog-filter-select{
-          display:block;
-          max-width:none;
-          flex:1 1 auto;
-        }
-        .phab-admin-dialog-filters-wrap{
-          display:none !important;
-        }
-        .phab-admin-chat-item{
-          padding:12px 10px 10px;
-        }
-        .phab-admin-chat-avatar{
-          width:42px;
-          height:42px;
-          border-radius:13px;
-          font-size:12px;
-        }
-        .phab-admin-dialog-wrap{
-          height:100%;
-        }
-        .phab-admin-dialog-head{
-          padding:10px 10px 8px;
-        }
-        .phab-admin-dialog-body{
-          display:flex;
-          flex-direction:column;
-          padding:0 10px 10px;
-          gap:0;
-        }
-        .phab-admin-mobile-back{
-          display:inline-flex;
-        }
-        .phab-admin-dialog-cabinet{
-          display:none;
-        }
-        .phab-admin-messages{
-          flex:1 1 auto;
-          min-height:0;
-          height:auto;
-          border-radius:14px 14px 0 0;
-          box-shadow:none;
-        }
-        .phab-admin-compose{
-          padding:10px;
-          gap:8px;
-          border-top:0;
-        }
-        .phab-admin-compose .phab-admin-btn{
-          min-width:104px;
-          padding:10px 14px;
-        }
-      }
       @media (max-width:640px){
         .phab-admin{border-radius:14px}
         .phab-admin-title{font-size:15px}
@@ -1833,27 +1523,6 @@
     );
   }
 
-  function createIconButton(label, iconName, extraClassName) {
-    var button = document.createElement('button');
-    button.className = 'phab-admin-icon-btn' + (extraClassName ? ' ' + extraClassName : '');
-    button.type = 'button';
-    button.setAttribute('aria-label', label);
-    button.title = label;
-    button.innerHTML = HEADER_ICON_MARKUP[iconName] || '';
-    return button;
-  }
-
-  function createStatusIcon(label, iconName) {
-    var icon = document.createElement('span');
-    icon.className = 'phab-admin-status-icon';
-    icon.setAttribute('role', 'status');
-    icon.setAttribute('aria-label', label);
-    icon.title = label;
-    icon.setAttribute('data-state', 'idle');
-    icon.innerHTML = HEADER_ICON_MARKUP[iconName] || '';
-    return icon;
-  }
-
   function createRoot(cfg) {
     if (cfg.mountSelector) {
       var mount = document.querySelector(cfg.mountSelector);
@@ -1890,56 +1559,42 @@
     root.appendChild(header);
 
     var heading = document.createElement('div');
-    heading.className = 'phab-admin-heading';
     header.appendChild(heading);
-
-    var titleRow = document.createElement('div');
-    titleRow.className = 'phab-admin-title-row';
-    heading.appendChild(titleRow);
 
     var title = document.createElement('div');
     title.className = 'phab-admin-title';
     title.textContent = cfg.title;
-    titleRow.appendChild(title);
-
-    var toolbar = document.createElement('div');
-    toolbar.className = 'phab-admin-toolbar';
-    titleRow.appendChild(toolbar);
+    heading.appendChild(title);
 
     var subtitle = document.createElement('div');
     subtitle.className = 'phab-admin-subtitle';
     subtitle.textContent = 'Центр управления пространством';
     heading.appendChild(subtitle);
 
+    var toolbar = document.createElement('div');
+    toolbar.className = 'phab-admin-toolbar';
+    header.appendChild(toolbar);
+
     var status = document.createElement('span');
-    status.className = 'phab-admin-status phab-admin-sr-only';
+    status.className = 'phab-admin-status';
     status.textContent = 'Готово';
     toolbar.appendChild(status);
 
-    var connectionStatusIcon = createStatusIcon('Подключение активно', 'connection');
-    toolbar.appendChild(connectionStatusIcon);
-
-    var deliveryStatusIcon = createStatusIcon('Отправка готова', 'delivery');
-    toolbar.appendChild(deliveryStatusIcon);
-
-    var refreshBtn = createIconButton('Обновить', 'refresh', 'phab-admin-icon-btn-refresh');
-    toolbar.appendChild(refreshBtn);
-
-    var logoutBtn = createIconButton('Разлогиниться', 'logout', 'phab-admin-icon-btn-logout');
+    var logoutBtn = document.createElement('button');
+    logoutBtn.className = 'phab-admin-btn-secondary';
+    logoutBtn.type = 'button';
+    logoutBtn.textContent = 'Разлогиниться';
     toolbar.appendChild(logoutBtn);
+
+    var refreshBtn = document.createElement('button');
+    refreshBtn.className = 'phab-admin-btn';
+    refreshBtn.type = 'button';
+    refreshBtn.textContent = 'Обновить';
+    toolbar.appendChild(refreshBtn);
 
     var tabs = document.createElement('div');
     tabs.className = 'phab-admin-tabs';
     root.appendChild(tabs);
-
-    var tabsSelectWrap = document.createElement('div');
-    tabsSelectWrap.className = 'phab-admin-tabs-select-wrap';
-    tabs.appendChild(tabsSelectWrap);
-
-    var tabsSelect = document.createElement('select');
-    tabsSelect.className = 'phab-admin-tabs-select';
-    tabsSelect.setAttribute('aria-label', 'Выбор раздела');
-    tabsSelectWrap.appendChild(tabsSelect);
 
     var tabMessages = document.createElement('button');
     tabMessages.className = 'phab-admin-tab phab-admin-tab-active';
@@ -2013,21 +1668,13 @@
     messagesSection.appendChild(messagesGrid);
 
     var leftPane = document.createElement('div');
-    leftPane.className = 'phab-admin-pane phab-admin-pane-list';
+    leftPane.className = 'phab-admin-pane';
     messagesGrid.appendChild(leftPane);
 
     var leftHead = document.createElement('div');
     leftHead.className = 'phab-admin-pane-head';
     leftPane.appendChild(leftHead);
 
-    var leftHeadTitle = document.createElement('span');
-    var dialogTools = document.createElement('div');
-    dialogTools.className = 'phab-admin-dialog-tools';
-    leftPane.appendChild(dialogTools);
-
-    var dialogSearchWrap = document.createElement('div');
-    dialogSearchWrap.className = 'phab-admin-dialog-tools-row';
-    dialogTools.appendChild(dialogSearchWrap);
     var leftHeadTitle = document.createElement('span');
     leftHeadTitle.className = 'phab-admin-pane-head-title';
     leftHeadTitle.textContent = 'Чаты';
@@ -2038,17 +1685,12 @@
     dialogSearchInput.type = 'search';
     dialogSearchInput.placeholder = 'Поиск по имени или номеру...';
     dialogSearchInput.setAttribute('aria-label', 'Поиск диалогов');
-    dialogSearchWrap.appendChild(dialogSearchInput);
-
-    var dialogFilterSelect = document.createElement('select');
-    dialogFilterSelect.className = 'phab-admin-settings-input phab-admin-dialog-filter-select phab-admin-hidden';
-    dialogFilterSelect.setAttribute('aria-label', 'Фильтр диалогов');
-    dialogSearchWrap.appendChild(dialogFilterSelect);
+    leftHead.appendChild(dialogSearchInput);
 
     var dialogListOptions = document.createElement('div');
-    dialogListOptions.className = 'phab-admin-dialog-list-options';
     dialogListOptions.style.display = 'none';
-    dialogTools.appendChild(dialogListOptions);
+    dialogListOptions.style.padding = '0 12px 8px';
+    leftPane.appendChild(dialogListOptions);
 
     var dialogListSystemToggleLabel = document.createElement('label');
     dialogListSystemToggleLabel.style.display = 'inline-flex';
@@ -2084,7 +1726,7 @@
     leftBody.appendChild(dialogsList);
 
     var rightPane = document.createElement('div');
-    rightPane.className = 'phab-admin-pane phab-admin-pane-detail';
+    rightPane.className = 'phab-admin-pane';
     messagesGrid.appendChild(rightPane);
 
     var dialogWrap = document.createElement('div');
@@ -2095,34 +1737,23 @@
     dialogHead.className = 'phab-admin-dialog-head';
     dialogWrap.appendChild(dialogHead);
 
-    var dialogHeadTop = document.createElement('div');
-    dialogHeadTop.className = 'phab-admin-dialog-head-top';
-    dialogHead.appendChild(dialogHeadTop);
-
-    var dialogBackBtn = createIconButton('Назад к списку чатов', 'back', 'phab-admin-mobile-back');
-    dialogHeadTop.appendChild(dialogBackBtn);
-
-    var dialogHeadMain = document.createElement('div');
-    dialogHeadMain.className = 'phab-admin-dialog-head-main';
-    dialogHeadTop.appendChild(dialogHeadMain);
-
     var dialogTitle = document.createElement('div');
     dialogTitle.className = 'phab-admin-dialog-title';
     dialogTitle.textContent = 'Диалоги';
-    dialogHeadMain.appendChild(dialogTitle);
+    dialogHead.appendChild(dialogTitle);
 
     var dialogMeta = document.createElement('div');
     dialogMeta.className = 'phab-admin-dialog-meta';
     dialogMeta.textContent = 'Выберите чат, чтобы открыть переписку и будущую ленту действий';
-    dialogHeadMain.appendChild(dialogMeta);
+    dialogHead.appendChild(dialogMeta);
 
     var dialogTags = document.createElement('div');
     dialogTags.className = 'phab-admin-dialog-tags';
     dialogHead.appendChild(dialogTags);
 
     var dialogOptions = document.createElement('div');
-    dialogOptions.className = 'phab-admin-dialog-options';
     dialogOptions.style.display = 'none';
+    dialogOptions.style.marginTop = '8px';
     dialogHead.appendChild(dialogOptions);
 
     var systemMessagesToggleLabel = document.createElement('label');
@@ -2187,7 +1818,7 @@
 
     var cabinetEmpty = document.createElement('div');
     cabinetEmpty.className = 'phab-admin-empty phab-admin-dialog-cabinet-empty';
-    cabinetEmpty.textContent = 'Выберите чат в списке, чтобы открыть кабинет клиента.';
+    cabinetEmpty.textContent = 'Выберите чат слева, чтобы открыть кабинет клиента.';
     cabinetFrameWrap.appendChild(cabinetEmpty);
 
     var cabinetFrame = document.createElement('iframe');
@@ -2872,11 +2503,8 @@
     return {
       root: root,
       status: status,
-      connectionStatusIcon: connectionStatusIcon,
-      deliveryStatusIcon: deliveryStatusIcon,
       logoutBtn: logoutBtn,
       refreshBtn: refreshBtn,
-      tabsSelect: tabsSelect,
       tabMessages: tabMessages,
       tabGames: tabGames,
       tabLogs: tabLogs,
@@ -2890,7 +2518,6 @@
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
       dialogSearchInput: dialogSearchInput,
-      dialogFilterSelect: dialogFilterSelect,
       dialogListOptions: dialogListOptions,
       dialogListSystemToggle: dialogListSystemToggle,
       dialogFiltersWrap: dialogFiltersWrap,
@@ -2900,7 +2527,6 @@
       dialogMeta: dialogMeta,
       dialogLinks: dialogLinks,
       dialogOptions: dialogOptions,
-      dialogBackBtn: dialogBackBtn,
       systemMessagesToggle: systemMessagesToggle,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
@@ -3095,24 +2721,10 @@
     var api = createApi(cfg);
     var pollTimer = null;
     var documentKeydownHandler = null;
-    var deliveryIndicatorTimer = null;
-    var mobileDialogMedia = typeof window.matchMedia === 'function'
-      ? window.matchMedia(MOBILE_DIALOG_MEDIA)
-      : null;
-    var mobileDialogMediaHandler = null;
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
-    var tabDefinitions = [
-      { key: 'messages', label: 'Диалоги', button: dom.tabMessages },
-      { key: 'games', label: 'Игры', button: dom.tabGames },
-      { key: 'logs', label: 'Логи', button: dom.tabLogs },
-      { key: 'analytics', label: 'Аналитика', button: dom.tabAnalytics },
-      { key: 'tournaments', label: 'Турниры', button: dom.tabTournaments },
-      { key: 'settings', label: 'Настройки', button: dom.tabSettings }
-    ];
 
     var state = {
       activeTab: 'messages',
-      mobileDialogView: 'list',
       allDialogs: [],
       loading: false,
       dialogs: [],
@@ -3178,7 +2790,6 @@
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
-    dom.dialogFilterSelect.value = '';
     dom.dialogListSystemToggle.checked = state.showSystemMessages;
     dom.systemMessagesToggle.checked = state.showSystemMessages;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
@@ -3191,113 +2802,8 @@
     function setStatus(text, isError) {
       dom.status.textContent = text;
       dom.status.className = isError
-        ? 'phab-admin-status phab-admin-sr-only phab-admin-status-error'
-        : 'phab-admin-status phab-admin-sr-only';
-      syncHeaderStatusIcons(text, isError);
-    }
-
-    function setStatusIcon(node, stateKey, label) {
-      if (!node) {
-        return;
-      }
-      node.setAttribute('data-state', stateKey || 'idle');
-      if (label) {
-        node.title = label;
-        node.setAttribute('aria-label', label);
-      }
-    }
-
-    function clearDeliveryIndicatorTimer() {
-      if (deliveryIndicatorTimer) {
-        window.clearTimeout(deliveryIndicatorTimer);
-        deliveryIndicatorTimer = null;
-      }
-    }
-
-    function scheduleDeliveryIndicatorIdle(label) {
-      clearDeliveryIndicatorTimer();
-      deliveryIndicatorTimer = window.setTimeout(function () {
-        setStatusIcon(dom.deliveryStatusIcon, 'idle', label || 'Отправка готова');
-      }, 2600);
-    }
-
-    function syncHeaderStatusIcons(text, isError) {
-      var normalized = String(text || '').toLowerCase();
-      if (isError) {
-        if (
-          normalized.indexOf('сообщ') >= 0 ||
-          normalized.indexOf('отправ') >= 0 ||
-          normalized.indexOf('чат') >= 0
-        ) {
-          setStatusIcon(dom.deliveryStatusIcon, 'error', text || 'Ошибка отправки');
-          scheduleDeliveryIndicatorIdle('Отправка готова');
-        } else {
-          setStatusIcon(dom.connectionStatusIcon, 'error', text || 'Ошибка подключения');
-        }
-        return;
-      }
-
-      if (
-        normalized.indexOf('обнов') >= 0 ||
-        normalized.indexOf('загру') >= 0 ||
-        normalized.indexOf('выходим') >= 0
-      ) {
-        setStatusIcon(dom.connectionStatusIcon, 'busy', text || 'Идёт обновление');
-        return;
-      }
-
-      if (
-        normalized.indexOf('сообщение отправлено') >= 0 ||
-        normalized.indexOf('сохран') >= 0 ||
-        normalized.indexOf('добав') >= 0 ||
-        normalized.indexOf('обновлен') >= 0
-      ) {
-        setStatusIcon(dom.connectionStatusIcon, 'ready', 'Подключение активно');
-        setStatusIcon(dom.deliveryStatusIcon, 'sent', text || 'Отправка выполнена');
-        scheduleDeliveryIndicatorIdle('Отправка готова');
-        return;
-      }
-
-      setStatusIcon(dom.connectionStatusIcon, 'ready', text || 'Подключение активно');
-    }
-
-    function getVisibleTabDefinitions() {
-      return tabDefinitions.filter(function (tab) {
-        return !(isRestrictedStationAdmin && ['logs', 'analytics', 'settings'].indexOf(tab.key) >= 0);
-      });
-    }
-
-    function syncTabsSelect() {
-      clearNode(dom.tabsSelect);
-      getVisibleTabDefinitions().forEach(function (tab) {
-        var option = document.createElement('option');
-        option.value = tab.key;
-        option.textContent = tab.label;
-        dom.tabsSelect.appendChild(option);
-      });
-      dom.tabsSelect.value = state.activeTab;
-    }
-
-    function isMobileDialogsLayout() {
-      return Boolean(mobileDialogMedia && mobileDialogMedia.matches);
-    }
-
-    function updateMobileDialogsView() {
-      var shouldShowDetail =
-        state.activeTab === 'messages' &&
-        isMobileDialogsLayout() &&
-        state.mobileDialogView === 'detail' &&
-        Boolean(state.selectedThreadId);
-
-      if (!state.selectedThreadId) {
-        state.mobileDialogView = 'list';
-      }
-
-      dom.root.classList.toggle(
-        'phab-admin-mobile-list',
-        state.activeTab === 'messages' && isMobileDialogsLayout() && !shouldShowDetail
-      );
-      dom.root.classList.toggle('phab-admin-mobile-detail', shouldShowDetail);
+        ? 'phab-admin-status phab-admin-status-error'
+        : 'phab-admin-status';
     }
 
     function getAudioContextConstructor() {
@@ -3526,7 +3032,7 @@
       if (!dialog) {
         dom.dialogTitle.textContent = 'Чат не выбран';
         dom.dialogMeta.textContent =
-          'Выберите чат в списке, чтобы открыть переписку. Позже здесь появится единая лента действий клиента из CRM, Битрикс, Mango Office и чатов.';
+          'Выберите чат слева, чтобы открыть переписку. Позже здесь появится единая лента действий клиента из CRM, Битрикс, Mango Office и чатов.';
         renderDialogLinks(null);
         return;
       }
@@ -3571,7 +3077,7 @@
         dom.cabinetFrame.removeAttribute('src');
         dom.cabinetFrame.style.display = 'none';
         dom.cabinetEmpty.style.display = 'flex';
-        dom.cabinetEmpty.textContent = 'Выберите чат в списке, чтобы открыть кабинет клиента.';
+        dom.cabinetEmpty.textContent = 'Выберите чат слева, чтобы открыть кабинет клиента.';
         return;
       }
 
@@ -4461,8 +3967,6 @@
         return;
       }
 
-      clearDeliveryIndicatorTimer();
-      setStatusIcon(dom.deliveryStatusIcon, 'busy', 'Отправляем сообщение в чат игры');
       dom.gameChatSendBtn.disabled = true;
       try {
         await api.sendGameChatMessage(gameId, text);
@@ -4731,31 +4235,19 @@
 
     function renderDialogFilters() {
       clearNode(dom.dialogFilters);
-      clearNode(dom.dialogFilterSelect);
 
       if (!canFilterDialogsByStation()) {
         dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
-        dom.dialogFilterSelect.className =
-          'phab-admin-settings-input phab-admin-dialog-filter-select phab-admin-hidden';
         return;
       }
 
       var options = Array.isArray(state.dialogFilterOptions) ? state.dialogFilterOptions : [];
       if (options.length === 0) {
         dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
-        dom.dialogFilterSelect.className =
-          'phab-admin-settings-input phab-admin-dialog-filter-select phab-admin-hidden';
         return;
       }
 
       dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap';
-      dom.dialogFilterSelect.className =
-        'phab-admin-settings-input phab-admin-dialog-filter-select';
-
-      var allOption = document.createElement('option');
-      allOption.value = '';
-      allOption.textContent = 'Все чаты';
-      dom.dialogFilterSelect.appendChild(allOption);
 
       var allBtn = document.createElement('button');
       allBtn.type = 'button';
@@ -4769,11 +4261,6 @@
       dom.dialogFilters.appendChild(allBtn);
 
       options.forEach(function (option) {
-        var selectOption = document.createElement('option');
-        selectOption.value = option.key;
-        selectOption.textContent = option.label + ' · ' + option.count;
-        dom.dialogFilterSelect.appendChild(selectOption);
-
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className =
@@ -4796,47 +4283,6 @@
         });
         dom.dialogFilters.appendChild(btn);
       });
-
-      dom.dialogFilterSelect.value =
-        (state.dialogStationFilters || []).length === 1
-          ? state.dialogStationFilters[0]
-          : '';
-    }
-
-    function getDialogAvatarLabel(dialog) {
-      var source = String(getDialogDisplayTitle(dialog) || '').trim();
-      var tokens = source
-        .replace(/[^0-9A-Za-zА-Яа-яЁё]+/g, ' ')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-
-      if (tokens.length >= 2) {
-        return (tokens[0].charAt(0) + tokens[1].charAt(0)).toUpperCase();
-      }
-      if (tokens.length === 1) {
-        if (/^\d+$/.test(tokens[0])) {
-          return tokens[0].slice(-2);
-        }
-        return tokens[0].slice(0, 2).toUpperCase();
-      }
-      return 'Ч';
-    }
-
-    function getDialogPreviewText(dialog) {
-      var text = String(dialog && dialog.lastMessageText || '').trim();
-      if (!text) {
-        return 'Сообщений пока нет';
-      }
-
-      var senderRole = String(dialog && dialog.lastMessageSenderRole || '').toUpperCase();
-      if (senderRole === 'CLIENT') {
-        return text;
-      }
-      if (senderRole) {
-        return 'Вы: ' + text;
-      }
-      return text;
     }
 
     function getDialogDisplayTitle(dialog) {
@@ -4885,7 +4331,7 @@
             : 'Нет доступных чатов';
         dom.dialogsList.appendChild(empty);
         dom.dialogTitle.textContent = 'Чат не выбран';
-        dom.dialogMeta.textContent = 'Список чатов сортируется по дате последнего сообщения';
+        dom.dialogMeta.textContent = 'Список слева сортируется по дате последнего сообщения';
         renderMessages([]);
         return;
       }
@@ -4912,14 +4358,7 @@
           (item.isActiveForUser === false ? ' phab-admin-list-btn-inactive' : '') +
           (state.selectedThreadId === item.dialogId ? ' phab-admin-list-btn-active' : '');
         btn.addEventListener('click', function () {
-          if (isMobileDialogsLayout()) {
-            state.mobileDialogView = 'detail';
-            updateMobileDialogsView();
-          }
           if (state.selectedThreadId === item.dialogId) {
-            if (isMobileDialogsLayout()) {
-              openSelectedDialog().catch(handleError);
-            }
             return;
           }
           state.selectedThreadId = item.dialogId;
@@ -4927,45 +4366,14 @@
         });
         li.appendChild(btn);
 
-        var avatar = document.createElement('div');
-        avatar.className = 'phab-admin-chat-avatar';
-        avatar.textContent = getDialogAvatarLabel(item);
-        btn.appendChild(avatar);
-
-        var main = document.createElement('div');
-        main.className = 'phab-admin-chat-main';
-        btn.appendChild(main);
-
         var top = document.createElement('div');
-        top.className = 'phab-admin-chat-topline';
-        main.appendChild(top);
-
-        var titleGroup = document.createElement('div');
-        titleGroup.className = 'phab-admin-chat-title-group';
-        top.appendChild(titleGroup);
+        top.className = 'phab-admin-chat-item-top';
+        btn.appendChild(top);
 
         var titleEl = document.createElement('div');
         titleEl.className = 'phab-admin-list-title';
         titleEl.textContent = getDialogDisplayTitle(item);
-        titleGroup.appendChild(titleEl);
-
-        var meta = document.createElement('div');
-        meta.className = 'phab-admin-list-meta';
-        meta.textContent =
-          stationLabel +
-          ' · ' +
-          (getDialogPrimaryPhone(item) || 'без номера') +
-          (item.isActiveForUser === false ? ' · неактивен' : '');
-        titleGroup.appendChild(meta);
-
-        var side = document.createElement('div');
-        side.className = 'phab-admin-chat-side';
-        top.appendChild(side);
-
-        var time = document.createElement('span');
-        time.className = 'phab-admin-chat-time';
-        time.textContent = formatTime(item.lastMessageAt);
-        side.appendChild(time);
+        top.appendChild(titleEl);
 
         var badgeCount = Number(item.unreadCount || 0);
         var badgeTone = 'red';
@@ -4981,13 +4389,24 @@
               ? 'phab-admin-chat-badge-unread'
               : 'phab-admin-chat-badge-pending');
           badge.textContent = String(badgeCount);
-          side.appendChild(badge);
+          top.appendChild(badge);
         }
+
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-list-meta';
+        meta.textContent =
+          stationLabel +
+          ' · ' +
+          (getDialogPrimaryPhone(item) || 'без номера') +
+          ' · ' +
+          formatTime(item.lastMessageAt) +
+          (item.isActiveForUser === false ? ' · неактивен' : '');
+        btn.appendChild(meta);
 
         var preview = document.createElement('div');
         preview.className = 'phab-admin-chat-preview';
-        preview.textContent = getDialogPreviewText(item);
-        main.appendChild(preview);
+        preview.textContent = String(item.lastMessageText || 'Сообщений пока нет');
+        btn.appendChild(preview);
       });
 
       dom.dialogsList.scrollTop = previousScrollTop;
@@ -5162,16 +4581,11 @@
       state.dialogStationFilters = nextFilters;
       state.dialogFilterOptions = nextFilterOptions;
       state.selectedThreadId = nextSelectedThreadId;
-      if (!state.selectedThreadId) {
-        state.mobileDialogView = 'list';
-      }
       if (!state.dialogsHydrated) {
         state.dialogsHydrated = true;
       } else if (!opts.silent && shouldPlayIncomingDialogsSound(previousDialogs, list)) {
         playIncomingMessageSound();
       }
-
-      updateMobileDialogsView();
 
       if (opts.forceRender || dialogsChanged || selectionChanged || filtersChanged) {
         renderDialogs();
@@ -5336,10 +4750,10 @@
       if (!state.selectedThreadId) {
         dom.input.disabled = true;
         dom.sendBtn.disabled = true;
-        dom.input.placeholder = 'Выберите чат в списке...';
+        dom.input.placeholder = 'Выберите чат слева...';
         var hint = document.createElement('div');
         hint.className = 'phab-admin-empty';
-        hint.textContent = 'Выберите чат в списке, чтобы открыть переписку';
+        hint.textContent = 'Выберите чат слева, чтобы открыть переписку';
         dom.messagesBox.appendChild(hint);
         return;
       }
@@ -6493,7 +5907,6 @@
     }
 
     async function openSelectedDialog() {
-      updateMobileDialogsView();
       renderDialogs();
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
@@ -6762,8 +6175,6 @@
         return;
       }
 
-      clearDeliveryIndicatorTimer();
-      setStatusIcon(dom.deliveryStatusIcon, 'busy', 'Отправляем сообщение');
       dom.sendBtn.disabled = true;
       try {
         await api.sendLegacyMessage(state.selectedThreadId, text);
@@ -6813,32 +6224,6 @@
       dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
-      syncTabsSelect();
-      updateMobileDialogsView();
-    }
-
-    function loadActiveTabData(tabKey) {
-      if (tabKey === 'messages') {
-        return refreshDialogsView();
-      }
-      if (tabKey === 'games') {
-        return loadGames();
-      }
-      if (tabKey === 'logs') {
-        return loadGameEvents();
-      }
-      if (tabKey === 'analytics') {
-        return loadGameAnalytics();
-      }
-      if (tabKey === 'tournaments') {
-        return loadTournaments();
-      }
-      return loadSettings();
-    }
-
-    function activateTab(nextTab) {
-      switchTab(nextTab);
-      return loadActiveTabData(state.activeTab);
     }
 
     function handleError(error) {
@@ -6873,7 +6258,19 @@
     async function refreshActiveTab() {
       try {
         setStatus('Обновление...', false);
-        await loadActiveTabData(state.activeTab);
+        if (state.activeTab === 'messages') {
+          await refreshDialogsView();
+        } else if (state.activeTab === 'games') {
+          await loadGames();
+        } else if (state.activeTab === 'logs') {
+          await loadGameEvents();
+        } else if (state.activeTab === 'analytics') {
+          await loadGameAnalytics();
+        } else if (state.activeTab === 'tournaments') {
+          await loadTournaments();
+        } else {
+          await loadSettings();
+        }
         setStatus('Готово', false);
       } catch (error) {
         handleError(error);
@@ -6882,43 +6279,34 @@
 
     function bindEvents() {
       bindIncomingSoundUnlock();
-      syncTabsSelect();
-      updateMobileDialogsView();
       if (isRestrictedStationAdmin) {
         dom.tabLogs.classList.add('phab-admin-hidden');
         dom.tabAnalytics.classList.add('phab-admin-hidden');
         dom.tabSettings.classList.add('phab-admin-hidden');
       }
-      mobileDialogMediaHandler = function () {
-        updateMobileDialogsView();
-      };
-      if (mobileDialogMedia) {
-        if (typeof mobileDialogMedia.addEventListener === 'function') {
-          mobileDialogMedia.addEventListener('change', mobileDialogMediaHandler);
-        } else if (typeof mobileDialogMedia.addListener === 'function') {
-          mobileDialogMedia.addListener(mobileDialogMediaHandler);
-        }
-      }
-      dom.tabsSelect.addEventListener('change', function () {
-        activateTab(dom.tabsSelect.value || 'messages').catch(handleError);
-      });
       dom.tabMessages.addEventListener('click', function () {
-        activateTab('messages').catch(handleError);
+        switchTab('messages');
+        refreshDialogsView().catch(handleError);
       });
       dom.tabGames.addEventListener('click', function () {
-        activateTab('games').catch(handleError);
+        switchTab('games');
+        loadGames().catch(handleError);
       });
       dom.tabLogs.addEventListener('click', function () {
-        activateTab('logs').catch(handleError);
+        switchTab('logs');
+        loadGameEvents().catch(handleError);
       });
       dom.tabAnalytics.addEventListener('click', function () {
-        activateTab('analytics').catch(handleError);
+        switchTab('analytics');
+        loadGameAnalytics().catch(handleError);
       });
       dom.tabTournaments.addEventListener('click', function () {
-        activateTab('tournaments').catch(handleError);
+        switchTab('tournaments');
+        loadTournaments().catch(handleError);
       });
       dom.tabSettings.addEventListener('click', function () {
-        activateTab('settings').catch(handleError);
+        switchTab('settings');
+        loadSettings().catch(handleError);
       });
       dom.systemMessagesToggle.addEventListener('change', function () {
         setShowSystemMessages(dom.systemMessagesToggle.checked).catch(handleError);
@@ -6928,14 +6316,6 @@
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
-      });
-      dom.dialogFilterSelect.addEventListener('change', function () {
-        var nextValue = String(dom.dialogFilterSelect.value || '').trim();
-        setDialogStationFilters(nextValue ? [nextValue] : []).catch(handleError);
-      });
-      dom.dialogBackBtn.addEventListener('click', function () {
-        state.mobileDialogView = 'list';
-        updateMobileDialogsView();
       });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
@@ -7110,7 +6490,6 @@
     }
 
     async function init() {
-      setStatus('Обновление...', false);
       bindEvents();
       await refreshDialogsView();
       pollTimer = window.setInterval(function () {
@@ -7125,16 +6504,8 @@
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }
-      clearDeliveryIndicatorTimer();
       if (documentKeydownHandler) {
         document.removeEventListener('keydown', documentKeydownHandler);
-      }
-      if (mobileDialogMedia && mobileDialogMediaHandler) {
-        if (typeof mobileDialogMedia.removeEventListener === 'function') {
-          mobileDialogMedia.removeEventListener('change', mobileDialogMediaHandler);
-        } else if (typeof mobileDialogMedia.removeListener === 'function') {
-          mobileDialogMedia.removeListener(mobileDialogMediaHandler);
-        }
       }
       [dom.gameModal, dom.eventModal, dom.gameChatModal].forEach(function (node) {
         if (node && node.parentNode) {
