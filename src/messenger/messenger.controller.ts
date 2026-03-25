@@ -399,12 +399,11 @@ export class MessengerController {
     const supportConnectorFilter = this.mapLegacyConnectorToSupportFilter(query.connector);
     const mappedSupport = this.sortDialogsByRank(
       this.supportService
-      .listDialogs(user, {
-        connector: supportConnectorFilter,
-        stationId: query.stationId
-      })
-      .map((dialog) => this.mapSupportDialogToLegacy(dialog))
-      .filter((dialog) => (query.connector ? dialog.connector === query.connector : true))
+        .listDialogs(user, {
+          connector: supportConnectorFilter,
+          stationId: query.stationId
+        })
+        .map((dialog) => this.mapSupportDialogToLegacy(dialog))
     );
 
     const paging = this.resolveDialogsPaging(query);
