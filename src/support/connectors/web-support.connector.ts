@@ -10,7 +10,7 @@ import {
 @Injectable()
 export class WebSupportConnectorAdapter implements SupportConnectorAdapter {
   readonly route = SupportConnectorRoute.LK_WEB_MESSENGER;
-  readonly aliases = ['LK_WEB_MESSENGER', 'WEB', 'LK_WEB', 'LK', 'WIDGET'];
+  readonly aliases = ['LK_WEB_MESSENGER', 'WEB', 'WEB_LK', 'LK_WEB', 'LK', 'WIDGET'];
 
   normalizeIncomingEvent(
     dto: IngestSupportEventDto,
@@ -29,4 +29,3 @@ export class WebSupportConnectorAdapter implements SupportConnectorAdapter {
     };
   }
 }
-

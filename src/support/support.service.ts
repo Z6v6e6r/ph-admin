@@ -3208,17 +3208,24 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private normalizeIncomingEvent(dto: IngestSupportEventDto): NormalizedIngestSupportEventDto {
+    const incomingMeta = dto.meta ?? dto.metadata;
     const connector = this.resolveIncomingConnector(dto);
     const selectedStation =
       this.resolveStationMappingFromAction(dto.action) ??
-      this.resolveStationMappingFromAction(this.extractMetaPathString(dto.meta, ['action']));
+      this.resolveStationMappingFromAction(this.extractMetaPathString(incomingMeta, ['action']));
     const baseNormalized: NormalizedIngestSupportEventDto = {
       ...dto,
       connector,
-      externalUserId: this.normalizeIdentityValue(dto.externalUserId),
-      externalChatId: this.normalizeIdentityValue(dto.externalChatId),
-      displayName: this.normalizeDisplayName(dto.displayName),
+      meta: incomingMeta,
+      externalUserId: this.normalizeIdentityValue(
+        dto.externalUserId ?? dto.userId ?? dto.senderId ?? dto.channelUserId ?? dto.clientId
+      ),
+      externalChatId: this.normalizeIdentityValue(
+        dto.externalChatId ?? dto.chatId ?? dto.externalThreadId
+      ),
+      displayName: this.normalizeDisplayName(dto.displayName ?? dto.clientName ?? dto.senderName),
       username: this.normalizeIdentityValue(dto.username),
+      phone: this.normalizePhone(dto.phone ?? dto.primaryPhone),
       selectedStationId:
         this.normalizeStationId(dto.selectedStationId) ??
         selectedStation?.stationId,
@@ -3230,6 +3237,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const connectorPatch = this.connectorRegistry.normalizeIncomingEvent(
       {
         ...dto,
+        meta: incomingMeta,
         connector
       },
       this.buildConnectorNormalizationHelpers()
@@ -3241,10 +3249,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private resolveIncomingConnector(dto: IngestSupportEventDto): SupportConnectorRoute {
+    const incomingMeta = dto.meta ?? dto.metadata;
     const rawConnector = this.readStringValue(dto.connector);
     const rawChannel = this.readStringValue(dto.channel);
-    const metaConnector = this.extractMetaPathString(dto.meta, ['connector']);
-    const metaChannel = this.extractMetaPathString(dto.meta, ['channel']);
+    const metaConnector = this.extractMetaPathString(incomingMeta, ['connector']);
+    const metaChannel = this.extractMetaPathString(incomingMeta, ['channel']);
 
     const candidates = [rawConnector, rawChannel, metaConnector, metaChannel];
     for (const candidate of candidates) {

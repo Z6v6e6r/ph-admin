@@ -29,6 +29,16 @@ export class IngestSupportEventDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
+  authorType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  eventType?: string;
+
+  @IsOptional()
+  @IsString()
   @MinLength(1)
   @MaxLength(200)
   externalUserId?: string;
@@ -49,6 +59,16 @@ export class IngestSupportEventDto {
   @IsString()
   @MaxLength(160)
   displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  clientName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  senderName?: string;
 
   @IsOptional()
   @IsString()
@@ -94,6 +114,11 @@ export class IngestSupportEventDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  primaryPhone?: string;
 
   @IsOptional()
   @IsString()
@@ -144,6 +169,46 @@ export class IngestSupportEventDto {
   subject?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  userId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  senderId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  channelUserId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  chatId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  externalThreadId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  authStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  workflowState?: string;
+
+  @IsOptional()
   @IsObject()
   ai?: {
     topic?: SupportTopic;
@@ -157,4 +222,8 @@ export class IngestSupportEventDto {
   @IsOptional()
   @IsObject()
   meta?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }

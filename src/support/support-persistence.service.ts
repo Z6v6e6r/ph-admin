@@ -635,7 +635,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       return undefined;
     }
 
-    if (['LK_WEB_MESSENGER', 'WEB', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
+    if (['LK_WEB_MESSENGER', 'WEB', 'WEB_LK', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
       return SupportConnectorRoute.LK_WEB_MESSENGER;
     }
     if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
