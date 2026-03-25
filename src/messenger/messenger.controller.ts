@@ -412,7 +412,7 @@ export class MessengerController {
       return rightTs - leftTs;
     });
 
-    return this.attachVivaCabinetUrls(dialogs);
+    return this.attachVivaCabinetUrls(this.sliceDialogsPage(dialogs, query));
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {
@@ -465,6 +465,21 @@ export class MessengerController {
   ): Promise<StationDialogSummary[]> {
     // Dialog listing no longer resolves Viva cabinet links to avoid expensive CRM phone LIKE lookups.
     return dialogs;
+  }
+
+  private sliceDialogsPage<T>(items: T[], query: ListThreadsDto): T[] {
+    const fallbackLimit = 30;
+    const maxLimit = 200;
+    const normalizedLimit =
+      Number.isFinite(query.limit) && Number(query.limit) > 0
+        ? Math.min(Math.floor(Number(query.limit)), maxLimit)
+        : fallbackLimit;
+    const normalizedOffset =
+      Number.isFinite(query.offset) && Number(query.offset) > 0
+        ? Math.floor(Number(query.offset))
+        : 0;
+
+    return items.slice(normalizedOffset, normalizedOffset + normalizedLimit);
   }
 
   private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {

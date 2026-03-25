@@ -1,5 +1,15 @@
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
 import { ConnectorRoute } from '../messenger.types';
+
+function toOptionalInteger(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
 
 export class ListThreadsDto {
   @IsOptional()
@@ -10,4 +20,16 @@ export class ListThreadsDto {
   @IsString()
   @MinLength(1)
   stationId?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => toOptionalInteger(value))
+  @IsInt()
+  @Min(1)
+  limit?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => toOptionalInteger(value))
+  @IsInt()
+  @Min(0)
+  offset?: number;
 }

@@ -338,6 +338,13 @@
         flex-direction:column;
         gap:7px;
       }
+      .phab-admin-list-more{
+        padding:8px 4px 2px;
+        text-align:center;
+        font-size:12px;
+        font-weight:600;
+        color:rgba(51,0,32,.58);
+      }
       .phab-admin-list-btn{
         width:100%;
         text-align:left;
@@ -1288,7 +1295,16 @@
         return request('/support/dialogs', 'GET');
       },
       getLegacyDialogs: function () {
-        return request('/messenger/dialogs', 'GET');
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query.offset !== undefined && query.offset !== null) {
+          params.set('offset', String(query.offset));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/messenger/dialogs' + suffix, 'GET');
       },
       getConnectors: function () {
         return request('/support/connectors', 'GET');
@@ -2522,6 +2538,7 @@
       dialogListSystemToggle: dialogListSystemToggle,
       dialogFiltersWrap: dialogFiltersWrap,
       dialogFilters: dialogFilters,
+      dialogsScrollBody: leftBody,
       dialogsList: dialogsList,
       dialogTitle: dialogTitle,
       dialogMeta: dialogMeta,
@@ -2722,12 +2739,17 @@
     var pollTimer = null;
     var documentKeydownHandler = null;
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
+    var DIALOGS_PAGE_SIZE = 30;
+    var DIALOGS_SCROLL_THRESHOLD_PX = 140;
 
     var state = {
       activeTab: 'messages',
       allDialogs: [],
       loading: false,
       dialogs: [],
+      dialogPageSize: DIALOGS_PAGE_SIZE,
+      hasMoreDialogs: true,
+      dialogsLoadingMore: false,
       dialogsSignature: '',
       dialogsHydrated: false,
       dialogSearchQuery: '',
@@ -4317,7 +4339,8 @@
     }
 
     function renderDialogs() {
-      var previousScrollTop = dom.dialogsList.scrollTop;
+      var dialogsScrollBody = dom.dialogsScrollBody || dom.dialogsList;
+      var previousScrollTop = dialogsScrollBody.scrollTop;
       clearNode(dom.dialogsList);
       renderDialogFilters();
       renderDialogHeader();
@@ -4409,7 +4432,16 @@
         btn.appendChild(preview);
       });
 
-      dom.dialogsList.scrollTop = previousScrollTop;
+      if (state.dialogs.length > 0 && (state.hasMoreDialogs || state.dialogsLoadingMore)) {
+        var more = document.createElement('li');
+        more.className = 'phab-admin-list-more';
+        more.textContent = state.dialogsLoadingMore
+          ? 'Загружаем ещё диалоги...'
+          : 'Прокрутите вниз, чтобы загрузить ещё';
+        dom.dialogsList.appendChild(more);
+      }
+
+      dialogsScrollBody.scrollTop = previousScrollTop;
     }
 
     function normalizeSupportDialog(item) {
@@ -4532,6 +4564,21 @@
       );
     }
 
+    function mergeDialogCollections(previousDialogs, nextDialogs) {
+      var mergedById = new Map();
+      (Array.isArray(previousDialogs) ? previousDialogs : []).forEach(function (dialog) {
+        if (dialog && dialog.dialogId) {
+          mergedById.set(dialog.dialogId, dialog);
+        }
+      });
+      (Array.isArray(nextDialogs) ? nextDialogs : []).forEach(function (dialog) {
+        if (dialog && dialog.dialogId) {
+          mergedById.set(dialog.dialogId, dialog);
+        }
+      });
+      return Array.from(mergedById.values());
+    }
+
     function applyDialogs(nextDialogs, options) {
       var opts = options || {};
       var rawList = sortDialogsByLastMessage(
@@ -4596,6 +4643,27 @@
         selectionChanged: selectionChanged,
         filtersChanged: filtersChanged
       };
+    }
+
+    async function loadMoreDialogsIfNeeded() {
+      if (state.activeTab !== 'messages' || state.dialogsLoadingMore || !state.hasMoreDialogs) {
+        return;
+      }
+
+      var container = dom.dialogsScrollBody || dom.dialogsList;
+      if (!container) {
+        return;
+      }
+
+      var distanceToBottom = container.scrollHeight - container.clientHeight - container.scrollTop;
+      if (distanceToBottom > DIALOGS_SCROLL_THRESHOLD_PX) {
+        return;
+      }
+
+      await loadDialogs({
+        append: true,
+        silent: true
+      });
     }
 
     async function setDialogStationFilters(nextFilters) {
@@ -5902,8 +5970,36 @@
     }
 
     async function loadDialogs(options) {
-      var legacyDialogs = (await api.getLegacyDialogs()) || [];
-      return applyDialogs(legacyDialogs.map(normalizeLegacyDialog).filter(Boolean), options);
+      var opts = options || {};
+      var append = opts.append === true;
+      var limit = append
+        ? state.dialogPageSize
+        : Math.max(state.allDialogs.length || state.dialogPageSize, state.dialogPageSize);
+      var offset = append ? state.allDialogs.length : 0;
+
+      if (append) {
+        state.dialogsLoadingMore = true;
+      }
+
+      try {
+        var legacyDialogs =
+          (await api.getLegacyDialogs({
+            limit: limit,
+            offset: offset
+          })) || [];
+        var normalizedDialogs = legacyDialogs.map(normalizeLegacyDialog).filter(Boolean);
+        state.hasMoreDialogs = normalizedDialogs.length >= limit;
+
+        if (append) {
+          return applyDialogs(mergeDialogCollections(state.allDialogs, normalizedDialogs), opts);
+        }
+
+        return applyDialogs(normalizedDialogs, opts);
+      } finally {
+        if (append) {
+          state.dialogsLoadingMore = false;
+        }
+      }
     }
 
     async function openSelectedDialog() {
@@ -6316,6 +6412,9 @@
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
+      });
+      dom.dialogsScrollBody.addEventListener('scroll', function () {
+        loadMoreDialogsIfNeeded().catch(handleError);
       });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
