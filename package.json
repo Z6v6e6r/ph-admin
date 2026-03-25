@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
+    "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts"
   },

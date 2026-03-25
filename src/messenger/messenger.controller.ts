@@ -625,10 +625,10 @@ export class MessengerController {
   }
 
   private mapSupportSenderRole(role?: SupportMessage['senderRole']): Role | undefined {
-    if (!role || role === 'SYSTEM') {
-      return Role.SUPPORT;
+    if (role === Role.CLIENT) {
+      return Role.CLIENT;
     }
-    return role;
+    return Role.SUPPORT;
   }
 
   private mapSupportTopic(topic?: SupportAiInsight['topic']): AiDialogTopic | undefined {
