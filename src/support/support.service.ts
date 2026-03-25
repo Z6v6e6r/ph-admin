@@ -1717,7 +1717,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return {
       ...client,
       authStatus: this.normalizeLoadedAuthStatus(client.authStatus),
-      unverifiedTextAttempts: client.unverifiedTextAttempts ?? 0
+      unverifiedTextAttempts: client.unverifiedTextAttempts ?? 0,
+      phones: Array.isArray(client.phones) ? client.phones : [],
+      emails: Array.isArray(client.emails) ? client.emails : [],
+      identities: Array.isArray(client.identities) ? client.identities : []
     };
   }
 
@@ -2670,17 +2673,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private upsertIdentity(
-    identities: SupportClientIdentity[],
+    identities: SupportClientIdentity[] | undefined,
     nextIdentity: SupportClientIdentity
   ): SupportClientIdentity[] {
-    const existingIndex = identities.findIndex(
+    const currentIdentities = Array.isArray(identities) ? identities : [];
+    const existingIndex = currentIdentities.findIndex(
       (identity) => this.identitiesOverlap(identity, nextIdentity)
     );
     if (existingIndex < 0) {
-      return [...identities, nextIdentity];
+      return [...currentIdentities, nextIdentity];
     }
 
-    const updated = [...identities];
+    const updated = [...currentIdentities];
     const existing = updated[existingIndex];
     updated[existingIndex] = {
       ...existing,
