@@ -76,6 +76,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly messages = new Map<string, SupportMessage[]>();
   private readonly responseMetrics = new Map<string, SupportResponseMetric[]>();
   private readonly outbox = new Map<string, SupportOutboxCommand>();
+  private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly stationMappings = this.parseStationMappings();
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
@@ -112,6 +113,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.messages.clear();
     this.responseMetrics.clear();
     this.outbox.clear();
+    this.dialogsNeedingUnreadRebuild.clear();
 
     for (const client of state.clients) {
       this.clients.set(client.id, this.normalizeLoadedClient(client));
@@ -1594,10 +1596,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         .map((email) => this.normalizeEmail(email))
         .filter((email): email is string => Boolean(email))
     );
-    const resolvedUnreadCount = Math.max(
-      0,
-      Number(dialog.unreadCount ?? rawDialog['unreadClientMessages'] ?? 0)
+    const hasStoredUnreadCount =
+      Object.prototype.hasOwnProperty.call(rawDialog, 'unreadCount') ||
+      Object.prototype.hasOwnProperty.call(rawDialog, 'unreadClientMessages');
+    const parsedUnreadCount = Number(
+      dialog.unreadCount ?? rawDialog['unreadClientMessages']
     );
+    const shouldRebuildUnreadCount =
+      !hasStoredUnreadCount || !Number.isFinite(parsedUnreadCount);
+    if (shouldRebuildUnreadCount) {
+      this.dialogsNeedingUnreadRebuild.add(dialog.id);
+    } else {
+      this.dialogsNeedingUnreadRebuild.delete(dialog.id);
+    }
+    const resolvedUnreadCount = shouldRebuildUnreadCount
+      ? 0
+      : Math.max(0, parsedUnreadCount);
     const resolvedSubject =
       this.normalizeDialogSubject(dialog.subject) ??
       this.normalizeDialogSubject(this.readStringValue(rawDialog['displayName']));
@@ -1663,12 +1677,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       dialog.lastClientMessageAt = lastInbound?.createdAt ?? dialog.lastClientMessageAt;
       dialog.lastStaffMessageAt = lastOutbound?.createdAt ?? dialog.lastStaffMessageAt;
       dialog.updatedAt = this.maxDate([dialog.updatedAt, lastMessage.createdAt]) ?? dialog.updatedAt;
-      if ((dialog.unreadCount ?? 0) <= 0) {
+      if (this.dialogsNeedingUnreadRebuild.has(dialog.id)) {
         dialog.unreadCount = dialogMessages.filter(
           (message) =>
             message.direction === SupportMessageDirection.INBOUND &&
             this.isActionableClientMessage(message)
         ).length;
+        this.dialogsNeedingUnreadRebuild.delete(dialog.id);
+        this.persistDialog(dialog);
       }
 
       const stationIdsFromMessages = dialogMessages.map((message) => message.stationId);
