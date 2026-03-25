@@ -192,6 +192,15 @@ export class SupportController {
     return this.supportService.getDailyAnalytics(date, user);
   }
 
+  @Get('debug/runtime')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.MANAGER)
+  async getRuntimeDiagnostics(@CurrentUser() user?: RequestUser) {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.supportService.getRuntimeDiagnostics(user);
+  }
+
   @Get('outbox/pull')
   pullOutbox(
     @Headers('x-integration-token') token: string | undefined,

@@ -133,6 +133,9 @@ export interface SupportDialog {
   averageFirstResponseMs?: number;
   lastFirstResponseMs?: number;
   lastMessageAt?: string;
+  lastRankingMessageAt?: string;
+  lastMessageText?: string;
+  lastMessageSenderRole?: SupportSenderRole;
   lastClientMessageAt?: string;
   lastStaffMessageAt?: string;
   ai?: SupportAiInsight;

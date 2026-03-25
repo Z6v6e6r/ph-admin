@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   OnApplicationBootstrap,
   OnModuleDestroy,
@@ -9,9 +10,17 @@ import {
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
+import {
+  SupportConnectorNormalizationHelpers,
+  SupportStationMappingMatch
+} from './connectors/support-connector-adapter';
+import { SupportConnectorRegistry } from './connectors/support-connector.registry';
 import { IngestSupportEventDto } from './dto/ingest-support-event.dto';
 import { ReplySupportDialogDto } from './dto/reply-support-dialog.dto';
-import { SupportPersistenceService } from './support-persistence.service';
+import {
+  SupportPersistenceRuntimeDiagnostics,
+  SupportPersistenceService
+} from './support-persistence.service';
 import {
   SUPPORT_UNASSIGNED_STATION_ID,
   SUPPORT_UNASSIGNED_STATION_NAME,
@@ -69,8 +78,14 @@ interface SupportStationMapping {
   stationName: string;
 }
 
+interface SupportDialogFilters {
+  connector?: SupportConnectorRoute;
+  stationId?: string;
+}
+
 @Injectable()
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
+  private readonly logger = new Logger(SupportService.name);
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
   private readonly messages = new Map<string, SupportMessage[]>();
@@ -81,16 +96,24 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
   private isPersistenceSyncInProgress = false;
+  private initialPersistenceSyncCompleted = false;
+  private lastPersistenceSyncStartedAt?: string;
+  private lastPersistenceSyncCompletedAt?: string;
+  private lastPersistenceSyncDurationMs?: number;
+  private lastPersistenceSyncError?: string;
 
-  constructor(private readonly persistence: SupportPersistenceService) {}
+  constructor(
+    private readonly persistence: SupportPersistenceService,
+    private readonly connectorRegistry: SupportConnectorRegistry
+  ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.syncFromPersistence();
+    await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.syncFromPersistence();
+    await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
   }
 
@@ -186,6 +209,63 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return { client, dialogs };
   }
 
+  async getRuntimeDiagnostics(user: RequestUser): Promise<{
+    timestamp: string;
+    inMemory: {
+      clients: number;
+      dialogs: number;
+      messages: number;
+      responseMetrics: number;
+      outbox: number;
+    };
+    sync: {
+      initialSyncCompleted: boolean;
+      periodicSyncEnabled: boolean;
+      intervalMs: number;
+      inProgress: boolean;
+      lastStartedAt?: string;
+      lastCompletedAt?: string;
+      lastDurationMs?: number;
+      lastError?: string;
+    };
+    persistence: SupportPersistenceRuntimeDiagnostics;
+    connectors: ReturnType<SupportConnectorRegistry['listEntries']>;
+  }> {
+    this.ensureStaff(user);
+    const dialogs = Array.from(this.dialogs.values());
+    const messagesCount = Array.from(this.messages.values()).reduce(
+      (total, items) => total + items.length,
+      0
+    );
+    const responseMetricsCount = Array.from(this.responseMetrics.values()).reduce(
+      (total, items) => total + items.length,
+      0
+    );
+    const persistence = await this.persistence.getRuntimeDiagnostics();
+    return {
+      timestamp: new Date().toISOString(),
+      inMemory: {
+        clients: this.clients.size,
+        dialogs: dialogs.length,
+        messages: messagesCount,
+        responseMetrics: responseMetricsCount,
+        outbox: this.outbox.size
+      },
+      sync: {
+        initialSyncCompleted: this.initialPersistenceSyncCompleted,
+        periodicSyncEnabled: this.persistenceSyncIntervalMs > 0,
+        intervalMs: this.persistenceSyncIntervalMs,
+        inProgress: this.isPersistenceSyncInProgress,
+        lastStartedAt: this.lastPersistenceSyncStartedAt,
+        lastCompletedAt: this.lastPersistenceSyncCompletedAt,
+        lastDurationMs: this.lastPersistenceSyncDurationMs,
+        lastError: this.lastPersistenceSyncError
+      },
+      persistence,
+      connectors: this.connectorRegistry.listEntries()
+    };
+  }
+
   private reconcileState(): void {
     this.reconcileDuplicateClients();
     this.reconcileDuplicateDialogs();
@@ -196,13 +276,30 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return;
     }
 
+    const startedAt = Date.now();
+    this.lastPersistenceSyncStartedAt = new Date(startedAt).toISOString();
     this.isPersistenceSyncInProgress = true;
     try {
       await this.hydrateFromPersistence();
       this.reconcileState();
+      const completedAt = Date.now();
+      this.lastPersistenceSyncCompletedAt = new Date(completedAt).toISOString();
+      this.lastPersistenceSyncDurationMs = Math.max(0, completedAt - startedAt);
+      this.lastPersistenceSyncError = undefined;
+    } catch (error) {
+      this.lastPersistenceSyncError = String(error);
+      throw error;
     } finally {
       this.isPersistenceSyncInProgress = false;
     }
+  }
+
+  private async ensureInitialPersistenceSync(): Promise<void> {
+    if (this.initialPersistenceSyncCompleted) {
+      return;
+    }
+    await this.syncFromPersistence();
+    this.initialPersistenceSyncCompleted = true;
   }
 
   private ensurePersistenceSyncTimer(): void {
@@ -214,15 +311,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return;
     }
 
+    this.logger.log(
+      `Support persistence periodic sync enabled (intervalMs=${this.persistenceSyncIntervalMs}).`
+    );
     this.persistenceSyncTimer = setInterval(() => {
       void this.syncFromPersistence();
     }, this.persistenceSyncIntervalMs);
   }
 
   private resolvePersistenceSyncIntervalMs(): number {
-    const rawValue = Number(process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS ?? 5000);
+    const rawValue = Number(process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS ?? 0);
     if (!Number.isFinite(rawValue) || rawValue < 0) {
-      return 5000;
+      return 0;
     }
     if (rawValue === 0) {
       return 0;
@@ -418,10 +518,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     stationId: string,
     user: RequestUser
   ): SupportDialogSummary[] {
-    return this.listAccessibleDialogs(user)
-      .filter(
-        (dialog) => dialog.stationId === stationId && dialog.connectors.includes(connector)
-      )
+    return this.listAccessibleDialogs(user, { connector, stationId })
       .map((dialog) => this.toDialogSummary(dialog, connector))
       .sort((left, right) => {
         if (left.unreadCount > 0 && right.unreadCount === 0) {
@@ -434,8 +531,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       });
   }
 
-  listDialogs(user: RequestUser): SupportDialogSummary[] {
-    return this.listAccessibleDialogs(user)
+  listDialogs(user: RequestUser, filters: SupportDialogFilters = {}): SupportDialogSummary[] {
+    return this.listAccessibleDialogs(user, filters)
       .map((dialog) => this.toDialogSummary(dialog, undefined, user))
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
@@ -1020,6 +1117,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       averageFirstResponseMs: undefined,
       lastFirstResponseMs: undefined,
       lastMessageAt: undefined,
+      lastRankingMessageAt: undefined,
+      lastMessageText: undefined,
+      lastMessageSenderRole: undefined,
       lastClientMessageAt: undefined,
       lastStaffMessageAt: undefined,
       ai: undefined,
@@ -1079,14 +1179,63 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private appendMessage(dialog: SupportDialog, message: SupportMessage): void {
     const existing = this.messages.get(dialog.id) ?? [];
-    existing.push(message);
-    existing.sort(
-      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
-    );
+    const messageTs = this.toTimestamp(message.createdAt);
+    const currentLastMessageTs = this.toTimestamp(dialog.lastMessageAt);
+    const currentLastRankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
+    const isSystemMessage = this.isSystemDialogMessage(message);
+
+    if (existing.length === 0) {
+      existing.push(message);
+    } else {
+      const lastMessage = existing[existing.length - 1];
+      const lastMessageTs = this.toTimestamp(lastMessage.createdAt);
+
+      if (messageTs >= lastMessageTs) {
+        existing.push(message);
+      } else {
+        const insertIndex = this.findMessageInsertIndex(existing, messageTs);
+        existing.splice(insertIndex, 0, message);
+      }
+    }
+
     this.messages.set(dialog.id, existing);
-    dialog.lastMessageAt = message.createdAt;
-    dialog.updatedAt = message.createdAt;
+
+    if (messageTs >= currentLastMessageTs) {
+      dialog.lastMessageAt = message.createdAt;
+      dialog.updatedAt = message.createdAt;
+    }
+
+    if (!isSystemMessage && messageTs >= currentLastRankingTs) {
+      dialog.lastRankingMessageAt = message.createdAt;
+      dialog.lastMessageText = this.formatDialogPreview(message);
+      dialog.lastMessageSenderRole = message.senderRole;
+    } else if (messageTs >= currentLastMessageTs && currentLastRankingTs <= 0) {
+      dialog.lastMessageText = this.formatDialogPreview(message);
+      dialog.lastMessageSenderRole = message.senderRole;
+    }
+
+    if (dialog.lastMessageText === undefined || dialog.lastMessageSenderRole === undefined) {
+      this.refreshDialogPreviewFromMessages(dialog, existing);
+    }
+
     this.persistence.persistMessage(message);
+  }
+
+  private findMessageInsertIndex(messages: SupportMessage[], createdAtTs: number): number {
+    let low = 0;
+    let high = messages.length;
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      const midTs = this.toTimestamp(messages[mid].createdAt);
+      if (midTs <= createdAtTs) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    return low;
   }
 
   private createResponseMetric(
@@ -1440,6 +1589,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     target.emails = this.mergeStrings(target.emails, source.emails);
     target.ai = target.ai ?? source.ai;
     target.updatedAt = this.maxDate([target.updatedAt, source.updatedAt]) ?? target.updatedAt;
+    this.refreshDialogPreviewFromMessages(target, mergedMessages);
 
     this.persistDialog(target);
     this.dialogs.delete(source.id);
@@ -1452,11 +1602,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     user?: RequestUser
   ): SupportDialogSummary {
     const client = this.clients.get(dialog.clientId);
-    const dialogMessages = this.messages.get(dialog.id) ?? [];
-    const lastMessage =
-      dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
-    const lastRankingMessage = this.findLastRankingMessage(dialogMessages);
-    const previewMessage = lastRankingMessage ?? lastMessage;
+    let lastRankingMessageAt = dialog.lastRankingMessageAt;
+    let lastMessageText = dialog.lastMessageText;
+    let lastMessageSenderRole = dialog.lastMessageSenderRole;
+
+    if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
+      const dialogMessages = this.messages.get(dialog.id) ?? [];
+      const lastMessage =
+        dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
+      const lastRankingMessage = this.findLastRankingMessage(dialogMessages);
+      const previewMessage = lastRankingMessage ?? lastMessage;
+      lastRankingMessageAt = lastRankingMessage?.createdAt;
+      lastMessageText = this.formatDialogPreview(previewMessage);
+      lastMessageSenderRole = previewMessage?.senderRole;
+    }
+
     return {
       dialogId: dialog.id,
       connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
@@ -1480,9 +1640,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       averageFirstResponseMs: dialog.averageFirstResponseMs,
       lastFirstResponseMs: dialog.lastFirstResponseMs,
       lastMessageAt: dialog.lastMessageAt,
-      lastRankingMessageAt: lastRankingMessage?.createdAt,
-      lastMessageText: this.formatDialogPreview(previewMessage),
-      lastMessageSenderRole: previewMessage?.senderRole,
+      lastRankingMessageAt,
+      lastMessageText,
+      lastMessageSenderRole,
       lastInboundConnector: dialog.lastInboundConnector,
       ai: dialog.ai
     };
@@ -1615,6 +1775,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const resolvedSubject =
       this.normalizeDialogSubject(dialog.subject) ??
       this.normalizeDialogSubject(this.readStringValue(rawDialog['displayName']));
+    const resolvedLastRankingMessageAt =
+      this.readStringValue(rawDialog['lastRankingMessageAt']) ?? dialog.lastRankingMessageAt;
+    const resolvedLastMessageText =
+      this.readStringValue(rawDialog['lastMessageText']) ?? dialog.lastMessageText;
+    const resolvedLastMessageSenderRole =
+      this.readStringValue(rawDialog['lastMessageSenderRole']) ?? dialog.lastMessageSenderRole;
 
     return {
       ...dialog,
@@ -1636,6 +1802,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         ? dialog.pendingClientMessageIds
         : [],
       unreadCount: resolvedUnreadCount,
+      lastRankingMessageAt: resolvedLastRankingMessageAt,
+      lastMessageText: resolvedLastMessageText,
+      lastMessageSenderRole:
+        resolvedLastMessageSenderRole === 'SYSTEM' ||
+        Object.values(Role).includes(resolvedLastMessageSenderRole as Role)
+          ? (resolvedLastMessageSenderRole as SupportSenderRole)
+          : undefined,
       accessStationIds: this.getDialogAccessStationIds(dialog)
     };
   }
@@ -1677,6 +1850,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       dialog.lastClientMessageAt = lastInbound?.createdAt ?? dialog.lastClientMessageAt;
       dialog.lastStaffMessageAt = lastOutbound?.createdAt ?? dialog.lastStaffMessageAt;
       dialog.updatedAt = this.maxDate([dialog.updatedAt, lastMessage.createdAt]) ?? dialog.updatedAt;
+      this.refreshDialogPreviewFromMessages(dialog, dialogMessages);
       if (this.dialogsNeedingUnreadRebuild.has(dialog.id)) {
         dialog.unreadCount = dialogMessages.filter(
           (message) =>
@@ -1828,6 +2002,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         averageFirstResponseMs: undefined,
         lastFirstResponseMs: undefined,
         lastMessageAt: message.createdAt,
+        lastRankingMessageAt: this.isSystemDialogMessage(message) ? undefined : message.createdAt,
+        lastMessageText: this.formatDialogPreview(message),
+        lastMessageSenderRole: message.senderRole,
         lastClientMessageAt:
           message.direction === SupportMessageDirection.INBOUND ? message.createdAt : undefined,
         lastStaffMessageAt:
@@ -1886,6 +2063,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.normalizeDialogSubject(existingDialog.subject) ??
       this.selectDialogTitleCandidate(undefined, snapshotDisplayName, message.phone);
     this.dialogs.set(existingDialog.id, existingDialog);
+  }
+
+  private refreshDialogPreviewFromMessages(
+    dialog: SupportDialog,
+    messages: SupportMessage[]
+  ): void {
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
+    const lastRankingMessage = this.findLastRankingMessage(messages);
+    const previewMessage = lastRankingMessage ?? lastMessage;
+
+    dialog.lastRankingMessageAt = lastRankingMessage?.createdAt;
+    dialog.lastMessageText = this.formatDialogPreview(previewMessage);
+    dialog.lastMessageSenderRole = previewMessage?.senderRole;
   }
 
   private normalizeLoadedMessage(
@@ -1998,31 +2188,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private normalizeLoadedConnector(rawConnector: unknown): SupportConnectorRoute | undefined {
-    const normalized = this.readStringValue(rawConnector)?.toUpperCase();
-    if (!normalized) {
-      return undefined;
-    }
-
-    if (['LK_WEB_MESSENGER', 'WEB', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
-      return SupportConnectorRoute.LK_WEB_MESSENGER;
-    }
-    if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
-      return SupportConnectorRoute.TG_BOT;
-    }
-    if (['MAX_BOT', 'MAX'].includes(normalized)) {
-      return SupportConnectorRoute.MAX_BOT;
-    }
-    if (['EMAIL', 'MAIL'].includes(normalized)) {
-      return SupportConnectorRoute.EMAIL;
-    }
-    if (['PHONE_CALL', 'CALL', 'PHONE'].includes(normalized)) {
-      return SupportConnectorRoute.PHONE_CALL;
-    }
-    if (['BITRIX', 'BITRIX24'].includes(normalized)) {
-      return SupportConnectorRoute.BITRIX;
-    }
-
-    return undefined;
+    return this.connectorRegistry.resolveRoute(this.readStringValue(rawConnector));
   }
 
   private normalizeLoadedDirection(
@@ -2340,9 +2506,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return user.stationIds.includes(dialog.stationId);
   }
 
-  private listAccessibleDialogs(user: RequestUser): SupportDialog[] {
+  private listAccessibleDialogs(
+    user: RequestUser,
+    filters: SupportDialogFilters = {}
+  ): SupportDialog[] {
     return Array.from(this.dialogs.values())
       .filter((dialog) => this.canAccessDialog(dialog, user))
+      .filter((dialog) => (filters.stationId ? dialog.stationId === filters.stationId : true))
+      .filter((dialog) =>
+        filters.connector ? dialog.connectors.includes(filters.connector) : true
+      )
       .sort((left, right) => this.toTimestamp(right.updatedAt) - this.toTimestamp(left.updatedAt));
   }
 
@@ -3029,37 +3202,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private normalizeIncomingEvent(dto: IngestSupportEventDto): NormalizedIngestSupportEventDto {
-    const senderIsBot = this.resolveSenderIsBot(dto);
-    const recipientExternalUserId =
-      this.normalizeIdentityValue(dto.recipientExternalUserId) ??
-      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'user_id']);
-    const recipientExternalChatId =
-      this.normalizeIdentityValue(dto.recipientExternalChatId) ??
-      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'chat_id']);
-    const recipientUsername =
-      this.normalizeIdentityValue(dto.recipientUsername) ??
-      this.extractMetaPathString(dto.meta, ['data', 'recipient', 'username']);
-
     const selectedStation =
       this.resolveStationMappingFromAction(dto.action) ??
       this.resolveStationMappingFromAction(this.extractMetaPathString(dto.meta, ['action']));
-
-    return {
+    const baseNormalized: NormalizedIngestSupportEventDto = {
       ...dto,
-      externalUserId:
-        senderIsBot && recipientExternalUserId
-          ? recipientExternalUserId
-          : this.normalizeIdentityValue(dto.externalUserId),
-      externalChatId:
-        senderIsBot && recipientExternalChatId
-          ? recipientExternalChatId
-          : this.normalizeIdentityValue(dto.externalChatId),
-      displayName: senderIsBot
-        ? undefined
-        : this.normalizeDisplayName(dto.displayName),
-      username: senderIsBot
-        ? recipientUsername
-        : this.normalizeIdentityValue(dto.username),
+      externalUserId: this.normalizeIdentityValue(dto.externalUserId),
+      externalChatId: this.normalizeIdentityValue(dto.externalChatId),
+      displayName: this.normalizeDisplayName(dto.displayName),
+      username: this.normalizeIdentityValue(dto.username),
       selectedStationId:
         this.normalizeStationId(dto.selectedStationId) ??
         selectedStation?.stationId,
@@ -3067,6 +3218,38 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.normalizeDisplayName(dto.selectedStationName) ??
         selectedStation?.stationName,
       deliverToClient: this.resolveDeliverToClient(dto)
+    };
+    const connectorPatch = this.connectorRegistry.normalizeIncomingEvent(
+      dto,
+      this.buildConnectorNormalizationHelpers()
+    );
+    return {
+      ...baseNormalized,
+      ...connectorPatch
+    };
+  }
+
+  private buildConnectorNormalizationHelpers(): SupportConnectorNormalizationHelpers {
+    return {
+      normalizeIdentityValue: (raw?: string) => this.normalizeIdentityValue(raw),
+      normalizeDisplayName: (raw?: string) => this.normalizeDisplayName(raw),
+      normalizeStationId: (raw?: string) => this.normalizeStationId(raw),
+      extractMetaPathString: (
+        meta: Record<string, unknown> | undefined,
+        path: string[]
+      ) => this.extractMetaPathString(meta, path),
+      resolveSenderIsBot: (dto: IngestSupportEventDto) => this.resolveSenderIsBot(dto),
+      resolveStationMappingFromAction: (action?: string): SupportStationMappingMatch | undefined => {
+        const mapping = this.resolveStationMappingFromAction(action);
+        if (!mapping) {
+          return undefined;
+        }
+        return {
+          stationId: mapping.stationId,
+          stationName: mapping.stationName
+        };
+      },
+      resolveDeliverToClient: (dto: IngestSupportEventDto) => this.resolveDeliverToClient(dto)
     };
   }
 

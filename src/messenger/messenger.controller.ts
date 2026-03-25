@@ -395,42 +395,27 @@ export class MessengerController {
     user: RequestUser,
     query: ListThreadsDto = {}
   ): Promise<StationDialogSummary[]> {
-    const legacy = this.messengerService.listDialogs(user, query);
-    const mappedSupport = this.supportService
-      .listDialogs(user)
+    const legacy = this.sortDialogsByRank(this.messengerService.listDialogs(user, query));
+    const supportConnectorFilter = this.mapLegacyConnectorToSupportFilter(query.connector);
+    const mappedSupport = this.sortDialogsByRank(
+      this.supportService
+      .listDialogs(user, {
+        connector: supportConnectorFilter,
+        stationId: query.stationId
+      })
       .map((dialog) => this.mapSupportDialogToLegacy(dialog))
       .filter((dialog) => (query.connector ? dialog.connector === query.connector : true))
-      .filter((dialog) => (query.stationId ? dialog.stationId === query.stationId : true));
+    );
 
-    const merged = new Map<string, StationDialogSummary>();
-    legacy.forEach((dialog) => merged.set(dialog.threadId, dialog));
-    mappedSupport.forEach((dialog) => merged.set(dialog.threadId, dialog));
+    const paging = this.resolveDialogsPaging(query);
+    const mergedTop = this.mergeDialogsByRank(
+      legacy,
+      mappedSupport,
+      paging.offset + paging.limit
+    );
+    const page = mergedTop.slice(paging.offset, paging.offset + paging.limit);
 
-    const dialogs = Array.from(merged.values()).sort((left, right) => {
-      const leftHasPending = Number(left.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
-      const rightHasPending = Number(right.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
-      if (leftHasPending !== rightHasPending) {
-        return rightHasPending - leftHasPending;
-      }
-
-      const leftRankTs =
-        Date.parse(left.lastRankingMessageAt || left.lastMessageAt || '') || 0;
-      const rightRankTs =
-        Date.parse(right.lastRankingMessageAt || right.lastMessageAt || '') || 0;
-      if (leftRankTs !== rightRankTs) {
-        return rightRankTs - leftRankTs;
-      }
-
-      const leftTs = Date.parse(left.lastMessageAt || '') || 0;
-      const rightTs = Date.parse(right.lastMessageAt || '') || 0;
-      if (leftTs !== rightTs) {
-        return rightTs - leftTs;
-      }
-
-      return left.threadId.localeCompare(right.threadId);
-    });
-
-    return this.attachVivaCabinetUrls(this.sliceDialogsPage(dialogs, query));
+    return this.attachVivaCabinetUrls(page);
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {
@@ -485,19 +470,110 @@ export class MessengerController {
     return dialogs;
   }
 
-  private sliceDialogsPage<T>(items: T[], query: ListThreadsDto): T[] {
+  private compareCompatibleDialogRank(
+    left: StationDialogSummary,
+    right: StationDialogSummary
+  ): number {
+    const leftHasPending = Number(left.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
+    const rightHasPending = Number(right.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
+    if (leftHasPending !== rightHasPending) {
+      return rightHasPending - leftHasPending;
+    }
+
+    const leftRankTs = Date.parse(left.lastRankingMessageAt || left.lastMessageAt || '') || 0;
+    const rightRankTs = Date.parse(right.lastRankingMessageAt || right.lastMessageAt || '') || 0;
+    if (leftRankTs !== rightRankTs) {
+      return rightRankTs - leftRankTs;
+    }
+
+    const leftTs = Date.parse(left.lastMessageAt || '') || 0;
+    const rightTs = Date.parse(right.lastMessageAt || '') || 0;
+    if (leftTs !== rightTs) {
+      return rightTs - leftTs;
+    }
+
+    return left.threadId.localeCompare(right.threadId);
+  }
+
+  private sortDialogsByRank(dialogs: StationDialogSummary[]): StationDialogSummary[] {
+    return [...dialogs].sort((left, right) => this.compareCompatibleDialogRank(left, right));
+  }
+
+  private mergeDialogsByRank(
+    legacy: StationDialogSummary[],
+    mappedSupport: StationDialogSummary[],
+    targetCount: number
+  ): StationDialogSummary[] {
+    const result: StationDialogSummary[] = [];
+    const seenThreadIds = new Set<string>();
+    let legacyIndex = 0;
+    let supportIndex = 0;
+
+    while (
+      result.length < targetCount &&
+      (legacyIndex < legacy.length || supportIndex < mappedSupport.length)
+    ) {
+      let candidate: StationDialogSummary | undefined;
+
+      if (legacyIndex >= legacy.length) {
+        candidate = mappedSupport[supportIndex];
+        supportIndex += 1;
+      } else if (supportIndex >= mappedSupport.length) {
+        candidate = legacy[legacyIndex];
+        legacyIndex += 1;
+      } else {
+        const legacyDialog = legacy[legacyIndex];
+        const supportDialog = mappedSupport[supportIndex];
+        if (this.compareCompatibleDialogRank(legacyDialog, supportDialog) <= 0) {
+          candidate = legacyDialog;
+          legacyIndex += 1;
+        } else {
+          candidate = supportDialog;
+          supportIndex += 1;
+        }
+      }
+
+      if (!candidate || seenThreadIds.has(candidate.threadId)) {
+        continue;
+      }
+
+      seenThreadIds.add(candidate.threadId);
+      result.push(candidate);
+    }
+
+    return result;
+  }
+
+  private resolveDialogsPaging(query: ListThreadsDto): { limit: number; offset: number } {
     const fallbackLimit = 30;
     const maxLimit = 200;
-    const normalizedLimit =
+    const limit =
       Number.isFinite(query.limit) && Number(query.limit) > 0
         ? Math.min(Math.floor(Number(query.limit)), maxLimit)
         : fallbackLimit;
-    const normalizedOffset =
+    const offset =
       Number.isFinite(query.offset) && Number(query.offset) > 0
         ? Math.floor(Number(query.offset))
         : 0;
 
-    return items.slice(normalizedOffset, normalizedOffset + normalizedLimit);
+    return { limit, offset };
+  }
+
+  private mapLegacyConnectorToSupportFilter(
+    connector?: ConnectorRoute
+  ): SupportConnectorRoute | undefined {
+    if (!connector) {
+      return undefined;
+    }
+
+    switch (connector) {
+      case ConnectorRoute.TG_BOT:
+        return SupportConnectorRoute.TG_BOT;
+      case ConnectorRoute.LK_WEB_MESSENGER:
+        return SupportConnectorRoute.LK_WEB_MESSENGER;
+      default:
+        return undefined;
+    }
   }
 
   private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {

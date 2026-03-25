@@ -17,11 +17,49 @@ export interface SupportPersistedState {
   outbox: SupportOutboxCommand[];
 }
 
+export interface SupportPersistenceCollectionCounts {
+  clients: number;
+  dialogs: number;
+  messages: number;
+  responseMetrics: number;
+  outbox: number;
+}
+
+export interface SupportPersistenceRuntimeDiagnostics {
+  enabled: boolean;
+  resolvedDbName: string;
+  activeDbName?: string;
+  collections: {
+    clients: string;
+    dialogs: string;
+    messages: string;
+    responseMetrics: string;
+    outbox: string;
+  };
+  env: {
+    supportMongoUriConfigured: boolean;
+    mongoUriConfigured: boolean;
+    supportMongoDb?: string;
+    mongoDb?: string;
+  };
+  counts?: SupportPersistenceCollectionCounts;
+  countError?: string;
+}
+
 @Injectable()
 export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SupportPersistenceService.name);
   private client?: MongoClient;
   private db?: Db;
+  private readonly supportMongoUri = this.readEnv('SUPPORT_MONGODB_URI');
+  private readonly fallbackMongoUri = this.readEnv('MONGODB_URI');
+  private readonly resolvedMongoUri = this.supportMongoUri ?? this.fallbackMongoUri;
+  private readonly supportMongoDb = this.readEnv('SUPPORT_MONGODB_DB');
+  private readonly fallbackMongoDb = this.readEnv('MONGODB_DB');
+  private readonly resolvedDbName =
+    this.supportMongoDb ??
+    this.fallbackMongoDb ??
+    DEFAULT_DIALOGS_MONGODB_DB;
   private readonly clientsCollectionName =
     this.readEnv('SUPPORT_CLIENTS_COLLECTION') ?? 'support_clients';
   private readonly dialogsCollectionName =
@@ -34,9 +72,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     this.readEnv('SUPPORT_OUTBOX_COLLECTION') ?? 'support_outbox';
 
   async onModuleInit(): Promise<void> {
-    const uri =
-      this.readEnv('SUPPORT_MONGODB_URI') ??
-      this.readEnv('MONGODB_URI');
+    const uri = this.resolvedMongoUri;
     if (!uri) {
       this.logger.log(
         'SUPPORT_MONGODB_URI/MONGODB_URI is empty. Support persistence disabled (in-memory mode).'
@@ -44,10 +80,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
-    const dbName =
-      this.readEnv('SUPPORT_MONGODB_DB') ??
-      this.readEnv('MONGODB_DB') ??
-      DEFAULT_DIALOGS_MONGODB_DB;
     this.client = new MongoClient(uri, {
       serverSelectionTimeoutMS: 5000,
       maxPoolSize: 20
@@ -55,9 +87,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
     try {
       await this.client.connect();
-      this.db = this.client.db(dbName);
+      this.db = this.client.db(this.resolvedDbName);
       await this.ensureIndexes();
-      this.logger.log(`MongoDB support persistence enabled. db=${dbName}`);
+      this.logger.log(`MongoDB support persistence enabled. db=${this.resolvedDbName}`);
     } catch (error) {
       this.logger.error(`MongoDB connect failed: ${String(error)}`);
       this.db = undefined;
@@ -71,6 +103,51 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   isEnabled(): boolean {
     return Boolean(this.db);
+  }
+
+  async getRuntimeDiagnostics(): Promise<SupportPersistenceRuntimeDiagnostics> {
+    const result: SupportPersistenceRuntimeDiagnostics = {
+      enabled: this.isEnabled(),
+      resolvedDbName: this.resolvedDbName,
+      activeDbName: this.db?.databaseName,
+      collections: {
+        clients: this.clientsCollectionName,
+        dialogs: this.dialogsCollectionName,
+        messages: this.messagesCollectionName,
+        responseMetrics: this.responseMetricsCollectionName,
+        outbox: this.outboxCollectionName
+      },
+      env: {
+        supportMongoUriConfigured: Boolean(this.supportMongoUri),
+        mongoUriConfigured: Boolean(this.fallbackMongoUri),
+        supportMongoDb: this.supportMongoDb,
+        mongoDb: this.fallbackMongoDb
+      }
+    };
+    if (!this.db) {
+      return result;
+    }
+
+    try {
+      const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
+        this.clients().countDocuments({}),
+        this.dialogs().countDocuments({}),
+        this.messages().countDocuments({}),
+        this.responseMetrics().countDocuments({}),
+        this.outbox().countDocuments({})
+      ]);
+      result.counts = {
+        clients,
+        dialogs,
+        messages,
+        responseMetrics,
+        outbox
+      };
+    } catch (error) {
+      result.countError = String(error);
+    }
+
+    return result;
   }
 
   async loadState(): Promise<SupportPersistedState> {

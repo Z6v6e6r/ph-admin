@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { ClientScriptModule } from './client-script/client-script.module';
+import { RequestMetricsInterceptor } from './common/observability/request-metrics.interceptor';
+import { RequestMetricsService } from './common/observability/request-metrics.service';
 import { GamesModule } from './games/games.module';
 import { TelegramConnectorModule } from './integrations/telegram/telegram-connector.module';
 import { MessengerModule } from './messenger/messenger.module';
@@ -23,9 +25,14 @@ import { UiController } from './ui/ui.controller';
   ],
   controllers: [SystemController, UiController],
   providers: [
+    RequestMetricsService,
     {
       provide: APP_GUARD,
       useClass: RolesGuard
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestMetricsInterceptor
     }
   ]
 })

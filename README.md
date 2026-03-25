@@ -79,6 +79,8 @@ API работает на `http://localhost:3000/api`.
 - `SUPPORT_MESSAGES_COLLECTION=support_messages` (опционально; коллекция сообщений)
 - `SUPPORT_RESPONSE_METRICS_COLLECTION=support_response_metrics` (опционально; коллекция метрик ответа)
 - `SUPPORT_OUTBOX_COLLECTION=support_outbox` (опционально; коллекция outbox)
+- `SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS=0` (опционально; периодический full-resync support-state из Mongo в память. `0` — выключен, если события пишутся напрямую в Mongo — задайте `5000` или больше)
+- `HTTP_METRICS_LOG_INTERVAL_MS=60000` (опционально; интервал логирования агрегированных p50/p95 метрик по `/api/messenger/*` и `/api/support/*`; `0` — выключить)
 - `VIVA_ADMIN_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva Admin API)
 - `VIVA_ADMIN_API_TOKEN=<token>` (опционально; если задан, используется как статический Bearer token)
 - `VIVA_ADMIN_TOKEN_URL=https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token` (опционально; URL получения access token)
@@ -179,6 +181,7 @@ curl http://localhost:3000/api/games \
 - `GET /api/integrations/telegram/outbox?limit=100`
 - `GET /api/support/clients/resolve?connector=MAX_BOT&phone=79991234567`
 - `POST /api/support/dialogs/events`
+- `GET /api/support/debug/runtime` (staff-only диагностика runtime-состояния support persistence/connector registry)
 
 ## Коннекторы мессенджера
 
