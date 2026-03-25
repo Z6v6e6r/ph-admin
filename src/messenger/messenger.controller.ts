@@ -407,9 +407,27 @@ export class MessengerController {
     mappedSupport.forEach((dialog) => merged.set(dialog.threadId, dialog));
 
     const dialogs = Array.from(merged.values()).sort((left, right) => {
+      const leftHasPending = Number(left.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
+      const rightHasPending = Number(right.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
+      if (leftHasPending !== rightHasPending) {
+        return rightHasPending - leftHasPending;
+      }
+
+      const leftRankTs =
+        Date.parse(left.lastRankingMessageAt || left.lastMessageAt || '') || 0;
+      const rightRankTs =
+        Date.parse(right.lastRankingMessageAt || right.lastMessageAt || '') || 0;
+      if (leftRankTs !== rightRankTs) {
+        return rightRankTs - leftRankTs;
+      }
+
       const leftTs = Date.parse(left.lastMessageAt || '') || 0;
       const rightTs = Date.parse(right.lastMessageAt || '') || 0;
-      return rightTs - leftTs;
+      if (leftTs !== rightTs) {
+        return rightTs - leftTs;
+      }
+
+      return left.threadId.localeCompare(right.threadId);
     });
 
     return this.attachVivaCabinetUrls(this.sliceDialogsPage(dialogs, query));

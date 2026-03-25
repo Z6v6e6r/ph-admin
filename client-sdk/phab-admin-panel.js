@@ -4505,6 +4505,12 @@
 
     function sortDialogsByLastMessage(items) {
       return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
+        var leftHasPending = Number(left && left.pendingClientMessagesCount || 0) > 0 ? 1 : 0;
+        var rightHasPending = Number(right && right.pendingClientMessagesCount || 0) > 0 ? 1 : 0;
+        if (leftHasPending !== rightHasPending) {
+          return rightHasPending - leftHasPending;
+        }
+
         var leftRank = parseDateValue(left.lastRankingMessageAt);
         var rightRank = parseDateValue(right.lastRankingMessageAt);
 
