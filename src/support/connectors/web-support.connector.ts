@@ -16,14 +16,24 @@ export class WebSupportConnectorAdapter implements SupportConnectorAdapter {
     dto: IngestSupportEventDto,
     helpers: SupportConnectorNormalizationHelpers
   ): SupportConnectorEventNormalizationPatch {
+    const normalizedEventType = String(dto.eventType ?? '')
+      .trim()
+      .toUpperCase();
+    const isStationSelectionEvent =
+      normalizedEventType === 'STATION_SELECTION' ||
+      normalizedEventType === 'STATION_SELECTED' ||
+      normalizedEventType === 'SELECT_STATION';
+
     return {
       externalUserId: helpers.normalizeIdentityValue(dto.externalUserId),
       externalChatId: helpers.normalizeIdentityValue(dto.externalChatId),
       displayName: helpers.normalizeDisplayName(dto.displayName),
       username: helpers.normalizeIdentityValue(dto.username),
-      selectedStationId: helpers.normalizeStationId(dto.selectedStationId ?? dto.stationId),
+      selectedStationId: helpers.normalizeStationId(
+        dto.selectedStationId ?? (isStationSelectionEvent ? dto.stationId : undefined)
+      ),
       selectedStationName: helpers.normalizeDisplayName(
-        dto.selectedStationName ?? dto.stationName
+        dto.selectedStationName ?? (isStationSelectionEvent ? dto.stationName : undefined)
       ),
       deliverToClient: helpers.resolveDeliverToClient(dto)
     };
