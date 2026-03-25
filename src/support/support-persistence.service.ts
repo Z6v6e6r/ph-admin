@@ -228,47 +228,19 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       };
     }
 
-    const loaded = await Promise.all(
-      activeBackends.map(async (backend) => {
-        const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
-          this.collection<SupportClientProfile>(backend, 'clients')
-            .find({}, { projection: { _id: 0 } })
-            .toArray(),
-          this.collection<SupportDialog>(backend, 'dialogs')
-            .find({}, { projection: { _id: 0 } })
-            .toArray(),
-          this.collection<SupportMessage>(backend, 'messages')
-            .find({}, { projection: { _id: 0 } })
-            .toArray(),
-          this.collection<SupportResponseMetric>(backend, 'responseMetrics')
-            .find({}, { projection: { _id: 0 } })
-            .toArray(),
-          this.collection<SupportOutboxCommand>(backend, 'outbox')
-            .find({}, { projection: { _id: 0 } })
-            .toArray()
-        ]);
-
-        return {
-          backend,
-          clients: clients as SupportClientProfile[],
-          dialogs: dialogs as SupportDialog[],
-          messages: messages as SupportMessage[],
-          responseMetrics: responseMetrics as SupportResponseMetric[],
-          outbox: outbox as SupportOutboxCommand[]
-        };
-      })
-    );
-
     const clientsById = new Map<string, TimestampedEntity<SupportClientProfile>>();
     const dialogsById = new Map<string, TimestampedEntity<SupportDialog>>();
     const messagesById = new Map<string, TimestampedEntity<SupportMessage>>();
     const metricsById = new Map<string, TimestampedEntity<SupportResponseMetric>>();
     const outboxById = new Map<string, TimestampedEntity<SupportOutboxCommand>>();
 
-    for (const snapshot of loaded) {
-      const backendKey = snapshot.backend.config.key;
+    for (const backend of activeBackends) {
+      const backendKey = backend.config.key;
 
-      for (const client of snapshot.clients) {
+      for await (const client of this.collection<SupportClientProfile>(backend, 'clients').find(
+        {},
+        { projection: { _id: 0 } }
+      )) {
         this.upsertByTimestamp(
           clientsById,
           client.id,
@@ -277,7 +249,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         );
       }
 
-      for (const dialog of snapshot.dialogs) {
+      for await (const dialog of this.collection<SupportDialog>(backend, 'dialogs').find(
+        {},
+        { projection: { _id: 0 } }
+      )) {
         if (!this.shouldIncludeDialogForBackend(dialog, backendKey)) {
           continue;
         }
@@ -289,7 +264,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         );
       }
 
-      for (const message of snapshot.messages) {
+      for await (const message of this.collection<SupportMessage>(backend, 'messages').find(
+        {},
+        { projection: { _id: 0 } }
+      )) {
         if (!this.shouldIncludeMessageForBackend(message, backendKey)) {
           continue;
         }
@@ -301,7 +279,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         );
       }
 
-      for (const metric of snapshot.responseMetrics) {
+      for await (const metric of this.collection<SupportResponseMetric>(
+        backend,
+        'responseMetrics'
+      ).find({}, { projection: { _id: 0 } })) {
         if (!this.shouldIncludeResponseMetricForBackend(metric, backendKey)) {
           continue;
         }
@@ -313,7 +294,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         );
       }
 
-      for (const command of snapshot.outbox) {
+      for await (const command of this.collection<SupportOutboxCommand>(backend, 'outbox').find(
+        {},
+        { projection: { _id: 0 } }
+      )) {
         if (!this.shouldIncludeOutboxForBackend(command, backendKey)) {
           continue;
         }
