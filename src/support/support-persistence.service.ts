@@ -570,9 +570,13 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     message: SupportMessage,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
+    const rawMessage = message as unknown as Record<string, unknown>;
+    const resolvedConnector =
+      this.normalizeConnector(message.connector) ??
+      this.normalizeConnector(rawMessage['channel']);
+
     return (
-      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(message.connector)) ===
-      backendKey
+      this.resolveLoadBackendKeyForConnector(resolvedConnector) === backendKey
     );
   }
 
