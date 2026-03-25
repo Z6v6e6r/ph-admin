@@ -14,6 +14,65 @@
 
   var STYLE_ID = 'phab-admin-panel-style';
   var CONNECTOR_ROUTES = ['TG_BOT', 'MAX_BOT', 'LK_WEB_MESSENGER'];
+  var CONNECTOR_CONFIG_PRESETS = {
+    MAX_BOT: {
+      label: 'MAX Bot',
+      description: 'Транспорт сообщений через MAX + support outbox',
+      fields: [
+        'inboundEnabled: включить прием входящих из MAX',
+        'outboxEnabled: включить доставку ответов через outbox',
+        'outboxPollIntervalMs: интервал pull outbox (мс)',
+        'outboxPullLimit: размер пачки сообщений на pull',
+        'outboxLeaseSec: lease на сообщение (сек)',
+        'requireIntegrationToken: требовать x-integration-token',
+        'normalizeStationAlias: маппить station alias (tereh/nagat и т.д.)',
+        'allowedMessageKinds: допустимые kind для входящих событий'
+      ],
+      template: {
+        inboundEnabled: true,
+        outboxEnabled: true,
+        outboxPollIntervalMs: 5000,
+        outboxPullLimit: 20,
+        outboxLeaseSec: 30,
+        requireIntegrationToken: true,
+        normalizeStationAlias: true,
+        allowedMessageKinds: ['TEXT', 'CONTACT', 'STATION_SELECTION', 'COMMAND', 'SYSTEM']
+      }
+    },
+    LK_WEB_MESSENGER: {
+      label: 'LK Web Messenger',
+      description: 'Диалоги и сообщения из web-виджета ЛК',
+      fields: [
+        'inboundEnabled: включить прием входящих из WEB',
+        'widgetEnabled: разрешить web-виджет',
+        'ingestPath: ожидаемый путь входящих событий',
+        'sourceTag: тег источника в metadata',
+        'syncFromMongoEnabled: подтягивать внешние записи из Mongo',
+        'syncIntervalMs: частота синхронизации (мс)',
+        'mapAuthorizedAsVerified: AUTHORIZED => VERIFIED',
+        'resolveStationAliasByName: добавлять alias станции (например tereh)'
+      ],
+      template: {
+        inboundEnabled: true,
+        widgetEnabled: true,
+        ingestPath: '/lk/support/dialogs/events',
+        sourceTag: 'lk_support_widget',
+        syncFromMongoEnabled: true,
+        syncIntervalMs: 5000,
+        mapAuthorizedAsVerified: true,
+        resolveStationAliasByName: true
+      }
+    },
+    TG_BOT: {
+      label: 'Telegram Bot',
+      description: 'Базовый preset TG',
+      fields: ['inboundEnabled: включить прием', 'outboxEnabled: включить outbox'],
+      template: {
+        inboundEnabled: true,
+        outboxEnabled: true
+      }
+    }
+  };
   var SUPPORT_CONNECTOR_ROUTES = [
     'TG_BOT',
     'MAX_BOT',
@@ -1539,6 +1598,42 @@
     );
   }
 
+  function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function getConnectorConfigPreset(route) {
+    return CONNECTOR_CONFIG_PRESETS[String(route || '').trim().toUpperCase()] || null;
+  }
+
+  function cloneObject(value) {
+    return JSON.parse(JSON.stringify(value || {}));
+  }
+
+  function buildConnectorConfigTemplate(route) {
+    var preset = getConnectorConfigPreset(route);
+    if (!preset || !isPlainObject(preset.template)) {
+      return {};
+    }
+    return cloneObject(preset.template);
+  }
+
+  function formatConnectorConfigGuide(route) {
+    var preset = getConnectorConfigPreset(route);
+    if (!preset) {
+      return 'Для этого route нет предустановленного шаблона. Можно сохранить произвольный JSON-объект.';
+    }
+    return (
+      preset.label +
+      ': ' +
+      preset.description +
+      '\n' +
+      preset.fields.map(function (line) {
+        return '• ' + line;
+      }).join('\n')
+    );
+  }
+
   function createRoot(cfg) {
     if (cfg.mountSelector) {
       var mount = document.querySelector(cfg.mountSelector);
@@ -2198,6 +2293,30 @@
     connectorStationsInput.placeholder = 'station-msk-1, station-spb-1';
     connectorForm.appendChild(connectorStationsInput);
 
+    var connectorConfigLabel = document.createElement('label');
+    connectorConfigLabel.className = 'phab-admin-settings-label';
+    connectorConfigLabel.textContent = 'Конфиг коннектора (JSON)';
+    connectorForm.appendChild(connectorConfigLabel);
+
+    var connectorConfigInput = document.createElement('textarea');
+    connectorConfigInput.className = 'phab-admin-settings-input';
+    connectorConfigInput.rows = 8;
+    connectorConfigInput.placeholder = '{"inboundEnabled":true}';
+    connectorConfigInput.style.fontFamily = 'monospace';
+    connectorConfigInput.style.fontSize = '12px';
+    connectorForm.appendChild(connectorConfigInput);
+
+    var connectorConfigTemplateBtn = document.createElement('button');
+    connectorConfigTemplateBtn.className = 'phab-admin-btn-secondary';
+    connectorConfigTemplateBtn.type = 'button';
+    connectorConfigTemplateBtn.textContent = 'Подставить шаблон';
+    connectorForm.appendChild(connectorConfigTemplateBtn);
+
+    var connectorConfigGuide = document.createElement('div');
+    connectorConfigGuide.className = 'phab-admin-settings-row-meta';
+    connectorConfigGuide.style.whiteSpace = 'pre-wrap';
+    connectorForm.appendChild(connectorConfigGuide);
+
     var connectorActiveWrap = document.createElement('label');
     connectorActiveWrap.className = 'phab-admin-check';
     connectorForm.appendChild(connectorActiveWrap);
@@ -2603,6 +2722,9 @@
       connectorNameInput: connectorNameInput,
       connectorRouteInput: connectorRouteInput,
       connectorStationsInput: connectorStationsInput,
+      connectorConfigInput: connectorConfigInput,
+      connectorConfigTemplateBtn: connectorConfigTemplateBtn,
+      connectorConfigGuide: connectorConfigGuide,
       connectorActiveInput: connectorActiveInput,
       connectorCreateBtn: connectorCreateBtn,
       accessList: accessList,
@@ -4503,6 +4625,24 @@
       };
     }
 
+    function normalizeConnectorSettingsItem(item) {
+      if (!item || !item.id) {
+        return null;
+      }
+
+      var route = String(item.route || '').trim().toUpperCase();
+      return {
+        id: String(item.id),
+        name: String(item.name || item.id),
+        route: route,
+        stationIds: Array.isArray(item.stationIds) ? item.stationIds.slice() : [],
+        config: isPlainObject(item.config) ? cloneObject(item.config) : buildConnectorConfigTemplate(route),
+        isActive: item.isActive !== false,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt
+      };
+    }
+
     function sortDialogsByLastMessage(items) {
       return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
         var leftHasPending = Number(left && left.pendingClientMessagesCount || 0) > 0 ? 1 : 0;
@@ -5780,6 +5920,41 @@
       });
     }
 
+    function renderConnectorConfigGuide(route) {
+      dom.connectorConfigGuide.textContent = formatConnectorConfigGuide(route);
+    }
+
+    function applyConnectorConfigTemplateForRoute(route, force) {
+      var shouldFill = force || !String(dom.connectorConfigInput.value || '').trim();
+      if (!shouldFill) {
+        renderConnectorConfigGuide(route);
+        return;
+      }
+      var template = buildConnectorConfigTemplate(route);
+      dom.connectorConfigInput.value = JSON.stringify(template, null, 2);
+      renderConnectorConfigGuide(route);
+    }
+
+    function parseConnectorConfigInput() {
+      var raw = String(dom.connectorConfigInput.value || '').trim();
+      if (!raw) {
+        return buildConnectorConfigTemplate(dom.connectorRouteInput.value);
+      }
+
+      var parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_error) {
+        throw new Error('Некорректный JSON в конфиге коннектора');
+      }
+
+      if (!isPlainObject(parsed)) {
+        throw new Error('Конфиг коннектора должен быть JSON-объектом');
+      }
+
+      return parsed;
+    }
+
     function renderSettingsConnectors() {
       clearNode(dom.connectorList);
       var connectors = state.settings.connectors || [];
@@ -5812,8 +5987,21 @@
           ' · станции: ' +
           (connector.stationIds && connector.stationIds.length > 0
             ? connector.stationIds.join(', ')
-            : 'all');
+            : 'all') +
+          ' · config: ' +
+          (connector.config && Object.keys(connector.config).length > 0
+            ? Object.keys(connector.config).join(', ')
+            : '-');
         main.appendChild(meta);
+
+        var configAction = document.createElement('button');
+        configAction.type = 'button';
+        configAction.className = 'phab-admin-btn-secondary';
+        configAction.textContent = 'Конфиг';
+        configAction.addEventListener('click', function () {
+          editConnectorConfig(connector).catch(handleError);
+        });
+        row.appendChild(configAction);
 
         var action = document.createElement('button');
         action.type = 'button';
@@ -6137,7 +6325,9 @@
         canManageVivaSettings(cfg) ? (await api.getVivaSettings()) || null : null;
       state.settings = {
         stations: settings.stations || [],
-        connectors: settings.connectors || [],
+        connectors: (settings.connectors || [])
+          .map(normalizeConnectorSettingsItem)
+          .filter(Boolean),
         accessRules: settings.accessRules || [],
         adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : [],
         viva: vivaSettings
@@ -6218,14 +6408,17 @@
 
       dom.connectorCreateBtn.disabled = true;
       try {
+        var config = parseConnectorConfigInput();
         await api.createConnector({
           name: name,
           route: dom.connectorRouteInput.value,
           stationIds: parseCsvInput(dom.connectorStationsInput.value),
+          config: config,
           isActive: Boolean(dom.connectorActiveInput.checked)
         });
         dom.connectorNameInput.value = '';
         dom.connectorStationsInput.value = '';
+        applyConnectorConfigTemplateForRoute(dom.connectorRouteInput.value, true);
         dom.connectorActiveInput.checked = true;
         await loadSettings();
         await refreshDialogsView();
@@ -6233,6 +6426,34 @@
       } finally {
         dom.connectorCreateBtn.disabled = false;
       }
+    }
+
+    async function editConnectorConfig(connector) {
+      var current = isPlainObject(connector && connector.config)
+        ? connector.config
+        : buildConnectorConfigTemplate(connector && connector.route);
+      var raw = window.prompt(
+        'Редактирование config (JSON) для ' + String(connector.name || connector.id),
+        JSON.stringify(current, null, 2)
+      );
+      if (raw === null) {
+        return;
+      }
+
+      var parsed;
+      try {
+        parsed = JSON.parse(String(raw || '').trim() || '{}');
+      } catch (_error) {
+        throw new Error('Некорректный JSON в конфиге коннектора');
+      }
+      if (!isPlainObject(parsed)) {
+        throw new Error('Конфиг коннектора должен быть JSON-объектом');
+      }
+
+      await api.updateConnector(connector.id, { config: parsed });
+      await loadSettings();
+      await refreshDialogsView();
+      setStatus('Конфиг коннектора обновлен', false);
     }
 
     async function toggleConnector(connector) {
@@ -6533,6 +6754,12 @@
       dom.connectorCreateBtn.addEventListener('click', function () {
         createConnector().catch(handleError);
       });
+      dom.connectorRouteInput.addEventListener('change', function () {
+        applyConnectorConfigTemplateForRoute(dom.connectorRouteInput.value, false);
+      });
+      dom.connectorConfigTemplateBtn.addEventListener('click', function () {
+        applyConnectorConfigTemplateForRoute(dom.connectorRouteInput.value, true);
+      });
       dom.accessCreateBtn.addEventListener('click', function () {
         createAccessRule().catch(handleError);
       });
@@ -6592,6 +6819,7 @@
         }
       };
       document.addEventListener('keydown', documentKeydownHandler);
+      applyConnectorConfigTemplateForRoute(dom.connectorRouteInput.value, false);
     }
 
     async function init() {

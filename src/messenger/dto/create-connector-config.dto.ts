@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -28,4 +29,8 @@ export class CreateConnectorConfigDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  config?: Record<string, unknown>;
 }

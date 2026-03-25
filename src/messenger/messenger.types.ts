@@ -78,6 +78,7 @@ export interface MessengerConnectorConfig {
   name: string;
   route: ConnectorRoute;
   stationIds: string[];
+  config: Record<string, string | number | boolean | string[]>;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

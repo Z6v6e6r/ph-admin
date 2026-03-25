@@ -2,6 +2,7 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -24,4 +25,8 @@ export class UpdateConnectorConfigDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  config?: Record<string, unknown>;
 }

@@ -102,7 +102,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     if (state.connectors.length > 0) {
       this.connectorConfigs.clear();
       for (const connector of state.connectors) {
-        this.connectorConfigs.set(connector.id, connector);
+        this.connectorConfigs.set(connector.id, this.normalizeLoadedConnectorConfig(connector));
       }
     } else {
       for (const connector of this.connectorConfigs.values()) {
@@ -502,6 +502,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       name: dto.name.trim(),
       route: dto.route,
       stationIds,
+      config: this.normalizeConnectorRuntimeConfig(dto.route, dto.config),
       isActive: dto.isActive ?? true,
       createdAt: now,
       updatedAt: now
@@ -533,6 +534,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       ...existing,
       name: dto.name?.trim() || existing.name,
       stationIds,
+      config:
+        dto.config === undefined
+          ? this.normalizeConnectorRuntimeConfig(existing.route, existing.config)
+          : this.normalizeConnectorRuntimeConfig(existing.route, dto.config),
       isActive: dto.isActive ?? existing.isActive,
       updatedAt: new Date().toISOString()
     };
@@ -995,6 +1000,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       name: route,
       route,
       stationIds: [],
+      config: this.normalizeConnectorRuntimeConfig(route),
       isActive: true,
       createdAt: now,
       updatedAt: now
@@ -1199,6 +1205,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
         name: route,
         route,
         stationIds: [],
+        config: this.normalizeConnectorRuntimeConfig(route),
         isActive: true,
         createdAt: now,
         updatedAt: now
@@ -1247,6 +1254,104 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       this.threads.set(thread.id, thread);
       this.persistence.persistThread(thread);
     }
+  }
+
+  private normalizeLoadedConnectorConfig(
+    connector: MessengerConnectorConfig
+  ): MessengerConnectorConfig {
+    return {
+      ...connector,
+      stationIds: this.normalizeStationIds(connector.stationIds),
+      config: this.normalizeConnectorRuntimeConfig(connector.route, connector.config)
+    };
+  }
+
+  private normalizeConnectorRuntimeConfig(
+    route: ConnectorRoute,
+    rawConfig?: Record<string, unknown>
+  ): Record<string, string | number | boolean | string[]> {
+    const defaults = this.defaultConnectorRuntimeConfig(route);
+    const source =
+      rawConfig && typeof rawConfig === 'object' && !Array.isArray(rawConfig)
+        ? rawConfig
+        : {};
+    const normalized: Record<string, string | number | boolean | string[]> = {
+      ...defaults
+    };
+
+    for (const [key, value] of Object.entries(source)) {
+      const normalizedValue = this.normalizeConnectorRuntimeConfigValue(value);
+      if (normalizedValue === undefined) {
+        continue;
+      }
+      normalized[key] = normalizedValue;
+    }
+
+    return normalized;
+  }
+
+  private defaultConnectorRuntimeConfig(
+    route: ConnectorRoute
+  ): Record<string, string | number | boolean | string[]> {
+    if (route === ConnectorRoute.MAX_BOT) {
+      return {
+        inboundEnabled: true,
+        outboxEnabled: true,
+        outboxPollIntervalMs: 5000,
+        outboxPullLimit: 20,
+        outboxLeaseSec: 30,
+        requireIntegrationToken: true,
+        normalizeStationAlias: true,
+        allowedMessageKinds: ['TEXT', 'CONTACT', 'STATION_SELECTION', 'COMMAND', 'SYSTEM']
+      };
+    }
+
+    if (route === ConnectorRoute.LK_WEB_MESSENGER) {
+      return {
+        inboundEnabled: true,
+        widgetEnabled: true,
+        ingestPath: '/lk/support/dialogs/events',
+        sourceTag: 'lk_support_widget',
+        syncFromMongoEnabled: true,
+        syncIntervalMs: 5000,
+        mapAuthorizedAsVerified: true,
+        resolveStationAliasByName: true
+      };
+    }
+
+    return {
+      inboundEnabled: true,
+      outboxEnabled: true
+    };
+  }
+
+  private normalizeConnectorRuntimeConfigValue(
+    value: unknown
+  ): string | number | boolean | string[] | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => {
+          if (typeof item === 'string') {
+            return item.trim();
+          }
+          if (typeof item === 'number' || typeof item === 'boolean') {
+            return String(item);
+          }
+          return '';
+        })
+        .filter((item) => item.length > 0);
+    }
+    return undefined;
   }
 
   private countUnreadMessagesForUser(thread: ChatThread, user: RequestUser): number {

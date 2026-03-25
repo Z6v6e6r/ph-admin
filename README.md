@@ -188,6 +188,22 @@ curl http://localhost:3000/api/games \
 - `MAX_BOT`
 - `LK_WEB_MESSENGER`
 
+Для каждого коннектора в `messenger/settings/connectors` теперь поддерживается поле `config`
+(JSON-объект с runtime-настройками, редактируется во вкладке `Настройки`).
+
+Базовые presets:
+
+- `MAX_BOT`:
+  `inboundEnabled`, `outboxEnabled`, `outboxPollIntervalMs`, `outboxPullLimit`,
+  `outboxLeaseSec`, `requireIntegrationToken`, `normalizeStationAlias`,
+  `allowedMessageKinds`
+- `LK_WEB_MESSENGER`:
+  `inboundEnabled`, `widgetEnabled`, `ingestPath`, `sourceTag`,
+  `syncFromMongoEnabled`, `syncIntervalMs`, `mapAuthorizedAsVerified`,
+  `resolveStationAliasByName`
+
+Можно сохранять и дополнительные custom-ключи в `config` для будущих коннекторов.
+
 При создании диалога (`POST /api/messenger/threads`) обязательно передаются:
 
 - `connector`
