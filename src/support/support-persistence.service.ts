@@ -1,8 +1,9 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Collection, Db, MongoClient } from 'mongodb';
+import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import {
   SupportClientProfile,
+  SupportConnectorRoute,
   SupportDialog,
   SupportMessage,
   SupportOutboxCommand,
@@ -25,6 +26,22 @@ export interface SupportPersistenceCollectionCounts {
   outbox: number;
 }
 
+export interface SupportPersistenceBackendDiagnostics {
+  key: string;
+  enabled: boolean;
+  resolvedDbName: string;
+  activeDbName?: string;
+  collections: {
+    clients: string;
+    dialogs: string;
+    messages: string;
+    responseMetrics: string;
+    outbox: string;
+  };
+  counts?: SupportPersistenceCollectionCounts;
+  countError?: string;
+}
+
 export interface SupportPersistenceRuntimeDiagnostics {
   enabled: boolean;
   resolvedDbName: string;
@@ -41,117 +58,167 @@ export interface SupportPersistenceRuntimeDiagnostics {
     mongoUriConfigured: boolean;
     supportMongoDb?: string;
     mongoDb?: string;
+    supportWebMongoUriConfigured: boolean;
+    supportWebMongoDb?: string;
+    supportMaxMongoUriConfigured: boolean;
+    supportMaxMongoDb?: string;
   };
   counts?: SupportPersistenceCollectionCounts;
   countError?: string;
+  routing: {
+    webBackendKey: string;
+    maxBackendKey: string;
+  };
+  backends: SupportPersistenceBackendDiagnostics[];
+}
+
+type SupportPersistenceBackendKey = 'primary' | 'web' | 'max';
+type SupportPersistenceCollectionKey =
+  | 'clients'
+  | 'dialogs'
+  | 'messages'
+  | 'responseMetrics'
+  | 'outbox';
+
+interface SupportPersistenceBackendConfig {
+  key: SupportPersistenceBackendKey;
+  uri?: string;
+  dbName: string;
+  collections: {
+    clients: string;
+    dialogs: string;
+    messages: string;
+    responseMetrics: string;
+    outbox: string;
+  };
+}
+
+interface SupportPersistenceBackendState {
+  config: SupportPersistenceBackendConfig;
+  client?: MongoClient;
+  db?: Db;
+}
+
+interface TimestampedEntity<T> {
+  entity: T;
+  timestamp: number;
 }
 
 @Injectable()
 export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SupportPersistenceService.name);
-  private client?: MongoClient;
-  private db?: Db;
+
   private readonly supportMongoUri = this.readEnv('SUPPORT_MONGODB_URI');
   private readonly fallbackMongoUri = this.readEnv('MONGODB_URI');
-  private readonly resolvedMongoUri = this.supportMongoUri ?? this.fallbackMongoUri;
   private readonly supportMongoDb = this.readEnv('SUPPORT_MONGODB_DB');
   private readonly fallbackMongoDb = this.readEnv('MONGODB_DB');
-  private readonly resolvedDbName =
-    this.supportMongoDb ??
-    this.fallbackMongoDb ??
-    DEFAULT_DIALOGS_MONGODB_DB;
-  private readonly clientsCollectionName =
-    this.readEnv('SUPPORT_CLIENTS_COLLECTION') ?? 'support_clients';
-  private readonly dialogsCollectionName =
-    this.readEnv('SUPPORT_DIALOGS_COLLECTION') ?? 'support_dialogs';
-  private readonly messagesCollectionName =
-    this.readEnv('SUPPORT_MESSAGES_COLLECTION') ?? 'support_messages';
-  private readonly responseMetricsCollectionName =
-    this.readEnv('SUPPORT_RESPONSE_METRICS_COLLECTION') ?? 'support_response_metrics';
-  private readonly outboxCollectionName =
-    this.readEnv('SUPPORT_OUTBOX_COLLECTION') ?? 'support_outbox';
+
+  private readonly supportWebMongoUri = this.readEnv('SUPPORT_WEB_MONGODB_URI');
+  private readonly supportWebMongoDb = this.readEnv('SUPPORT_WEB_MONGODB_DB');
+
+  private readonly supportMaxMongoUri = this.readEnv('SUPPORT_MAX_MONGODB_URI');
+  private readonly supportMaxMongoDb = this.readEnv('SUPPORT_MAX_MONGODB_DB');
+
+  private readonly primaryCollections = {
+    clients: this.readEnv('SUPPORT_CLIENTS_COLLECTION') ?? 'support_clients',
+    dialogs: this.readEnv('SUPPORT_DIALOGS_COLLECTION') ?? 'support_dialogs',
+    messages: this.readEnv('SUPPORT_MESSAGES_COLLECTION') ?? 'support_messages',
+    responseMetrics:
+      this.readEnv('SUPPORT_RESPONSE_METRICS_COLLECTION') ?? 'support_response_metrics',
+    outbox: this.readEnv('SUPPORT_OUTBOX_COLLECTION') ?? 'support_outbox'
+  };
+
+  private readonly backendConfigs = this.buildBackendConfigs();
+  private readonly backendStates = new Map<SupportPersistenceBackendKey, SupportPersistenceBackendState>();
 
   async onModuleInit(): Promise<void> {
-    const uri = this.resolvedMongoUri;
-    if (!uri) {
-      this.logger.log(
-        'SUPPORT_MONGODB_URI/MONGODB_URI is empty. Support persistence disabled (in-memory mode).'
-      );
-      return;
+    for (const config of this.backendConfigs) {
+      if (!config.uri) {
+        this.logger.warn(
+          `Support persistence backend ${config.key} has no Mongo URI and will be disabled.`
+        );
+        this.backendStates.set(config.key, { config });
+        continue;
+      }
+
+      const state: SupportPersistenceBackendState = { config };
+      this.backendStates.set(config.key, state);
+
+      const client = new MongoClient(config.uri, {
+        serverSelectionTimeoutMS: 5000,
+        maxPoolSize: 20
+      });
+
+      try {
+        await client.connect();
+        state.client = client;
+        state.db = client.db(config.dbName);
+        await this.ensureIndexes(state);
+        this.logger.log(
+          `MongoDB support persistence enabled. backend=${config.key} db=${config.dbName}`
+        );
+      } catch (error) {
+        this.logger.error(
+          `MongoDB connect failed for backend=${config.key}: ${String(error)}`
+        );
+        await this.safeCloseBackend(state);
+      }
     }
 
-    this.client = new MongoClient(uri, {
-      serverSelectionTimeoutMS: 5000,
-      maxPoolSize: 20
-    });
-
-    try {
-      await this.client.connect();
-      this.db = this.client.db(this.resolvedDbName);
-      await this.ensureIndexes();
-      this.logger.log(`MongoDB support persistence enabled. db=${this.resolvedDbName}`);
-    } catch (error) {
-      this.logger.error(`MongoDB connect failed: ${String(error)}`);
-      this.db = undefined;
-      await this.safeCloseClient();
+    if (!this.isEnabled()) {
+      this.logger.log(
+        'Support persistence has no active backend. Running in-memory mode.'
+      );
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.safeCloseClient();
+    await Promise.all(
+      Array.from(this.backendStates.values()).map((state) => this.safeCloseBackend(state))
+    );
   }
 
   isEnabled(): boolean {
-    return Boolean(this.db);
+    return this.getActiveBackends().length > 0;
   }
 
   async getRuntimeDiagnostics(): Promise<SupportPersistenceRuntimeDiagnostics> {
-    const result: SupportPersistenceRuntimeDiagnostics = {
+    const backendDiagnostics = await Promise.all(
+      this.backendConfigs.map((config) => this.collectBackendDiagnostics(config))
+    );
+
+    const primary = backendDiagnostics.find((backend) => backend.key === 'primary');
+    const fallback = backendDiagnostics.find((backend) => backend.enabled);
+    const selected = primary ?? fallback ?? backendDiagnostics[0];
+
+    return {
       enabled: this.isEnabled(),
-      resolvedDbName: this.resolvedDbName,
-      activeDbName: this.db?.databaseName,
-      collections: {
-        clients: this.clientsCollectionName,
-        dialogs: this.dialogsCollectionName,
-        messages: this.messagesCollectionName,
-        responseMetrics: this.responseMetricsCollectionName,
-        outbox: this.outboxCollectionName
-      },
+      resolvedDbName: selected?.resolvedDbName ?? this.resolvePrimaryDbName(),
+      activeDbName: selected?.activeDbName,
+      collections: selected?.collections ?? this.primaryCollections,
       env: {
         supportMongoUriConfigured: Boolean(this.supportMongoUri),
         mongoUriConfigured: Boolean(this.fallbackMongoUri),
         supportMongoDb: this.supportMongoDb,
-        mongoDb: this.fallbackMongoDb
-      }
+        mongoDb: this.fallbackMongoDb,
+        supportWebMongoUriConfigured: Boolean(this.supportWebMongoUri),
+        supportWebMongoDb: this.supportWebMongoDb,
+        supportMaxMongoUriConfigured: Boolean(this.supportMaxMongoUri),
+        supportMaxMongoDb: this.supportMaxMongoDb
+      },
+      counts: selected?.counts,
+      countError: selected?.countError,
+      routing: {
+        webBackendKey: this.resolveBackendKeyForConnector(SupportConnectorRoute.LK_WEB_MESSENGER),
+        maxBackendKey: this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)
+      },
+      backends: backendDiagnostics
     };
-    if (!this.db) {
-      return result;
-    }
-
-    try {
-      const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
-        this.clients().countDocuments({}),
-        this.dialogs().countDocuments({}),
-        this.messages().countDocuments({}),
-        this.responseMetrics().countDocuments({}),
-        this.outbox().countDocuments({})
-      ]);
-      result.counts = {
-        clients,
-        dialogs,
-        messages,
-        responseMetrics,
-        outbox
-      };
-    } catch (error) {
-      result.countError = String(error);
-    }
-
-    return result;
   }
 
   async loadState(): Promise<SupportPersistedState> {
-    if (!this.db) {
+    const activeBackends = this.getActiveBackends();
+    if (activeBackends.length === 0) {
       return {
         clients: [],
         dialogs: [],
@@ -161,106 +228,612 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       };
     }
 
-    const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
-      this.clients().find({}, { projection: { _id: 0 } }).toArray(),
-      this.dialogs().find({}, { projection: { _id: 0 } }).toArray(),
-      this.messages().find({}, { projection: { _id: 0 } }).toArray(),
-      this.responseMetrics().find({}, { projection: { _id: 0 } }).toArray(),
-      this.outbox().find({}, { projection: { _id: 0 } }).toArray()
-    ]);
+    const loaded = await Promise.all(
+      activeBackends.map(async (backend) => {
+        const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find({}, { projection: { _id: 0 } })
+            .toArray(),
+          this.collection<SupportDialog>(backend, 'dialogs')
+            .find({}, { projection: { _id: 0 } })
+            .toArray(),
+          this.collection<SupportMessage>(backend, 'messages')
+            .find({}, { projection: { _id: 0 } })
+            .toArray(),
+          this.collection<SupportResponseMetric>(backend, 'responseMetrics')
+            .find({}, { projection: { _id: 0 } })
+            .toArray(),
+          this.collection<SupportOutboxCommand>(backend, 'outbox')
+            .find({}, { projection: { _id: 0 } })
+            .toArray()
+        ]);
+
+        return {
+          backend,
+          clients: clients as SupportClientProfile[],
+          dialogs: dialogs as SupportDialog[],
+          messages: messages as SupportMessage[],
+          responseMetrics: responseMetrics as SupportResponseMetric[],
+          outbox: outbox as SupportOutboxCommand[]
+        };
+      })
+    );
+
+    const clientsById = new Map<string, TimestampedEntity<SupportClientProfile>>();
+    const dialogsById = new Map<string, TimestampedEntity<SupportDialog>>();
+    const messagesById = new Map<string, TimestampedEntity<SupportMessage>>();
+    const metricsById = new Map<string, TimestampedEntity<SupportResponseMetric>>();
+    const outboxById = new Map<string, TimestampedEntity<SupportOutboxCommand>>();
+
+    for (const snapshot of loaded) {
+      const backendKey = snapshot.backend.config.key;
+
+      for (const client of snapshot.clients) {
+        this.upsertByTimestamp(
+          clientsById,
+          client.id,
+          client,
+          this.resolveClientTimestamp(client)
+        );
+      }
+
+      for (const dialog of snapshot.dialogs) {
+        if (!this.shouldIncludeDialogForBackend(dialog, backendKey)) {
+          continue;
+        }
+        this.upsertByTimestamp(
+          dialogsById,
+          dialog.id,
+          dialog,
+          this.resolveDialogTimestamp(dialog)
+        );
+      }
+
+      for (const message of snapshot.messages) {
+        if (!this.shouldIncludeMessageForBackend(message, backendKey)) {
+          continue;
+        }
+        this.upsertByTimestamp(
+          messagesById,
+          message.id,
+          message,
+          this.resolveMessageTimestamp(message)
+        );
+      }
+
+      for (const metric of snapshot.responseMetrics) {
+        if (!this.shouldIncludeResponseMetricForBackend(metric, backendKey)) {
+          continue;
+        }
+        this.upsertByTimestamp(
+          metricsById,
+          metric.id,
+          metric,
+          this.resolveResponseMetricTimestamp(metric)
+        );
+      }
+
+      for (const command of snapshot.outbox) {
+        if (!this.shouldIncludeOutboxForBackend(command, backendKey)) {
+          continue;
+        }
+        this.upsertByTimestamp(
+          outboxById,
+          command.id,
+          command,
+          this.resolveOutboxTimestamp(command)
+        );
+      }
+    }
 
     return {
-      clients: clients as SupportClientProfile[],
-      dialogs: dialogs as SupportDialog[],
-      messages: messages as SupportMessage[],
-      responseMetrics: responseMetrics as SupportResponseMetric[],
-      outbox: outbox as SupportOutboxCommand[]
+      clients: Array.from(clientsById.values()).map((item) => item.entity),
+      dialogs: Array.from(dialogsById.values()).map((item) => item.entity),
+      messages: Array.from(messagesById.values()).map((item) => item.entity),
+      responseMetrics: Array.from(metricsById.values()).map((item) => item.entity),
+      outbox: Array.from(outboxById.values()).map((item) => item.entity)
     };
   }
 
   persistClient(client: SupportClientProfile): void {
-    this.fireAndForget(
-      async () => {
-        await this.clients().updateOne({ id: client.id }, { $set: client }, { upsert: true });
-      },
-      'persistClient'
-    );
+    this.fireAndForget(async () => {
+      const activeBackends = this.getActiveBackends();
+      await Promise.all(
+        activeBackends.map((backend) =>
+          this.collection<SupportClientProfile>(backend, 'clients').updateOne(
+            { id: client.id },
+            { $set: client },
+            { upsert: true }
+          )
+        )
+      );
+    }, 'persistClient');
   }
 
   deleteClient(id: string): void {
-    this.fireAndForget(
-      async () => {
-        await this.clients().deleteOne({ id });
-      },
-      'deleteClient'
-    );
+    this.fireAndForget(async () => {
+      const activeBackends = this.getActiveBackends();
+      await Promise.all(
+        activeBackends.map((backend) =>
+          this.collection<SupportClientProfile>(backend, 'clients').deleteOne({ id })
+        )
+      );
+    }, 'deleteClient');
   }
 
   persistDialog(dialog: SupportDialog): void {
-    this.fireAndForget(
-      async () => {
-        await this.dialogs().updateOne({ id: dialog.id }, { $set: dialog }, { upsert: true });
-      },
-      'persistDialog'
-    );
+    this.fireAndForget(async () => {
+      const target = this.resolveTargetBackendForDialog(dialog);
+      if (!target) {
+        return;
+      }
+
+      await this.collection<SupportDialog>(target, 'dialogs').updateOne(
+        { id: dialog.id },
+        { $set: dialog },
+        { upsert: true }
+      );
+
+      await this.deleteFromOtherBackends(target.config.key, 'dialogs', dialog.id);
+    }, 'persistDialog');
   }
 
   deleteDialog(id: string): void {
-    this.fireAndForget(
-      async () => {
-        await this.dialogs().deleteOne({ id });
-      },
-      'deleteDialog'
-    );
+    this.fireAndForget(async () => {
+      const activeBackends = this.getActiveBackends();
+      await Promise.all(
+        activeBackends.map((backend) =>
+          this.collection<SupportDialog>(backend, 'dialogs').deleteOne({ id })
+        )
+      );
+    }, 'deleteDialog');
   }
 
   persistMessage(message: SupportMessage): void {
-    this.fireAndForget(
-      async () => {
-        await this.messages().updateOne({ id: message.id }, { $set: message }, { upsert: true });
-      },
-      'persistMessage'
-    );
+    this.fireAndForget(async () => {
+      const target = this.resolveTargetBackendForConnector(message.connector);
+      if (!target) {
+        return;
+      }
+
+      await this.collection<SupportMessage>(target, 'messages').updateOne(
+        { id: message.id },
+        { $set: message },
+        { upsert: true }
+      );
+
+      await this.deleteFromOtherBackends(target.config.key, 'messages', message.id);
+    }, 'persistMessage');
   }
 
   persistResponseMetric(metric: SupportResponseMetric): void {
-    this.fireAndForget(
-      async () => {
-        await this.responseMetrics().updateOne({ id: metric.id }, { $set: metric }, { upsert: true });
-      },
-      'persistResponseMetric'
-    );
+    this.fireAndForget(async () => {
+      const target = this.resolveTargetBackendForConnector(metric.connector);
+      if (!target) {
+        return;
+      }
+
+      await this.collection<SupportResponseMetric>(target, 'responseMetrics').updateOne(
+        { id: metric.id },
+        { $set: metric },
+        { upsert: true }
+      );
+
+      await this.deleteFromOtherBackends(target.config.key, 'responseMetrics', metric.id);
+    }, 'persistResponseMetric');
   }
 
   persistOutboxCommand(command: SupportOutboxCommand): void {
-    this.fireAndForget(
-      async () => {
-        await this.outbox().updateOne({ id: command.id }, { $set: command }, { upsert: true });
-      },
-      'persistOutboxCommand'
+    this.fireAndForget(async () => {
+      const target = this.resolveTargetBackendForConnector(command.connector);
+      if (!target) {
+        return;
+      }
+
+      await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
+        { id: command.id },
+        { $set: command },
+        { upsert: true }
+      );
+
+      await this.deleteFromOtherBackends(target.config.key, 'outbox', command.id);
+    }, 'persistOutboxCommand');
+  }
+
+  private buildBackendConfigs(): SupportPersistenceBackendConfig[] {
+    const primaryUri = this.supportMongoUri ?? this.fallbackMongoUri;
+    const primaryDbName = this.resolvePrimaryDbName();
+
+    const primary: SupportPersistenceBackendConfig = {
+      key: 'primary',
+      uri: primaryUri,
+      dbName: primaryDbName,
+      collections: this.primaryCollections
+    };
+
+    const configs: SupportPersistenceBackendConfig[] = [primary];
+
+    if (this.supportWebMongoDb) {
+      configs.push({
+        key: 'web',
+        uri: this.supportWebMongoUri ?? primaryUri,
+        dbName: this.supportWebMongoDb,
+        collections: {
+          clients:
+            this.readEnv('SUPPORT_WEB_CLIENTS_COLLECTION') ?? this.primaryCollections.clients,
+          dialogs:
+            this.readEnv('SUPPORT_WEB_DIALOGS_COLLECTION') ?? this.primaryCollections.dialogs,
+          messages:
+            this.readEnv('SUPPORT_WEB_MESSAGES_COLLECTION') ?? this.primaryCollections.messages,
+          responseMetrics:
+            this.readEnv('SUPPORT_WEB_RESPONSE_METRICS_COLLECTION') ??
+            this.primaryCollections.responseMetrics,
+          outbox:
+            this.readEnv('SUPPORT_WEB_OUTBOX_COLLECTION') ?? this.primaryCollections.outbox
+        }
+      });
+    }
+
+    if (this.supportMaxMongoDb) {
+      configs.push({
+        key: 'max',
+        uri: this.supportMaxMongoUri ?? primaryUri,
+        dbName: this.supportMaxMongoDb,
+        collections: {
+          clients:
+            this.readEnv('SUPPORT_MAX_CLIENTS_COLLECTION') ?? this.primaryCollections.clients,
+          dialogs:
+            this.readEnv('SUPPORT_MAX_DIALOGS_COLLECTION') ?? this.primaryCollections.dialogs,
+          messages:
+            this.readEnv('SUPPORT_MAX_MESSAGES_COLLECTION') ?? this.primaryCollections.messages,
+          responseMetrics:
+            this.readEnv('SUPPORT_MAX_RESPONSE_METRICS_COLLECTION') ??
+            this.primaryCollections.responseMetrics,
+          outbox:
+            this.readEnv('SUPPORT_MAX_OUTBOX_COLLECTION') ?? this.primaryCollections.outbox
+        }
+      });
+    }
+
+    return configs;
+  }
+
+  private resolvePrimaryDbName(): string {
+    return this.supportMongoDb ?? this.fallbackMongoDb ?? DEFAULT_DIALOGS_MONGODB_DB;
+  }
+
+  private getBackendState(key: SupportPersistenceBackendKey):
+    | SupportPersistenceBackendState
+    | undefined {
+    return this.backendStates.get(key);
+  }
+
+  private getActiveBackends(): SupportPersistenceBackendState[] {
+    return Array.from(this.backendStates.values()).filter((state) => Boolean(state.db));
+  }
+
+  private hasActiveBackend(key: SupportPersistenceBackendKey): boolean {
+    return Boolean(this.getBackendState(key)?.db);
+  }
+
+  private resolveTargetBackendForDialog(
+    dialog: SupportDialog
+  ): SupportPersistenceBackendState | undefined {
+    const connector = this.extractDialogPrimaryConnector(dialog);
+    return this.resolveTargetBackendForConnector(connector);
+  }
+
+  private resolveTargetBackendForConnector(
+    connector?: SupportConnectorRoute
+  ): SupportPersistenceBackendState | undefined {
+    const preferredKey = this.resolveBackendKeyForConnector(connector);
+
+    const preferred = this.getBackendState(preferredKey);
+    if (preferred?.db) {
+      return preferred;
+    }
+
+    const primary = this.getBackendState('primary');
+    if (primary?.db) {
+      return primary;
+    }
+
+    return this.getActiveBackends()[0];
+  }
+
+  private resolveBackendKeyForConnector(
+    connector?: SupportConnectorRoute
+  ): SupportPersistenceBackendKey {
+    if (
+      connector === SupportConnectorRoute.LK_WEB_MESSENGER &&
+      this.backendConfigs.some((config) => config.key === 'web')
+    ) {
+      return 'web';
+    }
+
+    if (
+      connector === SupportConnectorRoute.MAX_BOT &&
+      this.backendConfigs.some((config) => config.key === 'max')
+    ) {
+      return 'max';
+    }
+
+    return 'primary';
+  }
+
+  private resolveLoadBackendKeyForConnector(
+    connector?: SupportConnectorRoute
+  ): SupportPersistenceBackendKey {
+    const preferred = this.resolveBackendKeyForConnector(connector);
+    if (this.hasActiveBackend(preferred)) {
+      return preferred;
+    }
+    if (this.hasActiveBackend('primary')) {
+      return 'primary';
+    }
+    return preferred;
+  }
+
+  private shouldIncludeDialogForBackend(
+    dialog: SupportDialog,
+    backendKey: SupportPersistenceBackendKey
+  ): boolean {
+    const connector = this.extractDialogPrimaryConnector(dialog);
+    return this.resolveLoadBackendKeyForConnector(connector) === backendKey;
+  }
+
+  private shouldIncludeMessageForBackend(
+    message: SupportMessage,
+    backendKey: SupportPersistenceBackendKey
+  ): boolean {
+    return (
+      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(message.connector)) ===
+      backendKey
     );
   }
 
-  private clients(): Collection<SupportClientProfile> {
-    return this.requireDb().collection<SupportClientProfile>(this.clientsCollectionName);
-  }
-
-  private dialogs(): Collection<SupportDialog> {
-    return this.requireDb().collection<SupportDialog>(this.dialogsCollectionName);
-  }
-
-  private messages(): Collection<SupportMessage> {
-    return this.requireDb().collection<SupportMessage>(this.messagesCollectionName);
-  }
-
-  private responseMetrics(): Collection<SupportResponseMetric> {
-    return this.requireDb().collection<SupportResponseMetric>(
-      this.responseMetricsCollectionName
+  private shouldIncludeResponseMetricForBackend(
+    metric: SupportResponseMetric,
+    backendKey: SupportPersistenceBackendKey
+  ): boolean {
+    return (
+      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(metric.connector)) ===
+      backendKey
     );
   }
 
-  private outbox(): Collection<SupportOutboxCommand> {
-    return this.requireDb().collection<SupportOutboxCommand>(this.outboxCollectionName);
+  private shouldIncludeOutboxForBackend(
+    command: SupportOutboxCommand,
+    backendKey: SupportPersistenceBackendKey
+  ): boolean {
+    return (
+      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(command.connector)) ===
+      backendKey
+    );
+  }
+
+  private extractDialogPrimaryConnector(dialog: SupportDialog): SupportConnectorRoute | undefined {
+    const rawDialog = dialog as unknown as Record<string, unknown>;
+    const candidates: unknown[] = [
+      dialog.lastInboundConnector,
+      dialog.lastReplyConnector,
+      rawDialog['lastInboundChannel'],
+      rawDialog['lastOutboundChannel'],
+      rawDialog['lastChannel']
+    ];
+
+    if (Array.isArray(dialog.connectors)) {
+      candidates.push(...dialog.connectors);
+    }
+
+    const channels = rawDialog['channels'];
+    if (Array.isArray(channels)) {
+      candidates.push(...channels);
+    }
+
+    for (const candidate of candidates) {
+      const normalized = this.normalizeConnector(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    return undefined;
+  }
+
+  private normalizeConnector(rawConnector: unknown): SupportConnectorRoute | undefined {
+    const normalized = String(rawConnector ?? '').trim().toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (['LK_WEB_MESSENGER', 'WEB', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
+      return SupportConnectorRoute.LK_WEB_MESSENGER;
+    }
+    if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
+      return SupportConnectorRoute.TG_BOT;
+    }
+    if (['MAX_BOT', 'MAX'].includes(normalized)) {
+      return SupportConnectorRoute.MAX_BOT;
+    }
+    if (['EMAIL', 'MAIL'].includes(normalized)) {
+      return SupportConnectorRoute.EMAIL;
+    }
+    if (['PHONE_CALL', 'CALL', 'PHONE'].includes(normalized)) {
+      return SupportConnectorRoute.PHONE_CALL;
+    }
+    if (['BITRIX', 'BITRIX24'].includes(normalized)) {
+      return SupportConnectorRoute.BITRIX;
+    }
+
+    return undefined;
+  }
+
+  private collection<T extends Document>(
+    backend: SupportPersistenceBackendState,
+    key: SupportPersistenceCollectionKey
+  ): Collection<T> {
+    if (!backend.db) {
+      throw new Error(`MongoDB backend ${backend.config.key} is not initialized`);
+    }
+    return backend.db.collection<T>(backend.config.collections[key]);
+  }
+
+  private async ensureIndexes(backend: SupportPersistenceBackendState): Promise<void> {
+    await Promise.all([
+      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+        { id: 1 },
+        { unique: true }
+      ),
+      this.collection<SupportClientProfile>(backend, 'clients').createIndex({ phones: 1 }),
+      this.collection<SupportClientProfile>(backend, 'clients').createIndex({ emails: 1 }),
+      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+        { 'identities.connector': 1, 'identities.externalUserId': 1 }
+      ),
+      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+        { 'identities.connector': 1, 'identities.externalChatId': 1 }
+      ),
+      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ id: 1 }, { unique: true }),
+      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ stationId: 1, updatedAt: -1 }),
+      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ accessStationIds: 1, updatedAt: -1 }),
+      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ clientId: 1, status: 1 }),
+      this.collection<SupportMessage>(backend, 'messages').createIndex({ id: 1 }, { unique: true }),
+      this.collection<SupportMessage>(backend, 'messages').createIndex({ dialogId: 1, createdAt: 1 }),
+      this.collection<SupportMessage>(backend, 'messages').createIndex({ clientId: 1, createdAt: 1 }),
+      this.collection<SupportResponseMetric>(backend, 'responseMetrics').createIndex(
+        { id: 1 },
+        { unique: true }
+      ),
+      this.collection<SupportResponseMetric>(backend, 'responseMetrics').createIndex({
+        dialogId: 1,
+        startedAt: -1
+      }),
+      this.collection<SupportOutboxCommand>(backend, 'outbox').createIndex(
+        { id: 1 },
+        { unique: true }
+      ),
+      this.collection<SupportOutboxCommand>(backend, 'outbox').createIndex({
+        connector: 1,
+        status: 1,
+        createdAt: 1
+      })
+    ]);
+  }
+
+  private async collectBackendDiagnostics(
+    config: SupportPersistenceBackendConfig
+  ): Promise<SupportPersistenceBackendDiagnostics> {
+    const state = this.getBackendState(config.key);
+    const diagnostics: SupportPersistenceBackendDiagnostics = {
+      key: config.key,
+      enabled: Boolean(state?.db),
+      resolvedDbName: config.dbName,
+      activeDbName: state?.db?.databaseName,
+      collections: config.collections
+    };
+
+    if (!state?.db) {
+      return diagnostics;
+    }
+
+    try {
+      const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
+        this.collection<SupportClientProfile>(state, 'clients').countDocuments({}),
+        this.collection<SupportDialog>(state, 'dialogs').countDocuments({}),
+        this.collection<SupportMessage>(state, 'messages').countDocuments({}),
+        this.collection<SupportResponseMetric>(state, 'responseMetrics').countDocuments({}),
+        this.collection<SupportOutboxCommand>(state, 'outbox').countDocuments({})
+      ]);
+
+      diagnostics.counts = {
+        clients,
+        dialogs,
+        messages,
+        responseMetrics,
+        outbox
+      };
+    } catch (error) {
+      diagnostics.countError = String(error);
+    }
+
+    return diagnostics;
+  }
+
+  private upsertByTimestamp<T>(
+    target: Map<string, TimestampedEntity<T>>,
+    id: string | undefined,
+    entity: T,
+    timestamp: number
+  ): void {
+    if (!id) {
+      return;
+    }
+
+    const existing = target.get(id);
+    if (!existing || timestamp >= existing.timestamp) {
+      target.set(id, {
+        entity,
+        timestamp
+      });
+    }
+  }
+
+  private resolveClientTimestamp(client: SupportClientProfile): number {
+    return this.parseTimestamp(client.updatedAt) || this.parseTimestamp(client.createdAt);
+  }
+
+  private resolveDialogTimestamp(dialog: SupportDialog): number {
+    return (
+      this.parseTimestamp(dialog.updatedAt) ||
+      this.parseTimestamp(dialog.lastMessageAt) ||
+      this.parseTimestamp(dialog.createdAt)
+    );
+  }
+
+  private resolveMessageTimestamp(message: SupportMessage): number {
+    const typed = message as unknown as Record<string, unknown>;
+    return this.parseTimestamp(message.createdAt) || this.parseTimestamp(typed['createdTs']);
+  }
+
+  private resolveResponseMetricTimestamp(metric: SupportResponseMetric): number {
+    return this.parseTimestamp(metric.respondedAt) || this.parseTimestamp(metric.startedAt);
+  }
+
+  private resolveOutboxTimestamp(command: SupportOutboxCommand): number {
+    return this.parseTimestamp(command.createdAt);
+  }
+
+  private parseTimestamp(rawValue: unknown): number {
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+
+    const asString = String(rawValue ?? '').trim();
+    if (!asString) {
+      return 0;
+    }
+
+    const numeric = Number(asString);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+
+    const date = new Date(asString).getTime();
+    return Number.isFinite(date) ? date : 0;
+  }
+
+  private async deleteFromOtherBackends(
+    keepKey: SupportPersistenceBackendKey,
+    collectionKey: SupportPersistenceCollectionKey,
+    id: string
+  ): Promise<void> {
+    const targets = this.getActiveBackends().filter(
+      (backend) => backend.config.key !== keepKey
+    );
+
+    await Promise.all(
+      targets.map((backend) => this.collection(backend, collectionKey).deleteOne({ id }))
+    );
   }
 
   private readEnv(name: string): string | undefined {
@@ -268,36 +841,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     return value || undefined;
   }
 
-  private requireDb(): Db {
-    if (!this.db) {
-      throw new Error('MongoDB is not initialized');
-    }
-    return this.db;
-  }
-
-  private async ensureIndexes(): Promise<void> {
-    await Promise.all([
-      this.clients().createIndex({ id: 1 }, { unique: true }),
-      this.clients().createIndex({ phones: 1 }),
-      this.clients().createIndex({ emails: 1 }),
-      this.clients().createIndex({ 'identities.connector': 1, 'identities.externalUserId': 1 }),
-      this.clients().createIndex({ 'identities.connector': 1, 'identities.externalChatId': 1 }),
-      this.dialogs().createIndex({ id: 1 }, { unique: true }),
-      this.dialogs().createIndex({ stationId: 1, updatedAt: -1 }),
-      this.dialogs().createIndex({ accessStationIds: 1, updatedAt: -1 }),
-      this.dialogs().createIndex({ clientId: 1, status: 1 }),
-      this.messages().createIndex({ id: 1 }, { unique: true }),
-      this.messages().createIndex({ dialogId: 1, createdAt: 1 }),
-      this.messages().createIndex({ clientId: 1, createdAt: 1 }),
-      this.responseMetrics().createIndex({ id: 1 }, { unique: true }),
-      this.responseMetrics().createIndex({ dialogId: 1, startedAt: -1 }),
-      this.outbox().createIndex({ id: 1 }, { unique: true }),
-      this.outbox().createIndex({ connector: 1, status: 1, createdAt: 1 })
-    ]);
-  }
-
   private fireAndForget(task: () => Promise<void>, context: string): void {
-    if (!this.db) {
+    if (!this.isEnabled()) {
       return;
     }
 
@@ -306,18 +851,19 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     });
   }
 
-  private async safeCloseClient(): Promise<void> {
-    if (!this.client) {
+  private async safeCloseBackend(state: SupportPersistenceBackendState): Promise<void> {
+    if (!state.client) {
+      state.db = undefined;
       return;
     }
 
     try {
-      await this.client.close();
+      await state.client.close();
     } catch (_error) {
       // ignore close errors
     }
 
-    this.client = undefined;
-    this.db = undefined;
+    state.client = undefined;
+    state.db = undefined;
   }
 }

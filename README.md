@@ -27,6 +27,12 @@ npm run build
 npm run start
 ```
 
+Проверка индексов диалоговых коллекций (strict audit):
+
+```bash
+npm run audit:indexes:dialogs
+```
+
 API работает на `http://localhost:3000/api`.
 
 Схема деплоя на сервере (Docker Compose: API + Node-RED + Nginx):
@@ -72,8 +78,12 @@ API работает на `http://localhost:3000/api`.
 - `TELEGRAM_DELIVERY_MODE=outbox|direct` (по умолчанию `outbox`; рекомендован для Node-RED)
 - `TELEGRAM_INTEGRATION_TOKEN=<token>` (опционально, защита outbox API для Node-RED)
 - `SUPPORT_INTEGRATION_TOKEN=<token>` (опционально, защита `support` integration endpoint'ов для Node-RED/внешних коннекторов)
-- `SUPPORT_MONGODB_URI=mongodb://...` (опционально; отдельный URI для `support`, иначе используется `MONGODB_URI`)
-- `SUPPORT_MONGODB_DB=games` (опционально; отдельная БД для `support`, иначе используется `MONGODB_DB`, затем `dialog`)
+- `SUPPORT_MONGODB_URI=mongodb://...` (опционально; primary URI для `support`, иначе используется `MONGODB_URI`)
+- `SUPPORT_MONGODB_DB=dialog` (опционально; primary БД для `support`, иначе используется `MONGODB_DB`, затем `dialog`)
+- `SUPPORT_WEB_MONGODB_URI=mongodb://...` (опционально; URI backend-а для `LK_WEB_MESSENGER`, если не задан — используется primary URI)
+- `SUPPORT_WEB_MONGODB_DB=games` (опционально; отдельная БД для `LK_WEB_MESSENGER`)
+- `SUPPORT_MAX_MONGODB_URI=mongodb://...` (опционально; URI backend-а для `MAX_BOT`, если не задан — используется primary URI)
+- `SUPPORT_MAX_MONGODB_DB=dialog` (опционально; отдельная БД для `MAX_BOT`; если не задано, `MAX_BOT` пишет в primary backend)
 - `SUPPORT_CLIENTS_COLLECTION=support_clients` (опционально; коллекция профилей клиентов)
 - `SUPPORT_DIALOGS_COLLECTION=support_dialogs` (опционально; коллекция диалогов)
 - `SUPPORT_MESSAGES_COLLECTION=support_messages` (опционально; коллекция сообщений)
@@ -89,6 +99,20 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_ADMIN_PASSWORD=<password>` (опционально; пароль Viva для получения access token)
 - `VIVA_ADMIN_CACHE_TTL_MS=600000` (опционально; TTL кэша ссылок на ЛК клиентов)
 - `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
+
+Рекомендуемая схема для разделения коннекторов:
+
+- `LK_WEB_MESSENGER` -> `games`
+- `MAX_BOT` -> `dialog`
+
+Пример:
+
+```env
+MONGODB_DB=dialog
+SUPPORT_MONGODB_DB=dialog
+SUPPORT_WEB_MONGODB_DB=games
+# SUPPORT_MAX_MONGODB_DB=dialog
+```
 
 Для Viva CRM поддерживаются два режима:
 
