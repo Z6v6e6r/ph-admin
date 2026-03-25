@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -63,6 +64,7 @@ interface ResolveClientQuery {
 }
 
 interface NormalizedIngestSupportEventDto extends IngestSupportEventDto {
+  connector: SupportConnectorRoute;
   externalUserId?: string;
   externalChatId?: string;
   displayName?: string;
@@ -875,7 +877,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private resolveOrCreateClient(
-    dto: IngestSupportEventDto,
+    dto: NormalizedIngestSupportEventDto,
     normalizedPhone: string | undefined,
     normalizedEmail: string | undefined,
     createdAt: string
@@ -1135,7 +1137,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private buildMessage(
-    dto: IngestSupportEventDto,
+    dto: NormalizedIngestSupportEventDto,
     context: {
       dialog: SupportDialog;
       client: SupportClientProfile;
@@ -2652,7 +2654,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private buildIdentity(
-    dto: IngestSupportEventDto,
+    dto: NormalizedIngestSupportEventDto,
     createdAt: string
   ): SupportClientIdentity | undefined {
     const externalUserId = this.normalizeIdentityValue(dto.externalUserId);
@@ -3206,11 +3208,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private normalizeIncomingEvent(dto: IngestSupportEventDto): NormalizedIngestSupportEventDto {
+    const connector = this.resolveIncomingConnector(dto);
     const selectedStation =
       this.resolveStationMappingFromAction(dto.action) ??
       this.resolveStationMappingFromAction(this.extractMetaPathString(dto.meta, ['action']));
     const baseNormalized: NormalizedIngestSupportEventDto = {
       ...dto,
+      connector,
       externalUserId: this.normalizeIdentityValue(dto.externalUserId),
       externalChatId: this.normalizeIdentityValue(dto.externalChatId),
       displayName: this.normalizeDisplayName(dto.displayName),
@@ -3224,13 +3228,33 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       deliverToClient: this.resolveDeliverToClient(dto)
     };
     const connectorPatch = this.connectorRegistry.normalizeIncomingEvent(
-      dto,
+      {
+        ...dto,
+        connector
+      },
       this.buildConnectorNormalizationHelpers()
     );
     return {
       ...baseNormalized,
       ...connectorPatch
     };
+  }
+
+  private resolveIncomingConnector(dto: IngestSupportEventDto): SupportConnectorRoute {
+    const rawConnector = this.readStringValue(dto.connector);
+    const rawChannel = this.readStringValue(dto.channel);
+    const metaConnector = this.extractMetaPathString(dto.meta, ['connector']);
+    const metaChannel = this.extractMetaPathString(dto.meta, ['channel']);
+
+    const candidates = [rawConnector, rawChannel, metaConnector, metaChannel];
+    for (const candidate of candidates) {
+      const resolved = this.connectorRegistry.resolveRoute(candidate);
+      if (resolved) {
+        return resolved;
+      }
+    }
+
+    throw new BadRequestException('connector is required');
   }
 
   private buildConnectorNormalizationHelpers(): SupportConnectorNormalizationHelpers {

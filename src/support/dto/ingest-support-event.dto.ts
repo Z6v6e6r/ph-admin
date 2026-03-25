@@ -17,8 +17,15 @@ import {
 } from '../support.types';
 
 export class IngestSupportEventDto {
-  @IsEnum(SupportConnectorRoute)
-  connector!: SupportConnectorRoute;
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  connector?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  channel?: string;
 
   @IsOptional()
   @IsString()

@@ -45,7 +45,8 @@ export class SupportConnectorRegistry {
     dto: IngestSupportEventDto,
     helpers: SupportConnectorNormalizationHelpers
   ): SupportConnectorEventNormalizationPatch {
-    const adapter = this.adaptersByRoute.get(dto.connector);
+    const adapterRoute = this.resolveRoute(dto.connector ?? dto.channel);
+    const adapter = adapterRoute ? this.adaptersByRoute.get(adapterRoute) : undefined;
     if (!adapter?.normalizeIncomingEvent) {
       return {
         externalUserId: helpers.normalizeIdentityValue(dto.externalUserId),
@@ -57,7 +58,13 @@ export class SupportConnectorRegistry {
         deliverToClient: helpers.resolveDeliverToClient(dto)
       };
     }
-    return adapter.normalizeIncomingEvent(dto, helpers);
+    return adapter.normalizeIncomingEvent(
+      {
+        ...dto,
+        connector: adapterRoute
+      },
+      helpers
+    );
   }
 
   listEntries(): SupportConnectorRegistryEntry[] {
@@ -105,4 +112,3 @@ export class SupportConnectorRegistry {
     return normalizedAlias || undefined;
   }
 }
-
