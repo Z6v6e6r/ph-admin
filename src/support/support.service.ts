@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
   OnApplicationBootstrap,
+  OnModuleDestroy,
   OnModuleInit
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -69,24 +70,35 @@ interface SupportStationMapping {
 }
 
 @Injectable()
-export class SupportService implements OnModuleInit, OnApplicationBootstrap {
+export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
   private readonly messages = new Map<string, SupportMessage[]>();
   private readonly responseMetrics = new Map<string, SupportResponseMetric[]>();
   private readonly outbox = new Map<string, SupportOutboxCommand>();
   private readonly stationMappings = this.parseStationMappings();
+  private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
+  private persistenceSyncTimer?: ReturnType<typeof setInterval>;
+  private isPersistenceSyncInProgress = false;
 
   constructor(private readonly persistence: SupportPersistenceService) {}
 
   async onModuleInit(): Promise<void> {
-    await this.hydrateFromPersistence();
-    this.reconcileState();
+    await this.syncFromPersistence();
+    this.ensurePersistenceSyncTimer();
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.hydrateFromPersistence();
-    this.reconcileState();
+    await this.syncFromPersistence();
+    this.ensurePersistenceSyncTimer();
+  }
+
+  onModuleDestroy(): void {
+    if (!this.persistenceSyncTimer) {
+      return;
+    }
+    clearInterval(this.persistenceSyncTimer);
+    this.persistenceSyncTimer = undefined;
   }
 
   async hydrateFromPersistence(): Promise<void> {
@@ -175,6 +187,45 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   private reconcileState(): void {
     this.reconcileDuplicateClients();
     this.reconcileDuplicateDialogs();
+  }
+
+  private async syncFromPersistence(): Promise<void> {
+    if (!this.persistence.isEnabled() || this.isPersistenceSyncInProgress) {
+      return;
+    }
+
+    this.isPersistenceSyncInProgress = true;
+    try {
+      await this.hydrateFromPersistence();
+      this.reconcileState();
+    } finally {
+      this.isPersistenceSyncInProgress = false;
+    }
+  }
+
+  private ensurePersistenceSyncTimer(): void {
+    if (
+      this.persistenceSyncTimer ||
+      !this.persistence.isEnabled() ||
+      this.persistenceSyncIntervalMs <= 0
+    ) {
+      return;
+    }
+
+    this.persistenceSyncTimer = setInterval(() => {
+      void this.syncFromPersistence();
+    }, this.persistenceSyncIntervalMs);
+  }
+
+  private resolvePersistenceSyncIntervalMs(): number {
+    const rawValue = Number(process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS ?? 5000);
+    if (!Number.isFinite(rawValue) || rawValue < 0) {
+      return 5000;
+    }
+    if (rawValue === 0) {
+      return 0;
+    }
+    return Math.max(1000, Math.floor(rawValue));
   }
 
   ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
