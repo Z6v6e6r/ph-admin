@@ -1509,13 +1509,47 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
+    const rawDialog = dialog as unknown as Record<string, unknown>;
+    const legacyChannels = this.readStringArray(rawDialog['channels']);
+    const legacyPrimaryPhone = this.normalizePhone(this.readStringValue(rawDialog['primaryPhone']));
+    const legacyPhones = this.readStringArray(rawDialog['phoneNumbers']).map((phone) =>
+      this.normalizePhone(phone)
+    );
+
     const normalizedConnectors = this.mergeConnectors(
       [],
-      [dialog.lastInboundConnector, dialog.lastReplyConnector, ...(dialog.connectors ?? [])]
+      [
+        dialog.lastInboundConnector,
+        dialog.lastReplyConnector,
+        ...legacyChannels,
+        this.readStringValue(rawDialog['lastInboundChannel']),
+        this.readStringValue(rawDialog['lastOutboundChannel']),
+        this.readStringValue(rawDialog['lastChannel']),
+        ...(dialog.connectors ?? [])
+      ]
         .map((connector) => this.normalizeLoadedConnector(connector))
         .filter((connector): connector is SupportConnectorRoute => Boolean(connector))
     );
     const fallbackConnector = normalizedConnectors[0] ?? SupportConnectorRoute.LK_WEB_MESSENGER;
+    const resolvedCurrentPhone = dialog.currentPhone ?? legacyPrimaryPhone;
+    const resolvedPhones = this.mergeStrings(
+      Array.isArray(dialog.phones) ? dialog.phones : [],
+      [resolvedCurrentPhone, ...legacyPhones]
+        .filter((phone): phone is string => Boolean(phone))
+    );
+    const resolvedEmails = this.mergeStrings(
+      Array.isArray(dialog.emails) ? dialog.emails : [],
+      this.readStringArray(rawDialog['emails'])
+        .map((email) => this.normalizeEmail(email))
+        .filter((email): email is string => Boolean(email))
+    );
+    const resolvedUnreadCount = Math.max(
+      0,
+      Number(dialog.unreadCount ?? rawDialog['unreadClientMessages'] ?? 0)
+    );
+    const resolvedSubject =
+      this.normalizeDialogSubject(dialog.subject) ??
+      this.normalizeDialogSubject(this.readStringValue(rawDialog['displayName']));
 
     return {
       ...dialog,
@@ -1529,12 +1563,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
         this.normalizeLoadedConnector(dialog.lastInboundConnector) ?? fallbackConnector,
       lastReplyConnector:
         this.normalizeLoadedConnector(dialog.lastReplyConnector) ?? dialog.lastReplyConnector,
-      phones: Array.isArray(dialog.phones) ? dialog.phones : [],
-      emails: Array.isArray(dialog.emails) ? dialog.emails : [],
+      currentPhone: resolvedCurrentPhone,
+      phones: resolvedPhones,
+      emails: resolvedEmails,
+      subject: resolvedSubject,
       pendingClientMessageIds: Array.isArray(dialog.pendingClientMessageIds)
         ? dialog.pendingClientMessageIds
         : [],
-      unreadCount: Math.max(0, Number(dialog.unreadCount ?? 0)),
+      unreadCount: resolvedUnreadCount,
       accessStationIds: this.getDialogAccessStationIds(dialog)
     };
   }
@@ -2160,6 +2196,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
     const trimmed = value.trim();
     return trimmed || undefined;
+  }
+
+  private readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map((item) => this.readStringValue(item))
+      .filter((item): item is string => Boolean(item));
   }
 
   private readNumberValue(value: unknown): number | undefined {
