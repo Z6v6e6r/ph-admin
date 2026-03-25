@@ -533,7 +533,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   listDialogs(user: RequestUser, filters: SupportDialogFilters = {}): SupportDialogSummary[] {
     return this.listAccessibleDialogs(user, filters)
-      .map((dialog) => this.toDialogSummary(dialog, undefined, user))
+      .map((dialog) => this.toDialogSummary(dialog, filters.connector, user))
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
