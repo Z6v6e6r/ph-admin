@@ -2269,8 +2269,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return undefined;
   }
 
-  private getDialogAccessStationIds(dialog: Pick<SupportDialog, 'stationId' | 'accessStationIds'>): string[] {
-    return this.mergeStationAccessIds(dialog.accessStationIds ?? [], [dialog.stationId]);
+  private getDialogAccessStationIds(
+    dialog: Pick<SupportDialog, 'stationId' | 'stationName' | 'accessStationIds'>
+  ): string[] {
+    const aliases = this.resolveStationAccessAliases(dialog.stationId, dialog.stationName);
+    return this.mergeStationAccessIds(dialog.accessStationIds ?? [], [dialog.stationId, ...aliases]);
   }
 
   private mergeStationAccessIds(existing: string[], values: Array<string | undefined>): string[] {
@@ -2283,6 +2286,28 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
             Boolean(value) && value !== SUPPORT_UNASSIGNED_STATION_ID
         )
     );
+  }
+
+  private resolveStationAccessAliases(stationId?: string, stationName?: string): string[] {
+    const normalizedStationId = this.normalizeStationId(stationId)?.toLowerCase();
+    const normalizedStationName = this.normalizeDisplayName(stationName)?.toLowerCase();
+    if (!normalizedStationId && !normalizedStationName) {
+      return [];
+    }
+
+    const aliases: string[] = [];
+    for (const mapping of this.stationMappings) {
+      const mappingId = this.normalizeStationId(mapping.stationId)?.toLowerCase();
+      const mappingName = this.normalizeDisplayName(mapping.stationName)?.toLowerCase();
+      if (
+        (normalizedStationId && mappingId && normalizedStationId === mappingId) ||
+        (normalizedStationName && mappingName && normalizedStationName === mappingName)
+      ) {
+        aliases.push(mapping.key, mapping.stationId);
+      }
+    }
+
+    return this.mergeStrings([], aliases);
   }
 
   private isDialogActiveForUser(dialog: SupportDialog, user: RequestUser): boolean {
