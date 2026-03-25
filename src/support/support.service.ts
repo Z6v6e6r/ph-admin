@@ -2858,11 +2858,30 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     normalizedPhone?: string,
     normalizedEmail?: string
   ): SupportMessageKind {
+    const text = String(dto.text ?? '').trim();
+    const normalizedEventType = String(dto.eventType ?? '')
+      .trim()
+      .toUpperCase();
+
     if (dto.kind) {
       return dto.kind;
     }
     if (dto.selectedStationId) {
       return SupportMessageKind.STATION_SELECTION;
+    }
+    if (dto.connector === SupportConnectorRoute.LK_WEB_MESSENGER) {
+      if (text.startsWith('/')) {
+        return SupportMessageKind.COMMAND;
+      }
+      if (text) {
+        return SupportMessageKind.TEXT;
+      }
+      if (
+        normalizedPhone &&
+        ['CONTACT', 'PHONE', 'PHONE_SHARED', 'CONTACT_SHARED'].includes(normalizedEventType)
+      ) {
+        return SupportMessageKind.CONTACT;
+      }
     }
     if (normalizedPhone) {
       return SupportMessageKind.CONTACT;
@@ -2876,7 +2895,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     ) {
       return SupportMessageKind.CALL;
     }
-    const text = String(dto.text ?? '').trim();
     if (text.startsWith('/')) {
       return SupportMessageKind.COMMAND;
     }
