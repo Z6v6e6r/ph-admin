@@ -37,6 +37,7 @@ Required changes:
 - `ADMIN_AUTH_SECRET`
 - `ADMIN_AUTH_USERS_JSON`
 - `MONGODB_URI`, `MONGODB_DB`
+- `SUPPORT_MONGODB_DB=games` (чтобы support-диалоги/сообщения, включая `LK_WEB_MESSENGER`, читались из базы `games`)
 - `GAMES_SOURCE=mongo`, `GAMES_MONGODB_DB=games`, `GAMES_MONGODB_COLLECTION=lk_games`
 - `GAMES_CHAT_MONGODB_DB=games_chat`, `GAMES_CHAT_MESSAGES_COLLECTION=chat_messages`
 - `TELEGRAM_BOT_TOKEN`

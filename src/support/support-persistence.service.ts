@@ -22,16 +22,31 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private readonly logger = new Logger(SupportPersistenceService.name);
   private client?: MongoClient;
   private db?: Db;
+  private readonly clientsCollectionName =
+    this.readEnv('SUPPORT_CLIENTS_COLLECTION') ?? 'support_clients';
+  private readonly dialogsCollectionName =
+    this.readEnv('SUPPORT_DIALOGS_COLLECTION') ?? 'support_dialogs';
+  private readonly messagesCollectionName =
+    this.readEnv('SUPPORT_MESSAGES_COLLECTION') ?? 'support_messages';
+  private readonly responseMetricsCollectionName =
+    this.readEnv('SUPPORT_RESPONSE_METRICS_COLLECTION') ?? 'support_response_metrics';
+  private readonly outboxCollectionName =
+    this.readEnv('SUPPORT_OUTBOX_COLLECTION') ?? 'support_outbox';
 
   async onModuleInit(): Promise<void> {
-    const uri = String(process.env.MONGODB_URI ?? '').trim();
+    const uri =
+      this.readEnv('SUPPORT_MONGODB_URI') ??
+      this.readEnv('MONGODB_URI');
     if (!uri) {
-      this.logger.log('MONGODB_URI is empty. Support persistence disabled (in-memory mode).');
+      this.logger.log(
+        'SUPPORT_MONGODB_URI/MONGODB_URI is empty. Support persistence disabled (in-memory mode).'
+      );
       return;
     }
 
     const dbName =
-      String(process.env.MONGODB_DB ?? DEFAULT_DIALOGS_MONGODB_DB).trim() ||
+      this.readEnv('SUPPORT_MONGODB_DB') ??
+      this.readEnv('MONGODB_DB') ??
       DEFAULT_DIALOGS_MONGODB_DB;
     this.client = new MongoClient(uri, {
       serverSelectionTimeoutMS: 5000,
@@ -150,23 +165,30 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   private clients(): Collection<SupportClientProfile> {
-    return this.requireDb().collection<SupportClientProfile>('support_clients');
+    return this.requireDb().collection<SupportClientProfile>(this.clientsCollectionName);
   }
 
   private dialogs(): Collection<SupportDialog> {
-    return this.requireDb().collection<SupportDialog>('support_dialogs');
+    return this.requireDb().collection<SupportDialog>(this.dialogsCollectionName);
   }
 
   private messages(): Collection<SupportMessage> {
-    return this.requireDb().collection<SupportMessage>('support_messages');
+    return this.requireDb().collection<SupportMessage>(this.messagesCollectionName);
   }
 
   private responseMetrics(): Collection<SupportResponseMetric> {
-    return this.requireDb().collection<SupportResponseMetric>('support_response_metrics');
+    return this.requireDb().collection<SupportResponseMetric>(
+      this.responseMetricsCollectionName
+    );
   }
 
   private outbox(): Collection<SupportOutboxCommand> {
-    return this.requireDb().collection<SupportOutboxCommand>('support_outbox');
+    return this.requireDb().collection<SupportOutboxCommand>(this.outboxCollectionName);
+  }
+
+  private readEnv(name: string): string | undefined {
+    const value = String(process.env[name] ?? '').trim();
+    return value || undefined;
   }
 
   private requireDb(): Db {
