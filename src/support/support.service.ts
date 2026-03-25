@@ -404,8 +404,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog.updatedAt = createdAt;
 
     let outbox: SupportOutboxCommand | undefined;
+    let emittedMessage = message;
+    const duplicateInboundMessage =
+      message && direction === SupportMessageDirection.INBOUND
+        ? this.findDuplicateInboundMessage(dialog.id, message)
+        : undefined;
+    if (duplicateInboundMessage) {
+      emittedMessage = duplicateInboundMessage;
+    }
 
-    if (message) {
+    if (message && !duplicateInboundMessage) {
       this.appendMessage(dialog, message);
       if (direction === SupportMessageDirection.INBOUND) {
         dialog.unreadCount += 1;
@@ -440,7 +448,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return {
       client,
       dialog,
-      message,
+      message: emittedMessage,
       outbox,
       requiredAction:
         client.authStatus !== SupportClientAuthStatus.VERIFIED
@@ -1221,6 +1229,68 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     this.persistence.persistMessage(message);
+  }
+
+  private findDuplicateInboundMessage(
+    dialogId: string,
+    message: SupportMessage
+  ): SupportMessage | undefined {
+    const existing = this.messages.get(dialogId) ?? [];
+    if (existing.length === 0) {
+      return undefined;
+    }
+
+    const incomingTs = this.toTimestamp(message.createdAt);
+    const incomingText = String(message.text ?? '').trim();
+    const incomingExternalUserId = this.normalizeIdentityValue(message.externalUserId);
+    const incomingExternalChatId = this.normalizeIdentityValue(message.externalChatId);
+    const incomingPhone = this.normalizePhone(message.phone);
+
+    const recentMessages = existing.slice(-30).reverse();
+    for (const candidate of recentMessages) {
+      if (candidate.direction !== SupportMessageDirection.INBOUND) {
+        continue;
+      }
+      if (candidate.connector !== message.connector || candidate.kind !== message.kind) {
+        continue;
+      }
+
+      if (message.externalMessageId && candidate.externalMessageId) {
+        if (message.externalMessageId === candidate.externalMessageId) {
+          return candidate;
+        }
+        continue;
+      }
+
+      if (message.externalMessageId || candidate.externalMessageId) {
+        continue;
+      }
+
+      const candidateTs = this.toTimestamp(candidate.createdAt);
+      if (Math.abs(candidateTs - incomingTs) > 5000) {
+        continue;
+      }
+
+      if (String(candidate.text ?? '').trim() !== incomingText) {
+        continue;
+      }
+
+      const candidateExternalUserId = this.normalizeIdentityValue(candidate.externalUserId);
+      const candidateExternalChatId = this.normalizeIdentityValue(candidate.externalChatId);
+      const candidatePhone = this.normalizePhone(candidate.phone);
+
+      if (
+        candidateExternalUserId !== incomingExternalUserId ||
+        candidateExternalChatId !== incomingExternalChatId ||
+        candidatePhone !== incomingPhone
+      ) {
+        continue;
+      }
+
+      return candidate;
+    }
+
+    return undefined;
   }
 
   private findMessageInsertIndex(messages: SupportMessage[], createdAtTs: number): number {
@@ -2842,8 +2912,25 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     phone?: string,
     email?: string
   ): boolean {
+    const text = String(dto.text ?? '').trim();
+    const normalizedEventType = String(dto.eventType ?? '')
+      .trim()
+      .toUpperCase();
+    const isExplicitContactEvent = ['CONTACT', 'PHONE', 'PHONE_SHARED', 'CONTACT_SHARED'].includes(
+      normalizedEventType
+    );
+
+    if (
+      dto.connector === SupportConnectorRoute.LK_WEB_MESSENGER &&
+      kind === SupportMessageKind.CONTACT &&
+      !isExplicitContactEvent &&
+      !text
+    ) {
+      return false;
+    }
+
     return Boolean(
-      String(dto.text ?? '').trim() ||
+      text ||
         phone ||
         email ||
         dto.selectedStationId ||
@@ -3239,7 +3326,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         dto.externalUserId ?? dto.userId ?? dto.senderId ?? dto.channelUserId ?? dto.clientId
       ),
       externalChatId: this.normalizeIdentityValue(
-        dto.externalChatId ?? dto.chatId ?? dto.externalThreadId
+        dto.externalChatId ?? dto.externalThreadId ?? dto.chatId
       ),
       displayName: this.normalizeDisplayName(dto.displayName ?? dto.clientName ?? dto.senderName),
       username: this.normalizeIdentityValue(dto.username),

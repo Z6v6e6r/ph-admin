@@ -25,9 +25,15 @@ export class WebSupportConnectorAdapter implements SupportConnectorAdapter {
       normalizedEventType === 'SELECT_STATION';
 
     return {
-      externalUserId: helpers.normalizeIdentityValue(dto.externalUserId),
-      externalChatId: helpers.normalizeIdentityValue(dto.externalChatId),
-      displayName: helpers.normalizeDisplayName(dto.displayName),
+      externalUserId: helpers.normalizeIdentityValue(
+        dto.externalUserId ?? dto.userId ?? dto.senderId ?? dto.channelUserId ?? dto.clientId
+      ),
+      externalChatId: helpers.normalizeIdentityValue(
+        dto.externalChatId ?? dto.externalThreadId ?? dto.chatId
+      ),
+      displayName: helpers.normalizeDisplayName(
+        dto.displayName ?? dto.clientName ?? dto.senderName
+      ),
       username: helpers.normalizeIdentityValue(dto.username),
       selectedStationId: helpers.normalizeStationId(
         dto.selectedStationId ?? (isStationSelectionEvent ? dto.stationId : undefined)
