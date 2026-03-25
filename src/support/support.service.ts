@@ -113,9 +113,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     for (const message of state.messages) {
-      const existing = this.messages.get(message.dialogId) ?? [];
-      existing.push(message);
-      this.messages.set(message.dialogId, existing);
+      const normalizedMessage = this.normalizeLoadedMessage(
+        message as unknown as Record<string, unknown>
+      );
+      if (!normalizedMessage) {
+        continue;
+      }
+
+      this.ensureClientAndDialogFromMessage(
+        normalizedMessage,
+        message as unknown as Record<string, unknown>
+      );
+
+      const existing = this.messages.get(normalizedMessage.dialogId) ?? [];
+      existing.push(normalizedMessage);
+      this.messages.set(normalizedMessage.dialogId, existing);
     }
 
     for (const metric of state.responseMetrics) {
@@ -141,6 +153,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
       );
       this.responseMetrics.set(dialogId, metrics);
     }
+
+    this.rebuildDialogsFromLoadedMessages();
   }
 
   resolveClient(query: ResolveClientQuery): {
@@ -1489,15 +1503,674 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap {
   private normalizeLoadedClient(client: SupportClientProfile): SupportClientProfile {
     return {
       ...client,
+      authStatus: this.normalizeLoadedAuthStatus(client.authStatus),
       unverifiedTextAttempts: client.unverifiedTextAttempts ?? 0
     };
   }
 
   private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
+    const normalizedConnectors = this.mergeConnectors(
+      [],
+      [dialog.lastInboundConnector, dialog.lastReplyConnector, ...(dialog.connectors ?? [])]
+        .map((connector) => this.normalizeLoadedConnector(connector))
+        .filter((connector): connector is SupportConnectorRoute => Boolean(connector))
+    );
+    const fallbackConnector = normalizedConnectors[0] ?? SupportConnectorRoute.LK_WEB_MESSENGER;
+
     return {
       ...dialog,
+      status:
+        dialog.status === SupportDialogStatus.CLOSED
+          ? SupportDialogStatus.CLOSED
+          : SupportDialogStatus.OPEN,
+      authStatus: this.normalizeLoadedAuthStatus(dialog.authStatus),
+      connectors: normalizedConnectors.length > 0 ? normalizedConnectors : [fallbackConnector],
+      lastInboundConnector:
+        this.normalizeLoadedConnector(dialog.lastInboundConnector) ?? fallbackConnector,
+      lastReplyConnector:
+        this.normalizeLoadedConnector(dialog.lastReplyConnector) ?? dialog.lastReplyConnector,
+      phones: Array.isArray(dialog.phones) ? dialog.phones : [],
+      emails: Array.isArray(dialog.emails) ? dialog.emails : [],
+      pendingClientMessageIds: Array.isArray(dialog.pendingClientMessageIds)
+        ? dialog.pendingClientMessageIds
+        : [],
+      unreadCount: Math.max(0, Number(dialog.unreadCount ?? 0)),
       accessStationIds: this.getDialogAccessStationIds(dialog)
     };
+  }
+
+  private rebuildDialogsFromLoadedMessages(): void {
+    for (const dialog of this.dialogs.values()) {
+      const dialogMessages = this.messages.get(dialog.id) ?? [];
+      if (dialogMessages.length === 0) {
+        continue;
+      }
+
+      dialogMessages.sort(
+        (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+      );
+      this.messages.set(dialog.id, dialogMessages);
+
+      const lastMessage = dialogMessages[dialogMessages.length - 1];
+      const lastInbound = [...dialogMessages]
+        .reverse()
+        .find((message) => message.direction === SupportMessageDirection.INBOUND);
+      const lastOutbound = [...dialogMessages]
+        .reverse()
+        .find((message) => message.direction === SupportMessageDirection.OUTBOUND);
+
+      dialog.connectors = this.mergeConnectors(
+        dialog.connectors,
+        dialogMessages.map((message) => message.connector)
+      );
+      dialog.lastInboundConnector =
+        lastInbound?.connector ??
+        dialog.lastInboundConnector ??
+        dialog.connectors[0] ??
+        SupportConnectorRoute.LK_WEB_MESSENGER;
+      dialog.lastReplyConnector =
+        dialog.lastReplyConnector ??
+        lastOutbound?.connector ??
+        dialog.connectors[0];
+      dialog.lastMessageAt = lastMessage.createdAt;
+      dialog.lastClientMessageAt = lastInbound?.createdAt ?? dialog.lastClientMessageAt;
+      dialog.lastStaffMessageAt = lastOutbound?.createdAt ?? dialog.lastStaffMessageAt;
+      dialog.updatedAt = this.maxDate([dialog.updatedAt, lastMessage.createdAt]) ?? dialog.updatedAt;
+      if ((dialog.unreadCount ?? 0) <= 0) {
+        dialog.unreadCount = dialogMessages.filter(
+          (message) =>
+            message.direction === SupportMessageDirection.INBOUND &&
+            this.isActionableClientMessage(message)
+        ).length;
+      }
+
+      const stationIdsFromMessages = dialogMessages.map((message) => message.stationId);
+      dialog.accessStationIds = this.mergeStationAccessIds(dialog.accessStationIds, [
+        dialog.stationId,
+        ...stationIdsFromMessages
+      ]);
+      const client = this.clients.get(dialog.clientId);
+      if (client) {
+        dialog.authStatus = client.authStatus;
+        dialog.currentPhone = client.primaryPhone ?? dialog.currentPhone;
+        dialog.phones = this.mergeStrings(dialog.phones, client.phones);
+        dialog.emails = this.mergeStrings(dialog.emails, client.emails);
+        dialog.subject =
+          this.normalizeDialogSubject(dialog.subject) ??
+          this.selectDialogTitleCandidate(
+            undefined,
+            client.displayName,
+            client.primaryPhone,
+            client.emails[0]
+          );
+      }
+
+      this.dialogs.set(dialog.id, dialog);
+    }
+  }
+
+  private ensureClientAndDialogFromMessage(
+    message: SupportMessage,
+    rawMessage: Record<string, unknown>
+  ): void {
+    const rawClientSnapshot = this.readRecord(rawMessage['clientSnapshot']);
+    const snapshotDisplayName = this.readStringValue(rawClientSnapshot?.['displayName']);
+    const snapshotPhone = this.normalizePhone(this.readStringValue(rawClientSnapshot?.['primaryPhone']));
+    const snapshotEmail = this.normalizeEmail(this.readStringValue(rawClientSnapshot?.['primaryEmail']));
+    const rawAuthStatus = rawMessage['authStatus'] ?? rawClientSnapshot?.['authStatus'];
+    const authStatus = this.normalizeLoadedAuthStatus(rawAuthStatus);
+
+    const current = this.clients.get(message.clientId);
+    const identity: SupportClientIdentity | undefined =
+      message.externalUserId || message.externalChatId
+        ? {
+            connector: message.connector,
+            externalUserId: message.externalUserId,
+            externalChatId: message.externalChatId,
+            externalThreadId: this.readStringValue(rawMessage['externalThreadId']),
+            username: this.readStringValue(rawMessage['username']),
+            displayName: message.senderName ?? snapshotDisplayName,
+            linkedAt: message.createdAt,
+            lastSeenAt: message.createdAt
+          }
+        : undefined;
+
+    if (!current) {
+      const client: SupportClientProfile = {
+        id: message.clientId,
+        displayName:
+          snapshotDisplayName ??
+          message.senderName ??
+          message.externalUserId ??
+          message.externalChatId ??
+          `Клиент ${message.clientId.slice(0, 8)}`,
+        authStatus,
+        unverifiedTextAttempts: 0,
+        primaryPhone: snapshotPhone ?? message.phone,
+        phones: this.mergeStrings([], [snapshotPhone, message.phone].filter(Boolean) as string[]),
+        emails: this.mergeStrings([], [snapshotEmail, message.email].filter(Boolean) as string[]),
+        identities: identity ? [identity] : [],
+        currentStationId: message.stationId,
+        currentStationName: message.stationName,
+        createdAt: message.createdAt,
+        updatedAt: message.createdAt
+      };
+      this.clients.set(client.id, client);
+    } else {
+      current.authStatus =
+        current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
+          ? SupportClientAuthStatus.VERIFIED
+          : SupportClientAuthStatus.UNVERIFIED;
+      current.displayName = current.displayName ?? snapshotDisplayName ?? message.senderName;
+      current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
+      current.phones = this.mergeStrings(
+        current.phones,
+        [snapshotPhone, message.phone].filter(Boolean) as string[]
+      );
+      current.emails = this.mergeStrings(
+        current.emails,
+        [snapshotEmail, message.email].filter(Boolean) as string[]
+      );
+      if (identity) {
+        current.identities = this.upsertIdentity(current.identities, identity);
+      }
+      current.currentStationId = current.currentStationId ?? message.stationId;
+      current.currentStationName = current.currentStationName ?? message.stationName;
+      current.updatedAt = this.maxDate([current.updatedAt, message.createdAt]) ?? current.updatedAt;
+      this.clients.set(current.id, current);
+    }
+
+    const existingDialog = this.dialogs.get(message.dialogId);
+    if (!existingDialog) {
+      const stationId = this.normalizeStationId(message.stationId) ?? SUPPORT_UNASSIGNED_STATION_ID;
+      const stationName = this.resolveStationName(
+        message.stationName,
+        undefined,
+        stationId
+      );
+      const createdDialog: SupportDialog = {
+        id: message.dialogId,
+        clientId: message.clientId,
+        stationId,
+        stationName,
+        accessStationIds: this.mergeStationAccessIds([], [stationId]),
+        status: SupportDialogStatus.OPEN,
+        authStatus,
+        currentPhone: message.phone,
+        phones: this.mergeStrings([], [message.phone].filter(Boolean) as string[]),
+        emails: this.mergeStrings([], [message.email].filter(Boolean) as string[]),
+        connectors: [message.connector],
+        lastInboundConnector:
+          message.direction === SupportMessageDirection.INBOUND ? message.connector : undefined,
+        lastReplyConnector:
+          message.direction === SupportMessageDirection.OUTBOUND ? message.connector : undefined,
+        subject: this.selectDialogTitleCandidate(undefined, snapshotDisplayName, message.phone),
+        unreadCount:
+          message.direction === SupportMessageDirection.INBOUND &&
+          this.isActionableClientMessage(message)
+            ? 1
+            : 0,
+        waitingForStaffSince:
+          message.direction === SupportMessageDirection.INBOUND &&
+          this.isActionableClientMessage(message)
+            ? message.createdAt
+            : undefined,
+        pendingClientMessageIds:
+          message.direction === SupportMessageDirection.INBOUND &&
+          this.isActionableClientMessage(message)
+            ? [message.id]
+            : [],
+        responseTimeTotalMs: 0,
+        responseCount: 0,
+        averageFirstResponseMs: undefined,
+        lastFirstResponseMs: undefined,
+        lastMessageAt: message.createdAt,
+        lastClientMessageAt:
+          message.direction === SupportMessageDirection.INBOUND ? message.createdAt : undefined,
+        lastStaffMessageAt:
+          message.direction === SupportMessageDirection.OUTBOUND ? message.createdAt : undefined,
+        ai: message.ai,
+        createdAt: message.createdAt,
+        updatedAt: message.createdAt
+      };
+      this.dialogs.set(createdDialog.id, createdDialog);
+      this.messages.set(createdDialog.id, this.messages.get(createdDialog.id) ?? []);
+      this.responseMetrics.set(createdDialog.id, this.responseMetrics.get(createdDialog.id) ?? []);
+      return;
+    }
+
+    existingDialog.connectors = this.mergeConnectors(existingDialog.connectors, [message.connector]);
+    if (
+      message.direction === SupportMessageDirection.INBOUND &&
+      !existingDialog.lastInboundConnector
+    ) {
+      existingDialog.lastInboundConnector = message.connector;
+    }
+    if (
+      message.direction === SupportMessageDirection.OUTBOUND &&
+      !existingDialog.lastReplyConnector
+    ) {
+      existingDialog.lastReplyConnector = message.connector;
+    }
+    existingDialog.stationId =
+      this.normalizeStationId(existingDialog.stationId) ??
+      this.normalizeStationId(message.stationId) ??
+      SUPPORT_UNASSIGNED_STATION_ID;
+    existingDialog.stationName = this.resolveStationName(
+      existingDialog.stationName,
+      message.stationName,
+      existingDialog.stationId
+    );
+    existingDialog.accessStationIds = this.mergeStationAccessIds(existingDialog.accessStationIds, [
+      existingDialog.stationId,
+      message.stationId
+    ]);
+    existingDialog.authStatus =
+      existingDialog.authStatus === SupportClientAuthStatus.VERIFIED ||
+      authStatus === SupportClientAuthStatus.VERIFIED
+        ? SupportClientAuthStatus.VERIFIED
+        : SupportClientAuthStatus.UNVERIFIED;
+    existingDialog.currentPhone = existingDialog.currentPhone ?? message.phone;
+    existingDialog.phones = this.mergeStrings(
+      existingDialog.phones,
+      [message.phone].filter(Boolean) as string[]
+    );
+    existingDialog.emails = this.mergeStrings(
+      existingDialog.emails,
+      [message.email].filter(Boolean) as string[]
+    );
+    existingDialog.subject =
+      this.normalizeDialogSubject(existingDialog.subject) ??
+      this.selectDialogTitleCandidate(undefined, snapshotDisplayName, message.phone);
+    this.dialogs.set(existingDialog.id, existingDialog);
+  }
+
+  private normalizeLoadedMessage(
+    rawMessage: Record<string, unknown>
+  ): SupportMessage | null {
+    const rawSender = this.readRecord(rawMessage['sender']);
+    const rawIdRecord = this.readRecord(rawMessage['_id']);
+    const normalizedId =
+      this.readStringValue(rawMessage['id']) ??
+      this.readStringValue(rawIdRecord?.['$oid']) ??
+      randomUUID();
+    const dialogId =
+      this.readStringValue(rawMessage['dialogId']) ??
+      this.readStringValue(rawMessage['threadId']) ??
+      this.readStringValue(rawMessage['id']);
+    if (!dialogId) {
+      return null;
+    }
+
+    const createdAt =
+      this.readStringValue(rawMessage['createdAt']) ??
+      this.parseDateFromEpoch(rawMessage['createdTs']) ??
+      new Date().toISOString();
+    const connector =
+      this.normalizeLoadedConnector(rawMessage['connector'] ?? rawMessage['channel']) ??
+      SupportConnectorRoute.LK_WEB_MESSENGER;
+    const direction = this.normalizeLoadedDirection(
+      rawMessage['direction'],
+      rawMessage['authorType']
+    );
+    const text =
+      this.readStringValue(rawMessage['text']) ??
+      this.readStringValue(rawMessage['textPreview']);
+    const kind = this.normalizeLoadedKind(rawMessage['kind'], rawMessage['eventType'], text);
+    const clientId =
+      this.readStringValue(rawMessage['clientId']) ??
+      this.readStringValue(rawMessage['channelUserId']) ??
+      this.readStringValue(rawMessage['chatId']) ??
+      `client:${dialogId}`;
+    const externalUserId =
+      this.readStringValue(rawMessage['externalUserId']) ??
+      this.readStringValue(rawMessage['channelUserId']) ??
+      this.readStringValue(rawSender?.['id']);
+    const externalChatId =
+      this.readStringValue(rawMessage['externalChatId']) ??
+      this.readStringValue(rawMessage['chatId']);
+    const senderName =
+      this.readStringValue(rawMessage['senderName']) ??
+      this.readStringValue(rawSender?.['name']);
+    const senderRole = this.normalizeLoadedSenderRole(
+      rawSender?.['role'] ?? rawMessage['authorType'],
+      direction
+    );
+    const senderId =
+      this.readStringValue(rawMessage['senderId']) ??
+      this.readStringValue(rawSender?.['id']) ??
+      (senderRole === 'SYSTEM' ? 'system' : clientId);
+    const normalizedPhone = this.normalizePhone(this.readStringValue(rawMessage['phone']));
+    const normalizedEmail = this.normalizeEmail(this.readStringValue(rawMessage['email']));
+    const stationId =
+      this.normalizeStationId(this.readStringValue(rawMessage['stationId'])) ??
+      SUPPORT_UNASSIGNED_STATION_ID;
+    const stationName = this.resolveStationName(
+      this.readStringValue(rawMessage['stationName']),
+      undefined,
+      stationId
+    );
+    const ai = this.normalizeLoadedAi(rawMessage['ai'], text);
+    const meta =
+      this.readRecord(rawMessage['meta']) ??
+      this.readRecord(rawMessage['metadata']);
+
+    return {
+      id: normalizedId,
+      dialogId,
+      clientId,
+      connector,
+      direction,
+      kind,
+      text,
+      createdAt,
+      senderId,
+      senderRole,
+      senderName,
+      externalUserId,
+      externalChatId,
+      externalMessageId: this.readStringValue(rawMessage['externalMessageId']),
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      stationId,
+      stationName,
+      ai,
+      meta
+    };
+  }
+
+  private normalizeLoadedAuthStatus(rawStatus: unknown): SupportClientAuthStatus {
+    const normalized = this.readStringValue(rawStatus)?.toUpperCase();
+    if (!normalized) {
+      return SupportClientAuthStatus.UNVERIFIED;
+    }
+    if (
+      ['VERIFIED', 'AUTHORIZED', 'AUTHORISED', 'AUTHENTICATED', 'READY'].includes(
+        normalized
+      )
+    ) {
+      return SupportClientAuthStatus.VERIFIED;
+    }
+    return SupportClientAuthStatus.UNVERIFIED;
+  }
+
+  private normalizeLoadedConnector(rawConnector: unknown): SupportConnectorRoute | undefined {
+    const normalized = this.readStringValue(rawConnector)?.toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (['LK_WEB_MESSENGER', 'WEB', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
+      return SupportConnectorRoute.LK_WEB_MESSENGER;
+    }
+    if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
+      return SupportConnectorRoute.TG_BOT;
+    }
+    if (['MAX_BOT', 'MAX'].includes(normalized)) {
+      return SupportConnectorRoute.MAX_BOT;
+    }
+    if (['EMAIL', 'MAIL'].includes(normalized)) {
+      return SupportConnectorRoute.EMAIL;
+    }
+    if (['PHONE_CALL', 'CALL', 'PHONE'].includes(normalized)) {
+      return SupportConnectorRoute.PHONE_CALL;
+    }
+    if (['BITRIX', 'BITRIX24'].includes(normalized)) {
+      return SupportConnectorRoute.BITRIX;
+    }
+
+    return undefined;
+  }
+
+  private normalizeLoadedDirection(
+    rawDirection: unknown,
+    rawAuthorType: unknown
+  ): SupportMessageDirection {
+    const normalizedDirection = this.readStringValue(rawDirection)?.toUpperCase();
+    if (
+      normalizedDirection === SupportMessageDirection.INBOUND ||
+      normalizedDirection === SupportMessageDirection.OUTBOUND ||
+      normalizedDirection === SupportMessageDirection.SYSTEM
+    ) {
+      return normalizedDirection as SupportMessageDirection;
+    }
+
+    const normalizedAuthorType = this.readStringValue(rawAuthorType)?.toUpperCase();
+    if (
+      normalizedAuthorType &&
+      ['STAFF', 'SUPPORT', 'ADMIN', 'MANAGER', 'OPERATOR', 'AGENT'].includes(normalizedAuthorType)
+    ) {
+      return SupportMessageDirection.OUTBOUND;
+    }
+    if (normalizedAuthorType && ['SYSTEM', 'BOT', 'SERVICE'].includes(normalizedAuthorType)) {
+      return SupportMessageDirection.SYSTEM;
+    }
+    return SupportMessageDirection.INBOUND;
+  }
+
+  private normalizeLoadedKind(
+    rawKind: unknown,
+    rawEventType: unknown,
+    text?: string
+  ): SupportMessageKind {
+    const normalizedKind = this.readStringValue(rawKind)?.toUpperCase();
+    const normalizedEventType = this.readStringValue(rawEventType)?.toUpperCase();
+
+    const directMatch = (normalizedKind ?? normalizedEventType) as SupportMessageKind | undefined;
+    if (directMatch && Object.values(SupportMessageKind).includes(directMatch)) {
+      return directMatch;
+    }
+
+    if (normalizedEventType && normalizedEventType.includes('CALL')) {
+      return SupportMessageKind.CALL;
+    }
+    if (normalizedEventType && normalizedEventType.includes('EMAIL')) {
+      return SupportMessageKind.EMAIL;
+    }
+    if (normalizedEventType && normalizedEventType.includes('MEDIA')) {
+      return SupportMessageKind.MEDIA;
+    }
+    if (normalizedEventType && normalizedEventType.includes('SYSTEM')) {
+      return SupportMessageKind.SYSTEM;
+    }
+
+    const normalizedText = String(text ?? '').trim();
+    if (normalizedText.startsWith('/')) {
+      return SupportMessageKind.COMMAND;
+    }
+    if (normalizedText) {
+      return SupportMessageKind.TEXT;
+    }
+    return SupportMessageKind.SYSTEM;
+  }
+
+  private normalizeLoadedSenderRole(
+    rawRole: unknown,
+    direction: SupportMessageDirection
+  ): SupportSenderRole {
+    const normalizedRole = this.readStringValue(rawRole)?.toUpperCase();
+    if (!normalizedRole) {
+      return direction === SupportMessageDirection.INBOUND ? Role.CLIENT : Role.SUPPORT;
+    }
+    if (normalizedRole === 'SYSTEM' || normalizedRole === 'BOT' || normalizedRole === 'SERVICE') {
+      return 'SYSTEM';
+    }
+    if (normalizedRole === Role.CLIENT) {
+      return Role.CLIENT;
+    }
+    if (normalizedRole === Role.SUPER_ADMIN) {
+      return Role.SUPER_ADMIN;
+    }
+    if (normalizedRole === Role.SUPPORT) {
+      return Role.SUPPORT;
+    }
+    if (normalizedRole === Role.STATION_ADMIN) {
+      return Role.STATION_ADMIN;
+    }
+    if (normalizedRole === Role.MANAGER) {
+      return Role.MANAGER;
+    }
+    if (normalizedRole === Role.TOURNAMENT_MANAGER) {
+      return Role.TOURNAMENT_MANAGER;
+    }
+    if (normalizedRole === Role.GAME_MANAGER) {
+      return Role.GAME_MANAGER;
+    }
+    if (normalizedRole === 'STAFF' || normalizedRole === 'ADMIN' || normalizedRole === 'OPERATOR') {
+      return Role.SUPPORT;
+    }
+    return direction === SupportMessageDirection.INBOUND ? Role.CLIENT : Role.SUPPORT;
+  }
+
+  private normalizeLoadedAi(rawAi: unknown, text?: string): SupportAiInsight | undefined {
+    const aiRecord = this.readRecord(rawAi);
+    if (!aiRecord) {
+      return text ? this.buildAiInsight({} as IngestSupportEventDto, text) : undefined;
+    }
+
+    const topic = this.normalizeLoadedAiTopic(aiRecord['topic'], text);
+    const sentiment = this.normalizeLoadedAiSentiment(aiRecord['sentiment']);
+    const priority = this.normalizeLoadedAiPriority(aiRecord['priority']);
+    const confidenceRaw = this.readNumberValue(aiRecord['confidence']);
+    const confidence =
+      typeof confidenceRaw === 'number' && Number.isFinite(confidenceRaw)
+        ? Math.max(0, Math.min(1, confidenceRaw))
+        : 0.7;
+    const summary =
+      this.readStringValue(aiRecord['summary']) ??
+      this.buildAiSummary(topic, sentiment, priority);
+    const tagsRaw = Array.isArray(aiRecord['topicTags'])
+      ? aiRecord['topicTags']
+      : Array.isArray(aiRecord['tags'])
+        ? aiRecord['tags']
+        : [];
+    const tags = tagsRaw
+      .map((value) => this.readStringValue(value))
+      .filter((value): value is string => Boolean(value));
+
+    return {
+      topic,
+      sentiment,
+      priority,
+      summary,
+      confidence,
+      tags
+    };
+  }
+
+  private normalizeLoadedAiTopic(rawTopic: unknown, text?: string): SupportTopic {
+    const normalized = this.readStringValue(rawTopic)
+      ?.toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    if (normalized && (Object.values(SupportTopic) as string[]).includes(normalized)) {
+      return normalized as SupportTopic;
+    }
+
+    if (normalized && normalized.includes('PAYMENT')) {
+      return SupportTopic.PAYMENT;
+    }
+    if (normalized && normalized.includes('BOOK')) {
+      return SupportTopic.BOOKING;
+    }
+    if (normalized && normalized.includes('TRAIN')) {
+      return SupportTopic.TRAINING;
+    }
+    if (normalized && normalized.includes('TOURN')) {
+      return SupportTopic.TOURNAMENT;
+    }
+    if (normalized && normalized.includes('GAME')) {
+      return SupportTopic.GAME;
+    }
+    if (normalized && normalized.includes('COMPL')) {
+      return SupportTopic.COMPLAINT;
+    }
+    if (normalized && normalized.includes('FEED')) {
+      return SupportTopic.FEEDBACK;
+    }
+    if (normalized && (normalized.includes('TECH') || normalized.includes('ERROR'))) {
+      return SupportTopic.TECHNICAL;
+    }
+    if (normalized && normalized.includes('CALL')) {
+      return SupportTopic.CALLBACK;
+    }
+
+    if (text) {
+      return this.detectTopic(text.toLowerCase());
+    }
+    return SupportTopic.GENERAL;
+  }
+
+  private normalizeLoadedAiSentiment(rawSentiment: unknown): SupportSentiment {
+    const normalized = this.readStringValue(rawSentiment)?.toUpperCase();
+    if (!normalized) {
+      return SupportSentiment.NEUTRAL;
+    }
+    if (normalized === SupportSentiment.DISTRESSED) {
+      return SupportSentiment.DISTRESSED;
+    }
+    if (normalized === SupportSentiment.POSITIVE) {
+      return SupportSentiment.POSITIVE;
+    }
+    if (normalized === SupportSentiment.NEGATIVE) {
+      return SupportSentiment.NEGATIVE;
+    }
+    return SupportSentiment.NEUTRAL;
+  }
+
+  private normalizeLoadedAiPriority(rawPriority: unknown): SupportPriority {
+    const normalized = this.readStringValue(rawPriority)?.toUpperCase();
+    if (!normalized) {
+      return SupportPriority.MEDIUM;
+    }
+    if (normalized === SupportPriority.CRITICAL) {
+      return SupportPriority.CRITICAL;
+    }
+    if (normalized === SupportPriority.IMPORTANT) {
+      return SupportPriority.IMPORTANT;
+    }
+    if (normalized === SupportPriority.RECOMMENDATION) {
+      return SupportPriority.RECOMMENDATION;
+    }
+    return SupportPriority.MEDIUM;
+  }
+
+  private parseDateFromEpoch(raw: unknown): string | undefined {
+    const value = this.readNumberValue(raw);
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    return new Date(value).toISOString();
+  }
+
+  private readRecord(value: unknown): Record<string, unknown> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private readStringValue(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+
+  private readNumberValue(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
   }
 
   private getDialogAccessStationIds(dialog: Pick<SupportDialog, 'stationId' | 'accessStationIds'>): string[] {
