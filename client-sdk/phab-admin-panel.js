@@ -4357,10 +4357,25 @@
     }
 
     function getDialogCurrentStationInfo(dialog) {
+      var writeStationIds = Array.isArray(dialog && dialog.writeStationIds)
+        ? dialog.writeStationIds
+            .map(function (value) {
+              return String(value || '').trim();
+            })
+            .filter(Boolean)
+        : [];
+      var canonicalWriteStationId = writeStationIds.length > 0 ? writeStationIds[0] : '';
       var currentStationId = String(dialog && dialog.currentStationId || '').trim();
       var currentStationName = String(dialog && dialog.currentStationName || '').trim();
       var fallbackStationId = String(dialog && dialog.stationId || '').trim();
       var fallbackStationName = String(dialog && dialog.stationName || '').trim();
+
+      if (
+        canonicalWriteStationId &&
+        canonicalWriteStationId.toUpperCase() !== 'UNASSIGNED'
+      ) {
+        currentStationId = canonicalWriteStationId;
+      }
 
       if (!currentStationId && !currentStationName) {
         if (fallbackStationId && fallbackStationId.toUpperCase() !== 'UNASSIGNED') {
@@ -4375,7 +4390,11 @@
         return null;
       }
 
-      var rawKey = currentStationId || normalizeDialogLabel(currentStationName) || 'station';
+      var rawKey =
+        canonicalWriteStationId ||
+        currentStationId ||
+        normalizeDialogLabel(currentStationName) ||
+        'station';
       return {
         key: 'station:' + rawKey,
         label: currentStationName || currentStationId
@@ -4653,6 +4672,11 @@
       var copy = Object.assign({}, item);
       copy.dialogId = String(item.dialogId);
       copy.dataSource = 'support';
+      copy.writeStationIds = Array.isArray(item.writeStationIds) ? item.writeStationIds.slice() : [];
+      copy.readOnlyStationIds = Array.isArray(item.readOnlyStationIds)
+        ? item.readOnlyStationIds.slice()
+        : [];
+      copy.isReadOnlyForUser = item.isReadOnlyForUser === true;
       return copy;
     }
 
@@ -4669,7 +4693,12 @@
         currentStationId: item.currentStationId || undefined,
         currentStationName: item.currentStationName || undefined,
         accessStationIds: Array.isArray(item.accessStationIds) ? item.accessStationIds.slice() : [],
+        writeStationIds: Array.isArray(item.writeStationIds) ? item.writeStationIds.slice() : [],
+        readOnlyStationIds: Array.isArray(item.readOnlyStationIds)
+          ? item.readOnlyStationIds.slice()
+          : [],
         isActiveForUser: item.isActiveForUser !== false,
+        isReadOnlyForUser: item.isReadOnlyForUser === true,
         clientId: item.clientId || '',
         clientDisplayName: item.clientDisplayName || undefined,
         vivaStatus: item.vivaStatus || undefined,
