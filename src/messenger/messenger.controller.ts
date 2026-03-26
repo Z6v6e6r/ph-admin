@@ -470,6 +470,11 @@ export class MessengerController {
     user: RequestUser,
     query: ListThreadsDto = {}
   ): Promise<StationDialogSummary[]> {
+    await Promise.all([
+      this.messengerService.refreshFromPersistence(),
+      this.supportService.refreshFromPersistence()
+    ]);
+
     const normalizedPhone = this.normalizePhoneQuery(query.phone);
     const hasPhoneSearch = normalizedPhone.length >= 10;
     const legacySource = this.messengerService.listDialogs(user, query);
