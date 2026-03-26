@@ -729,6 +729,35 @@
         font-size:10px;
         opacity:.78;
       }
+      .phab-admin-skeleton{
+        border-radius:12px;
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,255,255,.18) 0%,
+            rgba(255,255,255,.58) 45%,
+            rgba(255,255,255,.18) 100%
+          ),
+          rgba(51,0,32,.08);
+        background-size:260px 100%;
+        animation:phab-admin-skeleton-wave 1.2s ease-in-out infinite;
+      }
+      .phab-admin-message-skeleton{
+        width:min(84%,420px);
+        height:44px;
+        margin:0 0 10px;
+      }
+      .phab-admin-message-skeleton:nth-child(2n){
+        margin-left:auto;
+        width:min(76%,360px);
+      }
+      .phab-admin-message-skeleton:nth-child(3n){
+        width:min(68%,320px);
+      }
+      @keyframes phab-admin-skeleton-wave{
+        0%{background-position:-260px 0}
+        100%{background-position:260px 0}
+      }
       .phab-admin-compose{
         display:flex;
         gap:8px;
@@ -2881,6 +2910,10 @@
       messages: [],
       messagesSignature: '',
       messagesThreadId: null,
+      messagesLoading: false,
+      messagesLoadingThreadId: null,
+      messagesCacheByThreadId: Object.create(null),
+      messagesFetchPromisesByThreadId: Object.create(null),
       games: [],
       gameEvents: [],
       analytics: [],
@@ -4502,6 +4535,9 @@
           'phab-admin-list-btn phab-admin-chat-item' +
           (item.isActiveForUser === false ? ' phab-admin-list-btn-inactive' : '') +
           (state.selectedThreadId === item.dialogId ? ' phab-admin-list-btn-active' : '');
+        btn.addEventListener('mouseenter', function () {
+          prefetchDialogMessages(item.dialogId);
+        });
         btn.addEventListener('click', function () {
           if (state.selectedThreadId === item.dialogId) {
             return;
@@ -4908,6 +4944,67 @@
       };
     }
 
+    function getCachedMessages(threadId) {
+      if (!threadId) {
+        return null;
+      }
+      return state.messagesCacheByThreadId[threadId] || null;
+    }
+
+    function setMessagesLoading(loading, threadId) {
+      state.messagesLoading = Boolean(loading);
+      state.messagesLoadingThreadId = loading ? (threadId || null) : null;
+      renderMessages(state.messages, {
+        forceScrollBottom: false,
+        preserveScroll: true
+      });
+    }
+
+    function fetchDialogMessages(threadId, options) {
+      var opts = options || {};
+      if (!threadId) {
+        return Promise.resolve([]);
+      }
+
+      if (!opts.forceRefresh) {
+        var cached = getCachedMessages(threadId);
+        if (cached) {
+          return Promise.resolve(cached.slice());
+        }
+      }
+
+      var inFlight = state.messagesFetchPromisesByThreadId[threadId];
+      if (inFlight) {
+        return inFlight;
+      }
+
+      var request = api
+        .getLegacyMessages(threadId)
+        .then(function (payload) {
+          var normalized = normalizeLegacyMessages(payload || []);
+          state.messagesCacheByThreadId[threadId] = normalized.slice();
+          return normalized;
+        })
+        .finally(function () {
+          delete state.messagesFetchPromisesByThreadId[threadId];
+        });
+
+      state.messagesFetchPromisesByThreadId[threadId] = request;
+      return request;
+    }
+
+    function prefetchDialogMessages(threadId) {
+      if (!threadId || threadId === state.selectedThreadId) {
+        return;
+      }
+      if (getCachedMessages(threadId)) {
+        return;
+      }
+      fetchDialogMessages(threadId, { forceRefresh: false }).catch(function () {
+        // ignore background prefetch failures
+      });
+    }
+
     function normalizeSupportMessages(messages) {
       return (Array.isArray(messages) ? messages : []).map(function (message) {
         return Object.assign({ dataSource: 'support' }, message);
@@ -5057,6 +5154,19 @@
       }
 
       if (!messages || messages.length === 0) {
+        if (
+          state.messagesLoading &&
+          state.messagesLoadingThreadId &&
+          state.messagesLoadingThreadId === state.selectedThreadId
+        ) {
+          for (var skeletonIndex = 0; skeletonIndex < 4; skeletonIndex += 1) {
+            var skeleton = document.createElement('div');
+            skeleton.className = 'phab-admin-message-skeleton phab-admin-skeleton';
+            dom.messagesBox.appendChild(skeleton);
+          }
+          return;
+        }
+
         var empty = document.createElement('div');
         empty.className = 'phab-admin-empty';
         empty.textContent =
@@ -6202,7 +6312,7 @@
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
-      await loadMessages({ forceRender: true, forceScrollBottom: true });
+      await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
       markSelectedDialogAsReadLocally();
       if (!getSelectedDialog()) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
@@ -6219,20 +6329,50 @@
       }
       await loadMessages(
         dialogsResult && dialogsResult.selectionChanged
-          ? { forceRender: true, forceScrollBottom: true }
-          : { preserveScroll: true }
+          ? { forceRender: true, forceScrollBottom: true, forceRefresh: true }
+          : { preserveScroll: true, forceRefresh: true }
       );
     }
 
     async function loadMessages(options) {
+      var opts = options || {};
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
-      applyMessages(
-        normalizeLegacyMessages((await api.getLegacyMessages(state.selectedThreadId)) || []),
-        options
-      );
+      var threadId = state.selectedThreadId;
+      var requestToken = String(threadId) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
+      state.latestMessagesRequestToken = requestToken;
+
+      var cached = getCachedMessages(threadId);
+      if (cached) {
+        applyMessages(cached.slice(), opts);
+      } else {
+        applyMessages([], Object.assign({}, opts, { forceRender: true }));
+        setMessagesLoading(true, threadId);
+      }
+
+      try {
+        var normalized = await fetchDialogMessages(threadId, {
+          forceRefresh: opts.forceRefresh !== false
+        });
+        if (state.latestMessagesRequestToken !== requestToken) {
+          return;
+        }
+        state.messagesLoading = false;
+        state.messagesLoadingThreadId = null;
+        applyMessages(normalized.slice(), opts);
+      } catch (error) {
+        if (state.latestMessagesRequestToken === requestToken) {
+          state.messagesLoading = false;
+          state.messagesLoadingThreadId = null;
+          renderMessages(state.messages, {
+            forceScrollBottom: false,
+            preserveScroll: true
+          });
+        }
+        throw error;
+      }
     }
 
     async function loadGames() {
