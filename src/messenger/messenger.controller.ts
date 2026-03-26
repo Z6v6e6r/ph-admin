@@ -479,7 +479,7 @@ export class MessengerController {
         : legacySource
     );
     const supportConnectorFilter = this.mapLegacyConnectorToSupportFilter(query.connector);
-    const supportDialogs = hasPhoneSearch
+    let supportDialogs = hasPhoneSearch
       ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
           connector: supportConnectorFilter,
           stationId: query.stationId
@@ -488,6 +488,19 @@ export class MessengerController {
           connector: supportConnectorFilter,
           stationId: query.stationId
         });
+
+    if (supportDialogs.length === 0) {
+      await this.supportService.hydrateFromPersistence();
+      supportDialogs = hasPhoneSearch
+        ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
+            connector: supportConnectorFilter,
+            stationId: query.stationId
+          })
+        : this.supportService.listDialogs(user, {
+            connector: supportConnectorFilter,
+            stationId: query.stationId
+          });
+    }
     const mappedSupport = this.sortDialogsByRank(
       supportDialogs.map((dialog) => this.mapSupportDialogToLegacy(dialog))
     );
