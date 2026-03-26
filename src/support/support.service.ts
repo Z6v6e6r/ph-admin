@@ -373,7 +373,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const dialog = this.resolveDialog(client, stationId, stationName, normalizedDto.subject, createdAt);
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
-    const direction = normalizedDto.direction ?? SupportMessageDirection.INBOUND;
+    const direction = this.resolveIncomingDirection(normalizedDto, kind);
     const senderRole = this.resolveIncomingSenderRole(direction, kind);
 
     const message = this.shouldCreateMessage(normalizedDto, kind, normalizedPhone, normalizedEmail)
@@ -3477,6 +3477,76 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return 'SYSTEM';
     }
     return Role.CLIENT;
+  }
+
+  private resolveIncomingDirection(
+    dto: NormalizedIngestSupportEventDto,
+    kind: SupportMessageKind
+  ): SupportMessageDirection {
+    const explicitDirection = String(dto.direction ?? '')
+      .trim()
+      .toUpperCase();
+    if (
+      explicitDirection === SupportMessageDirection.INBOUND ||
+      explicitDirection === SupportMessageDirection.OUTBOUND ||
+      explicitDirection === SupportMessageDirection.SYSTEM
+    ) {
+      return explicitDirection as SupportMessageDirection;
+    }
+
+    const normalizedAuthorType = String(dto.authorType ?? '')
+      .trim()
+      .toUpperCase();
+    if (
+      normalizedAuthorType &&
+      ['STAFF', 'SUPPORT', 'ADMIN', 'MANAGER', 'OPERATOR', 'AGENT'].includes(
+        normalizedAuthorType
+      )
+    ) {
+      return SupportMessageDirection.OUTBOUND;
+    }
+    if (
+      normalizedAuthorType &&
+      ['SYSTEM', 'BOT', 'SERVICE'].includes(normalizedAuthorType)
+    ) {
+      return SupportMessageDirection.SYSTEM;
+    }
+
+    const normalizedEventType = String(dto.eventType ?? '')
+      .trim()
+      .toUpperCase();
+    if (
+      normalizedEventType.includes('SYSTEM') ||
+      normalizedEventType === 'OTP' ||
+      normalizedEventType.startsWith('OTP_') ||
+      normalizedEventType.endsWith('_OTP')
+    ) {
+      return SupportMessageDirection.SYSTEM;
+    }
+
+    if (
+      kind === SupportMessageKind.SYSTEM ||
+      Boolean(dto.deliverToClient) ||
+      this.resolveSenderIsBot(dto) ||
+      this.looksLikeServiceText(dto.text)
+    ) {
+      return SupportMessageDirection.SYSTEM;
+    }
+
+    return SupportMessageDirection.INBOUND;
+  }
+
+  private looksLikeServiceText(rawText?: string): boolean {
+    const text = String(rawText ?? '')
+      .trim()
+      .toLowerCase();
+    if (!text) {
+      return false;
+    }
+    if (text.startsWith('служебное сообщение')) {
+      return true;
+    }
+    return text.includes('viva crm') && text.includes('otp');
   }
 
   private isReservedClientDisplayName(
