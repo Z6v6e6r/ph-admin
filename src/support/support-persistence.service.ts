@@ -671,6 +671,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     backendKey: SupportPersistenceBackendKey
   ): boolean {
     const connector = this.extractDialogPrimaryConnector(dialog);
+    if (!connector) {
+      return true;
+    }
     return this.resolveLoadBackendKeyForConnector(connector) === backendKey;
   }
 
@@ -683,29 +686,35 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       this.normalizeConnector(message.connector) ??
       this.normalizeConnector(rawMessage['channel']);
 
-    return (
-      this.resolveLoadBackendKeyForConnector(resolvedConnector) === backendKey
-    );
+    if (!resolvedConnector) {
+      return true;
+    }
+
+    return this.resolveLoadBackendKeyForConnector(resolvedConnector) === backendKey;
   }
 
   private shouldIncludeResponseMetricForBackend(
     metric: SupportResponseMetric,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
-    return (
-      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(metric.connector)) ===
-      backendKey
-    );
+    const resolvedConnector = this.normalizeConnector(metric.connector);
+    if (!resolvedConnector) {
+      return true;
+    }
+
+    return this.resolveLoadBackendKeyForConnector(resolvedConnector) === backendKey;
   }
 
   private shouldIncludeOutboxForBackend(
     command: SupportOutboxCommand,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
-    return (
-      this.resolveLoadBackendKeyForConnector(this.normalizeConnector(command.connector)) ===
-      backendKey
-    );
+    const resolvedConnector = this.normalizeConnector(command.connector);
+    if (!resolvedConnector) {
+      return true;
+    }
+
+    return this.resolveLoadBackendKeyForConnector(resolvedConnector) === backendKey;
   }
 
   private extractDialogPrimaryConnector(dialog: SupportDialog): SupportConnectorRoute | undefined {
