@@ -151,7 +151,7 @@ export class SupportController {
     @Query('before') before: string | undefined,
     @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
-  ): SupportMessage[] {
+  ): Promise<SupportMessage[]> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -159,6 +159,30 @@ export class SupportController {
       limit,
       before,
       includeService: this.parseOptionalBoolean(includeService)
+    });
+  }
+
+  @Get('dialogs/:dialogId/service-messages')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  async listServiceMessages(
+    @Param('dialogId') dialogId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<SupportMessage[]> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.supportService.listServiceMessages(dialogId, user, {
+      limit,
+      before
     });
   }
 

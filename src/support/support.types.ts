@@ -116,6 +116,8 @@ export interface SupportDialog {
   stationId: string;
   stationName: string;
   accessStationIds: string[];
+  writeStationIds: string[];
+  readOnlyStationIds: string[];
   status: SupportDialogStatus;
   authStatus: SupportClientAuthStatus;
   currentPhone?: string;
@@ -126,6 +128,8 @@ export interface SupportDialog {
   lastReplyConnector?: SupportConnectorRoute;
   subject?: string;
   unreadCount: number;
+  hasUnreadMessages: boolean;
+  hasNewMessages: boolean;
   waitingForStaffSince?: string;
   pendingClientMessageIds: string[];
   responseTimeTotalMs: number;
@@ -184,7 +188,10 @@ export interface SupportDialogSummary {
   stationId: string;
   stationName: string;
   accessStationIds: string[];
+  writeStationIds: string[];
+  readOnlyStationIds: string[];
   isActiveForUser: boolean;
+  isReadOnlyForUser: boolean;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;
@@ -196,6 +203,8 @@ export interface SupportDialogSummary {
   subject?: string;
   status: SupportDialogStatus;
   unreadCount: number;
+  hasUnreadMessages: boolean;
+  hasNewMessages: boolean;
   waitingForStaffSince?: string;
   pendingClientMessagesCount: number;
   averageFirstResponseMs?: number;

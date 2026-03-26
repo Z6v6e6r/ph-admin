@@ -363,13 +363,13 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/messages')
-  listMessages(
+  async listMessages(
     @Param('threadId') threadId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
     @Query('before') before: string | undefined,
     @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
-  ): ChatMessage[] {
+  ): Promise<ChatMessage[]> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -381,13 +381,13 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId/messages')
-  listDialogMessages(
+  async listDialogMessages(
     @Param('dialogId') dialogId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
     @Query('before') before: string | undefined,
     @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
-  ): ChatMessage[] {
+  ): Promise<ChatMessage[]> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -396,6 +396,32 @@ export class MessengerController {
       before,
       includeService: this.parseOptionalBoolean(includeService)
     });
+  }
+
+  @Get('threads/:threadId/service-messages')
+  async listThreadServiceMessages(
+    @Param('threadId') threadId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<ChatMessage[]> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.listCompatibleServiceMessages(threadId, user, { limit, before });
+  }
+
+  @Get('dialogs/:dialogId/service-messages')
+  async listDialogServiceMessages(
+    @Param('dialogId') dialogId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<ChatMessage[]> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.listCompatibleServiceMessages(dialogId, user, { limit, before });
   }
 
   @Post('threads/:threadId/messages')
@@ -433,20 +459,46 @@ export class MessengerController {
     }
   }
 
-  private listCompatibleMessages(
+  private async listCompatibleMessages(
     threadId: string,
     user: RequestUser,
     options: ListMessagesQueryOptions = {}
-  ): ChatMessage[] {
+  ): Promise<ChatMessage[]> {
     try {
       return this.messengerService.listMessages(threadId, user, options);
     } catch (error) {
       if (!(error instanceof NotFoundException)) {
         throw error;
       }
-      return this.supportService
-        .listMessages(threadId, user, options)
+      const supportMessages = await this.supportService.listMessages(threadId, user, options);
+      return supportMessages
         .map((message) => this.mapSupportMessageToLegacy(message));
+    }
+  }
+
+  private async listCompatibleServiceMessages(
+    threadId: string,
+    user: RequestUser,
+    options: ListMessagesQueryOptions = {}
+  ): Promise<ChatMessage[]> {
+    try {
+      return this.messengerService
+        .listMessages(threadId, user, {
+          limit: options.limit,
+          before: options.before,
+          includeService: true
+        })
+        .filter((message) => {
+          const senderRoleRaw = String(message.senderRoleRaw ?? '').trim().toUpperCase();
+          const direction = String(message.direction ?? '').trim().toUpperCase();
+          return senderRoleRaw === 'SYSTEM' || direction === 'SYSTEM';
+        });
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      const supportMessages = await this.supportService.listServiceMessages(threadId, user, options);
+      return supportMessages.map((message) => this.mapSupportMessageToLegacy(message));
     }
   }
 
@@ -591,7 +643,10 @@ export class MessengerController {
       stationId: dialog.stationId,
       stationName: dialog.currentStationName || dialog.stationName,
       accessStationIds: [...dialog.accessStationIds],
+      writeStationIds: [...dialog.writeStationIds],
+      readOnlyStationIds: [...dialog.readOnlyStationIds],
       isActiveForUser: dialog.isActiveForUser,
+      isReadOnlyForUser: dialog.isReadOnlyForUser,
       currentStationId: dialog.currentStationId,
       currentStationName: dialog.currentStationName,
       clientId: dialog.clientId,
@@ -604,6 +659,8 @@ export class MessengerController {
       lastMessageAt: dialog.lastMessageAt,
       lastRankingMessageAt: dialog.lastRankingMessageAt,
       unreadMessagesCount: dialog.unreadCount,
+      hasUnreadMessages: dialog.hasUnreadMessages,
+      hasNewMessages: dialog.hasNewMessages,
       pendingClientMessagesCount: dialog.pendingClientMessagesCount,
       lastMessageText: dialog.lastMessageText,
       lastMessageSenderRole: this.mapSupportSenderRole(dialog.lastMessageSenderRole),

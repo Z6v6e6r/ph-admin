@@ -585,11 +585,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
-  listMessages(
+  async listMessages(
     dialogId: string,
     user: RequestUser,
     options: SupportMessagesListOptions = {}
-  ): SupportMessage[] {
+  ): Promise<SupportMessage[]> {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
     if (this.isStaff(user)) {
@@ -601,8 +601,50 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const beforeTs = this.toTimestamp(options.before);
     const limit = this.resolveMessagesLimit(options.limit);
     const source = this.messages.get(dialog.id) ?? [];
+    const regularMessages = source
+      .filter((message) => !this.isSystemDialogMessage(message))
+      .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
+
+    if (!includeService) {
+      return regularMessages.length <= limit
+        ? regularMessages
+        : regularMessages.slice(regularMessages.length - limit);
+    }
+
+    const serviceMessages = await this.listServiceMessages(dialog.id, user, {
+      limit: Math.max(limit * 2, limit),
+      before: options.before
+    });
+    const merged = [...regularMessages, ...serviceMessages].sort(
+      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+    );
+
+    return merged.length <= limit ? merged : merged.slice(merged.length - limit);
+  }
+
+  async listServiceMessages(
+    dialogId: string,
+    user: RequestUser,
+    options: SupportMessagesListOptions = {}
+  ): Promise<SupportMessage[]> {
+    const dialog = this.getDialogOrThrow(dialogId);
+    this.ensureDialogAccess(dialog, user);
+
+    const limit = this.resolveMessagesLimit(options.limit);
+    if (this.persistence.isEnabled()) {
+      const persisted = await this.persistence.findServiceMessages(dialog.id, {
+        limit,
+        before: options.before
+      });
+      if (persisted.length > 0) {
+        return persisted;
+      }
+    }
+
+    const beforeTs = this.toTimestamp(options.before);
+    const source = this.messages.get(dialog.id) ?? [];
     const filtered = source
-      .filter((message) => (includeService ? true : !this.isSystemDialogMessage(message)))
+      .filter((message) => this.isSystemDialogMessage(message))
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
     return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
@@ -1161,6 +1203,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       stationId,
       stationName,
       accessStationIds: this.mergeStationAccessIds([], [stationId]),
+      writeStationIds: [stationId],
+      readOnlyStationIds: [],
       status: SupportDialogStatus.OPEN,
       authStatus: client.authStatus,
       currentPhone: client.primaryPhone,
@@ -1171,6 +1215,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       lastReplyConnector: undefined,
       subject: normalizedSubject,
       unreadCount: 0,
+      hasUnreadMessages: false,
+      hasNewMessages: false,
       waitingForStaffSince: undefined,
       pendingClientMessageIds: [],
       responseTimeTotalMs: 0,
@@ -1245,21 +1291,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const currentLastRankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
     const isSystemMessage = this.isSystemDialogMessage(message);
 
-    if (existing.length === 0) {
-      existing.push(message);
-    } else {
-      const lastMessage = existing[existing.length - 1];
-      const lastMessageTs = this.toTimestamp(lastMessage.createdAt);
-
-      if (messageTs >= lastMessageTs) {
+    if (!isSystemMessage) {
+      if (existing.length === 0) {
         existing.push(message);
       } else {
-        const insertIndex = this.findMessageInsertIndex(existing, messageTs);
-        existing.splice(insertIndex, 0, message);
-      }
-    }
+        const lastMessage = existing[existing.length - 1];
+        const lastMessageTs = this.toTimestamp(lastMessage.createdAt);
 
-    this.messages.set(dialog.id, existing);
+        if (messageTs >= lastMessageTs) {
+          existing.push(message);
+        } else {
+          const insertIndex = this.findMessageInsertIndex(existing, messageTs);
+          existing.splice(insertIndex, 0, message);
+        }
+      }
+      this.messages.set(dialog.id, existing);
+    }
 
     if (messageTs >= currentLastMessageTs) {
       dialog.lastMessageAt = message.createdAt;
@@ -1275,10 +1322,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       dialog.lastMessageSenderRole = message.senderRole;
     }
 
-    if (dialog.lastMessageText === undefined || dialog.lastMessageSenderRole === undefined) {
+    if (
+      !isSystemMessage &&
+      (dialog.lastMessageText === undefined || dialog.lastMessageSenderRole === undefined)
+    ) {
       this.refreshDialogPreviewFromMessages(dialog, existing);
     }
 
+    if (isSystemMessage) {
+      this.persistence.persistServiceMessage(message);
+      return;
+    }
     this.persistence.persistMessage(message);
   }
 
@@ -1724,10 +1778,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     connector?: SupportConnectorRoute,
     user?: RequestUser
   ): SupportDialogSummary {
+    this.syncDialogMarkers(dialog);
     const client = this.clients.get(dialog.clientId);
     let lastRankingMessageAt = dialog.lastRankingMessageAt;
     let lastMessageText = dialog.lastMessageText;
     let lastMessageSenderRole = dialog.lastMessageSenderRole;
+    const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
 
     if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
       const dialogMessages = this.messages.get(dialog.id) ?? [];
@@ -1746,7 +1802,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       stationId: dialog.stationId,
       stationName: dialog.stationName,
       accessStationIds: this.getDialogAccessStationIds(dialog),
-      isActiveForUser: user ? this.isDialogActiveForUser(dialog, user) : true,
+      writeStationIds: [...dialog.writeStationIds],
+      readOnlyStationIds: [...dialog.readOnlyStationIds],
+      isActiveForUser: canWriteForUser,
+      isReadOnlyForUser: !canWriteForUser,
       currentStationId: client?.currentStationId,
       currentStationName: client?.currentStationName,
       clientId: dialog.clientId,
@@ -1758,6 +1817,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       subject: this.buildSummaryDialogSubject(client, dialog),
       status: dialog.status,
       unreadCount: dialog.unreadCount,
+      hasUnreadMessages: dialog.hasUnreadMessages,
+      hasNewMessages: dialog.hasNewMessages,
       waitingForStaffSince: dialog.waitingForStaffSince,
       pendingClientMessagesCount: dialog.pendingClientMessageIds.length,
       averageFirstResponseMs: dialog.averageFirstResponseMs,
@@ -1942,6 +2003,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.readStringValue(rawDialog['lastMessageText']) ?? dialog.lastMessageText;
     const resolvedLastMessageSenderRole =
       this.readStringValue(rawDialog['lastMessageSenderRole']) ?? dialog.lastMessageSenderRole;
+    const resolvedPendingClientMessageIds = Array.isArray(dialog.pendingClientMessageIds)
+      ? dialog.pendingClientMessageIds
+      : [];
+    const normalizedAccessStationIds = this.getDialogAccessStationIds(dialog);
+    const writeStationIds = this.resolveDialogWriteStationIds(dialog);
+    const readOnlyStationIds = this.resolveDialogReadOnlyStationIds(
+      normalizedAccessStationIds,
+      writeStationIds
+    );
 
     return {
       ...dialog,
@@ -1959,10 +2029,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       phones: resolvedPhones,
       emails: resolvedEmails,
       subject: resolvedSubject,
-      pendingClientMessageIds: Array.isArray(dialog.pendingClientMessageIds)
-        ? dialog.pendingClientMessageIds
-        : [],
+      pendingClientMessageIds: resolvedPendingClientMessageIds,
       unreadCount: resolvedUnreadCount,
+      hasUnreadMessages: resolvedUnreadCount > 0,
+      hasNewMessages: resolvedPendingClientMessageIds.length > 0,
       lastRankingMessageAt: resolvedLastRankingMessageAt,
       lastMessageText: resolvedLastMessageText,
       lastMessageSenderRole:
@@ -1970,7 +2040,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         Object.values(Role).includes(resolvedLastMessageSenderRole as Role)
           ? (resolvedLastMessageSenderRole as SupportSenderRole)
           : undefined,
-      accessStationIds: this.getDialogAccessStationIds(dialog)
+      accessStationIds: normalizedAccessStationIds,
+      writeStationIds,
+      readOnlyStationIds
     };
   }
 
@@ -2039,10 +2111,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
             undefined,
             client.displayName,
             client.primaryPhone,
-            client.emails[0]
+              client.emails[0]
           );
       }
 
+      this.syncDialogMarkers(dialog);
       this.dialogs.set(dialog.id, dialog);
     }
   }
@@ -2132,6 +2205,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         stationId,
         stationName,
         accessStationIds: this.mergeStationAccessIds([], [stationId]),
+        writeStationIds: [stationId],
+        readOnlyStationIds: [],
         status: SupportDialogStatus.OPEN,
         authStatus,
         currentPhone: message.phone,
@@ -2148,6 +2223,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           this.isActionableClientMessage(message)
             ? 1
             : 0,
+        hasUnreadMessages:
+          message.direction === SupportMessageDirection.INBOUND &&
+          this.isActionableClientMessage(message),
+        hasNewMessages:
+          message.direction === SupportMessageDirection.INBOUND &&
+          this.isActionableClientMessage(message),
         waitingForStaffSince:
           message.direction === SupportMessageDirection.INBOUND &&
           this.isActionableClientMessage(message)
@@ -2619,6 +2700,36 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return this.mergeStationAccessIds(dialog.accessStationIds ?? [], [dialog.stationId, ...aliases]);
   }
 
+  private resolveDialogWriteStationIds(
+    dialog: Pick<SupportDialog, 'stationId'>
+  ): string[] {
+    const stationId = this.normalizeStationId(dialog.stationId);
+    return stationId ? [stationId] : [];
+  }
+
+  private resolveDialogReadOnlyStationIds(
+    accessStationIds: string[],
+    writeStationIds: string[]
+  ): string[] {
+    const writeSet = new Set(writeStationIds.map((stationId) => stationId.toLowerCase()));
+    return accessStationIds.filter((stationId) => !writeSet.has(stationId.toLowerCase()));
+  }
+
+  private syncDialogMarkers(dialog: SupportDialog): void {
+    const accessStationIds = this.getDialogAccessStationIds(dialog);
+    const writeStationIds = this.resolveDialogWriteStationIds(dialog);
+    const readOnlyStationIds = this.resolveDialogReadOnlyStationIds(
+      accessStationIds,
+      writeStationIds
+    );
+
+    dialog.accessStationIds = accessStationIds;
+    dialog.writeStationIds = writeStationIds;
+    dialog.readOnlyStationIds = readOnlyStationIds;
+    dialog.hasUnreadMessages = dialog.unreadCount > 0;
+    dialog.hasNewMessages = dialog.pendingClientMessageIds.length > 0;
+  }
+
   private mergeStationAccessIds(existing: string[], values: Array<string | undefined>): string[] {
     return this.mergeStrings(
       existing,
@@ -2654,6 +2765,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private isDialogActiveForUser(dialog: SupportDialog, user: RequestUser): boolean {
+    return this.isDialogWritableForUser(dialog, user);
+  }
+
+  private isDialogWritableForUser(dialog: SupportDialog, user: RequestUser): boolean {
     if (
       user.roles.includes(Role.SUPER_ADMIN) ||
       user.roles.includes(Role.SUPPORT) ||
@@ -2743,6 +2858,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private persistDialog(dialog: SupportDialog): void {
+    this.syncDialogMarkers(dialog);
     this.dialogs.set(dialog.id, dialog);
     this.persistence.persistDialog(dialog);
   }

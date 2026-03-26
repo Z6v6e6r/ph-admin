@@ -22,6 +22,7 @@ export interface SupportPersistenceCollectionCounts {
   clients: number;
   dialogs: number;
   messages: number;
+  serviceMessages: number;
   responseMetrics: number;
   outbox: number;
 }
@@ -35,6 +36,7 @@ export interface SupportPersistenceBackendDiagnostics {
     clients: string;
     dialogs: string;
     messages: string;
+    serviceMessages: string;
     responseMetrics: string;
     outbox: string;
   };
@@ -50,6 +52,7 @@ export interface SupportPersistenceRuntimeDiagnostics {
     clients: string;
     dialogs: string;
     messages: string;
+    serviceMessages: string;
     responseMetrics: string;
     outbox: string;
   };
@@ -77,6 +80,7 @@ type SupportPersistenceCollectionKey =
   | 'clients'
   | 'dialogs'
   | 'messages'
+  | 'serviceMessages'
   | 'responseMetrics'
   | 'outbox';
 
@@ -88,6 +92,7 @@ interface SupportPersistenceBackendConfig {
     clients: string;
     dialogs: string;
     messages: string;
+    serviceMessages: string;
     responseMetrics: string;
     outbox: string;
   };
@@ -110,6 +115,11 @@ export interface SupportDialogPhoneLookupOptions {
   limit?: number;
 }
 
+export interface SupportServiceMessagesLookupOptions {
+  limit?: number;
+  before?: string;
+}
+
 @Injectable()
 export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SupportPersistenceService.name);
@@ -129,6 +139,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     clients: this.readEnv('SUPPORT_CLIENTS_COLLECTION') ?? 'support_clients',
     dialogs: this.readEnv('SUPPORT_DIALOGS_COLLECTION') ?? 'support_dialogs',
     messages: this.readEnv('SUPPORT_MESSAGES_COLLECTION') ?? 'support_messages',
+    serviceMessages:
+      this.readEnv('SUPPORT_SERVICE_MESSAGES_COLLECTION') ?? 'support_service_messages',
     responseMetrics:
       this.readEnv('SUPPORT_RESPONSE_METRICS_COLLECTION') ?? 'support_response_metrics',
     outbox: this.readEnv('SUPPORT_OUTBOX_COLLECTION') ?? 'support_outbox'
@@ -481,6 +493,86 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }, 'persistMessage');
   }
 
+  persistServiceMessage(message: SupportMessage): void {
+    this.fireAndForget(async () => {
+      const target = this.resolveTargetBackendForConnector(message.connector);
+      if (!target) {
+        return;
+      }
+
+      await this.collection<SupportMessage>(target, 'serviceMessages').updateOne(
+        { id: message.id },
+        { $set: message },
+        { upsert: true }
+      );
+
+      await this.deleteFromOtherBackends(target.config.key, 'serviceMessages', message.id);
+    }, 'persistServiceMessage');
+  }
+
+  async findServiceMessages(
+    dialogId: string,
+    options: SupportServiceMessagesLookupOptions = {}
+  ): Promise<SupportMessage[]> {
+    const normalizedDialogId = String(dialogId ?? '').trim();
+    if (!normalizedDialogId) {
+      return [];
+    }
+
+    const activeBackends = this.getActiveBackends();
+    if (activeBackends.length === 0) {
+      return [];
+    }
+
+    const limit = Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 300);
+    const beforeTs = this.parseTimestamp(options.before);
+    const byId = new Map<string, TimestampedEntity<SupportMessage>>();
+
+    for (const backend of activeBackends) {
+      const backendKey = backend.config.key;
+      const items = await this.collection<SupportMessage>(backend, 'serviceMessages')
+        .find(
+          { dialogId: normalizedDialogId },
+          {
+            projection: { _id: 0 },
+            sort: { createdAt: -1 },
+            limit
+          }
+        )
+        .toArray();
+
+      for (const message of items) {
+        if (!this.shouldIncludeMessageForBackend(message, backendKey)) {
+          continue;
+        }
+        if (!this.isServiceMessage(message)) {
+          continue;
+        }
+        if (
+          beforeTs > 0 &&
+          this.resolveMessageTimestamp(message) >= beforeTs
+        ) {
+          continue;
+        }
+        this.upsertByTimestamp(
+          byId,
+          message.id,
+          message,
+          this.resolveMessageTimestamp(message)
+        );
+      }
+    }
+
+    const sorted = Array.from(byId.values())
+      .map((item) => item.entity)
+      .sort(
+        (left, right) =>
+          this.resolveMessageTimestamp(left) - this.resolveMessageTimestamp(right)
+      );
+
+    return sorted.length <= limit ? sorted : sorted.slice(sorted.length - limit);
+  }
+
   persistResponseMetric(metric: SupportResponseMetric): void {
     this.fireAndForget(async () => {
       const target = this.resolveTargetBackendForConnector(metric.connector);
@@ -540,6 +632,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
             this.readEnv('SUPPORT_WEB_DIALOGS_COLLECTION') ?? this.primaryCollections.dialogs,
           messages:
             this.readEnv('SUPPORT_WEB_MESSAGES_COLLECTION') ?? this.primaryCollections.messages,
+          serviceMessages:
+            this.readEnv('SUPPORT_WEB_SERVICE_MESSAGES_COLLECTION') ??
+            this.primaryCollections.serviceMessages,
           responseMetrics:
             this.readEnv('SUPPORT_WEB_RESPONSE_METRICS_COLLECTION') ??
             this.primaryCollections.responseMetrics,
@@ -561,6 +656,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
             this.readEnv('SUPPORT_MAX_DIALOGS_COLLECTION') ?? this.primaryCollections.dialogs,
           messages:
             this.readEnv('SUPPORT_MAX_MESSAGES_COLLECTION') ?? this.primaryCollections.messages,
+          serviceMessages:
+            this.readEnv('SUPPORT_MAX_SERVICE_MESSAGES_COLLECTION') ??
+            this.primaryCollections.serviceMessages,
           responseMetrics:
             this.readEnv('SUPPORT_MAX_RESPONSE_METRICS_COLLECTION') ??
             this.primaryCollections.responseMetrics,
@@ -821,6 +919,18 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       this.collection<SupportMessage>(backend, 'messages').createIndex({ id: 1 }, { unique: true }),
       this.collection<SupportMessage>(backend, 'messages').createIndex({ dialogId: 1, createdAt: 1 }),
       this.collection<SupportMessage>(backend, 'messages').createIndex({ clientId: 1, createdAt: 1 }),
+      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex(
+        { id: 1 },
+        { unique: true }
+      ),
+      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex({
+        dialogId: 1,
+        createdAt: 1
+      }),
+      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex({
+        clientId: 1,
+        createdAt: 1
+      }),
       this.collection<SupportResponseMetric>(backend, 'responseMetrics').createIndex(
         { id: 1 },
         { unique: true }
@@ -858,10 +968,11 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }
 
     try {
-      const [clients, dialogs, messages, responseMetrics, outbox] = await Promise.all([
+      const [clients, dialogs, messages, serviceMessages, responseMetrics, outbox] = await Promise.all([
         this.collection<SupportClientProfile>(state, 'clients').countDocuments({}),
         this.collection<SupportDialog>(state, 'dialogs').countDocuments({}),
         this.collection<SupportMessage>(state, 'messages').countDocuments({}),
+        this.collection<SupportMessage>(state, 'serviceMessages').countDocuments({}),
         this.collection<SupportResponseMetric>(state, 'responseMetrics').countDocuments({}),
         this.collection<SupportOutboxCommand>(state, 'outbox').countDocuments({})
       ]);
@@ -870,6 +981,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         clients,
         dialogs,
         messages,
+        serviceMessages,
         responseMetrics,
         outbox
       };
@@ -914,6 +1026,14 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private resolveMessageTimestamp(message: SupportMessage): number {
     const typed = message as unknown as Record<string, unknown>;
     return this.parseTimestamp(message.createdAt) || this.parseTimestamp(typed['createdTs']);
+  }
+
+  private isServiceMessage(message: SupportMessage): boolean {
+    return (
+      String(message.direction ?? '').toUpperCase() === 'SYSTEM' ||
+      String(message.senderRole ?? '').toUpperCase() === 'SYSTEM' ||
+      String(message.kind ?? '').toUpperCase() === 'SYSTEM'
+    );
   }
 
   private resolveResponseMetricTimestamp(metric: SupportResponseMetric): number {

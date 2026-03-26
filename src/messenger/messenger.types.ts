@@ -117,7 +117,10 @@ export interface StationDialogSummary {
   stationId: string;
   stationName?: string;
   accessStationIds?: string[];
+  writeStationIds?: string[];
+  readOnlyStationIds?: string[];
   isActiveForUser?: boolean;
+  isReadOnlyForUser?: boolean;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;
@@ -132,6 +135,8 @@ export interface StationDialogSummary {
   lastMessageAt?: string;
   lastRankingMessageAt?: string;
   unreadMessagesCount: number;
+  hasUnreadMessages?: boolean;
+  hasNewMessages?: boolean;
   pendingClientMessagesCount: number;
   lastMessageText?: string;
   lastMessageSenderRole?: Role;
