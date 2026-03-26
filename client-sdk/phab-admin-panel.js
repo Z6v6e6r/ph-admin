@@ -1385,7 +1385,7 @@
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/messages', 'GET');
       },
       getLegacyMessages: function (threadId) {
-        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'GET');
+        return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'GET');
       },
       sendMessage: function (dialogId, text) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
@@ -1393,7 +1393,7 @@
         });
       },
       sendLegacyMessage: function (threadId, text) {
-        return request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', 'POST', {
+        return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'POST', {
           text: text
         });
       },

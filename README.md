@@ -177,6 +177,10 @@ curl http://localhost:3000/api/games \
 - `GET /api/tournaments/:id`
 - `GET /api/messenger/threads`
 - `GET /api/messenger/threads?connector=TG_BOT&stationId=station-msk-1`
+- `GET /api/messenger/dialogs`
+- `GET /api/messenger/dialogs/:dialogId`
+- `GET /api/messenger/dialogs/:dialogId/messages`
+- `POST /api/messenger/dialogs/:dialogId/messages`
 - `POST /api/messenger/threads`
 - `GET /api/messenger/threads/:threadId/messages`
 - `POST /api/messenger/threads/:threadId/messages`
@@ -206,6 +210,10 @@ curl http://localhost:3000/api/games \
 - `GET /api/support/clients/resolve?connector=MAX_BOT&phone=79991234567`
 - `POST /api/support/dialogs/events`
 - `GET /api/support/debug/runtime` (staff-only диагностика runtime-состояния support persistence/connector registry)
+
+Для UI-режима диалогов рекомендуется поток:
+`GET /api/messenger/dialogs` -> `GET /api/messenger/dialogs/:dialogId/messages` по клику.
+Маршруты `threads/*` сохранены для обратной совместимости.
 
 ## Коннекторы мессенджера
 

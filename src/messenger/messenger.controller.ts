@@ -330,14 +330,18 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    try {
-      return this.messengerService.getThreadById(threadId, user);
-    } catch (error) {
-      if (!(error instanceof NotFoundException)) {
-        throw error;
-      }
-      return this.getSupportThread(threadId, user);
+    return this.getCompatibleThread(threadId, user);
+  }
+
+  @Get('dialogs/:dialogId')
+  getDialog(
+    @Param('dialogId') dialogId: string,
+    @CurrentUser() user?: RequestUser
+  ): ChatThread {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
     }
+    return this.getCompatibleThread(dialogId, user);
   }
 
   @Post('threads')
@@ -359,6 +363,56 @@ export class MessengerController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
+    return this.listCompatibleMessages(threadId, user);
+  }
+
+  @Get('dialogs/:dialogId/messages')
+  listDialogMessages(
+    @Param('dialogId') dialogId: string,
+    @CurrentUser() user?: RequestUser
+  ): ChatMessage[] {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.listCompatibleMessages(dialogId, user);
+  }
+
+  @Post('threads/:threadId/messages')
+  sendMessage(
+    @Param('threadId') threadId: string,
+    @Body() dto: CreateMessageDto,
+    @CurrentUser() user?: RequestUser
+  ): ChatMessage {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.sendCompatibleMessage(threadId, dto, user);
+  }
+
+  @Post('dialogs/:dialogId/messages')
+  sendDialogMessage(
+    @Param('dialogId') dialogId: string,
+    @Body() dto: CreateMessageDto,
+    @CurrentUser() user?: RequestUser
+  ): ChatMessage {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.sendCompatibleMessage(dialogId, dto, user);
+  }
+
+  private getCompatibleThread(threadId: string, user: RequestUser): ChatThread {
+    try {
+      return this.messengerService.getThreadById(threadId, user);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      return this.getSupportThread(threadId, user);
+    }
+  }
+
+  private listCompatibleMessages(threadId: string, user: RequestUser): ChatMessage[] {
     try {
       return this.messengerService.listMessages(threadId, user);
     } catch (error) {
@@ -371,15 +425,11 @@ export class MessengerController {
     }
   }
 
-  @Post('threads/:threadId/messages')
-  sendMessage(
-    @Param('threadId') threadId: string,
-    @Body() dto: CreateMessageDto,
-    @CurrentUser() user?: RequestUser
+  private sendCompatibleMessage(
+    threadId: string,
+    dto: CreateMessageDto,
+    user: RequestUser
   ): ChatMessage {
-    if (!user) {
-      throw new UnauthorizedException('User context is missing');
-    }
     try {
       return this.messengerService.sendMessage(threadId, dto, user);
     } catch (error) {
