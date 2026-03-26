@@ -4681,10 +4681,16 @@
 
     function sortDialogsByLastMessage(items) {
       return (Array.isArray(items) ? items.slice() : []).sort(function (left, right) {
-        var leftHasPending = Number(left && left.pendingClientMessagesCount || 0) > 0 ? 1 : 0;
-        var rightHasPending = Number(right && right.pendingClientMessagesCount || 0) > 0 ? 1 : 0;
-        if (leftHasPending !== rightHasPending) {
-          return rightHasPending - leftHasPending;
+        var leftUnread = Number(left && left.unreadCount || 0);
+        var rightUnread = Number(right && right.unreadCount || 0);
+        if (leftUnread !== rightUnread) {
+          return rightUnread - leftUnread;
+        }
+
+        var leftPending = Number(left && left.pendingClientMessagesCount || 0);
+        var rightPending = Number(right && right.pendingClientMessagesCount || 0);
+        if (leftPending !== rightPending) {
+          return rightPending - leftPending;
         }
 
         var leftRank = parseDateValue(left.lastRankingMessageAt);
@@ -4700,7 +4706,12 @@
           return rightRank - leftRank;
         }
 
-        return compareNullable(parseDateValue(right.lastMessageAt), parseDateValue(left.lastMessageAt));
+        var byLastMessage = compareNullable(parseDateValue(right.lastMessageAt), parseDateValue(left.lastMessageAt));
+        if (byLastMessage !== 0) {
+          return byLastMessage;
+        }
+
+        return String(left && left.dialogId || '').localeCompare(String(right && right.dialogId || ''));
       });
     }
 

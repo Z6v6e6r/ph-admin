@@ -530,15 +530,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ): SupportDialogSummary[] {
     return this.listAccessibleDialogs(user, { connector, stationId })
       .map((dialog) => this.toDialogSummary(dialog, connector))
-      .sort((left, right) => {
-        if (left.unreadCount > 0 && right.unreadCount === 0) {
-          return -1;
-        }
-        if (left.unreadCount === 0 && right.unreadCount > 0) {
-          return 1;
-        }
-        return this.compareDialogSummaryRank(left, right);
-      });
+      .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
   listDialogs(user: RequestUser, filters: SupportDialogFilters = {}): SupportDialogSummary[] {
@@ -1724,12 +1716,30 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     left: SupportDialogSummary,
     right: SupportDialogSummary
   ): number {
+    const leftUnread = Number(left.unreadCount ?? 0);
+    const rightUnread = Number(right.unreadCount ?? 0);
+    if (leftUnread !== rightUnread) {
+      return rightUnread - leftUnread;
+    }
+
+    const leftPending = Number(left.pendingClientMessagesCount ?? 0);
+    const rightPending = Number(right.pendingClientMessagesCount ?? 0);
+    if (leftPending !== rightPending) {
+      return rightPending - leftPending;
+    }
+
     const byRankingMessage =
       this.toTimestamp(right.lastRankingMessageAt) - this.toTimestamp(left.lastRankingMessageAt);
     if (byRankingMessage !== 0) {
       return byRankingMessage;
     }
-    return this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
+
+    const byLastMessage = this.toTimestamp(right.lastMessageAt) - this.toTimestamp(left.lastMessageAt);
+    if (byLastMessage !== 0) {
+      return byLastMessage;
+    }
+
+    return left.dialogId.localeCompare(right.dialogId);
   }
 
   private findLastRankingMessage(messages: SupportMessage[]): SupportMessage | undefined {

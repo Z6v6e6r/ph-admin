@@ -523,10 +523,16 @@ export class MessengerController {
     left: StationDialogSummary,
     right: StationDialogSummary
   ): number {
-    const leftHasPending = Number(left.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
-    const rightHasPending = Number(right.pendingClientMessagesCount ?? 0) > 0 ? 1 : 0;
-    if (leftHasPending !== rightHasPending) {
-      return rightHasPending - leftHasPending;
+    const leftUnread = Number(left.unreadMessagesCount ?? 0);
+    const rightUnread = Number(right.unreadMessagesCount ?? 0);
+    if (leftUnread !== rightUnread) {
+      return rightUnread - leftUnread;
+    }
+
+    const leftPending = Number(left.pendingClientMessagesCount ?? 0);
+    const rightPending = Number(right.pendingClientMessagesCount ?? 0);
+    if (leftPending !== rightPending) {
+      return rightPending - leftPending;
     }
 
     const leftRankTs = Date.parse(left.lastRankingMessageAt || left.lastMessageAt || '') || 0;

@@ -865,17 +865,50 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     user: RequestUser,
     filters: ThreadFilters = {}
   ): ChatThread[] {
-    return Array.from(this.threads.values())
+    const filtered = Array.from(this.threads.values())
       .filter((thread) =>
         filters.connector ? thread.connector === filters.connector : true
       )
       .filter((thread) => (filters.stationId ? thread.stationId === filters.stationId : true))
-      .filter((thread) => this.canAccessThread(thread, user))
-      .sort(
-        (left, right) =>
-          this.toTimestamp(right.lastMessageAt ?? right.updatedAt) -
-          this.toTimestamp(left.lastMessageAt ?? left.updatedAt)
-      );
+      .filter((thread) => this.canAccessThread(thread, user));
+
+    const unreadByThreadId = new Map<string, number>();
+    const pendingByThreadId = new Map<string, number>();
+
+    for (const thread of filtered) {
+      unreadByThreadId.set(thread.id, this.countUnreadMessagesForUser(thread, user));
+      pendingByThreadId.set(thread.id, this.countPendingClientMessages(thread.id));
+    }
+
+    return filtered.sort((left, right) => {
+      const leftUnread = unreadByThreadId.get(left.id) ?? 0;
+      const rightUnread = unreadByThreadId.get(right.id) ?? 0;
+      if (leftUnread !== rightUnread) {
+        return rightUnread - leftUnread;
+      }
+
+      const leftPending = pendingByThreadId.get(left.id) ?? 0;
+      const rightPending = pendingByThreadId.get(right.id) ?? 0;
+      if (leftPending !== rightPending) {
+        return rightPending - leftPending;
+      }
+
+      const byRanking =
+        this.toTimestamp(right.lastRankingMessageAt ?? right.lastMessageAt ?? right.updatedAt) -
+        this.toTimestamp(left.lastRankingMessageAt ?? left.lastMessageAt ?? left.updatedAt);
+      if (byRanking !== 0) {
+        return byRanking;
+      }
+
+      const byLastMessage =
+        this.toTimestamp(right.lastMessageAt ?? right.updatedAt) -
+        this.toTimestamp(left.lastMessageAt ?? left.updatedAt);
+      if (byLastMessage !== 0) {
+        return byLastMessage;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
   }
 
   private buildDialogSummary(
@@ -897,6 +930,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       subject: thread.subject,
       status: thread.status,
       lastMessageAt: thread.lastMessageAt,
+      lastRankingMessageAt: thread.lastRankingMessageAt,
       unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
       pendingClientMessagesCount: this.countPendingClientMessages(thread.id),
       lastMessageText: lastMessage?.text,
