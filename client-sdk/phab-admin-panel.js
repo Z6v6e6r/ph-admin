@@ -452,18 +452,33 @@
         color:rgba(51,0,32,.58);
       }
       .phab-admin-chat-item-top{
+        min-width:0;
+      }
+      .phab-admin-chat-item{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        column-gap:10px;
+        align-items:stretch;
+      }
+      .phab-admin-chat-item-main{
+        min-width:0;
+      }
+      .phab-admin-chat-item-side{
+        min-width:24px;
         display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:8px;
+        flex-direction:column;
+        align-items:flex-end;
+        justify-content:flex-end;
+        gap:6px;
       }
       .phab-admin-chat-source{
-        margin-top:6px;
         display:flex;
         align-items:center;
-        justify-content:flex-start;
+        justify-content:flex-end;
         gap:5px;
         min-height:14px;
+        flex-wrap:wrap;
+        max-width:34px;
       }
       .phab-admin-chat-source-icon{
         width:14px;
@@ -508,6 +523,9 @@
         -webkit-box-orient:vertical;
         overflow:hidden;
         word-break:break-word;
+      }
+      .phab-admin-chat-item-side:empty{
+        display:none;
       }
       .phab-admin-list-title{
         font-size:12px;
@@ -4871,9 +4889,17 @@
         });
         li.appendChild(btn);
 
+        var main = document.createElement('div');
+        main.className = 'phab-admin-chat-item-main';
+        btn.appendChild(main);
+
+        var side = document.createElement('div');
+        side.className = 'phab-admin-chat-item-side';
+        btn.appendChild(side);
+
         var top = document.createElement('div');
         top.className = 'phab-admin-chat-item-top';
-        btn.appendChild(top);
+        main.appendChild(top);
 
         var titleEl = document.createElement('div');
         titleEl.className = 'phab-admin-list-title';
@@ -4894,7 +4920,7 @@
               ? 'phab-admin-chat-badge-unread'
               : 'phab-admin-chat-badge-pending');
           badge.textContent = String(badgeCount);
-          top.appendChild(badge);
+          side.appendChild(badge);
         }
 
         var meta = document.createElement('div');
@@ -4906,16 +4932,16 @@
           ' · ' +
           formatTime(item.lastMessageAt) +
           (item.isActiveForUser === false ? ' · неактивен' : '');
-        btn.appendChild(meta);
+        main.appendChild(meta);
 
         var preview = document.createElement('div');
         preview.className = 'phab-admin-chat-preview';
         preview.textContent = String(item.lastMessageText || 'Сообщений пока нет');
-        btn.appendChild(preview);
+        main.appendChild(preview);
 
         var sourceNode = buildDialogSourceNode(item);
         if (sourceNode) {
-          btn.appendChild(sourceNode);
+          side.appendChild(sourceNode);
         }
       });
 
