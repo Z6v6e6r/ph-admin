@@ -93,21 +93,6 @@
   ];
   var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
   var MAX_FAVICON_URL = 'https://max.ru/favicon.ico';
-  var MAX_MESSENGER_EMBLEM_DATA_URI =
-    'data:image/svg+xml;utf8,' +
-    encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
-        '<defs>' +
-          '<linearGradient id="maxg" x1="0%" y1="0%" x2="100%" y2="100%">' +
-            '<stop offset="0%" stop-color="#1f8fff"/>' +
-            '<stop offset="100%" stop-color="#00c2a8"/>' +
-          '</linearGradient>' +
-        '</defs>' +
-        '<rect x="2" y="2" width="60" height="60" rx="16" fill="#0b1220"/>' +
-        '<rect x="4" y="4" width="56" height="56" rx="14" fill="url(#maxg)" opacity=".9"/>' +
-        '<text x="32" y="39" text-anchor="middle" font-size="18" font-weight="800" font-family="Arial,sans-serif" fill="#ffffff">MAX</text>' +
-      '</svg>'
-    );
 
   function normalizeConfig(raw) {
     var cfg = Object.assign({}, DEFAULTS, raw || {});
@@ -4803,7 +4788,7 @@
       if (connector === 'MAX_BOT') {
         return [
           { src: MAX_FAVICON_URL, alt: 'MAX' },
-          { src: MAX_MESSENGER_EMBLEM_DATA_URI, alt: 'MAX Messenger' }
+          { src: PADLHUB_FAVICON_URL, alt: 'PadlHub' }
         ];
       }
       return [];
