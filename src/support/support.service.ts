@@ -1788,7 +1788,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     const byRankingMessage =
-      this.toTimestamp(right.lastRankingMessageAt) - this.toTimestamp(left.lastRankingMessageAt);
+      this.resolveDialogSummaryRankTimestamp(right) - this.resolveDialogSummaryRankTimestamp(left);
     if (byRankingMessage !== 0) {
       return byRankingMessage;
     }
@@ -1799,6 +1799,23 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return left.dialogId.localeCompare(right.dialogId);
+  }
+
+  private resolveDialogSummaryRankTimestamp(dialog: SupportDialogSummary): number {
+    const rankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
+    if (rankingTs > 0) {
+      return rankingTs;
+    }
+
+    if (this.isSystemSenderRole(dialog.lastMessageSenderRole)) {
+      return 0;
+    }
+
+    return this.toTimestamp(dialog.lastMessageAt);
+  }
+
+  private isSystemSenderRole(role?: SupportSenderRole): boolean {
+    return role === 'SYSTEM';
   }
 
   private findLastRankingMessage(messages: SupportMessage[]): SupportMessage | undefined {

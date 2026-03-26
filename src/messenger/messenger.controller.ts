@@ -629,8 +629,8 @@ export class MessengerController {
       return rightPending - leftPending;
     }
 
-    const leftRankTs = Date.parse(left.lastRankingMessageAt || left.lastMessageAt || '') || 0;
-    const rightRankTs = Date.parse(right.lastRankingMessageAt || right.lastMessageAt || '') || 0;
+    const leftRankTs = this.resolveDialogRankTimestamp(left);
+    const rightRankTs = this.resolveDialogRankTimestamp(right);
     if (leftRankTs !== rightRankTs) {
       return rightRankTs - leftRankTs;
     }
@@ -642,6 +642,25 @@ export class MessengerController {
     }
 
     return left.threadId.localeCompare(right.threadId);
+  }
+
+  private resolveDialogRankTimestamp(dialog: StationDialogSummary): number {
+    const explicitRankingTs = Date.parse(dialog.lastRankingMessageAt || '') || 0;
+    if (explicitRankingTs > 0) {
+      return explicitRankingTs;
+    }
+
+    const senderRoleRaw = String(
+      dialog.lastMessageSenderRoleRaw ?? dialog.lastMessageSenderRole ?? ''
+    )
+      .trim()
+      .toUpperCase();
+
+    if (senderRoleRaw === 'SYSTEM') {
+      return 0;
+    }
+
+    return Date.parse(dialog.lastMessageAt || '') || 0;
   }
 
   private sortDialogsByRank(dialogs: StationDialogSummary[]): StationDialogSummary[] {
