@@ -13,6 +13,7 @@
   };
 
   var STYLE_ID = 'phab-admin-panel-style';
+  var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
   var CONNECTOR_ROUTES = ['TG_BOT', 'MAX_BOT', 'LK_WEB_MESSENGER'];
   var CONNECTOR_CONFIG_PRESETS = {
     MAX_BOT: {
@@ -685,6 +686,45 @@
         flex-wrap:wrap;
         gap:6px;
         margin-top:8px;
+      }
+      .phab-admin-connector-icons{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        margin-right:2px;
+      }
+      .phab-admin-connector-logo{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:26px;
+        height:26px;
+        border-radius:8px;
+        border:1px solid rgba(51,0,32,.14);
+        background:rgba(255,255,255,.92);
+        box-shadow:0 4px 10px rgba(51,0,32,.08);
+        overflow:hidden;
+        flex:0 0 auto;
+      }
+      .phab-admin-connector-logo-max{
+        background:linear-gradient(135deg,#00a8ff 0%,#0b59d3 100%);
+        color:#fff;
+        font-size:9px;
+        font-weight:900;
+        letter-spacing:.04em;
+        font-family:var(--cup-font-heading);
+      }
+      .phab-admin-connector-logo-padlhub img{
+        display:block;
+        width:18px;
+        height:18px;
+        object-fit:contain;
+      }
+      .phab-admin-connector-logo-padlhub-fallback{
+        color:var(--cup-wine);
+        font-size:12px;
+        font-weight:900;
+        font-family:var(--cup-font-heading);
       }
       .phab-admin-chip{
         display:inline-flex;
@@ -3443,6 +3483,56 @@
       }
     }
 
+    function createConnectorTagNode(value) {
+      var normalized = String(value || '').trim().toUpperCase();
+      if (normalized !== 'MAX_BOT') {
+        var chip = document.createElement('span');
+        var lower = normalized.toLowerCase();
+        chip.className =
+          'phab-admin-chip' +
+          (lower.indexOf('critical') >= 0 || lower.indexOf('distressed') >= 0
+            ? ' phab-admin-chip-alert'
+            : lower.indexOf('important') >= 0 || lower.indexOf('negative') >= 0
+              ? ' phab-admin-chip-warn'
+              : '');
+        chip.textContent = String(value);
+        return chip;
+      }
+
+      var wrap = document.createElement('span');
+      wrap.className = 'phab-admin-connector-icons';
+
+      var maxLogo = document.createElement('span');
+      maxLogo.className = 'phab-admin-connector-logo phab-admin-connector-logo-max';
+      maxLogo.textContent = 'MAX';
+      maxLogo.title = 'MAX';
+      wrap.appendChild(maxLogo);
+
+      var padlHubLogo = document.createElement('span');
+      padlHubLogo.className = 'phab-admin-connector-logo phab-admin-connector-logo-padlhub';
+      padlHubLogo.title = 'PadlHub';
+      wrap.appendChild(padlHubLogo);
+
+      var fallback = document.createElement('span');
+      fallback.className = 'phab-admin-connector-logo-padlhub-fallback';
+      fallback.textContent = 'P';
+      padlHubLogo.appendChild(fallback);
+
+      var favicon = document.createElement('img');
+      favicon.alt = 'PadlHub';
+      favicon.src = PADLHUB_FAVICON_URL;
+      favicon.addEventListener('load', function () {
+        fallback.style.display = 'none';
+      });
+      favicon.addEventListener('error', function () {
+        favicon.remove();
+        fallback.style.display = 'inline-flex';
+      });
+      padlHubLogo.appendChild(favicon);
+
+      return wrap;
+    }
+
     function formatDateTimeFull(value) {
       if (!value) {
         return '-';
@@ -5427,18 +5517,8 @@
           selectedDialog.ai && selectedDialog.ai.priority
         ]
           .filter(Boolean)
-          .forEach(function (value, index) {
-            var chip = document.createElement('span');
-            var lower = String(value).toLowerCase();
-            chip.className =
-              'phab-admin-chip' +
-              (lower.indexOf('critical') >= 0 || lower.indexOf('distressed') >= 0
-                ? ' phab-admin-chip-alert'
-                : lower.indexOf('important') >= 0 || lower.indexOf('negative') >= 0
-                  ? ' phab-admin-chip-warn'
-                  : '');
-            chip.textContent = String(value);
-            dom.dialogTags.appendChild(chip);
+          .forEach(function (value) {
+            dom.dialogTags.appendChild(createConnectorTagNode(value));
           });
 
         if (
