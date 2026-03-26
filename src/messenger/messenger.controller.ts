@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Param,
   ParseEnumPipe,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -60,6 +61,12 @@ import {
   ThreadAiConfig
 } from './messenger.types';
 import { MessengerService } from './messenger.service';
+
+interface ListMessagesQueryOptions {
+  limit?: number;
+  before?: string;
+  includeService?: boolean;
+}
 
 @Controller('messenger')
 @Roles(
@@ -358,23 +365,37 @@ export class MessengerController {
   @Get('threads/:threadId/messages')
   listMessages(
     @Param('threadId') threadId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
   ): ChatMessage[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.listCompatibleMessages(threadId, user);
+    return this.listCompatibleMessages(threadId, user, {
+      limit,
+      before,
+      includeService: this.parseOptionalBoolean(includeService)
+    });
   }
 
   @Get('dialogs/:dialogId/messages')
   listDialogMessages(
     @Param('dialogId') dialogId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
   ): ChatMessage[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.listCompatibleMessages(dialogId, user);
+    return this.listCompatibleMessages(dialogId, user, {
+      limit,
+      before,
+      includeService: this.parseOptionalBoolean(includeService)
+    });
   }
 
   @Post('threads/:threadId/messages')
@@ -412,15 +433,19 @@ export class MessengerController {
     }
   }
 
-  private listCompatibleMessages(threadId: string, user: RequestUser): ChatMessage[] {
+  private listCompatibleMessages(
+    threadId: string,
+    user: RequestUser,
+    options: ListMessagesQueryOptions = {}
+  ): ChatMessage[] {
     try {
-      return this.messengerService.listMessages(threadId, user);
+      return this.messengerService.listMessages(threadId, user, options);
     } catch (error) {
       if (!(error instanceof NotFoundException)) {
         throw error;
       }
       return this.supportService
-        .listMessages(threadId, user)
+        .listMessages(threadId, user, options)
         .map((message) => this.mapSupportMessageToLegacy(message));
     }
   }
@@ -517,6 +542,23 @@ export class MessengerController {
     }
 
     return false;
+  }
+
+  private parseOptionalBoolean(value: string | undefined): boolean | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['0', 'false', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+    return undefined;
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {

@@ -1417,7 +1417,19 @@
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/messages', 'GET');
       },
       getLegacyMessages: function (threadId) {
-        return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'GET');
+        var query = arguments[1] || {};
+        var params = new URLSearchParams();
+        if (query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query.before) {
+          params.set('before', String(query.before));
+        }
+        if (query.includeService !== undefined && query.includeService !== null) {
+          params.set('includeService', query.includeService ? 'true' : 'false');
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages' + suffix, 'GET');
       },
       sendMessage: function (dialogId, text) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
@@ -2896,6 +2908,7 @@
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
     var DIALOGS_PAGE_SIZE = 30;
     var DIALOGS_SCROLL_THRESHOLD_PX = 140;
+    var MESSAGES_PAGE_SIZE = 120;
 
     var state = {
       activeTab: 'messages',
@@ -2911,6 +2924,7 @@
       dialogSearchPhoneDigits: '',
       dialogStationFilters: [],
       dialogFilterOptions: [],
+      messagePageSize: MESSAGES_PAGE_SIZE,
       rawMessages: [],
       messages: [],
       messagesSignature: '',
@@ -4934,6 +4948,8 @@
     async function setShowSystemMessages(nextValue) {
       state.showSystemMessages = Boolean(nextValue);
       saveStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, state.showSystemMessages);
+      state.messagesCacheByThreadId = Object.create(null);
+      state.messagesFetchPromisesByThreadId = Object.create(null);
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
         silent: true
@@ -4949,9 +4965,10 @@
         return;
       }
 
-      applyMessages(state.rawMessages, {
+      await loadMessages({
         forceRender: true,
-        preserveScroll: true
+        preserveScroll: true,
+        forceRefresh: true
       });
     }
 
@@ -4993,11 +5010,28 @@
       };
     }
 
-    function getCachedMessages(threadId) {
+    function resolveMessagesLimit(rawLimit) {
+      var parsed = Number(rawLimit);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return state.messagePageSize || MESSAGES_PAGE_SIZE;
+      }
+      return Math.max(1, Math.min(Math.floor(parsed), 500));
+    }
+
+    function buildMessagesCacheKey(threadId, options) {
+      var opts = options || {};
+      var includeService = opts.includeService === true ? '1' : '0';
+      var before = String(opts.before || '');
+      var limit = String(resolveMessagesLimit(opts.limit));
+      return String(threadId || '') + '|svc=' + includeService + '|before=' + before + '|limit=' + limit;
+    }
+
+    function getCachedMessages(threadId, options) {
       if (!threadId) {
         return null;
       }
-      return state.messagesCacheByThreadId[threadId] || null;
+      var cacheKey = buildMessagesCacheKey(threadId, options);
+      return state.messagesCacheByThreadId[cacheKey] || null;
     }
 
     function setMessagesLoading(loading, threadId) {
@@ -5015,30 +5049,37 @@
         return Promise.resolve([]);
       }
 
+      var requestOptions = {
+        includeService: opts.includeService === true,
+        before: opts.before,
+        limit: resolveMessagesLimit(opts.limit)
+      };
+      var cacheKey = buildMessagesCacheKey(threadId, requestOptions);
+
       if (!opts.forceRefresh) {
-        var cached = getCachedMessages(threadId);
+        var cached = getCachedMessages(threadId, requestOptions);
         if (cached) {
           return Promise.resolve(cached.slice());
         }
       }
 
-      var inFlight = state.messagesFetchPromisesByThreadId[threadId];
+      var inFlight = state.messagesFetchPromisesByThreadId[cacheKey];
       if (inFlight) {
         return inFlight;
       }
 
       var request = api
-        .getLegacyMessages(threadId)
+        .getLegacyMessages(threadId, requestOptions)
         .then(function (payload) {
           var normalized = normalizeLegacyMessages(payload || []);
-          state.messagesCacheByThreadId[threadId] = normalized.slice();
+          state.messagesCacheByThreadId[cacheKey] = normalized.slice();
           return normalized;
         })
         .finally(function () {
-          delete state.messagesFetchPromisesByThreadId[threadId];
+          delete state.messagesFetchPromisesByThreadId[cacheKey];
         });
 
-      state.messagesFetchPromisesByThreadId[threadId] = request;
+      state.messagesFetchPromisesByThreadId[cacheKey] = request;
       return request;
     }
 
@@ -5046,10 +5087,14 @@
       if (!threadId || threadId === state.selectedThreadId) {
         return;
       }
-      if (getCachedMessages(threadId)) {
+      if (getCachedMessages(threadId, { includeService: state.showSystemMessages })) {
         return;
       }
-      fetchDialogMessages(threadId, { forceRefresh: false }).catch(function () {
+      fetchDialogMessages(threadId, {
+        forceRefresh: false,
+        includeService: state.showSystemMessages,
+        limit: state.messagePageSize
+      }).catch(function () {
         // ignore background prefetch failures
       });
     }
@@ -6393,8 +6438,13 @@
       var threadId = state.selectedThreadId;
       var requestToken = String(threadId) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
       state.latestMessagesRequestToken = requestToken;
+      var requestOptions = {
+        includeService: state.showSystemMessages,
+        before: opts.before,
+        limit: resolveMessagesLimit(opts.limit)
+      };
 
-      var cached = getCachedMessages(threadId);
+      var cached = getCachedMessages(threadId, requestOptions);
       if (cached) {
         applyMessages(cached.slice(), opts);
       } else {
@@ -6403,9 +6453,12 @@
       }
 
       try {
-        var normalized = await fetchDialogMessages(threadId, {
-          forceRefresh: opts.forceRefresh !== false
-        });
+        var normalized = await fetchDialogMessages(
+          threadId,
+          Object.assign({}, requestOptions, {
+            forceRefresh: opts.forceRefresh !== false
+          })
+        );
         if (state.latestMessagesRequestToken !== requestToken) {
           return;
         }

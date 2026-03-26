@@ -45,6 +45,12 @@ interface ThreadFilters {
   stationId?: string;
 }
 
+interface ThreadMessagesListOptions {
+  limit?: number;
+  before?: string;
+  includeService?: boolean;
+}
+
 interface PendingStaffResponse {
   clientMessageId: string;
   startedAt: string;
@@ -239,11 +245,24 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     return thread;
   }
 
-  listMessages(threadId: string, user: RequestUser): ChatMessage[] {
+  listMessages(
+    threadId: string,
+    user: RequestUser,
+    options: ThreadMessagesListOptions = {}
+  ): ChatMessage[] {
     const thread = this.getThreadOrThrow(threadId);
     this.ensureThreadAccess(thread, user);
     this.markThreadRead(thread, user);
-    return this.messages.get(threadId) ?? [];
+
+    const includeService = options.includeService === true;
+    const beforeTs = this.toTimestamp(options.before);
+    const limit = this.resolveMessagesLimit(options.limit);
+    const source = this.messages.get(threadId) ?? [];
+    const filtered = source
+      .filter((message) => (includeService ? true : !this.isSystemThreadMessage(message)))
+      .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
+
+    return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
   }
 
   sendMessage(
@@ -1415,6 +1434,19 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
   private countPendingClientMessages(threadId: string): number {
     return (this.pendingStaffResponses.get(threadId) ?? []).length;
+  }
+
+  private isSystemThreadMessage(message: ChatMessage): boolean {
+    const direction = String(message.direction ?? '').trim().toUpperCase();
+    const role = String(message.senderRoleRaw ?? message.senderRole ?? '').trim().toUpperCase();
+    return direction === 'SYSTEM' || role === 'SYSTEM';
+  }
+
+  private resolveMessagesLimit(rawLimit?: number): number {
+    if (!Number.isFinite(rawLimit) || Number(rawLimit) <= 0) {
+      return 100;
+    }
+    return Math.min(Math.floor(Number(rawLimit)), 500);
   }
 
   private registerPendingClientResponse(thread: ChatThread, message: ChatMessage): void {

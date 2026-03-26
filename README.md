@@ -215,6 +215,11 @@ curl http://localhost:3000/api/games \
 `GET /api/messenger/dialogs` -> `GET /api/messenger/dialogs/:dialogId/messages` по клику.
 Маршруты `threads/*` сохранены для обратной совместимости.
 
+Параметры чтения сообщений:
+- `limit` (по умолчанию 100, максимум 500)
+- `before` (ISO timestamp; возвращает сообщения строго раньше этого времени)
+- `includeService` (`true|false`, по умолчанию `false`)
+
 ## Коннекторы мессенджера
 
 Поддерживаемые маршруты:

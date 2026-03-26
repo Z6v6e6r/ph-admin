@@ -85,6 +85,12 @@ interface SupportDialogFilters {
   stationId?: string;
 }
 
+interface SupportMessagesListOptions {
+  limit?: number;
+  before?: string;
+  includeService?: boolean;
+}
+
 @Injectable()
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(SupportService.name);
@@ -579,14 +585,27 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
-  listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
+  listMessages(
+    dialogId: string,
+    user: RequestUser,
+    options: SupportMessagesListOptions = {}
+  ): SupportMessage[] {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
     if (this.isStaff(user)) {
       dialog.unreadCount = 0;
       this.persistDialog(dialog);
     }
-    return this.messages.get(dialog.id) ?? [];
+
+    const includeService = options.includeService === true;
+    const beforeTs = this.toTimestamp(options.before);
+    const limit = this.resolveMessagesLimit(options.limit);
+    const source = this.messages.get(dialog.id) ?? [];
+    const filtered = source
+      .filter((message) => (includeService ? true : !this.isSystemDialogMessage(message)))
+      .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
+
+    return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
   }
 
   replyToDialog(
@@ -3092,6 +3111,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return digits;
     }
     return digits;
+  }
+
+  private resolveMessagesLimit(rawLimit?: number): number {
+    if (!Number.isFinite(rawLimit) || Number(rawLimit) <= 0) {
+      return 100;
+    }
+    return Math.min(Math.floor(Number(rawLimit)), 500);
   }
 
   private dialogMatchesPhone(dialog: SupportDialog, normalizedPhone: string): boolean {

@@ -147,12 +147,19 @@ export class SupportController {
   )
   listMessages(
     @Param('dialogId') dialogId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('before') before: string | undefined,
+    @Query('includeService') includeService: string | undefined,
     @CurrentUser() user?: RequestUser
   ): SupportMessage[] {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.supportService.listMessages(dialogId, user);
+    return this.supportService.listMessages(dialogId, user, {
+      limit,
+      before,
+      includeService: this.parseOptionalBoolean(includeService)
+    });
   }
 
   @Post('dialogs/:dialogId/reply')
@@ -243,5 +250,22 @@ export class SupportController {
       return;
     }
     throw new ForbiddenException('Invalid integration token');
+  }
+
+  private parseOptionalBoolean(value: string | undefined): boolean | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['0', 'false', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+    return undefined;
   }
 }
