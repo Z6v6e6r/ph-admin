@@ -90,6 +90,23 @@
     'SUPPORT',
     'CLIENT'
   ];
+  var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
+  var MAX_FAVICON_URL = 'https://max.ru/favicon.ico';
+  var MAX_MESSENGER_EMBLEM_DATA_URI =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+        '<defs>' +
+          '<linearGradient id="maxg" x1="0%" y1="0%" x2="100%" y2="100%">' +
+            '<stop offset="0%" stop-color="#1f8fff"/>' +
+            '<stop offset="100%" stop-color="#00c2a8"/>' +
+          '</linearGradient>' +
+        '</defs>' +
+        '<rect x="2" y="2" width="60" height="60" rx="16" fill="#0b1220"/>' +
+        '<rect x="4" y="4" width="56" height="56" rx="14" fill="url(#maxg)" opacity=".9"/>' +
+        '<text x="32" y="39" text-anchor="middle" font-size="18" font-weight="800" font-family="Arial,sans-serif" fill="#ffffff">MAX</text>' +
+      '</svg>'
+    );
 
   function normalizeConfig(raw) {
     var cfg = Object.assign({}, DEFAULTS, raw || {});
@@ -438,6 +455,24 @@
         align-items:flex-start;
         justify-content:space-between;
         gap:8px;
+      }
+      .phab-admin-chat-source{
+        margin-top:6px;
+        display:flex;
+        align-items:center;
+        justify-content:flex-start;
+        gap:5px;
+        min-height:14px;
+      }
+      .phab-admin-chat-source-icon{
+        width:14px;
+        height:14px;
+        border-radius:4px;
+        border:1px solid rgba(51,0,32,.14);
+        object-fit:cover;
+        background:rgba(255,255,255,.95);
+        display:block;
+        flex:0 0 auto;
       }
       .phab-admin-chat-badge{
         min-width:20px;
@@ -4636,6 +4671,62 @@
       );
     }
 
+    function resolveDialogConnector(dialog) {
+      if (!dialog) {
+        return '';
+      }
+      return String(
+        dialog.connector ||
+          dialog.lastInboundConnector ||
+          dialog.lastReplyConnector ||
+          ''
+      )
+        .trim()
+        .toUpperCase();
+    }
+
+    function getDialogSourceIcons(dialog) {
+      var connector = resolveDialogConnector(dialog);
+      if (connector === 'LK_WEB_MESSENGER') {
+        return [
+          { src: PADLHUB_FAVICON_URL, alt: 'Padelhub' }
+        ];
+      }
+      if (connector === 'MAX_BOT') {
+        return [
+          { src: MAX_FAVICON_URL, alt: 'MAX' },
+          { src: MAX_MESSENGER_EMBLEM_DATA_URI, alt: 'MAX Messenger' }
+        ];
+      }
+      return [];
+    }
+
+    function buildDialogSourceNode(dialog) {
+      var icons = getDialogSourceIcons(dialog);
+      if (!icons.length) {
+        return null;
+      }
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-chat-source';
+      icons.forEach(function (item) {
+        var icon = document.createElement('img');
+        icon.className = 'phab-admin-chat-source-icon';
+        icon.src = item.src;
+        icon.alt = item.alt;
+        icon.loading = 'lazy';
+        icon.decoding = 'async';
+        icon.referrerPolicy = 'no-referrer';
+        icon.addEventListener('error', function () {
+          icon.remove();
+          if (!wrap.children.length) {
+            wrap.remove();
+          }
+        });
+        wrap.appendChild(icon);
+      });
+      return wrap;
+    }
+
     function renderDialogs() {
       var dialogsScrollBody = dom.dialogsScrollBody || dom.dialogsList;
       var previousScrollTop = dialogsScrollBody.scrollTop;
@@ -4731,6 +4822,11 @@
         preview.className = 'phab-admin-chat-preview';
         preview.textContent = String(item.lastMessageText || 'Сообщений пока нет');
         btn.appendChild(preview);
+
+        var sourceNode = buildDialogSourceNode(item);
+        if (sourceNode) {
+          btn.appendChild(sourceNode);
+        }
       });
 
       if (state.dialogs.length > 0 && (state.hasMoreDialogs || state.dialogsLoadingMore)) {

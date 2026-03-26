@@ -16,6 +16,13 @@ export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
     dto: IngestSupportEventDto,
     helpers: SupportConnectorNormalizationHelpers
   ): SupportConnectorEventNormalizationPatch {
+    const normalizedEventType = String(dto.eventType ?? '')
+      .trim()
+      .toUpperCase();
+    const isStationSelectionEvent =
+      normalizedEventType === 'STATION_SELECTION' ||
+      normalizedEventType === 'STATION_SELECTED' ||
+      normalizedEventType === 'SELECT_STATION';
     const senderIsBot = helpers.resolveSenderIsBot(dto);
     const recipientExternalUserId =
       helpers.normalizeIdentityValue(dto.recipientExternalUserId) ??
@@ -36,9 +43,15 @@ export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
       ) ??
       helpers.resolveStationMappingFromAction(
         helpers.extractMetaPathString(dto.meta, ['data', 'payload', 'action'])
-      ) ??
-      helpers.resolveStationMappingFromAction(dto.selectedStationId) ??
-      helpers.resolveStationMappingFromAction(dto.stationId);
+      );
+    const explicitSelectedStationId = helpers.normalizeStationId(dto.selectedStationId);
+    const explicitSelectedStationName = helpers.normalizeDisplayName(dto.selectedStationName);
+    const selectedStationIdFromPayload = isStationSelectionEvent
+      ? helpers.normalizeStationId(dto.stationId)
+      : undefined;
+    const selectedStationNameFromPayload = isStationSelectionEvent
+      ? helpers.normalizeDisplayName(dto.stationName)
+      : undefined;
 
     return {
       externalUserId:
@@ -54,11 +67,13 @@ export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
         ? recipientUsername
         : helpers.normalizeIdentityValue(dto.username),
       selectedStationId:
-        helpers.normalizeStationId(dto.selectedStationId ?? dto.stationId) ??
-        selectedStation?.stationId,
+        explicitSelectedStationId ??
+        selectedStation?.stationId ??
+        selectedStationIdFromPayload,
       selectedStationName:
-        helpers.normalizeDisplayName(dto.selectedStationName ?? dto.stationName) ??
-        selectedStation?.stationName,
+        explicitSelectedStationName ??
+        selectedStation?.stationName ??
+        selectedStationNameFromPayload,
       deliverToClient: helpers.resolveDeliverToClient(dto)
     };
   }

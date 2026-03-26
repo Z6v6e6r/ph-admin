@@ -351,7 +351,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
 
     const selectedStationId = this.normalizeStationId(
-      normalizedDto.selectedStationId ?? normalizedDto.stationId
+      normalizedDto.selectedStationId ??
+      (normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
+        ? normalizedDto.stationId
+        : undefined)
     );
     const connectorFallbackStationId =
       normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
@@ -1209,6 +1212,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         existing.accessStationIds = this.mergeStationAccessIds(existing.accessStationIds, [
           stationId
         ]);
+      } else if (
+        existing.stationId &&
+        existing.stationId !== SUPPORT_UNASSIGNED_STATION_ID
+      ) {
+        existing.stationName = this.resolveStationName(undefined, undefined, existing.stationId);
       }
       existing.subject =
         this.normalizeDialogSubject(subject) ??
@@ -2808,7 +2816,24 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
       return true;
     }
-    return user.stationIds.includes(dialog.stationId);
+    if (user.stationIds.includes(dialog.stationId)) {
+      return true;
+    }
+
+    const accessStationIds = this.getDialogAccessStationIds(dialog);
+    return user.stationIds.some((stationId) => {
+      if (accessStationIds.includes(stationId)) {
+        return true;
+      }
+
+      const normalizedStationId = this.normalizeStationId(stationId);
+      if (normalizedStationId && accessStationIds.includes(normalizedStationId)) {
+        return true;
+      }
+
+      const aliases = this.resolveStationAccessAliases(stationId, stationId);
+      return aliases.some((alias) => accessStationIds.includes(alias));
+    });
   }
 
   private listAccessibleDialogs(
