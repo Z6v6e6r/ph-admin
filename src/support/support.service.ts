@@ -371,7 +371,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.persistClient(client);
     }
 
-    const dialog = this.resolveDialog(client, stationId, stationName, normalizedDto.subject, createdAt);
+    const dialog = this.resolveDialog(
+      client,
+      stationId,
+      stationName,
+      normalizedDto.subject,
+      normalizedDto.connector,
+      createdAt
+    );
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
     const direction = this.resolveIncomingDirection(normalizedDto, kind);
     const senderRole = this.resolveIncomingSenderRole(direction, kind);
@@ -1085,7 +1092,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     this.persistClient(client);
-    this.collapseOpenDialogsForClient(client.id);
+    this.collapseOpenDialogsForClient(client.id, dto.connector);
     return client;
   }
 
@@ -1174,9 +1181,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     stationId: string,
     stationName: string,
     subject: string | undefined,
+    connector: SupportConnectorRoute,
     createdAt: string
   ): SupportDialog {
-    const existing = this.collapseOpenDialogs(client.id);
+    const existing = this.collapseOpenDialogs(client.id, connector);
     const normalizedSubject =
       this.normalizeDialogSubject(subject) ?? this.buildDialogSubject(client, stationName);
 
@@ -1680,7 +1688,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       if (!clientId) {
         continue;
       }
-      this.collapseOpenDialogs(clientId);
+      this.collapseOpenDialogsForClient(clientId);
     }
   }
 
@@ -2877,8 +2885,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       .sort((left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt));
   }
 
-  private collapseOpenDialogs(clientId: string): SupportDialog | undefined {
-    const duplicates = this.findOpenDialogs(clientId);
+  private findOpenDialogsByConnector(
+    clientId: string,
+    connector: SupportConnectorRoute
+  ): SupportDialog[] {
+    return this.findOpenDialogs(clientId).filter(
+      (dialog) => this.resolveDialogPrimaryConnector(dialog) === connector
+    );
+  }
+
+  private collapseOpenDialogs(
+    clientId: string,
+    connector: SupportConnectorRoute
+  ): SupportDialog | undefined {
+    const duplicates = this.findOpenDialogsByConnector(clientId, connector);
     if (duplicates.length === 0) {
       return undefined;
     }
@@ -2890,8 +2910,42 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return canonical;
   }
 
-  private collapseOpenDialogsForClient(clientId: string): void {
-    this.collapseOpenDialogs(clientId);
+  private collapseOpenDialogsForClient(
+    clientId: string,
+    connector?: SupportConnectorRoute
+  ): void {
+    if (connector) {
+      this.collapseOpenDialogs(clientId, connector);
+      return;
+    }
+
+    const groupedByConnector = new Map<string, SupportDialog[]>();
+    for (const dialog of this.findOpenDialogs(clientId)) {
+      const key = this.resolveDialogPrimaryConnector(dialog) ?? '__unknown__';
+      const bucket = groupedByConnector.get(key) ?? [];
+      bucket.push(dialog);
+      groupedByConnector.set(key, bucket);
+    }
+
+    for (const group of groupedByConnector.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const [canonical, ...rest] = group;
+      for (const dialog of rest) {
+        this.mergeDialogInto(canonical, dialog);
+      }
+    }
+  }
+
+  private resolveDialogPrimaryConnector(
+    dialog: SupportDialog
+  ): SupportConnectorRoute | undefined {
+    return (
+      dialog.connectors[0] ??
+      dialog.lastInboundConnector ??
+      dialog.lastReplyConnector
+    );
   }
 
   private updateContactReminderStage(
