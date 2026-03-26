@@ -1431,6 +1431,21 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages' + suffix, 'GET');
       },
+      getLegacyServiceMessages: function (threadId) {
+        var query = arguments[1] || {};
+        var params = new URLSearchParams();
+        if (query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query.before) {
+          params.set('before', String(query.before));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request(
+          '/messenger/dialogs/' + encodeURIComponent(threadId) + '/service-messages' + suffix,
+          'GET'
+        );
+      },
       sendMessage: function (dialogId, text) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
           text: text
@@ -1842,29 +1857,6 @@
     dialogSearchInput.setAttribute('aria-label', 'Поиск диалогов');
     leftHead.appendChild(dialogSearchInput);
 
-    var dialogListOptions = document.createElement('div');
-    dialogListOptions.style.display = 'none';
-    dialogListOptions.style.padding = '0 12px 8px';
-    leftPane.appendChild(dialogListOptions);
-
-    var dialogListSystemToggleLabel = document.createElement('label');
-    dialogListSystemToggleLabel.style.display = 'inline-flex';
-    dialogListSystemToggleLabel.style.alignItems = 'center';
-    dialogListSystemToggleLabel.style.gap = '8px';
-    dialogListSystemToggleLabel.style.cursor = 'pointer';
-    dialogListSystemToggleLabel.style.fontSize = '13px';
-    dialogListSystemToggleLabel.style.fontWeight = '600';
-    dialogListOptions.appendChild(dialogListSystemToggleLabel);
-
-    var dialogListSystemToggle = document.createElement('input');
-    dialogListSystemToggle.type = 'checkbox';
-    dialogListSystemToggle.checked = true;
-    dialogListSystemToggleLabel.appendChild(dialogListSystemToggle);
-
-    var dialogListSystemToggleText = document.createElement('span');
-    dialogListSystemToggleText.textContent = 'Показывать системные сообщения и диалоги';
-    dialogListSystemToggleLabel.appendChild(dialogListSystemToggleText);
-
     var dialogFiltersWrap = document.createElement('div');
     dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
     leftPane.appendChild(dialogFiltersWrap);
@@ -1911,23 +1903,52 @@
     dialogOptions.style.marginTop = '8px';
     dialogHead.appendChild(dialogOptions);
 
-    var systemMessagesToggleLabel = document.createElement('label');
-    systemMessagesToggleLabel.style.display = 'inline-flex';
-    systemMessagesToggleLabel.style.alignItems = 'center';
-    systemMessagesToggleLabel.style.gap = '8px';
-    systemMessagesToggleLabel.style.cursor = 'pointer';
-    systemMessagesToggleLabel.style.fontSize = '13px';
-    systemMessagesToggleLabel.style.fontWeight = '600';
-    dialogOptions.appendChild(systemMessagesToggleLabel);
+    var messageModeGroupName = 'phab-admin-message-mode-' + Math.random().toString(36).slice(2, 8);
+    var messageModeWrap = document.createElement('div');
+    messageModeWrap.style.display = 'flex';
+    messageModeWrap.style.alignItems = 'center';
+    messageModeWrap.style.gap = '12px';
+    dialogOptions.appendChild(messageModeWrap);
 
-    var systemMessagesToggle = document.createElement('input');
-    systemMessagesToggle.type = 'checkbox';
-    systemMessagesToggle.checked = true;
-    systemMessagesToggleLabel.appendChild(systemMessagesToggle);
+    var messageModeRegularLabel = document.createElement('label');
+    messageModeRegularLabel.style.display = 'inline-flex';
+    messageModeRegularLabel.style.alignItems = 'center';
+    messageModeRegularLabel.style.gap = '6px';
+    messageModeRegularLabel.style.cursor = 'pointer';
+    messageModeRegularLabel.style.fontSize = '13px';
+    messageModeRegularLabel.style.fontWeight = '600';
+    messageModeWrap.appendChild(messageModeRegularLabel);
 
-    var systemMessagesToggleText = document.createElement('span');
-    systemMessagesToggleText.textContent = 'Показывать системные сообщения';
-    systemMessagesToggleLabel.appendChild(systemMessagesToggleText);
+    var messageModeRegularRadio = document.createElement('input');
+    messageModeRegularRadio.type = 'radio';
+    messageModeRegularRadio.name = messageModeGroupName;
+    messageModeRegularRadio.value = 'regular';
+    messageModeRegularRadio.checked = true;
+    messageModeRegularLabel.appendChild(messageModeRegularRadio);
+
+    var messageModeRegularText = document.createElement('span');
+    messageModeRegularText.textContent = 'Обычные';
+    messageModeRegularLabel.appendChild(messageModeRegularText);
+
+    var messageModeServiceLabel = document.createElement('label');
+    messageModeServiceLabel.style.display = 'inline-flex';
+    messageModeServiceLabel.style.alignItems = 'center';
+    messageModeServiceLabel.style.gap = '6px';
+    messageModeServiceLabel.style.cursor = 'pointer';
+    messageModeServiceLabel.style.fontSize = '13px';
+    messageModeServiceLabel.style.fontWeight = '600';
+    messageModeWrap.appendChild(messageModeServiceLabel);
+
+    var messageModeServiceRadio = document.createElement('input');
+    messageModeServiceRadio.type = 'radio';
+    messageModeServiceRadio.name = messageModeGroupName;
+    messageModeServiceRadio.value = 'service';
+    messageModeServiceRadio.checked = false;
+    messageModeServiceLabel.appendChild(messageModeServiceRadio);
+
+    var messageModeServiceText = document.createElement('span');
+    messageModeServiceText.textContent = 'Служебные';
+    messageModeServiceLabel.appendChild(messageModeServiceText);
 
     var dialogBody = document.createElement('div');
     dialogBody.className = 'phab-admin-dialog-body';
@@ -2697,8 +2718,6 @@
       tournamentsSection: tournamentsSection,
       settingsSection: settingsSection,
       dialogSearchInput: dialogSearchInput,
-      dialogListOptions: dialogListOptions,
-      dialogListSystemToggle: dialogListSystemToggle,
       dialogFiltersWrap: dialogFiltersWrap,
       dialogFilters: dialogFilters,
       dialogsScrollBody: leftBody,
@@ -2707,7 +2726,8 @@
       dialogMeta: dialogMeta,
       dialogLinks: dialogLinks,
       dialogOptions: dialogOptions,
-      systemMessagesToggle: systemMessagesToggle,
+      messageModeRegularRadio: messageModeRegularRadio,
+      messageModeServiceRadio: messageModeServiceRadio,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
       cabinetMeta: cabinetMeta,
@@ -2870,16 +2890,15 @@
 
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
   var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
-  var STORAGE_KEY_SHOW_SYSTEM_MESSAGES = 'phab_admin_show_system_messages';
+  var STORAGE_KEY_MESSAGE_VIEW_MODE = 'phab_admin_message_view_mode';
 
-  function loadStoredBoolean(key, fallbackValue) {
+  function loadStoredMessageViewMode(fallbackValue) {
     try {
-      var raw = window.localStorage.getItem(key);
-      if (raw === 'true' || raw === '1') {
-        return true;
-      }
-      if (raw === 'false' || raw === '0') {
-        return false;
+      var raw = String(window.localStorage.getItem(STORAGE_KEY_MESSAGE_VIEW_MODE) || '')
+        .trim()
+        .toLowerCase();
+      if (raw === 'regular' || raw === 'service') {
+        return raw;
       }
     } catch (_error) {
       // ignore storage errors
@@ -2887,9 +2906,12 @@
     return fallbackValue;
   }
 
-  function saveStoredBoolean(key, value) {
+  function saveStoredMessageViewMode(value) {
     try {
-      window.localStorage.setItem(key, value ? 'true' : 'false');
+      window.localStorage.setItem(
+        STORAGE_KEY_MESSAGE_VIEW_MODE,
+        value === 'service' ? 'service' : 'regular'
+      );
     } catch (_error) {
       // ignore storage errors
     }
@@ -2976,7 +2998,7 @@
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedThreadId: null,
-      showSystemMessages: loadStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, true)
+      messageViewMode: loadStoredMessageViewMode('regular')
     };
     var incomingSoundState = {
       context: null,
@@ -2986,8 +3008,8 @@
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
-    dom.dialogListSystemToggle.checked = state.showSystemMessages;
-    dom.systemMessagesToggle.checked = state.showSystemMessages;
+    dom.messageModeRegularRadio.checked = state.messageViewMode !== 'service';
+    dom.messageModeServiceRadio.checked = state.messageViewMode === 'service';
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
@@ -3224,7 +3246,7 @@
     }
 
     function applyDialogHeader(dialog) {
-      renderSystemMessagesToggle();
+      renderMessageModeToggle();
       if (!dialog) {
         dom.dialogTitle.textContent = 'Чат не выбран';
         dom.dialogMeta.textContent =
@@ -4294,7 +4316,10 @@
       if (!message) {
         return false;
       }
-      if (canToggleSystemMessages(cfg) && !state.showSystemMessages && isSystemMessage(message)) {
+      if (state.messageViewMode === 'service') {
+        return !isSystemMessage(message);
+      }
+      if (isSystemMessage(message)) {
         return true;
       }
       if (isRestrictedStationAdmin && isVivaOtpSystemMessage(message)) {
@@ -4307,7 +4332,7 @@
       if (!dialog) {
         return false;
       }
-      if (canToggleSystemMessages(cfg) && !state.showSystemMessages && isSystemDialog(dialog)) {
+      if (isSystemDialog(dialog)) {
         return true;
       }
       if (isRestrictedStationAdmin && isVivaOtpSystemDialog(dialog)) {
@@ -4322,16 +4347,14 @@
       });
     }
 
-    function renderSystemMessagesToggle() {
+    function renderMessageModeToggle() {
       if (!canToggleSystemMessages(cfg)) {
         dom.dialogOptions.style.display = 'none';
-        dom.dialogListOptions.style.display = 'none';
         return;
       }
-      dom.systemMessagesToggle.checked = state.showSystemMessages;
-      dom.dialogListSystemToggle.checked = state.showSystemMessages;
+      dom.messageModeRegularRadio.checked = state.messageViewMode !== 'service';
+      dom.messageModeServiceRadio.checked = state.messageViewMode === 'service';
       dom.dialogOptions.style.display = 'block';
-      dom.dialogListOptions.style.display = 'block';
     }
 
     function canFilterDialogsByStation() {
@@ -4989,9 +5012,13 @@
       }
     }
 
-    async function setShowSystemMessages(nextValue) {
-      state.showSystemMessages = Boolean(nextValue);
-      saveStoredBoolean(STORAGE_KEY_SHOW_SYSTEM_MESSAGES, state.showSystemMessages);
+    function resolveMessageViewMode(rawMode) {
+      return String(rawMode || '').trim().toLowerCase() === 'service' ? 'service' : 'regular';
+    }
+
+    async function setMessageViewMode(nextMode) {
+      state.messageViewMode = resolveMessageViewMode(nextMode);
+      saveStoredMessageViewMode(state.messageViewMode);
       state.messagesCacheByThreadId = Object.create(null);
       state.messagesFetchPromisesByThreadId = Object.create(null);
       var dialogsResult = applyDialogs(state.allDialogs, {
@@ -5064,10 +5091,10 @@
 
     function buildMessagesCacheKey(threadId, options) {
       var opts = options || {};
-      var includeService = opts.includeService === true ? '1' : '0';
+      var mode = resolveMessageViewMode(opts.mode);
       var before = String(opts.before || '');
       var limit = String(resolveMessagesLimit(opts.limit));
-      return String(threadId || '') + '|svc=' + includeService + '|before=' + before + '|limit=' + limit;
+      return String(threadId || '') + '|mode=' + mode + '|before=' + before + '|limit=' + limit;
     }
 
     function getCachedMessages(threadId, options) {
@@ -5094,7 +5121,7 @@
       }
 
       var requestOptions = {
-        includeService: opts.includeService === true,
+        mode: resolveMessageViewMode(opts.mode),
         before: opts.before,
         limit: resolveMessagesLimit(opts.limit)
       };
@@ -5112,8 +5139,15 @@
         return inFlight;
       }
 
-      var request = api
-        .getLegacyMessages(threadId, requestOptions)
+      var request = (
+        requestOptions.mode === 'service'
+          ? api.getLegacyServiceMessages(threadId, requestOptions)
+          : api.getLegacyMessages(threadId, {
+              includeService: false,
+              before: requestOptions.before,
+              limit: requestOptions.limit
+            })
+      )
         .then(function (payload) {
           var normalized = normalizeLegacyMessages(payload || []);
           state.messagesCacheByThreadId[cacheKey] = normalized.slice();
@@ -5131,12 +5165,12 @@
       if (!threadId || threadId === state.selectedThreadId) {
         return;
       }
-      if (getCachedMessages(threadId, { includeService: state.showSystemMessages })) {
+      if (getCachedMessages(threadId, { mode: 'regular' })) {
         return;
       }
       fetchDialogMessages(threadId, {
         forceRefresh: false,
-        includeService: state.showSystemMessages,
+        mode: 'regular',
         limit: state.messagePageSize
       }).catch(function () {
         // ignore background prefetch failures
@@ -6482,8 +6516,9 @@
       var threadId = state.selectedThreadId;
       var requestToken = String(threadId) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
       state.latestMessagesRequestToken = requestToken;
+      var mode = resolveMessageViewMode(state.messageViewMode);
       var requestOptions = {
-        includeService: state.showSystemMessages,
+        mode: mode,
         before: opts.before,
         limit: resolveMessagesLimit(opts.limit)
       };
@@ -6918,11 +6953,15 @@
         switchTab('settings');
         loadSettings().catch(handleError);
       });
-      dom.systemMessagesToggle.addEventListener('change', function () {
-        setShowSystemMessages(dom.systemMessagesToggle.checked).catch(handleError);
+      dom.messageModeRegularRadio.addEventListener('change', function () {
+        if (dom.messageModeRegularRadio.checked) {
+          setMessageViewMode('regular').catch(handleError);
+        }
       });
-      dom.dialogListSystemToggle.addEventListener('change', function () {
-        setShowSystemMessages(dom.dialogListSystemToggle.checked).catch(handleError);
+      dom.messageModeServiceRadio.addEventListener('change', function () {
+        if (dom.messageModeServiceRadio.checked) {
+          setMessageViewMode('service').catch(handleError);
+        }
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         var nextValue = dom.dialogSearchInput.value;
@@ -6932,6 +6971,22 @@
         dialogSearchTimer = window.setTimeout(function () {
           setDialogSearchQuery(nextValue).catch(handleError);
         }, 220);
+      });
+      dom.dialogSearchInput.addEventListener('search', function () {
+        if (dialogSearchTimer) {
+          window.clearTimeout(dialogSearchTimer);
+        }
+        setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
+      });
+      dom.dialogSearchInput.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') {
+          return;
+        }
+        event.preventDefault();
+        if (dialogSearchTimer) {
+          window.clearTimeout(dialogSearchTimer);
+        }
+        setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
       });
       dom.dialogsScrollBody.addEventListener('scroll', function () {
         loadMoreDialogsIfNeeded().catch(handleError);
