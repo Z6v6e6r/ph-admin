@@ -1,5 +1,14 @@
 import { Transform } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength
+} from 'class-validator';
 import { ConnectorRoute } from '../messenger.types';
 
 function toOptionalInteger(value: unknown): number | undefined {
@@ -38,4 +47,8 @@ export class ListThreadsDto {
   @IsInt()
   @Min(0)
   offset?: number;
+
+  @IsOptional()
+  @IsDateString()
+  updatedSince?: string;
 }
