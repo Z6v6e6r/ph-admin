@@ -1391,6 +1391,9 @@
         if (query.offset !== undefined && query.offset !== null) {
           params.set('offset', String(query.offset));
         }
+        if (query.phone) {
+          params.set('phone', String(query.phone));
+        }
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/messenger/dialogs' + suffix, 'GET');
       },
@@ -2888,6 +2891,7 @@
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
     var pollTimer = null;
+    var dialogSearchTimer = null;
     var documentKeydownHandler = null;
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
     var DIALOGS_PAGE_SIZE = 30;
@@ -2904,6 +2908,7 @@
       dialogsSignature: '',
       dialogsHydrated: false,
       dialogSearchQuery: '',
+      dialogSearchPhoneDigits: '',
       dialogStationFilters: [],
       dialogFilterOptions: [],
       rawMessages: [],
@@ -4161,6 +4166,28 @@
         .toLowerCase();
     }
 
+    function normalizePhoneSearchValue(value) {
+      var digits = String(value || '').replace(/\D+/g, '');
+      if (!digits) {
+        return '';
+      }
+      if (digits.length === 11 && digits.indexOf('8') === 0) {
+        return '7' + digits.slice(1);
+      }
+      if (digits.length === 10) {
+        return '7' + digits;
+      }
+      if (digits.length === 11 && digits.indexOf('7') === 0) {
+        return digits;
+      }
+      return digits;
+    }
+
+    function resolvePhoneSearchDigits(query) {
+      var normalized = normalizePhoneSearchValue(query);
+      return normalized.length >= 10 ? normalized : '';
+    }
+
     function isTechnicalDialogLabel(value) {
       var normalized = normalizeDialogLabel(value);
       return normalized === 'viva crm' || normalized === 'vivacrm';
@@ -4191,6 +4218,9 @@
     }
 
     function dialogMatchesSearch(dialog, query) {
+      if (state.dialogSearchPhoneDigits) {
+        return true;
+      }
       var normalizedQuery = String(query || '')
         .trim()
         .toLowerCase();
@@ -4877,7 +4907,15 @@
     }
 
     async function setDialogSearchQuery(nextQuery) {
+      var previousPhoneSearch = state.dialogSearchPhoneDigits;
       state.dialogSearchQuery = String(nextQuery || '').trim();
+      state.dialogSearchPhoneDigits = resolvePhoneSearchDigits(state.dialogSearchQuery);
+
+      if (state.dialogSearchPhoneDigits || previousPhoneSearch) {
+        await refreshDialogsView();
+        return;
+      }
+
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
         silent: true
@@ -6300,7 +6338,8 @@
         var legacyDialogs =
           (await api.getLegacyDialogs({
             limit: limit,
-            offset: offset
+            offset: offset,
+            phone: state.dialogSearchPhoneDigits || undefined
           })) || [];
         var normalizedDialogs = legacyDialogs.map(normalizeLegacyDialog).filter(Boolean);
         state.hasMoreDialogs = normalizedDialogs.length >= limit;
@@ -6789,7 +6828,13 @@
         setShowSystemMessages(dom.dialogListSystemToggle.checked).catch(handleError);
       });
       dom.dialogSearchInput.addEventListener('input', function () {
-        setDialogSearchQuery(dom.dialogSearchInput.value).catch(handleError);
+        var nextValue = dom.dialogSearchInput.value;
+        if (dialogSearchTimer) {
+          window.clearTimeout(dialogSearchTimer);
+        }
+        dialogSearchTimer = window.setTimeout(function () {
+          setDialogSearchQuery(nextValue).catch(handleError);
+        }, 220);
       });
       dom.dialogsScrollBody.addEventListener('scroll', function () {
         loadMoreDialogsIfNeeded().catch(handleError);
@@ -6987,6 +7032,9 @@
     function destroy() {
       if (pollTimer) {
         window.clearInterval(pollTimer);
+      }
+      if (dialogSearchTimer) {
+        window.clearTimeout(dialogSearchTimer);
       }
       if (documentKeydownHandler) {
         document.removeEventListener('keydown', documentKeydownHandler);

@@ -445,15 +445,26 @@ export class MessengerController {
     user: RequestUser,
     query: ListThreadsDto = {}
   ): Promise<StationDialogSummary[]> {
-    const legacy = this.sortDialogsByRank(this.messengerService.listDialogs(user, query));
+    const normalizedPhone = this.normalizePhoneQuery(query.phone);
+    const hasPhoneSearch = normalizedPhone.length >= 10;
+    const legacySource = this.messengerService.listDialogs(user, query);
+    const legacy = this.sortDialogsByRank(
+      hasPhoneSearch
+        ? legacySource.filter((dialog) => this.dialogMatchesPhone(dialog, normalizedPhone))
+        : legacySource
+    );
     const supportConnectorFilter = this.mapLegacyConnectorToSupportFilter(query.connector);
-    const mappedSupport = this.sortDialogsByRank(
-      this.supportService
-        .listDialogs(user, {
+    const supportDialogs = hasPhoneSearch
+      ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
           connector: supportConnectorFilter,
           stationId: query.stationId
         })
-        .map((dialog) => this.mapSupportDialogToLegacy(dialog))
+      : this.supportService.listDialogs(user, {
+          connector: supportConnectorFilter,
+          stationId: query.stationId
+        });
+    const mappedSupport = this.sortDialogsByRank(
+      supportDialogs.map((dialog) => this.mapSupportDialogToLegacy(dialog))
     );
 
     const paging = this.resolveDialogsPaging(query);
@@ -465,6 +476,47 @@ export class MessengerController {
     const page = mergedTop.slice(paging.offset, paging.offset + paging.limit);
 
     return this.attachVivaCabinetUrls(page);
+  }
+
+  private normalizePhoneQuery(rawPhone?: string): string {
+    const digits = String(rawPhone ?? '').replace(/\D+/g, '');
+    if (!digits) {
+      return '';
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `7${digits.slice(1)}`;
+    }
+    if (digits.length === 10) {
+      return `7${digits}`;
+    }
+    if (digits.length === 11 && digits.startsWith('7')) {
+      return digits;
+    }
+    return digits;
+  }
+
+  private dialogMatchesPhone(dialog: StationDialogSummary, normalizedPhone: string): boolean {
+    if (!normalizedPhone) {
+      return true;
+    }
+
+    const candidates = Array.from(
+      new Set(
+        [dialog.primaryPhone, ...(Array.isArray(dialog.phones) ? dialog.phones : [])]
+          .map((phone) => this.normalizePhoneQuery(phone))
+          .filter((phone) => phone.length > 0)
+      )
+    );
+
+    if (candidates.includes(normalizedPhone)) {
+      return true;
+    }
+
+    if (normalizedPhone.length >= 10) {
+      return candidates.some((phone) => phone.endsWith(normalizedPhone.slice(-10)));
+    }
+
+    return false;
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {

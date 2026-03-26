@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { ConnectorRoute } from '../messenger.types';
 
 function toOptionalInteger(value: unknown): number | undefined {
@@ -20,6 +20,12 @@ export class ListThreadsDto {
   @IsString()
   @MinLength(1)
   stationId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(40)
+  phone?: string;
 
   @IsOptional()
   @Transform(({ value }) => toOptionalInteger(value))

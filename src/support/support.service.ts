@@ -539,6 +539,46 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
+  async listDialogsByPhone(
+    phone: string,
+    user: RequestUser,
+    filters: SupportDialogFilters = {}
+  ): Promise<SupportDialogSummary[]> {
+    this.ensureStaff(user);
+    const normalizedPhone = this.normalizePhone(phone);
+    if (!normalizedPhone) {
+      return [];
+    }
+
+    let dialogs: SupportDialog[] = [];
+    if (this.persistence.isEnabled()) {
+      const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
+        connector: filters.connector,
+        stationId: filters.stationId,
+        limit: 200
+      });
+      dialogs = candidateIds
+        .map((dialogId) => this.dialogs.get(dialogId))
+        .filter((dialog): dialog is SupportDialog => Boolean(dialog))
+        .filter((dialog) => this.canAccessDialog(dialog, user));
+    }
+
+    if (dialogs.length === 0) {
+      dialogs = this.listAccessibleDialogs(user, filters).filter((dialog) =>
+        this.dialogMatchesPhone(dialog, normalizedPhone)
+      );
+    }
+
+    const byId = new Map<string, SupportDialog>();
+    for (const dialog of dialogs) {
+      byId.set(dialog.id, dialog);
+    }
+
+    return Array.from(byId.values())
+      .map((dialog) => this.toDialogSummary(dialog, filters.connector, user))
+      .sort((left, right) => this.compareDialogSummaryRank(left, right));
+  }
+
   listMessages(dialogId: string, user: RequestUser): SupportMessage[] {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
@@ -3052,6 +3092,28 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return digits;
     }
     return digits;
+  }
+
+  private dialogMatchesPhone(dialog: SupportDialog, normalizedPhone: string): boolean {
+    const candidates = this.mergeStrings(
+      [],
+      [
+        dialog.currentPhone,
+        ...(Array.isArray(dialog.phones) ? dialog.phones : [])
+      ]
+        .map((phone) => this.normalizePhone(phone))
+        .filter((phone): phone is string => Boolean(phone))
+    );
+
+    if (candidates.includes(normalizedPhone)) {
+      return true;
+    }
+
+    if (normalizedPhone.length >= 10) {
+      return candidates.some((phone) => phone.endsWith(normalizedPhone.slice(-10)));
+    }
+
+    return false;
   }
 
   private normalizeEmail(raw?: string): string | undefined {

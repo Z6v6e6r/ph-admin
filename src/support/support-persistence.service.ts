@@ -104,6 +104,12 @@ interface TimestampedEntity<T> {
   timestamp: number;
 }
 
+export interface SupportDialogPhoneLookupOptions {
+  connector?: SupportConnectorRoute;
+  stationId?: string;
+  limit?: number;
+}
+
 @Injectable()
 export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SupportPersistenceService.name);
@@ -319,6 +325,91 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     };
   }
 
+  async findDialogIdsByPhone(
+    normalizedPhone: string,
+    options: SupportDialogPhoneLookupOptions = {}
+  ): Promise<string[]> {
+    const phone = this.normalizePhoneForLookup(normalizedPhone);
+    if (!phone) {
+      return [];
+    }
+
+    const activeBackends = this.getActiveBackends();
+    if (activeBackends.length === 0) {
+      return [];
+    }
+
+    const limit = Math.min(Math.max(Math.floor(options.limit ?? 100), 1), 300);
+    const rankedByDialogId = new Map<string, number>();
+
+    for (const backend of activeBackends) {
+      const clientIds = (
+        await this.collection<Pick<SupportClientProfile, 'id'>>(backend, 'clients')
+          .find(
+            { phones: phone },
+            {
+              projection: { _id: 0, id: 1 },
+              limit
+            }
+          )
+          .toArray()
+      )
+        .map((client) => String(client.id ?? '').trim())
+        .filter((id) => id.length > 0);
+
+      if (clientIds.length === 0) {
+        continue;
+      }
+
+      const query: Document = {
+        clientId: { $in: clientIds }
+      };
+
+      if (options.stationId) {
+        query['stationId'] = String(options.stationId).trim();
+      }
+      if (options.connector) {
+        query['connectors'] = options.connector;
+      }
+
+      const dialogs = await this.collection<
+        Pick<SupportDialog, 'id' | 'updatedAt' | 'lastMessageAt' | 'createdAt'>
+      >(backend, 'dialogs')
+        .find(query, {
+          projection: {
+            _id: 0,
+            id: 1,
+            updatedAt: 1,
+            lastMessageAt: 1,
+            createdAt: 1
+          },
+          sort: { updatedAt: -1 },
+          limit
+        })
+        .toArray();
+
+      for (const dialog of dialogs) {
+        const dialogId = String(dialog.id ?? '').trim();
+        if (!dialogId) {
+          continue;
+        }
+        const rank =
+          this.parseTimestamp(dialog.updatedAt) ||
+          this.parseTimestamp(dialog.lastMessageAt) ||
+          this.parseTimestamp(dialog.createdAt);
+        const existingRank = rankedByDialogId.get(dialogId) ?? 0;
+        if (rank >= existingRank) {
+          rankedByDialogId.set(dialogId, rank);
+        }
+      }
+    }
+
+    return Array.from(rankedByDialogId.entries())
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, limit)
+      .map((entry) => entry[0]);
+  }
+
   persistClient(client: SupportClientProfile): void {
     this.fireAndForget(async () => {
       const activeBackends = this.getActiveBackends();
@@ -480,6 +571,23 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }
 
     return configs;
+  }
+
+  private normalizePhoneForLookup(rawPhone: string): string | undefined {
+    const digits = String(rawPhone ?? '').replace(/\D+/g, '');
+    if (!digits) {
+      return undefined;
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `7${digits.slice(1)}`;
+    }
+    if (digits.length === 10) {
+      return `7${digits}`;
+    }
+    if (digits.length === 11 && digits.startsWith('7')) {
+      return digits;
+    }
+    return digits;
   }
 
   private resolvePrimaryDbName(): string {
