@@ -670,6 +670,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     dialog: SupportDialog,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
+    if (backendKey === 'primary') {
+      return true;
+    }
+
     const connector = this.extractDialogPrimaryConnector(dialog);
     if (!connector) {
       return true;
@@ -681,6 +685,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     message: SupportMessage,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
+    if (backendKey === 'primary') {
+      return true;
+    }
+
     const rawMessage = message as unknown as Record<string, unknown>;
     const resolvedConnector =
       this.normalizeConnector(message.connector) ??
@@ -697,6 +705,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     metric: SupportResponseMetric,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
+    if (backendKey === 'primary') {
+      return true;
+    }
+
     const resolvedConnector = this.normalizeConnector(metric.connector);
     if (!resolvedConnector) {
       return true;
@@ -709,6 +721,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     command: SupportOutboxCommand,
     backendKey: SupportPersistenceBackendKey
   ): boolean {
+    if (backendKey === 'primary') {
+      return true;
+    }
+
     const resolvedConnector = this.normalizeConnector(command.connector);
     if (!resolvedConnector) {
       return true;
