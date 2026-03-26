@@ -4369,6 +4369,8 @@
       var currentStationName = String(dialog && dialog.currentStationName || '').trim();
       var fallbackStationId = String(dialog && dialog.stationId || '').trim();
       var fallbackStationName = String(dialog && dialog.stationName || '').trim();
+      var normalizedCurrentStationName = normalizeDialogLabel(currentStationName);
+      var normalizedFallbackStationName = normalizeDialogLabel(fallbackStationName);
 
       if (
         canonicalWriteStationId &&
@@ -4377,11 +4379,24 @@
         currentStationId = canonicalWriteStationId;
       }
 
+      if (currentStationId.toUpperCase() === 'UNASSIGNED') {
+        currentStationId = '';
+      }
+      if (fallbackStationId.toUpperCase() === 'UNASSIGNED') {
+        fallbackStationId = '';
+      }
+      if (normalizedCurrentStationName === 'без станции') {
+        currentStationName = '';
+      }
+      if (normalizedFallbackStationName === 'без станции') {
+        fallbackStationName = '';
+      }
+
       if (!currentStationId && !currentStationName) {
-        if (fallbackStationId && fallbackStationId.toUpperCase() !== 'UNASSIGNED') {
+        if (fallbackStationId) {
           currentStationId = fallbackStationId;
           currentStationName = fallbackStationName;
-        } else if (fallbackStationName && normalizeDialogLabel(fallbackStationName) !== 'без станции') {
+        } else if (fallbackStationName) {
           currentStationName = fallbackStationName;
         }
       }
