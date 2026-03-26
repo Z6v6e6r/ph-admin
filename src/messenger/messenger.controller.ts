@@ -68,6 +68,23 @@ interface ListMessagesQueryOptions {
   includeService?: boolean;
 }
 
+interface DialogUpdatesResponse {
+  serverTime: string;
+  updatedSince?: string;
+  pollIntervalMs: number;
+  hasMore: boolean;
+  dialogs: StationDialogSummary[];
+}
+
+interface MessageUpdatesResponse {
+  serverTime: string;
+  threadId: string;
+  updatedSince?: string;
+  pollIntervalMs: number;
+  hasMore: boolean;
+  messages: ChatMessage[];
+}
+
 @Controller('messenger')
 @Roles(
   Role.SUPER_ADMIN,
@@ -168,6 +185,48 @@ export class MessengerController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.listCompatibleDialogs(user, query);
+  }
+
+  @Get('dialogs/updates')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  async listDialogUpdates(
+    @CurrentUser() user?: RequestUser,
+    @Query() query: ListThreadsDto = {},
+    @Query('updatedSince') updatedSince?: string
+  ): Promise<DialogUpdatesResponse> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+
+    const limit = this.resolvePollingLimit(query.limit, 30, 200);
+    const sourceLimit = this.resolvePollingLimit(limit * 3, 120, 500);
+    const sourceDialogs = await this.listCompatibleDialogs(user, {
+      ...query,
+      limit: sourceLimit,
+      offset: 0
+    });
+    const updatedSinceTs = this.parseUpdatedSince(updatedSince);
+    const changed = updatedSinceTs > 0
+      ? sourceDialogs.filter(
+          (dialog) => this.resolveDialogUpdateTimestamp(dialog) > updatedSinceTs
+        )
+      : sourceDialogs;
+    const dialogs = changed.slice(0, limit);
+
+    return {
+      serverTime: new Date().toISOString(),
+      updatedSince: updatedSince,
+      pollIntervalMs: 1000,
+      hasMore: changed.length > dialogs.length,
+      dialogs
+    };
   }
 
   @Get('viva/client-cabinet')
@@ -398,6 +457,40 @@ export class MessengerController {
     });
   }
 
+  @Get('threads/:threadId/messages/updates')
+  async listThreadMessageUpdates(
+    @Param('threadId') threadId: string,
+    @Query('updatedSince') updatedSince: string | undefined,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('includeService') includeService: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<MessageUpdatesResponse> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.listCompatibleMessageUpdates(threadId, user, {
+      limit,
+      includeService: this.parseOptionalBoolean(includeService)
+    }, updatedSince);
+  }
+
+  @Get('dialogs/:dialogId/messages/updates')
+  async listDialogMessageUpdates(
+    @Param('dialogId') dialogId: string,
+    @Query('updatedSince') updatedSince: string | undefined,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @Query('includeService') includeService: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): Promise<MessageUpdatesResponse> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.listCompatibleMessageUpdates(dialogId, user, {
+      limit,
+      includeService: this.parseOptionalBoolean(includeService)
+    }, updatedSince);
+  }
+
   @Get('threads/:threadId/service-messages')
   async listThreadServiceMessages(
     @Param('threadId') threadId: string,
@@ -500,6 +593,34 @@ export class MessengerController {
       const supportMessages = await this.supportService.listServiceMessages(threadId, user, options);
       return supportMessages.map((message) => this.mapSupportMessageToLegacy(message));
     }
+  }
+
+  private async listCompatibleMessageUpdates(
+    threadId: string,
+    user: RequestUser,
+    options: ListMessagesQueryOptions,
+    updatedSince?: string
+  ): Promise<MessageUpdatesResponse> {
+    const limit = this.resolvePollingLimit(options.limit, 60, 400);
+    const sourceLimit = this.resolvePollingLimit(limit * 4, 200, 1000);
+    const source = await this.listCompatibleMessages(threadId, user, {
+      limit: sourceLimit,
+      includeService: options.includeService
+    });
+    const updatedSinceTs = this.parseUpdatedSince(updatedSince);
+    const changed = updatedSinceTs > 0
+      ? source.filter((message) => Date.parse(message.createdAt || '') > updatedSinceTs)
+      : source;
+    const messages = changed.length <= limit ? changed : changed.slice(changed.length - limit);
+
+    return {
+      serverTime: new Date().toISOString(),
+      threadId,
+      updatedSince,
+      pollIntervalMs: 1000,
+      hasMore: changed.length > messages.length,
+      messages
+    };
   }
 
   private sendCompatibleMessage(
@@ -624,6 +745,34 @@ export class MessengerController {
       return false;
     }
     return undefined;
+  }
+
+  private parseUpdatedSince(value?: string): number {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return 0;
+    }
+    const parsed = Date.parse(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private resolvePollingLimit(
+    rawLimit: number | undefined,
+    fallback: number,
+    maxLimit: number
+  ): number {
+    if (!Number.isFinite(rawLimit) || Number(rawLimit) <= 0) {
+      return fallback;
+    }
+    return Math.min(Math.floor(Number(rawLimit)), maxLimit);
+  }
+
+  private resolveDialogUpdateTimestamp(dialog: StationDialogSummary): number {
+    const rankingTs = Date.parse(dialog.lastRankingMessageAt || '');
+    const lastMessageTs = Date.parse(dialog.lastMessageAt || '');
+    const normalizedRankingTs = Number.isFinite(rankingTs) ? rankingTs : 0;
+    const normalizedLastMessageTs = Number.isFinite(lastMessageTs) ? lastMessageTs : 0;
+    return Math.max(normalizedRankingTs, normalizedLastMessageTs);
   }
 
   private getSupportThread(threadId: string, user: RequestUser): ChatThread {
