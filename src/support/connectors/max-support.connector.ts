@@ -30,7 +30,15 @@ export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
       helpers.resolveStationMappingFromAction(dto.action) ??
       helpers.resolveStationMappingFromAction(
         helpers.extractMetaPathString(dto.meta, ['action'])
-      );
+      ) ??
+      helpers.resolveStationMappingFromAction(
+        helpers.extractMetaPathString(dto.meta, ['data', 'action'])
+      ) ??
+      helpers.resolveStationMappingFromAction(
+        helpers.extractMetaPathString(dto.meta, ['data', 'payload', 'action'])
+      ) ??
+      helpers.resolveStationMappingFromAction(dto.selectedStationId) ??
+      helpers.resolveStationMappingFromAction(dto.stationId);
 
     return {
       externalUserId:
@@ -46,11 +54,12 @@ export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
         ? recipientUsername
         : helpers.normalizeIdentityValue(dto.username),
       selectedStationId:
-        helpers.normalizeStationId(dto.selectedStationId) ?? selectedStation?.stationId,
+        helpers.normalizeStationId(dto.selectedStationId ?? dto.stationId) ??
+        selectedStation?.stationId,
       selectedStationName:
-        helpers.normalizeDisplayName(dto.selectedStationName) ?? selectedStation?.stationName,
+        helpers.normalizeDisplayName(dto.selectedStationName ?? dto.stationName) ??
+        selectedStation?.stationName,
       deliverToClient: helpers.resolveDeliverToClient(dto)
     };
   }
 }
-

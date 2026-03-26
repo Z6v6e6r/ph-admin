@@ -2282,10 +2282,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     ) {
       existingDialog.lastReplyConnector = message.connector;
     }
+    const normalizedExistingStationId = this.normalizeStationId(existingDialog.stationId);
+    const normalizedMessageStationId = this.normalizeStationId(message.stationId);
     existingDialog.stationId =
-      this.normalizeStationId(existingDialog.stationId) ??
-      this.normalizeStationId(message.stationId) ??
-      SUPPORT_UNASSIGNED_STATION_ID;
+      normalizedExistingStationId &&
+      normalizedExistingStationId !== SUPPORT_UNASSIGNED_STATION_ID
+        ? normalizedExistingStationId
+        : normalizedMessageStationId ?? SUPPORT_UNASSIGNED_STATION_ID;
     existingDialog.stationName = this.resolveStationName(
       existingDialog.stationName,
       message.stationName,
@@ -2942,9 +2945,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog: SupportDialog
   ): SupportConnectorRoute | undefined {
     return (
-      dialog.connectors[0] ??
       dialog.lastInboundConnector ??
-      dialog.lastReplyConnector
+      dialog.lastReplyConnector ??
+      dialog.connectors[0]
     );
   }
 
@@ -3346,7 +3349,23 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private normalizeStationId(raw?: string): string | undefined {
     const value = String(raw ?? '').trim();
-    return value || undefined;
+    if (!value) {
+      return undefined;
+    }
+
+    const normalizedValue = value.toLowerCase();
+    const mapping = (this.stationMappings ?? []).find((item) => {
+      const mappingKey = this.normalizeIdentityValue(item.key)?.toLowerCase();
+      const mappingStationId = this.normalizeIdentityValue(item.stationId)?.toLowerCase();
+      const mappingStationName = this.normalizeDisplayName(item.stationName)?.toLowerCase();
+      return (
+        (mappingKey && mappingKey === normalizedValue) ||
+        (mappingStationId && mappingStationId === normalizedValue) ||
+        (mappingStationName && mappingStationName === normalizedValue)
+      );
+    });
+
+    return mapping?.stationId ?? value;
   }
 
   private resolveStationName(
@@ -3358,10 +3377,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (value) {
       return value;
     }
-    if (stationId === SUPPORT_UNASSIGNED_STATION_ID || !stationId) {
+    const normalizedStationId = this.normalizeStationId(stationId);
+    if (normalizedStationId === SUPPORT_UNASSIGNED_STATION_ID || !normalizedStationId) {
       return SUPPORT_UNASSIGNED_STATION_NAME;
     }
-    return stationId;
+    const mapped = (this.stationMappings ?? []).find(
+      (item) =>
+        this.normalizeStationId(item.stationId)?.toLowerCase() ===
+        normalizedStationId.toLowerCase()
+    );
+    return mapped?.stationName ?? normalizedStationId;
   }
 
   private resolveEventTimestamp(raw?: string): string {
@@ -3672,7 +3697,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const connector = this.resolveIncomingConnector(dto);
     const selectedStation =
       this.resolveStationMappingFromAction(dto.action) ??
-      this.resolveStationMappingFromAction(this.extractMetaPathString(incomingMeta, ['action']));
+      this.resolveStationMappingFromAction(this.extractMetaPathString(incomingMeta, ['action'])) ??
+      this.resolveStationMappingFromAction(
+        this.extractMetaPathString(incomingMeta, ['data', 'action'])
+      ) ??
+      this.resolveStationMappingFromAction(
+        this.extractMetaPathString(incomingMeta, ['data', 'payload', 'action'])
+      );
     const baseNormalized: NormalizedIngestSupportEventDto = {
       ...dto,
       connector,
@@ -3784,7 +3815,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (!normalizedAction) {
       return undefined;
     }
-    return this.stationMappings.find((mapping) => mapping.key === normalizedAction);
+    return this.stationMappings.find((mapping) => {
+      const mappingKey = this.normalizeIdentityValue(mapping.key)?.toLowerCase();
+      const mappingStationId = this.normalizeStationId(mapping.stationId)?.toLowerCase();
+      const mappingStationName = this.normalizeDisplayName(mapping.stationName)?.toLowerCase();
+      return (
+        (mappingKey && mappingKey === normalizedAction) ||
+        (mappingStationId && mappingStationId === normalizedAction) ||
+        (mappingStationName && mappingStationName === normalizedAction)
+      );
+    });
   }
 
   private parseStationMappings(): SupportStationMapping[] {
