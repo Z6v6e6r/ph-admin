@@ -1025,6 +1025,57 @@
         font-size:12px;
         color:var(--cup-wine);
       }
+      .phab-admin-switch{
+        position:relative;
+        display:inline-flex;
+        align-items:center;
+      }
+      .phab-admin-switch-input{
+        position:absolute;
+        width:1px;
+        height:1px;
+        opacity:0;
+        pointer-events:none;
+      }
+      .phab-admin-switch-track{
+        width:42px;
+        height:24px;
+        border-radius:999px;
+        border:1px solid rgba(51,0,32,.28);
+        background:rgba(51,0,32,.12);
+        box-shadow:inset 0 1px 2px rgba(51,0,32,.12);
+        transition:background .2s ease,border-color .2s ease;
+        position:relative;
+        cursor:pointer;
+      }
+      .phab-admin-switch-track::after{
+        content:"";
+        position:absolute;
+        top:2px;
+        left:2px;
+        width:18px;
+        height:18px;
+        border-radius:50%;
+        background:#fff;
+        box-shadow:0 2px 6px rgba(51,0,32,.25);
+        transition:transform .2s ease;
+      }
+      .phab-admin-switch-input:checked + .phab-admin-switch-track{
+        background:rgba(1,67,58,.78);
+        border-color:rgba(1,67,58,.9);
+      }
+      .phab-admin-switch-input:checked + .phab-admin-switch-track::after{
+        transform:translateX(18px);
+      }
+      .phab-admin-switch-input:focus-visible + .phab-admin-switch-track{
+        outline:2px solid rgba(0,58,134,.45);
+        outline-offset:2px;
+      }
+      .phab-admin-switch-text{
+        font-size:13px;
+        font-weight:700;
+        color:var(--cup-wine);
+      }
       .phab-admin-empty{
         font-size:12px;
         color:rgba(51,0,32,.7);
@@ -1903,52 +1954,30 @@
     dialogOptions.style.marginTop = '8px';
     dialogHead.appendChild(dialogOptions);
 
-    var messageModeGroupName = 'phab-admin-message-mode-' + Math.random().toString(36).slice(2, 8);
     var messageModeWrap = document.createElement('div');
     messageModeWrap.style.display = 'flex';
     messageModeWrap.style.alignItems = 'center';
-    messageModeWrap.style.gap = '12px';
+    messageModeWrap.style.gap = '10px';
     dialogOptions.appendChild(messageModeWrap);
 
-    var messageModeRegularLabel = document.createElement('label');
-    messageModeRegularLabel.style.display = 'inline-flex';
-    messageModeRegularLabel.style.alignItems = 'center';
-    messageModeRegularLabel.style.gap = '6px';
-    messageModeRegularLabel.style.cursor = 'pointer';
-    messageModeRegularLabel.style.fontSize = '13px';
-    messageModeRegularLabel.style.fontWeight = '600';
-    messageModeWrap.appendChild(messageModeRegularLabel);
+    var messageModeToggleLabel = document.createElement('label');
+    messageModeToggleLabel.className = 'phab-admin-switch';
+    messageModeWrap.appendChild(messageModeToggleLabel);
 
-    var messageModeRegularRadio = document.createElement('input');
-    messageModeRegularRadio.type = 'radio';
-    messageModeRegularRadio.name = messageModeGroupName;
-    messageModeRegularRadio.value = 'regular';
-    messageModeRegularRadio.checked = true;
-    messageModeRegularLabel.appendChild(messageModeRegularRadio);
+    var messageModeToggle = document.createElement('input');
+    messageModeToggle.type = 'checkbox';
+    messageModeToggle.className = 'phab-admin-switch-input';
+    messageModeToggle.checked = false;
+    messageModeToggleLabel.appendChild(messageModeToggle);
 
-    var messageModeRegularText = document.createElement('span');
-    messageModeRegularText.textContent = 'Обычные';
-    messageModeRegularLabel.appendChild(messageModeRegularText);
+    var messageModeToggleTrack = document.createElement('span');
+    messageModeToggleTrack.className = 'phab-admin-switch-track';
+    messageModeToggleLabel.appendChild(messageModeToggleTrack);
 
-    var messageModeServiceLabel = document.createElement('label');
-    messageModeServiceLabel.style.display = 'inline-flex';
-    messageModeServiceLabel.style.alignItems = 'center';
-    messageModeServiceLabel.style.gap = '6px';
-    messageModeServiceLabel.style.cursor = 'pointer';
-    messageModeServiceLabel.style.fontSize = '13px';
-    messageModeServiceLabel.style.fontWeight = '600';
-    messageModeWrap.appendChild(messageModeServiceLabel);
-
-    var messageModeServiceRadio = document.createElement('input');
-    messageModeServiceRadio.type = 'radio';
-    messageModeServiceRadio.name = messageModeGroupName;
-    messageModeServiceRadio.value = 'service';
-    messageModeServiceRadio.checked = false;
-    messageModeServiceLabel.appendChild(messageModeServiceRadio);
-
-    var messageModeServiceText = document.createElement('span');
-    messageModeServiceText.textContent = 'Служебные';
-    messageModeServiceLabel.appendChild(messageModeServiceText);
+    var messageModeToggleText = document.createElement('span');
+    messageModeToggleText.className = 'phab-admin-switch-text';
+    messageModeToggleText.textContent = 'Показывать служебные сообщения';
+    messageModeWrap.appendChild(messageModeToggleText);
 
     var dialogBody = document.createElement('div');
     dialogBody.className = 'phab-admin-dialog-body';
@@ -2726,8 +2755,7 @@
       dialogMeta: dialogMeta,
       dialogLinks: dialogLinks,
       dialogOptions: dialogOptions,
-      messageModeRegularRadio: messageModeRegularRadio,
-      messageModeServiceRadio: messageModeServiceRadio,
+      messageModeToggle: messageModeToggle,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
       cabinetMeta: cabinetMeta,
@@ -2890,28 +2918,40 @@
 
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
   var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
-  var STORAGE_KEY_MESSAGE_VIEW_MODE = 'phab_admin_message_view_mode';
+  var STORAGE_KEY_INCLUDE_SERVICE_MESSAGES = 'phab_admin_include_service_messages';
+  var STORAGE_KEY_MESSAGE_VIEW_MODE_LEGACY = 'phab_admin_message_view_mode';
 
-  function loadStoredMessageViewMode(fallbackValue) {
+  function loadStoredIncludeServiceMessages(fallbackValue) {
     try {
-      var raw = String(window.localStorage.getItem(STORAGE_KEY_MESSAGE_VIEW_MODE) || '')
+      var raw = String(window.localStorage.getItem(STORAGE_KEY_INCLUDE_SERVICE_MESSAGES) || '')
         .trim()
         .toLowerCase();
-      if (raw === 'regular' || raw === 'service') {
-        return raw;
+      if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on') {
+        return true;
+      }
+      if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'off') {
+        return false;
+      }
+
+      var legacyRaw = String(window.localStorage.getItem(STORAGE_KEY_MESSAGE_VIEW_MODE_LEGACY) || '')
+        .trim()
+        .toLowerCase();
+      if (legacyRaw === 'service') {
+        return true;
+      }
+      if (legacyRaw === 'regular') {
+        return false;
       }
     } catch (_error) {
       // ignore storage errors
     }
-    return fallbackValue;
+    return fallbackValue === true;
   }
 
-  function saveStoredMessageViewMode(value) {
+  function saveStoredIncludeServiceMessages(value) {
     try {
-      window.localStorage.setItem(
-        STORAGE_KEY_MESSAGE_VIEW_MODE,
-        value === 'service' ? 'service' : 'regular'
-      );
+      window.localStorage.setItem(STORAGE_KEY_INCLUDE_SERVICE_MESSAGES, value ? 'true' : 'false');
+      window.localStorage.removeItem(STORAGE_KEY_MESSAGE_VIEW_MODE_LEGACY);
     } catch (_error) {
       // ignore storage errors
     }
@@ -2998,8 +3038,11 @@
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedThreadId: null,
-      messageViewMode: loadStoredMessageViewMode('regular')
+      includeServiceMessages: loadStoredIncludeServiceMessages(false)
     };
+    if (!canToggleSystemMessages(cfg)) {
+      state.includeServiceMessages = false;
+    }
     var incomingSoundState = {
       context: null,
       unlockBound: false,
@@ -3008,8 +3051,7 @@
     };
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
-    dom.messageModeRegularRadio.checked = state.messageViewMode !== 'service';
-    dom.messageModeServiceRadio.checked = state.messageViewMode === 'service';
+    dom.messageModeToggle.checked = state.includeServiceMessages === true;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
@@ -4312,17 +4354,18 @@
       );
     }
 
+    function shouldIncludeServiceMessages() {
+      return canToggleSystemMessages(cfg) && state.includeServiceMessages === true;
+    }
+
     function shouldHideSystemMessage(message) {
       if (!message) {
         return false;
       }
-      if (state.messageViewMode === 'service') {
-        return !isSystemMessage(message);
-      }
-      if (isSystemMessage(message)) {
+      if (isSystemMessage(message) && !shouldIncludeServiceMessages()) {
         return true;
       }
-      if (isRestrictedStationAdmin && isVivaOtpSystemMessage(message)) {
+      if (isRestrictedStationAdmin && isSystemMessage(message) && isVivaOtpSystemMessage(message)) {
         return true;
       }
       return false;
@@ -4352,8 +4395,7 @@
         dom.dialogOptions.style.display = 'none';
         return;
       }
-      dom.messageModeRegularRadio.checked = state.messageViewMode !== 'service';
-      dom.messageModeServiceRadio.checked = state.messageViewMode === 'service';
+      dom.messageModeToggle.checked = shouldIncludeServiceMessages();
       dom.dialogOptions.style.display = 'block';
     }
 
@@ -5012,13 +5054,13 @@
       }
     }
 
-    function resolveMessageViewMode(rawMode) {
-      return String(rawMode || '').trim().toLowerCase() === 'service' ? 'service' : 'regular';
+    function resolveIncludeServiceMessages(value) {
+      return value === true;
     }
 
-    async function setMessageViewMode(nextMode) {
-      state.messageViewMode = resolveMessageViewMode(nextMode);
-      saveStoredMessageViewMode(state.messageViewMode);
+    async function setIncludeServiceMessages(nextValue) {
+      state.includeServiceMessages = resolveIncludeServiceMessages(nextValue);
+      saveStoredIncludeServiceMessages(state.includeServiceMessages);
       state.messagesCacheByThreadId = Object.create(null);
       state.messagesFetchPromisesByThreadId = Object.create(null);
       var dialogsResult = applyDialogs(state.allDialogs, {
@@ -5091,10 +5133,18 @@
 
     function buildMessagesCacheKey(threadId, options) {
       var opts = options || {};
-      var mode = resolveMessageViewMode(opts.mode);
+      var includeService = resolveIncludeServiceMessages(opts.includeService);
       var before = String(opts.before || '');
       var limit = String(resolveMessagesLimit(opts.limit));
-      return String(threadId || '') + '|mode=' + mode + '|before=' + before + '|limit=' + limit;
+      return (
+        String(threadId || '') +
+        '|includeService=' +
+        (includeService ? 'true' : 'false') +
+        '|before=' +
+        before +
+        '|limit=' +
+        limit
+      );
     }
 
     function getCachedMessages(threadId, options) {
@@ -5121,7 +5171,7 @@
       }
 
       var requestOptions = {
-        mode: resolveMessageViewMode(opts.mode),
+        includeService: resolveIncludeServiceMessages(opts.includeService),
         before: opts.before,
         limit: resolveMessagesLimit(opts.limit)
       };
@@ -5139,15 +5189,11 @@
         return inFlight;
       }
 
-      var request = (
-        requestOptions.mode === 'service'
-          ? api.getLegacyServiceMessages(threadId, requestOptions)
-          : api.getLegacyMessages(threadId, {
-              includeService: false,
-              before: requestOptions.before,
-              limit: requestOptions.limit
-            })
-      )
+      var request = api.getLegacyMessages(threadId, {
+        includeService: requestOptions.includeService,
+        before: requestOptions.before,
+        limit: requestOptions.limit
+      })
         .then(function (payload) {
           var normalized = normalizeLegacyMessages(payload || []);
           state.messagesCacheByThreadId[cacheKey] = normalized.slice();
@@ -5165,12 +5211,12 @@
       if (!threadId || threadId === state.selectedThreadId) {
         return;
       }
-      if (getCachedMessages(threadId, { mode: 'regular' })) {
+      if (getCachedMessages(threadId, { includeService: shouldIncludeServiceMessages() })) {
         return;
       }
       fetchDialogMessages(threadId, {
         forceRefresh: false,
-        mode: 'regular',
+        includeService: shouldIncludeServiceMessages(),
         limit: state.messagePageSize
       }).catch(function () {
         // ignore background prefetch failures
@@ -6516,9 +6562,8 @@
       var threadId = state.selectedThreadId;
       var requestToken = String(threadId) + ':' + Date.now() + ':' + Math.random().toString(36).slice(2, 8);
       state.latestMessagesRequestToken = requestToken;
-      var mode = resolveMessageViewMode(state.messageViewMode);
       var requestOptions = {
-        mode: mode,
+        includeService: shouldIncludeServiceMessages(),
         before: opts.before,
         limit: resolveMessagesLimit(opts.limit)
       };
@@ -6953,15 +6998,8 @@
         switchTab('settings');
         loadSettings().catch(handleError);
       });
-      dom.messageModeRegularRadio.addEventListener('change', function () {
-        if (dom.messageModeRegularRadio.checked) {
-          setMessageViewMode('regular').catch(handleError);
-        }
-      });
-      dom.messageModeServiceRadio.addEventListener('change', function () {
-        if (dom.messageModeServiceRadio.checked) {
-          setMessageViewMode('service').catch(handleError);
-        }
+      dom.messageModeToggle.addEventListener('change', function () {
+        setIncludeServiceMessages(dom.messageModeToggle.checked).catch(handleError);
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         var nextValue = dom.dialogSearchInput.value;
