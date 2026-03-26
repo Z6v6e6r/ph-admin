@@ -60,7 +60,6 @@ type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Prom
 
 @Injectable()
 export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
-  private static readonly PERSISTENCE_REFRESH_TTL_MS = 3000;
   private readonly threads = new Map<string, ChatThread>();
   private readonly messages = new Map<string, ChatMessage[]>();
   private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
@@ -72,8 +71,6 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   private readonly connectorConfigs = new Map<string, MessengerConnectorConfig>();
   private readonly accessRules = new Map<string, MessengerAccessRule>();
   private readonly messageObservers: MessageObserver[] = [];
-  private lastHydratedAt = 0;
-  private refreshPromise?: Promise<void>;
 
   constructor(
     private readonly aiConnector: AiConnectorService,
@@ -83,41 +80,11 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   }
 
   async onModuleInit(): Promise<void> {
-    await this.refreshFromPersistence(true);
+    await this.hydrateFromPersistence();
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.refreshFromPersistence(true);
-  }
-
-  async refreshFromPersistence(force = false): Promise<void> {
-    if (!this.persistence.isEnabled()) {
-      return;
-    }
-
-    if (
-      !force &&
-      this.lastHydratedAt > 0 &&
-      Date.now() - this.lastHydratedAt < MessengerService.PERSISTENCE_REFRESH_TTL_MS
-    ) {
-      return;
-    }
-
-    if (this.refreshPromise) {
-      await this.refreshPromise;
-      return;
-    }
-
-    this.refreshPromise = (async () => {
-      await this.hydrateFromPersistence();
-      this.lastHydratedAt = Date.now();
-    })();
-
-    try {
-      await this.refreshPromise;
-    } finally {
-      this.refreshPromise = undefined;
-    }
+    await this.hydrateFromPersistence();
   }
 
   registerMessageObserver(observer: MessageObserver): void {

@@ -94,7 +94,6 @@ interface SupportMessagesListOptions {
 @Injectable()
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(SupportService.name);
-  private static readonly PERSISTENCE_REFRESH_TTL_MS = 3000;
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
   private readonly messages = new Map<string, SupportMessage[]>();
@@ -132,26 +131,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     clearInterval(this.persistenceSyncTimer);
     this.persistenceSyncTimer = undefined;
-  }
-
-  async refreshFromPersistence(force = false): Promise<void> {
-    await this.ensureInitialPersistenceSync();
-    if (!this.persistence.isEnabled()) {
-      return;
-    }
-
-    if (!force) {
-      const lastCompletedAt =
-        Date.parse(this.lastPersistenceSyncCompletedAt ?? '') || 0;
-      if (
-        lastCompletedAt > 0 &&
-        Date.now() - lastCompletedAt < SupportService.PERSISTENCE_REFRESH_TTL_MS
-      ) {
-        return;
-      }
-    }
-
-    await this.syncFromPersistence();
   }
 
   async hydrateFromPersistence(): Promise<void> {
