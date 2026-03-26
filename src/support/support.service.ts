@@ -353,9 +353,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const selectedStationId = this.normalizeStationId(
       normalizedDto.selectedStationId ?? normalizedDto.stationId
     );
+    const connectorFallbackStationId =
+      normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
+        ? this.normalizeStationId(client.currentStationId)
+        : undefined;
     const stationId =
       selectedStationId ??
-      this.normalizeStationId(client.currentStationId) ??
+      connectorFallbackStationId ??
       SUPPORT_UNASSIGNED_STATION_ID;
     const stationName =
       this.resolveStationName(
@@ -364,7 +368,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         stationId
       ) ?? SUPPORT_UNASSIGNED_STATION_NAME;
 
-    if (selectedStationId) {
+    if (
+      selectedStationId &&
+      normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
+    ) {
       client.currentStationId = stationId;
       client.currentStationName = stationName;
       client.updatedAt = createdAt;
@@ -377,6 +384,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       stationName,
       normalizedDto.subject,
       normalizedDto.connector,
+      selectedStationId,
       createdAt
     );
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
@@ -1182,6 +1190,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     stationName: string,
     subject: string | undefined,
     connector: SupportConnectorRoute,
+    explicitSelectedStationId: string | undefined,
     createdAt: string
   ): SupportDialog {
     const existing = this.collapseOpenDialogs(client.id, connector);
@@ -1189,9 +1198,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.normalizeDialogSubject(subject) ?? this.buildDialogSubject(client, stationName);
 
     if (existing) {
-      existing.stationId = stationId;
-      existing.stationName = stationName;
-      existing.accessStationIds = this.mergeStationAccessIds(existing.accessStationIds, [stationId]);
+      const hasResolvedStation = stationId !== SUPPORT_UNASSIGNED_STATION_ID;
+      const shouldUpdateStation =
+        Boolean(explicitSelectedStationId) ||
+        (existing.stationId === SUPPORT_UNASSIGNED_STATION_ID && hasResolvedStation);
+
+      if (shouldUpdateStation) {
+        existing.stationId = stationId;
+        existing.stationName = stationName;
+        existing.accessStationIds = this.mergeStationAccessIds(existing.accessStationIds, [
+          stationId
+        ]);
+      }
       existing.subject =
         this.normalizeDialogSubject(subject) ??
         this.normalizeDialogSubject(existing.subject) ??
