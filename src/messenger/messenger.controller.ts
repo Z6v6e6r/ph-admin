@@ -790,7 +790,7 @@ export class MessengerController {
       threadId: dialog.dialogId,
       connector: this.mapSupportConnector(dialog.connector),
       stationId: dialog.stationId,
-      stationName: dialog.currentStationName || dialog.stationName,
+      stationName: dialog.stationName,
       accessStationIds: [...dialog.accessStationIds],
       writeStationIds: [...dialog.writeStationIds],
       readOnlyStationIds: [...dialog.readOnlyStationIds],

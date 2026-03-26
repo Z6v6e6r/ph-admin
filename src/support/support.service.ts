@@ -1814,6 +1814,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ): SupportDialogSummary {
     this.syncDialogMarkers(dialog);
     const client = this.clients.get(dialog.clientId);
+    const currentDialogStationId = this.normalizeStationId(dialog.stationId);
+    const currentDialogStationName = this.resolveStationName(
+      dialog.stationName,
+      undefined,
+      currentDialogStationId ?? dialog.stationId
+    );
     let lastRankingMessageAt = dialog.lastRankingMessageAt;
     let lastMessageText = dialog.lastMessageText;
     let lastMessageSenderRole = dialog.lastMessageSenderRole;
@@ -1840,8 +1846,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       readOnlyStationIds: [...dialog.readOnlyStationIds],
       isActiveForUser: canWriteForUser,
       isReadOnlyForUser: !canWriteForUser,
-      currentStationId: client?.currentStationId,
-      currentStationName: client?.currentStationName,
+      currentStationId: currentDialogStationId,
+      currentStationName:
+        currentDialogStationId === SUPPORT_UNASSIGNED_STATION_ID
+          ? SUPPORT_UNASSIGNED_STATION_NAME
+          : currentDialogStationName,
       clientId: dialog.clientId,
       clientDisplayName: this.buildSummaryClientDisplayName(client, dialog),
       authStatus: dialog.authStatus,
@@ -2099,6 +2108,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       const lastOutbound = [...dialogMessages]
         .reverse()
         .find((message) => message.direction === SupportMessageDirection.OUTBOUND);
+      const latestResolvedStationMessage = [...dialogMessages]
+        .reverse()
+        .find((message) => {
+          const stationId = this.normalizeStationId(message.stationId);
+          return Boolean(
+            stationId &&
+              stationId !== SUPPORT_UNASSIGNED_STATION_ID
+          );
+        });
 
       dialog.connectors = this.mergeConnectors(
         dialog.connectors,
@@ -2129,6 +2147,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
 
       const stationIdsFromMessages = dialogMessages.map((message) => message.stationId);
+      if (latestResolvedStationMessage) {
+        dialog.stationId =
+          this.normalizeStationId(latestResolvedStationMessage.stationId) ??
+          dialog.stationId;
+        dialog.stationName = this.resolveStationName(
+          latestResolvedStationMessage.stationName,
+          dialog.stationName,
+          dialog.stationId
+        );
+      }
       dialog.accessStationIds = this.mergeStationAccessIds(dialog.accessStationIds, [
         dialog.stationId,
         ...stationIdsFromMessages
@@ -2311,13 +2339,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const normalizedExistingStationId = this.normalizeStationId(existingDialog.stationId);
     const normalizedMessageStationId = this.normalizeStationId(message.stationId);
     existingDialog.stationId =
-      normalizedExistingStationId &&
-      normalizedExistingStationId !== SUPPORT_UNASSIGNED_STATION_ID
-        ? normalizedExistingStationId
-        : normalizedMessageStationId ?? SUPPORT_UNASSIGNED_STATION_ID;
+      normalizedMessageStationId ??
+      normalizedExistingStationId ??
+      SUPPORT_UNASSIGNED_STATION_ID;
     existingDialog.stationName = this.resolveStationName(
-      existingDialog.stationName,
       message.stationName,
+      existingDialog.stationName,
       existingDialog.stationId
     );
     existingDialog.accessStationIds = this.mergeStationAccessIds(existingDialog.accessStationIds, [
@@ -2820,19 +2847,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return true;
     }
 
-    const accessStationIds = this.getDialogAccessStationIds(dialog);
+    const writeStationIds =
+      dialog.writeStationIds.length > 0
+        ? this.mergeStationAccessIds([], dialog.writeStationIds)
+        : this.resolveDialogWriteStationIds(dialog);
     return user.stationIds.some((stationId) => {
-      if (accessStationIds.includes(stationId)) {
+      if (writeStationIds.includes(stationId)) {
         return true;
       }
 
       const normalizedStationId = this.normalizeStationId(stationId);
-      if (normalizedStationId && accessStationIds.includes(normalizedStationId)) {
+      if (normalizedStationId && writeStationIds.includes(normalizedStationId)) {
         return true;
       }
 
       const aliases = this.resolveStationAccessAliases(stationId, stationId);
-      return aliases.some((alias) => accessStationIds.includes(alias));
+      return aliases.some((alias) => writeStationIds.includes(alias));
     });
   }
 
