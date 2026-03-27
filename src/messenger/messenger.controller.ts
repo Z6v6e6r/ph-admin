@@ -730,11 +730,15 @@ export class MessengerController {
     const mappedSupport = this.sortDialogsByRank(
       supportDialogs.map((dialog) => this.mapSupportDialogToLegacy(dialog))
     );
+    const visibleLegacy = legacy.filter((dialog) => this.shouldIncludeDialogInList(dialog));
+    const visibleSupport = mappedSupport.filter((dialog) =>
+      this.shouldIncludeDialogInList(dialog)
+    );
 
     const paging = this.resolveDialogsPaging(query);
     const mergedTop = this.mergeDialogsByRank(
-      legacy,
-      mappedSupport,
+      visibleLegacy,
+      visibleSupport,
       paging.offset + paging.limit
     );
     const page = mergedTop.slice(paging.offset, paging.offset + paging.limit);
@@ -1015,6 +1019,10 @@ export class MessengerController {
     }
 
     return Date.parse(dialog.lastMessageAt || '') || 0;
+  }
+
+  private shouldIncludeDialogInList(dialog: StationDialogSummary): boolean {
+    return this.resolveDialogRankTimestamp(dialog) > 0;
   }
 
   private sortDialogsByRank(dialogs: StationDialogSummary[]): StationDialogSummary[] {
