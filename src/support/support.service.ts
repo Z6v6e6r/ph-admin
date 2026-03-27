@@ -350,12 +350,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       createdAt
     );
 
-    const selectedStationId = this.normalizeStationId(
-      normalizedDto.selectedStationId ??
-      (normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
-        ? normalizedDto.stationId
-        : undefined)
-    );
+    const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
     const connectorFallbackStationId =
       normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
         ? this.normalizeStationId(client.currentStationId)
@@ -364,10 +359,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       selectedStationId ??
       connectorFallbackStationId ??
       SUPPORT_UNASSIGNED_STATION_ID;
+    const resolvedStationNameSource = selectedStationId
+      ? normalizedDto.selectedStationName ?? normalizedDto.stationName
+      : undefined;
     const stationName =
       this.resolveStationName(
-        normalizedDto.selectedStationName ?? normalizedDto.stationName,
-        client.currentStationName,
+        resolvedStationNameSource,
+        connectorFallbackStationId ? client.currentStationName : undefined,
         stationId
       ) ?? SUPPORT_UNASSIGNED_STATION_NAME;
 
