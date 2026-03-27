@@ -130,6 +130,9 @@ export interface SupportDialog {
   unreadCount: number;
   hasUnreadMessages: boolean;
   hasNewMessages: boolean;
+  isResolved: boolean;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
   waitingForStaffSince?: string;
   pendingClientMessageIds: string[];
   responseTimeTotalMs: number;
@@ -192,6 +195,9 @@ export interface SupportDialogSummary {
   readOnlyStationIds: string[];
   isActiveForUser: boolean;
   isReadOnlyForUser: boolean;
+  isResolved: boolean;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;

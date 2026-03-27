@@ -121,6 +121,9 @@ export interface StationDialogSummary {
   readOnlyStationIds?: string[];
   isActiveForUser?: boolean;
   isReadOnlyForUser?: boolean;
+  isResolved?: boolean;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
   currentStationId?: string;
   currentStationName?: string;
   clientId: string;

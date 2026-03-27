@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -541,6 +542,38 @@ export class MessengerController {
     return this.sendCompatibleMessage(dialogId, dto, user);
   }
 
+  @Patch('threads/:threadId/resolution')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
+  setThreadResolution(
+    @Param('threadId') threadId: string,
+    @Body() body: { resolved?: boolean } = {},
+    @CurrentUser() user?: RequestUser
+  ): StationDialogSummary {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    if (typeof body.resolved !== 'boolean') {
+      throw new BadRequestException('resolved must be boolean');
+    }
+    return this.setCompatibleDialogResolution(threadId, body.resolved, user);
+  }
+
+  @Patch('dialogs/:dialogId/resolution')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
+  setDialogResolution(
+    @Param('dialogId') dialogId: string,
+    @Body() body: { resolved?: boolean } = {},
+    @CurrentUser() user?: RequestUser
+  ): StationDialogSummary {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    if (typeof body.resolved !== 'boolean') {
+      throw new BadRequestException('resolved must be boolean');
+    }
+    return this.setCompatibleDialogResolution(dialogId, body.resolved, user);
+  }
+
   private getCompatibleThread(threadId: string, user: RequestUser): ChatThread {
     try {
       return this.messengerService.getThreadById(threadId, user);
@@ -550,6 +583,15 @@ export class MessengerController {
       }
       return this.getSupportThread(threadId, user);
     }
+  }
+
+  private setCompatibleDialogResolution(
+    dialogId: string,
+    resolved: boolean,
+    user: RequestUser
+  ): StationDialogSummary {
+    const summary = this.supportService.setDialogResolution(dialogId, resolved, user);
+    return this.mapSupportDialogToLegacy(summary);
   }
 
   private async listCompatibleMessages(
@@ -796,6 +838,9 @@ export class MessengerController {
       readOnlyStationIds: [...dialog.readOnlyStationIds],
       isActiveForUser: dialog.isActiveForUser,
       isReadOnlyForUser: dialog.isReadOnlyForUser,
+      isResolved: dialog.isResolved,
+      resolvedAt: dialog.resolvedAt,
+      resolvedByUserId: dialog.resolvedByUserId,
       currentStationId: dialog.currentStationId,
       currentStationName: dialog.currentStationName,
       clientId: dialog.clientId,

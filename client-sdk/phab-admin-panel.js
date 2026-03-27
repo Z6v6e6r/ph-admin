@@ -1585,6 +1585,13 @@
           text: text
         });
       },
+      setLegacyDialogResolution: function (threadId, resolved) {
+        return request(
+          '/messenger/dialogs/' + encodeURIComponent(threadId) + '/resolution',
+          'PATCH',
+          { resolved: resolved === true }
+        );
+      },
       getAnalytics: function (date) {
         var path = '/support/analytics/daily';
         if (date) {
@@ -2056,6 +2063,33 @@
     messageModeToggleText.className = 'phab-admin-switch-text';
     messageModeToggleText.textContent = 'Показывать служебные сообщения';
     messageModeWrap.appendChild(messageModeToggleText);
+
+    var resolutionWrap = document.createElement('div');
+    resolutionWrap.style.display = 'flex';
+    resolutionWrap.style.alignItems = 'center';
+    resolutionWrap.style.gap = '10px';
+    resolutionWrap.style.marginTop = '8px';
+    dialogOptions.appendChild(resolutionWrap);
+
+    var resolutionToggleLabel = document.createElement('label');
+    resolutionToggleLabel.className = 'phab-admin-switch';
+    resolutionWrap.appendChild(resolutionToggleLabel);
+
+    var resolutionToggle = document.createElement('input');
+    resolutionToggle.type = 'checkbox';
+    resolutionToggle.className = 'phab-admin-switch-input';
+    resolutionToggle.checked = false;
+    resolutionToggle.disabled = true;
+    resolutionToggleLabel.appendChild(resolutionToggle);
+
+    var resolutionToggleTrack = document.createElement('span');
+    resolutionToggleTrack.className = 'phab-admin-switch-track';
+    resolutionToggleLabel.appendChild(resolutionToggleTrack);
+
+    var resolutionToggleText = document.createElement('span');
+    resolutionToggleText.className = 'phab-admin-switch-text';
+    resolutionToggleText.textContent = 'Вопрос пользователя решен';
+    resolutionWrap.appendChild(resolutionToggleText);
 
     var dialogBody = document.createElement('div');
     dialogBody.className = 'phab-admin-dialog-body';
@@ -2834,6 +2868,9 @@
       dialogLinks: dialogLinks,
       dialogOptions: dialogOptions,
       messageModeToggle: messageModeToggle,
+      resolutionWrap: resolutionWrap,
+      resolutionToggle: resolutionToggle,
+      resolutionToggleText: resolutionToggleText,
       vivaCabinetStatus: vivaCabinetStatus,
       vivaCabinetLink: vivaCabinetLink,
       cabinetMeta: cabinetMeta,
@@ -3116,7 +3153,8 @@
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedThreadId: null,
-      includeServiceMessages: loadStoredIncludeServiceMessages(false)
+      includeServiceMessages: loadStoredIncludeServiceMessages(false),
+      updatingResolution: false
     };
     if (!canToggleSystemMessages(cfg)) {
       state.includeServiceMessages = false;
@@ -3130,6 +3168,8 @@
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
     dom.messageModeToggle.checked = state.includeServiceMessages === true;
+    dom.resolutionToggle.checked = false;
+    dom.resolutionToggle.disabled = true;
     dom.logsEventInput.value = state.gameEventsFilterEvent;
     dom.logsPhoneInput.value = state.gameEventsFilterPhone;
     dom.logsFromInput.value = state.gameEventsFilterFrom;
@@ -4518,13 +4558,48 @@
       });
     }
 
+    function canToggleResolution(dialog) {
+      if (!dialog || !dialog.dialogId) {
+        return false;
+      }
+      if (typeof dialog.isResolved !== 'boolean') {
+        return false;
+      }
+      return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER', 'SUPPORT', 'STATION_ADMIN']);
+    }
+
     function renderMessageModeToggle() {
-      if (!canToggleSystemMessages(cfg)) {
+      var dialog = getSelectedDialog();
+      var canToggleMessages = canToggleSystemMessages(cfg);
+      var canToggleResolved = canToggleResolution(dialog);
+      if (!canToggleMessages && !canToggleResolved) {
         dom.dialogOptions.style.display = 'none';
         return;
       }
-      dom.messageModeToggle.checked = shouldIncludeServiceMessages();
+
       dom.dialogOptions.style.display = 'block';
+      dom.messageModeToggle.checked = shouldIncludeServiceMessages();
+      if (canToggleMessages) {
+        dom.messageModeToggle.disabled = false;
+        dom.messageModeToggle.parentElement.style.opacity = '1';
+      } else {
+        dom.messageModeToggle.disabled = true;
+        dom.messageModeToggle.parentElement.style.opacity = '.55';
+      }
+
+      if (canToggleResolved) {
+        dom.resolutionWrap.style.display = 'flex';
+        dom.resolutionToggle.disabled =
+          state.updatingResolution || dialog.isActiveForUser === false;
+        dom.resolutionToggle.checked = dialog.isResolved === true;
+        dom.resolutionToggleText.textContent =
+          dialog.isResolved === true ? 'Вопрос пользователя решен' : 'Вопрос пользователя не решен';
+      } else {
+        dom.resolutionWrap.style.display = 'none';
+        dom.resolutionToggle.checked = false;
+        dom.resolutionToggle.disabled = true;
+        dom.resolutionToggleText.textContent = 'Вопрос пользователя решен';
+      }
     }
 
     function canFilterDialogsByStation() {
@@ -4955,6 +5030,9 @@
         ? item.readOnlyStationIds.slice()
         : [];
       copy.isReadOnlyForUser = item.isReadOnlyForUser === true;
+      copy.isResolved = typeof item.isResolved === 'boolean' ? item.isResolved : false;
+      copy.resolvedAt = item.resolvedAt || undefined;
+      copy.resolvedByUserId = item.resolvedByUserId || undefined;
       return copy;
     }
 
@@ -4977,6 +5055,9 @@
           : [],
         isActiveForUser: item.isActiveForUser !== false,
         isReadOnlyForUser: item.isReadOnlyForUser === true,
+        isResolved: typeof item.isResolved === 'boolean' ? item.isResolved : undefined,
+        resolvedAt: item.resolvedAt || undefined,
+        resolvedByUserId: item.resolvedByUserId || undefined,
         clientId: item.clientId || '',
         clientDisplayName: item.clientDisplayName || undefined,
         vivaStatus: item.vivaStatus || undefined,
@@ -5079,6 +5160,7 @@
             String(getDialogPrimaryPhone(dialog) || ''),
             String(dialog && dialog.subject || ''),
             String(dialog && dialog.status || ''),
+            String(dialog && dialog.isResolved === true ? '1' : '0'),
             Number(dialog && dialog.unreadCount || 0),
             Number(dialog && dialog.pendingClientMessagesCount || 0),
             String(dialog && dialog.lastMessageAt || ''),
@@ -5281,6 +5363,50 @@
         preserveScroll: true,
         forceRefresh: true
       });
+    }
+
+    async function setDialogResolved(nextResolved) {
+      var dialog = getSelectedDialog();
+      if (!dialog || !dialog.dialogId) {
+        return;
+      }
+      if (typeof dialog.isResolved !== 'boolean') {
+        return;
+      }
+      if (state.updatingResolution) {
+        return;
+      }
+
+      state.updatingResolution = true;
+      renderMessageModeToggle();
+      try {
+        var payload = await api.setLegacyDialogResolution(dialog.dialogId, nextResolved === true);
+        var normalized = normalizeLegacyDialog(payload || {});
+        var resolvedDialogId = String(dialog.dialogId);
+        if (normalized && normalized.dialogId === resolvedDialogId) {
+          for (var i = 0; i < state.allDialogs.length; i += 1) {
+            if (String(state.allDialogs[i] && state.allDialogs[i].dialogId || '') !== resolvedDialogId) {
+              continue;
+            }
+            state.allDialogs[i] = Object.assign({}, state.allDialogs[i], normalized);
+          }
+        } else {
+          dialog.isResolved = nextResolved === true;
+          if (nextResolved === true) {
+            dialog.pendingClientMessagesCount = 0;
+            dialog.hasNewMessages = false;
+          }
+        }
+
+        applyDialogs(state.allDialogs, {
+          forceRender: true,
+          silent: true
+        });
+        renderMessageModeToggle();
+      } finally {
+        state.updatingResolution = false;
+        renderMessageModeToggle();
+      }
     }
 
     function markSelectedDialogAsReadLocally() {
@@ -7188,6 +7314,14 @@
       });
       dom.messageModeToggle.addEventListener('change', function () {
         setIncludeServiceMessages(dom.messageModeToggle.checked).catch(handleError);
+      });
+      dom.resolutionToggle.addEventListener('change', function () {
+        setDialogResolved(dom.resolutionToggle.checked).catch(function (error) {
+          var selected = getSelectedDialog();
+          dom.resolutionToggle.checked = selected ? selected.isResolved === true : false;
+          handleError(error);
+          renderMessageModeToggle();
+        });
       });
       dom.dialogSearchInput.addEventListener('input', function () {
         var nextValue = dom.dialogSearchInput.value;

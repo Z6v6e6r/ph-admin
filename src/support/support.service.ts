@@ -439,6 +439,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.appendMessage(dialog, message);
       if (direction === SupportMessageDirection.INBOUND) {
         dialog.unreadCount += 1;
+        if (!this.isSystemDialogMessage(message)) {
+          dialog.isResolved = false;
+          dialog.resolvedAt = undefined;
+          dialog.resolvedByUserId = undefined;
+        }
         if (this.isActionableClientMessage(message)) {
           dialog.waitingForStaffSince = dialog.waitingForStaffSince ?? createdAt;
           dialog.pendingClientMessageIds = this.mergeIds(dialog.pendingClientMessageIds, [message.id]);
@@ -733,6 +738,40 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return { dialog, message, outbox };
+  }
+
+  setDialogResolution(
+    dialogId: string,
+    resolved: boolean,
+    user: RequestUser
+  ): SupportDialogSummary {
+    const dialog = this.getDialogOrThrow(dialogId);
+    this.ensureDialogAccess(dialog, user);
+    this.ensureStaff(user);
+    if (!this.isDialogActiveForUser(dialog, user)) {
+      throw new ForbiddenException('Dialog is inactive for your station');
+    }
+
+    const now = new Date().toISOString();
+    if (resolved) {
+      dialog.isResolved = true;
+      dialog.resolvedAt = now;
+      dialog.resolvedByUserId = user.id;
+      dialog.pendingClientMessageIds = [];
+      dialog.waitingForStaffSince = undefined;
+    } else {
+      dialog.isResolved = false;
+      dialog.resolvedAt = undefined;
+      dialog.resolvedByUserId = undefined;
+    }
+    dialog.updatedAt = now;
+    this.persistDialog(dialog);
+
+    return this.toDialogSummary(
+      dialog,
+      dialog.lastInboundConnector ?? dialog.connectors[0],
+      user
+    );
   }
 
   pullOutbox(
@@ -1249,6 +1288,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       unreadCount: 0,
       hasUnreadMessages: false,
       hasNewMessages: false,
+      isResolved: false,
+      resolvedAt: undefined,
+      resolvedByUserId: undefined,
       waitingForStaffSince: undefined,
       pendingClientMessageIds: [],
       responseTimeTotalMs: 0,
@@ -1844,6 +1886,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       readOnlyStationIds: [...dialog.readOnlyStationIds],
       isActiveForUser: canWriteForUser,
       isReadOnlyForUser: !canWriteForUser,
+      isResolved: dialog.isResolved === true,
+      resolvedAt: dialog.isResolved === true ? dialog.resolvedAt : undefined,
+      resolvedByUserId: dialog.isResolved === true ? dialog.resolvedByUserId : undefined,
       currentStationId: currentDialogStationId,
       currentStationName:
         currentDialogStationId === SUPPORT_UNASSIGNED_STATION_ID
@@ -2047,6 +2092,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const resolvedPendingClientMessageIds = Array.isArray(dialog.pendingClientMessageIds)
       ? dialog.pendingClientMessageIds
       : [];
+    const resolvedIsResolved = dialog.isResolved === true;
+    const resolvedAt = this.readStringValue(rawDialog['resolvedAt']) ?? dialog.resolvedAt;
+    const resolvedByUserId =
+      this.readStringValue(rawDialog['resolvedByUserId']) ?? dialog.resolvedByUserId;
     const normalizedAccessStationIds = this.getDialogAccessStationIds(dialog);
     const writeStationIds = this.resolveDialogWriteStationIds(dialog);
     const readOnlyStationIds = this.resolveDialogReadOnlyStationIds(
@@ -2074,6 +2123,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       unreadCount: resolvedUnreadCount,
       hasUnreadMessages: resolvedUnreadCount > 0,
       hasNewMessages: resolvedPendingClientMessageIds.length > 0,
+      isResolved: resolvedPendingClientMessageIds.length > 0 ? false : resolvedIsResolved,
+      resolvedAt:
+        resolvedPendingClientMessageIds.length > 0 || !resolvedIsResolved
+          ? undefined
+          : resolvedAt,
+      resolvedByUserId:
+        resolvedPendingClientMessageIds.length > 0 || !resolvedIsResolved
+          ? undefined
+          : resolvedByUserId,
       lastRankingMessageAt: resolvedLastRankingMessageAt,
       lastMessageText: resolvedLastMessageText,
       lastMessageSenderRole:
@@ -2289,6 +2347,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         hasNewMessages:
           message.direction === SupportMessageDirection.INBOUND &&
           this.isActionableClientMessage(message),
+        isResolved: false,
+        resolvedAt: undefined,
+        resolvedByUserId: undefined,
         waitingForStaffSince:
           message.direction === SupportMessageDirection.INBOUND &&
           this.isActionableClientMessage(message)
@@ -2791,6 +2852,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog.readOnlyStationIds = readOnlyStationIds;
     dialog.hasUnreadMessages = dialog.unreadCount > 0;
     dialog.hasNewMessages = dialog.pendingClientMessageIds.length > 0;
+    if (dialog.pendingClientMessageIds.length > 0) {
+      dialog.isResolved = false;
+      dialog.resolvedAt = undefined;
+      dialog.resolvedByUserId = undefined;
+      return;
+    }
+    if (dialog.isResolved !== true) {
+      dialog.isResolved = false;
+      dialog.resolvedAt = undefined;
+      dialog.resolvedByUserId = undefined;
+    }
   }
 
   private mergeStationAccessIds(existing: string[], values: Array<string | undefined>): string[] {

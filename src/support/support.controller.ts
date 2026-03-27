@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -7,6 +8,7 @@ import {
   Param,
   ParseEnumPipe,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UnauthorizedException
@@ -202,6 +204,22 @@ export class SupportController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.supportService.replyToDialog(dialogId, dto, user);
+  }
+
+  @Patch('dialogs/:dialogId/resolution')
+  @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
+  setDialogResolution(
+    @Param('dialogId') dialogId: string,
+    @Body() body: { resolved?: boolean } = {},
+    @CurrentUser() user?: RequestUser
+  ): SupportDialogSummary {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    if (typeof body.resolved !== 'boolean') {
+      throw new BadRequestException('resolved must be boolean');
+    }
+    return this.supportService.setDialogResolution(dialogId, body.resolved, user);
   }
 
   @Get('analytics/daily')
