@@ -1010,12 +1010,19 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     stationNameRaw?: string
   ): MessengerStationConfig {
     const stationId = stationIdRaw.trim();
+    const normalizedIncomingStationName = this.normalizeIncomingStationName(
+      stationNameRaw,
+      stationId
+    );
     const existing = this.stationConfigs.get(stationId);
     if (existing) {
-      if (stationNameRaw?.trim()) {
+      if (
+        normalizedIncomingStationName &&
+        this.shouldRefreshStationNameFromInbound(existing, normalizedIncomingStationName)
+      ) {
         const updated: MessengerStationConfig = {
           ...existing,
-          stationName: stationNameRaw.trim(),
+          stationName: normalizedIncomingStationName,
           updatedAt: new Date().toISOString()
         };
         this.stationConfigs.set(stationId, updated);
@@ -1028,7 +1035,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     const now = new Date().toISOString();
     const created: MessengerStationConfig = {
       stationId,
-      stationName: stationNameRaw?.trim() || stationId,
+      stationName: normalizedIncomingStationName ?? stationId,
       isActive: true,
       createdAt: now,
       updatedAt: now
@@ -1036,6 +1043,52 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     this.stationConfigs.set(stationId, created);
     this.persistence.persistStation(created);
     return created;
+  }
+
+  private normalizeIncomingStationName(
+    stationNameRaw: string | undefined,
+    stationId: string
+  ): string | undefined {
+    const stationName = String(stationNameRaw ?? '').trim();
+    if (!stationName) {
+      return undefined;
+    }
+    if (stationName.toLowerCase() === stationId.toLowerCase()) {
+      return undefined;
+    }
+    if (this.isUuidLike(stationName)) {
+      return undefined;
+    }
+    return stationName;
+  }
+
+  private shouldRefreshStationNameFromInbound(
+    existing: MessengerStationConfig,
+    incomingStationName: string
+  ): boolean {
+    const existingStationName = String(existing.stationName ?? '').trim();
+    if (!existingStationName) {
+      return true;
+    }
+    if (existingStationName === incomingStationName) {
+      return false;
+    }
+
+    const normalizedExistingStationName = existingStationName.toLowerCase();
+    const normalizedStationId = String(existing.stationId ?? '')
+      .trim()
+      .toLowerCase();
+
+    return (
+      normalizedExistingStationName === normalizedStationId ||
+      this.isUuidLike(existingStationName)
+    );
+  }
+
+  private isUuidLike(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      String(value).trim()
+    );
   }
 
   private ensureConnectorConfig(route: ConnectorRoute): void {
@@ -1346,7 +1399,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   private defaultConnectorRuntimeConfig(
     route: ConnectorRoute
   ): Record<string, string | number | boolean | string[]> {
-    if (route === ConnectorRoute.MAX_BOT) {
+    if (
+      route === ConnectorRoute.MAX_BOT ||
+      route === ConnectorRoute.MAX_ACADEMY_BOT
+    ) {
       return {
         inboundEnabled: true,
         outboxEnabled: true,
@@ -1359,12 +1415,18 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       };
     }
 
-    if (route === ConnectorRoute.LK_WEB_MESSENGER) {
+    if (
+      route === ConnectorRoute.LK_WEB_MESSENGER ||
+      route === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+    ) {
+      const isAcademyRoute = route === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
       return {
         inboundEnabled: true,
         widgetEnabled: true,
-        ingestPath: '/lk/support/dialogs/events',
-        sourceTag: 'lk_support_widget',
+        ingestPath: isAcademyRoute
+          ? '/lk-academy/support/dialogs/events'
+          : '/lk/support/dialogs/events',
+        sourceTag: isAcademyRoute ? 'lk_academy_support_widget' : 'lk_support_widget',
         syncFromMongoEnabled: true,
         syncIntervalMs: 5000,
         mapAuthorizedAsVerified: true,

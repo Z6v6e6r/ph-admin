@@ -261,7 +261,7 @@
         if (parsed && parsed.clientId === state.clientId) {
           state.threadId = parsed.threadId || null;
           state.stationId = parsed.stationId || null;
-          state.stationName = parsed.stationName || null;
+          state.stationName = sanitizeStationName(parsed.stationName, parsed.stationId) || null;
           state.lastSeenAt = parsed.lastSeenAt || null;
           state.lastBadgeMessageAt = parsed.lastBadgeMessageAt || null;
         }
@@ -333,6 +333,40 @@
       return null;
     }
 
+    function isUuidLike(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        String(value || '').trim()
+      );
+    }
+
+    function sanitizeStationName(stationName, stationId) {
+      var candidate = String(stationName || '').trim();
+      if (!candidate) {
+        return '';
+      }
+      var normalizedStationId = String(stationId || '').trim();
+      if (normalizedStationId && candidate.toLowerCase() === normalizedStationId.toLowerCase()) {
+        return '';
+      }
+      if (isUuidLike(candidate)) {
+        return '';
+      }
+      return candidate;
+    }
+
+    function resolveStationNameById(stationId) {
+      var station = getStationById(stationId);
+      return sanitizeStationName(station && station.name, stationId);
+    }
+
+    function resolveStationLabel(stationId, stationName) {
+      return (
+        sanitizeStationName(stationName, stationId) ||
+        resolveStationNameById(stationId) ||
+        String(stationId || '').trim()
+      );
+    }
+
     async function ensureThread() {
       if (state.threadId) {
         return state.threadId;
@@ -343,20 +377,23 @@
         throw new Error('Станция не выбрана');
       }
 
-      var station = getStationById(selectedStationId);
-      var stationName = station ? station.name : selectedStationId;
-
-      var thread = await api.createThread({
+      var stationName = resolveStationNameById(selectedStationId);
+      var createPayload = {
         connector: 'LK_WEB_MESSENGER',
         stationId: selectedStationId,
-        stationName: stationName,
         clientId: state.clientId,
         aiMode: 'SUGGEST'
-      });
+      };
+      if (stationName) {
+        createPayload.stationName = stationName;
+      }
+
+      var thread = await api.createThread(createPayload);
 
       state.threadId = thread.id;
       state.stationId = selectedStationId;
-      state.stationName = stationName;
+      state.stationName =
+        sanitizeStationName(thread && thread.stationName, selectedStationId) || stationName || null;
       saveSession();
       return thread.id;
     }
@@ -416,7 +453,7 @@
         dom.input.value = '';
         await syncMessages(true);
         setStatus('Онлайн');
-        showHint('Диалог активен: ' + (state.stationName || state.stationId || 'станция'));
+        showHint('Диалог активен: ' + (resolveStationLabel(state.stationId, state.stationName) || 'станция'));
       } catch (err) {
         setStatus('Ошибка');
         showHint(err && err.message ? err.message : 'Не удалось отправить сообщение');
@@ -438,7 +475,10 @@
           return;
         }
         state.stationId = thread.stationId || state.stationId;
-        state.stationName = thread.stationName || state.stationName;
+        state.stationName =
+          sanitizeStationName(thread && thread.stationName, state.stationId) ||
+          resolveStationNameById(state.stationId) ||
+          state.stationName;
         saveSession();
       } catch (_err) {
         state.threadId = null;
@@ -464,7 +504,7 @@
 
       if (state.stationId) {
         dom.stationSelect.value = state.stationId;
-        showHint('Станция: ' + (state.stationName || state.stationId));
+        showHint('Станция: ' + resolveStationLabel(state.stationId, state.stationName));
       }
 
       dom.launcher.addEventListener('click', function () {
@@ -486,10 +526,10 @@
         if (!state.threadId) {
           var station = getStationById(dom.stationSelect.value);
           state.stationId = dom.stationSelect.value || null;
-          state.stationName = station ? station.name : null;
+          state.stationName = sanitizeStationName(station ? station.name : null, state.stationId) || null;
           saveSession();
           if (state.stationId) {
-            showHint('Станция выбрана: ' + (state.stationName || state.stationId));
+            showHint('Станция выбрана: ' + resolveStationLabel(state.stationId, state.stationName));
           }
         }
       });

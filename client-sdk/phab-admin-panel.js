@@ -4711,6 +4711,65 @@
       return '';
     }
 
+    function isUuidLikeStationLabel(value) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        String(value || '').trim()
+      );
+    }
+
+    function getStationNameFromSettings(stationId) {
+      var normalizedStationId = String(stationId || '').trim();
+      if (!normalizedStationId) {
+        return '';
+      }
+      var stations =
+        state &&
+        state.settings &&
+        Array.isArray(state.settings.stations)
+          ? state.settings.stations
+          : [];
+      for (var i = 0; i < stations.length; i += 1) {
+        var item = stations[i] || {};
+        var candidateId = String(item.stationId || item.id || '').trim();
+        if (candidateId !== normalizedStationId) {
+          continue;
+        }
+        return String(item.stationName || item.name || '').trim();
+      }
+      return '';
+    }
+
+    function normalizeStationDisplayName(stationName, stationId) {
+      var candidate = String(stationName || '').trim();
+      if (!candidate) {
+        return '';
+      }
+      var normalizedStationId = String(stationId || '').trim();
+      if (normalizedStationId && candidate.toLowerCase() === normalizedStationId.toLowerCase()) {
+        return '';
+      }
+      if (isUuidLikeStationLabel(candidate)) {
+        return '';
+      }
+      if (normalizeDialogLabel(candidate) === 'без станции') {
+        return '';
+      }
+      return candidate;
+    }
+
+    function resolveDialogStationLabel(stationId, stationName) {
+      var normalizedStationId = String(stationId || '').trim();
+      var directName = normalizeStationDisplayName(stationName, normalizedStationId);
+      if (directName) {
+        return directName;
+      }
+      var settingsName = normalizeStationDisplayName(
+        getStationNameFromSettings(normalizedStationId),
+        normalizedStationId
+      );
+      return settingsName || normalizedStationId;
+    }
+
     function getDialogCurrentStationInfo(dialog) {
       var writeStationIds = Array.isArray(dialog && dialog.writeStationIds)
         ? dialog.writeStationIds
@@ -4750,7 +4809,7 @@
       if (!currentStationId && !currentStationName) {
         if (fallbackStationId) {
           currentStationId = fallbackStationId;
-          currentStationName = fallbackStationName;
+          currentStationName = resolveDialogStationLabel(fallbackStationId, fallbackStationName);
         } else if (fallbackStationName) {
           currentStationName = fallbackStationName;
         }
@@ -4760,7 +4819,8 @@
         return null;
       }
 
-      var normalizedStationLabel = normalizeDialogLabel(currentStationName || currentStationId);
+      var stationLabel = resolveDialogStationLabel(currentStationId, currentStationName);
+      var normalizedStationLabel = normalizeDialogLabel(stationLabel || currentStationId);
       var rawKey =
         normalizedStationLabel ||
         canonicalWriteStationId ||
@@ -4768,7 +4828,7 @@
         'station';
       return {
         key: 'station:' + rawKey,
-        label: currentStationName || currentStationId
+        label: stationLabel || currentStationId
       };
     }
 
@@ -5005,9 +5065,12 @@
       }
 
       state.dialogs.forEach(function (item) {
-        var stationLabel = String(item.stationName || item.stationId || 'Без станции');
+        var stationLabel = String(
+          resolveDialogStationLabel(item && item.stationId, item && item.stationName) ||
+            'Без станции'
+        );
         var currentStationLabel = String(
-          item.currentStationName || item.currentStationId || ''
+          resolveDialogStationLabel(item && item.currentStationId, item && item.currentStationName)
         ).trim();
         if (
           currentStationLabel &&

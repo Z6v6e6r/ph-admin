@@ -3666,7 +3666,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.normalizeStationId(item.stationId)?.toLowerCase() ===
         normalizedStationId.toLowerCase()
     );
-    return mapped?.stationName ?? normalizedStationId;
+    if (mapped?.stationName) {
+      return mapped.stationName;
+    }
+    if (this.isUuidLike(normalizedStationId)) {
+      return SUPPORT_UNASSIGNED_STATION_NAME;
+    }
+    return normalizedStationId;
+  }
+
+  private isUuidLike(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      String(value).trim()
+    );
   }
 
   private resolveEventTimestamp(raw?: string): string {
