@@ -6,7 +6,9 @@ export const SUPPORT_UNASSIGNED_STATION_NAME = 'Без станции';
 export enum SupportConnectorRoute {
   TG_BOT = 'TG_BOT',
   MAX_BOT = 'MAX_BOT',
+  MAX_ACADEMY_BOT = 'MAX_ACADEMY_BOT',
   LK_WEB_MESSENGER = 'LK_WEB_MESSENGER',
+  LK_ACADEMY_WEB_MESSENGER = 'LK_ACADEMY_WEB_MESSENGER',
   EMAIL = 'EMAIL',
   PHONE_CALL = 'PHONE_CALL',
   BITRIX = 'BITRIX'
@@ -20,6 +22,14 @@ export enum SupportClientAuthStatus {
 export enum SupportDialogStatus {
   OPEN = 'OPEN',
   CLOSED = 'CLOSED'
+}
+
+export type SupportDialogVivaStatus = 'FOUND' | 'NOT_FOUND' | 'DISABLED';
+
+export interface SupportDialogSettings {
+  vivaStatus?: SupportDialogVivaStatus;
+  vivaClientId?: string;
+  vivaCabinetUrl?: string;
 }
 
 export enum SupportMessageDirection {
@@ -146,6 +156,7 @@ export interface SupportDialog {
   lastClientMessageAt?: string;
   lastStaffMessageAt?: string;
   ai?: SupportAiInsight;
+  settings?: SupportDialogSettings;
   createdAt: string;
   updatedAt: string;
 }
@@ -215,6 +226,10 @@ export interface SupportDialogSummary {
   pendingClientMessagesCount: number;
   averageFirstResponseMs?: number;
   lastFirstResponseMs?: number;
+  settings?: SupportDialogSettings;
+  vivaStatus?: SupportDialogVivaStatus;
+  vivaClientId?: string;
+  vivaCabinetUrl?: string;
   lastMessageAt?: string;
   lastRankingMessageAt?: string;
   lastMessageText?: string;

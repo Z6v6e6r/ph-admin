@@ -240,11 +240,22 @@ export class MessengerController {
     Role.GAME_MANAGER
   )
   async getVivaClientCabinet(
+    @Query('dialogId') dialogId: string | undefined,
     @Query('phone') phone: string | undefined,
     @CurrentUser() user?: RequestUser
   ): Promise<VivaClientCabinetLookup | null> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
+    }
+    const normalizedDialogId = String(dialogId ?? '').trim();
+    if (normalizedDialogId) {
+      try {
+        return await this.resolveSupportDialogVivaCabinet(normalizedDialogId, user, phone);
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
     }
     return this.vivaAdminService.lookupClientCabinetByPhone(phone);
   }
@@ -390,10 +401,10 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId')
-  getThread(
+  async getThread(
     @Param('threadId') threadId: string,
     @CurrentUser() user?: RequestUser
-  ): ChatThread {
+  ): Promise<ChatThread> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -401,10 +412,10 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId')
-  getDialog(
+  async getDialog(
     @Param('dialogId') dialogId: string,
     @CurrentUser() user?: RequestUser
-  ): ChatThread {
+  ): Promise<ChatThread> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -574,7 +585,7 @@ export class MessengerController {
     return this.setCompatibleDialogResolution(dialogId, body.resolved, user);
   }
 
-  private getCompatibleThread(threadId: string, user: RequestUser): ChatThread {
+  private async getCompatibleThread(threadId: string, user: RequestUser): Promise<ChatThread> {
     try {
       return this.messengerService.getThreadById(threadId, user);
     } catch (error) {
@@ -817,17 +828,86 @@ export class MessengerController {
     return Math.max(normalizedRankingTs, normalizedLastMessageTs);
   }
 
-  private getSupportThread(threadId: string, user: RequestUser): ChatThread {
-    const dialog = this.supportService
-      .listDialogs(user)
-      .find((item) => item.dialogId === threadId);
-    if (!dialog) {
-      throw new NotFoundException(`Thread with id ${threadId} not found`);
+  private async getSupportThread(threadId: string, user: RequestUser): Promise<ChatThread> {
+    const dialog = this.supportService.getDialogSummary(threadId, user);
+    await this.resolveSupportDialogVivaCabinet(
+      dialog.dialogId,
+      user,
+      this.findFirstDialogPhone(dialog)
+    );
+    const refreshed = this.supportService.getDialogSummary(threadId, user);
+    return this.mapSupportDialogToThread(refreshed);
+  }
+
+  private async resolveSupportDialogVivaCabinet(
+    dialogId: string,
+    user: RequestUser,
+    fallbackPhone?: string
+  ): Promise<VivaClientCabinetLookup | null> {
+    const dialog = this.supportService.getDialogSummary(dialogId, user);
+    const fromSettings = this.buildLookupFromDialogSettings(dialog, fallbackPhone);
+    if (fromSettings) {
+      return fromSettings;
     }
-    return this.mapSupportDialogToThread(dialog);
+
+    const phone = this.findFirstDialogPhone(dialog) ?? String(fallbackPhone ?? '').trim();
+    if (!phone) {
+      return null;
+    }
+
+    const lookup = await this.vivaAdminService.lookupClientCabinetByPhone(phone);
+    if (lookup?.status === 'FOUND' && String(lookup.vivaCabinetUrl ?? '').trim()) {
+      this.supportService.cacheDialogVivaCabinetLookup(dialogId, user, lookup);
+    }
+    return lookup;
+  }
+
+  private buildLookupFromDialogSettings(
+    dialog: SupportDialogSummary,
+    fallbackPhone?: string
+  ): VivaClientCabinetLookup | null {
+    const settings = dialog.settings;
+    const vivaCabinetUrl = String(
+      settings?.vivaCabinetUrl ?? dialog.vivaCabinetUrl ?? ''
+    ).trim();
+    if (!vivaCabinetUrl) {
+      return null;
+    }
+
+    const phone = this.findFirstDialogPhone(dialog) ?? String(fallbackPhone ?? '').trim();
+    const vivaClientId = String(settings?.vivaClientId ?? dialog.vivaClientId ?? '').trim();
+    return {
+      phone,
+      status: 'FOUND',
+      vivaClientId: vivaClientId || undefined,
+      vivaCabinetUrl
+    };
+  }
+
+  private findFirstDialogPhone(dialog: SupportDialogSummary): string | undefined {
+    const primary = String(dialog.primaryPhone ?? '').trim();
+    if (primary) {
+      return primary;
+    }
+
+    if (Array.isArray(dialog.phones)) {
+      for (const phone of dialog.phones) {
+        const normalized = String(phone ?? '').trim();
+        if (normalized) {
+          return normalized;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   private mapSupportDialogToLegacy(dialog: SupportDialogSummary): StationDialogSummary {
+    const vivaSettings = dialog.settings;
+    const vivaStatus = vivaSettings?.vivaStatus ?? dialog.vivaStatus;
+    const vivaClientId = vivaSettings?.vivaClientId ?? dialog.vivaClientId;
+    const vivaCabinetUrl = vivaSettings?.vivaCabinetUrl ?? dialog.vivaCabinetUrl;
+
     return {
       threadId: dialog.dialogId,
       connector: this.mapSupportConnector(dialog.connector),
@@ -845,6 +925,16 @@ export class MessengerController {
       currentStationName: dialog.currentStationName,
       clientId: dialog.clientId,
       clientDisplayName: dialog.clientDisplayName,
+      settings: vivaSettings || vivaStatus || vivaClientId || vivaCabinetUrl
+        ? {
+            vivaStatus,
+            vivaClientId,
+            vivaCabinetUrl
+          }
+        : undefined,
+      vivaStatus,
+      vivaClientId,
+      vivaCabinetUrl,
       primaryPhone: dialog.primaryPhone,
       phones: [...dialog.phones],
       subject: dialog.subject,
@@ -1003,6 +1093,10 @@ export class MessengerController {
         return SupportConnectorRoute.TG_BOT;
       case ConnectorRoute.LK_WEB_MESSENGER:
         return SupportConnectorRoute.LK_WEB_MESSENGER;
+      case ConnectorRoute.LK_ACADEMY_WEB_MESSENGER:
+        return SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+      case ConnectorRoute.MAX_ACADEMY_BOT:
+        return SupportConnectorRoute.MAX_ACADEMY_BOT;
       default:
         return undefined;
     }
@@ -1010,6 +1104,11 @@ export class MessengerController {
 
   private mapSupportDialogToThread(dialog: SupportDialogSummary): ChatThread {
     const timestamp = dialog.lastMessageAt || new Date().toISOString();
+    const vivaSettings = dialog.settings;
+    const vivaStatus = vivaSettings?.vivaStatus ?? dialog.vivaStatus;
+    const vivaClientId = vivaSettings?.vivaClientId ?? dialog.vivaClientId;
+    const vivaCabinetUrl = vivaSettings?.vivaCabinetUrl ?? dialog.vivaCabinetUrl;
+
     return {
       id: dialog.dialogId,
       connector: this.mapSupportConnector(dialog.connector),
@@ -1021,6 +1120,17 @@ export class MessengerController {
         dialog.status === SupportDialogStatus.CLOSED ? ThreadStatus.CLOSED : ThreadStatus.OPEN,
       lastMessageAt: dialog.lastMessageAt,
       lastRankingMessageAt: dialog.lastRankingMessageAt,
+      settings:
+        vivaSettings || vivaStatus || vivaClientId || vivaCabinetUrl
+          ? {
+              vivaStatus,
+              vivaClientId,
+              vivaCabinetUrl
+            }
+          : undefined,
+      vivaStatus,
+      vivaClientId,
+      vivaCabinetUrl,
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -1047,6 +1157,10 @@ export class MessengerController {
         return ConnectorRoute.TG_BOT;
       case SupportConnectorRoute.LK_WEB_MESSENGER:
         return ConnectorRoute.LK_WEB_MESSENGER;
+      case SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER:
+        return ConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+      case SupportConnectorRoute.MAX_ACADEMY_BOT:
+        return ConnectorRoute.MAX_ACADEMY_BOT;
       case SupportConnectorRoute.MAX_BOT:
       case SupportConnectorRoute.EMAIL:
       case SupportConnectorRoute.PHONE_CALL:

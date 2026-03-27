@@ -22,6 +22,7 @@ import {
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
+import type { VivaClientCabinetLookup } from '../integrations/viva/viva-admin.service';
 import {
   SUPPORT_UNASSIGNED_STATION_ID,
   SUPPORT_UNASSIGNED_STATION_NAME,
@@ -34,9 +35,11 @@ import {
   SupportConnectorSummary,
   SupportDailyAnalytics,
   SupportDialog,
+  SupportDialogSettings,
   SupportDialogReactionAnalytics,
   SupportDialogStatus,
   SupportDialogSummary,
+  SupportDialogVivaStatus,
   SupportMessage,
   SupportMessageDirection,
   SupportMessageKind,
@@ -352,7 +355,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
     const connectorFallbackStationId =
-      normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
+      this.isLkConnector(normalizedDto.connector)
         ? this.normalizeStationId(client.currentStationId)
         : undefined;
     const stationId =
@@ -371,7 +374,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     if (
       selectedStationId &&
-      normalizedDto.connector === SupportConnectorRoute.LK_WEB_MESSENGER
+      this.isLkConnector(normalizedDto.connector)
     ) {
       client.currentStationId = stationId;
       client.currentStationName = stationName;
@@ -564,6 +567,48 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return this.listAccessibleDialogs(user, filters)
       .map((dialog) => this.toDialogSummary(dialog, filters.connector, user))
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
+  }
+
+  getDialogSummary(dialogId: string, user: RequestUser): SupportDialogSummary {
+    const dialog = this.getDialogOrThrow(dialogId);
+    this.ensureDialogAccess(dialog, user);
+    const connector = dialog.lastInboundConnector ?? dialog.connectors[0];
+    return this.toDialogSummary(dialog, connector, user);
+  }
+
+  cacheDialogVivaCabinetLookup(
+    dialogId: string,
+    user: RequestUser,
+    lookup: VivaClientCabinetLookup
+  ): SupportDialogSummary {
+    const dialog = this.getDialogOrThrow(dialogId);
+    this.ensureDialogAccess(dialog, user);
+    const connector = dialog.lastInboundConnector ?? dialog.connectors[0];
+    const vivaCabinetUrl = String(lookup.vivaCabinetUrl ?? '').trim();
+
+    if (lookup.status !== 'FOUND' || !vivaCabinetUrl) {
+      return this.toDialogSummary(dialog, connector, user);
+    }
+
+    const currentSettings = this.normalizeDialogSettings(dialog.settings);
+    const nextSettings = this.normalizeDialogSettings({
+      ...(dialog.settings ?? {}),
+      vivaStatus: 'FOUND',
+      vivaClientId: String(lookup.vivaClientId ?? '').trim() || undefined,
+      vivaCabinetUrl
+    });
+    const changed =
+      currentSettings?.vivaStatus !== nextSettings?.vivaStatus ||
+      currentSettings?.vivaClientId !== nextSettings?.vivaClientId ||
+      currentSettings?.vivaCabinetUrl !== nextSettings?.vivaCabinetUrl;
+
+    if (changed) {
+      dialog.settings = nextSettings;
+      dialog.updatedAt = new Date().toISOString();
+      this.persistDialog(dialog);
+    }
+
+    return this.toDialogSummary(dialog, connector, user);
   }
 
   async listDialogsByPhone(
@@ -1304,6 +1349,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       lastClientMessageAt: undefined,
       lastStaffMessageAt: undefined,
       ai: undefined,
+      settings: undefined,
       createdAt,
       updatedAt: createdAt
     };
@@ -1537,7 +1583,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const identity = this.pickIdentityForConnector(client, connector);
     if (
       connector !== SupportConnectorRoute.EMAIL &&
-      connector !== SupportConnectorRoute.LK_WEB_MESSENGER &&
+      !this.isLkConnector(connector) &&
       !identity
     ) {
       return undefined;
@@ -1584,7 +1630,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     if (
-      connector === SupportConnectorRoute.MAX_BOT &&
+      this.isMaxConnector(connector) &&
       message.senderRole !== 'SYSTEM'
     ) {
       const sender = String(message.senderName ?? '').trim();
@@ -1615,7 +1661,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     if (
-      connector === SupportConnectorRoute.MAX_BOT &&
+      this.isMaxConnector(connector) &&
       message.senderRole === 'SYSTEM'
     ) {
       const stripped = text.replace(
@@ -1839,6 +1885,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     target.phones = this.mergeStrings(target.phones, source.phones);
     target.emails = this.mergeStrings(target.emails, source.emails);
     target.ai = target.ai ?? source.ai;
+    target.settings = this.mergeDialogSettings(target.settings, source.settings);
     target.updatedAt = this.maxDate([target.updatedAt, source.updatedAt]) ?? target.updatedAt;
     this.refreshDialogPreviewFromMessages(target, mergedMessages);
 
@@ -1864,6 +1911,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     let lastMessageText = dialog.lastMessageText;
     let lastMessageSenderRole = dialog.lastMessageSenderRole;
     const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
+    const dialogSettings = this.normalizeDialogSettings(dialog.settings);
 
     if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
       const dialogMessages = this.messages.get(dialog.id) ?? [];
@@ -1909,6 +1957,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       pendingClientMessagesCount: dialog.pendingClientMessageIds.length,
       averageFirstResponseMs: dialog.averageFirstResponseMs,
       lastFirstResponseMs: dialog.lastFirstResponseMs,
+      settings: dialogSettings,
+      vivaStatus: dialogSettings?.vivaStatus,
+      vivaClientId: dialogSettings?.vivaClientId,
+      vivaCabinetUrl: dialogSettings?.vivaCabinetUrl,
       lastMessageAt: dialog.lastMessageAt,
       lastRankingMessageAt,
       lastMessageText,
@@ -2096,6 +2148,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const resolvedAt = this.readStringValue(rawDialog['resolvedAt']) ?? dialog.resolvedAt;
     const resolvedByUserId =
       this.readStringValue(rawDialog['resolvedByUserId']) ?? dialog.resolvedByUserId;
+    const resolvedSettings = this.normalizeDialogSettings(
+      dialog.settings ?? {
+        vivaStatus: this.normalizeDialogVivaStatus(this.readStringValue(rawDialog['vivaStatus'])),
+        vivaClientId: this.readStringValue(rawDialog['vivaClientId']),
+        vivaCabinetUrl: this.readStringValue(rawDialog['vivaCabinetUrl'])
+      }
+    );
     const normalizedAccessStationIds = this.getDialogAccessStationIds(dialog);
     const writeStationIds = this.resolveDialogWriteStationIds(dialog);
     const readOnlyStationIds = this.resolveDialogReadOnlyStationIds(
@@ -2139,10 +2198,75 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         Object.values(Role).includes(resolvedLastMessageSenderRole as Role)
           ? (resolvedLastMessageSenderRole as SupportSenderRole)
           : undefined,
+      settings: resolvedSettings,
       accessStationIds: normalizedAccessStationIds,
       writeStationIds,
       readOnlyStationIds
     };
+  }
+
+  private mergeDialogSettings(
+    left?: SupportDialogSettings,
+    right?: SupportDialogSettings
+  ): SupportDialogSettings | undefined {
+    const normalizedLeft = this.normalizeDialogSettings(left);
+    const normalizedRight = this.normalizeDialogSettings(right);
+    if (!normalizedLeft) {
+      return normalizedRight;
+    }
+    if (!normalizedRight) {
+      return normalizedLeft;
+    }
+
+    if (!normalizedLeft.vivaCabinetUrl && normalizedRight.vivaCabinetUrl) {
+      return normalizedRight;
+    }
+    if (normalizedLeft.vivaCabinetUrl && !normalizedRight.vivaCabinetUrl) {
+      return normalizedLeft;
+    }
+
+    return this.normalizeDialogSettings({
+      vivaStatus: normalizedLeft.vivaStatus ?? normalizedRight.vivaStatus,
+      vivaClientId: normalizedLeft.vivaClientId ?? normalizedRight.vivaClientId,
+      vivaCabinetUrl: normalizedLeft.vivaCabinetUrl ?? normalizedRight.vivaCabinetUrl
+    });
+  }
+
+  private normalizeDialogSettings(
+    settings?: SupportDialogSettings
+  ): SupportDialogSettings | undefined {
+    if (!settings) {
+      return undefined;
+    }
+
+    const vivaStatus = this.normalizeDialogVivaStatus(settings.vivaStatus);
+    const vivaClientId = this.readStringValue(settings.vivaClientId);
+    const vivaCabinetUrl = this.readStringValue(settings.vivaCabinetUrl);
+
+    if (!vivaStatus && !vivaClientId && !vivaCabinetUrl) {
+      return undefined;
+    }
+
+    return {
+      vivaStatus,
+      vivaClientId,
+      vivaCabinetUrl
+    };
+  }
+
+  private normalizeDialogVivaStatus(
+    value: unknown
+  ): SupportDialogVivaStatus | undefined {
+    const normalized = this.readStringValue(value)?.toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (normalized === 'FOUND' || normalized === 'NOT_FOUND' || normalized === 'DISABLED') {
+      return normalized as SupportDialogVivaStatus;
+    }
+
+    return undefined;
   }
 
   private rebuildDialogsFromLoadedMessages(): void {
@@ -3336,7 +3460,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
 
     if (
-      dto.connector === SupportConnectorRoute.LK_WEB_MESSENGER &&
+      this.isLkConnector(dto.connector) &&
       kind === SupportMessageKind.CONTACT &&
       !isExplicitContactEvent &&
       !text
@@ -3371,7 +3495,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (dto.selectedStationId) {
       return SupportMessageKind.STATION_SELECTION;
     }
-    if (dto.connector === SupportConnectorRoute.LK_WEB_MESSENGER) {
+    if (this.isLkConnector(dto.connector)) {
       if (text.startsWith('/')) {
         return SupportMessageKind.COMMAND;
       }
@@ -3839,6 +3963,26 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private mergeIds(left: string[], right: string[]): string[] {
     return Array.from(new Set([...left, ...right]));
+  }
+
+  private isMaxConnector(connector?: SupportConnectorRoute | string): boolean {
+    const normalized = String(connector ?? '')
+      .trim()
+      .toUpperCase();
+    return (
+      normalized === SupportConnectorRoute.MAX_BOT ||
+      normalized === SupportConnectorRoute.MAX_ACADEMY_BOT
+    );
+  }
+
+  private isLkConnector(connector?: SupportConnectorRoute | string): boolean {
+    const normalized = String(connector ?? '')
+      .trim()
+      .toUpperCase();
+    return (
+      normalized === SupportConnectorRoute.LK_WEB_MESSENGER ||
+      normalized === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+    );
   }
 
   private mergeConnectors(

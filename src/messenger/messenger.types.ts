@@ -4,7 +4,9 @@ import { VivaClientCabinetStatus } from '../integrations/viva/viva-admin.service
 export enum ConnectorRoute {
   TG_BOT = 'TG_BOT',
   MAX_BOT = 'MAX_BOT',
-  LK_WEB_MESSENGER = 'LK_WEB_MESSENGER'
+  MAX_ACADEMY_BOT = 'MAX_ACADEMY_BOT',
+  LK_WEB_MESSENGER = 'LK_WEB_MESSENGER',
+  LK_ACADEMY_WEB_MESSENGER = 'LK_ACADEMY_WEB_MESSENGER'
 }
 
 export enum MessageOrigin {
@@ -15,6 +17,12 @@ export enum MessageOrigin {
 export enum ThreadStatus {
   OPEN = 'OPEN',
   CLOSED = 'CLOSED'
+}
+
+export interface DialogSettings {
+  vivaStatus?: VivaClientCabinetStatus;
+  vivaClientId?: string;
+  vivaCabinetUrl?: string;
 }
 
 export interface ChatThread {
@@ -30,6 +38,10 @@ export interface ChatThread {
   lastRankingMessageAt?: string;
   lastStaffReadAt?: string;
   lastClientReadAt?: string;
+  settings?: DialogSettings;
+  vivaStatus?: VivaClientCabinetStatus;
+  vivaClientId?: string;
+  vivaCabinetUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -128,6 +140,7 @@ export interface StationDialogSummary {
   currentStationName?: string;
   clientId: string;
   clientDisplayName?: string;
+  settings?: DialogSettings;
   vivaStatus?: VivaClientCabinetStatus;
   vivaClientId?: string;
   vivaCabinetUrl?: string;

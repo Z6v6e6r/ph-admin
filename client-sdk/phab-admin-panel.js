@@ -40,6 +40,30 @@
         allowedMessageKinds: ['TEXT', 'CONTACT', 'STATION_SELECTION', 'COMMAND', 'SYSTEM']
       }
     },
+    MAX_ACADEMY_BOT: {
+      label: 'MAX Academy Bot',
+      description: 'Транспорт сообщений через MAX Академии будущего + support outbox',
+      fields: [
+        'inboundEnabled: включить прием входящих из MAX',
+        'outboxEnabled: включить доставку ответов через outbox',
+        'outboxPollIntervalMs: интервал pull outbox (мс)',
+        'outboxPullLimit: размер пачки сообщений на pull',
+        'outboxLeaseSec: lease на сообщение (сек)',
+        'requireIntegrationToken: требовать x-integration-token',
+        'normalizeStationAlias: маппить station alias (tereh/nagat и т.д.)',
+        'allowedMessageKinds: допустимые kind для входящих событий'
+      ],
+      template: {
+        inboundEnabled: true,
+        outboxEnabled: true,
+        outboxPollIntervalMs: 5000,
+        outboxPullLimit: 20,
+        outboxLeaseSec: 30,
+        requireIntegrationToken: true,
+        normalizeStationAlias: true,
+        allowedMessageKinds: ['TEXT', 'CONTACT', 'STATION_SELECTION', 'COMMAND', 'SYSTEM']
+      }
+    },
     LK_WEB_MESSENGER: {
       label: 'LK Web Messenger',
       description: 'Диалоги и сообщения из web-виджета ЛК',
@@ -64,6 +88,30 @@
         resolveStationAliasByName: true
       }
     },
+    LK_ACADEMY_WEB_MESSENGER: {
+      label: 'LK Academy Web Messenger',
+      description: 'Диалоги и сообщения из личного кабинета Академии будущего',
+      fields: [
+        'inboundEnabled: включить прием входящих из WEB',
+        'widgetEnabled: разрешить web-виджет',
+        'ingestPath: ожидаемый путь входящих событий',
+        'sourceTag: тег источника в metadata',
+        'syncFromMongoEnabled: подтягивать внешние записи из Mongo',
+        'syncIntervalMs: частота синхронизации (мс)',
+        'mapAuthorizedAsVerified: AUTHORIZED => VERIFIED',
+        'resolveStationAliasByName: добавлять alias станции (например tereh)'
+      ],
+      template: {
+        inboundEnabled: true,
+        widgetEnabled: true,
+        ingestPath: '/lk-academy/support/dialogs/events',
+        sourceTag: 'lk_academy_support_widget',
+        syncFromMongoEnabled: true,
+        syncIntervalMs: 5000,
+        mapAuthorizedAsVerified: true,
+        resolveStationAliasByName: true
+      }
+    },
     TG_BOT: {
       label: 'Telegram Bot',
       description: 'Базовый preset TG',
@@ -77,7 +125,9 @@
   var SUPPORT_CONNECTOR_ROUTES = [
     'TG_BOT',
     'MAX_BOT',
+    'MAX_ACADEMY_BOT',
     'LK_WEB_MESSENGER',
+    'LK_ACADEMY_WEB_MESSENGER',
     'EMAIL',
     'PHONE_CALL',
     'BITRIX'
@@ -1526,6 +1576,18 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/messenger/dialogs' + suffix, 'GET');
       },
+      lookupDialogVivaCabinet: function (dialogId) {
+        var phone = arguments.length > 1 ? arguments[1] : undefined;
+        var params = new URLSearchParams();
+        if (dialogId) {
+          params.set('dialogId', String(dialogId));
+        }
+        if (phone) {
+          params.set('phone', String(phone));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/messenger/viva/client-cabinet' + suffix, 'GET');
+      },
       getConnectors: function () {
         return request('/support/connectors', 'GET');
       },
@@ -2588,7 +2650,7 @@
 
     var accessRoutesInput = document.createElement('input');
     accessRoutesInput.className = 'phab-admin-settings-input';
-    accessRoutesInput.placeholder = 'TG_BOT, MAX_BOT';
+    accessRoutesInput.placeholder = 'TG_BOT, MAX_BOT, MAX_ACADEMY_BOT';
     accessForm.appendChild(accessRoutesInput);
 
     var accessReadWrap = document.createElement('label');
@@ -3110,6 +3172,7 @@
       messagesLoadingThreadId: null,
       messagesCacheByThreadId: Object.create(null),
       messagesFetchPromisesByThreadId: Object.create(null),
+      vivaLookupPromisesByDialogId: Object.create(null),
       games: [],
       gameEvents: [],
       analytics: [],
@@ -3376,8 +3439,34 @@
     }
 
     function getDialogCabinetUrl(dialog) {
-      return dialog && typeof dialog.vivaCabinetUrl === 'string'
+      if (!dialog) {
+        return '';
+      }
+      if (
+        dialog.settings &&
+        typeof dialog.settings.vivaCabinetUrl === 'string' &&
+        String(dialog.settings.vivaCabinetUrl).trim()
+      ) {
+        return String(dialog.settings.vivaCabinetUrl).trim();
+      }
+      return typeof dialog.vivaCabinetUrl === 'string'
         ? String(dialog.vivaCabinetUrl).trim()
+        : '';
+    }
+
+    function getDialogVivaStatus(dialog) {
+      if (!dialog) {
+        return '';
+      }
+      if (
+        dialog.settings &&
+        typeof dialog.settings.vivaStatus === 'string' &&
+        String(dialog.settings.vivaStatus).trim()
+      ) {
+        return String(dialog.settings.vivaStatus).trim().toUpperCase();
+      }
+      return typeof dialog.vivaStatus === 'string'
+        ? String(dialog.vivaStatus).trim().toUpperCase()
         : '';
     }
 
@@ -3436,10 +3525,7 @@
     }
 
     function renderDialogLinks(dialog) {
-      var vivaStatus =
-        dialog && typeof dialog.vivaStatus === 'string'
-          ? String(dialog.vivaStatus).trim().toUpperCase()
-          : '';
+      var vivaStatus = getDialogVivaStatus(dialog);
       var vivaCabinetUrl = getDialogCabinetUrl(dialog);
       var vivaCabinetWebviewUrl = getDialogCabinetWebviewUrl(dialog);
       var effectiveStatus = vivaStatus || (vivaCabinetUrl ? 'FOUND' : '');
@@ -4856,12 +4942,12 @@
 
     function getDialogSourceIcons(dialog) {
       var connector = resolveDialogConnector(dialog);
-      if (connector === 'LK_WEB_MESSENGER') {
+      if (connector === 'LK_WEB_MESSENGER' || connector === 'LK_ACADEMY_WEB_MESSENGER') {
         return [
           { src: PADLHUB_FAVICON_URL, alt: 'Padelhub' }
         ];
       }
-      if (connector === 'MAX_BOT') {
+      if (connector === 'MAX_BOT' || connector === 'MAX_ACADEMY_BOT') {
         return [
           { src: MAX_FAVICON_URL, alt: 'MAX' },
           { src: PADLHUB_FAVICON_URL, alt: 'PadlHub' }
@@ -5023,8 +5109,27 @@
         return null;
       }
       var copy = Object.assign({}, item);
+      var settings = isPlainObject(item.settings)
+        ? {
+            vivaStatus: item.settings.vivaStatus || item.vivaStatus || undefined,
+            vivaClientId: item.settings.vivaClientId || item.vivaClientId || undefined,
+            vivaCabinetUrl: item.settings.vivaCabinetUrl || item.vivaCabinetUrl || undefined
+          }
+        : (
+          item.vivaStatus || item.vivaClientId || item.vivaCabinetUrl
+            ? {
+                vivaStatus: item.vivaStatus || undefined,
+                vivaClientId: item.vivaClientId || undefined,
+                vivaCabinetUrl: item.vivaCabinetUrl || undefined
+              }
+            : undefined
+        );
       copy.dialogId = String(item.dialogId);
       copy.dataSource = 'support';
+      copy.settings = settings;
+      copy.vivaStatus = item.vivaStatus || (settings && settings.vivaStatus) || undefined;
+      copy.vivaClientId = item.vivaClientId || (settings && settings.vivaClientId) || undefined;
+      copy.vivaCabinetUrl = item.vivaCabinetUrl || (settings && settings.vivaCabinetUrl) || undefined;
       copy.writeStationIds = Array.isArray(item.writeStationIds) ? item.writeStationIds.slice() : [];
       copy.readOnlyStationIds = Array.isArray(item.readOnlyStationIds)
         ? item.readOnlyStationIds.slice()
@@ -5040,6 +5145,21 @@
       if (!item || !item.threadId) {
         return null;
       }
+      var settings = isPlainObject(item.settings)
+        ? {
+            vivaStatus: item.settings.vivaStatus || item.vivaStatus || undefined,
+            vivaClientId: item.settings.vivaClientId || item.vivaClientId || undefined,
+            vivaCabinetUrl: item.settings.vivaCabinetUrl || item.vivaCabinetUrl || undefined
+          }
+        : (
+          item.vivaStatus || item.vivaClientId || item.vivaCabinetUrl
+            ? {
+                vivaStatus: item.vivaStatus || undefined,
+                vivaClientId: item.vivaClientId || undefined,
+                vivaCabinetUrl: item.vivaCabinetUrl || undefined
+              }
+            : undefined
+        );
       return {
         dialogId: String(item.threadId),
         dataSource: 'messenger',
@@ -5060,9 +5180,10 @@
         resolvedByUserId: item.resolvedByUserId || undefined,
         clientId: item.clientId || '',
         clientDisplayName: item.clientDisplayName || undefined,
-        vivaStatus: item.vivaStatus || undefined,
-        vivaClientId: item.vivaClientId || undefined,
-        vivaCabinetUrl: item.vivaCabinetUrl || undefined,
+        settings: settings,
+        vivaStatus: item.vivaStatus || (settings && settings.vivaStatus) || undefined,
+        vivaClientId: item.vivaClientId || (settings && settings.vivaClientId) || undefined,
+        vivaCabinetUrl: item.vivaCabinetUrl || (settings && settings.vivaCabinetUrl) || undefined,
         vivaCabinetWebviewUrl:
           item.vivaCabinetWebviewUrl || item.vivaCabinetEmbedUrl || undefined,
         authStatus: 'VERIFIED',
@@ -5269,6 +5390,120 @@
         selectionChanged: selectionChanged,
         filtersChanged: filtersChanged
       };
+    }
+
+    function updateDialogById(dialogId, updater) {
+      if (!dialogId || typeof updater !== 'function') {
+        return false;
+      }
+
+      var changed = false;
+      var patchList = function (items) {
+        return (Array.isArray(items) ? items : []).map(function (dialog) {
+          if (!dialog || dialog.dialogId !== dialogId) {
+            return dialog;
+          }
+          var nextDialog = updater(dialog);
+          if (nextDialog && nextDialog !== dialog) {
+            changed = true;
+            return nextDialog;
+          }
+          return dialog;
+        });
+      };
+
+      state.allDialogs = patchList(state.allDialogs);
+      state.dialogs = patchList(state.dialogs);
+      return changed;
+    }
+
+    function applyVivaLookupToDialog(dialogId, lookup) {
+      if (!dialogId || !lookup) {
+        return;
+      }
+
+      var status = String(lookup.status || '').trim().toUpperCase();
+      var vivaCabinetUrl = String(lookup.vivaCabinetUrl || '').trim();
+      var vivaClientId = String(lookup.vivaClientId || '').trim();
+      if (!status && !vivaCabinetUrl) {
+        return;
+      }
+
+      var changed = updateDialogById(dialogId, function (dialog) {
+        var nextSettings = isPlainObject(dialog.settings)
+          ? cloneObject(dialog.settings)
+          : {};
+
+        if (status) {
+          nextSettings.vivaStatus = status;
+        }
+        if (vivaClientId) {
+          nextSettings.vivaClientId = vivaClientId;
+        }
+        if (vivaCabinetUrl) {
+          nextSettings.vivaCabinetUrl = vivaCabinetUrl;
+        }
+
+        var currentStatus = getDialogVivaStatus(dialog);
+        var currentClientId =
+          dialog.settings && dialog.settings.vivaClientId
+            ? String(dialog.settings.vivaClientId).trim()
+            : String(dialog.vivaClientId || '').trim();
+        var currentCabinetUrl = getDialogCabinetUrl(dialog);
+
+        if (
+          currentStatus === (status || currentStatus) &&
+          currentClientId === (vivaClientId || currentClientId) &&
+          currentCabinetUrl === (vivaCabinetUrl || currentCabinetUrl)
+        ) {
+          return dialog;
+        }
+
+        return Object.assign({}, dialog, {
+          settings: nextSettings,
+          vivaStatus: status || dialog.vivaStatus,
+          vivaClientId: vivaClientId || dialog.vivaClientId,
+          vivaCabinetUrl: vivaCabinetUrl || dialog.vivaCabinetUrl
+        });
+      });
+
+      if (changed) {
+        renderDialogHeader();
+      }
+    }
+
+    async function ensureSelectedDialogVivaCabinet() {
+      var selectedDialog = getSelectedDialog();
+      if (!selectedDialog || !selectedDialog.dialogId) {
+        return null;
+      }
+      if (getDialogCabinetUrl(selectedDialog)) {
+        return null;
+      }
+
+      var dialogId = String(selectedDialog.dialogId);
+      if (state.vivaLookupPromisesByDialogId[dialogId]) {
+        return state.vivaLookupPromisesByDialogId[dialogId];
+      }
+
+      var phone = getDialogPrimaryPhone(selectedDialog);
+      var request = api
+        .lookupDialogVivaCabinet(dialogId, phone || undefined)
+        .then(function (lookup) {
+          if (lookup) {
+            applyVivaLookupToDialog(dialogId, lookup);
+          }
+          return lookup;
+        })
+        .catch(function () {
+          return null;
+        })
+        .finally(function () {
+          delete state.vivaLookupPromisesByDialogId[dialogId];
+        });
+
+      state.vivaLookupPromisesByDialogId[dialogId] = request;
+      return request;
     }
 
     async function loadMoreDialogsIfNeeded() {
@@ -6845,7 +7080,9 @@
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
+      var vivaLookupPromise = ensureSelectedDialogVivaCabinet();
       await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
+      await vivaLookupPromise;
       markSelectedDialogAsReadLocally();
       if (!getSelectedDialog()) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
@@ -6865,6 +7102,9 @@
           ? { forceRender: true, forceScrollBottom: true, forceRefresh: true }
           : { preserveScroll: true, forceRefresh: true }
       );
+      if (dialogsResult && dialogsResult.selectionChanged) {
+        await ensureSelectedDialogVivaCabinet();
+      }
     }
 
     async function loadMessages(options) {
