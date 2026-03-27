@@ -4598,10 +4598,11 @@
         return null;
       }
 
+      var normalizedStationLabel = normalizeDialogLabel(currentStationName || currentStationId);
       var rawKey =
+        normalizedStationLabel ||
         canonicalWriteStationId ||
         currentStationId ||
-        normalizeDialogLabel(currentStationName) ||
         'station';
       return {
         key: 'station:' + rawKey,

@@ -2765,10 +2765,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private resolveDialogWriteStationIds(
-    dialog: Pick<SupportDialog, 'stationId'>
+    dialog: Pick<SupportDialog, 'stationId' | 'stationName'>
   ): string[] {
     const stationId = this.normalizeStationId(dialog.stationId);
-    return stationId ? [stationId] : [];
+    const aliases = this.resolveStationAccessAliases(dialog.stationId, dialog.stationName);
+    return this.mergeStationAccessIds([], [stationId, ...aliases]);
   }
 
   private resolveDialogReadOnlyStationIds(
@@ -2898,7 +2899,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return true;
     }
     const accessStationIds = this.getDialogAccessStationIds(dialog);
-    return user.stationIds.some((stationId) => accessStationIds.includes(stationId));
+    return user.stationIds.some((stationId) => {
+      if (accessStationIds.includes(stationId)) {
+        return true;
+      }
+
+      const normalizedStationId = this.normalizeStationId(stationId);
+      if (normalizedStationId && accessStationIds.includes(normalizedStationId)) {
+        return true;
+      }
+
+      const aliases = this.resolveStationAccessAliases(stationId, stationId);
+      return aliases.some((alias) => accessStationIds.includes(alias));
+    });
   }
 
   private ensureDialogAccess(dialog: SupportDialog, user: RequestUser): void {
