@@ -4629,9 +4629,6 @@
       if (!dialog) {
         return false;
       }
-      if (isSystemDialog(dialog)) {
-        return true;
-      }
       if (isRestrictedStationAdmin && isVivaOtpSystemDialog(dialog)) {
         return true;
       }
@@ -4646,6 +4643,10 @@
 
     function canToggleResolution(dialog) {
       if (!dialog || !dialog.dialogId) {
+        return false;
+      }
+      var connector = resolveDialogConnector(dialog);
+      if (connector === 'LK_WEB_MESSENGER' || connector === 'LK_ACADEMY_WEB_MESSENGER') {
         return false;
       }
       if (typeof dialog.isResolved !== 'boolean') {
