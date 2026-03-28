@@ -5057,8 +5057,8 @@
       }
       if (connector === 'MAX_ACADEMY_BOT') {
         return [
-          { src: FFC_FAVICON_URL, alt: 'FFC Team' },
-          { src: PADLHUB_FAVICON_URL, alt: 'PadlHub' }
+          { src: MAX_FAVICON_URL, alt: 'MAX' },
+          { src: FFC_FAVICON_URL, alt: 'FFC Team' }
         ];
       }
       if (connector === 'MAX_BOT') {
