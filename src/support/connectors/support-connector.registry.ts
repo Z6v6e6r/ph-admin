@@ -6,7 +6,9 @@ import {
   SupportConnectorEventNormalizationPatch,
   SupportConnectorNormalizationHelpers
 } from './support-connector-adapter';
+import { MaxAcademySupportConnectorAdapter } from './max-academy-support.connector';
 import { MaxSupportConnectorAdapter } from './max-support.connector';
+import { WebAcademySupportConnectorAdapter } from './web-academy-support.connector';
 import { WebSupportConnectorAdapter } from './web-support.connector';
 
 export interface SupportConnectorRegistryEntry {
@@ -23,10 +25,14 @@ export class SupportConnectorRegistry {
 
   constructor(
     maxAdapter: MaxSupportConnectorAdapter,
-    webAdapter: WebSupportConnectorAdapter
+    maxAcademyAdapter: MaxAcademySupportConnectorAdapter,
+    webAdapter: WebSupportConnectorAdapter,
+    webAcademyAdapter: WebAcademySupportConnectorAdapter
   ) {
     this.registerAdapter(maxAdapter);
+    this.registerAdapter(maxAcademyAdapter);
     this.registerAdapter(webAdapter);
+    this.registerAdapter(webAcademyAdapter);
     this.registerAliases(SupportConnectorRoute.TG_BOT, ['TG_BOT', 'TG', 'TELEGRAM']);
     this.registerAliases(SupportConnectorRoute.EMAIL, ['EMAIL', 'MAIL']);
     this.registerAliases(SupportConnectorRoute.PHONE_CALL, ['PHONE_CALL', 'CALL', 'PHONE']);

@@ -104,6 +104,8 @@ API работает на `http://localhost:3000/api`.
 
 - `LK_WEB_MESSENGER` -> `games`
 - `MAX_BOT` -> `dialog`
+- `LK_ACADEMY_WEB_MESSENGER` -> `games` (или отдельная БД под Academy)
+- `MAX_ACADEMY_BOT` -> `dialog` (или отдельная БД под Academy)
 
 Пример:
 
@@ -226,7 +228,9 @@ curl http://localhost:3000/api/games \
 
 - `TG_BOT`
 - `MAX_BOT`
+- `MAX_ACADEMY_BOT`
 - `LK_WEB_MESSENGER`
+- `LK_ACADEMY_WEB_MESSENGER`
 
 Для каждого коннектора в `messenger/settings/connectors` теперь поддерживается поле `config`
 (JSON-объект с runtime-настройками, редактируется во вкладке `Настройки`).
@@ -237,12 +241,81 @@ curl http://localhost:3000/api/games \
   `inboundEnabled`, `outboxEnabled`, `outboxPollIntervalMs`, `outboxPullLimit`,
   `outboxLeaseSec`, `requireIntegrationToken`, `normalizeStationAlias`,
   `allowedMessageKinds`
+- `MAX_ACADEMY_BOT`:
+  `inboundEnabled`, `outboxEnabled`, `outboxPollIntervalMs`, `outboxPullLimit`,
+  `outboxLeaseSec`, `requireIntegrationToken`, `normalizeStationAlias`,
+  `allowedMessageKinds`
 - `LK_WEB_MESSENGER`:
+  `inboundEnabled`, `widgetEnabled`, `ingestPath`, `sourceTag`,
+  `syncFromMongoEnabled`, `syncIntervalMs`, `mapAuthorizedAsVerified`,
+  `resolveStationAliasByName`
+- `LK_ACADEMY_WEB_MESSENGER`:
   `inboundEnabled`, `widgetEnabled`, `ingestPath`, `sourceTag`,
   `syncFromMongoEnabled`, `syncIntervalMs`, `mapAuthorizedAsVerified`,
   `resolveStationAliasByName`
 
 Можно сохранять и дополнительные custom-ключи в `config` для будущих коннекторов.
+
+## План внедрения: Academy коннекторы
+
+Новые route:
+
+- `MAX_ACADEMY_BOT` (бот в MAX Академии будущего)
+- `LK_ACADEMY_WEB_MESSENGER` (сообщения из ЛК Академии будущего)
+
+Поддерживаемые alias (ingest `connector`/`channel`):
+
+- `MAX_ACADEMY_BOT`, `MAX_ACADEMY`, `ACADEMY_MAX_BOT`, `AF_MAX_BOT`, `AB_MAX_BOT`
+- `LK_ACADEMY_WEB_MESSENGER`, `LK_ACADEMY`, `ACADEMY_WEB`, `ACADEMY_LK`, `AF_LK`, `AB_LK`
+
+Этап 1. Подготовка конфигурации (без клиентского трафика):
+
+1. Обновить backend до версии с новыми route.
+2. В `messenger/settings/connectors` создать 2 записи (`MAX_ACADEMY_BOT`, `LK_ACADEMY_WEB_MESSENGER`) с `isActive=false`.
+3. Настроить access rules для staff ролей (read/write) на новые route и нужные станции.
+
+Точка теста:
+
+- `GET /api/messenger/settings/connectors` и `GET /api/support/connectors` возвращают новые route.
+- Существующие `MAX_BOT`/`LK_WEB_MESSENGER` продолжают работать без изменений.
+
+Этап 2. Inbound dry-run:
+
+1. Отправлять тестовые события в `POST /api/support/dialogs/events` с новыми route.
+2. Проверить создание диалога, нормализацию клиента/станции и отображение в админке.
+
+Точка теста:
+
+- Диалоги видны в разделе новых route.
+- Поиск `GET /api/support/clients/resolve` корректно находит клиента по `connector + externalUserId`.
+
+Этап 3. Outbox и доставка:
+
+1. Включить `isActive=true` для `MAX_ACADEMY_BOT`.
+2. Настроить polling `GET /api/support/outbox/pull?connector=MAX_ACADEMY_BOT`.
+3. Для `LK_ACADEMY_WEB_MESSENGER` включить прием входящих из ЛК (через integration flow).
+
+Точка теста:
+
+- Ответ из админки (`POST /api/support/dialogs/:dialogId/reply`) создает outbox-команду в нужном route.
+- `ack/fail` корректно меняют статус в outbox.
+
+Этап 4. Canary rollout:
+
+1. Включить новые коннекторы для 1-2 станций.
+2. Мониторить 24 часа: количество непрочитанных, SLA первого ответа, долю `FAILED` outbox.
+3. После стабильности включить остальные станции.
+
+Точка теста:
+
+- Нет роста ошибок ingest/outbox.
+- Нет регрессий по текущим коннекторам (`MAX_BOT`, `LK_WEB_MESSENGER`, `TG_BOT`).
+
+Rollback (быстрый):
+
+1. Выключить `isActive` у `MAX_ACADEMY_BOT` и `LK_ACADEMY_WEB_MESSENGER`.
+2. Остановить внешние poll/webhook потоки для новых route.
+3. Старые route продолжают обслуживать трафик без миграций данных.
 
 При создании диалога (`POST /api/messenger/threads`) обязательно передаются:
 
@@ -380,6 +453,31 @@ Node-RED env vars:
   }
 }
 ```
+
+## Academy Future: Node-RED flow templates
+
+Для шага подключения транспортного контура добавлены готовые flow-файлы:
+
+- `node-red/max-academy-support-bridge-flow.json`
+  - клон MAX bridge под `connector=MAX_ACADEMY_BOT`
+  - webhook path: `POST /integrations/max-academy/webhook`
+  - outbox polling: `/api/support/outbox/pull?connector=MAX_ACADEMY_BOT`
+  - env: `SUPPORT_API_BASE_URL`, `SUPPORT_INTEGRATION_TOKEN`,
+    `MAX_ACADEMY_BOT_WEBHOOK_SECRET`, `MAX_ACADEMY_BOT_ACCESS_TOKEN`
+- `node-red/lk-academy-support-ingest-flow.json`
+  - входящий webhook для ЛК Академии: `POST /integrations/lk-academy/webhook`
+  - нормализация payload и запись в `POST /api/support/dialogs/events`
+  - route события: `connector=LK_ACADEMY_WEB_MESSENGER`
+  - env: `SUPPORT_API_BASE_URL`, `SUPPORT_INTEGRATION_TOKEN`
+
+Рекомендованный порядок запуска:
+
+1. Импортировать оба flow в Node-RED.
+2. Задать env-переменные.
+3. Прогнать тестовые payload в оба webhook path.
+4. Проверить в backend:
+   - `GET /api/support/connectors`
+   - `GET /api/support/outbox/pull?connector=MAX_ACADEMY_BOT`
 
 ## Клиентский скачиваемый скрипт
 

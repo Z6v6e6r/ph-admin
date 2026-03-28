@@ -9,7 +9,7 @@ import {
 
 @Injectable()
 export class MaxSupportConnectorAdapter implements SupportConnectorAdapter {
-  readonly route = SupportConnectorRoute.MAX_BOT;
+  readonly route: SupportConnectorRoute = SupportConnectorRoute.MAX_BOT;
   readonly aliases = ['MAX_BOT', 'MAX'];
 
   normalizeIncomingEvent(

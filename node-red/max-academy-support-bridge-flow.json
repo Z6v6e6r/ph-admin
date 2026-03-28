@@ -1,0 +1,622 @@
+[
+  {
+    "id": "99db28109ee6a1f7",
+    "type": "tab",
+    "label": "MAX Academy support bridge",
+    "disabled": false,
+    "info": "Единый MAX Academy flow: прием MAX, авторизация по контакту, выбор станции, запись в ph-ab support API, отправка ответов администратора из outbox.\n\nEnv vars (Node-RED):\n- SUPPORT_API_BASE_URL=http://<ph-ab-host>:3000/api\n- SUPPORT_INTEGRATION_TOKEN=<token>\n- MAX_ACADEMY_BOT_WEBHOOK_SECRET=<secret, если используете webhook>\n- MAX_ACADEMY_BOT_ACCESS_TOKEN=<bot token для callback answer /answers>"
+  },
+  {
+    "id": "e2f28f936c85dbd0",
+    "type": "comment",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX Academy support bridge",
+    "info": "Настройте env в Node-RED:\n- SUPPORT_API_BASE_URL=http://<ph-ab-host>:3000/api\n- SUPPORT_INTEGRATION_TOKEN=<token>\n- MAX_ACADEMY_BOT_WEBHOOK_SECRET=<secret, если используете webhook>\n- MAX_ACADEMY_BOT_ACCESS_TOKEN=<bot token для POST /answers>\n\nFlow делает:\n1. Принимает входящие MAX через maxbot-receive или webhook.\n2. Проверяет клиента через ph-ab /support/clients/resolve.\n3. Записывает событие в ph-ab /support/dialogs/events.\n4. Отправляет сервисные ответы про номер телефона и выбор станции.\n5. После выбора станции обновляет старое сообщение с inline-кнопками через MAX /answers.\n6. Каждые 5 секунд тянет /support/outbox/pull?connector=MAX_ACADEMY_BOT и отправляет ответы администратора в MAX.",
+    "x": 250,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "4d7bfc1669c89afe",
+    "type": "maxbot-receive",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX receive",
+    "bot": "3af94f779f118cb7",
+    "pollInterval": 3000,
+    "x": 120,
+    "y": 200,
+    "wires": [
+      [
+        "b544738019f48e57",
+        "5479f45132a601cf"
+      ]
+    ]
+  },
+  {
+    "id": "32bb6b8b68de78c6",
+    "type": "http in",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX webhook",
+    "url": "/integrations/max-academy/webhook",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 120,
+    "y": 260,
+    "wires": [
+      [
+        "b544738019f48e57"
+      ]
+    ]
+  },
+  {
+    "id": "b544738019f48e57",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Normalize MAX inbound",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toArray = (value) => (Array.isArray(value) ? value : []);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\nconst toInt = (value) => {\n  const parsed = Number(value);\n  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;\n};\nconst normPhone = (value) => {\n  const digits = String(value || \"\").replace(/\\D/g, \"\");\n  if (!digits) return null;\n  if (digits.length === 10) return \"7\" + digits;\n  if (digits.length === 11 && digits.startsWith(\"8\")) return \"7\" + digits.slice(1);\n  return digits;\n};\nconst uniq = (values) => Array.from(new Set(values.filter(Boolean)));\n\nfunction extractPhoneFromVcard(vcf) {\n  const source = toStr(vcf);\n  if (!source) return null;\n\n  const telLine = source\n    .split(/\\r?\\n/)\n    .map((line) => line.trim())\n    .find((line) => /^TEL(?:;[^:]*)?:/i.test(line));\n\n  if (!telLine) return null;\n\n  const parts = telLine.split(/:(.+)/, 2);\n  const phonePart = parts[1] || \"\";\n  return normPhone(phonePart);\n}\n\nfunction buildSenderName(sender) {\n  const firstName = toStr(sender && (sender.first_name || sender.firstName));\n  const lastName = toStr(sender && (sender.last_name || sender.lastName));\n  const fullName = [firstName, lastName].filter(Boolean).join(\" \").trim();\n  return fullName || toStr(sender && sender.name) || toStr(sender && sender.username) || null;\n}\n\nfunction makeHttpResponse(baseMsg, statusCode, payload) {\n  return Object.assign({}, baseMsg, {\n    statusCode,\n    headers: { \"Content-Type\": \"application/json; charset=utf-8\" },\n    payload,\n  });\n}\n\nfunction extractContact(rawMessage, body, attachments) {\n  const contactAttachment = attachments.find((item) => String((item && item.type) || \"\").toLowerCase() === \"contact\") || null;\n  const attachmentPayload = isObj(contactAttachment && contactAttachment.payload) ? contactAttachment.payload : null;\n  const attachmentMaxInfo = isObj(attachmentPayload && attachmentPayload.max_info) ? attachmentPayload.max_info : null;\n  const directContact =\n    (isObj(body.contact) ? body.contact : null)\n    || (isObj(rawMessage.contact) ? rawMessage.contact : null)\n    || (attachments.find((item) => isObj(item && item.contact)) || {}).contact\n    || attachmentPayload\n    || contactAttachment\n    || null;\n\n  if (!isObj(directContact)) return null;\n\n  const phone = normPhone(\n    directContact.phone_number\n      || directContact.phone\n      || directContact.phoneNumber\n      || directContact.msisdn\n      || (attachmentPayload && (attachmentPayload.phone_number || attachmentPayload.phone || attachmentPayload.phoneNumber || attachmentPayload.msisdn))\n  );\n\n  const phoneFromVcard = phone || extractPhoneFromVcard((attachmentPayload && attachmentPayload.vcf_info) || directContact.vcf_info);\n  if (!phoneFromVcard) return null;\n\n  return {\n    phone: phoneFromVcard,\n    firstName: toStr(directContact.first_name || directContact.firstName || (attachmentMaxInfo && (attachmentMaxInfo.first_name || attachmentMaxInfo.firstName))),\n    lastName: toStr(directContact.last_name || directContact.lastName || (attachmentMaxInfo && (attachmentMaxInfo.last_name || attachmentMaxInfo.lastName))),\n    userId: toStr(directContact.user_id || directContact.userId || (attachmentMaxInfo && (attachmentMaxInfo.user_id || attachmentMaxInfo.userId))),\n    raw: {\n      contact: directContact,\n      attachment: contactAttachment,\n      payload: attachmentPayload,\n    },\n  };\n}\n\nfunction extractButtonValue(rawMessage, body) {\n  return (\n    toStr(body.callback_data)\n    || toStr(body.callbackData)\n    || toStr(body.button)\n    || toStr(rawMessage.callback_data)\n    || toStr(rawMessage.callbackData)\n    || null\n  );\n}\n\nconst stationMap = new Map([\n  [\"нaгатинская\", { id: \"nagat\", name: \"Нагатинская\" }],\n  [\"нагатинская\", { id: \"nagat\", name: \"Нагатинская\" }],\n  [\"нагатинская премиум\", { id: \"nagat_p\", name: \"Нагатинская Премиум\" }],\n  [\"терехово\", { id: \"tereh\", name: \"Терехово\" }],\n  [\"сколково\", { id: \"kuncev\", name: \"Сколково\" }],\n  [\"ясенево\", { id: \"yas\", name: \"Ясенево\" }],\n  [\"селигерская\", { id: \"seleger\", name: \"Селигерская\" }],\n  [\"сочи\", { id: \"sochi\", name: \"Сочи\" }],\n  [\"точка сбора\", { id: \"t-sbora\", name: \"Точка сбора\" }],\n  [\"nagat\", { id: \"nagat\", name: \"Нагатинская\" }],\n  [\"nagat_p\", { id: \"nagat_p\", name: \"Нагатинская Премиум\" }],\n  [\"tereh\", { id: \"tereh\", name: \"Терехово\" }],\n  [\"kuncev\", { id: \"kuncev\", name: \"Сколково\" }],\n  [\"yas\", { id: \"yas\", name: \"Ясенево\" }],\n  [\"seleger\", { id: \"seleger\", name: \"Селигерская\" }],\n  [\"sochi\", { id: \"sochi\", name: \"Сочи\" }],\n  [\"t-sbora\", { id: \"t-sbora\", name: \"Точка сбора\" }],\n]);\n\nfunction extractStation(text, buttonValue) {\n  const candidates = [toStr(buttonValue) && toStr(buttonValue).toLowerCase(), toStr(text) && toStr(text).toLowerCase()].filter(Boolean);\n  for (const candidate of candidates) {\n    if (stationMap.has(candidate)) return stationMap.get(candidate);\n  }\n  return null;\n}\n\nconst expectedSecret = (() => {\n  try {\n    return toStr(env.get(\"MAX_ACADEMY_BOT_WEBHOOK_SECRET\"));\n  } catch {\n    return null;\n  }\n})();\n\nconst rawPayload = isObj(msg.maxUpdate) ? msg.maxUpdate : (isObj(msg.payload) ? msg.payload : null);\nif (!rawPayload) {\n  const response = makeHttpResponse(msg, 400, { ok: false, provider: \"max\", error: \"JSON body is required\" });\n  return [null, response, response];\n}\n\nconst isWebhook = Boolean(msg.req);\nif (isWebhook) {\n  const incomingSecret = toStr(msg.req && msg.req.headers && msg.req.headers[\"x-max-bot-api-secret\"]);\n  if (expectedSecret && incomingSecret !== expectedSecret) {\n    const response = makeHttpResponse(msg, 401, { ok: false, provider: \"max\", error: \"Invalid X-Max-Bot-Api-Secret header\" });\n    return [null, response, response];\n  }\n}\n\nconst transportData = isObj(rawPayload.data) ? rawPayload.data : null;\nconst rawMessage = (isObj(rawPayload.message) ? rawPayload.message : null)\n  || (isObj(rawPayload.originalMessage) ? rawPayload.originalMessage : null)\n  || transportData\n  || rawPayload;\nconst sender = isObj(rawMessage.sender)\n  ? rawMessage.sender\n  : (isObj(rawMessage.from) ? rawMessage.from : (isObj(transportData && transportData.sender) ? transportData.sender : {}));\nconst recipient = isObj(rawMessage.recipient)\n  ? rawMessage.recipient\n  : (isObj(transportData && transportData.recipient) ? transportData.recipient : {});\nconst body = isObj(rawMessage.body)\n  ? rawMessage.body\n  : (isObj(transportData && transportData.body) ? transportData.body : (isObj(rawPayload.body) ? rawPayload.body : rawMessage));\nconst attachments = uniq([].concat(toArray(body.attachments), toArray(rawMessage.attachments), toArray(transportData && transportData.attachments))).filter((item) => item !== null && item !== undefined);\n\nconst text = toStr(body.text) || toStr(rawMessage.text) || toStr(transportData && transportData.text) || toStr(rawPayload.text) || toStr(rawPayload.content) || null;\nconst action = toStr(rawPayload.action || (transportData && transportData.action));\nconst buttonValue = action || extractButtonValue(rawMessage, body);\nconst callbackId = toStr(rawPayload.callback_id) || toStr(transportData && transportData.callback_id) || attachments.map((item) => toStr(item && (item.callback_id || item.callbackId))).find(Boolean) || null;\nconst command = text && text.startsWith(\"/\") ? text.split(/\\s+/)[0] : null;\nconst contact = extractContact(rawMessage, body, attachments);\nconst station = extractStation(text, buttonValue);\nconst updateType = toStr(rawPayload.update_type || rawPayload.type || rawMessage.type || (transportData && transportData.type)) || \"message\";\nconst updateTimestamp = toInt(rawPayload.timestamp || rawMessage.timestamp || (transportData && transportData.timestamp)) || Date.now();\n\nconst normalized = {\n  provider: \"max\",\n  updateType,\n  timestamp: updateTimestamp,\n  messageId: toStr(rawMessage.mid || rawMessage.message_id || body.mid || body.message_id || rawPayload.messageId),\n  messageTimestamp: toInt(rawMessage.timestamp || body.timestamp) || updateTimestamp,\n  text,\n  command,\n  action,\n  buttonValue,\n  callbackId,\n  contact,\n  station,\n  messageKind: contact ? \"contact\" : station ? \"station\" : command ? \"command\" : (text ? \"text\" : \"unknown\"),\n  attachments,\n  senderIsBot: typeof sender.is_bot === \"boolean\" ? sender.is_bot : false,\n  sender: {\n    userId: toStr(sender.user_id || sender.userId || sender.id || rawPayload.userId),\n    username: toStr(sender.username),\n    name: buildSenderName(sender),\n    isBot: typeof sender.is_bot === \"boolean\" ? sender.is_bot : null,\n  },\n  recipient: {\n    chatId: toStr(recipient.chat_id || recipient.chatId || rawPayload.chatId || rawMessage.chatId),\n    userId: toStr(recipient.user_id || recipient.userId || rawPayload.userId),\n    chatType: toStr(recipient.chat_type || recipient.type || rawPayload.chatType),\n    username: toStr(recipient.username),\n    name: buildSenderName(recipient),\n  },\n  raw: rawPayload,\n};\n\nconst downstreamMsg = Object.assign({}, msg, {\n  topic: \"max/\" + normalized.messageKind,\n  maxRaw: rawPayload,\n  maxUpdate: normalized,\n  payload: normalized,\n});\n\nconst httpResponse = isWebhook ? makeHttpResponse(msg, 200, {\n  ok: true,\n  provider: \"max\",\n  accepted: true,\n  messageId: normalized.messageId,\n  chatId: normalized.recipient.chatId,\n  userId: normalized.sender.userId,\n  messageKind: normalized.messageKind,\n}) : null;\n\nconst debugMsg = Object.assign({}, downstreamMsg);\nreturn [downstreamMsg, httpResponse, debugMsg];",
+    "outputs": 3,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 390,
+    "y": 220,
+    "wires": [
+      [
+        "3d20ab5e309b7cba"
+      ],
+      [
+        "0ccf66cdf02d0404"
+      ],
+      [
+        "ee25cb32a53dd9eb"
+      ]
+    ]
+  },
+  {
+    "id": "3d20ab5e309b7cba",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Prepare support resolve",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nconst update = isObj(msg.maxUpdate) ? msg.maxUpdate : null;\nif (!update) return null;\n\nconst apiBase = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_API_BASE_URL\"));\n  } catch {\n    return null;\n  }\n})();\nconst integrationToken = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_INTEGRATION_TOKEN\"));\n  } catch {\n    return null;\n  }\n})();\n\nconst baseUrl = apiBase || \"http://127.0.0.1:3000/api\";\nconst queryParts = [];\nconst addQuery = (key, value) => {\n  const normalized = toStr(value);\n  if (!normalized) return;\n  queryParts.push(encodeURIComponent(key) + \"=\" + encodeURIComponent(normalized));\n};\n\nconst externalUserId = update.senderIsBot && update.recipient && update.recipient.userId\n  ? update.recipient.userId\n  : (update.sender && update.sender.userId);\n\nconst username = update.senderIsBot\n  ? (update.recipient && update.recipient.username)\n  : (update.sender && update.sender.username);\n\naddQuery(\"connector\", \"MAX_ACADEMY_BOT\");\naddQuery(\"externalUserId\", externalUserId);\naddQuery(\"externalChatId\", update.recipient && update.recipient.chatId);\naddQuery(\"username\", username);\naddQuery(\"phone\", update.contact && update.contact.phone);\n\nmsg.method = \"GET\";\nmsg.url = baseUrl + \"/support/clients/resolve\" + (queryParts.length ? \"?\" + queryParts.join(\"&\") : \"\");\nmsg.headers = Object.assign({ Accept: \"application/json\" }, integrationToken ? { \"x-integration-token\": integrationToken } : {});\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 690,
+    "y": 200,
+    "wires": [
+      [
+        "9986adc06c04d820"
+      ]
+    ]
+  },
+  {
+    "id": "9986adc06c04d820",
+    "type": "http request",
+    "z": "99db28109ee6a1f7",
+    "name": "GET support client",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 950,
+    "y": 200,
+    "wires": [
+      [
+        "f81b5b485aaf4273"
+      ]
+    ]
+  },
+  {
+    "id": "f81b5b485aaf4273",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Route MAX support flow",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nfunction getApiBase() {\n  try {\n    return toStr(env.get(\"SUPPORT_API_BASE_URL\")) || \"http://127.0.0.1:3000/api\";\n  } catch {\n    return \"http://127.0.0.1:3000/api\";\n  }\n}\n\nfunction getIntegrationToken() {\n  try {\n    return toStr(env.get(\"SUPPORT_INTEGRATION_TOKEN\"));\n  } catch {\n    return null;\n  }\n}\n\nfunction buildInlineKeyboard(buttons) {\n  return {\n    type: \"inline_keyboard\",\n    payload: { buttons },\n  };\n}\n\nfunction buildMessage(chatId, text, attachments = null, format = null) {\n  const normalizedText = toStr(text);\n  if (!chatId || !normalizedText) return null;\n\n  let payload = normalizedText;\n  if (format || (Array.isArray(attachments) && attachments.length)) {\n    payload = { text: normalizedText };\n    if (format) payload.format = format;\n    if (Array.isArray(attachments) && attachments.length) payload.attachments = attachments;\n  }\n\n  return { chatId, payload };\n}\n\nfunction buildContactRequestAttachment() {\n  return [\n    buildInlineKeyboard([\n      [\n        {\n          type: \"request_contact\",\n          text: \"Поделиться номером\",\n          payload: \"share_contact\",\n        },\n      ],\n    ]),\n  ];\n}\n\nfunction buildStationAttachment() {\n  return [\n    buildInlineKeyboard([\n      [{ type: \"callback\", text: \"Нагатинская\", payload: \"nagat\" }],\n      [{ type: \"callback\", text: \"Нагатинская Премиум\", payload: \"nagat_p\" }],\n      [{ type: \"callback\", text: \"Терехово\", payload: \"tereh\" }],\n      [{ type: \"callback\", text: \"Сколково\", payload: \"kuncev\" }],\n      [{ type: \"callback\", text: \"Ясенево\", payload: \"yas\" }],\n      [{ type: \"callback\", text: \"Селигерская\", payload: \"seleger\" }],\n      [{ type: \"callback\", text: \"Сочи\", payload: \"sochi\" }],\n      [{ type: \"callback\", text: \"Точка сбора\", payload: \"t-sbora\" }],\n    ]),\n  ];\n}\n\nfunction buildCabinetAttachment() {\n  return [\n    buildInlineKeyboard([\n      [\n        {\n          type: \"link\",\n          text: \"Открыть личный кабинет\",\n          url: \"https://padlhub.ru/lk\",\n        },\n      ],\n    ]),\n  ];\n}\n\nconst update = isObj(msg.maxUpdate) ? msg.maxUpdate : null;\nif (!update) return [null, null, null, msg];\n\nconst lookupPayload = isObj(msg.payload) ? msg.payload : {};\nconst client = isObj(lookupPayload.client) ? lookupPayload.client : null;\nconst chatId = toStr(update.recipient && update.recipient.chatId);\n\nconst senderUserId = update.senderIsBot && update.recipient && update.recipient.userId\n  ? toStr(update.recipient.userId)\n  : toStr(update.sender && update.sender.userId);\n\nconst senderName =\n  toStr(client && client.displayName)\n  || toStr(client && client.name)\n  || toStr(update.recipient && update.recipient.name)\n  || (!update.senderIsBot ? toStr(update.sender && update.sender.name) : null)\n  || \"Клиент\";\n\nconst senderUsername = update.senderIsBot\n  ? (toStr(update.recipient && update.recipient.username) || null)\n  : (toStr(update.sender && update.sender.username) || null);\n\nconst authVerified = Boolean(client && client.authStatus === \"VERIFIED\") || Boolean(update.contact && update.contact.phone);\nconst currentStationId = toStr(client && client.currentStationId) || null;\nconst currentStationName = toStr(client && client.currentStationName) || null;\nconst selectedStationId = update.station && update.station.id || null;\nconst selectedStationName = update.station && update.station.name || null;\nconst previousUnverifiedTextAttempts = Number(client && client.unverifiedTextAttempts || 0);\nconst nextUnverifiedTextReminderStage = !authVerified && update.messageKind === \"text\"\n  ? Math.min(previousUnverifiedTextAttempts + 1, 2)\n  : 0;\n\nconst event = {\n  connector: \"MAX_ACADEMY_BOT\",\n  externalUserId: senderUserId,\n  externalChatId: chatId,\n  recipientExternalUserId: update.recipient && update.recipient.userId || null,\n  recipientExternalChatId: update.recipient && update.recipient.chatId || null,\n  senderIsBot: Boolean(update.senderIsBot),\n  action: update.action || update.buttonValue || null,\n  externalMessageId: update.messageId || null,\n  displayName: senderName,\n  username: senderUsername,\n  phone: update.contact && update.contact.phone || null,\n  text: update.text || null,\n  direction: \"INBOUND\",\n  stationId: currentStationId,\n  stationName: currentStationName,\n  selectedStationId: selectedStationId,\n  selectedStationName: selectedStationName,\n  subject: senderName,\n  kind: update.messageKind === \"contact\"\n    ? \"CONTACT\"\n    : update.messageKind === \"station\"\n      ? \"STATION_SELECTION\"\n      : update.messageKind === \"command\"\n        ? \"COMMAND\"\n        : \"TEXT\",\n  meta: {\n    provider: \"max\",\n    command: update.command || null,\n    rawMessageKind: update.messageKind,\n    data: update.raw || null,\n  },\n};\n\nconst outbound = [];\n\nif (update.command === \"/start\") {\n  if (!authVerified) {\n    outbound.push(buildMessage(chatId, \"Чтобы подключить администратора, сначала подтвердите номер телефона. Нажмите кнопку ниже.\", buildContactRequestAttachment()));\n  } else if (!currentStationId) {\n    outbound.push(buildMessage(chatId, \"Номер уже подтвержден. Теперь выберите станцию, чтобы мы направили обращение нужной команде.\", buildStationAttachment()));\n  } else {\n    outbound.push(buildMessage(chatId, \"Вы уже подключены к станции \" + (currentStationName || currentStationId) + \". Напишите сообщение, и мы подключим администратора. Чтобы сменить станцию, используйте /station.\"));\n  }\n} else if (update.command === \"/station\") {\n  if (!authVerified) {\n    outbound.push(buildMessage(chatId, \"Чтобы выбрать станцию, сначала подтвердите номер телефона.\", buildContactRequestAttachment()));\n  } else {\n    outbound.push(buildMessage(chatId, \"Выберите станцию, чтобы мы направили обращение нужному администратору.\", buildStationAttachment()));\n  }\n} else if (update.messageKind === \"contact\" && update.contact && update.contact.phone) {\n  outbound.push(buildMessage(chatId, \"Спасибо. Номер сохранен. Теперь выберите станцию, чтобы мы направили обращение нужному администратору.\", buildStationAttachment()));\n} else if (update.messageKind === \"station\" && update.station) {\n  if (!authVerified) {\n    outbound.push(buildMessage(chatId, \"поделись номером, чтобы менеджер мог помочь 📲\", buildContactRequestAttachment()));\n  } else {\n    const stationMsg = buildMessage(chatId, \"ты на станции \" + update.station.name + \"\n\nнапиши свой вопрос ⬇️\n\nчтобы поменять станцию отправь ответным сообщением:\n/station\");\n    const cabinetMsg = buildMessage(\n      chatId,\n      \"Рекомендуем использовать личный кабинет, где можно все и даже больше:\n\n🎾 поиграть на корте\n👥 записаться на групповую тренировку\n🏆 поучаствовать в турнире\n🤝 создать свое комьюнити с друзьями и делиться фотками и рейтингами\",\n      buildCabinetAttachment()\n    );\n\n    if (stationMsg) {\n      stationMsg._delayMs = 0;\n      outbound.push(stationMsg);\n    }\n\n    if (cabinetMsg) {\n      cabinetMsg._delayMs = 3000;\n      outbound.push(cabinetMsg);\n    }\n  }\n} else if (!authVerified && nextUnverifiedTextReminderStage === 1) {\n  outbound.push(buildMessage(\n    chatId,\n    \"напоминаем, что мы не сможем помочь, если не нажать на кнопку поделиться номером ⬇️\",\n    buildContactRequestAttachment()\n  ));\n} else if (!authVerified && nextUnverifiedTextReminderStage >= 2) {\n  outbound.push(buildMessage(\n    chatId,\n    \"окей, всегда можно сделать все самостоятельно в личном кабинете ⬇️\",\n    buildCabinetAttachment()\n  ));\n} else if (!authVerified) {\n  outbound.push(buildMessage(chatId, \"Подключить администратора мы можем только для авторизованных пользователей. Поделитесь номером телефона, и мы продолжим диалог.\", buildContactRequestAttachment()));\n} else if (!currentStationId && !selectedStationId) {\n  outbound.push(buildMessage(chatId, \"Номер подтвержден, но станция еще не выбрана. Пожалуйста, выберите станцию.\", buildStationAttachment()));\n}\n\nconst integrationToken = getIntegrationToken();\nconst supportEventMsg = Object.assign({}, msg, {\n  method: \"POST\",\n  url: getApiBase() + \"/support/dialogs/events\",\n  headers: Object.assign(\n    { \"Content-Type\": \"application/json\", Accept: \"application/json\" },\n    integrationToken ? { \"x-integration-token\": integrationToken } : {}\n  ),\n  payload: event,\n});\n\nconst callbackAnswerMsg = Object.assign({}, msg, { maxUpdate: update });\nconst debugMsg = Object.assign({}, msg, {\n  payload: {\n    maxUpdate: update,\n    client,\n    supportEvent: event,\n    outboundCount: outbound.length,\n    nextUnverifiedTextReminderStage,\n  },\n});\n\nreturn [supportEventMsg, outbound, callbackAnswerMsg, debugMsg];",
+    "outputs": 4,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1220,
+    "y": 200,
+    "wires": [
+      [
+        "a20df921285ed6f4"
+      ],
+      [
+        "7dd77a6746d647ac"
+      ],
+      [
+        "abc7e416e271a301"
+      ],
+      [
+        "ffeaf70dcf680659"
+      ]
+    ]
+  },
+  {
+    "id": "a20df921285ed6f4",
+    "type": "http request",
+    "z": "99db28109ee6a1f7",
+    "name": "POST support event",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1490,
+    "y": 160,
+    "wires": [
+      [
+        "36d7bd30d21961df"
+      ]
+    ]
+  },
+  {
+    "id": "7dd77a6746d647ac",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Delay MAX outbound by _delayMs",
+    "func": "const delayMs = Number(msg._delayMs || (msg.payload && msg.payload._delayMs) || 0);\n\nconst cleanMessage = (message) => {\n  if (!message || typeof message !== \"object\") return message;\n  const cloned = Object.assign({}, message);\n  delete cloned._delayMs;\n  return cloned;\n};\n\nmsg.payload = cleanMessage(msg.payload);\nmsg.chatId = (msg.payload && msg.payload.chatId) || msg.chatId;\n\nif (!Number.isFinite(delayMs) || delayMs <= 0) {\n  return msg;\n}\n\nsetTimeout(() => {\n  node.send(msg);\n}, delayMs);\n\nreturn null;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1500,
+    "y": 260,
+    "wires": [
+      [
+        "f64e5818bc8d7aa6",
+        "d54dcd6a7a13a130"
+      ]
+    ]
+  },
+  {
+    "id": "f64e5818bc8d7aa6",
+    "type": "maxbot-send",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX send",
+    "bot": "3af94f779f118cb7",
+    "defaultChatId": "",
+    "x": 1760,
+    "y": 260,
+    "wires": [
+      [
+        "9e31a7acad8d3b66",
+        "f5f06035c95580a3"
+      ]
+    ]
+  },
+  {
+    "id": "f5f06035c95580a3",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Prepare outbox ACK",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nconst command = isObj(msg.supportOutbox) ? msg.supportOutbox : (isObj(msg.payload && msg.payload.supportOutbox) ? msg.payload.supportOutbox : null);\nif (!command || !command.id) return null;\n\nconst apiBase = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_API_BASE_URL\"));\n  } catch {\n    return null;\n  }\n})();\nconst integrationToken = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_INTEGRATION_TOKEN\"));\n  } catch {\n    return null;\n  }\n})();\n\nconst baseUrl = apiBase || \"http://127.0.0.1:3000/api\";\nmsg.method = \"POST\";\nmsg.url = baseUrl + \"/support/outbox/\" + encodeURIComponent(command.id) + \"/ack\";\nmsg.headers = Object.assign({ \"Content-Type\": \"application/json\", Accept: \"application/json\" }, integrationToken ? { \"x-integration-token\": integrationToken } : {});\nmsg.payload = {};\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2020,
+    "y": 260,
+    "wires": [
+      [
+        "2b256966da862d4b"
+      ]
+    ]
+  },
+  {
+    "id": "2b256966da862d4b",
+    "type": "http request",
+    "z": "99db28109ee6a1f7",
+    "name": "POST outbox ACK",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 2260,
+    "y": 260,
+    "wires": [
+      [
+        "4dce0f3c9cf0c0d5"
+      ]
+    ]
+  },
+  {
+    "id": "e75785ffa19c2e20",
+    "type": "inject",
+    "z": "99db28109ee6a1f7",
+    "name": "Poll MAX outbox",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 2,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 130,
+    "y": 420,
+    "wires": [
+      [
+        "41be3d2c95b57295"
+      ]
+    ]
+  },
+  {
+    "id": "41be3d2c95b57295",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Prepare MAX outbox pull",
+    "func": "const toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nconst apiBase = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_API_BASE_URL\"));\n  } catch {\n    return null;\n  }\n})();\nconst integrationToken = (() => {\n  try {\n    return toStr(env.get(\"SUPPORT_INTEGRATION_TOKEN\"));\n  } catch {\n    return null;\n  }\n})();\n\nconst baseUrl = apiBase || \"http://127.0.0.1:3000/api\";\nmsg.method = \"GET\";\nmsg.url = baseUrl + \"/support/outbox/pull?connector=MAX_ACADEMY_BOT&limit=10&leaseSec=60\";\nmsg.headers = Object.assign({ Accept: \"application/json\" }, integrationToken ? { \"x-integration-token\": integrationToken } : {});\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 420,
+    "wires": [
+      [
+        "b9dd8b1790758ae5"
+      ]
+    ]
+  },
+  {
+    "id": "b9dd8b1790758ae5",
+    "type": "http request",
+    "z": "99db28109ee6a1f7",
+    "name": "GET support outbox",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 690,
+    "y": 420,
+    "wires": [
+      [
+        "ac58fde64d1af67e"
+      ]
+    ]
+  },
+  {
+    "id": "ac58fde64d1af67e",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Parse MAX outbox",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst payload = isObj(msg.payload) ? msg.payload : {};\nconst commands = Array.isArray(payload.commands) ? payload.commands : [];\nmsg.payload = commands;\nreturn commands.length > 0 ? [msg, null] : [null, msg];",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 940,
+    "y": 420,
+    "wires": [
+      [
+        "79607434c44c17f0"
+      ],
+      [
+        "ac74fad461d28cf3"
+      ]
+    ]
+  },
+  {
+    "id": "79607434c44c17f0",
+    "type": "split",
+    "z": "99db28109ee6a1f7",
+    "name": "Split MAX commands",
+    "splt": "\\n",
+    "spltType": "str",
+    "arraySplt": 1,
+    "arraySpltType": "len",
+    "stream": false,
+    "addname": "",
+    "property": "payload",
+    "x": 1180,
+    "y": 420,
+    "wires": [
+      [
+        "47c460de0db646e6"
+      ]
+    ]
+  },
+  {
+    "id": "47c460de0db646e6",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Prepare MAX dispatch",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nconst command = isObj(msg.payload) ? msg.payload : null;\nif (!command) return [null, msg];\n\nconst chatId = toStr(command.targetExternalChatId) || toStr(command.targetExternalUserId);\nconst content = toStr(command.text);\nif (!chatId || !content) {\n  return [null, Object.assign({}, msg, { payload: { error: \"Missing target or text\", command } })];\n}\n\nconst formattedText = command && command.meta && typeof command.meta.formattedText === \"string\" && command.meta.formattedText.trim()\n  ? command.meta.formattedText.trim()\n  : null;\n\nconst sendPayload = command && command.format && formattedText\n  ? { text: formattedText, format: command.format }\n  : content;\n\nconst sendMsg = Object.assign({}, msg, {\n  supportOutbox: command,\n  chatId,\n  payload: sendPayload,\n});\n\nreturn [sendMsg, null];",
+    "outputs": 2,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1450,
+    "y": 420,
+    "wires": [
+      [
+        "f64e5818bc8d7aa6"
+      ],
+      [
+        "468f0a7f6af3a67e"
+      ]
+    ]
+  },
+  {
+    "id": "abc7e416e271a301",
+    "type": "function",
+    "z": "99db28109ee6a1f7",
+    "name": "Prepare MAX callback answer",
+    "func": "const isObj = (value) => value && typeof value === \"object\" && !Array.isArray(value);\nconst toStr = (value) => {\n  if (value === null || value === undefined) return null;\n  const normalized = String(value).trim();\n  return normalized ? normalized : null;\n};\n\nconst update = isObj(msg.maxUpdate) ? msg.maxUpdate : null;\nif (!update) return null;\nif (!(update.messageKind === \"station\" && update.station && update.callbackId)) return null;\n\nconst token = (() => {\n  try {\n    return toStr(env.get(\"MAX_ACADEMY_BOT_ACCESS_TOKEN\"));\n  } catch {\n    return null;\n  }\n})();\n\nif (!token) {\n  node.warn(\"MAX_ACADEMY_BOT_ACCESS_TOKEN is empty, callback answer skipped\");\n  return null;\n}\n\nmsg.method = \"POST\";\nmsg.url = \"https://platform-api.max.ru/answers?callback_id=\" + encodeURIComponent(update.callbackId);\nmsg.headers = {\n  \"Content-Type\": \"application/json\",\n  \"Authorization\": token\n};\nmsg.payload = {\n  message: {\n    text: \"Станция выбрана: \" + update.station.name,\n    attachments: []\n  }\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1500,
+    "y": 320,
+    "wires": [
+      [
+        "a9794f988b2c7851"
+      ]
+    ]
+  },
+  {
+    "id": "a9794f988b2c7851",
+    "type": "http request",
+    "z": "99db28109ee6a1f7",
+    "name": "POST MAX callback answer",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 1770,
+    "y": 320,
+    "wires": [
+      [
+        "6e42d45ff378c183"
+      ]
+    ]
+  },
+  {
+    "id": "0ccf66cdf02d0404",
+    "type": "http response",
+    "z": "99db28109ee6a1f7",
+    "name": "",
+    "x": 700,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "ee25cb32a53dd9eb",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX inbound debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 700,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "d54dcd6a7a13a130",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX service reply debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1770,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "36d7bd30d21961df",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "Support ingest debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1720,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "ac74fad461d28cf3",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX outbox pull debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1180,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "468f0a7f6af3a67e",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX outbox error debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1730,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "9e31a7acad8d3b66",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX send debug",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 2000,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "4dce0f3c9cf0c0d5",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX outbox ack debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 2490,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "5479f45132a601cf",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "debug 291",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 330,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "6e42d45ff378c183",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "MAX callback answer debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 2030,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "ffeaf70dcf680659",
+    "type": "debug",
+    "z": "99db28109ee6a1f7",
+    "name": "Route support flow debug",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1490,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "3af94f779f118cb7",
+    "type": "maxbot-config",
+    "name": "id7722810381_bot"
+  }
+]

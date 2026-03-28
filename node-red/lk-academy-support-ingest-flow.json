@@ -1,0 +1,167 @@
+[
+  {
+    "id": "f3a13b61b1d54c4c",
+    "type": "tab",
+    "label": "PHAB LK Academy Ingest",
+    "disabled": false,
+    "info": "Inbound flow: LK Academy webhook -> immediate 200 OK -> POST /support/dialogs/events with connector=LK_ACADEMY_WEB_MESSENGER.\n\nIncoming endpoint:\n- POST /integrations/lk-academy/webhook\n\nNode-RED env vars:\n- SUPPORT_API_BASE_URL=http://<ph-ab-host>:3000/api\n- SUPPORT_INTEGRATION_TOKEN=<optional>"
+  },
+  {
+    "id": "60de3d4e4cf44d8f",
+    "type": "comment",
+    "z": "f3a13b61b1d54c4c",
+    "name": "Env vars",
+    "info": "Set in Node-RED settings/env:\nSUPPORT_API_BASE_URL=http://localhost:3000/api\nSUPPORT_INTEGRATION_TOKEN=<optional>\n\nPublic webhook path:\nPOST /integrations/lk-academy/webhook",
+    "x": 170,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "e50f59d6f5b74012",
+    "type": "http in",
+    "z": "f3a13b61b1d54c4c",
+    "name": "LK Academy webhook",
+    "url": "/integrations/lk-academy/webhook",
+    "method": "post",
+    "upload": true,
+    "swaggerDoc": "",
+    "x": 180,
+    "y": 140,
+    "wires": [
+      [
+        "4d5dd86a4fe84556",
+        "2242459f03e14c45",
+        "dcb3d03c388b4e4d"
+      ]
+    ]
+  },
+  {
+    "id": "4d5dd86a4fe84556",
+    "type": "debug",
+    "z": "f3a13b61b1d54c4c",
+    "name": "LK Academy raw",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 410,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "2242459f03e14c45",
+    "type": "function",
+    "z": "f3a13b61b1d54c4c",
+    "name": "reply 200",
+    "func": "msg.statusCode = 200;\nmsg.headers = { \"Content-Type\": \"application/json\" };\nmsg.payload = { ok: true, accepted: true };\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 140,
+    "wires": [
+      [
+        "6ce7ff4304d24853"
+      ]
+    ]
+  },
+  {
+    "id": "6ce7ff4304d24853",
+    "type": "http response",
+    "z": "f3a13b61b1d54c4c",
+    "name": "HTTP 200 response",
+    "statusCode": "",
+    "headers": {},
+    "x": 640,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "dcb3d03c388b4e4d",
+    "type": "function",
+    "z": "f3a13b61b1d54c4c",
+    "name": "build support ingest",
+    "func": "const base = String(env.get(\"SUPPORT_API_BASE_URL\") || \"http://localhost:3000/api\").replace(/\\/+$/, \"\");\nconst token = String(env.get(\"SUPPORT_INTEGRATION_TOKEN\") || \"\").trim();\n\nconst raw = (msg.payload && typeof msg.payload === \"object\") ? msg.payload : {};\n\nfunction norm(value) {\n  const text = String(value ?? \"\").trim();\n  if (!text) return undefined;\n  const lowered = text.toLowerCase();\n  if (lowered === \"null\" || lowered === \"undefined\") return undefined;\n  return text;\n}\n\nconst externalUserId =\n  norm(raw.externalUserId) ||\n  norm(raw.userId) ||\n  norm(raw.clientId) ||\n  norm(raw.senderId) ||\n  norm(raw.channelUserId);\n\nconst externalChatId =\n  norm(raw.externalChatId) ||\n  norm(raw.externalThreadId) ||\n  norm(raw.chatId) ||\n  norm(raw.threadId) ||\n  norm(raw.dialogId);\n\nconst payload = {\n  connector: \"LK_ACADEMY_WEB_MESSENGER\",\n  externalUserId,\n  externalChatId,\n  displayName: norm(raw.displayName) || norm(raw.clientName) || norm(raw.senderName),\n  username: norm(raw.username),\n  phone: norm(raw.phone) || norm(raw.primaryPhone),\n  email: norm(raw.email),\n  stationId: norm(raw.stationId),\n  stationName: norm(raw.stationName),\n  selectedStationId: norm(raw.selectedStationId) || norm(raw.stationId),\n  selectedStationName: norm(raw.selectedStationName) || norm(raw.stationName),\n  subject: norm(raw.subject),\n  text: norm(raw.text) || norm(raw.message) || norm(raw.content),\n  eventType: norm(raw.eventType),\n  direction: norm(raw.direction) || \"INBOUND\",\n  kind: norm(raw.kind),\n  meta: {\n    source: \"lk_academy\",\n    receivedAt: new Date().toISOString(),\n    payload: raw\n  }\n};\n\nif (!payload.externalUserId && !payload.externalChatId && !payload.phone && !payload.email) {\n  node.warn(\"LK Academy payload without identifiers\");\n  return null;\n}\n\nmsg.method = \"POST\";\nmsg.url = base + \"/support/dialogs/events\";\nmsg.headers = { \"Content-Type\": \"application/json\" };\nif (token) {\n  msg.headers[\"x-integration-token\"] = token;\n}\nmsg.payload = payload;\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 240,
+    "wires": [
+      [
+        "16f6a0a007384ee6"
+      ]
+    ]
+  },
+  {
+    "id": "16f6a0a007384ee6",
+    "type": "http request",
+    "z": "f3a13b61b1d54c4c",
+    "name": "POST /support/dialogs/events",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 690,
+    "y": 240,
+    "wires": [
+      [
+        "52a7f68ee21146e0"
+      ]
+    ]
+  },
+  {
+    "id": "52a7f68ee21146e0",
+    "type": "function",
+    "z": "f3a13b61b1d54c4c",
+    "name": "log support result",
+    "func": "const code = Number(msg.statusCode || 0);\nif (code < 200 || code >= 300) {\n  node.warn(\"LK Academy ingest failed: HTTP \" + (code || \"n/a\") + \"; body=\" + (typeof msg.payload === \"string\" ? msg.payload : JSON.stringify(msg.payload)));\n} else {\n  node.log(\"LK Academy ingest OK: HTTP \" + code);\n}\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 910,
+    "y": 240,
+    "wires": [
+      [
+        "e5ce65dbbb914f52"
+      ]
+    ]
+  },
+  {
+    "id": "e5ce65dbbb914f52",
+    "type": "debug",
+    "z": "f3a13b61b1d54c4c",
+    "name": "LK Academy ingest result",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1150,
+    "y": 240,
+    "wires": []
+  }
+]

@@ -71,6 +71,8 @@ export interface SupportPersistenceRuntimeDiagnostics {
   routing: {
     webBackendKey: string;
     maxBackendKey: string;
+    webAcademyBackendKey: string;
+    maxAcademyBackendKey: string;
   };
   backends: SupportPersistenceBackendDiagnostics[];
 }
@@ -228,7 +230,13 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       countError: selected?.countError,
       routing: {
         webBackendKey: this.resolveBackendKeyForConnector(SupportConnectorRoute.LK_WEB_MESSENGER),
-        maxBackendKey: this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)
+        maxBackendKey: this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT),
+        webAcademyBackendKey: this.resolveBackendKeyForConnector(
+          SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+        ),
+        maxAcademyBackendKey: this.resolveBackendKeyForConnector(
+          SupportConnectorRoute.MAX_ACADEMY_BOT
+        )
       },
       backends: backendDiagnostics
     };
@@ -735,14 +743,16 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     connector?: SupportConnectorRoute
   ): SupportPersistenceBackendKey {
     if (
-      connector === SupportConnectorRoute.LK_WEB_MESSENGER &&
+      (connector === SupportConnectorRoute.LK_WEB_MESSENGER ||
+        connector === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER) &&
       this.backendConfigs.some((config) => config.key === 'web')
     ) {
       return 'web';
     }
 
     if (
-      connector === SupportConnectorRoute.MAX_BOT &&
+      (connector === SupportConnectorRoute.MAX_BOT ||
+        connector === SupportConnectorRoute.MAX_ACADEMY_BOT) &&
       this.backendConfigs.some((config) => config.key === 'max')
     ) {
       return 'max';
@@ -869,11 +879,30 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     if (['LK_WEB_MESSENGER', 'WEB', 'WEB_LK', 'LK_WEB', 'LK', 'WIDGET'].includes(normalized)) {
       return SupportConnectorRoute.LK_WEB_MESSENGER;
     }
+    if (
+      [
+        'LK_ACADEMY_WEB_MESSENGER',
+        'LK_ACADEMY',
+        'ACADEMY_WEB',
+        'ACADEMY_LK',
+        'AF_LK',
+        'AB_LK'
+      ].includes(normalized)
+    ) {
+      return SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+    }
     if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
       return SupportConnectorRoute.TG_BOT;
     }
     if (['MAX_BOT', 'MAX'].includes(normalized)) {
       return SupportConnectorRoute.MAX_BOT;
+    }
+    if (
+      ['MAX_ACADEMY_BOT', 'MAX_ACADEMY', 'ACADEMY_MAX_BOT', 'AF_MAX_BOT', 'AB_MAX_BOT'].includes(
+        normalized
+      )
+    ) {
+      return SupportConnectorRoute.MAX_ACADEMY_BOT;
     }
     if (['EMAIL', 'MAIL'].includes(normalized)) {
       return SupportConnectorRoute.EMAIL;
