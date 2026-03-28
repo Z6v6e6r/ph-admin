@@ -4045,9 +4045,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       },
       this.buildConnectorNormalizationHelpers()
     );
+    const resolvedDeliverToClient =
+      typeof connectorPatch.deliverToClient === 'boolean'
+        ? connectorPatch.deliverToClient
+        : baseNormalized.deliverToClient;
     return {
       ...baseNormalized,
-      ...connectorPatch
+      externalUserId: connectorPatch.externalUserId ?? baseNormalized.externalUserId,
+      externalChatId: connectorPatch.externalChatId ?? baseNormalized.externalChatId,
+      displayName: connectorPatch.displayName ?? baseNormalized.displayName,
+      username: connectorPatch.username ?? baseNormalized.username,
+      selectedStationId: connectorPatch.selectedStationId ?? baseNormalized.selectedStationId,
+      selectedStationName:
+        connectorPatch.selectedStationName ?? baseNormalized.selectedStationName,
+      deliverToClient: resolvedDeliverToClient
     };
   }
 
