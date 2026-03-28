@@ -4645,10 +4645,6 @@
       if (!dialog || !dialog.dialogId) {
         return false;
       }
-      var connector = resolveDialogConnector(dialog);
-      if (connector === 'LK_WEB_MESSENGER' || connector === 'LK_ACADEMY_WEB_MESSENGER') {
-        return false;
-      }
       if (typeof dialog.isResolved !== 'boolean') {
         return false;
       }
