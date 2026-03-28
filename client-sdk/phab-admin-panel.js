@@ -143,6 +143,7 @@
   ];
   var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
   var MAX_FAVICON_URL = 'https://max.ru/favicon.ico';
+  var FFC_FAVICON_URL = 'https://ffc.team/favicon.ico';
 
   function normalizeConfig(raw) {
     var cfg = Object.assign({}, DEFAULTS, raw || {});
@@ -5054,7 +5055,13 @@
           { src: PADLHUB_FAVICON_URL, alt: 'Padelhub' }
         ];
       }
-      if (connector === 'MAX_BOT' || connector === 'MAX_ACADEMY_BOT') {
+      if (connector === 'MAX_ACADEMY_BOT') {
+        return [
+          { src: FFC_FAVICON_URL, alt: 'FFC Team' },
+          { src: PADLHUB_FAVICON_URL, alt: 'PadlHub' }
+        ];
+      }
+      if (connector === 'MAX_BOT') {
         return [
           { src: MAX_FAVICON_URL, alt: 'MAX' },
           { src: PADLHUB_FAVICON_URL, alt: 'PadlHub' }
