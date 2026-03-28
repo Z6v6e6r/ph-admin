@@ -605,11 +605,17 @@
         overflow:hidden;
       }
       .phab-admin-dialog-head{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        column-gap:18px;
+        row-gap:4px;
+        align-items:start;
         padding:10px 12px;
         border-bottom:1px solid rgba(51,0,32,.12);
         background:linear-gradient(90deg,rgba(207,255,182,.78) 0%,rgba(255,255,255,.96) 100%);
       }
       .phab-admin-dialog-title{
+        grid-column:1;
         font-size:14px;
         font-family:var(--cup-font-heading);
         font-weight:700;
@@ -618,9 +624,40 @@
         color:var(--cup-wine);
       }
       .phab-admin-dialog-meta{
-        margin-top:3px;
+        grid-column:1;
         font-size:11px;
         color:rgba(51,0,32,.72);
+      }
+      .phab-admin-dialog-tags{
+        grid-column:1;
+        margin-top:4px;
+      }
+      .phab-admin-dialog-options{
+        grid-column:2;
+        grid-row:1 / span 3;
+        align-self:center;
+        justify-self:end;
+        display:flex;
+        flex-direction:column;
+        align-items:flex-end;
+        gap:8px;
+        width:min(100%,320px);
+        max-width:100%;
+        margin-top:0;
+      }
+      .phab-admin-dialog-option{
+        display:flex;
+        align-items:center;
+        justify-content:flex-end;
+        gap:10px;
+        width:100%;
+      }
+      .phab-admin-dialog-option .phab-admin-switch{
+        order:2;
+        flex:0 0 auto;
+      }
+      .phab-admin-dialog-option .phab-admin-switch-text{
+        text-align:right;
       }
       .phab-admin-dialog-links{
         display:flex;
@@ -1471,6 +1508,24 @@
           grid-template-rows:minmax(220px,32dvh) minmax(0,1fr);
         }
         .phab-admin-dialog-wrap{height:100%}
+        .phab-admin-dialog-head{
+          grid-template-columns:1fr;
+          row-gap:6px;
+        }
+        .phab-admin-dialog-options{
+          grid-column:1;
+          grid-row:auto;
+          justify-self:stretch;
+          align-items:stretch;
+          min-width:0;
+          margin-top:6px;
+        }
+        .phab-admin-dialog-option{
+          justify-content:space-between;
+        }
+        .phab-admin-dialog-option .phab-admin-switch-text{
+          text-align:left;
+        }
         .phab-admin-dialog-body{
           grid-template-columns:1fr;
           grid-template-rows:minmax(240px,34dvh) minmax(0,1fr);
@@ -2097,14 +2152,12 @@
     dialogHead.appendChild(dialogTags);
 
     var dialogOptions = document.createElement('div');
+    dialogOptions.className = 'phab-admin-dialog-options';
     dialogOptions.style.display = 'none';
-    dialogOptions.style.marginTop = '8px';
     dialogHead.appendChild(dialogOptions);
 
     var messageModeWrap = document.createElement('div');
-    messageModeWrap.style.display = 'flex';
-    messageModeWrap.style.alignItems = 'center';
-    messageModeWrap.style.gap = '10px';
+    messageModeWrap.className = 'phab-admin-dialog-option';
     dialogOptions.appendChild(messageModeWrap);
 
     var messageModeToggleLabel = document.createElement('label');
@@ -2127,10 +2180,7 @@
     messageModeWrap.appendChild(messageModeToggleText);
 
     var resolutionWrap = document.createElement('div');
-    resolutionWrap.style.display = 'flex';
-    resolutionWrap.style.alignItems = 'center';
-    resolutionWrap.style.gap = '10px';
-    resolutionWrap.style.marginTop = '8px';
+    resolutionWrap.className = 'phab-admin-dialog-option';
     dialogOptions.appendChild(resolutionWrap);
 
     var resolutionToggleLabel = document.createElement('label');
@@ -4660,7 +4710,7 @@
         return;
       }
 
-      dom.dialogOptions.style.display = 'block';
+      dom.dialogOptions.style.display = 'flex';
       dom.messageModeToggle.checked = shouldIncludeServiceMessages();
       if (canToggleMessages) {
         dom.messageModeToggle.disabled = false;
