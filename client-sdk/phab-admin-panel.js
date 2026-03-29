@@ -3811,6 +3811,7 @@
       dialogLinks: dialogLinks,
       dialogOptions: dialogOptions,
       messageModeToggle: messageModeToggle,
+      messageModeToggleText: messageModeToggleText,
       resolutionWrap: resolutionWrap,
       resolutionToggle: resolutionToggle,
       resolutionToggleText: resolutionToggleText,
