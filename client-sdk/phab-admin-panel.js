@@ -2056,7 +2056,7 @@
             linear-gradient(180deg,rgba(255,255,255,.95) 0%,rgba(245,249,255,.95) 100%);
         }
         .phab-admin-chat-mobile .phab-admin-dialog-head{
-          grid-template-columns:40px minmax(0,1fr) 38px;
+          grid-template-columns:40px minmax(0,1fr);
           column-gap:12px;
           row-gap:6px;
           padding:12px;
@@ -2072,7 +2072,8 @@
           grid-row:1 / span 3;
         }
         .phab-admin-chat-mobile .phab-admin-dialog-title,
-        .phab-admin-chat-mobile .phab-admin-dialog-meta{
+        .phab-admin-chat-mobile .phab-admin-dialog-meta,
+        .phab-admin-chat-mobile .phab-admin-dialog-source-row{
           grid-column:2;
         }
         .phab-admin-chat-mobile .phab-admin-dialog-title{
@@ -2085,47 +2086,15 @@
         }
         .phab-admin-chat-mobile .phab-admin-dialog-source-row{
           display:flex;
-          grid-column:3;
-          grid-row:1 / span 2;
-          align-self:start;
-          justify-self:end;
-          justify-content:flex-end;
-          gap:0;
-          min-height:38px;
-        }
-        .phab-admin-chat-mobile .phab-admin-dialog-source-meta{
-          display:none;
         }
         .phab-admin-chat-mobile .phab-admin-dialog-tags{
-          display:none;
+          grid-column:1 / -1;
+          margin-top:2px;
         }
         .phab-admin-chat-mobile .phab-admin-dialog-options{
           grid-column:1 / -1;
           width:100%;
           justify-self:stretch;
-          display:grid;
-          grid-template-columns:repeat(2,minmax(0,1fr));
-          gap:8px;
-          margin-top:2px;
-        }
-        .phab-admin-chat-mobile .phab-admin-dialog-option{
-          min-width:0;
-          gap:8px;
-          padding:8px 10px;
-          border-radius:14px;
-          border:1px solid rgba(51,0,32,.1);
-          background:rgba(255,255,255,.88);
-          align-items:center;
-        }
-        .phab-admin-chat-mobile .phab-admin-dialog-option .phab-admin-switch{
-          order:2;
-        }
-        .phab-admin-chat-mobile .phab-admin-dialog-option .phab-admin-switch-text{
-          flex:1 1 auto;
-          min-width:0;
-          font-size:11px;
-          line-height:1.2;
-          text-align:left;
         }
         .phab-admin-chat-mobile .phab-admin-dialog-body{
           grid-template-columns:1fr;
@@ -4446,9 +4415,6 @@
     function syncResponsiveChatLayout() {
       var mobileMode = isMobileChatMode();
       dom.root.classList.toggle('phab-admin-chat-mobile', mobileMode);
-      if (state.activeTab === 'messages') {
-        applyDialogHeader(getSelectedDialog() || null);
-      }
 
       if (!mobileMode) {
         dom.leftPane.classList.remove('phab-admin-pane-mobile-hidden');
@@ -5816,17 +5782,13 @@
       var dialog = getSelectedDialog();
       var canToggleMessages = canToggleSystemMessages(cfg);
       var canToggleResolved = canToggleResolution(dialog);
-      var mobileMode = isMobileChatMode();
       if (!canToggleMessages && !canToggleResolved) {
         dom.dialogOptions.style.display = 'none';
         return;
       }
 
-      dom.dialogOptions.style.display = mobileMode ? 'grid' : 'flex';
+      dom.dialogOptions.style.display = 'flex';
       dom.messageModeToggle.checked = shouldIncludeServiceMessages();
-      dom.messageModeToggleText.textContent = mobileMode
-        ? 'Служебные сообщения'
-        : 'Показывать служебные сообщения';
       if (canToggleMessages) {
         dom.messageModeToggle.disabled = false;
         dom.messageModeToggle.parentElement.style.opacity = '1';
@@ -5840,18 +5802,13 @@
         dom.resolutionToggle.disabled =
           state.updatingResolution || dialog.isActiveForUser === false;
         dom.resolutionToggle.checked = dialog.isResolved === true;
-        dom.resolutionToggleText.textContent = mobileMode
-          ? 'Вопрос решен'
-          : dialog.isResolved === true
-            ? 'Вопрос пользователя решен'
-            : 'Вопрос пользователя не решен';
+        dom.resolutionToggleText.textContent =
+          dialog.isResolved === true ? 'Вопрос пользователя решен' : 'Вопрос пользователя не решен';
       } else {
         dom.resolutionWrap.style.display = 'none';
         dom.resolutionToggle.checked = false;
         dom.resolutionToggle.disabled = true;
-        dom.resolutionToggleText.textContent = mobileMode
-          ? 'Вопрос решен'
-          : 'Вопрос пользователя решен';
+        dom.resolutionToggleText.textContent = 'Вопрос пользователя решен';
       }
     }
 
