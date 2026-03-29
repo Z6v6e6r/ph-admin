@@ -1,5 +1,7 @@
 import { Controller, Get, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { AuthService } from '../auth/auth.service';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
@@ -52,6 +54,65 @@ const escapeHtml = (value: string): string =>
 export class UiController {
   constructor(private readonly authService: AuthService) {}
 
+  @Get('favicon.svg')
+  faviconSvg(@Res() response: Response): void {
+    response.sendFile(this.resolveBrandingAssetPath('dvoroteka-favicon.svg'));
+  }
+
+  @Get('favicon-192.png')
+  favicon192(@Res() response: Response): void {
+    response.sendFile(this.resolveBrandingAssetPath('favicon-192.png'));
+  }
+
+  @Get('favicon-512.png')
+  favicon512(@Res() response: Response): void {
+    response.sendFile(this.resolveBrandingAssetPath('favicon-512.png'));
+  }
+
+  @Get('apple-touch-icon.png')
+  appleTouchIcon(@Res() response: Response): void {
+    response.sendFile(this.resolveBrandingAssetPath('apple-touch-icon.png'));
+  }
+
+  @Get('site.webmanifest')
+  siteManifest(@Res() response: Response): void {
+    response.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    response.send(
+      JSON.stringify(
+        {
+          id: '/api/ui/admin',
+          name: 'ЦУП Дворотека',
+          short_name: 'Дворотека',
+          description: 'Центр управления пространством Дворотеки',
+          lang: 'ru',
+          dir: 'ltr',
+          start_url: '/api/ui/admin',
+          scope: '/api/ui/',
+          display: 'standalone',
+          orientation: 'portrait',
+          background_color: '#ffffff',
+          theme_color: '#330020',
+          icons: [
+            {
+              src: '/api/ui/favicon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: '/api/ui/favicon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any'
+            }
+          ]
+        },
+        null,
+        2
+      )
+    );
+  }
+
   @Get('admin/login')
   adminLogin(
     @Req() request: Request,
@@ -72,6 +133,7 @@ export class UiController {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ЦУП Дворотека - Вход</title>
+    ${this.renderBrandMetaTags()}
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
       :root { color-scheme: light; }
@@ -280,6 +342,7 @@ export class UiController {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ЦУП Дворотека</title>
+    ${this.renderBrandMetaTags()}
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
       :root { color-scheme: light; }
@@ -390,5 +453,35 @@ export class UiController {
       return '/api/ui/admin';
     }
     return value;
+  }
+
+  private renderBrandMetaTags(): string {
+    return [
+      '<meta name="application-name" content="Дворотека" />',
+      '<meta name="theme-color" content="#330020" />',
+      '<meta name="mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-capable" content="yes" />',
+      '<meta name="apple-mobile-web-app-title" content="Дворотека" />',
+      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
+      '<link rel="icon" type="image/svg+xml" href="/api/ui/favicon.svg" />',
+      '<link rel="icon" type="image/png" sizes="192x192" href="/api/ui/favicon-192.png" />',
+      '<link rel="apple-touch-icon" sizes="180x180" href="/api/ui/apple-touch-icon.png" />',
+      '<link rel="manifest" href="/api/ui/site.webmanifest" />'
+    ].join('\n    ');
+  }
+
+  private resolveBrandingAssetPath(fileName: string): string {
+    const candidates = [
+      resolve(process.cwd(), 'client-sdk', 'branding', fileName),
+      resolve(process.cwd(), 'dist', 'client-sdk', 'branding', fileName)
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return candidates[0];
   }
 }

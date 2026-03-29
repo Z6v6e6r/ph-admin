@@ -263,12 +263,44 @@
         color:var(--cup-white);
         border-bottom:2px solid rgba(255,255,255,.28);
       }
+      .phab-admin-heading{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        min-width:0;
+        flex:1 1 auto;
+      }
+      .phab-admin-heading-top{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        min-width:0;
+      }
+      .phab-admin-brand-logo{
+        width:34px;
+        height:34px;
+        border-radius:10px;
+        background:rgba(255,255,255,.98);
+        padding:4px;
+        box-shadow:0 8px 18px rgba(0,0,0,.16);
+        flex:0 0 auto;
+      }
+      .phab-admin-title-wrap{
+        display:flex;
+        align-items:center;
+        gap:10px;
+        min-width:0;
+        flex:1 1 auto;
+      }
       .phab-admin-title{
         font-family:var(--cup-font-heading);
         font-size:18px;
         letter-spacing:.02em;
         font-weight:700;
         text-transform:uppercase;
+      }
+      .phab-admin-title-short{
+        display:none;
       }
       .phab-admin-subtitle{
         margin-top:4px;
@@ -277,11 +309,74 @@
         letter-spacing:.04em;
         opacity:.9;
       }
+      .phab-admin-mobile-tab-select{
+        display:none;
+        min-width:0;
+        max-width:180px;
+        flex:1 1 auto;
+        border:1px solid rgba(255,255,255,.22);
+        border-radius:12px;
+        padding:7px 30px 7px 10px;
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.03em;
+        color:var(--cup-white);
+        background:
+          linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,.08)),
+          rgba(255,255,255,.08);
+        font-family:var(--cup-font-body);
+        appearance:none;
+        -webkit-appearance:none;
+        background-image:
+          linear-gradient(45deg,transparent 50%,rgba(255,255,255,.9) 50%),
+          linear-gradient(135deg,rgba(255,255,255,.9) 50%,transparent 50%);
+        background-position:
+          calc(100% - 16px) calc(50% - 2px),
+          calc(100% - 10px) calc(50% - 2px);
+        background-size:6px 6px, 6px 6px;
+        background-repeat:no-repeat;
+      }
+      .phab-admin-mobile-tab-select:focus{
+        outline:none;
+        border-color:rgba(255,255,255,.42);
+        box-shadow:0 0 0 3px rgba(182,253,255,.28);
+      }
+      .phab-admin-mobile-tab-select option{
+        color:var(--cup-wine);
+        background:#fff;
+      }
       .phab-admin-toolbar{
         display:flex;
         gap:8px;
         align-items:center;
         flex-wrap:wrap;
+      }
+      .phab-admin-toolbar-btn{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:7px;
+      }
+      .phab-admin-btn-icon{
+        width:16px;
+        height:16px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        flex:0 0 auto;
+      }
+      .phab-admin-btn-icon svg{
+        width:100%;
+        height:100%;
+        display:block;
+        fill:none;
+        stroke:currentColor;
+        stroke-width:2;
+        stroke-linecap:round;
+        stroke-linejoin:round;
+      }
+      .phab-admin-btn-label{
+        white-space:nowrap;
       }
       .phab-admin-btn,
       .phab-admin-btn-secondary{
@@ -574,7 +669,11 @@
         background:linear-gradient(135deg,#6bb8ff 0%,#2374f4 100%);
       }
       .phab-admin-source-icon--max{
-        background:linear-gradient(135deg,#7b5cff 0%,#5730d9 100%);
+        background:linear-gradient(135deg,#41c3f2 0%,#8c2af7 100%);
+      }
+      .phab-admin-source-icon--max .phab-admin-source-icon-svg{
+        width:100%;
+        height:100%;
       }
       .phab-admin-source-icon--web{
         background:linear-gradient(135deg,#47c986 0%,#17905d 100%);
@@ -713,11 +812,35 @@
         color:#0f5c3c;
         border:1px solid rgba(1,67,58,.24);
         animation:phab-cup-pulse 2.2s ease-in-out infinite;
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
       }
       .phab-admin-status-error{
         background:rgba(255,70,78,.12);
         border-color:rgba(255,70,78,.45);
         color:#9f1735;
+      }
+      .phab-admin-status-icon{
+        width:14px;
+        height:14px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        flex:0 0 auto;
+      }
+      .phab-admin-status-icon svg{
+        width:100%;
+        height:100%;
+        display:block;
+        fill:none;
+        stroke:currentColor;
+        stroke-width:2.2;
+        stroke-linecap:round;
+        stroke-linejoin:round;
+      }
+      .phab-admin-status-label{
+        white-space:nowrap;
       }
       .phab-admin-dialog-wrap{
         display:grid;
@@ -1787,6 +1910,67 @@
         .phab-admin-header{padding:14px}
       }
       @media (max-width:767px){
+        .phab-admin-header{
+          padding:10px 12px;
+          gap:8px;
+        }
+        .phab-admin-heading-top{
+          gap:8px;
+        }
+        .phab-admin-brand-logo{
+          width:28px;
+          height:28px;
+          border-radius:8px;
+          padding:3px;
+        }
+        .phab-admin-title{
+          font-size:14px;
+        }
+        .phab-admin-title-full,
+        .phab-admin-subtitle,
+        .phab-admin-tabs{
+          display:none;
+        }
+        .phab-admin-title-short,
+        .phab-admin-mobile-tab-select{
+          display:block;
+        }
+        .phab-admin-title-wrap{
+          gap:8px;
+        }
+        .phab-admin-mobile-tab-select{
+          max-width:140px;
+          font-size:11px;
+          padding-top:8px;
+          padding-bottom:8px;
+        }
+        .phab-admin-toolbar{
+          flex-wrap:nowrap;
+          gap:6px;
+          margin-left:auto;
+        }
+        .phab-admin-toolbar .phab-admin-btn,
+        .phab-admin-toolbar .phab-admin-btn-secondary,
+        .phab-admin-toolbar .phab-admin-status{
+          width:38px;
+          height:38px;
+          min-width:38px;
+          padding:0;
+          border-radius:12px;
+          justify-content:center;
+        }
+        .phab-admin-toolbar .phab-admin-btn-label,
+        .phab-admin-toolbar .phab-admin-status-label{
+          display:none;
+        }
+        .phab-admin-toolbar .phab-admin-btn-icon,
+        .phab-admin-toolbar .phab-admin-status-icon{
+          width:18px;
+          height:18px;
+        }
+        .phab-admin-dialog-filters-inline{
+          display:none !important;
+        }
         .phab-admin-content{
           padding:8px;
         }
@@ -2407,12 +2591,41 @@
     root.appendChild(header);
 
     var heading = document.createElement('div');
+    heading.className = 'phab-admin-heading';
     header.appendChild(heading);
+
+    var headingTop = document.createElement('div');
+    headingTop.className = 'phab-admin-heading-top';
+    heading.appendChild(headingTop);
+
+    var brandLogo = document.createElement('img');
+    brandLogo.className = 'phab-admin-brand-logo';
+    brandLogo.src = '/api/ui/favicon.svg';
+    brandLogo.alt = 'Дворотека';
+    headingTop.appendChild(brandLogo);
+
+    var titleWrap = document.createElement('div');
+    titleWrap.className = 'phab-admin-title-wrap';
+    headingTop.appendChild(titleWrap);
 
     var title = document.createElement('div');
     title.className = 'phab-admin-title';
-    title.textContent = cfg.title;
-    heading.appendChild(title);
+    titleWrap.appendChild(title);
+
+    var titleFull = document.createElement('span');
+    titleFull.className = 'phab-admin-title-full';
+    titleFull.textContent = cfg.title;
+    title.appendChild(titleFull);
+
+    var titleShort = document.createElement('span');
+    titleShort.className = 'phab-admin-title-short';
+    titleShort.textContent = 'ЦУП';
+    title.appendChild(titleShort);
+
+    var mobileTabSelect = document.createElement('select');
+    mobileTabSelect.className = 'phab-admin-mobile-tab-select';
+    mobileTabSelect.setAttribute('aria-label', 'Раздел панели');
+    titleWrap.appendChild(mobileTabSelect);
 
     var subtitle = document.createElement('div');
     subtitle.className = 'phab-admin-subtitle';
@@ -2425,19 +2638,54 @@
 
     var status = document.createElement('span');
     status.className = 'phab-admin-status';
-    status.textContent = 'Готово';
+    status.title = 'Готово';
+    status.setAttribute('aria-label', 'Готово');
+    var statusIcon = document.createElement('span');
+    statusIcon.className = 'phab-admin-status-icon';
+    status.appendChild(statusIcon);
+    var statusLabel = document.createElement('span');
+    statusLabel.className = 'phab-admin-status-label';
+    statusLabel.textContent = 'Готово';
+    status.appendChild(statusLabel);
     toolbar.appendChild(status);
 
     var logoutBtn = document.createElement('button');
-    logoutBtn.className = 'phab-admin-btn-secondary';
+    logoutBtn.className = 'phab-admin-btn-secondary phab-admin-toolbar-btn';
     logoutBtn.type = 'button';
-    logoutBtn.textContent = 'Разлогиниться';
+    logoutBtn.setAttribute('aria-label', 'Выйти');
+    logoutBtn.title = 'Выйти';
+    var logoutIcon = document.createElement('span');
+    logoutIcon.className = 'phab-admin-btn-icon';
+    logoutIcon.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/>' +
+      '<path d="M10 17l5-5-5-5"/>' +
+      '<path d="M15 12H4"/>' +
+      '</svg>';
+    logoutBtn.appendChild(logoutIcon);
+    var logoutLabel = document.createElement('span');
+    logoutLabel.className = 'phab-admin-btn-label';
+    logoutLabel.textContent = 'Выйти';
+    logoutBtn.appendChild(logoutLabel);
     toolbar.appendChild(logoutBtn);
 
     var refreshBtn = document.createElement('button');
-    refreshBtn.className = 'phab-admin-btn';
+    refreshBtn.className = 'phab-admin-btn phab-admin-toolbar-btn';
     refreshBtn.type = 'button';
-    refreshBtn.textContent = 'Обновить';
+    refreshBtn.setAttribute('aria-label', 'Обновить');
+    refreshBtn.title = 'Обновить';
+    var refreshIcon = document.createElement('span');
+    refreshIcon.className = 'phab-admin-btn-icon';
+    refreshIcon.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M20 6v5h-5"/>' +
+      '<path d="M20 11a8 8 0 1 0 2.1 5.4"/>' +
+      '</svg>';
+    refreshBtn.appendChild(refreshIcon);
+    var refreshLabel = document.createElement('span');
+    refreshLabel.className = 'phab-admin-btn-label';
+    refreshLabel.textContent = 'Обновить';
+    refreshBtn.appendChild(refreshLabel);
     toolbar.appendChild(refreshBtn);
 
     var tabs = document.createElement('div');
@@ -2547,7 +2795,8 @@
     leftHeadActions.appendChild(dialogFiltersBtn);
 
     var dialogFiltersWrap = document.createElement('div');
-    dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
+    dialogFiltersWrap.className =
+      'phab-admin-dialog-filters-wrap phab-admin-dialog-filters-inline phab-admin-hidden';
     leftPane.appendChild(dialogFiltersWrap);
 
     var dialogFilters = document.createElement('div');
@@ -3497,8 +3746,11 @@
     return {
       root: root,
       status: status,
+      statusIcon: statusIcon,
+      statusLabel: statusLabel,
       logoutBtn: logoutBtn,
       refreshBtn: refreshBtn,
+      mobileTabSelect: mobileTabSelect,
       tabMessages: tabMessages,
       tabGames: tabGames,
       tabLogs: tabLogs,
@@ -3849,11 +4101,55 @@
     dom.analyticsFromInput.value = state.analyticsFilterFrom;
     dom.analyticsToInput.value = state.analyticsFilterTo;
 
+    function getStatusIconMarkup(isError) {
+      if (isError) {
+        return (
+          '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="9"/>' +
+          '<path d="M9 9l6 6"/>' +
+          '<path d="M15 9l-6 6"/>' +
+          '</svg>'
+        );
+      }
+      return (
+        '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<circle cx="12" cy="12" r="9"/>' +
+        '<path d="M8 12.5l2.5 2.5L16 9.5"/>' +
+        '</svg>'
+      );
+    }
+
     function setStatus(text, isError) {
-      dom.status.textContent = text;
+      var message = String(text || '').trim() || (isError ? 'Ошибка' : 'Готово');
+      dom.statusIcon.innerHTML = getStatusIconMarkup(isError);
+      dom.statusLabel.textContent = message;
+      dom.status.title = message;
+      dom.status.setAttribute('aria-label', message);
       dom.status.className = isError
         ? 'phab-admin-status phab-admin-status-error'
         : 'phab-admin-status';
+    }
+
+    function populateMobileTabSelect() {
+      clearNode(dom.mobileTabSelect);
+      [
+        { value: 'messages', label: 'Диалоги' },
+        { value: 'games', label: 'Игры' },
+        { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
+        { value: 'tournaments', label: 'Турниры' },
+        { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
+        { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin }
+      ]
+        .filter(function (item) {
+          return item.hidden !== true;
+        })
+        .forEach(function (item) {
+          var option = document.createElement('option');
+          option.value = item.value;
+          option.textContent = item.label;
+          dom.mobileTabSelect.appendChild(option);
+        });
+      dom.mobileTabSelect.value = state.activeTab;
     }
 
     function getAudioContextConstructor() {
@@ -4206,6 +4502,13 @@
         return (
           '<svg class="phab-admin-source-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' +
           '<path d="M20.55 4.52 3.98 10.9c-1.13.45-1.12 1.08-.2 1.36l4.25 1.33 1.64 5.09c.2.62.1.86.76.86.51 0 .74-.24 1.02-.53l2.3-2.24 4.78 3.52c.88.49 1.51.24 1.73-.82l2.83-13.34c.32-1.3-.5-1.89-1.54-1.41Z"/></svg>'
+        );
+      }
+      if (messengerKey === 'max') {
+        return (
+          '<svg class="phab-admin-source-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' +
+          '<path fill="#fff" d="M12.28 2.1c5.56 0 9.52 4.02 9.52 9.66 0 5.77-4.03 9.84-9.73 9.84-2.29 0-4.36-.58-5.98-1.67l-1.63 1.53c-.9.85-2.4.2-2.4-1.03V11.2c0-5.5 4.32-9.1 10.22-9.1Zm0 4.2c-3 0-5.08 2.17-5.08 5.4 0 3.2 2.08 5.4 5.08 5.4s5.08-2.2 5.08-5.4c0-3.23-2.08-5.4-5.08-5.4Z"/>' +
+          '<circle cx="12.28" cy="11.7" r="3.86" fill="#5a60f4"/></svg>'
         );
       }
       if (messengerKey === 'web') {
@@ -8518,6 +8821,7 @@
         'phab-admin-tab' +
         (isSettings ? ' phab-admin-tab-active' : '') +
         (hideSettingsTab ? ' phab-admin-hidden' : '');
+      dom.mobileTabSelect.value = nextTab;
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
@@ -8591,6 +8895,31 @@
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
         refreshDialogsView().catch(handleError);
+      });
+      dom.mobileTabSelect.addEventListener('change', function () {
+        var nextTab = String(dom.mobileTabSelect.value || 'messages');
+        switchTab(nextTab);
+        if (nextTab === 'messages') {
+          refreshDialogsView().catch(handleError);
+          return;
+        }
+        if (nextTab === 'games') {
+          loadGames().catch(handleError);
+          return;
+        }
+        if (nextTab === 'logs') {
+          loadGameEvents().catch(handleError);
+          return;
+        }
+        if (nextTab === 'analytics') {
+          loadGameAnalytics().catch(handleError);
+          return;
+        }
+        if (nextTab === 'tournaments') {
+          loadTournaments().catch(handleError);
+          return;
+        }
+        loadSettings().catch(handleError);
       });
       dom.tabGames.addEventListener('click', function () {
         switchTab('games');
@@ -8868,6 +9197,8 @@
     }
 
     async function init() {
+      populateMobileTabSelect();
+      setStatus('Готово', false);
       bindEvents();
       await refreshDialogsView();
       syncResponsiveChatLayout();
