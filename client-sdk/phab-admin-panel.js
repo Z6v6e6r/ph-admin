@@ -6036,12 +6036,12 @@
       var canToggleMessages = canToggleSystemMessages(cfg);
       var options = Array.isArray(state.dialogFilterOptions) ? state.dialogFilterOptions : [];
 
-      if (!canFilterByStation) {
-        dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
-      } else if (options.length === 0) {
-        dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap phab-admin-hidden';
+      if (!canFilterByStation || options.length === 0) {
+        dom.dialogFiltersWrap.className =
+          'phab-admin-dialog-filters-wrap phab-admin-dialog-filters-inline phab-admin-hidden';
       } else {
-        dom.dialogFiltersWrap.className = 'phab-admin-dialog-filters-wrap';
+        dom.dialogFiltersWrap.className =
+          'phab-admin-dialog-filters-wrap phab-admin-dialog-filters-inline';
       }
 
       if (canFilterByStation && options.length > 0) {
