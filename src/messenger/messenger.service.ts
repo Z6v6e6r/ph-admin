@@ -501,9 +501,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
   listConnectorConfigs(user: RequestUser): MessengerConnectorConfig[] {
     this.ensureSettingsReadAccess(user);
-    return Array.from(this.connectorConfigs.values()).sort((left, right) =>
-      left.name.localeCompare(right.name)
-    );
+    return Array.from(this.connectorConfigs.values())
+      .filter((config) => this.isConnectorAllowedForUser(user, config.route))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   createConnectorConfig(
@@ -511,6 +511,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     user: RequestUser
   ): MessengerConnectorConfig {
     this.ensureSettingsManageAccess(user);
+    this.ensureUserCanManageConnectorRoute(dto.route, user);
     this.ensureConnectorConfig(dto.route);
     const stationIds = this.normalizeStationIds(dto.stationIds);
     this.ensureConfiguredStationsExist(stationIds);
@@ -542,6 +543,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     if (!existing) {
       throw new NotFoundException(`Connector config with id ${connectorId} not found`);
     }
+    this.ensureUserCanManageConnectorRoute(existing.route, user);
 
     const stationIds =
       dto.stationIds === undefined
@@ -573,7 +575,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
         return left.id.localeCompare(right.id);
       }
       return left.role.localeCompare(right.role);
-    });
+    }).filter((rule) => this.canViewAccessRule(user, rule));
   }
 
   createAccessRule(dto: CreateAccessRuleDto, user: RequestUser): MessengerAccessRule {
@@ -581,6 +583,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     const stationIds = this.normalizeStationIds(dto.stationIds);
     this.ensureConfiguredStationsExist(stationIds);
     const connectorRoutes = this.normalizeConnectorRoutes(dto.connectorRoutes);
+    this.ensureUserCanManageAccessRuleRoutes(connectorRoutes, user);
     const canRead = dto.canRead ?? true;
     const canWrite = dto.canWrite ?? false;
     this.ensureNonEmptyRule(canRead, canWrite);
@@ -622,6 +625,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       dto.connectorRoutes === undefined
         ? existing.connectorRoutes
         : this.normalizeConnectorRoutes(dto.connectorRoutes);
+    this.ensureUserCanManageAccessRuleRoutes(connectorRoutes, user);
     const canRead = dto.canRead ?? existing.canRead;
     const canWrite = dto.canWrite ?? existing.canWrite;
     this.ensureNonEmptyRule(canRead, canWrite);
@@ -856,6 +860,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       throw new ForbiddenException('Only staff or client can create thread');
     }
 
+    if (!this.isConnectorAllowedForUser(user, connector)) {
+      throw new ForbiddenException('Staff cannot create thread outside assigned connectors');
+    }
+
     if (this.isSuperAdmin(user)) {
       return;
     }
@@ -964,10 +972,14 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
   private canAccessThread(thread: ChatThread, user: RequestUser): boolean {
     if (user.roles.includes(Role.CLIENT)) {
-      return thread.clientId === user.id;
+      return thread.clientId === user.id && this.isConnectorAllowedForUser(user, thread.connector);
     }
 
     if (!this.isStaff(user)) {
+      return false;
+    }
+
+    if (!this.isConnectorAllowedForUser(user, thread.connector)) {
       return false;
     }
 
@@ -1127,6 +1139,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     if (!this.isStaff(user)) {
       return false;
     }
+    if (!this.isConnectorAllowedForUser(user, connector)) {
+      return false;
+    }
     if (this.isSuperAdmin(user)) {
       return true;
     }
@@ -1203,6 +1218,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       .map((config) => config.route);
 
     for (const route of configuredRoutes) {
+      if (!this.isConnectorAllowedForUser(user, route)) {
+        continue;
+      }
+
       if (this.isSuperAdmin(user)) {
         routes.add(route);
         continue;
@@ -1223,6 +1242,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     user: RequestUser
   ): string[] {
     if (!this.isStaff(user)) {
+      return [];
+    }
+    if (!this.isConnectorAllowedForUser(user, route)) {
       return [];
     }
 
@@ -1291,6 +1313,78 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
         );
       }
     }
+  }
+
+  private getUserConnectorRoutes(user?: RequestUser): string[] {
+    if (!user || !Array.isArray(user.connectorRoutes) || user.connectorRoutes.length === 0) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        user.connectorRoutes
+          .map((route) => String(route ?? '').trim().toUpperCase())
+          .filter((route) => route.length > 0)
+      )
+    );
+  }
+
+  private isConnectorAllowedForUser(
+    user: RequestUser,
+    connector: ConnectorRoute | string
+  ): boolean {
+    const allowedRoutes = this.getUserConnectorRoutes(user);
+    if (allowedRoutes.length === 0) {
+      return true;
+    }
+
+    return allowedRoutes.includes(String(connector).trim().toUpperCase());
+  }
+
+  private ensureUserCanManageConnectorRoute(
+    route: ConnectorRoute,
+    user: RequestUser
+  ): void {
+    if (this.isConnectorAllowedForUser(user, route)) {
+      return;
+    }
+
+    throw new ForbiddenException('Connector settings access denied for this route');
+  }
+
+  private ensureUserCanManageAccessRuleRoutes(
+    connectorRoutes: ConnectorRoute[],
+    user: RequestUser
+  ): void {
+    const allowedRoutes = this.getUserConnectorRoutes(user);
+    if (allowedRoutes.length === 0) {
+      return;
+    }
+
+    if (connectorRoutes.length === 0) {
+      throw new ForbiddenException(
+        'Restricted user cannot manage access rules for all connectors'
+      );
+    }
+
+    if (connectorRoutes.every((route) => this.isConnectorAllowedForUser(user, route))) {
+      return;
+    }
+
+    throw new ForbiddenException('Access rule contains connectors outside assigned scope');
+  }
+
+  private canViewAccessRule(user: RequestUser, rule: MessengerAccessRule): boolean {
+    const allowedRoutes = this.getUserConnectorRoutes(user);
+    if (allowedRoutes.length === 0) {
+      return true;
+    }
+
+    if (rule.connectorRoutes.length === 0) {
+      return true;
+    }
+
+    return rule.connectorRoutes.some((route) => this.isConnectorAllowedForUser(user, route));
   }
 
   private ensureNonEmptyRule(canRead: boolean, canWrite: boolean): void {

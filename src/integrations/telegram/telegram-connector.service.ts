@@ -247,7 +247,8 @@ export class TelegramConnectorService implements OnModuleInit {
     const user: RequestUser = {
       id: senderId,
       roles: [Role.SUPPORT],
-      stationIds: [mapping.stationId]
+      stationIds: [mapping.stationId],
+      connectorRoutes: []
     };
     this.messengerService.sendMessage(thread.id, dto, user);
   }
@@ -467,7 +468,8 @@ export class TelegramConnectorService implements OnModuleInit {
     return {
       id: this.toClientId(clientChatId),
       roles: [Role.CLIENT],
-      stationIds: []
+      stationIds: [],
+      connectorRoutes: []
     };
   }
 
@@ -475,7 +477,8 @@ export class TelegramConnectorService implements OnModuleInit {
     return {
       id: 'telegram-connector-system',
       roles: [Role.SUPER_ADMIN],
-      stationIds: []
+      stationIds: [],
+      connectorRoutes: []
     };
   }
 

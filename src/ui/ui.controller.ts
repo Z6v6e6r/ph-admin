@@ -11,6 +11,7 @@ type AdminUiQuery = {
   userId?: string;
   roles?: string;
   stationIds?: string;
+  connectorRoutes?: string;
   title?: string;
   pollIntervalMs?: string;
   authToken?: string;
@@ -319,6 +320,9 @@ export class UiController {
           return fromQuery.length > 0 ? fromQuery : [Role.SUPER_ADMIN];
         })();
     const stationIds = authContext.user ? authContext.user.stationIds : parseCsv(query.stationIds);
+    const connectorRoutes = authContext.user
+      ? authContext.user.connectorRoutes
+      : parseCsv(query.connectorRoutes);
     const pollIntervalMs = Number(query.pollIntervalMs);
 
     const authToken = String(query.authToken ?? '').trim();
@@ -328,6 +332,7 @@ export class UiController {
       userId: authContext.user?.id || query.userId?.trim() || 'local-admin',
       roles,
       stationIds,
+      connectorRoutes,
       title: query.title?.trim() || 'ЦУП Дворотека',
       pollIntervalMs:
         Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 8000,

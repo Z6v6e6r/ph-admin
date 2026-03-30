@@ -52,6 +52,25 @@ const parseStationIdsHeader = (value?: string | string[]): string[] => {
   return Array.from(new Set(stationIds));
 };
 
+const normalizeConnectorRoute = (rawRoute: string): string | undefined => {
+  const normalized = rawRoute.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return normalized || undefined;
+};
+
+const parseConnectorRoutesHeader = (value?: string | string[]): string[] => {
+  if (!value) {
+    return [];
+  }
+
+  const raw = Array.isArray(value) ? value.join(',') : value;
+  const connectorRoutes = raw
+    .split(',')
+    .map((entry) => normalizeConnectorRoute(entry))
+    .filter((entry): entry is string => Boolean(entry));
+
+  return Array.from(new Set(connectorRoutes));
+};
+
 export const resolveRequestUser = (headers: IncomingHttpHeaders): RequestUser => {
   const id = String(headers['x-user-id'] ?? 'anonymous');
   const login = String(headers['x-user-login'] ?? '').trim() || undefined;
@@ -63,10 +82,23 @@ export const resolveRequestUser = (headers: IncomingHttpHeaders): RequestUser =>
   const fromStationIds = parseStationIdsHeader(headers['x-station-ids']);
   const fromStationId = parseStationIdsHeader(headers['x-station-id']);
   const stationIds = Array.from(new Set([...fromStationIds, ...fromStationId]));
+  const fromConnectorRoutes = parseConnectorRoutesHeader(headers['x-connector-routes']);
+  const fromConnectorRoute = parseConnectorRoutesHeader(headers['x-connector-route']);
+  const connectorRoutes = Array.from(
+    new Set([...fromConnectorRoutes, ...fromConnectorRoute])
+  );
 
   if (roles.length === 0 && id !== 'anonymous') {
-    return { id, login, title, maxPublicUrl, roles: [Role.CLIENT], stationIds };
+    return {
+      id,
+      login,
+      title,
+      maxPublicUrl,
+      roles: [Role.CLIENT],
+      stationIds,
+      connectorRoutes
+    };
   }
 
-  return { id, login, title, maxPublicUrl, roles, stationIds };
+  return { id, login, title, maxPublicUrl, roles, stationIds, connectorRoutes };
 };

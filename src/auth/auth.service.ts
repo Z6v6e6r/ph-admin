@@ -20,6 +20,7 @@ interface TokenPayload {
   maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
+  connectorRoutes?: string[];
   iat: number;
   exp: number;
   typ: 'admin';
@@ -65,7 +66,8 @@ export class AuthService implements OnModuleInit {
         title: user.title,
         maxPublicUrl: user.maxPublicUrl,
         roles: user.roles.slice(),
-        stationIds: user.stationIds.slice()
+        stationIds: user.stationIds.slice(),
+        connectorRoutes: user.connectorRoutes.slice()
       }))
       .sort((left, right) => left.login.localeCompare(right.login));
   }
@@ -92,6 +94,7 @@ export class AuthService implements OnModuleInit {
       maxPublicUrl: user.maxPublicUrl,
       roles: user.roles,
       stationIds: user.stationIds,
+      connectorRoutes: user.connectorRoutes,
       iat: issuedAtSeconds,
       exp: expiresAtSeconds,
       typ: 'admin'
@@ -109,6 +112,7 @@ export class AuthService implements OnModuleInit {
         maxPublicUrl: user.maxPublicUrl,
         roles: user.roles,
         stationIds: user.stationIds,
+        connectorRoutes: user.connectorRoutes,
         authSource: 'token'
       }
     };
@@ -214,7 +218,8 @@ export class AuthService implements OnModuleInit {
       roles,
       stationIds: payload.stationIds
         .map((stationId) => String(stationId).trim())
-        .filter((stationId) => stationId.length > 0)
+        .filter((stationId) => stationId.length > 0),
+      connectorRoutes: this.normalizeConnectorRoutes(payload.connectorRoutes)
     };
   }
 
@@ -334,14 +339,16 @@ export class AuthService implements OnModuleInit {
       title: 'Суперадмин',
       maxPublicUrl: undefined,
       roles: [Role.SUPER_ADMIN],
-      stationIds: []
+      stationIds: [],
+      connectorRoutes: []
     };
   }
 
   private setUsers(users: AdminUserRecord[]): void {
     this.usersByLogin.clear();
     for (const user of users) {
-      this.usersByLogin.set(user.login.toLowerCase(), user);
+      const normalized = this.normalizeUserRecord(user);
+      this.usersByLogin.set(normalized.login.toLowerCase(), normalized);
     }
   }
 
@@ -370,6 +377,7 @@ export class AuthService implements OnModuleInit {
                 .map((stationId) => String(stationId).trim())
                 .filter((stationId) => stationId.length > 0)
             : [];
+          const connectorRoutes = this.normalizeConnectorRoutes(entry?.connectorRoutes);
 
           if (!login || !password || roles.length === 0) {
             return null;
@@ -380,7 +388,8 @@ export class AuthService implements OnModuleInit {
             login: login.toLowerCase(),
             password,
             roles,
-            stationIds: Array.from(new Set(stationIds))
+            stationIds: Array.from(new Set(stationIds)),
+            connectorRoutes
           };
 
           if (title) {
@@ -409,6 +418,41 @@ export class AuthService implements OnModuleInit {
       .filter((role): role is Role => (Object.values(Role) as string[]).includes(role));
 
     return Array.from(new Set(roles));
+  }
+
+  private normalizeConnectorRoutes(rawRoutes: unknown): string[] {
+    if (!Array.isArray(rawRoutes)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        rawRoutes
+          .map((route) => String(route ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_'))
+          .filter((route) => route.length > 0)
+      )
+    );
+  }
+
+  private normalizeUserRecord(user: AdminUserRecord): AdminUserRecord {
+    return {
+      id: String(user.id ?? '').trim(),
+      login: String(user.login ?? '').trim().toLowerCase(),
+      password: String(user.password ?? ''),
+      title: String(user.title ?? '').trim() || undefined,
+      maxPublicUrl: String(user.maxPublicUrl ?? '').trim() || undefined,
+      roles: this.parseRoles(user.roles),
+      stationIds: Array.from(
+        new Set(
+          Array.isArray(user.stationIds)
+            ? user.stationIds
+                .map((stationId) => String(stationId).trim())
+                .filter((stationId) => stationId.length > 0)
+            : []
+        )
+      ),
+      connectorRoutes: this.normalizeConnectorRoutes(user.connectorRoutes)
+    };
   }
 
   private readBooleanEnv(name: string, fallback: boolean): boolean {

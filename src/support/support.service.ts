@@ -496,7 +496,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const byConnector = new Map<SupportConnectorRoute, SupportDialog[]>();
 
     for (const dialog of dialogs) {
-      for (const connector of dialog.connectors) {
+      for (const connector of this.getAccessibleDialogConnectors(dialog, user)) {
         const existing = byConnector.get(connector) ?? [];
         existing.push(dialog);
         byConnector.set(connector, existing);
@@ -526,6 +526,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     connector: SupportConnectorRoute,
     user: RequestUser
   ): SupportStationSummary[] {
+    if (!this.isConnectorAllowedForUser(user, connector)) {
+      return [];
+    }
+
     const dialogs = this.listAccessibleDialogs(user).filter((dialog) =>
       dialog.connectors.includes(connector)
     );
@@ -559,7 +563,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     user: RequestUser
   ): SupportDialogSummary[] {
     return this.listAccessibleDialogs(user, { connector, stationId })
-      .map((dialog) => this.toDialogSummary(dialog, connector))
+      .map((dialog) => this.toDialogSummary(dialog, connector, user))
       .sort((left, right) => this.compareDialogSummaryRank(left, right));
   }
 
@@ -572,7 +576,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   getDialogSummary(dialogId: string, user: RequestUser): SupportDialogSummary {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
-    const connector = dialog.lastInboundConnector ?? dialog.connectors[0];
+    const connector = this.resolvePreferredDialogConnector(dialog, user);
     return this.toDialogSummary(dialog, connector, user);
   }
 
@@ -583,7 +587,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ): SupportDialogSummary {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
-    const connector = dialog.lastInboundConnector ?? dialog.connectors[0];
+    const connector = this.resolvePreferredDialogConnector(dialog, user);
     const vivaCabinetUrl = String(lookup.vivaCabinetUrl ?? '').trim();
 
     if (lookup.status !== 'FOUND' || !vivaCabinetUrl) {
@@ -617,6 +621,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     filters: SupportDialogFilters = {}
   ): Promise<SupportDialogSummary[]> {
     this.ensureStaff(user);
+    if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) {
+      return [];
+    }
     const normalizedPhone = this.normalizePhone(phone);
     if (!normalizedPhone) {
       return [];
@@ -668,6 +675,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const limit = this.resolveMessagesLimit(options.limit);
     const source = this.messages.get(dialog.id) ?? [];
     const regularMessages = source
+      .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
       .filter((message) => !this.isSystemDialogMessage(message))
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
@@ -703,13 +711,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         before: options.before
       });
       if (persisted.length > 0) {
-        return persisted;
+        const filteredPersisted = persisted.filter((message) =>
+          this.isConnectorAllowedForUser(user, message.connector)
+        );
+        return filteredPersisted.length <= limit
+          ? filteredPersisted
+          : filteredPersisted.slice(filteredPersisted.length - limit);
       }
     }
 
     const beforeTs = this.toTimestamp(options.before);
     const source = this.messages.get(dialog.id) ?? [];
     const filtered = source
+      .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
       .filter((message) => this.isSystemDialogMessage(message))
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
@@ -732,12 +746,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ForbiddenException('Dialog is closed');
     }
 
-    const connector =
-      dto.connector ??
-      dialog.lastReplyConnector ??
-      dialog.lastInboundConnector ??
-      dialog.connectors[0] ??
-      SupportConnectorRoute.MAX_BOT;
+    const connector = dto.connector
+      ? this.resolveAllowedReplyConnector(dialog, user, dto.connector)
+      : this.resolveAllowedReplyConnector(dialog, user);
     const createdAt = new Date().toISOString();
     const senderRole = this.resolveSenderRole(user.roles);
     const message: SupportMessage = {
@@ -814,7 +825,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     return this.toDialogSummary(
       dialog,
-      dialog.lastInboundConnector ?? dialog.connectors[0],
+      this.resolvePreferredDialogConnector(dialog, user),
       user
     );
   }
@@ -896,6 +907,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       const createdTs = this.toTimestamp(message.createdAt);
       return (
         accessibleDialogIds.has(message.dialogId) &&
+        (!user || this.isConnectorAllowedForUser(user, message.connector)) &&
         createdTs >= dayStart.getTime() &&
         createdTs < dayEnd.getTime()
       );
@@ -912,6 +924,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       const startedTs = this.toTimestamp(metric.startedAt);
       return (
         accessibleDialogIds.has(metric.dialogId) &&
+        (!user || this.isConnectorAllowedForUser(user, metric.connector)) &&
         startedTs >= dayStart.getTime() &&
         startedTs < dayEnd.getTime()
       );
@@ -1926,7 +1939,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     return {
       dialogId: dialog.id,
-      connector: connector ?? dialog.lastInboundConnector ?? dialog.connectors[0] ?? SupportConnectorRoute.MAX_BOT,
+      connector:
+        this.resolvePreferredDialogConnector(dialog, user, connector) ??
+        SupportConnectorRoute.MAX_BOT,
       stationId: dialog.stationId,
       stationName: dialog.stationName,
       accessStationIds: this.getDialogAccessStationIds(dialog),
@@ -3028,6 +3043,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private isDialogWritableForUser(dialog: SupportDialog, user: RequestUser): boolean {
+    if (this.getAccessibleDialogConnectors(dialog, user).length === 0) {
+      return false;
+    }
     if (
       user.roles.includes(Role.SUPER_ADMIN) ||
       user.roles.includes(Role.SUPPORT) ||
@@ -3066,6 +3084,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     filters: SupportDialogFilters = {}
   ): SupportDialog[] {
     return Array.from(this.dialogs.values())
+      .filter((dialog) =>
+        filters.connector ? this.isConnectorAllowedForUser(user, filters.connector) : true
+      )
       .filter((dialog) => this.canAccessDialog(dialog, user))
       .filter((dialog) => (filters.stationId ? dialog.stationId === filters.stationId : true))
       .filter((dialog) =>
@@ -3075,6 +3096,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private canAccessDialog(dialog: SupportDialog, user: RequestUser): boolean {
+    if (this.getAccessibleDialogConnectors(dialog, user).length === 0) {
+      return false;
+    }
     if (!this.isStaff(user)) {
       return false;
     }
@@ -3124,6 +3148,85 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private isStaff(user: RequestUser): boolean {
     return user.roles.some((role) => STAFF_ROLES.includes(role));
+  }
+
+  private getUserConnectorRoutes(user?: RequestUser): string[] {
+    if (!user || !Array.isArray(user.connectorRoutes) || user.connectorRoutes.length === 0) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        user.connectorRoutes
+          .map((route) => String(route ?? '').trim().toUpperCase())
+          .filter((route) => route.length > 0)
+      )
+    );
+  }
+
+  private isConnectorAllowedForUser(
+    user: RequestUser | undefined,
+    connector?: SupportConnectorRoute | string
+  ): boolean {
+    if (!connector) {
+      return true;
+    }
+
+    const allowedRoutes = this.getUserConnectorRoutes(user);
+    if (allowedRoutes.length === 0) {
+      return true;
+    }
+
+    return allowedRoutes.includes(String(connector).trim().toUpperCase());
+  }
+
+  private getAccessibleDialogConnectors(
+    dialog: SupportDialog,
+    user?: RequestUser
+  ): SupportConnectorRoute[] {
+    return dialog.connectors.filter((connector) =>
+      this.isConnectorAllowedForUser(user, connector)
+    );
+  }
+
+  private resolvePreferredDialogConnector(
+    dialog: SupportDialog,
+    user?: RequestUser,
+    preferred?: SupportConnectorRoute
+  ): SupportConnectorRoute | undefined {
+    const candidates: Array<SupportConnectorRoute | undefined> = [
+      preferred,
+      dialog.lastInboundConnector,
+      dialog.lastReplyConnector,
+      ...dialog.connectors
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate) {
+        continue;
+      }
+      if (!dialog.connectors.includes(candidate)) {
+        continue;
+      }
+      if (this.isConnectorAllowedForUser(user, candidate)) {
+        return candidate;
+      }
+    }
+
+    return this.getAccessibleDialogConnectors(dialog, user)[0] ?? dialog.connectors[0];
+  }
+
+  private resolveAllowedReplyConnector(
+    dialog: SupportDialog,
+    user: RequestUser,
+    preferred?: SupportConnectorRoute
+  ): SupportConnectorRoute {
+    const connector = this.resolvePreferredDialogConnector(dialog, user, preferred);
+    if (connector && this.isConnectorAllowedForUser(user, connector)) {
+      return connector;
+    }
+
+    throw new ForbiddenException('Reply connector is outside assigned connector scope');
   }
 
   private getDialogOrThrow(dialogId: string): SupportDialog {

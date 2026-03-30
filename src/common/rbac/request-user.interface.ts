@@ -8,6 +8,7 @@ export interface RequestUser {
   maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
+  connectorRoutes: string[];
   authSource?: 'token' | 'headers' | 'anonymous';
 }
 

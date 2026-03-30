@@ -7,6 +7,7 @@
     roles: [],
     role: '',
     stationIds: [],
+    connectorRoutes: [],
     pollIntervalMs: 8000,
     authHeaders: {},
     authToken: ''
@@ -14,7 +15,13 @@
 
   var STYLE_ID = 'phab-admin-panel-style';
   var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
-  var CONNECTOR_ROUTES = ['TG_BOT', 'MAX_BOT', 'LK_WEB_MESSENGER'];
+  var CONNECTOR_ROUTES = [
+    'TG_BOT',
+    'MAX_BOT',
+    'MAX_ACADEMY_BOT',
+    'LK_WEB_MESSENGER',
+    'LK_ACADEMY_WEB_MESSENGER'
+  ];
   var CONNECTOR_CONFIG_PRESETS = {
     MAX_BOT: {
       label: 'MAX Bot',
@@ -168,6 +175,9 @@
     }
     if (!Array.isArray(cfg.stationIds)) {
       cfg.stationIds = [];
+    }
+    if (!Array.isArray(cfg.connectorRoutes)) {
+      cfg.connectorRoutes = [];
     }
     cfg.authToken = String(cfg.authToken || '').trim();
     if (!cfg.authToken) {
@@ -2208,13 +2218,15 @@
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
+    var connectorHeader = cfg.connectorRoutes.join(',');
 
     function buildHeaders(extraHeaders) {
       var headers = Object.assign(
         {
           'x-user-id': cfg.userId,
           'x-user-roles': roleHeader,
-          'x-station-ids': stationHeader
+          'x-station-ids': stationHeader,
+          'x-connector-routes': connectorHeader
         },
         cfg.authHeaders || {},
         extraHeaders || {}
@@ -3932,6 +3944,13 @@
       return 'все станции';
     }
     return stationIds.join(', ');
+  }
+
+  function formatConnectorScope(connectorRoutes) {
+    if (!Array.isArray(connectorRoutes) || connectorRoutes.length === 0) {
+      return 'все коннекторы';
+    }
+    return connectorRoutes.join(', ');
   }
 
   function formatRoleLabel(role) {
@@ -8427,7 +8446,9 @@
             ' · ' +
             user.roles.map(formatRoleLabel).join(', ') +
             ' · станции: ' +
-            formatStationScope(user.stationIds);
+            formatStationScope(user.stationIds) +
+            ' · коннекторы: ' +
+            formatConnectorScope(user.connectorRoutes);
           main.appendChild(meta);
         });
       });

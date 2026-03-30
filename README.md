@@ -69,7 +69,8 @@ API работает на `http://localhost:3000/api`.
 - `ADMIN_AUTH_SECRET=<strong_secret>`
 - `ADMIN_AUTH_TTL_HOURS=12`
 - `ADMIN_AUTH_USERS_JSON=<json-array>` (логины админов/сотрудников)
-  - пример: `[{"id":"superadmin-1","login":"superadmin","password":"change_me","roles":["SUPER_ADMIN"],"stationIds":[]}]`
+  - пример: `[{"id":"superadmin-1","login":"superadmin","password":"change_me","roles":["SUPER_ADMIN"],"stationIds":[],"connectorRoutes":[]}]`
+  - `connectorRoutes` опционален; если не задан или пустой, сотруднику доступны все коннекторы
 - `ADMIN_AUTH_MONGODB_DB=dialog` (опционально; по умолчанию используется `MONGODB_DB`, затем `dialog`)
 - `ADMIN_AUTH_MONGODB_COLLECTION=admin_users` (опционально; коллекция админ-учеток)
 - `TELEGRAM_BOT_TOKEN=<bot_token>` (для отправки сообщений в TG из коннектора)
@@ -157,6 +158,7 @@ Dev fallback:
 - `x-user-id: <id>`
 - `x-user-roles: ROLE_1,ROLE_2` или `x-user-role: ROLE`
 - `x-station-ids: station_1,station_2` или `x-station-id: station_1` (для ограничения доступа сотрудника по станциям)
+- `x-connector-routes: MAX_ACADEMY_BOT,LK_ACADEMY_WEB_MESSENGER` или `x-connector-route: MAX_ACADEMY_BOT` (для ограничения доступа сотрудника по видам коннекторов; если заголовка нет, доступны все)
 
 Пример:
 
@@ -564,7 +566,8 @@ Node-RED env vars:
     apiBaseUrl: "https://YOUR_DOMAIN/api",
     userId: "station-admin-1",
     roles: ["STATION_ADMIN"],
-    stationIds: ["station-msk-1"]
+    stationIds: ["station-msk-1"],
+    connectorRoutes: ["MAX_ACADEMY_BOT", "LK_ACADEMY_WEB_MESSENGER"]
   });
 </script>
 ```

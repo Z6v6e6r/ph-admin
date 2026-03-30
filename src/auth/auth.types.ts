@@ -23,6 +23,7 @@ export interface AdminUserConfig {
   maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
+  connectorRoutes?: string[];
 }
 
 export interface AdminUserRecord {
@@ -33,6 +34,7 @@ export interface AdminUserRecord {
   maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
+  connectorRoutes: string[];
 }
 
 export interface AdminUserSummary {
@@ -42,4 +44,5 @@ export interface AdminUserSummary {
   maxPublicUrl?: string;
   roles: Role[];
   stationIds: string[];
+  connectorRoutes: string[];
 }
