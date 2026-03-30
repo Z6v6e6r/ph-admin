@@ -24,6 +24,7 @@ import {
   SupportConnectorRoute,
   SupportConnectorSummary,
   SupportDailyAnalytics,
+  SupportDialogsExportResult,
   SupportDialogSummary,
   SupportIngestEventResult,
   SupportMessage,
@@ -239,6 +240,34 @@ export class SupportController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.supportService.getDailyAnalytics(date, user);
+  }
+
+  @Get('analytics/dialogs')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.STATION_ADMIN,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER,
+    Role.GAME_MANAGER
+  )
+  getDialogsAnalyticsExport(
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Query('includeService') includeService: string | undefined,
+    @CurrentUser() user?: RequestUser
+  ): SupportDialogsExportResult {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.supportService.getDialogsExport(
+      {
+        from,
+        to,
+        includeService: this.parseOptionalBoolean(includeService)
+      },
+      user
+    );
   }
 
   @Get('debug/runtime')

@@ -1345,6 +1345,29 @@
         margin-bottom:10px;
         flex-wrap:wrap;
       }
+      .phab-admin-analytics-subtabs{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        margin-bottom:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-analytics-pane{
+        display:block;
+      }
+      .phab-admin-analytics-export-format{
+        min-width:120px;
+        width:auto;
+      }
+      .phab-admin-analytics-export-summary{
+        margin-top:8px;
+        padding:10px 12px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        background:rgba(255,255,255,.84);
+        font-size:12px;
+        color:var(--cup-wine);
+      }
       .phab-admin-logs-filters{
         display:flex;
         align-items:flex-end;
@@ -2199,6 +2222,9 @@
         .phab-admin-logs-controls{
           justify-content:flex-start;
         }
+        .phab-admin-analytics-subtabs{
+          justify-content:flex-start;
+        }
         .phab-admin-games-page-info{
           min-width:0;
         }
@@ -2368,6 +2394,21 @@
           path += '?date=' + encodeURIComponent(date);
         }
         return request(path, 'GET');
+      },
+      getDialogsAnalyticsExport: function () {
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.from) {
+          params.set('from', String(query.from));
+        }
+        if (query.to) {
+          params.set('to', String(query.to));
+        }
+        if (query.includeService === true) {
+          params.set('includeService', 'true');
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/support/analytics/dialogs' + suffix, 'GET');
       },
       getGames: function () {
         return request('/games', 'GET');
@@ -3188,9 +3229,29 @@
     logsTable.className = 'phab-admin-games-table';
     logsTableWrap.appendChild(logsTable);
 
+    var analyticsSubtabs = document.createElement('div');
+    analyticsSubtabs.className = 'phab-admin-analytics-subtabs';
+    analyticsSection.appendChild(analyticsSubtabs);
+
+    var analyticsGamesTabBtn = document.createElement('button');
+    analyticsGamesTabBtn.className = 'phab-admin-dialog-filter phab-admin-dialog-filter-active';
+    analyticsGamesTabBtn.type = 'button';
+    analyticsGamesTabBtn.textContent = 'Игры';
+    analyticsSubtabs.appendChild(analyticsGamesTabBtn);
+
+    var analyticsDialogsTabBtn = document.createElement('button');
+    analyticsDialogsTabBtn.className = 'phab-admin-dialog-filter';
+    analyticsDialogsTabBtn.type = 'button';
+    analyticsDialogsTabBtn.textContent = 'Диалоги';
+    analyticsSubtabs.appendChild(analyticsDialogsTabBtn);
+
+    var analyticsGamesPane = document.createElement('div');
+    analyticsGamesPane.className = 'phab-admin-analytics-pane';
+    analyticsSection.appendChild(analyticsGamesPane);
+
     var analyticsControls = document.createElement('div');
     analyticsControls.className = 'phab-admin-logs-controls';
-    analyticsSection.appendChild(analyticsControls);
+    analyticsGamesPane.appendChild(analyticsControls);
 
     var analyticsFilters = document.createElement('div');
     analyticsFilters.className = 'phab-admin-logs-filters';
@@ -3240,11 +3301,87 @@
 
     var analyticsTableWrap = document.createElement('div');
     analyticsTableWrap.className = 'phab-admin-games-table-wrap';
-    analyticsSection.appendChild(analyticsTableWrap);
+    analyticsGamesPane.appendChild(analyticsTableWrap);
 
     var analyticsTable = document.createElement('table');
     analyticsTable.className = 'phab-admin-games-table';
     analyticsTableWrap.appendChild(analyticsTable);
+
+    var analyticsDialogsPane = document.createElement('div');
+    analyticsDialogsPane.className = 'phab-admin-analytics-pane phab-admin-hidden';
+    analyticsSection.appendChild(analyticsDialogsPane);
+
+    var analyticsDialogsControls = document.createElement('div');
+    analyticsDialogsControls.className = 'phab-admin-logs-controls';
+    analyticsDialogsPane.appendChild(analyticsDialogsControls);
+
+    var analyticsDialogsFilters = document.createElement('div');
+    analyticsDialogsFilters.className = 'phab-admin-logs-filters';
+    analyticsDialogsControls.appendChild(analyticsDialogsFilters);
+
+    var analyticsDialogsFromWrap = document.createElement('label');
+    analyticsDialogsFromWrap.className = 'phab-admin-logs-filter';
+    analyticsDialogsFilters.appendChild(analyticsDialogsFromWrap);
+
+    var analyticsDialogsFromLabel = document.createElement('span');
+    analyticsDialogsFromLabel.className = 'phab-admin-settings-label';
+    analyticsDialogsFromLabel.textContent = 'С даты';
+    analyticsDialogsFromWrap.appendChild(analyticsDialogsFromLabel);
+
+    var analyticsDialogsFromInput = document.createElement('input');
+    analyticsDialogsFromInput.className = 'phab-admin-settings-input';
+    analyticsDialogsFromInput.type = 'date';
+    analyticsDialogsFromInput.style.width = '160px';
+    analyticsDialogsFromWrap.appendChild(analyticsDialogsFromInput);
+
+    var analyticsDialogsToWrap = document.createElement('label');
+    analyticsDialogsToWrap.className = 'phab-admin-logs-filter';
+    analyticsDialogsFilters.appendChild(analyticsDialogsToWrap);
+
+    var analyticsDialogsToLabel = document.createElement('span');
+    analyticsDialogsToLabel.className = 'phab-admin-settings-label';
+    analyticsDialogsToLabel.textContent = 'По дату';
+    analyticsDialogsToWrap.appendChild(analyticsDialogsToLabel);
+
+    var analyticsDialogsToInput = document.createElement('input');
+    analyticsDialogsToInput.className = 'phab-admin-settings-input';
+    analyticsDialogsToInput.type = 'date';
+    analyticsDialogsToInput.style.width = '160px';
+    analyticsDialogsToWrap.appendChild(analyticsDialogsToInput);
+
+    var analyticsDialogsFormatWrap = document.createElement('label');
+    analyticsDialogsFormatWrap.className = 'phab-admin-logs-filter';
+    analyticsDialogsFilters.appendChild(analyticsDialogsFormatWrap);
+
+    var analyticsDialogsFormatLabel = document.createElement('span');
+    analyticsDialogsFormatLabel.className = 'phab-admin-settings-label';
+    analyticsDialogsFormatLabel.textContent = 'Формат';
+    analyticsDialogsFormatWrap.appendChild(analyticsDialogsFormatLabel);
+
+    var analyticsDialogsFormatInput = document.createElement('select');
+    analyticsDialogsFormatInput.className =
+      'phab-admin-settings-input phab-admin-analytics-export-format';
+    var analyticsDialogsFormatJson = document.createElement('option');
+    analyticsDialogsFormatJson.value = 'json';
+    analyticsDialogsFormatJson.textContent = 'JSON';
+    analyticsDialogsFormatInput.appendChild(analyticsDialogsFormatJson);
+    var analyticsDialogsFormatCsv = document.createElement('option');
+    analyticsDialogsFormatCsv.value = 'csv';
+    analyticsDialogsFormatCsv.textContent = 'CSV';
+    analyticsDialogsFormatInput.appendChild(analyticsDialogsFormatCsv);
+    analyticsDialogsFormatWrap.appendChild(analyticsDialogsFormatInput);
+
+    var analyticsDialogsExportBtn = document.createElement('button');
+    analyticsDialogsExportBtn.className = 'phab-admin-btn';
+    analyticsDialogsExportBtn.type = 'button';
+    analyticsDialogsExportBtn.textContent = 'Выгрузить';
+    analyticsDialogsFilters.appendChild(analyticsDialogsExportBtn);
+
+    var analyticsDialogsSummary = document.createElement('div');
+    analyticsDialogsSummary.className = 'phab-admin-analytics-export-summary';
+    analyticsDialogsSummary.textContent =
+      'Выберите период и формат, затем нажмите «Выгрузить».';
+    analyticsDialogsPane.appendChild(analyticsDialogsSummary);
 
     var tournamentsTable = document.createElement('table');
     tournamentsTable.className = 'phab-admin-games-table';
@@ -3879,11 +4016,20 @@
       logsNextPageBtn: logsNextPageBtn,
       logsPageInfo: logsPageInfo,
       logsTable: logsTable,
+      analyticsGamesTabBtn: analyticsGamesTabBtn,
+      analyticsDialogsTabBtn: analyticsDialogsTabBtn,
+      analyticsGamesPane: analyticsGamesPane,
+      analyticsDialogsPane: analyticsDialogsPane,
       analyticsFromInput: analyticsFromInput,
       analyticsToInput: analyticsToInput,
       analyticsApplyBtn: analyticsApplyBtn,
       analyticsResetBtn: analyticsResetBtn,
       analyticsTable: analyticsTable,
+      analyticsDialogsFromInput: analyticsDialogsFromInput,
+      analyticsDialogsToInput: analyticsDialogsToInput,
+      analyticsDialogsFormatInput: analyticsDialogsFormatInput,
+      analyticsDialogsExportBtn: analyticsDialogsExportBtn,
+      analyticsDialogsSummary: analyticsDialogsSummary,
       tournamentsTable: tournamentsTable,
       stationList: stationList,
       stationIdInput: stationIdInput,
@@ -4107,8 +4253,12 @@
       gameEventsFilterPhone: '',
       gameEventsFilterFrom: '',
       gameEventsFilterTo: '',
+      analyticsSubtab: 'games',
       analyticsFilterFrom: getMonthStartDateInputValue(),
       analyticsFilterTo: getTodayDateInputValue(),
+      analyticsDialogsFilterFrom: getMonthStartDateInputValue(),
+      analyticsDialogsFilterTo: getTodayDateInputValue(),
+      analyticsDialogsExportFormat: 'json',
       tournaments: [],
       tournamentsColumnWidths: {},
       tournamentsColumnWidths: {},
@@ -4152,6 +4302,9 @@
     dom.logsToInput.value = state.gameEventsFilterTo;
     dom.analyticsFromInput.value = state.analyticsFilterFrom;
     dom.analyticsToInput.value = state.analyticsFilterTo;
+    dom.analyticsDialogsFromInput.value = state.analyticsDialogsFilterFrom;
+    dom.analyticsDialogsToInput.value = state.analyticsDialogsFilterTo;
+    dom.analyticsDialogsFormatInput.value = state.analyticsDialogsExportFormat;
 
     function getStatusIconMarkup(isError) {
       if (isError) {
@@ -8104,6 +8257,300 @@
       dom.analyticsTable.appendChild(tfoot);
     }
 
+    function setAnalyticsSubtab(nextSubtab) {
+      var target = nextSubtab === 'dialogs' ? 'dialogs' : 'games';
+      state.analyticsSubtab = target;
+      var isGames = target === 'games';
+      dom.analyticsGamesTabBtn.className =
+        'phab-admin-dialog-filter' + (isGames ? ' phab-admin-dialog-filter-active' : '');
+      dom.analyticsDialogsTabBtn.className =
+        'phab-admin-dialog-filter' + (!isGames ? ' phab-admin-dialog-filter-active' : '');
+      dom.analyticsGamesPane.className = isGames
+        ? 'phab-admin-analytics-pane'
+        : 'phab-admin-analytics-pane phab-admin-hidden';
+      dom.analyticsDialogsPane.className = isGames
+        ? 'phab-admin-analytics-pane phab-admin-hidden'
+        : 'phab-admin-analytics-pane';
+    }
+
+    function escapeCsvCell(value) {
+      var text = value == null ? '' : String(value);
+      if (/[",\r\n]/.test(text)) {
+        return '"' + text.replace(/"/g, '""') + '"';
+      }
+      return text;
+    }
+
+    function buildDialogsExportRows(payload) {
+      var rows = [];
+      var period = isObject(payload && payload.period) ? payload.period : {};
+      var dialogs = Array.isArray(payload && payload.dialogs) ? payload.dialogs : [];
+
+      dialogs.forEach(function (dialog) {
+        var connectors = Array.isArray(dialog && dialog.connectors)
+          ? dialog.connectors.join('|')
+          : '';
+        var messages = Array.isArray(dialog && dialog.messages) ? dialog.messages : [];
+
+        if (messages.length === 0) {
+          rows.push({
+            periodFrom: String(period.from || ''),
+            periodTo: String(period.to || ''),
+            dialogId: String(dialog && dialog.dialogId ? dialog.dialogId : ''),
+            clientId: String(dialog && dialog.clientId ? dialog.clientId : ''),
+            clientDisplayName: String(dialog && dialog.clientDisplayName ? dialog.clientDisplayName : ''),
+            stationId: String(dialog && dialog.stationId ? dialog.stationId : ''),
+            stationName: String(dialog && dialog.stationName ? dialog.stationName : ''),
+            connectors: connectors,
+            authStatus: String(dialog && dialog.authStatus ? dialog.authStatus : ''),
+            dialogStatus: String(dialog && dialog.status ? dialog.status : ''),
+            isResolved: dialog && dialog.isResolved === true ? 'true' : 'false',
+            subject: String(dialog && dialog.subject ? dialog.subject : ''),
+            dialogCreatedAt: String(dialog && dialog.createdAt ? dialog.createdAt : ''),
+            dialogUpdatedAt: String(dialog && dialog.updatedAt ? dialog.updatedAt : ''),
+            dialogLastMessageAt: String(dialog && dialog.lastMessageAt ? dialog.lastMessageAt : ''),
+            responseCount: String(
+              Number(dialog && dialog.responseCount ? dialog.responseCount : 0)
+            ),
+            averageFirstResponseMs:
+              dialog && dialog.averageFirstResponseMs != null
+                ? String(dialog.averageFirstResponseMs)
+                : '',
+            lastFirstResponseMs:
+              dialog && dialog.lastFirstResponseMs != null
+                ? String(dialog.lastFirstResponseMs)
+                : '',
+            messageId: '',
+            messageCreatedAt: '',
+            messageConnector: '',
+            messageDirection: '',
+            messageKind: '',
+            senderRole: '',
+            senderId: '',
+            senderName: '',
+            messageText: '',
+            messagePhone: '',
+            messageEmail: '',
+            aiTopic: '',
+            aiPriority: '',
+            aiSentiment: '',
+            aiSummary: '',
+            aiTags: '',
+            messageMetaJson: ''
+          });
+          return;
+        }
+
+        messages.forEach(function (message) {
+          var ai = isObject(message && message.ai) ? message.ai : {};
+          rows.push({
+            periodFrom: String(period.from || ''),
+            periodTo: String(period.to || ''),
+            dialogId: String(dialog && dialog.dialogId ? dialog.dialogId : ''),
+            clientId: String(dialog && dialog.clientId ? dialog.clientId : ''),
+            clientDisplayName: String(dialog && dialog.clientDisplayName ? dialog.clientDisplayName : ''),
+            stationId: String(dialog && dialog.stationId ? dialog.stationId : ''),
+            stationName: String(dialog && dialog.stationName ? dialog.stationName : ''),
+            connectors: connectors,
+            authStatus: String(dialog && dialog.authStatus ? dialog.authStatus : ''),
+            dialogStatus: String(dialog && dialog.status ? dialog.status : ''),
+            isResolved: dialog && dialog.isResolved === true ? 'true' : 'false',
+            subject: String(dialog && dialog.subject ? dialog.subject : ''),
+            dialogCreatedAt: String(dialog && dialog.createdAt ? dialog.createdAt : ''),
+            dialogUpdatedAt: String(dialog && dialog.updatedAt ? dialog.updatedAt : ''),
+            dialogLastMessageAt: String(dialog && dialog.lastMessageAt ? dialog.lastMessageAt : ''),
+            responseCount: String(
+              Number(dialog && dialog.responseCount ? dialog.responseCount : 0)
+            ),
+            averageFirstResponseMs:
+              dialog && dialog.averageFirstResponseMs != null
+                ? String(dialog.averageFirstResponseMs)
+                : '',
+            lastFirstResponseMs:
+              dialog && dialog.lastFirstResponseMs != null
+                ? String(dialog.lastFirstResponseMs)
+                : '',
+            messageId: String(message && message.messageId ? message.messageId : ''),
+            messageCreatedAt: String(message && message.createdAt ? message.createdAt : ''),
+            messageConnector: String(message && message.connector ? message.connector : ''),
+            messageDirection: String(message && message.direction ? message.direction : ''),
+            messageKind: String(message && message.kind ? message.kind : ''),
+            senderRole: String(message && message.senderRole ? message.senderRole : ''),
+            senderId: String(message && message.senderId ? message.senderId : ''),
+            senderName: String(message && message.senderName ? message.senderName : ''),
+            messageText: String(message && message.text ? message.text : ''),
+            messagePhone: String(message && message.phone ? message.phone : ''),
+            messageEmail: String(message && message.email ? message.email : ''),
+            aiTopic: String(ai.topic || ''),
+            aiPriority: String(ai.priority || ''),
+            aiSentiment: String(ai.sentiment || ''),
+            aiSummary: String(ai.summary || ''),
+            aiTags: Array.isArray(ai.tags) ? ai.tags.join('|') : '',
+            messageMetaJson:
+              message && isObject(message.meta) ? JSON.stringify(message.meta) : ''
+          });
+        });
+      });
+
+      return rows;
+    }
+
+    function buildDialogsExportCsv(payload) {
+      var headers = [
+        'periodFrom',
+        'periodTo',
+        'dialogId',
+        'clientId',
+        'clientDisplayName',
+        'stationId',
+        'stationName',
+        'connectors',
+        'authStatus',
+        'dialogStatus',
+        'isResolved',
+        'subject',
+        'dialogCreatedAt',
+        'dialogUpdatedAt',
+        'dialogLastMessageAt',
+        'responseCount',
+        'averageFirstResponseMs',
+        'lastFirstResponseMs',
+        'messageId',
+        'messageCreatedAt',
+        'messageConnector',
+        'messageDirection',
+        'messageKind',
+        'senderRole',
+        'senderId',
+        'senderName',
+        'messageText',
+        'messagePhone',
+        'messageEmail',
+        'aiTopic',
+        'aiPriority',
+        'aiSentiment',
+        'aiSummary',
+        'aiTags',
+        'messageMetaJson'
+      ];
+      var rows = buildDialogsExportRows(payload);
+      var lines = [headers.join(',')];
+      rows.forEach(function (row) {
+        var line = headers
+          .map(function (header) {
+            return escapeCsvCell(row[header]);
+          })
+          .join(',');
+        lines.push(line);
+      });
+      return lines.join('\n');
+    }
+
+    function buildDialogsExportFileName(format) {
+      var fromPart = state.analyticsDialogsFilterFrom || 'from';
+      var toPart = state.analyticsDialogsFilterTo || 'to';
+      var extension = format === 'csv' ? 'csv' : 'json';
+      return 'dialogs-export-' + fromPart + '_to_' + toPart + '.' + extension;
+    }
+
+    function downloadTextFile(fileName, content, mimeType) {
+      var blob = new Blob([content], {
+        type: mimeType || 'text/plain;charset=utf-8'
+      });
+      var url = window.URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(function () {
+        window.URL.revokeObjectURL(url);
+        if (link.parentNode) {
+          link.parentNode.removeChild(link);
+        }
+      }, 0);
+    }
+
+    function renderDialogsExportSummary(payload) {
+      if (!isObject(payload)) {
+        dom.analyticsDialogsSummary.textContent = 'Нет данных для выгрузки.';
+        return;
+      }
+
+      var period = isObject(payload.period) ? payload.period : {};
+      var summary = isObject(payload.summary) ? payload.summary : {};
+      dom.analyticsDialogsSummary.textContent =
+        'Период: ' +
+        String(period.from || '-') +
+        ' — ' +
+        String(period.to || '-') +
+        '. Диалогов: ' +
+        String(Number(summary.dialogsCount || 0)) +
+        ', сообщений: ' +
+        String(Number(summary.messagesCount || 0)) +
+        ' (входящих: ' +
+        String(Number(summary.inboundMessagesCount || 0)) +
+        ', исходящих: ' +
+        String(Number(summary.outboundMessagesCount || 0)) +
+        ').';
+    }
+
+    async function exportDialogsAnalytics() {
+      state.analyticsDialogsFilterFrom = String(dom.analyticsDialogsFromInput.value || '').trim();
+      state.analyticsDialogsFilterTo = String(dom.analyticsDialogsToInput.value || '').trim();
+      state.analyticsDialogsExportFormat = String(dom.analyticsDialogsFormatInput.value || 'json')
+        .trim()
+        .toLowerCase();
+
+      if (!state.analyticsDialogsFilterFrom || !state.analyticsDialogsFilterTo) {
+        setStatus('Выберите период для выгрузки диалогов', true);
+        return;
+      }
+      if (state.analyticsDialogsFilterTo < state.analyticsDialogsFilterFrom) {
+        setStatus('Дата "По дату" должна быть не раньше "С даты"', true);
+        return;
+      }
+
+      dom.analyticsDialogsExportBtn.disabled = true;
+      try {
+        setStatus('Формируем выгрузку диалогов...', false);
+        var payload =
+          (await api.getDialogsAnalyticsExport({
+            from: state.analyticsDialogsFilterFrom || undefined,
+            to: state.analyticsDialogsFilterTo || undefined
+          })) || {};
+        if (!isObject(payload)) {
+          throw new Error('Сервис выгрузки вернул пустой ответ');
+        }
+
+        renderDialogsExportSummary(payload);
+        var format = state.analyticsDialogsExportFormat === 'csv' ? 'csv' : 'json';
+        var fileName = buildDialogsExportFileName(format);
+        if (format === 'csv') {
+          downloadTextFile(fileName, buildDialogsExportCsv(payload), 'text/csv;charset=utf-8');
+        } else {
+          downloadTextFile(
+            fileName,
+            JSON.stringify(payload, null, 2),
+            'application/json;charset=utf-8'
+          );
+        }
+
+        var exportedDialogsCount = Number(payload.summary && payload.summary.dialogsCount ? payload.summary.dialogsCount : 0);
+        var exportedMessagesCount = Number(payload.summary && payload.summary.messagesCount ? payload.summary.messagesCount : 0);
+        setStatus(
+          'Выгрузка готова: ' +
+            String(exportedDialogsCount) +
+            ' диалогов, ' +
+            String(exportedMessagesCount) +
+            ' сообщений',
+          false
+        );
+      } finally {
+        dom.analyticsDialogsExportBtn.disabled = false;
+      }
+    }
+
     function renderTournaments() {
       clearNode(dom.tournamentsTable);
 
@@ -8891,6 +9338,9 @@
       dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
+      if (isAnalytics) {
+        setAnalyticsSubtab(state.analyticsSubtab);
+      }
       if (!isMessages) {
         toggleMobileFiltersSheet(false);
       }
@@ -8936,7 +9386,9 @@
         } else if (state.activeTab === 'logs') {
           await loadGameEvents();
         } else if (state.activeTab === 'analytics') {
-          await loadGameAnalytics();
+          if (state.analyticsSubtab === 'games') {
+            await loadGameAnalytics();
+          }
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
         } else {
@@ -8975,7 +9427,11 @@
           return;
         }
         if (nextTab === 'analytics') {
-          loadGameAnalytics().catch(handleError);
+          if (state.analyticsSubtab === 'games') {
+            loadGameAnalytics().catch(handleError);
+          } else {
+            setAnalyticsSubtab(state.analyticsSubtab);
+          }
           return;
         }
         if (nextTab === 'tournaments') {
@@ -8994,7 +9450,20 @@
       });
       dom.tabAnalytics.addEventListener('click', function () {
         switchTab('analytics');
-        loadGameAnalytics().catch(handleError);
+        if (state.analyticsSubtab === 'games') {
+          loadGameAnalytics().catch(handleError);
+        } else {
+          setAnalyticsSubtab(state.analyticsSubtab);
+        }
+      });
+      dom.analyticsGamesTabBtn.addEventListener('click', function () {
+        setAnalyticsSubtab('games');
+        if (state.activeTab === 'analytics') {
+          loadGameAnalytics().catch(handleError);
+        }
+      });
+      dom.analyticsDialogsTabBtn.addEventListener('click', function () {
+        setAnalyticsSubtab('dialogs');
       });
       dom.tabTournaments.addEventListener('click', function () {
         switchTab('tournaments');
@@ -9131,6 +9600,14 @@
         dom.analyticsToInput.value = state.analyticsFilterTo;
         loadGameAnalytics().catch(handleError);
       });
+      dom.analyticsDialogsExportBtn.addEventListener('click', function () {
+        exportDialogsAnalytics().catch(handleError);
+      });
+      dom.analyticsDialogsFormatInput.addEventListener('change', function () {
+        state.analyticsDialogsExportFormat = String(dom.analyticsDialogsFormatInput.value || 'json')
+          .trim()
+          .toLowerCase();
+      });
       [dom.logsEventInput, dom.logsPhoneInput, dom.logsFromInput, dom.logsToInput].forEach(function (input) {
         input.addEventListener('keydown', function (event) {
           if (event.key === 'Enter') {
@@ -9151,6 +9628,14 @@
             state.analyticsFilterFrom = String(dom.analyticsFromInput.value || '').trim();
             state.analyticsFilterTo = String(dom.analyticsToInput.value || '').trim();
             loadGameAnalytics().catch(handleError);
+          }
+        });
+      });
+      [dom.analyticsDialogsFromInput, dom.analyticsDialogsToInput].forEach(function (input) {
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            exportDialogsAnalytics().catch(handleError);
           }
         });
       });
@@ -9263,6 +9748,7 @@
       populateMobileTabSelect();
       setStatus('Готово', false);
       bindEvents();
+      setAnalyticsSubtab(state.analyticsSubtab);
       await refreshDialogsView();
       syncResponsiveChatLayout();
       pollTimer = window.setInterval(function () {

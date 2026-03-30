@@ -306,6 +306,94 @@ export interface SupportDailyAnalytics {
   byDialog: SupportDialogReactionAnalytics[];
 }
 
+export interface SupportDialogsExportMessage {
+  messageId: string;
+  createdAt: string;
+  connector: SupportConnectorRoute;
+  direction: SupportMessageDirection;
+  kind: SupportMessageKind;
+  senderId: string;
+  senderRole: SupportSenderRole;
+  senderName?: string;
+  text?: string;
+  phone?: string;
+  email?: string;
+  externalUserId?: string;
+  externalChatId?: string;
+  externalMessageId?: string;
+  ai?: SupportAiInsight;
+  meta?: Record<string, unknown>;
+}
+
+export interface SupportDialogsExportDialog {
+  dialogId: string;
+  clientId: string;
+  clientDisplayName?: string;
+  stationId: string;
+  stationName: string;
+  connectors: SupportConnectorRoute[];
+  lastInboundConnector?: SupportConnectorRoute;
+  lastReplyConnector?: SupportConnectorRoute;
+  authStatus: SupportClientAuthStatus;
+  status: SupportDialogStatus;
+  isResolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt?: string;
+  lastClientMessageAt?: string;
+  lastStaffMessageAt?: string;
+  waitingForStaffSince?: string;
+  responseCount: number;
+  averageFirstResponseMs?: number;
+  lastFirstResponseMs?: number;
+  subject?: string;
+  primaryPhone?: string;
+  phones: string[];
+  emails: string[];
+  ai?: SupportAiInsight;
+  messages: SupportDialogsExportMessage[];
+}
+
+export interface SupportDialogsExportSummary {
+  dialogsCount: number;
+  clientsCount: number;
+  messagesCount: number;
+  inboundMessagesCount: number;
+  outboundMessagesCount: number;
+  unresolvedDialogsCount: number;
+  withoutStationDialogsCount: number;
+}
+
+export interface SupportDialogsExportConnectorStat {
+  connector: SupportConnectorRoute;
+  dialogsCount: number;
+  messagesCount: number;
+}
+
+export interface SupportDialogsExportStationStat {
+  stationId: string;
+  stationName: string;
+  dialogsCount: number;
+  messagesCount: number;
+}
+
+export interface SupportDialogsExportPeriod {
+  from: string;
+  to: string;
+  fromInclusiveIso: string;
+  toExclusiveIso: string;
+  timezone: 'UTC';
+}
+
+export interface SupportDialogsExportResult {
+  generatedAt: string;
+  period: SupportDialogsExportPeriod;
+  summary: SupportDialogsExportSummary;
+  byConnector: SupportDialogsExportConnectorStat[];
+  byStation: SupportDialogsExportStationStat[];
+  dialogs: SupportDialogsExportDialog[];
+}
+
 export interface SupportOutboxCommand {
   id: string;
   dialogId: string;

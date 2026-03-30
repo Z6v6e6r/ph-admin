@@ -35,6 +35,9 @@ import {
   SupportConnectorSummary,
   SupportDailyAnalytics,
   SupportDialog,
+  SupportDialogsExportDialog,
+  SupportDialogsExportMessage,
+  SupportDialogsExportResult,
   SupportDialogSettings,
   SupportDialogReactionAnalytics,
   SupportDialogStatus,
@@ -1039,6 +1042,214 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       byDialog: Array.from(byDialogMap.values()).sort((left, right) =>
         this.numberOrZero(right.lastFirstResponseMs) - this.numberOrZero(left.lastFirstResponseMs)
       )
+    };
+  }
+
+  getDialogsExport(
+    params: {
+      from?: string;
+      to?: string;
+      includeService?: boolean;
+    } = {},
+    user?: RequestUser
+  ): SupportDialogsExportResult {
+    if (!user) {
+      throw new ForbiddenException('User context is missing');
+    }
+    this.ensureStaff(user);
+
+    const range = this.resolveDialogsExportDateRange(params.from, params.to);
+    const includeServiceMessages = params.includeService === true;
+    const accessibleDialogs = this.listAccessibleDialogs(user);
+    const connectorStats = new Map<
+      SupportConnectorRoute,
+      {
+        dialogIds: Set<string>;
+        messagesCount: number;
+      }
+    >();
+    const stationStats = new Map<
+      string,
+      {
+        stationId: string;
+        stationName: string;
+        dialogIds: Set<string>;
+        messagesCount: number;
+      }
+    >();
+
+    const exportedDialogs: SupportDialogsExportDialog[] = [];
+    const uniqueClientIds = new Set<string>();
+    let totalMessagesCount = 0;
+    let inboundMessagesCount = 0;
+    let outboundMessagesCount = 0;
+    let unresolvedDialogsCount = 0;
+    let withoutStationDialogsCount = 0;
+
+    for (const dialog of accessibleDialogs) {
+      const sourceMessages = this.messages.get(dialog.id) ?? [];
+      const filteredMessages = sourceMessages
+        .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
+        .filter((message) =>
+          includeServiceMessages ? true : !this.isSystemDialogMessage(message)
+        )
+        .filter((message) => {
+          const messageTs = this.toTimestamp(message.createdAt);
+          return (
+            messageTs >= range.fromInclusive.getTime() &&
+            messageTs < range.toExclusive.getTime()
+          );
+        })
+        .sort(
+          (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+        );
+
+      if (filteredMessages.length === 0) {
+        continue;
+      }
+      totalMessagesCount += filteredMessages.length;
+
+      const periodConnectors = new Set<SupportConnectorRoute>();
+      const exportedMessages: SupportDialogsExportMessage[] = filteredMessages.map((message) => {
+        periodConnectors.add(message.connector);
+        if (message.direction === SupportMessageDirection.INBOUND) {
+          inboundMessagesCount += 1;
+        } else if (message.direction === SupportMessageDirection.OUTBOUND) {
+          outboundMessagesCount += 1;
+        }
+
+        const connectorStatsItem = connectorStats.get(message.connector) ?? {
+          dialogIds: new Set<string>(),
+          messagesCount: 0
+        };
+        connectorStatsItem.dialogIds.add(dialog.id);
+        connectorStatsItem.messagesCount += 1;
+        connectorStats.set(message.connector, connectorStatsItem);
+
+        return {
+          messageId: message.id,
+          createdAt: message.createdAt,
+          connector: message.connector,
+          direction: message.direction,
+          kind: message.kind,
+          senderId: message.senderId,
+          senderRole: message.senderRole,
+          senderName: message.senderName,
+          text: message.text,
+          phone: message.phone,
+          email: message.email,
+          externalUserId: message.externalUserId,
+          externalChatId: message.externalChatId,
+          externalMessageId: message.externalMessageId,
+          ai: message.ai,
+          meta: message.meta
+        };
+      });
+
+      const stationKey = dialog.stationId;
+      const stationName =
+        dialog.stationName ||
+        this.resolveStationName(undefined, undefined, dialog.stationId) ||
+        SUPPORT_UNASSIGNED_STATION_NAME;
+      const stationStatsItem = stationStats.get(stationKey) ?? {
+        stationId: dialog.stationId,
+        stationName,
+        dialogIds: new Set<string>(),
+        messagesCount: 0
+      };
+      stationStatsItem.dialogIds.add(dialog.id);
+      stationStatsItem.messagesCount += exportedMessages.length;
+      stationStats.set(stationKey, stationStatsItem);
+
+      uniqueClientIds.add(dialog.clientId);
+      if (!dialog.isResolved) {
+        unresolvedDialogsCount += 1;
+      }
+      if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
+        withoutStationDialogsCount += 1;
+      }
+
+      const client = this.clients.get(dialog.clientId);
+      exportedDialogs.push({
+        dialogId: dialog.id,
+        clientId: dialog.clientId,
+        clientDisplayName: client?.displayName,
+        stationId: dialog.stationId,
+        stationName,
+        connectors: this.mergeConnectors(dialog.connectors, Array.from(periodConnectors.values())),
+        lastInboundConnector: dialog.lastInboundConnector,
+        lastReplyConnector: dialog.lastReplyConnector,
+        authStatus: dialog.authStatus,
+        status: dialog.status,
+        isResolved: dialog.isResolved,
+        createdAt: dialog.createdAt,
+        updatedAt: dialog.updatedAt,
+        lastMessageAt: dialog.lastMessageAt,
+        lastClientMessageAt: dialog.lastClientMessageAt,
+        lastStaffMessageAt: dialog.lastStaffMessageAt,
+        waitingForStaffSince: dialog.waitingForStaffSince,
+        responseCount: dialog.responseCount,
+        averageFirstResponseMs: dialog.averageFirstResponseMs,
+        lastFirstResponseMs: dialog.lastFirstResponseMs,
+        subject: dialog.subject,
+        primaryPhone: dialog.currentPhone,
+        phones: [...dialog.phones],
+        emails: [...dialog.emails],
+        ai: dialog.ai,
+        messages: exportedMessages
+      });
+    }
+
+    exportedDialogs.sort(
+      (left, right) =>
+        this.toTimestamp(right.messages[right.messages.length - 1]?.createdAt) -
+        this.toTimestamp(left.messages[left.messages.length - 1]?.createdAt)
+    );
+
+    return {
+      generatedAt: new Date().toISOString(),
+      period: {
+        from: this.formatDateOnly(range.fromInclusive),
+        to: this.formatDateOnly(range.toInclusive),
+        fromInclusiveIso: range.fromInclusive.toISOString(),
+        toExclusiveIso: range.toExclusive.toISOString(),
+        timezone: 'UTC'
+      },
+      summary: {
+        dialogsCount: exportedDialogs.length,
+        clientsCount: uniqueClientIds.size,
+        messagesCount: totalMessagesCount,
+        inboundMessagesCount,
+        outboundMessagesCount,
+        unresolvedDialogsCount,
+        withoutStationDialogsCount
+      },
+      byConnector: Array.from(connectorStats.entries())
+        .map(([connector, item]) => ({
+          connector,
+          dialogsCount: item.dialogIds.size,
+          messagesCount: item.messagesCount
+        }))
+        .sort((left, right) => {
+          if (right.messagesCount !== left.messagesCount) {
+            return right.messagesCount - left.messagesCount;
+          }
+          return left.connector.localeCompare(right.connector);
+        }),
+      byStation: Array.from(stationStats.values())
+        .map((item) => ({
+          stationId: item.stationId,
+          stationName: item.stationName,
+          dialogsCount: item.dialogIds.size,
+          messagesCount: item.messagesCount
+        }))
+        .sort((left, right) => {
+          if (right.messagesCount !== left.messagesCount) {
+            return right.messagesCount - left.messagesCount;
+          }
+          return left.stationName.localeCompare(right.stationName, 'ru');
+        }),
+      dialogs: exportedDialogs
     };
   }
 
@@ -4351,6 +4562,55 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     const timestamp = new Date(value).getTime();
     return Number.isNaN(timestamp) ? 0 : timestamp;
+  }
+
+  private resolveDialogsExportDateRange(
+    from?: string,
+    to?: string
+  ): {
+    fromInclusive: Date;
+    toInclusive: Date;
+    toExclusive: Date;
+  } {
+    const today = this.resolveAnalyticsStart();
+    const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const fromInclusive = this.parseAnalyticsDateOrThrow(from, 'from') ?? monthStart;
+    const toInclusive = this.parseAnalyticsDateOrThrow(to, 'to') ?? today;
+
+    if (toInclusive.getTime() < fromInclusive.getTime()) {
+      throw new BadRequestException('`to` must be greater than or equal to `from`');
+    }
+
+    return {
+      fromInclusive,
+      toInclusive,
+      toExclusive: new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000)
+    };
+  }
+
+  private parseAnalyticsDateOrThrow(value: string | undefined, fieldName: 'from' | 'to'): Date | undefined {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const parsedDateOnly = new Date(`${raw}T00:00:00.000Z`);
+      if (Number.isNaN(parsedDateOnly.getTime())) {
+        throw new BadRequestException(`Invalid \`${fieldName}\` value. Expected YYYY-MM-DD.`);
+      }
+      return parsedDateOnly;
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`Invalid \`${fieldName}\` value. Expected YYYY-MM-DD.`);
+    }
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+  }
+
+  private formatDateOnly(value: Date): string {
+    return value.toISOString().slice(0, 10);
   }
 
   private resolveAnalyticsStart(date?: string): Date {

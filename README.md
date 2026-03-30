@@ -213,6 +213,7 @@ curl http://localhost:3000/api/games \
 - `GET /api/integrations/telegram/outbox?limit=100`
 - `GET /api/support/clients/resolve?connector=MAX_BOT&phone=79991234567`
 - `POST /api/support/dialogs/events`
+- `GET /api/support/analytics/dialogs?from=2026-03-01&to=2026-03-31` (выгрузка диалогов за период для `JSON/CSV`-экспорта в админке)
 - `GET /api/support/debug/runtime` (staff-only диагностика runtime-состояния support persistence/connector registry)
 
 Для UI-режима диалогов рекомендуется поток:
