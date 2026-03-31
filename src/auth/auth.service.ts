@@ -413,9 +413,27 @@ export class AuthService implements OnModuleInit {
       return [];
     }
 
+    const roleAliases: Record<string, Role> = {
+      ADMIN: Role.STATION_ADMIN,
+      ADMINISTRATOR: Role.STATION_ADMIN,
+      STATIONADMIN: Role.STATION_ADMIN,
+      STATION_ADMINISTRATOR: Role.STATION_ADMIN,
+      ADMINSTATION: Role.STATION_ADMIN,
+      SUPERADMIN: Role.SUPER_ADMIN,
+      TOURNAMENTMANAGER: Role.TOURNAMENT_MANAGER,
+      GAMEMANAGER: Role.GAME_MANAGER,
+      OPERATIONSMANAGER: Role.MANAGER
+    };
+
     const roles = rawRoles
-      .map((role) => String(role).trim().toUpperCase())
-      .filter((role): role is Role => (Object.values(Role) as string[]).includes(role));
+      .map((role) => String(role).trim().toUpperCase().replace(/[\s-]+/g, '_'))
+      .map((role) => {
+        if ((Object.values(Role) as string[]).includes(role)) {
+          return role as Role;
+        }
+        return roleAliases[role.replace(/_/g, '')] ?? roleAliases[role];
+      })
+      .filter((role): role is Role => Boolean(role));
 
     return Array.from(new Set(roles));
   }

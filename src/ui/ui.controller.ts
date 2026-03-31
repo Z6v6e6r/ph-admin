@@ -38,9 +38,26 @@ const parseCsv = (raw?: string): string[] => {
 
 const asRoleList = (rawRoles: string[]): Role[] => {
   const known = new Set<string>(Object.values(Role));
+  const aliases: Record<string, Role> = {
+    ADMIN: Role.STATION_ADMIN,
+    ADMINISTRATOR: Role.STATION_ADMIN,
+    STATIONADMIN: Role.STATION_ADMIN,
+    STATIONADMINISTRATOR: Role.STATION_ADMIN,
+    ADMINSTATION: Role.STATION_ADMIN,
+    SUPERADMIN: Role.SUPER_ADMIN,
+    TOURNAMENTMANAGER: Role.TOURNAMENT_MANAGER,
+    GAMEMANAGER: Role.GAME_MANAGER,
+    OPERATIONSMANAGER: Role.MANAGER
+  };
   return rawRoles
     .map((role) => role.trim().toUpperCase().replace(/[\s-]+/g, '_'))
-    .filter((role): role is Role => known.has(role));
+    .map((role) => {
+      if (known.has(role)) {
+        return role as Role;
+      }
+      return aliases[role.replace(/_/g, '')] ?? aliases[role];
+    })
+    .filter((role): role is Role => Boolean(role));
 };
 
 const escapeHtml = (value: string): string =>

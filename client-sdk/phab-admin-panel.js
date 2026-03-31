@@ -160,6 +160,29 @@
     { label: 'Спасибо!', text: 'Спасибо!' }
   ];
 
+  function normalizeRoleValue(rawRole) {
+    var normalized = String(rawRole || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (!normalized) {
+      return '';
+    }
+    if (ROLE_OPTIONS.indexOf(normalized) >= 0) {
+      return normalized;
+    }
+    var aliasKey = normalized.replace(/_/g, '');
+    var aliases = {
+      ADMIN: 'STATION_ADMIN',
+      ADMINISTRATOR: 'STATION_ADMIN',
+      STATIONADMIN: 'STATION_ADMIN',
+      STATIONADMINISTRATOR: 'STATION_ADMIN',
+      ADMINSTATION: 'STATION_ADMIN',
+      SUPERADMIN: 'SUPER_ADMIN',
+      TOURNAMENTMANAGER: 'TOURNAMENT_MANAGER',
+      GAMEMANAGER: 'GAME_MANAGER',
+      OPERATIONSMANAGER: 'MANAGER'
+    };
+    return aliases[aliasKey] || aliases[normalized] || normalized;
+  }
+
   function normalizeConfig(raw) {
     var cfg = Object.assign({}, DEFAULTS, raw || {});
     if (!cfg.apiBaseUrl) {
@@ -171,8 +194,19 @@
     if (!Array.isArray(cfg.roles)) {
       cfg.roles = [];
     }
+    cfg.roles = cfg.roles
+      .map(function (role) {
+        return normalizeRoleValue(role);
+      })
+      .filter(Boolean)
+      .filter(function (role, index, list) {
+        return list.indexOf(role) === index;
+      });
     if (cfg.role && cfg.roles.indexOf(cfg.role) === -1) {
-      cfg.roles.unshift(String(cfg.role));
+      var normalizedRole = normalizeRoleValue(cfg.role);
+      if (normalizedRole && cfg.roles.indexOf(normalizedRole) === -1) {
+        cfg.roles.unshift(normalizedRole);
+      }
     }
     if (!Array.isArray(cfg.stationIds)) {
       cfg.stationIds = [];
