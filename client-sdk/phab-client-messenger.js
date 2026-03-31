@@ -5,7 +5,9 @@
     title: 'Поддержка PadelHub',
     launcherText: 'Чат',
     storageKey: 'phab_messenger_widget_session',
-    stations: []
+    stations: [],
+    enableWebPush: true,
+    webPushServiceWorkerUrl: ''
   };
 
   var STYLE_ID = 'phab-messenger-widget-style';
@@ -22,6 +24,43 @@
     return Number.isNaN(ts) ? 0 : ts;
   }
 
+  function normalizeBoolean(value, fallback) {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    if (typeof value === 'string') {
+      var normalized = value.trim().toLowerCase();
+      if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+        return true;
+      }
+      if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+        return false;
+      }
+    }
+    return fallback;
+  }
+
+  function base64UrlToUint8Array(base64Url) {
+    var padded = String(base64Url || '').replace(/-/g, '+').replace(/_/g, '/');
+    var remainder = padded.length % 4;
+    if (remainder === 2) {
+      padded += '==';
+    } else if (remainder === 3) {
+      padded += '=';
+    } else if (remainder !== 0) {
+      return null;
+    }
+    var raw = window.atob(padded);
+    var output = new Uint8Array(raw.length);
+    for (var index = 0; index < raw.length; index += 1) {
+      output[index] = raw.charCodeAt(index);
+    }
+    return output;
+  }
+
   function mergeConfig(input) {
     var cfg = Object.assign({}, DEFAULTS, input || {});
     if (!cfg.apiBaseUrl) {
@@ -29,6 +68,8 @@
     }
     cfg.apiBaseUrl = String(cfg.apiBaseUrl).replace(/\/+$/, '');
     cfg.pollIntervalMs = Math.max(2000, Number(cfg.pollIntervalMs || DEFAULTS.pollIntervalMs));
+    cfg.enableWebPush = normalizeBoolean(cfg.enableWebPush, DEFAULTS.enableWebPush);
+    cfg.webPushServiceWorkerUrl = String(cfg.webPushServiceWorkerUrl || '').trim();
     if (!Array.isArray(cfg.stations)) {
       cfg.stations = [];
     }
@@ -207,6 +248,27 @@
           method: 'POST',
           body: JSON.stringify({ text: text })
         });
+      },
+
+      async getWebPushConfig() {
+        return this.request('/messenger/web-push/config', { method: 'GET' });
+      },
+
+      async upsertWebPushSubscription(subscription, threadId) {
+        return this.request('/messenger/web-push/subscriptions', {
+          method: 'POST',
+          body: JSON.stringify({
+            subscription: subscription,
+            threadId: threadId || undefined
+          })
+        });
+      },
+
+      async removeWebPushSubscription(endpoint) {
+        return this.request('/messenger/web-push/subscriptions', {
+          method: 'DELETE',
+          body: JSON.stringify({ endpoint: endpoint })
+        });
       }
     };
   }
@@ -224,6 +286,7 @@
       stationName: null,
       lastSeenAt: null,
       lastBadgeMessageAt: null,
+      pushEndpoint: null,
       unreadCount: 0,
       disposed: false
     };
@@ -231,6 +294,12 @@
     var dom = createWidgetDom(cfg);
     var api = createApi(cfg, state.clientId);
     var pollTimer = null;
+    var push = {
+      supported: false,
+      registration: null,
+      serverConfig: null,
+      syncPromise: null
+    };
 
     function setStatus(text) {
       dom.status.textContent = text;
@@ -264,6 +333,7 @@
           state.stationName = sanitizeStationName(parsed.stationName, parsed.stationId) || null;
           state.lastSeenAt = parsed.lastSeenAt || null;
           state.lastBadgeMessageAt = parsed.lastBadgeMessageAt || null;
+          state.pushEndpoint = parsed.pushEndpoint || null;
         }
       } catch (_err) {}
     }
@@ -278,7 +348,8 @@
             stationId: state.stationId,
             stationName: state.stationName,
             lastSeenAt: state.lastSeenAt,
-            lastBadgeMessageAt: state.lastBadgeMessageAt
+            lastBadgeMessageAt: state.lastBadgeMessageAt,
+            pushEndpoint: state.pushEndpoint
           })
         );
       } catch (_err) {}
@@ -367,6 +438,181 @@
       );
     }
 
+    function resolveApiOrigin() {
+      try {
+        return new URL(cfg.apiBaseUrl, window.location.href).origin;
+      } catch (_err) {
+        return '';
+      }
+    }
+
+    function resolvePushServiceWorkerUrl() {
+      if (cfg.webPushServiceWorkerUrl) {
+        try {
+          return new URL(cfg.webPushServiceWorkerUrl, window.location.href).toString();
+        } catch (_err) {
+          return '';
+        }
+      }
+
+      try {
+        return new URL(cfg.apiBaseUrl + '/client-script/messenger-push-sw.js', window.location.href).toString();
+      } catch (_err) {
+        return '';
+      }
+    }
+
+    function canUseWebPush() {
+      if (!cfg.enableWebPush) {
+        return false;
+      }
+      if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+        return false;
+      }
+      if (!window.isSecureContext) {
+        return false;
+      }
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        return false;
+      }
+      var apiOrigin = resolveApiOrigin();
+      if (!apiOrigin || apiOrigin !== window.location.origin) {
+        return false;
+      }
+      return true;
+    }
+
+    function serializePushSubscription(subscription) {
+      if (!subscription) {
+        return null;
+      }
+
+      if (typeof subscription.toJSON === 'function') {
+        var json = subscription.toJSON();
+        if (json && json.endpoint) {
+          return json;
+        }
+      }
+
+      var endpoint = String(subscription.endpoint || '').trim();
+      if (!endpoint) {
+        return null;
+      }
+
+      var p256dh = '';
+      var auth = '';
+      if (typeof subscription.getKey === 'function') {
+        var p256dhRaw = subscription.getKey('p256dh');
+        var authRaw = subscription.getKey('auth');
+        if (p256dhRaw) {
+          p256dh = btoa(String.fromCharCode.apply(null, new Uint8Array(p256dhRaw)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/g, '');
+        }
+        if (authRaw) {
+          auth = btoa(String.fromCharCode.apply(null, new Uint8Array(authRaw)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/g, '');
+        }
+      }
+
+      if (!p256dh || !auth) {
+        return null;
+      }
+
+      return {
+        endpoint: endpoint,
+        expirationTime: subscription.expirationTime,
+        keys: {
+          p256dh: p256dh,
+          auth: auth
+        }
+      };
+    }
+
+    async function ensureWebPushSubscription(interactive) {
+      if (!push.supported || state.disposed) {
+        return;
+      }
+      if (push.syncPromise) {
+        return push.syncPromise;
+      }
+
+      push.syncPromise = (async function () {
+        try {
+          if (!push.serverConfig) {
+            push.serverConfig = await api.getWebPushConfig().catch(function () {
+              return null;
+            });
+          }
+
+          if (!push.serverConfig || !push.serverConfig.enabled || !push.serverConfig.publicKey) {
+            return;
+          }
+
+          if (Notification.permission === 'denied') {
+            return;
+          }
+
+          if (!push.registration) {
+            var serviceWorkerUrl = resolvePushServiceWorkerUrl();
+            if (!serviceWorkerUrl) {
+              return;
+            }
+            push.registration = await navigator.serviceWorker.register(serviceWorkerUrl, {
+              scope: '/'
+            });
+          }
+
+          var subscription = await push.registration.pushManager.getSubscription();
+
+          if (!subscription) {
+            if (Notification.permission !== 'granted') {
+              if (!interactive) {
+                return;
+              }
+              var permission = await Notification.requestPermission();
+              if (permission !== 'granted') {
+                return;
+              }
+            }
+
+            var applicationServerKey = base64UrlToUint8Array(push.serverConfig.publicKey);
+            if (!applicationServerKey) {
+              return;
+            }
+
+            subscription = await push.registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: applicationServerKey
+            });
+          }
+
+          var serializedSubscription = serializePushSubscription(subscription);
+          if (!serializedSubscription || !serializedSubscription.endpoint) {
+            return;
+          }
+
+          var previousEndpoint = state.pushEndpoint;
+          if (previousEndpoint && previousEndpoint !== serializedSubscription.endpoint) {
+            api.removeWebPushSubscription(previousEndpoint).catch(function () {});
+          }
+
+          await api.upsertWebPushSubscription(serializedSubscription, state.threadId);
+          state.pushEndpoint = serializedSubscription.endpoint;
+          saveSession();
+        } catch (_err) {}
+      })();
+
+      try {
+        await push.syncPromise;
+      } finally {
+        push.syncPromise = null;
+      }
+    }
+
     async function ensureThread() {
       if (state.threadId) {
         return state.threadId;
@@ -449,6 +695,7 @@
 
       try {
         var threadId = await ensureThread();
+        await ensureWebPushSubscription(true);
         await api.sendMessage(threadId, text);
         dom.input.value = '';
         await syncMessages(true);
@@ -491,6 +738,7 @@
       if (state.open) {
         dom.panel.classList.remove('phab-panel-hidden');
         syncMessages(true).catch(function () {});
+        ensureWebPushSubscription(true).catch(function () {});
         setStatus('Онлайн');
       } else {
         dom.panel.classList.add('phab-panel-hidden');
@@ -505,6 +753,11 @@
       if (state.stationId) {
         dom.stationSelect.value = state.stationId;
         showHint('Станция: ' + resolveStationLabel(state.stationId, state.stationName));
+      }
+
+      push.supported = canUseWebPush();
+      if (push.supported) {
+        ensureWebPushSubscription(false).catch(function () {});
       }
 
       dom.launcher.addEventListener('click', function () {

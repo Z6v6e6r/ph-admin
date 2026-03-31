@@ -92,6 +92,14 @@ API работает на `http://localhost:3000/api`.
 - `SUPPORT_OUTBOX_COLLECTION=support_outbox` (опционально; коллекция outbox)
 - `SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS=0` (опционально; периодический full-resync support-state из Mongo в память. `0` — выключен, если события пишутся напрямую в Mongo — задайте `5000` или больше)
 - `HTTP_METRICS_LOG_INTERVAL_MS=60000` (опционально; интервал логирования агрегированных p50/p95 метрик по `/api/messenger/*` и `/api/support/*`; `0` — выключить)
+- `WEB_PUSH_ENABLED=true|false` (опционально; по умолчанию `true`)
+- `WEB_PUSH_VAPID_PUBLIC_KEY=<base64url_public_key>` (обязательно для web push)
+- `WEB_PUSH_VAPID_PRIVATE_KEY=<base64url_private_key>` (обязательно для web push)
+- `WEB_PUSH_SUBJECT=mailto:support@your-domain.com` (опционально; по умолчанию `mailto:support@padelhub.local`)
+- `WEB_PUSH_CLICK_URL=/` (опционально; куда открывать приложение по клику на push)
+- `WEB_PUSH_MONGODB_URI=mongodb://...` (опционально; отдельный URI для хранения push-подписок, иначе `SUPPORT_MONGODB_URI`/`MONGODB_URI`)
+- `WEB_PUSH_MONGODB_DB=dialog` (опционально; отдельная БД для push-подписок, иначе `SUPPORT_MONGODB_DB`/`MONGODB_DB`)
+- `WEB_PUSH_SUBSCRIPTIONS_COLLECTION=web_push_subscriptions` (опционально; коллекция подписок web push)
 - `VIVA_ADMIN_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva Admin API)
 - `VIVA_ADMIN_API_TOKEN=<token>` (опционально; если задан, используется как статический Bearer token)
 - `VIVA_ADMIN_TOKEN_URL=https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/token` (опционально; URL получения access token)
@@ -100,6 +108,12 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_ADMIN_PASSWORD=<password>` (опционально; пароль Viva для получения access token)
 - `VIVA_ADMIN_CACHE_TTL_MS=600000` (опционально; TTL кэша ссылок на ЛК клиентов)
 - `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
+
+VAPID ключи для web push можно сгенерировать командой:
+
+```bash
+npx web-push generate-vapid-keys
+```
 
 Рекомендуемая схема для разделения коннекторов:
 
@@ -188,6 +202,9 @@ curl http://localhost:3000/api/games \
 - `POST /api/messenger/threads`
 - `GET /api/messenger/threads/:threadId/messages`
 - `POST /api/messenger/threads/:threadId/messages`
+- `GET /api/messenger/web-push/config`
+- `POST /api/messenger/web-push/subscriptions`
+- `DELETE /api/messenger/web-push/subscriptions`
 - `GET /api/messenger/threads/:threadId/response-metrics`
 - `PATCH /api/messenger/threads/:threadId/close`
 - `GET /api/messenger/connectors`
@@ -492,6 +509,7 @@ Node-RED env vars:
 
 - `GET /api/client-script/messenger-widget.js` (вставка через `<script src=...>`)
 - `GET /api/client-script/messenger-widget.download.js` (скачивание файла)
+- `GET /api/client-script/messenger-push-sw.js` (service worker для web push)
 
 Пример подключения на сайт:
 
@@ -502,6 +520,8 @@ Node-RED env vars:
     apiBaseUrl: "https://YOUR_DOMAIN/api",
     clientId: "client-12345",
     pollIntervalMs: 5000,
+    enableWebPush: true,
+    // webPushServiceWorkerUrl: "/api/client-script/messenger-push-sw.js",
     stations: [
       { id: "station-msk-1", name: "Москва #1" },
       { id: "station-spb-1", name: "Санкт-Петербург #1" }
@@ -517,6 +537,7 @@ Node-RED env vars:
 - создает диалог с коннектором `LK_WEB_MESSENGER`
 - отправляет и получает сообщения
 - сохраняет сессию диалога в `localStorage`
+- регистрирует `service worker` и подписывает устройство на web push (если поддерживается браузером/доменом)
 
 ## Встраиваемый админ-скрипт (Tilda)
 

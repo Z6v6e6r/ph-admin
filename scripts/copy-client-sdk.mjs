@@ -15,7 +15,11 @@ if (!existsSync(sourceDir)) {
 
 mkdirSync(distClientSdkDir, { recursive: true });
 
-const files = ['phab-admin-panel.js', 'phab-client-messenger.js'];
+const files = [
+  'phab-admin-panel.js',
+  'phab-client-messenger.js',
+  'phab-messenger-push-sw.js'
+];
 for (const file of files) {
   const sourceFile = join(sourceDir, file);
   cpSync(sourceFile, join(distDir, file));

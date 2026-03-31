@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { ClientScriptModule } from './client-script/client-script.module';
+import { CommunitiesModule } from './communities/communities.module';
 import { RequestMetricsInterceptor } from './common/observability/request-metrics.interceptor';
 import { RequestMetricsService } from './common/observability/request-metrics.service';
 import { GamesModule } from './games/games.module';
@@ -12,16 +13,19 @@ import { RolesGuard } from './common/rbac/roles.guard';
 import { SystemController } from './system/system.controller';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { UiController } from './ui/ui.controller';
+import { WebPushModule } from './web-push/web-push.module';
 
 @Module({
   imports: [
     AuthModule,
     ClientScriptModule,
+    CommunitiesModule,
     GamesModule,
     TournamentsModule,
     MessengerModule,
     SupportModule,
-    TelegramConnectorModule
+    TelegramConnectorModule,
+    WebPushModule
   ],
   controllers: [SystemController, UiController],
   providers: [

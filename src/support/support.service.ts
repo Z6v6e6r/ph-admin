@@ -97,6 +97,11 @@ interface SupportMessagesListOptions {
   includeService?: boolean;
 }
 
+type SupportMessageObserver = (
+  dialog: SupportDialog,
+  message: SupportMessage
+) => void | Promise<void>;
+
 @Injectable()
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(SupportService.name);
@@ -106,6 +111,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly responseMetrics = new Map<string, SupportResponseMetric[]>();
   private readonly outbox = new Map<string, SupportOutboxCommand>();
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
+  private readonly messageObservers: SupportMessageObserver[] = [];
   private readonly stationMappings = this.parseStationMappings();
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
@@ -137,6 +143,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     clearInterval(this.persistenceSyncTimer);
     this.persistenceSyncTimer = undefined;
+  }
+
+  registerMessageObserver(observer: SupportMessageObserver): void {
+    this.messageObservers.push(observer);
   }
 
   async hydrateFromPersistence(): Promise<void> {
@@ -1675,9 +1685,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     if (isSystemMessage) {
       this.persistence.persistServiceMessage(message);
+      this.notifyMessageObservers(dialog, message);
       return;
     }
     this.persistence.persistMessage(message);
+    this.notifyMessageObservers(dialog, message);
+  }
+
+  private notifyMessageObservers(dialog: SupportDialog, message: SupportMessage): void {
+    for (const observer of this.messageObservers) {
+      Promise.resolve(observer(dialog, message)).catch((error: unknown) => {
+        if (console && console.error) {
+          console.error('[SupportService] message observer failed', error);
+        }
+      });
+    }
   }
 
   private findDuplicateInboundMessage(

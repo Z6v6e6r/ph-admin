@@ -55,4 +55,12 @@ export class ClientScriptController {
     );
     response.sendFile(filePath);
   }
+
+  @Get('messenger-push-sw.js')
+  streamMessengerPushServiceWorker(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-messenger-push-sw.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Service-Worker-Allowed', '/');
+    response.sendFile(filePath);
+  }
 }

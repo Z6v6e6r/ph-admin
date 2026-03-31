@@ -1,4 +1,5 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Community, CommunityStatus } from '../../communities/communities.types';
 import { Game, GameStatus } from '../../games/games.types';
 import { Tournament, TournamentStatus } from '../../tournaments/tournaments.types';
 import { LkRawRecord } from './lk-padelhub.types';
@@ -10,6 +11,7 @@ export class LkPadelHubClientService {
   private readonly logger = new Logger(LkPadelHubClientService.name);
   private readonly gamesUrl = process.env.LK_PADELHUB_GAMES_URL;
   private readonly tournamentsUrl = process.env.LK_PADELHUB_TOURNAMENTS_URL;
+  private readonly communitiesUrl = process.env.LK_PADELHUB_COMMUNITIES_URL;
   private readonly token = process.env.LK_PADELHUB_API_TOKEN;
   private readonly mode: ClientMode = this.resolveMode();
 
@@ -36,6 +38,19 @@ export class LkPadelHubClientService {
     return this.unwrapArray(payload)
       .map((raw) => this.toTournament(raw))
       .filter((tournament): tournament is Tournament => tournament !== null);
+  }
+
+  async listCommunities(): Promise<Community[]> {
+    const payload = await this.resolveCommunitiesPayload();
+
+    return this.unwrapArray(payload)
+      .map((raw) => this.toCommunity(raw))
+      .filter((community): community is Community => community !== null);
+  }
+
+  async getCommunityById(id: string): Promise<Community | null> {
+    const communities = await this.listCommunities();
+    return communities.find((community) => community.id === id) ?? null;
   }
 
   async getTournamentById(id: string): Promise<Tournament | null> {
@@ -73,6 +88,29 @@ export class LkPadelHubClientService {
       );
     }
     return this.fetchJson(this.tournamentsUrl);
+  }
+
+  private async resolveCommunitiesPayload(): Promise<unknown> {
+    const explicit = process.env.LK_PADELHUB_MODE?.trim().toLowerCase();
+
+    if (explicit === 'mock') {
+      return this.mockCommunitiesPayload();
+    }
+
+    if (explicit === 'http') {
+      if (!this.communitiesUrl) {
+        throw new InternalServerErrorException(
+          'LK_PADELHUB_COMMUNITIES_URL is required for HTTP mode'
+        );
+      }
+      return this.fetchJson(this.communitiesUrl);
+    }
+
+    if (this.communitiesUrl) {
+      return this.fetchJson(this.communitiesUrl);
+    }
+
+    return this.mockCommunitiesPayload();
   }
 
   private async fetchJson(url: string): Promise<unknown> {
@@ -183,6 +221,127 @@ export class LkPadelHubClientService {
     };
   }
 
+  private toCommunity(raw: LkRawRecord): Community | null {
+    const id =
+      this.readString(raw.id) ??
+      this.readString(raw.communityId) ??
+      this.readString(raw.community_id) ??
+      this.readString(raw.uuid) ??
+      this.readString(raw.slug);
+    const name =
+      this.readString(raw.name) ??
+      this.readString(raw.title) ??
+      this.readString(raw.communityName) ??
+      this.readString(raw.community_name);
+    if (!id || !name) {
+      return null;
+    }
+
+    const rawStatus =
+      this.readString(raw.status) ??
+      this.readString(raw.state) ??
+      this.readString(raw.moderationStatus) ??
+      this.readString(raw.moderation_status);
+
+    return {
+      id,
+      source: 'LK_PADELHUB',
+      name,
+      slug: this.readString(raw.slug),
+      description:
+        this.readString(raw.description) ??
+        this.readString(raw.summary) ??
+        this.readString(raw.about),
+      status: this.normalizeCommunityStatus(rawStatus),
+      rawStatus: rawStatus ?? undefined,
+      visibility:
+        this.readString(raw.visibility) ??
+        this.readString(raw.access) ??
+        this.readString(raw.accessMode) ??
+        this.readString(raw.access_mode),
+      stationId:
+        this.readString(raw.stationId) ??
+        this.readString(raw.station_id) ??
+        this.readString(raw.clubId) ??
+        this.readString(raw.club_id),
+      stationName:
+        this.readString(raw.stationName) ??
+        this.readString(raw.station_name) ??
+        this.readString(raw.clubName) ??
+        this.readString(raw.club_name) ??
+        this.readString(raw.locationName) ??
+        this.readString(raw.location_name),
+      membersCount:
+        this.readNumber(raw.membersCount) ??
+        this.readNumber(raw.members_count) ??
+        this.readNumber(raw.participantsCount) ??
+        this.readNumber(raw.participants_count) ??
+        this.readNumber(raw.usersCount) ??
+        this.readNumber(raw.users_count) ??
+        this.readNumber(raw.subscribersCount) ??
+        this.readNumber(raw.subscribers_count),
+      moderatorsCount:
+        this.readNumber(raw.moderatorsCount) ??
+        this.readNumber(raw.moderators_count) ??
+        this.readNumber(raw.adminsCount) ??
+        this.readNumber(raw.admins_count),
+      postsCount:
+        this.readNumber(raw.postsCount) ??
+        this.readNumber(raw.posts_count) ??
+        this.readNumber(raw.publicationsCount) ??
+        this.readNumber(raw.publications_count) ??
+        this.readNumber(raw.topicsCount) ??
+        this.readNumber(raw.topics_count) ??
+        this.readNumber(raw.discussionsCount) ??
+        this.readNumber(raw.discussions_count),
+      pendingRequestsCount:
+        this.readNumber(raw.pendingRequestsCount) ??
+        this.readNumber(raw.pending_requests_count) ??
+        this.readNumber(raw.requestsCount) ??
+        this.readNumber(raw.requests_count) ??
+        this.readNumber(raw.moderationQueueCount) ??
+        this.readNumber(raw.moderation_queue_count),
+      createdAt:
+        this.readString(raw.createdAt) ??
+        this.readString(raw.created_at),
+      updatedAt:
+        this.readString(raw.updatedAt) ??
+        this.readString(raw.updated_at),
+      lastActivityAt:
+        this.readString(raw.lastActivityAt) ??
+        this.readString(raw.last_activity_at) ??
+        this.readString(raw.lastPostAt) ??
+        this.readString(raw.last_post_at),
+      publicUrl:
+        this.readString(raw.publicUrl) ??
+        this.readString(raw.public_url) ??
+        this.readString(raw.url) ??
+        this.readString(raw.href) ??
+        this.readString(raw.link),
+      moderationUrl:
+        this.readString(raw.moderationUrl) ??
+        this.readString(raw.moderation_url) ??
+        this.readString(raw.adminUrl) ??
+        this.readString(raw.admin_url) ??
+        this.readString(raw.manageUrl) ??
+        this.readString(raw.manage_url) ??
+        this.readString(raw.managerUrl) ??
+        this.readString(raw.manager_url),
+      webviewUrl:
+        this.readString(raw.webviewUrl) ??
+        this.readString(raw.webview_url) ??
+        this.readString(raw.embedUrl) ??
+        this.readString(raw.embed_url) ??
+        this.readString(raw.iframeUrl) ??
+        this.readString(raw.iframe_url),
+      tags:
+        this.readStringArray(raw.tags) ??
+        this.readStringArray(raw.labels) ??
+        this.readStringArray(raw.categories),
+      details: raw
+    };
+  }
+
   private normalizeGameStatus(rawStatus?: string): GameStatus {
     if (!rawStatus) {
       return GameStatus.UNKNOWN;
@@ -229,6 +388,34 @@ export class LkPadelHubClientService {
     return TournamentStatus.UNKNOWN;
   }
 
+  private normalizeCommunityStatus(rawStatus?: string): CommunityStatus {
+    if (!rawStatus) {
+      return CommunityStatus.UNKNOWN;
+    }
+
+    const normalized = this.normalizeStatus(rawStatus);
+    if (['DRAFT', 'NEW', 'CREATED'].includes(normalized)) {
+      return CommunityStatus.DRAFT;
+    }
+    if (['ACTIVE', 'OPEN', 'PUBLISHED', 'PUBLIC'].includes(normalized)) {
+      return CommunityStatus.ACTIVE;
+    }
+    if (
+      ['MODERATION', 'REVIEW', 'PENDING', 'PENDING_REVIEW', 'PREMODERATION'].includes(
+        normalized
+      )
+    ) {
+      return CommunityStatus.MODERATION;
+    }
+    if (['PRIVATE', 'CLOSED', 'LOCKED', 'HIDDEN'].includes(normalized)) {
+      return CommunityStatus.PRIVATE;
+    }
+    if (['ARCHIVED', 'DELETED', 'DISABLED'].includes(normalized)) {
+      return CommunityStatus.ARCHIVED;
+    }
+    return CommunityStatus.UNKNOWN;
+  }
+
   private normalizeStatus(rawStatus: string): string {
     return rawStatus
       .trim()
@@ -242,6 +429,29 @@ export class LkPadelHubClientService {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private readNumber(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private readStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    const items = value
+      .map((item) => this.readString(item))
+      .filter((item): item is string => Boolean(item));
+
+    return items.length > 0 ? items : undefined;
   }
 
   private isRecord(value: unknown): value is LkRawRecord {
@@ -271,6 +481,55 @@ export class LkPadelHubClientService {
         endsAt: '2026-03-16T20:00:00.000Z',
         createdAt: '2026-02-20T10:00:00.000Z',
         updatedAt: '2026-03-06T09:00:00.000Z'
+      }
+    ];
+  }
+
+  private mockCommunitiesPayload(): unknown {
+    return [
+      {
+        id: 'community-dvoroteka-moscow',
+        slug: 'dvoroteka-moscow',
+        name: 'Дворотека Москва',
+        description:
+          'Основное сообщество станции: новости, анонсы матчей и заявки на вступление новых участников.',
+        status: 'ACTIVE',
+        visibility: 'PRIVATE',
+        stationId: 'station-msk-1',
+        stationName: 'Москва #1',
+        membersCount: 248,
+        moderatorsCount: 5,
+        postsCount: 184,
+        pendingRequestsCount: 7,
+        createdAt: '2026-01-15T09:00:00.000Z',
+        updatedAt: '2026-03-30T16:40:00.000Z',
+        lastActivityAt: '2026-03-31T10:15:00.000Z',
+        publicUrl: 'https://lk.padlhub.ru/communities/dvoroteka-moscow',
+        moderationUrl: 'https://lk.padlhub.ru/admin/communities/dvoroteka-moscow',
+        webviewUrl: 'https://lk.padlhub.ru/admin/communities/dvoroteka-moscow',
+        tags: ['основное', 'москва', 'частное']
+      },
+      {
+        id: 'community-juniors',
+        slug: 'dvoroteka-juniors',
+        name: 'Dvoroteka Juniors',
+        description:
+          'Клубное сообщество детского и подросткового направления с отдельной модерацией заявок.',
+        status: 'MODERATION',
+        visibility: 'REQUEST',
+        stationId: 'station-msk-2',
+        stationName: 'Москва #2',
+        membersCount: 96,
+        moderatorsCount: 3,
+        postsCount: 61,
+        pendingRequestsCount: 12,
+        createdAt: '2026-02-08T11:30:00.000Z',
+        updatedAt: '2026-03-30T12:05:00.000Z',
+        lastActivityAt: '2026-03-30T18:20:00.000Z',
+        publicUrl: 'https://lk.padlhub.ru/communities/dvoroteka-juniors',
+        moderationUrl: 'https://lk.padlhub.ru/admin/communities/dvoroteka-juniors',
+        webviewUrl: 'https://lk.padlhub.ru/admin/communities/dvoroteka-juniors',
+        tags: ['junior', 'заявки', 'модерация']
       }
     ];
   }

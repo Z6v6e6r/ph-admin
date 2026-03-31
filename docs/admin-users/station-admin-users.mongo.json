@@ -1,0 +1,110 @@
+[
+  {
+    "id": "yas-admin",
+    "login": "yas_admin",
+    "password": "StrongYas123!",
+    "title": "Администратор станции Ясенево",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "Yasenevo"
+    ]
+  },
+  {
+    "id": "nagat-admin",
+    "login": "nagat_admin",
+    "password": "StrongNagat123!",
+    "title": "Администратор станции Нагатинская",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "Nagatinskaya"
+    ]
+  },
+  {
+    "id": "nagat-p-admin",
+    "login": "nagat_p_admin",
+    "password": "StrongNagatP123!",
+    "title": "Администратор станции Нагатинская Премиум",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "NagatinskayaP"
+    ]
+  },
+  {
+    "_id": {
+      "$oid": "67e10a10aa55cc77dd001104"
+    },
+    "id": "tereh-admin",
+    "login": "tereh_admin",
+    "password": "StrongTereh123!",
+    "title": "Администратор станции Терехово",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "Terehovo"
+    ]
+  },
+  {
+    "id": "skolkovo-admin",
+    "login": "skolkovo_admin",
+    "password": "StrongSkolkovo@26",
+    "title": "Администратор станции Сколково",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "Skolkovo"
+    ]
+  },
+  {
+    "_id": {
+      "$oid": "67e10a10aa55cc77dd001106"
+    },
+    "id": "sochi-admin",
+    "login": "sochi_admin",
+    "password": "StrongSochi123!",
+    "title": "Администратор станции Сочи",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "Sochi"
+    ]
+  },
+  {
+    "_id": {
+      "$oid": "67e10a10aa55cc77dd001107"
+    },
+    "id": "seleger-admin",
+    "login": "seleger_admin",
+    "password": "StrongSeleger123!",
+    "title": "Администратор станции Селигерская",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "seleger"
+    ]
+  },
+  {
+    "_id": {
+      "$oid": "67e10a10aa55cc77dd001108"
+    },
+    "id": "t-sbora-admin",
+    "login": "t_sbora_admin",
+    "password": "StrongTSbora123!",
+    "title": "Администратор станции Точка сбора",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "care_service"
+    ]
+  }
+]

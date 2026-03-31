@@ -1,0 +1,9 @@
+station_key,station_name,system_station_id,mongo_oid,id,login,password,title,role
+yas,Ясенево,Yasenevo,67e10a10aa55cc77dd001101,yas-admin,yas_admin,StrongYas123!,"Администратор станции Ясенево",STATION_ADMIN
+nagat,Нагатинская,Nagatinskaya,67e10a10aa55cc77dd001102,nagat-admin,nagat_admin,StrongNagat123!,"Администратор станции Нагатинская",STATION_ADMIN
+nagat_p,Нагатинская Премиум,NagatinskayaP,67e10a10aa55cc77dd001103,nagat-p-admin,nagat_p_admin,StrongNagatP123!,"Администратор станции Нагатинская Премиум",STATION_ADMIN
+tereh,Терехово,Terehovo,67e10a10aa55cc77dd001104,tereh-admin,tereh_admin,StrongTereh123!,"Администратор станции Терехово",STATION_ADMIN
+kuncev,Сколково,Skolkovo,67e10a10aa55cc77dd001105,kuncev-admin,kuncev_admin,StrongKuncev123!,"Администратор станции Сколково",STATION_ADMIN
+sochi,Сочи,Sochi,67e10a10aa55cc77dd001106,sochi-admin,sochi_admin,StrongSochi123!,"Администратор станции Сочи",STATION_ADMIN
+seleger,Селигерская,seleger,67e10a10aa55cc77dd001107,seleger-admin,seleger_admin,StrongSeleger123!,"Администратор станции Селигерская",STATION_ADMIN
+t-sbora,Точка сбора,care_service,67e10a10aa55cc77dd001108,t-sbora-admin,t_sbora_admin,StrongTSbora123!,"Администратор станции Точка сбора",STATION_ADMIN
