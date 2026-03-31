@@ -249,10 +249,17 @@ export class LkPadelHubClientService {
       source: 'LK_PADELHUB',
       name,
       slug: this.readString(raw.slug),
+      logo:
+        this.readString(raw.logo) ??
+        this.readString(raw.logoUrl) ??
+        this.readString(raw.logo_url) ??
+        this.readString(raw.imageUrl) ??
+        this.readString(raw.image_url),
       description:
         this.readString(raw.description) ??
         this.readString(raw.summary) ??
         this.readString(raw.about),
+      city: this.readString(raw.city),
       status: this.normalizeCommunityStatus(rawStatus),
       rawStatus: rawStatus ?? undefined,
       visibility:
@@ -260,6 +267,24 @@ export class LkPadelHubClientService {
         this.readString(raw.access) ??
         this.readString(raw.accessMode) ??
         this.readString(raw.access_mode),
+      joinRule:
+        this.readString(raw.joinRule) ??
+        this.readString(raw.join_rule),
+      minimumLevel:
+        this.readString(raw.minimumLevel) ??
+        this.readString(raw.minimum_level) ??
+        this.readString(raw.levelFrom) ??
+        this.readString(raw.level_from),
+      rules:
+        this.readString(raw.rules) ??
+        this.readString(raw.policy),
+      inviteCode:
+        this.readString(raw.inviteCode) ??
+        this.readString(raw.invite_code),
+      inviteLink:
+        this.readString(raw.inviteLink) ??
+        this.readString(raw.invite_link) ??
+        this.readString(raw.link),
       stationId:
         this.readString(raw.stationId) ??
         this.readString(raw.station_id) ??
@@ -339,6 +364,10 @@ export class LkPadelHubClientService {
         this.readStringArray(raw.tags) ??
         this.readStringArray(raw.labels) ??
         this.readStringArray(raw.categories),
+      focusTags:
+        this.readStringArray(raw.focusTags) ??
+        this.readStringArray(raw.focus_tags) ??
+        this.readStringArray(raw.tags),
       details: raw
     };
   }

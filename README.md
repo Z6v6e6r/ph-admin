@@ -58,7 +58,11 @@ API работает на `http://localhost:3000/api`.
 - `LK_PADELHUB_MODE=mock|http`
 - `LK_PADELHUB_GAMES_URL=https://...`
 - `LK_PADELHUB_TOURNAMENTS_URL=https://...`
-- `LK_PADELHUB_COMMUNITIES_URL=https://...` (источник боевых сообществ для вкладки `Сообщества`)
+- `COMMUNITIES_MONGODB_URI=mongodb://...` (предпочтительный боевой источник сообществ; если не задано, используется `GAMES_MONGODB_URI`, затем `MONGODB_URI`)
+- `COMMUNITIES_MONGODB_DB=games` (опционально; по умолчанию `GAMES_MONGODB_DB`, затем `MONGODB_DB`, затем `games`)
+- `COMMUNITIES_MONGODB_COLLECTION=lk_communities` (опционально; по умолчанию `lk_communities`)
+- `COMMUNITIES_INVITE_BASE_URL=https://padlhub.ru/community/invite/` (опционально; база для генерации invite-link, если в документе есть только `inviteCode`)
+- `LK_PADELHUB_COMMUNITIES_URL=https://...` (fallback HTTP-источник сообществ, если Mongo для communities не настроен)
 - `LK_PADELHUB_API_TOKEN=<token>` (опционально, передается как Bearer)
 - `MONGODB_DB=dialog` (опционально; база для диалогов/чатов, по умолчанию `dialog`)
 - `GAMES_SOURCE=lk|mongo` (по умолчанию `lk`; для Mongo-источника игр укажите `mongo`)
@@ -138,9 +142,9 @@ SUPPORT_WEB_MONGODB_DB=games
 - автоматическое получение access token через password grant:
   `VIVA_ADMIN_TOKEN_URL + VIVA_ADMIN_CLIENT_ID + VIVA_ADMIN_USERNAME + VIVA_ADMIN_PASSWORD`
 
-Для `Сообществ` mock-данные используются только как локальный dev fallback. Если
-`LK_PADELHUB_COMMUNITIES_URL` не задан, в рабочем контуре backend вернет пустой список,
-а не тестовые сообщества.
+Для `Сообществ` backend сначала читает коллекцию `lk_communities` из MongoDB. HTTP-источник
+`LK_PADELHUB_COMMUNITIES_URL` используется только как fallback, если communities-Mongo не
+настроен. Mock-данные остаются только как локальный dev fallback.
 
 ## Аутентификация в MVP
 
