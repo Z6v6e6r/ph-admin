@@ -92,25 +92,26 @@ export class LkPadelHubClientService {
 
   private async resolveCommunitiesPayload(): Promise<unknown> {
     const explicit = process.env.LK_PADELHUB_MODE?.trim().toLowerCase();
-
-    if (explicit === 'mock') {
-      return this.mockCommunitiesPayload();
-    }
-
-    if (explicit === 'http') {
-      if (!this.communitiesUrl) {
-        throw new InternalServerErrorException(
-          'LK_PADELHUB_COMMUNITIES_URL is required for HTTP mode'
-        );
-      }
-      return this.fetchJson(this.communitiesUrl);
-    }
+    const isProduction = process.env.NODE_ENV?.trim().toLowerCase() === 'production';
 
     if (this.communitiesUrl) {
       return this.fetchJson(this.communitiesUrl);
     }
 
-    return this.mockCommunitiesPayload();
+    if (explicit === 'mock' && !isProduction) {
+      return this.mockCommunitiesPayload();
+    }
+
+    if (explicit === 'http') {
+      throw new InternalServerErrorException(
+        'LK_PADELHUB_COMMUNITIES_URL is required for communities HTTP mode'
+      );
+    }
+
+    this.logger.warn(
+      'LK communities source is not configured. Returning empty communities list.'
+    );
+    return [];
   }
 
   private async fetchJson(url: string): Promise<unknown> {

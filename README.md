@@ -58,6 +58,7 @@ API работает на `http://localhost:3000/api`.
 - `LK_PADELHUB_MODE=mock|http`
 - `LK_PADELHUB_GAMES_URL=https://...`
 - `LK_PADELHUB_TOURNAMENTS_URL=https://...`
+- `LK_PADELHUB_COMMUNITIES_URL=https://...` (источник боевых сообществ для вкладки `Сообщества`)
 - `LK_PADELHUB_API_TOKEN=<token>` (опционально, передается как Bearer)
 - `MONGODB_DB=dialog` (опционально; база для диалогов/чатов, по умолчанию `dialog`)
 - `GAMES_SOURCE=lk|mongo` (по умолчанию `lk`; для Mongo-источника игр укажите `mongo`)
@@ -136,6 +137,10 @@ SUPPORT_WEB_MONGODB_DB=games
 - статический токен через `VIVA_ADMIN_API_TOKEN`
 - автоматическое получение access token через password grant:
   `VIVA_ADMIN_TOKEN_URL + VIVA_ADMIN_CLIENT_ID + VIVA_ADMIN_USERNAME + VIVA_ADMIN_PASSWORD`
+
+Для `Сообществ` mock-данные используются только как локальный dev fallback. Если
+`LK_PADELHUB_COMMUNITIES_URL` не задан, в рабочем контуре backend вернет пустой список,
+а не тестовые сообщества.
 
 ## Аутентификация в MVP
 
