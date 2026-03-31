@@ -2,6 +2,8 @@ export enum CommunityStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
   MODERATION = 'MODERATION',
+  PAUSED = 'PAUSED',
+  HIDDEN = 'HIDDEN',
   PRIVATE = 'PRIVATE',
   ARCHIVED = 'ARCHIVED',
   UNKNOWN = 'UNKNOWN'
@@ -29,6 +31,9 @@ export interface CommunityMember {
   levelScore?: number;
   levelLabel?: string;
   joinedAt?: string;
+  lastActiveAt?: string;
+  warningsCount?: number;
+  complaintsCount?: number;
 }
 
 export interface Community {

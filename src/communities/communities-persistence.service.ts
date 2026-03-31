@@ -22,6 +22,7 @@ type MongoCommunityDocument = Document & {
 
 export interface CommunitiesUpdateMutation {
   name?: string;
+  status?: string;
   description?: string;
   city?: string;
   visibility?: CommunityVisibility;
@@ -32,7 +33,13 @@ export interface CommunitiesUpdateMutation {
   focusTags?: string[];
 }
 
-export type CommunityMemberManageAction = 'APPROVE' | 'REMOVE' | 'BAN';
+export type CommunityMemberManageAction =
+  | 'APPROVE'
+  | 'REMOVE'
+  | 'BAN'
+  | 'PROMOTE'
+  | 'DEMOTE'
+  | 'WARN';
 
 export interface CommunityMemberMutationInput {
   id?: string;
@@ -131,6 +138,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     if (mutation.name !== undefined) {
       updated.name = mutation.name.trim();
     }
+    if (mutation.status !== undefined) {
+      updated.status = mutation.status.trim().toUpperCase();
+      updated.archived = updated.status === 'ARCHIVED';
+    }
     if (mutation.description !== undefined) {
       updated.description = mutation.description.trim();
     }
@@ -210,6 +221,37 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         }),
         ...membersFiltered
       ];
+    }
+
+    if (mutation.action === 'PROMOTE' || mutation.action === 'DEMOTE' || mutation.action === 'WARN') {
+      const targetRole = mutation.action === 'PROMOTE'
+        ? 'ADMIN'
+        : mutation.action === 'DEMOTE'
+          ? 'MEMBER'
+          : this.normalizeRole(existingMember?.role ?? mutation.member.role);
+      const warningsCount =
+        mutation.action === 'WARN'
+          ? this.readWarningsCount(existingMember) + 1
+          : this.readWarningsCount(existingMember);
+      const targetMember = this.buildStoredMember(existingMember, mutation.member, {
+        role: targetRole,
+        status: this.normalizeMemberStatus(existingMember?.status, 'ACTIVE'),
+        warningsCount: warningsCount,
+        ...(mutation.action === 'WARN'
+          ? {
+              lastWarnedAt: now,
+              lastWarnedBy: actor ?? undefined
+            }
+          : {})
+      });
+
+      if (pendingMembers.some((entry) => this.sameMemberIdentity(entry, mutation.member))) {
+        updated.pendingMembers = [targetMember, ...pendingFiltered];
+      } else if (bannedMembers.some((entry) => this.sameMemberIdentity(entry, mutation.member))) {
+        updated.bannedMembers = [targetMember, ...bannedFiltered];
+      } else {
+        updated.members = [targetMember, ...membersFiltered];
+      }
     }
 
     if (mutation.action === 'BAN') {
@@ -501,6 +543,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     if (['MODERATION', 'REVIEW', 'PENDING', 'PENDING_REVIEW'].includes(normalized)) {
       return CommunityStatus.MODERATION;
     }
+    if (['PAUSED', 'ON_PAUSE', 'FROZEN'].includes(normalized)) {
+      return CommunityStatus.PAUSED;
+    }
+    if (['HIDDEN', 'SHADOW', 'INVISIBLE'].includes(normalized)) {
+      return CommunityStatus.HIDDEN;
+    }
     if (['PRIVATE', 'CLOSED', 'LOCKED', 'HIDDEN'].includes(normalized)) {
       return CommunityStatus.PRIVATE;
     }
@@ -553,21 +601,32 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return null;
     }
 
-    return {
-      id: id ?? undefined,
-      phone: phone ?? undefined,
-      name: name ?? 'Игрок',
-      avatar: this.pickNullableString(value.avatar ?? value.photo ?? value.imageUrl),
-      role: this.normalizeRole(value.role),
-      status: this.normalizeMemberStatus(value.status, fallbackStatus),
-      levelScore: this.pickNumeric(value.levelScore ?? value.ratingNumeric ?? value.levelNumeric),
-      levelLabel:
-        this.pickString(value.levelLabel)
-        ?? this.pickString(value.rating)
-        ?? this.pickString(value.level)
-        ?? undefined,
+      return {
+        id: id ?? undefined,
+        phone: phone ?? undefined,
+        name: name ?? 'Игрок',
+        avatar: this.pickNullableString(value.avatar ?? value.photo ?? value.imageUrl),
+        role: this.normalizeRole(value.role),
+        status: this.normalizeMemberStatus(value.status, fallbackStatus),
+        levelScore: this.pickNumeric(value.levelScore ?? value.ratingNumeric ?? value.levelNumeric),
+        levelLabel:
+          this.pickString(value.levelLabel)
+          ?? this.pickString(value.rating)
+          ?? this.pickString(value.level)
+          ?? undefined,
       joinedAt:
-        this.pickString(value.joinedAt) ?? this.pickString(value.createdAt) ?? undefined
+        this.pickString(value.joinedAt) ?? this.pickString(value.createdAt) ?? undefined,
+      lastActiveAt:
+        this.pickString(value.lastActiveAt)
+        ?? this.pickString(value.updatedAt)
+        ?? this.pickString(value.lastSeenAt)
+        ?? undefined,
+      warningsCount: this.readWarningsCount(value) || undefined,
+      complaintsCount:
+        this.pickCountNumber(value.complaintsCount)
+        ?? this.pickCountNumber(value.reportsCount)
+        ?? this.pickCountNumber(value.flagsCount)
+        ?? undefined
     };
   }
 
@@ -695,6 +754,26 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return normalized;
     }
     return fallbackStatus;
+  }
+
+  private readWarningsCount(value: unknown): number {
+    if (!this.isRecord(value)) {
+      return 0;
+    }
+
+    const explicit =
+      this.pickCountNumber(value.warningsCount)
+      ?? this.pickCountNumber(value.warningCount)
+      ?? this.pickCountNumber(value.warnCount);
+    if (explicit !== undefined) {
+      return explicit;
+    }
+
+    if (Array.isArray(value.warnings)) {
+      return value.warnings.length;
+    }
+
+    return 0;
   }
 
   private toObjectArray(value: unknown): Record<string, unknown>[] {

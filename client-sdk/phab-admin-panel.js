@@ -1036,51 +1036,310 @@
         text-align:center;
         padding:18px;
       }
-      .phab-admin-community-layout{
+      .phab-admin-communities-grid{
         display:grid;
-        grid-template-rows:auto auto minmax(0,1fr);
+        grid-template-columns:minmax(278px,320px) minmax(0,1.2fr) minmax(308px,.92fr);
+        gap:12px;
+        flex:1;
+        min-height:0;
         height:100%;
+      }
+      .phab-admin-community-pane{
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(51,0,32,.15);
+        border-radius:20px;
+        overflow:hidden;
+        box-shadow:0 14px 34px rgba(51,0,32,.08);
+        display:flex;
+        flex-direction:column;
         min-height:0;
       }
-      .phab-admin-community-head{
-        padding:12px;
-        border-bottom:1px solid rgba(51,0,32,.12);
-        background:linear-gradient(90deg,rgba(182,253,255,.34) 0%,rgba(255,255,255,.96) 100%);
+      .phab-admin-community-pane-head{
+        padding:14px 14px 12px;
+        background:
+          linear-gradient(135deg,rgba(97,7,136,.95) 0%,rgba(0,58,134,.88) 100%);
+        color:var(--cup-white);
       }
-      .phab-admin-community-title{
-        font-size:14px;
+      .phab-admin-community-pane-head-light{
+        padding:14px;
+        background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(246,242,255,.86));
+        border-bottom:1px solid rgba(51,0,32,.08);
+      }
+      .phab-admin-community-pane-title{
         font-family:var(--cup-font-heading);
+        font-size:14px;
         font-weight:700;
         letter-spacing:.04em;
         text-transform:uppercase;
-        color:var(--cup-wine);
       }
-      .phab-admin-community-meta{
+      .phab-admin-community-pane-subtitle{
         margin-top:6px;
         font-size:11px;
+        color:rgba(255,255,255,.84);
+      }
+      .phab-admin-community-pane-head-light .phab-admin-community-pane-subtitle{
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-community-search{
+        margin-top:12px;
+        width:100%;
+        max-width:none;
+        padding:10px 12px;
+        border-radius:14px;
+        border:1px solid rgba(255,255,255,.24);
+        background:rgba(255,255,255,.94);
+      }
+      .phab-admin-community-toolbar{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+        padding:10px 10px 0;
+        background:linear-gradient(180deg,rgba(246,241,255,.78),rgba(255,255,255,.68));
+      }
+      .phab-admin-community-toolbar-select{
+        width:100%;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        padding:8px 10px;
+        font-size:11px;
+        font-weight:700;
+        color:var(--cup-wine);
+        background:rgba(255,255,255,.94);
+      }
+      .phab-admin-community-toolbar-select:focus{
+        outline:none;
+        border-color:rgba(97,7,136,.44);
+        box-shadow:0 0 0 3px rgba(221,200,252,.34);
+      }
+      .phab-admin-community-list-body{
+        padding:10px;
+        overflow:auto;
+        flex:1;
+        min-height:0;
+      }
+      .phab-admin-community-card{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        padding:10px;
+        border-radius:18px;
+        border:1px solid rgba(51,0,32,.1);
+        background:rgba(255,255,255,.94);
+        box-shadow:0 10px 24px rgba(51,0,32,.06);
+      }
+      .phab-admin-community-card-active{
+        border-color:rgba(97,7,136,.34);
+        background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(245,240,255,.95));
+        box-shadow:0 14px 26px rgba(97,7,136,.12);
+      }
+      .phab-admin-community-card-btn{
+        border:none;
+        background:transparent;
+        padding:0;
+        cursor:pointer;
+        text-align:left;
+      }
+      .phab-admin-community-card-head{
+        display:grid;
+        grid-template-columns:44px minmax(0,1fr) auto;
+        gap:10px;
+        align-items:center;
+      }
+      .phab-admin-community-avatar{
+        width:44px;
+        height:44px;
+        border-radius:16px;
+        border:1px solid rgba(51,0,32,.1);
+        background:linear-gradient(135deg,rgba(221,200,252,.9),rgba(182,253,255,.88));
+        overflow:hidden;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-family:var(--cup-font-heading);
+        font-size:13px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-avatar img{
+        width:100%;
+        height:100%;
+        object-fit:cover;
+        display:block;
+      }
+      .phab-admin-community-card-title{
+        font-size:18px;
+        font-weight:800;
+        line-height:1.08;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-card-meta{
+        margin-top:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.62);
+      }
+      .phab-admin-community-status-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        padding:6px 10px;
+        border-radius:999px;
+        font-size:10px;
+        font-weight:900;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        border:1px solid rgba(51,0,32,.1);
+        white-space:nowrap;
+      }
+      .phab-admin-community-status-good{
+        background:rgba(1,67,58,.1);
+        color:#04604a;
+      }
+      .phab-admin-community-status-warn{
+        background:rgba(255,232,145,.56);
+        color:#8e5900;
+      }
+      .phab-admin-community-status-danger{
+        background:rgba(255,70,78,.12);
+        color:#be1d2a;
+      }
+      .phab-admin-community-status-muted{
+        background:rgba(51,0,32,.08);
         color:rgba(51,0,32,.72);
       }
-      .phab-admin-community-links{
+      .phab-admin-community-activity-row,
+      .phab-admin-community-signal-row,
+      .phab-admin-community-risk-row,
+      .phab-admin-community-card-actions{
         display:flex;
         flex-wrap:wrap;
+        gap:6px;
+      }
+      .phab-admin-community-mini-chip,
+      .phab-admin-community-signal,
+      .phab-admin-community-risk{
+        display:inline-flex;
+        align-items:center;
+        gap:5px;
+        padding:5px 9px;
+        border-radius:999px;
+        font-size:10px;
+        font-weight:800;
+        border:1px solid rgba(51,0,32,.09);
+        background:rgba(247,243,255,.9);
+        color:rgba(51,0,32,.78);
+      }
+      .phab-admin-community-signal-strong{
+        background:rgba(255,70,78,.12);
+        color:#be1d2a;
+      }
+      .phab-admin-community-risk{
+        background:rgba(255,232,145,.46);
+        color:#915f00;
+      }
+      .phab-admin-community-risk-danger{
+        background:rgba(255,70,78,.12);
+        color:#be1d2a;
+      }
+      .phab-admin-community-card-action{
+        border:none;
+        cursor:pointer;
+        border-radius:12px;
+        padding:7px 10px;
+        font-size:11px;
+        font-weight:800;
+        color:var(--cup-wine);
+        background:rgba(246,241,255,.96);
+      }
+      .phab-admin-community-card-action:hover{
+        background:rgba(221,200,252,.56);
+      }
+      .phab-admin-community-card-action-danger{
+        background:rgba(255,70,78,.12);
+        color:#be1d2a;
+      }
+      .phab-admin-community-main{
+        display:flex;
+        flex-direction:column;
+        min-height:0;
+      }
+      .phab-admin-community-main-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:14px;
+        padding:14px;
+        border-bottom:1px solid rgba(51,0,32,.08);
+        background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(245,240,255,.88));
+      }
+      .phab-admin-community-main-lead{
+        display:grid;
+        grid-template-columns:62px minmax(0,1fr);
+        gap:12px;
+        align-items:flex-start;
+        min-width:0;
+      }
+      .phab-admin-community-main-avatar{
+        width:62px;
+        height:62px;
+        border-radius:20px;
+      }
+      .phab-admin-community-main-title{
+        font-size:22px;
+        line-height:1.04;
+      }
+      .phab-admin-community-main-meta{
+        margin-top:6px;
+        font-size:12px;
+        color:rgba(51,0,32,.68);
+      }
+      .phab-admin-community-main-actions{
+        display:flex;
+        flex-wrap:wrap;
+        justify-content:flex-end;
         gap:8px;
+        max-width:280px;
+      }
+      .phab-admin-community-main-action{
+        border:none;
+        cursor:pointer;
+        padding:9px 12px;
+        border-radius:14px;
+        font-size:11px;
+        font-weight:800;
+        background:rgba(246,241,255,.98);
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-main-action:hover{
+        transform:translateY(-1px);
+      }
+      .phab-admin-community-main-action-danger{
+        background:linear-gradient(90deg,rgba(255,70,78,.14),rgba(255,113,88,.16));
+        color:#be1d2a;
+      }
+      .phab-admin-community-main-action-warn{
+        background:rgba(255,232,145,.62);
+        color:#855500;
+      }
+      .phab-admin-community-main-tags{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
         margin-top:10px;
       }
-      .phab-admin-community-stats{
+      .phab-admin-community-summary{
         display:grid;
         grid-template-columns:repeat(4,minmax(0,1fr));
         gap:10px;
-        padding:12px;
+        padding:12px 14px;
         border-bottom:1px solid rgba(51,0,32,.08);
-        background:rgba(255,255,255,.64);
+        background:rgba(255,255,255,.76);
       }
       .phab-admin-community-stat{
         min-width:0;
         padding:11px 12px;
-        border-radius:14px;
-        border:1px solid rgba(51,0,32,.12);
-        background:rgba(255,255,255,.92);
-        box-shadow:0 8px 18px rgba(51,0,32,.06);
+        border-radius:16px;
+        border:1px solid rgba(51,0,32,.1);
+        background:rgba(255,255,255,.96);
+        box-shadow:0 8px 18px rgba(51,0,32,.05);
       }
       .phab-admin-community-stat-label{
         display:block;
@@ -1093,50 +1352,108 @@
       .phab-admin-community-stat-value{
         display:block;
         margin-top:7px;
-        font-size:18px;
+        font-size:20px;
         font-weight:800;
         color:var(--cup-wine);
       }
-      .phab-admin-community-frame-wrap{
-        min-height:0;
-        position:relative;
-        background:
-          linear-gradient(rgba(255,255,255,.86),rgba(255,255,255,.86)),
-          linear-gradient(135deg,rgba(207,255,182,.22) 0%,rgba(182,253,255,.18) 48%,rgba(221,200,252,.22) 100%);
-      }
-      .phab-admin-community-frame{
-        display:block;
-        width:100%;
-        height:100%;
-        border:0;
-        background:#fff;
-      }
-      .phab-admin-community-empty{
+      .phab-admin-community-tabs{
         display:flex;
-        align-items:center;
-        justify-content:center;
-        height:100%;
-        text-align:center;
-        padding:18px;
-      }
-      .phab-admin-community-admin-grid{
-        display:grid;
-        grid-template-columns:repeat(3,minmax(240px,1fr));
-        gap:12px;
-        padding:12px;
+        flex-wrap:wrap;
+        gap:8px;
+        padding:12px 14px 10px;
         border-bottom:1px solid rgba(51,0,32,.08);
-        background:rgba(255,255,255,.56);
+        background:rgba(255,255,255,.82);
       }
-      .phab-admin-community-admin-grid .phab-admin-settings-card{
-        min-height:320px;
+      .phab-admin-community-tab{
+        border:none;
+        border-radius:999px;
+        padding:8px 12px;
+        cursor:pointer;
+        background:rgba(246,241,255,.96);
+        color:rgba(51,0,32,.82);
+        font-size:12px;
+        font-weight:800;
+      }
+      .phab-admin-community-tab-active{
+        background:linear-gradient(90deg,rgba(97,7,136,.96),rgba(0,58,134,.92));
+        color:var(--cup-white);
+      }
+      .phab-admin-community-main-body,
+      .phab-admin-community-preview-body{
+        padding:14px;
+        overflow:auto;
+        flex:1;
+        min-height:0;
+      }
+      .phab-admin-community-stack{
+        display:flex;
+        flex-direction:column;
+        gap:12px;
+      }
+      .phab-admin-community-section-card{
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:18px;
+        background:rgba(255,255,255,.96);
+        padding:14px;
+        box-shadow:0 8px 18px rgba(51,0,32,.05);
+      }
+      .phab-admin-community-section-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:10px;
+        margin-bottom:12px;
+      }
+      .phab-admin-community-section-title{
+        font-size:12px;
+        font-weight:900;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.7);
+      }
+      .phab-admin-community-section-subtitle{
+        margin-top:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.58);
+      }
+      .phab-admin-community-overview-grid{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:10px;
+      }
+      .phab-admin-community-overview-card{
+        padding:12px;
+        border-radius:16px;
+        background:linear-gradient(180deg,rgba(247,243,255,.98),rgba(255,255,255,.96));
+        border:1px solid rgba(51,0,32,.08);
+      }
+      .phab-admin-community-overview-card strong{
+        display:block;
+        font-size:22px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-overview-card span{
+        display:block;
+        margin-top:6px;
+        font-size:11px;
+        color:rgba(51,0,32,.64);
+      }
+      .phab-admin-community-form-grid{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:12px;
       }
       .phab-admin-community-form-field{
         display:flex;
         flex-direction:column;
         gap:6px;
       }
+      .phab-admin-community-form-field-wide{
+        grid-column:1 / -1;
+      }
       .phab-admin-community-form-actions{
         display:flex;
+        flex-wrap:wrap;
         justify-content:flex-end;
         gap:8px;
         margin-top:4px;
@@ -1148,6 +1465,142 @@
         display:flex;
         flex-wrap:wrap;
         gap:8px;
+      }
+      .phab-admin-community-segments{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-bottom:12px;
+      }
+      .phab-admin-community-segment{
+        border:none;
+        cursor:pointer;
+        border-radius:999px;
+        padding:7px 11px;
+        font-size:11px;
+        font-weight:800;
+        background:rgba(246,241,255,.96);
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-segment-active{
+        background:rgba(97,7,136,.96);
+        color:var(--cup-white);
+      }
+      .phab-admin-community-preview-shell{
+        background:
+          linear-gradient(180deg,rgba(255,255,255,.98),rgba(244,240,255,.92));
+      }
+      .phab-admin-community-preview-frame{
+        border:1px solid rgba(97,7,136,.12);
+        border-radius:26px;
+        padding:12px;
+        background:
+          linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,244,255,.94));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.8);
+      }
+      .phab-admin-community-preview-tabs{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-bottom:12px;
+      }
+      .phab-admin-community-preview-card{
+        border:1px solid rgba(51,0,32,.08);
+        border-radius:20px;
+        padding:14px;
+        background:rgba(255,255,255,.98);
+        box-shadow:0 8px 18px rgba(51,0,32,.05);
+      }
+      .phab-admin-community-preview-post-top,
+      .phab-admin-community-preview-message-top,
+      .phab-admin-community-history-row,
+      .phab-admin-community-rating-row{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:10px;
+      }
+      .phab-admin-community-preview-kicker{
+        font-size:10px;
+        font-weight:900;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        color:rgba(97,7,136,.86);
+      }
+      .phab-admin-community-preview-title{
+        margin-top:6px;
+        font-size:22px;
+        line-height:1.04;
+        font-weight:800;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-preview-text{
+        margin-top:10px;
+        font-size:13px;
+        line-height:1.5;
+        color:rgba(51,0,32,.74);
+      }
+      .phab-admin-community-preview-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:12px;
+      }
+      .phab-admin-community-preview-action{
+        border:none;
+        cursor:pointer;
+        border-radius:14px;
+        padding:9px 12px;
+        font-size:11px;
+        font-weight:800;
+        background:rgba(246,241,255,.96);
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-preview-action-danger{
+        background:rgba(255,70,78,.12);
+        color:#be1d2a;
+      }
+      .phab-admin-community-rating-list,
+      .phab-admin-community-history-list{
+        display:flex;
+        flex-direction:column;
+        gap:10px;
+      }
+      .phab-admin-community-rating-row strong{
+        font-size:15px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-rating-row span,
+      .phab-admin-community-history-row span{
+        display:block;
+        margin-top:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.6);
+      }
+      .phab-admin-community-about-grid{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:10px;
+      }
+      .phab-admin-community-about-item{
+        padding:12px;
+        border-radius:16px;
+        background:rgba(247,243,255,.94);
+        border:1px solid rgba(51,0,32,.08);
+      }
+      .phab-admin-community-about-item label{
+        display:block;
+        font-size:10px;
+        font-weight:900;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.54);
+      }
+      .phab-admin-community-about-item strong{
+        display:block;
+        margin-top:7px;
+        font-size:14px;
+        color:var(--cup-wine);
       }
       .phab-admin-dialog-tags{
         display:flex;
@@ -2025,6 +2478,9 @@
           grid-template-columns:1fr;
           grid-template-rows:minmax(220px,32dvh) minmax(0,1fr);
         }
+        .phab-admin-communities-grid{
+          grid-template-columns:1fr;
+        }
         .phab-admin-dialog-wrap{height:100%}
         .phab-admin-dialog-head{
           grid-template-columns:1fr;
@@ -2050,8 +2506,17 @@
         }
         .phab-admin-messages{grid-column:auto;grid-row:1}
         .phab-admin-dialog-cabinet{grid-column:auto;grid-row:2}
-        .phab-admin-community-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
-        .phab-admin-community-admin-grid{grid-template-columns:1fr}
+        .phab-admin-community-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-admin-community-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-admin-community-form-grid{grid-template-columns:1fr}
+        .phab-admin-community-main-head{
+          flex-direction:column;
+        }
+        .phab-admin-community-main-actions{
+          justify-content:flex-start;
+          max-width:none;
+        }
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -2351,8 +2816,12 @@
         }
         .phab-admin-modal-card{max-height:calc(100dvh - 16px)}
         .phab-admin-detail-row{grid-template-columns:1fr}
-        .phab-admin-community-stats{grid-template-columns:1fr}
-        .phab-admin-community-admin-grid{padding:8px}
+        .phab-admin-community-toolbar{grid-template-columns:1fr}
+        .phab-admin-community-summary{grid-template-columns:1fr}
+        .phab-admin-community-overview-grid{grid-template-columns:1fr}
+        .phab-admin-community-about-grid{grid-template-columns:1fr}
+        .phab-admin-community-main-body,
+        .phab-admin-community-preview-body{padding:10px}
       }
     `;
     document.head.appendChild(style);
@@ -3532,35 +4001,65 @@
     tournamentsSection.appendChild(tournamentsTable);
 
     var communitiesGrid = document.createElement('div');
-    communitiesGrid.className = 'phab-admin-msg-grid';
+    communitiesGrid.className = 'phab-admin-communities-grid';
     communitiesSection.appendChild(communitiesGrid);
 
     var communitiesListPane = document.createElement('div');
-    communitiesListPane.className = 'phab-admin-pane';
+    communitiesListPane.className = 'phab-admin-community-pane';
     communitiesGrid.appendChild(communitiesListPane);
 
     var communitiesListHead = document.createElement('div');
-    communitiesListHead.className = 'phab-admin-pane-head';
+    communitiesListHead.className = 'phab-admin-community-pane-head';
     communitiesListPane.appendChild(communitiesListHead);
 
-    var communitiesListHeadTitle = document.createElement('span');
-    communitiesListHeadTitle.className = 'phab-admin-pane-head-title';
+    var communitiesListHeadTitle = document.createElement('div');
+    communitiesListHeadTitle.className = 'phab-admin-community-pane-title';
     communitiesListHeadTitle.textContent = 'Сообщества';
     communitiesListHead.appendChild(communitiesListHeadTitle);
 
-    var communitiesListHeadActions = document.createElement('div');
-    communitiesListHeadActions.className = 'phab-admin-pane-head-actions';
-    communitiesListHead.appendChild(communitiesListHeadActions);
+    var communitiesListHeadSubtitle = document.createElement('div');
+    communitiesListHeadSubtitle.className = 'phab-admin-community-pane-subtitle';
+    communitiesListHeadSubtitle.textContent =
+      'Рабочая панель модератора: поиск, фильтры, риски и быстрые действия.';
+    communitiesListHead.appendChild(communitiesListHeadSubtitle);
 
     var communitySearchInput = document.createElement('input');
-    communitySearchInput.className = 'phab-admin-input phab-admin-pane-head-search';
+    communitySearchInput.className = 'phab-admin-input phab-admin-community-search';
     communitySearchInput.type = 'search';
-    communitySearchInput.placeholder = 'Поиск по названию или станции...';
+    communitySearchInput.placeholder = 'Поиск по названию, станции, тегам...';
     communitySearchInput.setAttribute('aria-label', 'Поиск сообществ');
-    communitiesListHeadActions.appendChild(communitySearchInput);
+    communitiesListHead.appendChild(communitySearchInput);
+
+    var communitiesToolbar = document.createElement('div');
+    communitiesToolbar.className = 'phab-admin-community-toolbar';
+    communitiesListPane.appendChild(communitiesToolbar);
+
+    var communityStationFilter = document.createElement('select');
+    communityStationFilter.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communityStationFilter);
+
+    var communityStatusFilter = document.createElement('select');
+    communityStatusFilter.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communityStatusFilter);
+
+    var communityLevelFilter = document.createElement('select');
+    communityLevelFilter.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communityLevelFilter);
+
+    var communityAccessFilter = document.createElement('select');
+    communityAccessFilter.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communityAccessFilter);
+
+    var communityActivityFilter = document.createElement('select');
+    communityActivityFilter.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communityActivityFilter);
+
+    var communitySortSelect = document.createElement('select');
+    communitySortSelect.className = 'phab-admin-community-toolbar-select';
+    communitiesToolbar.appendChild(communitySortSelect);
 
     var communitiesListBody = document.createElement('div');
-    communitiesListBody.className = 'phab-admin-pane-body';
+    communitiesListBody.className = 'phab-admin-community-list-body';
     communitiesListPane.appendChild(communitiesListBody);
 
     var communitiesList = document.createElement('ul');
@@ -3568,60 +4067,83 @@
     communitiesListBody.appendChild(communitiesList);
 
     var communitiesDetailPane = document.createElement('div');
-    communitiesDetailPane.className = 'phab-admin-pane';
+    communitiesDetailPane.className = 'phab-admin-community-pane phab-admin-community-main';
     communitiesGrid.appendChild(communitiesDetailPane);
 
-    var communitiesDetailLayout = document.createElement('div');
-    communitiesDetailLayout.className = 'phab-admin-community-layout';
-    communitiesDetailPane.appendChild(communitiesDetailLayout);
-
     var communityHead = document.createElement('div');
-    communityHead.className = 'phab-admin-community-head';
-    communitiesDetailLayout.appendChild(communityHead);
+    communityHead.className = 'phab-admin-community-main-head';
+    communitiesDetailPane.appendChild(communityHead);
+
+    var communityHeadLead = document.createElement('div');
+    communityHeadLead.className = 'phab-admin-community-main-lead';
+    communityHead.appendChild(communityHeadLead);
+
+    var communityAvatar = document.createElement('div');
+    communityAvatar.className = 'phab-admin-community-avatar phab-admin-community-main-avatar';
+    communityAvatar.textContent = 'CM';
+    communityHeadLead.appendChild(communityAvatar);
+
+    var communityHeadInfo = document.createElement('div');
+    communityHeadLead.appendChild(communityHeadInfo);
 
     var communityTitle = document.createElement('div');
-    communityTitle.className = 'phab-admin-community-title';
+    communityTitle.className = 'phab-admin-community-pane-title phab-admin-community-main-title';
     communityTitle.textContent = 'Сообщество не выбрано';
-    communityHead.appendChild(communityTitle);
+    communityHeadInfo.appendChild(communityTitle);
 
     var communityMeta = document.createElement('div');
-    communityMeta.className = 'phab-admin-community-meta';
+    communityMeta.className = 'phab-admin-community-main-meta';
     communityMeta.textContent =
-      'Выберите сообщество слева, чтобы открыть интерфейс модерации и параметры сообщества.';
-    communityHead.appendChild(communityMeta);
+      'Выберите сообщество слева, чтобы открыть модераторский интерфейс и параметры.';
+    communityHeadInfo.appendChild(communityMeta);
 
     var communityTags = document.createElement('div');
-    communityTags.className = 'phab-admin-dialog-tags';
-    communityHead.appendChild(communityTags);
+    communityTags.className = 'phab-admin-community-main-tags';
+    communityHeadInfo.appendChild(communityTags);
 
     var communityLinks = document.createElement('div');
-    communityLinks.className = 'phab-admin-community-links';
+    communityLinks.className = 'phab-admin-community-main-tags';
     communityLinks.style.display = 'none';
-    communityHead.appendChild(communityLinks);
+    communityHeadInfo.appendChild(communityLinks);
+
+    var communityActions = document.createElement('div');
+    communityActions.className = 'phab-admin-community-main-actions';
+    communityHead.appendChild(communityActions);
 
     var communityStats = document.createElement('div');
-    communityStats.className = 'phab-admin-community-stats phab-admin-hidden';
-    communitiesDetailLayout.appendChild(communityStats);
+    communityStats.className = 'phab-admin-community-summary';
+    communitiesDetailPane.appendChild(communityStats);
+
+    var communityTabs = document.createElement('div');
+    communityTabs.className = 'phab-admin-community-tabs';
+    communitiesDetailPane.appendChild(communityTabs);
 
     var communityAdminGrid = document.createElement('div');
-    communityAdminGrid.className = 'phab-admin-community-admin-grid phab-admin-hidden';
-    communitiesDetailLayout.appendChild(communityAdminGrid);
+    communityAdminGrid.className = 'phab-admin-community-main-body';
+    communitiesDetailPane.appendChild(communityAdminGrid);
 
-    var communityFrameWrap = document.createElement('div');
-    communityFrameWrap.className = 'phab-admin-community-frame-wrap';
-    communitiesDetailLayout.appendChild(communityFrameWrap);
+    var communitiesPreviewPane = document.createElement('div');
+    communitiesPreviewPane.className = 'phab-admin-community-pane phab-admin-community-preview-shell';
+    communitiesGrid.appendChild(communitiesPreviewPane);
 
-    var communityEmpty = document.createElement('div');
-    communityEmpty.className = 'phab-admin-empty phab-admin-community-empty';
-    communityEmpty.textContent = 'Выберите сообщество слева, чтобы открыть интерфейс управления.';
-    communityFrameWrap.appendChild(communityEmpty);
+    var communityPreviewHead = document.createElement('div');
+    communityPreviewHead.className = 'phab-admin-community-pane-head-light';
+    communitiesPreviewPane.appendChild(communityPreviewHead);
 
-    var communityFrame = document.createElement('iframe');
-    communityFrame.className = 'phab-admin-community-frame';
-    communityFrame.loading = 'lazy';
-    communityFrame.style.display = 'none';
-    communityFrame.setAttribute('title', 'Интерфейс сообщества');
-    communityFrameWrap.appendChild(communityFrame);
+    var communityPreviewTitle = document.createElement('div');
+    communityPreviewTitle.className = 'phab-admin-community-pane-title';
+    communityPreviewTitle.textContent = 'Модерация сообщества';
+    communityPreviewHead.appendChild(communityPreviewTitle);
+
+    var communityPreviewMeta = document.createElement('div');
+    communityPreviewMeta.className = 'phab-admin-community-pane-subtitle';
+    communityPreviewMeta.textContent =
+      'Живой режим просмотра: лента, чат, рейтинг и карточка сообщества.';
+    communityPreviewHead.appendChild(communityPreviewMeta);
+
+    var communityPreviewBody = document.createElement('div');
+    communityPreviewBody.className = 'phab-admin-community-preview-body';
+    communitiesPreviewPane.appendChild(communityPreviewBody);
 
     var settingsGrid = document.createElement('div');
     settingsGrid.className = 'phab-admin-settings-grid';
@@ -4270,15 +4792,25 @@
       analyticsDialogsSummary: analyticsDialogsSummary,
       tournamentsTable: tournamentsTable,
       communitySearchInput: communitySearchInput,
+      communityStationFilter: communityStationFilter,
+      communityStatusFilter: communityStatusFilter,
+      communityLevelFilter: communityLevelFilter,
+      communityAccessFilter: communityAccessFilter,
+      communityActivityFilter: communityActivityFilter,
+      communitySortSelect: communitySortSelect,
       communitiesList: communitiesList,
+      communityAvatar: communityAvatar,
       communityTitle: communityTitle,
       communityMeta: communityMeta,
       communityTags: communityTags,
       communityLinks: communityLinks,
+      communityActions: communityActions,
       communityStats: communityStats,
+      communityTabs: communityTabs,
       communityAdminGrid: communityAdminGrid,
-      communityFrame: communityFrame,
-      communityEmpty: communityEmpty,
+      communityPreviewTitle: communityPreviewTitle,
+      communityPreviewMeta: communityPreviewMeta,
+      communityPreviewBody: communityPreviewBody,
       stationList: stationList,
       stationIdInput: stationIdInput,
       stationNameInput: stationNameInput,
@@ -4524,6 +5056,15 @@
       communities: [],
       selectedCommunityId: null,
       communitiesSearchQuery: '',
+      communitiesStationFilter: 'ALL',
+      communitiesStatusFilter: 'ALL',
+      communitiesLevelFilter: 'ALL',
+      communitiesAccessFilter: 'ALL',
+      communitiesActivityFilter: 'ALL',
+      communitiesSortField: 'activity',
+      communityCenterTab: 'overview',
+      communityPreviewTab: 'feed',
+      communityMembersSegment: 'ALL',
       communitySavingId: null,
       communityManagingKey: null,
       tournamentsColumnWidths: {},
@@ -4572,6 +5113,12 @@
     dom.analyticsDialogsToInput.value = state.analyticsDialogsFilterTo;
     dom.analyticsDialogsFormatInput.value = state.analyticsDialogsExportFormat;
     dom.communitySearchInput.value = state.communitiesSearchQuery;
+    dom.communityStationFilter.value = state.communitiesStationFilter;
+    dom.communityStatusFilter.value = state.communitiesStatusFilter;
+    dom.communityLevelFilter.value = state.communitiesLevelFilter;
+    dom.communityAccessFilter.value = state.communitiesAccessFilter;
+    dom.communityActivityFilter.value = state.communitiesActivityFilter;
+    dom.communitySortSelect.value = state.communitiesSortField;
 
     function getStatusIconMarkup(isError) {
       if (isError) {
@@ -9042,36 +9589,201 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
 
-    function buildCommunityListMeta(community) {
-      return [
-        community.stationName || community.stationId || 'Без станции',
-        community.visibility ? 'доступ: ' + community.visibility : null
-      ]
-        .filter(Boolean)
-        .join(' · ');
+    function pickCommunityStringValue(community, keys) {
+      var details = normalizeObject(community && community.details);
+      var nested = [
+        normalizeObject(details.summary),
+        normalizeObject(details.preview),
+        normalizeObject(details.moderation),
+        normalizeObject(details.feed),
+        normalizeObject(details.chat),
+        normalizeObject(details.rating)
+      ];
+      for (var i = 0; i < keys.length; i += 1) {
+        var key = keys[i];
+        var candidates = [community && community[key], details[key]];
+        nested.forEach(function (entry) {
+          candidates.push(entry[key]);
+        });
+        for (var j = 0; j < candidates.length; j += 1) {
+          var candidate = candidates[j];
+          if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+          }
+        }
+      }
+      return null;
     }
 
-    function buildCommunityPreview(community) {
-      var parts = [];
-      var membersCount = normalizeCommunityCount(community.membersCount);
-      var postsCount = normalizeCommunityCount(community.postsCount);
-      var pendingRequestsCount = normalizeCommunityCount(community.pendingRequestsCount);
+    function pickCommunityNumericValue(community, keys) {
+      var details = normalizeObject(community && community.details);
+      var nested = [
+        normalizeObject(details.summary),
+        normalizeObject(details.preview),
+        normalizeObject(details.moderation),
+        normalizeObject(details.feed),
+        normalizeObject(details.chat),
+        normalizeObject(details.rating)
+      ];
+      for (var i = 0; i < keys.length; i += 1) {
+        var key = keys[i];
+        var candidates = [community && community[key], details[key]];
+        nested.forEach(function (entry) {
+          candidates.push(entry[key]);
+        });
+        for (var j = 0; j < candidates.length; j += 1) {
+          var parsed = normalizeCommunityCount(candidates[j]);
+          if (parsed !== null) {
+            return parsed;
+          }
+        }
+      }
+      return null;
+    }
 
-      if (membersCount !== null) {
-        parts.push('Участники: ' + String(membersCount));
+    function readArrayLike(value) {
+      if (Array.isArray(value)) {
+        return value;
       }
-      if (postsCount !== null) {
-        parts.push('Публикации: ' + String(postsCount));
+      if (isObject(value)) {
+        if (Array.isArray(value.items)) {
+          return value.items;
+        }
+        if (Array.isArray(value.rows)) {
+          return value.rows;
+        }
+        if (Array.isArray(value.posts)) {
+          return value.posts;
+        }
+        if (Array.isArray(value.messages)) {
+          return value.messages;
+        }
+        if (Array.isArray(value.list)) {
+          return value.list;
+        }
       }
-      if (pendingRequestsCount !== null) {
-        parts.push('Заявки: ' + String(pendingRequestsCount));
+      return [];
+    }
+
+    function pickCommunityArrayValue(community, keys) {
+      var details = normalizeObject(community && community.details);
+      var nested = [
+        normalizeObject(details.summary),
+        normalizeObject(details.preview),
+        normalizeObject(details.moderation),
+        normalizeObject(details.feed),
+        normalizeObject(details.chat),
+        normalizeObject(details.rating)
+      ];
+      for (var i = 0; i < keys.length; i += 1) {
+        var key = keys[i];
+        var candidates = [community && community[key], details[key]];
+        nested.forEach(function (entry) {
+          candidates.push(entry[key]);
+        });
+        for (var j = 0; j < candidates.length; j += 1) {
+          var list = readArrayLike(candidates[j]);
+          if (list.length > 0) {
+            return list;
+          }
+        }
+      }
+      return [];
+    }
+
+    function getCommunityIdentityLetter(community) {
+      var source = String((community && community.name) || 'C').trim();
+      return (source.charAt(0) || 'C').toUpperCase();
+    }
+
+    function renderCommunityAvatarNode(node, community) {
+      clearNode(node);
+      var logo = String((community && community.logo) || '').trim();
+      if (logo) {
+        var img = document.createElement('img');
+        img.alt = String((community && community.name) || 'Сообщество');
+        img.src = logo;
+        node.appendChild(img);
+        return;
+      }
+      node.textContent = getCommunityIdentityLetter(community);
+    }
+
+    function getCommunityStatusDescriptor(community) {
+      var raw = String((community && (community.rawStatus || community.status)) || '')
+        .trim()
+        .toUpperCase();
+      if (raw === 'PAUSED' || raw === 'ON_PAUSE' || raw === 'FROZEN') {
+        return { key: 'PAUSED', label: 'На паузе', tone: 'warn' };
+      }
+      if (raw === 'HIDDEN' || raw === 'ARCHIVED') {
+        return { key: 'HIDDEN', label: 'Скрыто', tone: 'muted' };
+      }
+      if (raw === 'MODERATION' || raw === 'REVIEW' || raw === 'PENDING_REVIEW') {
+        return { key: 'MODERATION', label: 'На проверке', tone: 'warn' };
+      }
+      if (raw === 'PRIVATE' || raw === 'CLOSED' || String(community && community.visibility).toUpperCase() === 'CLOSED') {
+        return { key: 'CLOSED', label: 'Закрыто', tone: 'muted' };
+      }
+      return { key: 'OPEN', label: 'Открыто', tone: 'good' };
+    }
+
+    function getCommunityVisibilityLabel(value) {
+      return String(value || '').toUpperCase() === 'CLOSED' ? 'Скрыто из каталога' : 'Видимо всем';
+    }
+
+    function getCommunityJoinRuleLabel(value) {
+      var normalized = String(value || '').toUpperCase();
+      if (normalized === 'MODERATED') {
+        return 'Через заявку';
+      }
+      if (normalized === 'INVITE_ONLY') {
+        return 'Только по инвайту';
+      }
+      return 'Свободный вход';
+    }
+
+    function getCommunityActivityTypes(community) {
+      var raw = normalizeArray(pickCommunityArrayValue(community, ['activityTypes', 'allowedPostTypes']))
+        .concat(getCommunityFocusTags(community));
+      var joined = raw
+        .map(function (item) {
+          return String(item || '').toLowerCase();
+        })
+        .join(' ');
+      var result = [];
+
+      if (/игр|game|match|padel|падл/.test(joined) || normalizeCommunityCount(community.postsCount) > 0) {
+        result.push('Игры');
+      }
+      if (/турнир|tournament|cup|league/.test(joined)) {
+        result.push('Турниры');
+      }
+      if (/новост|news|feed|post/.test(joined) || normalizeCommunityCount(community.postsCount) > 0) {
+        result.push('Новости');
+      }
+      if ((normalizeCommunityCount(community.membersCount) || 0) > 0) {
+        result.push('Чат');
       }
 
-      if (parts.length > 0) {
-        return parts.join(' · ');
+      if (result.length === 0) {
+        result = ['Новости', 'Чат'];
       }
 
-      return String(community.description || 'Параметры сообщества появятся после загрузки данных.');
+      return Array.from(new Set(result)).slice(0, 4);
+    }
+
+    function communityLevelRank(level) {
+      var map = {
+        D: 1,
+        'D+': 2,
+        C: 3,
+        'C+': 4,
+        B: 5,
+        'B+': 6,
+        A: 7
+      };
+      return map[String(level || '').trim().toUpperCase()] || 0;
     }
 
     function createCommunityStatCard(label, value) {
@@ -9091,34 +9803,43 @@
       return card;
     }
 
-    function createCommunityAdminCard(title) {
+    function createCommunitySectionCard(title, subtitle) {
       var card = document.createElement('section');
-      card.className = 'phab-admin-settings-card';
+      card.className = 'phab-admin-community-section-card';
 
       var head = document.createElement('div');
-      head.className = 'phab-admin-settings-head';
-      head.textContent = title;
+      head.className = 'phab-admin-community-section-head';
       card.appendChild(head);
 
-      var list = document.createElement('div');
-      list.className = 'phab-admin-settings-list';
-      card.appendChild(list);
+      var textWrap = document.createElement('div');
+      head.appendChild(textWrap);
 
-      var form = document.createElement('div');
-      form.className = 'phab-admin-settings-form';
-      card.appendChild(form);
+      var titleNode = document.createElement('div');
+      titleNode.className = 'phab-admin-community-section-title';
+      titleNode.textContent = title;
+      textWrap.appendChild(titleNode);
+
+      if (subtitle) {
+        var subtitleNode = document.createElement('div');
+        subtitleNode.className = 'phab-admin-community-section-subtitle';
+        subtitleNode.textContent = subtitle;
+        textWrap.appendChild(subtitleNode);
+      }
+
+      var body = document.createElement('div');
+      card.appendChild(body);
 
       return {
         card: card,
         head: head,
-        list: list,
-        form: form
+        body: body
       };
     }
 
-    function appendCommunityFormField(container, label, control) {
+    function appendCommunityFormField(container, label, control, wide) {
       var field = document.createElement('div');
-      field.className = 'phab-admin-community-form-field';
+      field.className =
+        'phab-admin-community-form-field' + (wide ? ' phab-admin-community-form-field-wide' : '');
       container.appendChild(field);
 
       var title = document.createElement('label');
@@ -9135,6 +9856,383 @@
       empty.className = 'phab-admin-empty phab-admin-community-list-empty';
       empty.textContent = text;
       container.appendChild(empty);
+    }
+
+    function getCommunityPreviewPosts(community, model) {
+      var list = pickCommunityArrayValue(community, [
+        'feedPreview',
+        'previewPosts',
+        'feedPosts',
+        'posts',
+        'feed'
+      ])
+        .map(function (item, index) {
+          var source = normalizeObject(item);
+          return {
+            id: String(source.id || source.postId || 'post-' + index),
+            kicker: String(source.kind || source.type || 'Лента'),
+            title: String(source.title || source.name || 'Публикация сообщества'),
+            body: String(source.body || source.text || source.description || '').trim(),
+            authorName: String(
+              source.authorName ||
+                (isObject(source.author) && source.author.name) ||
+                (community.createdBy && community.createdBy.name) ||
+                'Модератор'
+            ),
+            publishedAt: String(source.publishedAt || source.createdAt || community.updatedAt || ''),
+            reportsCount:
+              normalizeCommunityCount(source.reportsCount || source.complaintsCount || source.flagsCount) || 0
+          };
+        })
+        .filter(function (item) {
+          return item.title || item.body;
+        });
+
+      if (list.length > 0) {
+        return list.slice(0, 3);
+      }
+
+      var synthetic = [];
+      if (String(community.description || '').trim()) {
+        synthetic.push({
+          id: community.id + ':desc',
+          kicker: 'Новости',
+          title: 'О сообществе',
+          body: String(community.description || '').trim(),
+          authorName: String((community.createdBy && community.createdBy.name) || 'Владелец сообщества'),
+          publishedAt: String(community.updatedAt || community.createdAt || ''),
+          reportsCount: 0
+        });
+      }
+      if (String(community.rules || '').trim()) {
+        synthetic.push({
+          id: community.id + ':rules',
+          kicker: 'Закреп',
+          title: 'Правила сообщества',
+          body: String(community.rules || '').trim(),
+          authorName: 'Система',
+          publishedAt: String(community.updatedAt || community.createdAt || ''),
+          reportsCount: model.reportCount > 0 ? Math.min(model.reportCount, 2) : 0
+        });
+      }
+      if (model.pendingMembers.length > 0) {
+        synthetic.push({
+          id: community.id + ':pending',
+          kicker: 'Новый участник',
+          title: String(model.pendingMembers[0].name || 'Новая заявка'),
+          body: 'Ожидает решения модератора.',
+          authorName: String(model.pendingMembers[0].name || 'Игрок'),
+          publishedAt: String(model.pendingMembers[0].joinedAt || community.updatedAt || ''),
+          reportsCount: 0
+        });
+      }
+
+      if (synthetic.length === 0) {
+        synthetic.push({
+          id: community.id + ':empty',
+          kicker: 'Лента',
+          title: 'Пока без контента',
+          body: 'Как только появятся публикации или превью из ЛК, здесь будет живой модераторский просмотр.',
+          authorName: 'Система',
+          publishedAt: String(community.updatedAt || community.createdAt || ''),
+          reportsCount: 0
+        });
+      }
+
+      return synthetic.slice(0, 3);
+    }
+
+    function getCommunityPreviewMessages(community, model) {
+      var list = pickCommunityArrayValue(community, [
+        'chatPreview',
+        'previewMessages',
+        'chatMessages',
+        'messages',
+        'events'
+      ])
+        .map(function (item, index) {
+          var source = normalizeObject(item);
+          return {
+            id: String(source.id || source.messageId || 'msg-' + index),
+            authorName: String(
+              source.authorName ||
+                source.name ||
+                (isObject(source.author) && source.author.name) ||
+                'Участник'
+            ),
+            text: String(source.text || source.body || source.description || '').trim(),
+            createdAt: String(source.createdAt || source.publishedAt || community.updatedAt || ''),
+            flagged: Boolean(source.flagged || source.reported || source.suspicious),
+            reportsCount:
+              normalizeCommunityCount(source.reportsCount || source.complaintsCount || source.flagsCount) || 0
+          };
+        })
+        .filter(function (item) {
+          return item.text;
+        });
+
+      if (list.length > 0) {
+        return list.slice(0, 4);
+      }
+
+      var synthetic = [];
+      if (model.members.length > 0) {
+        synthetic.push({
+          id: community.id + ':hello',
+          authorName: String(model.members[0].name || 'Участник'),
+          text: 'Проверьте ближайшие игры и новости сообщества.',
+          createdAt: String(model.members[0].lastActiveAt || community.lastActivityAt || community.updatedAt || ''),
+          flagged: false,
+          reportsCount: 0
+        });
+      }
+      if (model.pendingMembers.length > 0) {
+        synthetic.push({
+          id: community.id + ':pending-chat',
+          authorName: String(model.pendingMembers[0].name || 'Новый участник'),
+          text: 'Добрый день! Хочу присоединиться к сообществу.',
+          createdAt: String(model.pendingMembers[0].joinedAt || community.updatedAt || ''),
+          flagged: model.reportCount > 2,
+          reportsCount: model.reportCount > 2 ? 1 : 0
+        });
+      }
+      if (synthetic.length === 0) {
+        synthetic.push({
+          id: community.id + ':idle',
+          authorName: 'Система',
+          text: 'Чат пока тихий. Как только подтянем живые сообщения, здесь появится модераторский слой.',
+          createdAt: String(community.updatedAt || community.createdAt || ''),
+          flagged: false,
+          reportsCount: 0
+        });
+      }
+      return synthetic.slice(0, 4);
+    }
+
+    function getCommunityPreviewRanking(community, model) {
+      var list = pickCommunityArrayValue(community, [
+        'rankingRows',
+        'ranking',
+        'ratingRows',
+        'table'
+      ])
+        .map(function (item) {
+          var source = normalizeObject(item);
+          var name = String(source.name || source.playerName || source.displayName || '').trim();
+          if (!name) {
+            return null;
+          }
+          return {
+            name: name,
+            role: String(source.role || 'MEMBER'),
+            levelLabel: String(source.levelLabel || source.rating || source.level || 'C'),
+            score:
+              normalizeCommunityCount(source.score || source.ratingScore || source.overallPlace) || 0
+          };
+        })
+        .filter(Boolean);
+
+      if (list.length > 0) {
+        return list.slice(0, 5);
+      }
+
+      return model.members
+        .slice()
+        .sort(function (left, right) {
+          return Number(right.levelScore || 0) - Number(left.levelScore || 0);
+        })
+        .slice(0, 5)
+        .map(function (member) {
+          return {
+            name: String(member.name || 'Игрок'),
+            role: String(member.role || 'MEMBER'),
+            levelLabel: String(member.levelLabel || 'C'),
+            score: Math.round(Number(member.levelScore || 0) * 20)
+          };
+        });
+    }
+
+    function getCommunityHistoryEntries(community, model) {
+      var list = pickCommunityArrayValue(community, ['moderationLog', 'history', 'auditLog', 'actions'])
+        .map(function (item, index) {
+          var source = normalizeObject(item);
+          return {
+            id: String(source.id || 'history-' + index),
+            title: String(source.title || source.action || source.type || 'Действие'),
+            meta: [
+              source.actorName || source.by || source.moderator,
+              source.reason || source.subject,
+              source.createdAt || source.at
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          };
+        })
+        .filter(function (item) {
+          return item.title;
+        });
+
+      if (list.length > 0) {
+        return list.slice(0, 6);
+      }
+
+      var fallback = [];
+      if (community.createdAt) {
+        fallback.push({
+          id: community.id + ':created',
+          title: 'Сообщество создано',
+          meta: [
+            (community.createdBy && (community.createdBy.name || community.createdBy.phone)) || 'Система',
+            formatDateTimeFull(community.createdAt)
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        });
+      }
+      if (community.updatedAt) {
+        fallback.push({
+          id: community.id + ':updated',
+          title: 'Карточка обновлена',
+          meta: formatDateTimeFull(community.updatedAt)
+        });
+      }
+      if (model.pendingCount > 0) {
+        fallback.push({
+          id: community.id + ':pending',
+          title: 'Есть новые заявки',
+          meta: 'Ожидают проверки: ' + String(model.pendingCount)
+        });
+      }
+      return fallback.slice(0, 5);
+    }
+
+    function buildCommunityModeratorModel(community) {
+      var members = normalizeCommunityMemberList(community && community.members);
+      var pendingMembers = normalizeCommunityMemberList(community && community.pendingMembers);
+      var membersCount = normalizeCommunityCount(community && community.membersCount) || members.length;
+      var moderatorsCount =
+        normalizeCommunityCount(community && community.moderatorsCount) ||
+        members.filter(function (member) {
+          var role = String(member.role || '').toUpperCase();
+          return role === 'OWNER' || role === 'ADMIN';
+        }).length;
+      var pendingCount =
+        normalizeCommunityCount(community && community.pendingRequestsCount) || pendingMembers.length;
+      var bannedCount =
+        normalizeCommunityCount(community && community.bannedMembersCount) ||
+        pickCommunityNumericValue(community, ['bannedCount', 'blockedCount']) ||
+        0;
+      var postsCount = normalizeCommunityCount(community && community.postsCount) || 0;
+      var posts7d =
+        pickCommunityNumericValue(community, ['posts7d', 'postsLast7Days', 'publications7d']) ||
+        Math.min(postsCount, Math.max(1, Math.round(postsCount * 0.65)));
+      var reportCount =
+        pickCommunityNumericValue(community, ['reportsCount', 'complaintsCount', 'flagsCount', 'claimsCount']) ||
+        0;
+      var unreadEventsCount =
+        pickCommunityNumericValue(community, ['unreadEventsCount', 'newEventsCount', 'eventsUnread']) ||
+        0;
+      var rating =
+        pickCommunityNumericValue(community, ['ratingScore', 'communityRating', 'qualityScore', 'score']) ||
+        Math.max(
+          42,
+          Math.min(
+            95,
+            Math.round(
+              ((members.reduce(function (sum, member) {
+                return sum + Number(member.levelScore || 0);
+              }, 0) /
+                Math.max(members.length, 1)) *
+                17 || 0) +
+                38 -
+                reportCount * 3
+            )
+          )
+        );
+      var engagement =
+        pickCommunityNumericValue(community, ['engagementScore', 'engagement']) ||
+        Math.max(28, Math.min(96, Math.round((posts7d + pendingCount + membersCount / 14) * 4)));
+      var chatActivity =
+        pickCommunityNumericValue(community, ['chatActivityCount', 'messages7d', 'chat7d']) ||
+        Math.max(0, Math.round(membersCount * 0.6 + posts7d * 2 + pendingCount));
+      var status = getCommunityStatusDescriptor(community);
+      var activityTypes = getCommunityActivityTypes(community);
+      var riskFlags = [];
+
+      if (reportCount >= 4) {
+        riskFlags.push({ label: 'Много жалоб', tone: 'danger' });
+      }
+      if (bannedCount >= 2) {
+        riskFlags.push({ label: 'Конфликт', tone: 'warn' });
+      }
+      if (rating <= 58) {
+        riskFlags.push({ label: 'Низкий рейтинг', tone: 'danger' });
+      }
+      if (pendingCount >= 5) {
+        riskFlags.push({ label: 'Спам / наплыв', tone: 'warn' });
+      }
+      if (status.key === 'PAUSED' || status.key === 'HIDDEN') {
+        riskFlags.push({ label: status.label, tone: 'warn' });
+      }
+
+      return {
+        status: status,
+        members: members,
+        pendingMembers: pendingMembers,
+        membersCount: membersCount,
+        moderatorsCount: moderatorsCount,
+        pendingCount: pendingCount,
+        bannedCount: bannedCount,
+        postsCount: postsCount,
+        posts7d: posts7d,
+        reportCount: reportCount,
+        unreadEventsCount: unreadEventsCount,
+        rating: rating,
+        engagement: engagement,
+        chatActivity: chatActivity,
+        activityTypes: activityTypes,
+        riskFlags: riskFlags,
+        growthScore: pendingCount * 4 + posts7d * 3 + Math.round(membersCount / 12),
+        activityScore:
+          chatActivity + posts7d * 3 + unreadEventsCount * 2 + Math.round(getCommunityTimestampValue(community) / 86400000),
+        previewPosts: [],
+        previewMessages: [],
+        rankingRows: [],
+        historyEntries: []
+      };
+    }
+
+    function buildCommunityPreview(community) {
+      var model = buildCommunityModeratorModel(community);
+      var parts = [];
+
+      parts.push('Участники: ' + String(model.membersCount));
+      parts.push('Заявки: ' + String(model.pendingCount));
+      if (model.reportCount > 0) {
+        parts.push('Жалобы: ' + String(model.reportCount));
+      }
+
+      return parts.join(' · ');
+    }
+
+    function getCommunityMemberFilters(model) {
+      var owners = model.members.filter(function (member) {
+        return String(member.role || '').toUpperCase() === 'OWNER';
+      });
+      var admins = model.members.filter(function (member) {
+        return String(member.role || '').toUpperCase() === 'ADMIN';
+      });
+      var regular = model.members.filter(function (member) {
+        return String(member.role || '').toUpperCase() === 'MEMBER';
+      });
+      return {
+        ALL: model.members,
+        OWNERS: owners,
+        MODS: admins,
+        MEMBERS: regular,
+        NEW: model.pendingMembers,
+        BANNED: []
+      };
     }
 
     function buildCommunityMemberMeta(member) {
@@ -9160,6 +10258,15 @@
       }
       if (member.joinedAt) {
         parts.push('с ' + formatDateTimeFull(member.joinedAt));
+      }
+      if (member.lastActiveAt) {
+        parts.push('активен ' + formatDateTimeFull(member.lastActiveAt));
+      }
+      if (normalizeCommunityCount(member.complaintsCount) > 0) {
+        parts.push('жалобы: ' + String(normalizeCommunityCount(member.complaintsCount)));
+      }
+      if (normalizeCommunityCount(member.warningsCount) > 0) {
+        parts.push('предупр.: ' + String(normalizeCommunityCount(member.warningsCount)));
       }
       return parts.filter(Boolean).join(' · ') || 'Без дополнительных данных';
     }
@@ -9212,208 +10319,344 @@
       });
     }
 
-    function renderCommunityDetails() {
-      var community = getSelectedCommunity();
-      clearNode(dom.communityTags);
-      clearNode(dom.communityLinks);
-      clearNode(dom.communityStats);
-      clearNode(dom.communityAdminGrid);
-
-      if (!community) {
-        dom.communityTitle.textContent = 'Сообщество не выбрано';
-        dom.communityMeta.textContent =
-          'Выберите сообщество слева, чтобы открыть интерфейс модерации и параметры сообщества.';
-        dom.communityLinks.style.display = 'none';
-        dom.communityStats.className = 'phab-admin-community-stats phab-admin-hidden';
-        dom.communityAdminGrid.className = 'phab-admin-community-admin-grid phab-admin-hidden';
-        dom.communityFrame.removeAttribute('src');
-        dom.communityFrame.style.display = 'none';
-        dom.communityEmpty.style.display = 'flex';
-        dom.communityEmpty.textContent =
-          'Выберите сообщество слева, чтобы открыть интерфейс управления.';
-        return;
-      }
-
-      dom.communityTitle.textContent = String(community.name || 'Сообщество');
-      dom.communityMeta.textContent =
-        String(community.description || '').trim() ||
-        [
-          community.stationName || community.stationId || 'Без станции',
-          community.lastActivityAt
-            ? 'активность: ' + formatDateTimeFull(community.lastActivityAt)
-            : community.updatedAt
-              ? 'обновлено: ' + formatDateTimeFull(community.updatedAt)
-              : null
-        ]
-          .filter(Boolean)
-          .join(' · ');
-
-      if (community.rawStatus || community.status) {
-        var statusTone =
-          String(community.status || '').toUpperCase() === 'ARCHIVED'
-            ? 'alert'
-            : String(community.status || '').toUpperCase() === 'MODERATION'
-              ? 'warn'
-              : '';
-        dom.communityTags.appendChild(
-          createTextChip('Статус: ' + String(community.rawStatus || community.status), statusTone)
-        );
-      }
-      if (community.visibility) {
-        dom.communityTags.appendChild(
-          createTextChip('Доступ: ' + String(community.visibility), 'warn')
-        );
-      }
-      if (community.stationName || community.stationId) {
-        dom.communityTags.appendChild(
-          createTextChip(
-            'Станция: ' + String(community.stationName || community.stationId),
-            ''
-          )
-        );
-      }
-      getCommunityFocusTags(community).slice(0, 6).forEach(function (tag) {
-        dom.communityTags.appendChild(createTextChip(tag, ''));
+    function ensureCommunitySelectOptions(select, items, currentValue) {
+      clearNode(select);
+      items.forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        select.appendChild(option);
       });
+      select.value = currentValue;
+      if (select.value !== currentValue && items.length > 0) {
+        select.value = items[0].value;
+      }
+    }
 
-      var stats = [];
-      var membersCount = normalizeCommunityCount(community.membersCount);
-      var postsCount = normalizeCommunityCount(community.postsCount);
-      var moderatorsCount = normalizeCommunityCount(community.moderatorsCount);
-      var pendingRequestsCount = normalizeCommunityCount(community.pendingRequestsCount);
-      var bannedMembersCount = normalizeCommunityCount(community.bannedMembersCount);
+    function filterCommunitiesForModeration(community) {
+      var model = buildCommunityModeratorModel(community);
+      var stationValue = String(state.communitiesStationFilter || 'ALL');
+      var statusValue = String(state.communitiesStatusFilter || 'ALL');
+      var levelValue = String(state.communitiesLevelFilter || 'ALL');
+      var accessValue = String(state.communitiesAccessFilter || 'ALL');
+      var activityValue = String(state.communitiesActivityFilter || 'ALL');
 
-      if (membersCount !== null) {
-        stats.push(createCommunityStatCard('Участники', String(membersCount)));
+      if (!matchCommunitySearch(community, state.communitiesSearchQuery)) {
+        return false;
       }
-      if (postsCount !== null) {
-        stats.push(createCommunityStatCard('Публикации', String(postsCount)));
+      if (
+        stationValue !== 'ALL' &&
+        stationValue !== String(community.stationName || community.stationId || 'NONE')
+      ) {
+        return false;
       }
-      if (moderatorsCount !== null) {
-        stats.push(createCommunityStatCard('Модераторы', String(moderatorsCount)));
+      if (statusValue !== 'ALL' && statusValue !== model.status.key) {
+        return false;
       }
-      if (pendingRequestsCount !== null) {
-        stats.push(createCommunityStatCard('Заявки', String(pendingRequestsCount)));
+      if (
+        levelValue !== 'ALL' &&
+        String(community.minimumLevel || '').trim().toUpperCase() !== levelValue
+      ) {
+        return false;
       }
-      if (bannedMembersCount !== null) {
-        stats.push(createCommunityStatCard('В бане', String(bannedMembersCount)));
+      if (accessValue !== 'ALL') {
+        var visibility = String(community.visibility || '').toUpperCase();
+        var joinRule = String(community.joinRule || '').toUpperCase();
+        if (accessValue === 'OPEN' || accessValue === 'CLOSED') {
+          if (visibility !== accessValue) {
+            return false;
+          }
+        } else if (joinRule !== accessValue) {
+          return false;
+        }
       }
-      if (stats.length === 0 && community.updatedAt) {
-        stats.push(createCommunityStatCard('Обновлено', formatDateTimeFull(community.updatedAt)));
+      if (
+        activityValue !== 'ALL' &&
+        model.activityTypes.indexOf(activityValue) === -1
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    function sortCommunitiesForModeration(items) {
+      var sortField = String(state.communitiesSortField || 'activity');
+      return sortCommunities(items).sort(function (left, right) {
+        var leftModel = buildCommunityModeratorModel(left);
+        var rightModel = buildCommunityModeratorModel(right);
+        if (sortField === 'pending') {
+          return rightModel.pendingCount - leftModel.pendingCount;
+        }
+        if (sortField === 'reports') {
+          return rightModel.reportCount - leftModel.reportCount;
+        }
+        if (sortField === 'growth') {
+          return rightModel.growthScore - leftModel.growthScore;
+        }
+        return rightModel.activityScore - leftModel.activityScore;
+      });
+    }
+
+    function setCommunityPreviewActionNotice(label) {
+      setStatus(label + ': для контента и чата нужен отдельный moderation API.', false);
+    }
+
+    function createCommunityStatusBadge(descriptor) {
+      var badge = document.createElement('span');
+      badge.className =
+        'phab-admin-community-status-badge phab-admin-community-status-' +
+        String(descriptor.tone || 'muted');
+      badge.textContent = descriptor.label;
+      return badge;
+    }
+
+    function createCommunityPill(label, className) {
+      var pill = document.createElement('span');
+      pill.className = className || 'phab-admin-community-mini-chip';
+      pill.textContent = label;
+      return pill;
+    }
+
+    function createCommunityActionButton(label, className, onClick, disabled) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = className;
+      button.disabled = disabled === true;
+      button.textContent = label;
+      button.addEventListener('click', onClick);
+      return button;
+    }
+
+    function buildCommunityMemberActions(community, member, isPending) {
+      var isOwner = String(member.role || '').toUpperCase() === 'OWNER';
+      if (isPending || String(member.status || '').toUpperCase() === 'PENDING') {
+        return [
+          {
+            action: 'APPROVE',
+            label: 'Одобрить',
+            loadingLabel: 'Одобряем...',
+            successText: 'Заявка одобрена'
+          },
+          {
+            action: 'REMOVE',
+            label: 'Отклонить',
+            loadingLabel: 'Отклоняем...',
+            successText: 'Заявка отклонена'
+          },
+          {
+            action: 'BAN',
+            label: 'В бан',
+            loadingLabel: 'Баним...',
+            successText: 'Пользователь заблокирован',
+            tone: 'danger'
+          }
+        ];
       }
 
-      if (stats.length > 0) {
-        dom.communityStats.className = 'phab-admin-community-stats';
-        stats.forEach(function (card) {
-          dom.communityStats.appendChild(card);
-        });
-      } else {
-        dom.communityStats.className = 'phab-admin-community-stats phab-admin-hidden';
-      }
+      return [
+        {
+          action: String(member.role || '').toUpperCase() === 'ADMIN' ? 'DEMOTE' : 'PROMOTE',
+          label: String(member.role || '').toUpperCase() === 'ADMIN' ? 'Понизить' : 'В модераторы',
+          loadingLabel: 'Обновляем...',
+          successText:
+            String(member.role || '').toUpperCase() === 'ADMIN'
+              ? 'Роль понижена до участника'
+              : 'Участник назначен модератором',
+          disabled: isOwner
+        },
+        {
+          action: 'WARN',
+          label: 'Предупредить',
+          loadingLabel: 'Фиксируем...',
+          successText: 'Предупреждение записано'
+        },
+        {
+          action: 'REMOVE',
+          label: 'Удалить',
+          loadingLabel: 'Удаляем...',
+          successText: 'Участник удалён',
+          disabled: isOwner
+        },
+        {
+          action: 'BAN',
+          label: 'В бан',
+          loadingLabel: 'Баним...',
+          successText: 'Пользователь заблокирован',
+          tone: 'danger',
+          disabled: isOwner
+        }
+      ];
+    }
 
-      var externalLinks = [];
-      if (community.moderationUrl) {
-        externalLinks.push({
-          href: community.moderationUrl,
-          label: 'Открыть модерацию'
-        });
-      }
-      if (community.inviteLink && community.inviteLink !== community.publicUrl) {
-        externalLinks.push({
-          href: community.inviteLink,
-          label: 'Инвайт'
-        });
-      }
-      if (community.publicUrl && community.publicUrl !== community.moderationUrl) {
-        externalLinks.push({
-          href: community.publicUrl,
-          label: 'Публичная страница'
-        });
-      }
+    function renderCommunityOverviewTab(community, model) {
+      var stack = document.createElement('div');
+      stack.className = 'phab-admin-community-stack';
+      dom.communityAdminGrid.appendChild(stack);
 
-      if (externalLinks.length > 0) {
-        externalLinks.forEach(function (item) {
-          var link = document.createElement('a');
-          link.className = 'phab-admin-dialog-link';
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          link.href = String(item.href);
-          link.textContent = item.label;
-          dom.communityLinks.appendChild(link);
-        });
-        dom.communityLinks.style.display = 'flex';
-      } else {
-        dom.communityLinks.style.display = 'none';
-      }
-
-      dom.communityAdminGrid.className = 'phab-admin-community-admin-grid';
-
-      var overviewCard = createCommunityAdminCard('Сводка');
-      dom.communityAdminGrid.appendChild(overviewCard.card);
-      appendCommunityListEmpty(overviewCard.form, 'Детальные параметры сообщества загружены из MongoDB.');
-
+      var summaryCard = createCommunitySectionCard('Обзор', 'Главный экран модерации сообщества');
+      stack.appendChild(summaryCard.card);
+      var overviewGrid = document.createElement('div');
+      overviewGrid.className = 'phab-admin-community-overview-grid';
+      summaryCard.body.appendChild(overviewGrid);
       [
-        ['ID', community.id],
-        ['Slug', community.slug],
-        ['Город', community.city],
-        ['Видимость', community.visibility],
-        ['Правило входа', community.joinRule],
-        ['Мин. уровень', community.minimumLevel],
-        ['Создатель', community.createdBy && (community.createdBy.name || community.createdBy.phone || community.createdBy.id)],
-        ['Создано', community.createdAt ? formatDateTimeFull(community.createdAt) : '-'],
-        ['Обновлено', community.updatedAt ? formatDateTimeFull(community.updatedAt) : '-']
+        { value: model.membersCount, label: 'участников' },
+        { value: model.moderatorsCount, label: 'модераторов' },
+        { value: model.pendingCount, label: 'новых заявок' },
+        { value: model.bannedCount, label: 'заблокированы' },
+        { value: model.posts7d, label: 'публикаций за 7 дней' },
+        { value: model.chatActivity, label: 'активность в чате' },
+        { value: model.reportCount, label: 'жалобы' },
+        { value: model.rating + '%', label: 'рейтинг сообщества' },
+        { value: model.engagement + '%', label: 'вовлечённость' }
       ].forEach(function (item) {
-        var row = document.createElement('div');
-        row.className = 'phab-admin-settings-row';
-        overviewCard.list.appendChild(row);
-
-        var main = document.createElement('div');
-        main.className = 'phab-admin-settings-row-main';
-        row.appendChild(main);
-
-        var title = document.createElement('div');
-        title.className = 'phab-admin-settings-row-title';
-        title.textContent = item[0];
-        main.appendChild(title);
-
-        var meta = document.createElement('div');
-        meta.className = 'phab-admin-settings-row-meta';
-        meta.textContent = item[1] ? String(item[1]) : '-';
-        main.appendChild(meta);
+        var card = document.createElement('div');
+        card.className = 'phab-admin-community-overview-card';
+        var value = document.createElement('strong');
+        value.textContent = String(item.value);
+        var label = document.createElement('span');
+        label.textContent = item.label;
+        card.appendChild(value);
+        card.appendChild(label);
+        overviewGrid.appendChild(card);
       });
 
-      var rulesCard = createCommunityAdminCard('Правила И Описание');
-      dom.communityAdminGrid.appendChild(rulesCard.card);
-      appendCommunityListEmpty(
-        rulesCard.list,
-        String(community.description || '').trim()
-          ? String(community.description)
-          : 'Описание не заполнено'
+      var risksCard = createCommunitySectionCard('Риски и сигналы', 'Что требует внимания прямо сейчас');
+      stack.appendChild(risksCard.card);
+      var risksWrap = document.createElement('div');
+      risksWrap.className = 'phab-admin-community-risk-row';
+      risksCard.body.appendChild(risksWrap);
+      if (model.riskFlags.length === 0) {
+        risksWrap.appendChild(createCommunityPill('Критичных рисков нет', 'phab-admin-community-risk'));
+      } else {
+        model.riskFlags.forEach(function (risk) {
+          risksWrap.appendChild(
+            createCommunityPill(
+              risk.label,
+              'phab-admin-community-risk' +
+                (risk.tone === 'danger' ? ' phab-admin-community-risk-danger' : '')
+            )
+          );
+        });
+      }
+
+      var scenariosCard = createCommunitySectionCard('Быстрые сценарии', 'MVP для системных действий модератора');
+      stack.appendChild(scenariosCard.card);
+      var actionsWrap = document.createElement('div');
+      actionsWrap.className = 'phab-admin-community-card-actions';
+      scenariosCard.body.appendChild(actionsWrap);
+      actionsWrap.appendChild(
+        createCommunityActionButton(
+          'Заморозить сообщество',
+          'phab-admin-community-card-action',
+          function () {
+            saveCommunitySettings(community.id, {
+              status: 'PAUSED',
+              visibility: 'CLOSED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
       );
-      appendCommunityListEmpty(
-        rulesCard.form,
-        String(community.rules || '').trim() ? String(community.rules) : 'Правила не заполнены'
+      actionsWrap.appendChild(
+        createCommunityActionButton(
+          'Ограничить новых участников',
+          'phab-admin-community-card-action',
+          function () {
+            saveCommunitySettings(community.id, {
+              joinRule: 'MODERATED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      actionsWrap.appendChild(
+        createCommunityActionButton(
+          'Включить премодерацию',
+          'phab-admin-community-card-action',
+          function () {
+            saveCommunitySettings(community.id, {
+              status: 'MODERATION',
+              joinRule: 'MODERATED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      actionsWrap.appendChild(
+        createCommunityActionButton(
+          'Очистить чат от спама',
+          'phab-admin-community-card-action',
+          function () {
+            setCommunityPreviewActionNotice('Очистка чата');
+          }
+        )
       );
 
-      var settingsCard = createCommunityAdminCard('Управление');
+      var historyCard = createCommunitySectionCard('История действий', 'Кто и когда менял состояние сообщества');
+      stack.appendChild(historyCard.card);
+      var historyList = document.createElement('div');
+      historyList.className = 'phab-admin-community-history-list';
+      historyCard.body.appendChild(historyList);
+      model.historyEntries.forEach(function (entry) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-community-history-row';
+        var left = document.createElement('div');
+        var title = document.createElement('strong');
+        title.textContent = entry.title;
+        var meta = document.createElement('span');
+        meta.textContent = entry.meta || 'Без деталей';
+        left.appendChild(title);
+        left.appendChild(meta);
+        row.appendChild(left);
+        historyList.appendChild(row);
+      });
+    }
+
+    function renderCommunitySettingsTab(community, model) {
+      var settingsCard = createCommunitySectionCard('Настройки', 'Конфигурация сообщества и базовые ограничения');
       dom.communityAdminGrid.appendChild(settingsCard.card);
-      clearNode(settingsCard.list);
+
+      var form = document.createElement('div');
+      form.className = 'phab-admin-community-form-grid';
+      settingsCard.body.appendChild(form);
 
       var nameInput = document.createElement('input');
       nameInput.className = 'phab-admin-input';
       nameInput.value = String(community.name || '');
-      appendCommunityFormField(settingsCard.form, 'Название', nameInput);
+      appendCommunityFormField(form, 'Название', nameInput);
+
+      var statusSelect = document.createElement('select');
+      statusSelect.className = 'phab-admin-input';
+      [
+        { value: 'ACTIVE', label: 'Открыто' },
+        { value: 'PRIVATE', label: 'Закрыто' },
+        { value: 'HIDDEN', label: 'Скрыто' },
+        { value: 'PAUSED', label: 'На паузе' },
+        { value: 'MODERATION', label: 'Ограничить публикации' }
+      ].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        statusSelect.appendChild(option);
+      });
+      statusSelect.value =
+        model.status.key === 'OPEN'
+          ? 'ACTIVE'
+          : model.status.key === 'CLOSED'
+            ? 'PRIVATE'
+            : model.status.key;
+      appendCommunityFormField(form, 'Статус', statusSelect);
 
       var cityInput = document.createElement('input');
       cityInput.className = 'phab-admin-input';
       cityInput.value = String(community.city || '');
-      appendCommunityFormField(settingsCard.form, 'Город', cityInput);
+      appendCommunityFormField(form, 'Город', cityInput);
 
       var visibilitySelect = document.createElement('select');
       visibilitySelect.className = 'phab-admin-input';
       [
-        { value: 'OPEN', label: 'Открытое' },
-        { value: 'CLOSED', label: 'Закрытое' }
+        { value: 'OPEN', label: 'Показывать в каталоге' },
+        { value: 'CLOSED', label: 'Скрыть из каталога' }
       ].forEach(function (item) {
         var option = document.createElement('option');
         option.value = item.value;
@@ -9421,14 +10664,14 @@
         visibilitySelect.appendChild(option);
       });
       visibilitySelect.value = String(community.visibility || 'OPEN').toUpperCase();
-      appendCommunityFormField(settingsCard.form, 'Видимость', visibilitySelect);
+      appendCommunityFormField(form, 'Видимость', visibilitySelect);
 
       var joinRuleSelect = document.createElement('select');
       joinRuleSelect.className = 'phab-admin-input';
       [
-        { value: 'INSTANT', label: 'Сразу' },
+        { value: 'INSTANT', label: 'Свободный вход' },
         { value: 'MODERATED', label: 'После модерации' },
-        { value: 'INVITE_ONLY', label: 'Только по инвайту' }
+        { value: 'INVITE_ONLY', label: 'Только по приглашению' }
       ].forEach(function (item) {
         var option = document.createElement('option');
         option.value = item.value;
@@ -9436,50 +10679,75 @@
         joinRuleSelect.appendChild(option);
       });
       joinRuleSelect.value = String(community.joinRule || 'INSTANT').toUpperCase();
-      appendCommunityFormField(settingsCard.form, 'Правило вступления', joinRuleSelect);
+      appendCommunityFormField(form, 'Правило вступления', joinRuleSelect);
 
       var levelInput = document.createElement('input');
       levelInput.className = 'phab-admin-input';
       levelInput.value = String(community.minimumLevel || '');
-      appendCommunityFormField(settingsCard.form, 'Мин. уровень', levelInput);
+      appendCommunityFormField(form, 'Мин. уровень', levelInput);
+
+      var slugInput = document.createElement('input');
+      slugInput.className = 'phab-admin-input';
+      slugInput.value = String(community.slug || '');
+      slugInput.disabled = true;
+      appendCommunityFormField(form, 'Slug', slugInput);
 
       var tagsInput = document.createElement('input');
       tagsInput.className = 'phab-admin-input';
       tagsInput.value = getCommunityFocusTags(community).join(', ');
-      appendCommunityFormField(settingsCard.form, 'Теги', tagsInput);
+      appendCommunityFormField(form, 'Активности / теги', tagsInput);
 
       var logoInput = document.createElement('input');
       logoInput.className = 'phab-admin-input';
       logoInput.value = String(community.logo || '');
-      appendCommunityFormField(settingsCard.form, 'Лого URL / data URI', logoInput);
+      appendCommunityFormField(form, 'Лого / обложка', logoInput);
 
       var descriptionInput = document.createElement('textarea');
       descriptionInput.className = 'phab-admin-input';
       descriptionInput.rows = 4;
       descriptionInput.value = String(community.description || '');
-      appendCommunityFormField(settingsCard.form, 'Описание', descriptionInput);
+      appendCommunityFormField(form, 'Описание', descriptionInput, true);
 
       var rulesInput = document.createElement('textarea');
       rulesInput.className = 'phab-admin-input';
       rulesInput.rows = 5;
       rulesInput.value = String(community.rules || '');
-      appendCommunityFormField(settingsCard.form, 'Правила', rulesInput);
+      appendCommunityFormField(form, 'Правила', rulesInput, true);
+
+      var metaInfo = createCommunitySectionCard('Модераторские правила', 'Что уже считается системным поведением');
+      dom.communityAdminGrid.appendChild(metaInfo.card);
+      var infoWrap = document.createElement('div');
+      infoWrap.className = 'phab-admin-community-risk-row';
+      metaInfo.body.appendChild(infoWrap);
+      [
+        'Публикации: ' + (statusSelect.value === 'MODERATION' ? 'на проверке' : 'свободно'),
+        'Чат: ' + (joinRuleSelect.value === 'MODERATED' ? 'под вниманием' : 'открыт участникам'),
+        'Уровень: от ' + String(levelInput.value || 'любого'),
+        'Рейтинг: ' + String(model.rating) + '%'
+      ].forEach(function (item) {
+        infoWrap.appendChild(createCommunityPill(item, 'phab-admin-community-mini-chip'));
+      });
 
       var saveActions = document.createElement('div');
       saveActions.className = 'phab-admin-community-form-actions';
-      settingsCard.form.appendChild(saveActions);
+      settingsCard.body.appendChild(saveActions);
 
       var saveBtn = document.createElement('button');
       saveBtn.type = 'button';
       saveBtn.className = 'phab-admin-btn-secondary';
       saveBtn.disabled = state.communitySavingId === community.id;
       saveBtn.textContent =
-        state.communitySavingId === community.id ? 'Сохраняем...' : 'Сохранить параметры';
+        state.communitySavingId === community.id ? 'Сохраняем...' : 'Сохранить настройки';
       saveBtn.addEventListener('click', function () {
+        var nextStatus = String(statusSelect.value || 'ACTIVE').toUpperCase();
         saveCommunitySettings(community.id, {
           name: String(nameInput.value || '').trim(),
+          status: nextStatus,
           city: String(cityInput.value || '').trim(),
-          visibility: String(visibilitySelect.value || 'OPEN').toUpperCase(),
+          visibility:
+            nextStatus === 'HIDDEN' || nextStatus === 'PRIVATE' || nextStatus === 'PAUSED'
+              ? 'CLOSED'
+              : String(visibilitySelect.value || 'OPEN').toUpperCase(),
           joinRule: String(joinRuleSelect.value || 'INSTANT').toUpperCase(),
           minimumLevel: String(levelInput.value || '').trim(),
           focusTags: String(tagsInput.value || '')
@@ -9494,107 +10762,707 @@
         }).catch(handleError);
       });
       saveActions.appendChild(saveBtn);
+    }
 
-      var membersCard = createCommunityAdminCard('Участники');
-      dom.communityAdminGrid.appendChild(membersCard.card);
-      clearNode(membersCard.form);
-      var members = normalizeCommunityMemberList(community.members).sort(function (left, right) {
-        return String(left.name || '').localeCompare(String(right.name || ''), 'ru');
+    function renderCommunityMembersTab(community, model) {
+      var card = createCommunitySectionCard('Участники', 'Владельцы, модераторы, обычные участники и новые');
+      dom.communityAdminGrid.appendChild(card.card);
+
+      var segments = document.createElement('div');
+      segments.className = 'phab-admin-community-segments';
+      card.body.appendChild(segments);
+
+      var segmentMap = getCommunityMemberFilters(model);
+      [
+        { key: 'ALL', label: 'Все' },
+        { key: 'OWNERS', label: 'Владельцы' },
+        { key: 'MODS', label: 'Модераторы' },
+        { key: 'MEMBERS', label: 'Участники' },
+        { key: 'NEW', label: 'Новые' }
+      ].forEach(function (item) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'phab-admin-community-segment' +
+          (state.communityMembersSegment === item.key ? ' phab-admin-community-segment-active' : '');
+        button.textContent =
+          item.label + ' (' + String((segmentMap[item.key] || []).length) + ')';
+        button.addEventListener('click', function () {
+          state.communityMembersSegment = item.key;
+          renderCommunityDetails();
+        });
+        segments.appendChild(button);
       });
+
+      var list = document.createElement('div');
+      list.className = 'phab-admin-settings-list';
+      card.body.appendChild(list);
+      var members = segmentMap[state.communityMembersSegment] || segmentMap.ALL || [];
       if (members.length === 0) {
-        appendCommunityListEmpty(membersCard.list, 'В сообществе пока нет участников');
+        appendCommunityListEmpty(list, 'Нет участников для выбранного сегмента');
       } else {
-        members.forEach(function (member) {
-          var isOwner = String(member.role || '').toUpperCase() === 'OWNER';
-          appendCommunityMemberRow(membersCard.list, community, member, [
-            {
-              action: 'REMOVE',
-              label: 'Удалить',
-              loadingLabel: 'Удаляем...',
-              successText: 'Участник удалён из сообщества',
-              disabled: isOwner
-            },
-            {
-              action: 'BAN',
-              label: 'В бан',
-              loadingLabel: 'Баним...',
-              successText: 'Участник заблокирован',
-              tone: 'danger',
-              disabled: isOwner
-            }
-          ]);
+        members
+          .slice()
+          .sort(function (left, right) {
+            return String(left.name || '').localeCompare(String(right.name || ''), 'ru');
+          })
+          .forEach(function (member) {
+            appendCommunityMemberRow(
+              list,
+              community,
+              member,
+              buildCommunityMemberActions(
+                community,
+                member,
+                state.communityMembersSegment === 'NEW'
+              )
+            );
+          });
+      }
+    }
+
+    function renderCommunityApplicationsTab(community, model) {
+      var card = createCommunitySectionCard('Заявки', 'Люди, которые ждут решения модератора');
+      dom.communityAdminGrid.appendChild(card.card);
+
+      var intro = document.createElement('div');
+      intro.className = 'phab-admin-community-risk-row';
+      intro.appendChild(
+        createCommunityPill(
+          'Новых заявок: ' + String(model.pendingCount),
+          model.pendingCount > 0
+            ? 'phab-admin-community-signal phab-admin-community-signal-strong'
+            : 'phab-admin-community-signal'
+        )
+      );
+      intro.appendChild(
+        createCommunityPill(
+          'Режим доступа: ' + getCommunityJoinRuleLabel(community.joinRule),
+          'phab-admin-community-mini-chip'
+        )
+      );
+      card.body.appendChild(intro);
+
+      var list = document.createElement('div');
+      list.className = 'phab-admin-settings-list';
+      card.body.appendChild(list);
+      if (model.pendingMembers.length === 0) {
+        appendCommunityListEmpty(list, 'Новых заявок нет');
+      } else {
+        model.pendingMembers.forEach(function (member) {
+          appendCommunityMemberRow(list, community, member, buildCommunityMemberActions(community, member, true));
         });
       }
-      appendCommunityListEmpty(
-        membersCard.form,
-        'Удаление исключает участника из сообщества, бан запрещает повторное вступление.'
-      );
 
-      var pendingCard = createCommunityAdminCard('Заявки');
-      dom.communityAdminGrid.appendChild(pendingCard.card);
-      clearNode(pendingCard.form);
-      var pendingMembers = normalizeCommunityMemberList(community.pendingMembers).sort(function (
-        left,
-        right
-      ) {
-        return String(left.name || '').localeCompare(String(right.name || ''), 'ru');
+      var note = createCommunitySectionCard('Комментарий модератора', 'Дополнительные сценарии пока идут как следующий этап API');
+      dom.communityAdminGrid.appendChild(note.card);
+      var noteWrap = document.createElement('div');
+      noteWrap.className = 'phab-admin-community-risk-row';
+      [
+        'Запросить уточнение',
+        'Тестовый доступ',
+        'Взаимные контакты',
+        'Рекомендации'
+      ].forEach(function (item) {
+        noteWrap.appendChild(createCommunityPill(item, 'phab-admin-community-mini-chip'));
       });
-      if (pendingMembers.length === 0) {
-        appendCommunityListEmpty(pendingCard.list, 'Новых заявок нет');
-      } else {
-        pendingMembers.forEach(function (member) {
-          appendCommunityMemberRow(pendingCard.list, community, member, [
-            {
-              action: 'APPROVE',
-              label: 'Одобрить',
-              loadingLabel: 'Одобряем...',
-              successText: 'Заявка одобрена'
-            },
-            {
-              action: 'REMOVE',
-              label: 'Отклонить',
-              loadingLabel: 'Отклоняем...',
-              successText: 'Заявка отклонена'
-            },
-            {
-              action: 'BAN',
-              label: 'В бан',
-              loadingLabel: 'Баним...',
-              successText: 'Пользователь заблокирован',
-              tone: 'danger'
-            }
-          ]);
+      note.body.appendChild(noteWrap);
+    }
+
+    function renderCommunityContentTab(community, model) {
+      var card = createCommunitySectionCard('Контент', 'Превью публикаций и быстрые модераторские действия');
+      dom.communityAdminGrid.appendChild(card.card);
+      model.previewPosts.forEach(function (post) {
+        var preview = document.createElement('div');
+        preview.className = 'phab-admin-community-preview-card';
+        var top = document.createElement('div');
+        top.className = 'phab-admin-community-preview-post-top';
+        var left = document.createElement('div');
+        var kicker = document.createElement('div');
+        kicker.className = 'phab-admin-community-preview-kicker';
+        kicker.textContent = String(post.kicker || 'Публикация');
+        var title = document.createElement('div');
+        title.className = 'phab-admin-community-preview-title';
+        title.style.fontSize = '18px';
+        title.textContent = post.title;
+        left.appendChild(kicker);
+        left.appendChild(title);
+        top.appendChild(left);
+        preview.appendChild(top);
+        var text = document.createElement('div');
+        text.className = 'phab-admin-community-preview-text';
+        text.textContent = post.body || 'Без текста';
+        preview.appendChild(text);
+        var actions = document.createElement('div');
+        actions.className = 'phab-admin-community-preview-actions';
+        [
+          { label: 'Скрыть', className: 'phab-admin-community-preview-action' },
+          { label: 'Закрепить', className: 'phab-admin-community-preview-action' },
+          { label: 'Предупредить автора', className: 'phab-admin-community-preview-action' },
+          { label: 'Удалить', className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger' }
+        ].forEach(function (item) {
+          actions.appendChild(
+            createCommunityActionButton(item.label, item.className, function () {
+              setCommunityPreviewActionNotice(item.label);
+            })
+          );
         });
+        preview.appendChild(actions);
+        card.body.appendChild(preview);
+      });
+    }
+
+    function renderCommunityChatTab(community, model) {
+      var card = createCommunitySectionCard('Чат', 'Подозрительные сообщения и live preview');
+      dom.communityAdminGrid.appendChild(card.card);
+      model.previewMessages.forEach(function (message) {
+        var preview = document.createElement('div');
+        preview.className = 'phab-admin-community-preview-card';
+        var top = document.createElement('div');
+        top.className = 'phab-admin-community-preview-message-top';
+        var left = document.createElement('div');
+        var kicker = document.createElement('div');
+        kicker.className = 'phab-admin-community-preview-kicker';
+        kicker.textContent = message.authorName;
+        var text = document.createElement('div');
+        text.className = 'phab-admin-community-preview-text';
+        text.style.marginTop = '6px';
+        text.textContent = message.text;
+        left.appendChild(kicker);
+        left.appendChild(text);
+        top.appendChild(left);
+        preview.appendChild(top);
+        var actions = document.createElement('div');
+        actions.className = 'phab-admin-community-preview-actions';
+        [
+          { label: 'Удалить', className: 'phab-admin-community-preview-action' },
+          { label: 'Скрыть', className: 'phab-admin-community-preview-action' },
+          { label: 'Мут 1 день', className: 'phab-admin-community-preview-action' },
+          { label: 'Забанить', className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger' }
+        ].forEach(function (item) {
+          actions.appendChild(
+            createCommunityActionButton(item.label, item.className, function () {
+              setCommunityPreviewActionNotice(item.label);
+            })
+          );
+        });
+        preview.appendChild(actions);
+        card.body.appendChild(preview);
+      });
+    }
+
+    function renderCommunityRatingTab(community, model) {
+      var card = createCommunitySectionCard('Рейтинг', 'Как сейчас выглядит качество сообщества');
+      dom.communityAdminGrid.appendChild(card.card);
+      var ratingList = document.createElement('div');
+      ratingList.className = 'phab-admin-community-rating-list';
+      card.body.appendChild(ratingList);
+      model.rankingRows.forEach(function (row, index) {
+        var ratingRow = document.createElement('div');
+        ratingRow.className = 'phab-admin-community-rating-row';
+        var left = document.createElement('div');
+        var title = document.createElement('strong');
+        title.textContent = String(index + 1) + '. ' + row.name;
+        var meta = document.createElement('span');
+        meta.textContent =
+          [row.role, row.levelLabel ? 'уровень ' + row.levelLabel : null]
+            .filter(Boolean)
+            .join(' · ');
+        left.appendChild(title);
+        left.appendChild(meta);
+        var score = document.createElement('strong');
+        score.textContent = String(row.score);
+        ratingRow.appendChild(left);
+        ratingRow.appendChild(score);
+        ratingList.appendChild(ratingRow);
+      });
+    }
+
+    function renderCommunityCenterTab(community, model) {
+      clearNode(dom.communityAdminGrid);
+      if (state.communityCenterTab === 'settings') {
+        renderCommunitySettingsTab(community, model);
+        return;
       }
-      appendCommunityListEmpty(
-        pendingCard.form,
-        'Заявки берутся из массива pendingMembers в документе lk_communities.'
+      if (state.communityCenterTab === 'participants') {
+        renderCommunityMembersTab(community, model);
+        return;
+      }
+      if (state.communityCenterTab === 'applications') {
+        renderCommunityApplicationsTab(community, model);
+        return;
+      }
+      if (state.communityCenterTab === 'content') {
+        renderCommunityContentTab(community, model);
+        return;
+      }
+      if (state.communityCenterTab === 'chat') {
+        renderCommunityChatTab(community, model);
+        return;
+      }
+      if (state.communityCenterTab === 'rating') {
+        renderCommunityRatingTab(community, model);
+        return;
+      }
+      renderCommunityOverviewTab(community, model);
+    }
+
+    function renderCommunityPreview(community, model) {
+      clearNode(dom.communityPreviewBody);
+      dom.communityPreviewTitle.textContent = 'Модерация сообщества';
+      dom.communityPreviewMeta.textContent = String(community.name || 'Сообщество');
+
+      var shell = document.createElement('div');
+      shell.className = 'phab-admin-community-preview-frame';
+      dom.communityPreviewBody.appendChild(shell);
+
+      var previewTabs = document.createElement('div');
+      previewTabs.className = 'phab-admin-community-preview-tabs';
+      shell.appendChild(previewTabs);
+      [
+        { key: 'feed', label: 'Лента' },
+        { key: 'chat', label: 'Чат' },
+        { key: 'rating', label: 'Рейтинг' },
+        { key: 'about', label: 'О сообществе' }
+      ].forEach(function (item) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'phab-admin-community-tab' +
+          (state.communityPreviewTab === item.key ? ' phab-admin-community-tab-active' : '');
+        button.textContent = item.label;
+        button.addEventListener('click', function () {
+          state.communityPreviewTab = item.key;
+          renderCommunityDetails();
+        });
+        previewTabs.appendChild(button);
+      });
+
+      if (state.communityPreviewTab === 'chat') {
+        model.previewMessages.forEach(function (message) {
+          var card = document.createElement('div');
+          card.className = 'phab-admin-community-preview-card';
+          var kicker = document.createElement('div');
+          kicker.className = 'phab-admin-community-preview-kicker';
+          kicker.textContent = message.authorName + ' · ' + formatDateTimeFull(message.createdAt);
+          card.appendChild(kicker);
+          var text = document.createElement('div');
+          text.className = 'phab-admin-community-preview-text';
+          text.textContent = message.text;
+          card.appendChild(text);
+          var actions = document.createElement('div');
+          actions.className = 'phab-admin-community-preview-actions';
+          ['Удалить', 'Скрыть', 'Предупредить', 'Забанить'].forEach(function (label) {
+            actions.appendChild(
+              createCommunityActionButton(
+                label,
+                'phab-admin-community-preview-action' +
+                  (label === 'Забанить' ? ' phab-admin-community-preview-action-danger' : ''),
+                function () {
+                  setCommunityPreviewActionNotice(label);
+                }
+              )
+            );
+          });
+          card.appendChild(actions);
+          shell.appendChild(card);
+        });
+        return;
+      }
+
+      if (state.communityPreviewTab === 'rating') {
+        var ratingCard = document.createElement('div');
+        ratingCard.className = 'phab-admin-community-preview-card';
+        var title = document.createElement('div');
+        title.className = 'phab-admin-community-preview-title';
+        title.style.fontSize = '18px';
+        title.textContent = 'Общий балл: ' + String(model.rating) + '%';
+        ratingCard.appendChild(title);
+        var ratingList = document.createElement('div');
+        ratingList.className = 'phab-admin-community-rating-list';
+        ratingCard.appendChild(ratingList);
+        model.rankingRows.forEach(function (row, index) {
+          var rowNode = document.createElement('div');
+          rowNode.className = 'phab-admin-community-rating-row';
+          var left = document.createElement('div');
+          var leftTitle = document.createElement('strong');
+          leftTitle.textContent = String(index + 1) + '. ' + row.name;
+          var meta = document.createElement('span');
+          meta.textContent = [row.role, row.levelLabel].filter(Boolean).join(' · ');
+          left.appendChild(leftTitle);
+          left.appendChild(meta);
+          var value = document.createElement('strong');
+          value.textContent = String(row.score);
+          rowNode.appendChild(left);
+          rowNode.appendChild(value);
+          ratingList.appendChild(rowNode);
+        });
+        shell.appendChild(ratingCard);
+        return;
+      }
+
+      if (state.communityPreviewTab === 'about') {
+        var aboutCard = document.createElement('div');
+        aboutCard.className = 'phab-admin-community-preview-card';
+        var aboutGrid = document.createElement('div');
+        aboutGrid.className = 'phab-admin-community-about-grid';
+        aboutCard.appendChild(aboutGrid);
+        [
+          ['Статус', model.status.label],
+          ['Видимость', getCommunityVisibilityLabel(community.visibility)],
+          ['Вступление', getCommunityJoinRuleLabel(community.joinRule)],
+          ['Мин. уровень', String(community.minimumLevel || 'Не задан')],
+          ['Рейтинг', String(model.rating) + '%'],
+          ['Жалобы', String(model.reportCount)]
+        ].forEach(function (item) {
+          var box = document.createElement('div');
+          box.className = 'phab-admin-community-about-item';
+          var label = document.createElement('label');
+          label.textContent = item[0];
+          var value = document.createElement('strong');
+          value.textContent = item[1];
+          box.appendChild(label);
+          box.appendChild(value);
+          aboutGrid.appendChild(box);
+        });
+        if (String(community.description || '').trim()) {
+          var text = document.createElement('div');
+          text.className = 'phab-admin-community-preview-text';
+          text.textContent = String(community.description || '');
+          aboutCard.appendChild(text);
+        }
+        shell.appendChild(aboutCard);
+        return;
+      }
+
+      model.previewPosts.forEach(function (post) {
+        var card = document.createElement('div');
+        card.className = 'phab-admin-community-preview-card';
+        var top = document.createElement('div');
+        top.className = 'phab-admin-community-preview-post-top';
+        var left = document.createElement('div');
+        var kicker = document.createElement('div');
+        kicker.className = 'phab-admin-community-preview-kicker';
+        kicker.textContent =
+          String(post.kicker || 'Лента') + ' · ' + formatDateTimeFull(post.publishedAt);
+        var title = document.createElement('div');
+        title.className = 'phab-admin-community-preview-title';
+        title.style.fontSize = '18px';
+        title.textContent = post.title;
+        left.appendChild(kicker);
+        left.appendChild(title);
+        top.appendChild(left);
+        if (post.reportsCount > 0) {
+          top.appendChild(
+            createCommunityPill(
+              'Жалобы: ' + String(post.reportsCount),
+              'phab-admin-community-signal phab-admin-community-signal-strong'
+            )
+          );
+        }
+        card.appendChild(top);
+        var text = document.createElement('div');
+        text.className = 'phab-admin-community-preview-text';
+        text.textContent = post.body || 'Без текста';
+        card.appendChild(text);
+        var actions = document.createElement('div');
+        actions.className = 'phab-admin-community-preview-actions';
+        [
+          { label: 'Скрыть', className: 'phab-admin-community-preview-action' },
+          { label: 'Закрепить', className: 'phab-admin-community-preview-action' },
+          { label: 'Ограничить автора', className: 'phab-admin-community-preview-action' },
+          { label: 'Удалить', className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger' }
+        ].forEach(function (item) {
+          actions.appendChild(
+            createCommunityActionButton(item.label, item.className, function () {
+              setCommunityPreviewActionNotice(item.label);
+            })
+          );
+        });
+        card.appendChild(actions);
+        shell.appendChild(card);
+      });
+    }
+
+    function renderCommunityDetails() {
+      var community = getSelectedCommunity();
+      clearNode(dom.communityTags);
+      clearNode(dom.communityLinks);
+      clearNode(dom.communityStats);
+      clearNode(dom.communityTabs);
+      clearNode(dom.communityActions);
+      clearNode(dom.communityAdminGrid);
+      clearNode(dom.communityPreviewBody);
+
+      if (!community) {
+        dom.communityTitle.textContent = 'Сообщество не выбрано';
+        dom.communityMeta.textContent =
+          'Выберите сообщество слева, чтобы открыть модераторский интерфейс и параметры.';
+        dom.communityPreviewTitle.textContent = 'Модерация сообщества';
+        dom.communityPreviewMeta.textContent = 'Выберите карточку слева';
+        renderCommunityAvatarNode(dom.communityAvatar, { name: 'CM', logo: '' });
+        appendCommunityListEmpty(dom.communityAdminGrid, 'Слева выберите сообщество для модерации.');
+        appendCommunityListEmpty(dom.communityPreviewBody, 'Превью появится после выбора сообщества.');
+        return;
+      }
+
+      var model = buildCommunityModeratorModel(community);
+      model.previewPosts = getCommunityPreviewPosts(community, model);
+      model.previewMessages = getCommunityPreviewMessages(community, model);
+      model.rankingRows = getCommunityPreviewRanking(community, model);
+      model.historyEntries = getCommunityHistoryEntries(community, model);
+
+      renderCommunityAvatarNode(dom.communityAvatar, community);
+      dom.communityTitle.textContent = String(community.name || 'Сообщество');
+      dom.communityMeta.textContent = [
+        community.stationName || community.stationId || 'Без станции',
+        community.city || null,
+        community.lastActivityAt
+          ? 'активность: ' + formatDateTimeFull(community.lastActivityAt)
+          : community.updatedAt
+            ? 'обновлено: ' + formatDateTimeFull(community.updatedAt)
+            : null
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
+      dom.communityTags.appendChild(createCommunityStatusBadge(model.status));
+      dom.communityTags.appendChild(
+        createCommunityPill(
+          getCommunityVisibilityLabel(community.visibility),
+          'phab-admin-community-mini-chip'
+        )
+      );
+      dom.communityTags.appendChild(
+        createCommunityPill(
+          getCommunityJoinRuleLabel(community.joinRule),
+          'phab-admin-community-mini-chip'
+        )
+      );
+      if (community.minimumLevel) {
+        dom.communityTags.appendChild(
+          createCommunityPill('Уровень ' + String(community.minimumLevel), 'phab-admin-community-mini-chip')
+        );
+      }
+      getCommunityFocusTags(community).slice(0, 4).forEach(function (tag) {
+        dom.communityTags.appendChild(createCommunityPill(String(tag), 'phab-admin-community-mini-chip'));
+      });
+
+      var externalLinks = [];
+      if (community.moderationUrl) {
+        externalLinks.push({ href: community.moderationUrl, label: 'Открыть модерацию' });
+      }
+      if (community.publicUrl) {
+        externalLinks.push({ href: community.publicUrl, label: 'Публичная страница' });
+      }
+      if (community.inviteLink) {
+        externalLinks.push({ href: community.inviteLink, label: 'Инвайт' });
+      }
+      if (externalLinks.length > 0) {
+        externalLinks.forEach(function (item) {
+          var link = document.createElement('a');
+          link.className = 'phab-admin-dialog-link';
+          link.href = String(item.href);
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = item.label;
+          dom.communityLinks.appendChild(link);
+        });
+        dom.communityLinks.style.display = 'flex';
+      } else {
+        dom.communityLinks.style.display = 'none';
+      }
+
+      [
+        ['Участники', model.membersCount],
+        ['Заявки', model.pendingCount],
+        ['Жалобы', model.reportCount],
+        ['Рейтинг', String(model.rating) + '%'],
+        ['Чат', model.chatActivity],
+        ['Публикации 7д', model.posts7d],
+        ['Непросмотрено', model.unreadEventsCount],
+        ['В бане', model.bannedCount]
+      ].forEach(function (item) {
+        dom.communityStats.appendChild(createCommunityStatCard(item[0], String(item[1])));
+      });
+
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          model.status.key === 'HIDDEN' ? 'Показать' : 'Скрыть',
+          'phab-admin-community-main-action phab-admin-community-main-action-danger',
+          function () {
+            saveCommunitySettings(community.id, {
+              status: model.status.key === 'HIDDEN' ? 'ACTIVE' : 'HIDDEN',
+              visibility: model.status.key === 'HIDDEN' ? 'OPEN' : 'CLOSED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          model.status.key === 'PAUSED' ? 'Разморозить' : 'Заморозить',
+          'phab-admin-community-main-action phab-admin-community-main-action-warn',
+          function () {
+            saveCommunitySettings(community.id, {
+              status: model.status.key === 'PAUSED' ? 'ACTIVE' : 'PAUSED',
+              visibility: model.status.key === 'PAUSED' ? 'OPEN' : 'CLOSED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          'Ограничить публикации',
+          'phab-admin-community-main-action',
+          function () {
+            saveCommunitySettings(community.id, {
+              status: 'MODERATION',
+              joinRule: 'MODERATED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          'Назначить модератора',
+          'phab-admin-community-main-action',
+          function () {
+            state.communityCenterTab = 'participants';
+            state.communityMembersSegment = 'MEMBERS';
+            renderCommunityDetails();
+            setStatus('Выберите участника в центральной колонке и назначьте модератором.', false);
+          }
+        )
       );
 
-      var frameUrl = String(
-        community.webviewUrl || community.moderationUrl || community.publicUrl || ''
-      ).trim();
+      [
+        { key: 'overview', label: 'Обзор' },
+        { key: 'settings', label: 'Настройки' },
+        { key: 'participants', label: 'Участники' },
+        { key: 'applications', label: 'Заявки' },
+        { key: 'content', label: 'Контент' },
+        { key: 'chat', label: 'Чат' },
+        { key: 'rating', label: 'Рейтинг' }
+      ].forEach(function (item) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'phab-admin-community-tab' +
+          (state.communityCenterTab === item.key ? ' phab-admin-community-tab-active' : '');
+        button.textContent = item.label;
+        button.addEventListener('click', function () {
+          state.communityCenterTab = item.key;
+          renderCommunityDetails();
+        });
+        dom.communityTabs.appendChild(button);
+      });
 
-      if (frameUrl) {
-        if (dom.communityFrame.getAttribute('src') !== frameUrl) {
-          dom.communityFrame.src = frameUrl;
-        }
-        dom.communityFrame.style.display = 'block';
-        dom.communityEmpty.style.display = 'none';
-      } else {
-        dom.communityFrame.removeAttribute('src');
-        dom.communityFrame.style.display = 'none';
-        dom.communityEmpty.style.display = 'flex';
-        dom.communityEmpty.textContent =
-          'Внешний webview не задан. Используйте карточки управления выше для модерации.';
-      }
+      renderCommunityCenterTab(community, model);
+      renderCommunityPreview(community, model);
     }
 
     function renderCommunities() {
       clearNode(dom.communitiesList);
 
-      var filteredCommunities = sortCommunities(state.communities).filter(function (community) {
-        return matchCommunitySearch(community, state.communitiesSearchQuery);
+      var stations = ['ALL'];
+      var activities = ['ALL'];
+      state.communities.forEach(function (community) {
+        var station = String(community.stationName || community.stationId || 'NONE');
+        if (stations.indexOf(station) === -1) {
+          stations.push(station);
+        }
+        buildCommunityModeratorModel(community).activityTypes.forEach(function (type) {
+          if (activities.indexOf(type) === -1) {
+            activities.push(type);
+          }
+        });
+      });
+
+      ensureCommunitySelectOptions(
+        dom.communityStationFilter,
+        stations.map(function (value) {
+          return {
+            value: value,
+            label: value === 'ALL' ? 'Все станции' : value === 'NONE' ? 'Без станции' : value
+          };
+        }),
+        state.communitiesStationFilter
+      );
+      state.communitiesStationFilter = String(dom.communityStationFilter.value || 'ALL');
+
+      ensureCommunitySelectOptions(
+        dom.communityStatusFilter,
+        [
+          { value: 'ALL', label: 'Любой статус' },
+          { value: 'OPEN', label: 'Открыто' },
+          { value: 'CLOSED', label: 'Закрыто' },
+          { value: 'HIDDEN', label: 'Скрыто' },
+          { value: 'PAUSED', label: 'На паузе' },
+          { value: 'MODERATION', label: 'На проверке' }
+        ],
+        state.communitiesStatusFilter
+      );
+      state.communitiesStatusFilter = String(dom.communityStatusFilter.value || 'ALL');
+
+      ensureCommunitySelectOptions(
+        dom.communityLevelFilter,
+        [
+          { value: 'ALL', label: 'Любой уровень' },
+          { value: 'D', label: 'D' },
+          { value: 'D+', label: 'D+' },
+          { value: 'C', label: 'C' },
+          { value: 'C+', label: 'C+' },
+          { value: 'B', label: 'B' },
+          { value: 'B+', label: 'B+' },
+          { value: 'A', label: 'A' }
+        ],
+        state.communitiesLevelFilter
+      );
+      state.communitiesLevelFilter = String(dom.communityLevelFilter.value || 'ALL');
+
+      ensureCommunitySelectOptions(
+        dom.communityAccessFilter,
+        [
+          { value: 'ALL', label: 'Любой доступ' },
+          { value: 'OPEN', label: 'Каталог открыт' },
+          { value: 'CLOSED', label: 'Скрыт из каталога' },
+          { value: 'INSTANT', label: 'Свободный вход' },
+          { value: 'MODERATED', label: 'Через заявку' },
+          { value: 'INVITE_ONLY', label: 'По инвайту' }
+        ],
+        state.communitiesAccessFilter
+      );
+      state.communitiesAccessFilter = String(dom.communityAccessFilter.value || 'ALL');
+
+      ensureCommunitySelectOptions(
+        dom.communityActivityFilter,
+        activities.map(function (value) {
+          return {
+            value: value,
+            label: value === 'ALL' ? 'Любая активность' : value
+          };
+        }),
+        state.communitiesActivityFilter
+      );
+      state.communitiesActivityFilter = String(dom.communityActivityFilter.value || 'ALL');
+
+      ensureCommunitySelectOptions(
+        dom.communitySortSelect,
+        [
+          { value: 'activity', label: 'Сортировка: активность' },
+          { value: 'pending', label: 'Сортировка: заявки' },
+          { value: 'reports', label: 'Сортировка: жалобы' },
+          { value: 'growth', label: 'Сортировка: рост' }
+        ],
+        state.communitiesSortField
+      );
+      state.communitiesSortField = String(dom.communitySortSelect.value || 'activity');
+
+      var filteredCommunities = sortCommunitiesForModeration(state.communities).filter(function (community) {
+        return filterCommunitiesForModeration(community);
       });
 
       if (filteredCommunities.length === 0) {
@@ -9603,7 +11471,7 @@
         empty.className = 'phab-admin-empty';
         empty.textContent = state.communitiesSearchQuery
           ? 'По вашему запросу сообщества не найдены'
-          : 'Сообщества не найдены';
+          : 'Нет сообществ под выбранные фильтры';
         emptyItem.appendChild(empty);
         dom.communitiesList.appendChild(emptyItem);
         state.selectedCommunityId = null;
@@ -9620,50 +11488,143 @@
       }
 
       filteredCommunities.forEach(function (community) {
+        var model = buildCommunityModeratorModel(community);
         var li = document.createElement('li');
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className =
-          'phab-admin-list-btn' +
-          (state.selectedCommunityId === community.id ? ' phab-admin-list-btn-active' : '');
-        btn.addEventListener('click', function () {
+        var article = document.createElement('article');
+        article.className =
+          'phab-admin-community-card' +
+          (state.selectedCommunityId === community.id ? ' phab-admin-community-card-active' : '');
+        li.appendChild(article);
+
+        var selectBtn = document.createElement('button');
+        selectBtn.type = 'button';
+        selectBtn.className = 'phab-admin-community-card-btn';
+        selectBtn.addEventListener('click', function () {
           state.selectedCommunityId = community.id;
           renderCommunities();
         });
-        li.appendChild(btn);
+        article.appendChild(selectBtn);
 
+        var head = document.createElement('div');
+        head.className = 'phab-admin-community-card-head';
+        selectBtn.appendChild(head);
+
+        var avatar = document.createElement('div');
+        avatar.className = 'phab-admin-community-avatar';
+        renderCommunityAvatarNode(avatar, community);
+        head.appendChild(avatar);
+
+        var identity = document.createElement('div');
         var title = document.createElement('div');
-        title.className = 'phab-admin-list-title';
+        title.className = 'phab-admin-community-card-title';
         title.textContent = String(community.name || 'Сообщество');
-        btn.appendChild(title);
-
         var meta = document.createElement('div');
-        meta.className = 'phab-admin-list-meta';
-        meta.textContent = buildCommunityListMeta(community);
-        btn.appendChild(meta);
+        meta.className = 'phab-admin-community-card-meta';
+        meta.textContent = [
+          community.stationName || community.stationId || 'Без станции',
+          community.city || null
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        identity.appendChild(title);
+        identity.appendChild(meta);
+        head.appendChild(identity);
+        head.appendChild(createCommunityStatusBadge(model.status));
 
-        var preview = document.createElement('div');
-        preview.className = 'phab-admin-chat-preview';
-        preview.textContent = buildCommunityPreview(community);
-        btn.appendChild(preview);
+        var activityRow = document.createElement('div');
+        activityRow.className = 'phab-admin-community-activity-row';
+        model.activityTypes.forEach(function (type) {
+          activityRow.appendChild(createCommunityPill(type, 'phab-admin-community-mini-chip'));
+        });
+        selectBtn.appendChild(activityRow);
 
-        var chips = document.createElement('div');
-        chips.className = 'phab-admin-dialog-tags';
-        if (community.rawStatus || community.status) {
-          chips.appendChild(createTextChip(String(community.rawStatus || community.status), ''));
-        }
-        if (community.visibility) {
-          chips.appendChild(createTextChip(String(community.visibility), 'warn'));
-        }
-        if (normalizeCommunityCount(community.pendingRequestsCount) !== null) {
-          chips.appendChild(
-            createTextChip(
-              'Заявки: ' + String(normalizeCommunityCount(community.pendingRequestsCount)),
-              Number(community.pendingRequestsCount || 0) > 0 ? 'alert' : ''
+        var signalRow = document.createElement('div');
+        signalRow.className = 'phab-admin-community-signal-row';
+        signalRow.appendChild(createCommunityPill('Участники ' + String(model.membersCount), 'phab-admin-community-signal'));
+        signalRow.appendChild(
+          createCommunityPill(
+            'Заявки ' + String(model.pendingCount),
+            'phab-admin-community-signal' +
+              (model.pendingCount > 0 ? ' phab-admin-community-signal-strong' : '')
+          )
+        );
+        signalRow.appendChild(
+          createCommunityPill(
+            'Жалобы ' + String(model.reportCount),
+            'phab-admin-community-signal' +
+              (model.reportCount > 0 ? ' phab-admin-community-signal-strong' : '')
+          )
+        );
+        if (model.unreadEventsCount > 0) {
+          signalRow.appendChild(
+            createCommunityPill(
+              'Новые события ' + String(model.unreadEventsCount),
+              'phab-admin-community-signal'
             )
           );
         }
-        btn.appendChild(chips);
+        selectBtn.appendChild(signalRow);
+
+        var riskRow = document.createElement('div');
+        riskRow.className = 'phab-admin-community-risk-row';
+        if (model.riskFlags.length === 0) {
+          riskRow.appendChild(createCommunityPill('Стабильно', 'phab-admin-community-risk'));
+        } else {
+          model.riskFlags.slice(0, 3).forEach(function (risk) {
+            riskRow.appendChild(
+              createCommunityPill(
+                risk.label,
+                'phab-admin-community-risk' +
+                  (risk.tone === 'danger' ? ' phab-admin-community-risk-danger' : '')
+              )
+            );
+          });
+        }
+        selectBtn.appendChild(riskRow);
+
+        var actions = document.createElement('div');
+        actions.className = 'phab-admin-community-card-actions';
+        article.appendChild(actions);
+        actions.appendChild(
+          createCommunityActionButton('Открыть', 'phab-admin-community-card-action', function () {
+            state.selectedCommunityId = community.id;
+            state.communityCenterTab = 'overview';
+            renderCommunities();
+          })
+        );
+        actions.appendChild(
+          createCommunityActionButton('В чат', 'phab-admin-community-card-action', function () {
+            state.selectedCommunityId = community.id;
+            state.communityPreviewTab = 'chat';
+            renderCommunities();
+          })
+        );
+        actions.appendChild(
+          createCommunityActionButton(
+            'Скрыть',
+            'phab-admin-community-card-action phab-admin-community-card-action-danger',
+            function () {
+              saveCommunitySettings(community.id, {
+                status: 'HIDDEN',
+                visibility: 'CLOSED'
+              }).catch(handleError);
+            },
+            state.communitySavingId === community.id
+          )
+        );
+        actions.appendChild(
+          createCommunityActionButton(
+            'Заморозить',
+            'phab-admin-community-card-action',
+            function () {
+              saveCommunitySettings(community.id, {
+                status: 'PAUSED',
+                visibility: 'CLOSED'
+              }).catch(handleError);
+            },
+            state.communitySavingId === community.id
+          )
+        );
 
         dom.communitiesList.appendChild(li);
       });
@@ -10604,6 +12565,19 @@
         event.preventDefault();
         state.communitiesSearchQuery = String(dom.communitySearchInput.value || '').trim();
         renderCommunities();
+      });
+      [
+        ['communityStationFilter', 'communitiesStationFilter'],
+        ['communityStatusFilter', 'communitiesStatusFilter'],
+        ['communityLevelFilter', 'communitiesLevelFilter'],
+        ['communityAccessFilter', 'communitiesAccessFilter'],
+        ['communityActivityFilter', 'communitiesActivityFilter'],
+        ['communitySortSelect', 'communitiesSortField']
+      ].forEach(function (item) {
+        dom[item[0]].addEventListener('change', function () {
+          state[item[1]] = String(dom[item[0]].value || 'ALL');
+          renderCommunities();
+        });
       });
       dom.dialogFiltersBtn.addEventListener('click', function () {
         if (dom.dialogFiltersBtn.disabled) {

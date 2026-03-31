@@ -29,7 +29,7 @@ class CommunityActorDto {
 }
 
 export class ManageCommunityMemberDto {
-  @IsIn(['APPROVE', 'REMOVE', 'BAN'])
+  @IsIn(['APPROVE', 'REMOVE', 'BAN', 'PROMOTE', 'DEMOTE', 'WARN'])
   action!: CommunityMemberManageAction;
 
   @IsObject()

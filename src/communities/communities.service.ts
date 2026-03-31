@@ -52,6 +52,9 @@ export class CommunitiesService {
     if (mutation.name !== undefined && !String(mutation.name).trim()) {
       throw new BadRequestException('Community name cannot be empty');
     }
+    if (mutation.status !== undefined && !String(mutation.status).trim()) {
+      throw new BadRequestException('Community status cannot be empty');
+    }
 
     const community = await this.communitiesPersistence.updateCommunity(id, mutation);
     if (!community) {
