@@ -267,8 +267,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     const outboxById = new Map<string, TimestampedEntity<SupportOutboxCommand>>();
 
     for (const backend of activeBackends) {
-      const backendKey = backend.config.key;
-
       for await (const client of this.collection<SupportClientProfile>(backend, 'clients').find(
         {},
         { projection: { _id: 0 } }
@@ -285,9 +283,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         {},
         { projection: { _id: 0 } }
       )) {
-        if (!this.shouldIncludeDialogForBackend(dialog, backendKey)) {
-          continue;
-        }
         this.upsertByTimestamp(
           dialogsById,
           dialog.id,
@@ -300,9 +295,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         {},
         { projection: { _id: 0 } }
       )) {
-        if (!this.shouldIncludeMessageForBackend(message, backendKey)) {
-          continue;
-        }
         this.upsertByTimestamp(
           messagesById,
           message.id,
@@ -315,9 +307,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         backend,
         'responseMetrics'
       ).find({}, { projection: { _id: 0 } })) {
-        if (!this.shouldIncludeResponseMetricForBackend(metric, backendKey)) {
-          continue;
-        }
         this.upsertByTimestamp(
           metricsById,
           metric.id,
@@ -330,9 +319,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         {},
         { projection: { _id: 0 } }
       )) {
-        if (!this.shouldIncludeOutboxForBackend(command, backendKey)) {
-          continue;
-        }
         this.upsertByTimestamp(
           outboxById,
           command.id,
@@ -543,7 +529,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     const byId = new Map<string, TimestampedEntity<SupportMessage>>();
 
     for (const backend of activeBackends) {
-      const backendKey = backend.config.key;
       const items = await this.collection<SupportMessage>(backend, 'serviceMessages')
         .find(
           { dialogId: normalizedDialogId },
@@ -556,9 +541,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         .toArray();
 
       for (const message of items) {
-        if (!this.shouldIncludeMessageForBackend(message, backendKey)) {
-          continue;
-        }
         if (!this.isServiceMessage(message)) {
           continue;
         }
