@@ -58,18 +58,22 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   private readonly mongoUri = this.readEnv('COMMUNITIES_MONGODB_URI')
     ?? this.readEnv('GAMES_MONGODB_URI')
     ?? this.readEnv('MONGODB_URI');
-  private readonly mongoDbName =
-    this.readEnv('COMMUNITIES_MONGODB_DB')
-    ?? this.readEnv('GAMES_MONGODB_DB')
-    ?? this.readEnv('MONGODB_DB')
-    ?? 'games';
-  private readonly collectionName =
-    this.readEnv('COMMUNITIES_MONGODB_COLLECTION') ?? 'lk_communities';
+  private readonly mongoDbNames = this.dedupeStrings([
+    this.readEnv('COMMUNITIES_MONGODB_DB'),
+    this.readEnv('GAMES_MONGODB_DB'),
+    'games',
+    this.readEnv('MONGODB_DB'),
+    'ph_admin'
+  ]);
+  private readonly collectionNames = this.dedupeStrings([
+    this.readEnv('COMMUNITIES_MONGODB_COLLECTION'),
+    'lk_communities'
+  ]);
   private readonly inviteBaseUrl =
     this.readEnv('COMMUNITIES_INVITE_BASE_URL')
     ?? 'https://padlhub.ru/community/invite/';
   private client?: MongoClient;
-  private db?: Db;
+  private dbsByName = new Map<string, Db>();
 
   isEnabled(): boolean {
     return Boolean(this.mongoUri);
@@ -81,36 +85,47 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
     await this.client.close().catch(() => undefined);
     this.client = undefined;
-    this.db = undefined;
+    this.dbsByName.clear();
   }
 
   async listCommunities(): Promise<Community[]> {
-    const collection = await this.collection();
-    const items = await collection
-      .find({ archived: { $ne: true } })
-      .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
-      .toArray();
+    const fallback = await this.primaryCollection();
+    const candidates = await this.readCollections(fallback);
 
-    return items
-      .map((item) => this.toCommunity(item))
-      .filter((community): community is Community => community !== null);
+    for (const candidate of candidates) {
+      const items = await candidate.collection
+        .find({ archived: { $ne: true } })
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .toArray();
+      const communities = items
+        .map((item) => this.toCommunity(item))
+        .filter((community): community is Community => community !== null);
+      if (communities.length > 0) {
+        this.logger.log(
+          `Communities source resolved: db=${candidate.dbName}, collection=${candidate.collectionName}, count=${communities.length}`
+        );
+        return communities;
+      }
+    }
+
+    return [];
   }
 
   async findCommunityById(id: string): Promise<Community | null> {
-    const item = await this.findDocumentById(id);
-    return item ? this.toCommunity(item) : null;
+    const match = await this.findDocumentWithSourceById(id);
+    return match ? this.toCommunity(match.document) : null;
   }
 
   async updateCommunity(
     id: string,
     mutation: CommunitiesUpdateMutation
   ): Promise<Community | null> {
-    const item = await this.findDocumentById(id);
-    if (!item) {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match) {
       return null;
     }
 
-    const updated: MongoCommunityDocument = { ...item };
+    const updated: MongoCommunityDocument = { ...match.document };
     const now = new Date().toISOString();
 
     if (mutation.name !== undefined) {
@@ -143,7 +158,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
 
     updated.updatedAt = now;
 
-    await this.persistDocument(updated);
+    await this.persistDocument(updated, match.collection);
     return this.toCommunity(updated);
   }
 
@@ -151,12 +166,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     id: string,
     mutation: CommunitiesManageMemberMutation
   ): Promise<Community | null> {
-    const item = await this.findDocumentById(id);
-    if (!item) {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match) {
       return null;
     }
 
-    const updated: MongoCommunityDocument = { ...item };
+    const updated: MongoCommunityDocument = { ...match.document };
     const members = this.toObjectArray(updated.members);
     const pendingMembers = this.toObjectArray(updated.pendingMembers);
     const bannedMembers = this.toObjectArray(updated.bannedMembers);
@@ -217,16 +232,17 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     updated.pendingCount = this.toObjectArray(updated.pendingMembers).length;
     updated.updatedAt = now;
 
-    await this.persistDocument(updated);
+    await this.persistDocument(updated, match.collection);
     return this.toCommunity(updated);
   }
 
-  private async collection(): Promise<Collection<MongoCommunityDocument>> {
-    const db = await this.database();
-    return db.collection<MongoCommunityDocument>(this.collectionName);
+  private async primaryCollection(): Promise<Collection<MongoCommunityDocument>> {
+    const dbName = this.mongoDbNames[0] || 'games';
+    const collectionName = this.collectionNames[0] || 'lk_communities';
+    return this.collection(dbName, collectionName);
   }
 
-  private async database(): Promise<Db> {
+  private async database(dbName: string): Promise<Db> {
     if (!this.mongoUri) {
       throw new InternalServerErrorException(
         'Communities MongoDB access requires COMMUNITIES_MONGODB_URI or MONGODB_URI'
@@ -240,13 +256,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       });
       try {
         await this.client.connect();
-        this.db = this.client.db(this.mongoDbName);
-        this.logger.log(
-          `MongoDB communities source enabled: db=${this.mongoDbName}, collection=${this.collectionName}`
-        );
+        this.logger.log('MongoDB communities source enabled');
       } catch (error) {
         this.client = undefined;
-        this.db = undefined;
+        this.dbsByName.clear();
         this.logger.error(`Mongo connect failed for communities source: ${String(error)}`);
         throw new InternalServerErrorException(
           'MongoDB connection failed for communities source'
@@ -254,16 +267,26 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       }
     }
 
-    if (!this.db) {
-      throw new InternalServerErrorException('MongoDB communities database is unavailable');
+    if (!this.client) {
+      throw new InternalServerErrorException('MongoDB communities client is unavailable');
     }
 
-    return this.db;
+    const existingDb = this.dbsByName.get(dbName);
+    if (existingDb) {
+      return existingDb;
+    }
+
+    const db = this.client.db(dbName);
+    this.dbsByName.set(dbName, db);
+    return db;
   }
 
-  private async findDocumentById(id: string): Promise<MongoCommunityDocument | null> {
-    const collection = await this.collection();
-    return collection.findOne(this.buildIdFilter(id));
+  private async collection(
+    dbName: string,
+    collectionName: string
+  ): Promise<Collection<MongoCommunityDocument>> {
+    const db = await this.database(dbName);
+    return db.collection<MongoCommunityDocument>(collectionName);
   }
 
   private buildIdFilter(id: string): Filter<MongoCommunityDocument> {
@@ -282,8 +305,75 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     } as Filter<MongoCommunityDocument>;
   }
 
-  private async persistDocument(document: MongoCommunityDocument): Promise<void> {
-    const collection = await this.collection();
+  private async readCollections(
+    fallback: Collection<MongoCommunityDocument>
+  ): Promise<
+    Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityDocument>;
+    }>
+  > {
+    const result: Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityDocument>;
+    }> = [];
+
+    for (const dbName of this.mongoDbNames.length > 0 ? this.mongoDbNames : ['games']) {
+      for (const collectionName of this.collectionNames.length > 0
+        ? this.collectionNames
+        : ['lk_communities']) {
+        result.push({
+          dbName: dbName,
+          collectionName: collectionName,
+          collection: await this.collection(dbName, collectionName)
+        });
+      }
+    }
+
+    if (result.length === 0) {
+      result.push({
+        dbName: 'games',
+        collectionName: 'lk_communities',
+        collection: fallback
+      });
+    }
+
+    return result;
+  }
+
+  private async findDocumentWithSourceById(
+    id: string
+  ): Promise<{
+    document: MongoCommunityDocument;
+    collection: Collection<MongoCommunityDocument>;
+    dbName: string;
+    collectionName: string;
+  } | null> {
+    const fallback = await this.primaryCollection();
+    const candidates = await this.readCollections(fallback);
+    const filter = this.buildIdFilter(id);
+
+    for (const candidate of candidates) {
+      const document = await candidate.collection.findOne(filter);
+      if (document) {
+        return {
+          document: document,
+          collection: candidate.collection,
+          dbName: candidate.dbName,
+          collectionName: candidate.collectionName
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async persistDocument(
+    document: MongoCommunityDocument,
+    collection: Collection<MongoCommunityDocument>
+  ): Promise<void> {
     const identifier = document._id ?? this.pickString(document.id) ?? this.pickString(document.communityId);
     const payload = { ...document };
     delete payload._id;
@@ -636,16 +726,6 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return result;
   }
 
-  private dedupeStrings(values: string[]): string[] {
-    return Array.from(
-      new Set(
-        values
-          .map((entry) => String(entry ?? '').trim())
-          .filter((entry) => entry.length > 0)
-      )
-    );
-  }
-
   private normalizePhone(value: unknown): string | null {
     const digits = String(value ?? '').replace(/\D+/g, '');
     if (!digits) {
@@ -721,5 +801,15 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   private readEnv(name: string): string | undefined {
     const value = String(process.env[name] ?? '').trim();
     return value || undefined;
+  }
+
+  private dedupeStrings(values: Array<string | undefined>): string[] {
+    return Array.from(
+      new Set(
+        values
+          .map((entry) => String(entry ?? '').trim())
+          .filter((entry) => entry.length > 0)
+      )
+    );
   }
 }

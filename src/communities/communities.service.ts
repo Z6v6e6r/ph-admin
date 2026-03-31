@@ -21,15 +21,21 @@ export class CommunitiesService {
 
   async findAll(): Promise<Community[]> {
     if (this.communitiesPersistence.isEnabled()) {
-      return this.communitiesPersistence.listCommunities();
+      const communities = await this.communitiesPersistence.listCommunities();
+      if (communities.length > 0) {
+        return communities;
+      }
     }
     return this.lkPadelHubClient.listCommunities();
   }
 
   async findById(id: string): Promise<Community> {
-    const community = this.communitiesPersistence.isEnabled()
+    let community = this.communitiesPersistence.isEnabled()
       ? await this.communitiesPersistence.findCommunityById(id)
-      : await this.lkPadelHubClient.getCommunityById(id);
+      : null;
+    if (!community) {
+      community = await this.lkPadelHubClient.getCommunityById(id);
+    }
     if (!community) {
       throw new NotFoundException(`Community with id ${id} not found`);
     }
