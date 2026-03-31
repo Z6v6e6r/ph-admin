@@ -59,8 +59,10 @@ export interface SupportPersistenceRuntimeDiagnostics {
   env: {
     supportMongoUriConfigured: boolean;
     mongoUriConfigured: boolean;
+    gamesMongoUriConfigured: boolean;
     supportMongoDb?: string;
     mongoDb?: string;
+    gamesMongoDb?: string;
     supportWebMongoUriConfigured: boolean;
     supportWebMongoDb?: string;
     supportMaxMongoUriConfigured: boolean;
@@ -130,6 +132,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private readonly fallbackMongoUri = this.readEnv('MONGODB_URI');
   private readonly supportMongoDb = this.readEnv('SUPPORT_MONGODB_DB');
   private readonly fallbackMongoDb = this.readEnv('MONGODB_DB');
+  private readonly gamesMongoUri = this.readEnv('GAMES_MONGODB_URI');
+  private readonly gamesMongoDb = this.readEnv('GAMES_MONGODB_DB');
 
   private readonly supportWebMongoUri = this.readEnv('SUPPORT_WEB_MONGODB_URI');
   private readonly supportWebMongoDb = this.readEnv('SUPPORT_WEB_MONGODB_DB');
@@ -219,8 +223,10 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       env: {
         supportMongoUriConfigured: Boolean(this.supportMongoUri),
         mongoUriConfigured: Boolean(this.fallbackMongoUri),
+        gamesMongoUriConfigured: Boolean(this.gamesMongoUri),
         supportMongoDb: this.supportMongoDb,
         mongoDb: this.fallbackMongoDb,
+        gamesMongoDb: this.gamesMongoDb,
         supportWebMongoUriConfigured: Boolean(this.supportWebMongoUri),
         supportWebMongoDb: this.supportWebMongoDb,
         supportMaxMongoUriConfigured: Boolean(this.supportMaxMongoUri),
@@ -618,6 +624,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private buildBackendConfigs(): SupportPersistenceBackendConfig[] {
     const primaryUri = this.supportMongoUri ?? this.fallbackMongoUri;
     const primaryDbName = this.resolvePrimaryDbName();
+    const webUri = this.supportWebMongoUri ?? this.gamesMongoUri ?? primaryUri;
+    const webDbName = this.resolveWebDbName(primaryDbName);
 
     const primary: SupportPersistenceBackendConfig = {
       key: 'primary',
@@ -628,11 +636,21 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
     const configs: SupportPersistenceBackendConfig[] = [primary];
 
-    if (this.supportWebMongoDb) {
+    if (
+      webUri &&
+      webDbName &&
+      (
+        Boolean(this.supportWebMongoUri) ||
+        Boolean(this.supportWebMongoDb) ||
+        Boolean(this.gamesMongoUri) ||
+        Boolean(this.gamesMongoDb) ||
+        webDbName !== primaryDbName
+      )
+    ) {
       configs.push({
         key: 'web',
-        uri: this.supportWebMongoUri ?? primaryUri,
-        dbName: this.supportWebMongoDb,
+        uri: webUri,
+        dbName: webDbName,
         collections: {
           clients:
             this.readEnv('SUPPORT_WEB_CLIENTS_COLLECTION') ?? this.primaryCollections.clients,
@@ -697,7 +715,35 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   private resolvePrimaryDbName(): string {
-    return this.supportMongoDb ?? this.fallbackMongoDb ?? DEFAULT_DIALOGS_MONGODB_DB;
+    if (this.supportMongoDb) {
+      return this.supportMongoDb;
+    }
+
+    const fallback = String(this.fallbackMongoDb ?? '').trim();
+    if (!fallback) {
+      return DEFAULT_DIALOGS_MONGODB_DB;
+    }
+
+    const normalized = fallback.toLowerCase();
+    if (['ph_admin', 'admin', 'games', 'games_chat'].includes(normalized)) {
+      return DEFAULT_DIALOGS_MONGODB_DB;
+    }
+
+    return fallback;
+  }
+
+  private resolveWebDbName(primaryDbName: string): string {
+    const explicit = String(this.supportWebMongoDb ?? '').trim();
+    if (explicit) {
+      return explicit;
+    }
+
+    const gamesDb = String(this.gamesMongoDb ?? '').trim();
+    if (gamesDb) {
+      return gamesDb;
+    }
+
+    return primaryDbName === 'games' ? primaryDbName : 'games';
   }
 
   private getBackendState(key: SupportPersistenceBackendKey):
