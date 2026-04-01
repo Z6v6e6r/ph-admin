@@ -71,5 +71,6 @@ export interface Community {
   createdBy?: CommunityActor;
   members?: CommunityMember[];
   pendingMembers?: CommunityMember[];
+  bannedMembers?: CommunityMember[];
   details?: Record<string, unknown>;
 }

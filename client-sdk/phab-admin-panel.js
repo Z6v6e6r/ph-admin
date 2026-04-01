@@ -1488,12 +1488,23 @@
         padding:14px;
         box-shadow:0 8px 18px rgba(51,0,32,.05);
       }
+      .phab-admin-community-section-card-fill{
+        display:flex;
+        flex-direction:column;
+        min-height:calc(100dvh - 390px);
+      }
       .phab-admin-community-section-head{
         display:flex;
         align-items:flex-start;
         justify-content:space-between;
         gap:10px;
         margin-bottom:12px;
+      }
+      .phab-admin-community-section-body-fill{
+        display:flex;
+        flex-direction:column;
+        flex:1;
+        min-height:0;
       }
       .phab-admin-community-section-title{
         font-size:12px;
@@ -1557,6 +1568,11 @@
         flex-wrap:wrap;
         gap:8px;
       }
+      .phab-admin-community-members-list{
+        flex:1;
+        min-height:0;
+        max-height:none;
+      }
       .phab-admin-community-segments{
         display:flex;
         flex-wrap:wrap;
@@ -1584,10 +1600,80 @@
       .phab-admin-community-preview-frame{
         border:1px solid rgba(97,7,136,.12);
         border-radius:26px;
-        padding:12px;
+        padding:14px;
         background:
           linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,244,255,.94));
         box-shadow:inset 0 1px 0 rgba(255,255,255,.8);
+      }
+      .phab-admin-community-lk-head{
+        display:grid;
+        grid-template-columns:60px minmax(0,1fr) auto;
+        gap:12px;
+        align-items:center;
+        padding:4px 2px 14px;
+      }
+      .phab-admin-community-lk-head .phab-admin-community-avatar{
+        width:60px;
+        height:60px;
+      }
+      .phab-admin-community-lk-head .phab-admin-community-avatar-media{
+        border-radius:20px;
+      }
+      .phab-admin-community-lk-head .phab-admin-community-avatar-verified{
+        width:22px;
+        height:22px;
+        right:-4px;
+        bottom:-4px;
+      }
+      .phab-admin-community-lk-head-main{
+        min-width:0;
+      }
+      .phab-admin-community-lk-name{
+        font-size:18px;
+        font-weight:900;
+        line-height:1.05;
+        color:var(--cup-ink);
+      }
+      .phab-admin-community-lk-subtitle{
+        margin-top:6px;
+        font-size:12px;
+        color:rgba(51,0,32,.62);
+      }
+      .phab-admin-community-lk-head-actions{
+        display:flex;
+        gap:8px;
+      }
+      .phab-admin-community-lk-circle-btn{
+        width:40px;
+        height:40px;
+        border:none;
+        border-radius:999px;
+        cursor:pointer;
+        background:rgba(255,255,255,.96);
+        box-shadow:0 8px 20px rgba(51,0,32,.08);
+        color:rgba(51,0,32,.6);
+        font-size:18px;
+        font-weight:800;
+      }
+      .phab-admin-community-lk-segments{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin:-2px 0 14px;
+      }
+      .phab-admin-community-lk-segment{
+        border:none;
+        cursor:pointer;
+        border-radius:999px;
+        padding:8px 14px;
+        background:rgba(246,241,255,.96);
+        color:rgba(51,0,32,.76);
+        font-size:12px;
+        font-weight:900;
+      }
+      .phab-admin-community-lk-segment-active{
+        background:linear-gradient(90deg,rgba(37,31,44,.96),rgba(30,28,38,.92));
+        color:#fff;
       }
       .phab-admin-community-preview-tabs{
         display:flex;
@@ -1613,12 +1699,70 @@
         border-color:rgba(255,162,0,.2);
         box-shadow:0 10px 24px rgba(255,162,0,.08);
       }
+      .phab-admin-community-feed-card--event{
+        border-color:rgba(255,138,0,.22);
+        box-shadow:0 10px 24px rgba(255,138,0,.08);
+      }
       .phab-admin-community-feed-card--news{
         border-color:rgba(97,7,136,.15);
       }
       .phab-admin-community-feed-card--system{
         border-color:rgba(51,0,32,.12);
         background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(250,248,255,.95));
+      }
+      .phab-admin-community-feed-card-promoted{
+        box-shadow:0 16px 30px rgba(255,120,34,.16);
+      }
+      .phab-admin-community-feed-card-muted{
+        opacity:.72;
+      }
+      .phab-admin-community-lk-card-top{
+        display:flex;
+        gap:12px;
+        align-items:flex-start;
+      }
+      .phab-admin-community-lk-card-content{
+        min-width:0;
+        flex:1;
+      }
+      .phab-admin-community-lk-date-badge{
+        flex:0 0 54px;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        gap:2px;
+        padding:8px 6px;
+        border-radius:14px;
+        background:linear-gradient(180deg,#2b223a 0%,#6f4df6 60%,#ece7ff 60%,#f4efff 100%);
+        color:#fff;
+        text-align:center;
+        box-shadow:0 8px 18px rgba(93,78,255,.18);
+      }
+      .phab-admin-community-lk-date-badge span{
+        font-size:9px;
+        font-weight:900;
+        letter-spacing:.06em;
+      }
+      .phab-admin-community-lk-date-badge strong{
+        font-size:24px;
+        line-height:1;
+      }
+      .phab-admin-community-lk-date-badge em{
+        font-style:normal;
+        font-size:9px;
+        color:rgba(43,34,58,.74);
+      }
+      .phab-admin-community-lk-side-action{
+        flex:0 0 auto;
+        width:40px;
+        height:40px;
+        border:none;
+        border-radius:14px;
+        background:rgba(243,236,255,.98);
+        color:#7b52f1;
+        font-size:18px;
+        cursor:pointer;
       }
       .phab-admin-community-feed-media{
         margin-top:12px;
@@ -1670,6 +1814,85 @@
         border-color:rgba(255,70,78,.24);
         color:#b31931;
       }
+      .phab-admin-community-feed-chip-accent{
+        background:rgba(255,128,36,.12);
+        border-color:rgba(255,128,36,.24);
+        color:#db6f12;
+      }
+      .phab-admin-community-lk-game-meta{
+        margin-top:12px;
+        font-size:13px;
+        color:rgba(51,0,32,.72);
+      }
+      .phab-admin-community-lk-game-footer{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        margin-top:14px;
+      }
+      .phab-admin-community-lk-participants{
+        display:flex;
+        align-items:center;
+        min-width:0;
+      }
+      .phab-admin-community-lk-participant{
+        width:34px;
+        height:34px;
+        margin-right:-8px;
+        border-radius:999px;
+        border:2px solid rgba(255,255,255,.98);
+        background:linear-gradient(135deg,rgba(223,227,236,.98),rgba(239,232,255,.92));
+        color:rgba(51,0,32,.7);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:12px;
+        font-weight:800;
+        overflow:hidden;
+        box-shadow:0 6px 14px rgba(51,0,32,.08);
+      }
+      .phab-admin-community-lk-participant img{
+        width:100%;
+        height:100%;
+        object-fit:cover;
+        display:block;
+      }
+      .phab-admin-community-lk-primary-cta{
+        border:none;
+        cursor:pointer;
+        border-radius:16px;
+        padding:13px 18px;
+        background:linear-gradient(90deg,#ff9b32 0%,#ff6b1b 100%);
+        color:#fff;
+        font-size:13px;
+        font-weight:900;
+        box-shadow:0 12px 22px rgba(255,107,27,.22);
+      }
+      .phab-admin-community-lk-news-body{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:12px;
+        margin-top:12px;
+        align-items:start;
+      }
+      .phab-admin-community-lk-inline-image{
+        width:108px;
+        border-radius:16px;
+        overflow:hidden;
+        background:rgba(244,239,255,.94);
+      }
+      .phab-admin-community-lk-inline-image img{
+        display:block;
+        width:100%;
+        height:108px;
+        object-fit:cover;
+      }
+      .phab-admin-community-lk-engagement{
+        margin-top:14px;
+        font-size:12px;
+        color:rgba(51,0,32,.58);
+      }
       .phab-admin-community-preview-post-top,
       .phab-admin-community-preview-message-top,
       .phab-admin-community-history-row,
@@ -1718,6 +1941,14 @@
       .phab-admin-community-preview-action-danger{
         background:rgba(255,70,78,.12);
         color:#be1d2a;
+      }
+      .phab-admin-community-preview-action-accent{
+        background:rgba(255,128,36,.12);
+        color:#db6f12;
+      }
+      .phab-admin-community-preview-actions-moderation{
+        padding-top:12px;
+        border-top:1px solid rgba(51,0,32,.08);
       }
       .phab-admin-community-rating-list,
       .phab-admin-community-history-list{
@@ -2676,6 +2907,22 @@
           justify-content:flex-start;
           max-width:none;
         }
+        .phab-admin-community-section-card-fill{
+          min-height:calc(100dvh - 300px);
+        }
+        .phab-admin-community-lk-news-body{
+          grid-template-columns:1fr;
+        }
+        .phab-admin-community-lk-inline-image{
+          width:100%;
+        }
+        .phab-admin-community-lk-inline-image img{
+          height:180px;
+        }
+        .phab-admin-community-lk-game-footer{
+          flex-direction:column;
+          align-items:flex-start;
+        }
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -2709,6 +2956,16 @@
         }
         .phab-admin-title-wrap{
           gap:8px;
+        }
+        .phab-admin-community-section-card-fill{
+          min-height:calc(100dvh - 250px);
+        }
+        .phab-admin-community-lk-head{
+          grid-template-columns:52px minmax(0,1fr);
+        }
+        .phab-admin-community-lk-head-actions{
+          grid-column:1 / -1;
+          justify-content:flex-end;
         }
         .phab-admin-mobile-tab-select{
           max-width:140px;
@@ -5283,8 +5540,10 @@
       communitiesSortField: 'activity',
       communityCenterTab: 'overview',
       communityPreviewTab: 'feed',
+      communityPreviewFeedSegment: 'ALL',
       communityMembersSegment: 'ALL',
       communityFeedById: Object.create(null),
+      communityFeedModerationById: Object.create(null),
       communityFeedLoadedById: Object.create(null),
       communityFeedErrorById: Object.create(null),
       communityFeedLoadingId: null,
@@ -9752,6 +10011,62 @@
       }
     }
 
+    function getCommunityFeedModerationBucket(communityId) {
+      var key = String(communityId || '');
+      if (!key) {
+        return Object.create(null);
+      }
+      if (!state.communityFeedModerationById[key]) {
+        state.communityFeedModerationById[key] = Object.create(null);
+      }
+      return state.communityFeedModerationById[key];
+    }
+
+    function getCommunityFeedModerationState(communityId, postId) {
+      var bucket = getCommunityFeedModerationBucket(communityId);
+      return normalizeObject(bucket[String(postId || '')]);
+    }
+
+    function setCommunityFeedModerationState(communityId, postId, patch, statusText) {
+      var bucket = getCommunityFeedModerationBucket(communityId);
+      var key = String(postId || '');
+      var current = normalizeObject(bucket[key]);
+      bucket[key] = Object.assign({}, current, patch || {});
+      renderCommunityDetails();
+      if (statusText) {
+        setStatus(statusText + ' в окне модерации', false);
+      }
+    }
+
+    function applyCommunityFeedModeration(communityId, posts) {
+      return normalizeArray(posts)
+        .map(function (post) {
+          var moderation = getCommunityFeedModerationState(communityId, post && post.id);
+          return Object.assign({}, post, { moderation: moderation });
+        })
+        .sort(function (left, right) {
+          var leftState = normalizeObject(left.moderation);
+          var rightState = normalizeObject(right.moderation);
+          var leftWeight =
+            (leftState.pinned ? 1000 : 0) +
+            (leftState.promoted ? 240 : 0) +
+            (Number(leftState.rank || 0) * 12) -
+            (leftState.hidden ? 2000 : 0) -
+            (leftState.removed ? 4000 : 0);
+          var rightWeight =
+            (rightState.pinned ? 1000 : 0) +
+            (rightState.promoted ? 240 : 0) +
+            (Number(rightState.rank || 0) * 12) -
+            (rightState.hidden ? 2000 : 0) -
+            (rightState.removed ? 4000 : 0);
+          if (rightWeight !== leftWeight) {
+            return rightWeight - leftWeight;
+          }
+          return getCommunityTimestampValue({ lastActivityAt: right.publishedAt }) -
+            getCommunityTimestampValue({ lastActivityAt: left.publishedAt });
+        });
+    }
+
     async function submitCommunityMemberAction(communityId, action, member, successText) {
       var managingKey = buildCommunityManageKey(communityId, action, member);
       state.communityManagingKey = managingKey;
@@ -9878,6 +10193,28 @@
       return null;
     }
 
+    function pickCommunityRecordsText(sources, keys) {
+      var list = normalizeArray(sources);
+      for (var i = 0; i < list.length; i += 1) {
+        var candidate = pickCommunityRecordText(list[i], keys);
+        if (candidate) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
+    function pickCommunityRecordsNumber(sources, keys) {
+      var list = normalizeArray(sources);
+      for (var i = 0; i < list.length; i += 1) {
+        var candidate = pickCommunityRecordNumber(list[i], keys);
+        if (candidate !== null) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
     function extractCommunityResponseArray(payload, keys) {
       if (Array.isArray(payload)) {
         return payload;
@@ -9900,6 +10237,9 @@
       if (normalized === 'TOURNAMENT') {
         return 'Турнир';
       }
+      if (normalized === 'EVENT') {
+        return 'Событие';
+      }
       if (normalized === 'PHOTO') {
         return 'Публикация';
       }
@@ -9909,21 +10249,72 @@
       return toCommunityText(kind) || 'Лента';
     }
 
+    function normalizeCommunityPreviewParticipants(value) {
+      return normalizeArray(value)
+        .map(function (item, index) {
+          if (!item) {
+            return null;
+          }
+          if (typeof item === 'string') {
+            return {
+              id: 'participant-' + String(index),
+              name: item,
+              avatar: '',
+              shortName: getCommunityIdentityLetter({ name: item })
+            };
+          }
+          var source = normalizeObject(item);
+          var name =
+            pickCommunityRecordText(source, ['name', 'displayName', 'fullName']) ||
+            pickCommunityRecordText(source.user, ['name', 'displayName', 'fullName']) ||
+            pickCommunityRecordText(source.member, ['name', 'displayName', 'fullName']);
+          if (!name) {
+            return null;
+          }
+          return {
+            id:
+              pickCommunityRecordText(source, ['id', 'clientId', 'userId', 'uuid']) ||
+              'participant-' + String(index),
+            name: name,
+            avatar:
+              pickCommunityRecordText(source, ['avatar', 'avatarUrl', 'photo']) ||
+              pickCommunityRecordText(source.user, ['avatar', 'avatarUrl', 'photo']) ||
+              '',
+            shortName: getCommunityIdentityLetter({ name: name })
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 4);
+    }
+
     function normalizeCommunityFeedPostEntry(value, index, community) {
       var source = normalizeObject(value);
+      var eventSource = normalizeObject(source.event || source.game || source.match || source.tournament);
+      var venueSource = normalizeObject(source.venue || source.location || source.place);
+      var sources = [source, eventSource, venueSource];
       var kind = String(pickCommunityRecordText(source, ['kind', 'type']) || 'PHOTO').toUpperCase();
       var title =
-        pickCommunityRecordText(source, ['title', 'name', 'header']) ||
-        pickCommunityRecordText(source, ['body', 'text', 'description']) ||
+        pickCommunityRecordsText(sources, ['title', 'name', 'header']) ||
+        pickCommunityRecordsText(sources, ['body', 'text', 'description']) ||
         'Публикация сообщества';
       var body =
-        pickCommunityRecordText(source, ['body', 'text', 'description', 'content']) || '';
+        pickCommunityRecordsText(sources, ['body', 'text', 'description', 'content']) || '';
       var author =
-        pickCommunityRecordText(source, ['authorName', 'memberName']) ||
+        pickCommunityRecordsText(sources, ['authorName', 'memberName']) ||
         pickCommunityRecordText(source.author, ['name', 'displayName']) ||
         pickCommunityRecordText(source.memberPreview, ['name', 'displayName']) ||
         (community.createdBy && (community.createdBy.name || community.createdBy.phone || community.createdBy.id)) ||
         'Участник';
+      var participants = normalizeCommunityPreviewParticipants(source.participants);
+      if (participants.length === 0) {
+        participants = normalizeCommunityPreviewParticipants(source.players);
+      }
+      if (participants.length === 0) {
+        participants = normalizeCommunityPreviewParticipants(eventSource.participants);
+      }
+      if (participants.length === 0) {
+        participants = normalizeCommunityPreviewParticipants(source.members);
+      }
       return {
         id:
           pickCommunityRecordText(source, ['id', 'postId', 'uuid']) ||
@@ -9934,19 +10325,58 @@
         body: body,
         authorName: String(author),
         publishedAt:
-          pickCommunityRecordText(source, ['publishedAt', 'createdAt', 'updatedAt']) ||
+          pickCommunityRecordsText(sources, ['publishedAt', 'createdAt', 'updatedAt']) ||
           String((community && (community.updatedAt || community.createdAt)) || ''),
+        startAt:
+          pickCommunityRecordsText(sources, ['startAt', 'startsAt', 'eventAt', 'beginsAt']) ||
+          '',
+        endAt:
+          pickCommunityRecordsText(sources, ['endAt', 'endsAt', 'finishAt', 'endsOn']) ||
+          '',
+        stationName:
+          pickCommunityRecordsText(sources, ['stationName', 'clubName', 'locationName']) ||
+          String((community && (community.stationName || community.stationId)) || ''),
+        courtName:
+          pickCommunityRecordsText(sources, ['courtName', 'court', 'courtLabel', 'venueName']) || '',
+        levelLabel:
+          pickCommunityRecordsText(sources, ['levelLabel', 'rating', 'level']) || '',
         reportsCount:
           normalizeCommunityCount(
-            pickCommunityRecordNumber(source, [
+            pickCommunityRecordsNumber(sources, [
               'reportsCount',
               'complaintsCount',
               'flagsCount'
             ])
           ) || 0,
+        likesCount:
+          normalizeCommunityCount(
+            pickCommunityRecordsNumber(sources, [
+              'likesCount',
+              'likes',
+              'reactionsCount',
+              'heartsCount'
+            ])
+          ) || 0,
+        commentsCount:
+          normalizeCommunityCount(
+            pickCommunityRecordsNumber(sources, [
+              'commentsCount',
+              'comments',
+              'repliesCount',
+              'messagesCount'
+            ])
+          ) || 0,
         imageUrl: pickCommunityRecordText(source, ['imageUrl', 'image', 'photo']),
         previewLabel: pickCommunityRecordText(source, ['previewLabel', 'preview', 'label']),
-        ctaLabel: pickCommunityRecordText(source, ['ctaLabel', 'actionLabel', 'buttonLabel'])
+        ctaLabel:
+          pickCommunityRecordText(source, ['ctaLabel', 'actionLabel', 'buttonLabel']) ||
+          (kind === 'GAME'
+            ? 'Внести результаты игры'
+            : kind === 'TOURNAMENT' || kind === 'EVENT'
+              ? 'Открыть событие'
+              : 'Открыть'),
+        participants: participants,
+        raw: source
       };
     }
 
@@ -10697,6 +11127,7 @@
     function buildCommunityModeratorModel(community) {
       var members = normalizeCommunityMemberList(community && community.members);
       var pendingMembers = normalizeCommunityMemberList(community && community.pendingMembers);
+      var bannedMembers = normalizeCommunityMemberList(community && community.bannedMembers);
       var membersCount = normalizeCommunityCount(community && community.membersCount) || members.length;
       var moderatorsCount =
         normalizeCommunityCount(community && community.moderatorsCount) ||
@@ -10708,6 +11139,7 @@
         normalizeCommunityCount(community && community.pendingRequestsCount) || pendingMembers.length;
       var bannedCount =
         normalizeCommunityCount(community && community.bannedMembersCount) ||
+        bannedMembers.length ||
         pickCommunityNumericValue(community, ['bannedCount', 'blockedCount']) ||
         0;
       var postsCount = normalizeCommunityCount(community && community.postsCount) || 0;
@@ -10767,6 +11199,7 @@
         status: status,
         members: members,
         pendingMembers: pendingMembers,
+        bannedMembers: bannedMembers,
         membersCount: membersCount,
         moderatorsCount: moderatorsCount,
         pendingCount: pendingCount,
@@ -10800,94 +11233,362 @@
       if (normalized === 'TOURNAMENT') {
         return 'tournament';
       }
+      if (normalized === 'EVENT') {
+        return 'event';
+      }
       if (normalized === 'SYSTEM') {
         return 'system';
       }
       return 'news';
     }
 
-    function createCommunityFeedCard(post, actionItems) {
+    function formatCommunityPreviewDateParts(value) {
+      var date = value ? new Date(value) : null;
+      if (!date || Number.isNaN(date.getTime())) {
+        return {
+          month: 'ЛК',
+          day: '00',
+          weekday: '--'
+        };
+      }
+      var months = ['ЯНВ', 'ФЕВ', 'МАР', 'АПР', 'МАЙ', 'ИЮН', 'ИЮЛ', 'АВГ', 'СЕН', 'ОКТ', 'НОЯ', 'ДЕК'];
+      var weekdays = ['ВС', 'ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ'];
+      return {
+        month: months[date.getMonth()] || 'ЛК',
+        day: String(date.getDate()),
+        weekday: weekdays[date.getDay()] || '--'
+      };
+    }
+
+    function formatCommunityPreviewTimeRange(post) {
+      var start = post && post.startAt ? new Date(post.startAt) : null;
+      var end = post && post.endAt ? new Date(post.endAt) : null;
+      if (!start || Number.isNaN(start.getTime())) {
+        start = post && post.publishedAt ? new Date(post.publishedAt) : null;
+      }
+      if (!start || Number.isNaN(start.getTime())) {
+        return 'Время уточняется';
+      }
+      var startText =
+        String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0');
+      if (!end || Number.isNaN(end.getTime())) {
+        return startText;
+      }
+      var endText =
+        String(end.getHours()).padStart(2, '0') + ':' + String(end.getMinutes()).padStart(2, '0');
+      return startText + '–' + endText;
+    }
+
+    function buildCommunityPreviewLocation(post, community) {
+      var parts = [
+        post && post.courtName ? String(post.courtName) : null,
+        post && post.stationName ? String(post.stationName) : community && (community.stationName || community.stationId),
+        community && community.city ? String(community.city) : null
+      ].filter(Boolean);
+      if (parts.length === 0 && post && post.previewLabel) {
+        parts.push(String(post.previewLabel));
+      }
+      return parts.join(' • ') || 'Локация уточняется';
+    }
+
+    function getCommunityPreviewFeedSegmentKey(post) {
       var variant = getCommunityPostVariant(post);
+      if (variant === 'game') {
+        return 'GAME';
+      }
+      if (variant === 'tournament' || variant === 'event') {
+        return 'EVENT';
+      }
+      return 'NEWS';
+    }
+
+    function filterCommunityPreviewFeedPosts(posts) {
+      var segment = String(state.communityPreviewFeedSegment || 'ALL').toUpperCase();
+      if (segment === 'ALL') {
+        return normalizeArray(posts);
+      }
+      return normalizeArray(posts).filter(function (post) {
+        return getCommunityPreviewFeedSegmentKey(post) === segment;
+      });
+    }
+
+    function createCommunityParticipantAvatar(participant, index) {
+      var avatar = document.createElement('div');
+      avatar.className = 'phab-admin-community-lk-participant';
+      avatar.style.zIndex = String(10 - index);
+      if (participant && participant.avatar) {
+        var image = document.createElement('img');
+        image.alt = String(participant.name || 'Участник');
+        image.src = String(participant.avatar);
+        avatar.appendChild(image);
+      } else {
+        avatar.textContent = String((participant && participant.shortName) || 'C');
+      }
+      return avatar;
+    }
+
+    function createCommunityFeedActionItems(community, post) {
+      var moderation = normalizeObject(post && post.moderation);
+      var variant = getCommunityPostVariant(post);
+      var items = [
+        {
+          label: Number(moderation.rank || 0) > 0 ? 'Опустить' : 'Поднять',
+          className: 'phab-admin-community-preview-action',
+          onClick: function () {
+            var current = Number(getCommunityFeedModerationState(community.id, post.id).rank || 0);
+            setCommunityFeedModerationState(
+              community.id,
+              post.id,
+              { rank: current > 0 ? current - 1 : current + 1 },
+              current > 0 ? 'Карточка опущена ниже' : 'Карточка поднята выше'
+            );
+          }
+        },
+        {
+          label: moderation.pinned ? 'Открепить' : 'Закрепить',
+          className: 'phab-admin-community-preview-action',
+          onClick: function () {
+            setCommunityFeedModerationState(
+              community.id,
+              post.id,
+              { pinned: !moderation.pinned },
+              moderation.pinned ? 'Карточка откреплена' : 'Карточка закреплена'
+            );
+          }
+        }
+      ];
+
+      if (variant === 'game' || variant === 'tournament' || variant === 'event') {
+        items.push({
+          label: moderation.promoted ? 'Снять буст' : 'Продвинуть',
+          className: 'phab-admin-community-preview-action phab-admin-community-preview-action-accent',
+          onClick: function () {
+            setCommunityFeedModerationState(
+              community.id,
+              post.id,
+              { promoted: !moderation.promoted },
+              moderation.promoted ? 'Продвижение снято' : 'Карточка продвигается'
+            );
+          }
+        });
+      }
+
+      items.push({
+        label: moderation.authorLimited ? 'Снять ограничение' : 'Огр. автора',
+        className: 'phab-admin-community-preview-action',
+        onClick: function () {
+          setCommunityFeedModerationState(
+            community.id,
+            post.id,
+            { authorLimited: !moderation.authorLimited },
+            moderation.authorLimited ? 'Ограничение автора снято' : 'Автор ограничен'
+          );
+        }
+      });
+      items.push({
+        label: moderation.hidden ? 'Показать' : 'Скрыть',
+        className: 'phab-admin-community-preview-action',
+        onClick: function () {
+          setCommunityFeedModerationState(
+            community.id,
+            post.id,
+            { hidden: !moderation.hidden, removed: false },
+            moderation.hidden ? 'Карточка возвращена в ленту' : 'Карточка скрыта из ленты'
+          );
+        }
+      });
+      items.push({
+        label: moderation.removed ? 'Вернуть' : 'Удалить',
+        className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger',
+        onClick: function () {
+          setCommunityFeedModerationState(
+            community.id,
+            post.id,
+            { removed: !moderation.removed, hidden: moderation.removed ? moderation.hidden : true },
+            moderation.removed ? 'Карточка восстановлена' : 'Карточка удалена'
+          );
+        }
+      });
+
+      return items;
+    }
+
+    function createCommunityFeedCard(post, actionItems, community) {
+      var variant = getCommunityPostVariant(post);
+      var moderation = normalizeObject(post && post.moderation);
+      var dateParts = formatCommunityPreviewDateParts(post.startAt || post.publishedAt);
       var preview = document.createElement('div');
       preview.className =
-        'phab-admin-community-preview-card phab-admin-community-feed-card phab-admin-community-feed-card--' +
-        variant;
+        'phab-admin-community-preview-card phab-admin-community-feed-card phab-admin-community-feed-card--' + variant +
+        (moderation.hidden || moderation.removed ? ' phab-admin-community-feed-card-muted' : '') +
+        (moderation.promoted ? ' phab-admin-community-feed-card-promoted' : '');
 
       var top = document.createElement('div');
-      top.className = 'phab-admin-community-preview-post-top';
+      top.className = 'phab-admin-community-lk-card-top';
+      preview.appendChild(top);
+
+      if (variant === 'game' || variant === 'tournament' || variant === 'event') {
+        var dateBadge = document.createElement('div');
+        dateBadge.className = 'phab-admin-community-lk-date-badge';
+        dateBadge.innerHTML =
+          '<span>' + dateParts.month + '</span>' +
+          '<strong>' + dateParts.day + '</strong>' +
+          '<em>' + dateParts.weekday + '</em>';
+        top.appendChild(dateBadge);
+      }
+
+      var content = document.createElement('div');
+      content.className = 'phab-admin-community-lk-card-content';
+      top.appendChild(content);
+
+      var head = document.createElement('div');
+      head.className = 'phab-admin-community-preview-post-top';
+      content.appendChild(head);
+
       var left = document.createElement('div');
       var kicker = document.createElement('div');
       kicker.className = 'phab-admin-community-preview-kicker';
-      kicker.textContent =
-        String(post.kicker || 'Публикация') + ' · ' + formatDateTimeFull(post.publishedAt);
+      kicker.textContent = String(post.kicker || 'Публикация') + ' · ' + formatDateTimeFull(post.publishedAt);
       var title = document.createElement('div');
       title.className = 'phab-admin-community-preview-title';
-      title.style.fontSize = variant === 'game' ? '22px' : '18px';
+      title.style.fontSize = variant === 'news' ? '18px' : '20px';
       title.textContent = post.title;
       left.appendChild(kicker);
       left.appendChild(title);
-      top.appendChild(left);
-      if (post.reportsCount > 0) {
-        top.appendChild(
-          createCommunityPill(
-            'Жалобы: ' + String(post.reportsCount),
-            'phab-admin-community-signal phab-admin-community-signal-strong'
-          )
-        );
-      }
-      preview.appendChild(top);
+      head.appendChild(left);
 
-      if (post.imageUrl) {
-        var media = document.createElement('div');
-        media.className = 'phab-admin-community-feed-media';
-        var image = document.createElement('img');
-        image.alt = String(post.title || 'Публикация сообщества');
-        image.src = String(post.imageUrl);
-        media.appendChild(image);
-        preview.appendChild(media);
-      } else if (variant === 'game' || variant === 'tournament') {
-        var placeholder = document.createElement('div');
-        placeholder.className = 'phab-admin-community-feed-media';
-        var placeholderText = document.createElement('div');
-        placeholderText.className = 'phab-admin-community-feed-media-placeholder';
-        placeholderText.textContent = variant === 'game' ? 'Карточка игры сообщества' : 'Карточка турнира';
-        placeholder.appendChild(placeholderText);
-        preview.appendChild(placeholder);
-      }
+      var sideAction = document.createElement('button');
+      sideAction.type = 'button';
+      sideAction.className = 'phab-admin-community-lk-side-action';
+      sideAction.setAttribute('aria-label', 'Модераторские действия');
+      sideAction.textContent = '◌';
+      sideAction.addEventListener('click', function () {
+        setCommunityPreviewActionNotice('Открыть карточку');
+      });
+      head.appendChild(sideAction);
 
-      var meta = document.createElement('div');
-      meta.className = 'phab-admin-community-feed-meta';
+      var chips = document.createElement('div');
+      chips.className = 'phab-admin-community-feed-meta';
       [
-        post.previewLabel || null,
+        buildCommunityPreviewLocation(post, community),
         post.authorName ? 'Автор: ' + String(post.authorName) : null,
+        post.levelLabel ? 'Уровень: ' + String(post.levelLabel) : null,
         post.ctaLabel ? 'CTA: ' + String(post.ctaLabel) : null
       ]
         .filter(Boolean)
         .forEach(function (item) {
-          meta.appendChild(createCommunityPill(String(item), 'phab-admin-community-feed-chip'));
+          chips.appendChild(createCommunityPill(String(item), 'phab-admin-community-feed-chip'));
         });
       if (post.reportsCount > 0) {
-        meta.appendChild(
+        chips.appendChild(
           createCommunityPill(
-            'Нужна проверка',
+            'Жалобы: ' + String(post.reportsCount),
             'phab-admin-community-feed-chip phab-admin-community-feed-chip-strong'
           )
         );
       }
-      if (meta.childNodes.length > 0) {
-        preview.appendChild(meta);
+      if (moderation.pinned) {
+        chips.appendChild(
+          createCommunityPill('Закреплено', 'phab-admin-community-feed-chip phab-admin-community-feed-chip-strong')
+        );
+      }
+      if (moderation.promoted) {
+        chips.appendChild(
+          createCommunityPill('Продвигается', 'phab-admin-community-feed-chip phab-admin-community-feed-chip-accent')
+        );
+      }
+      if (moderation.authorLimited) {
+        chips.appendChild(
+          createCommunityPill('Автор ограничен', 'phab-admin-community-feed-chip')
+        );
+      }
+      if (moderation.hidden) {
+        chips.appendChild(
+          createCommunityPill('Скрыто из ленты', 'phab-admin-community-feed-chip')
+        );
+      }
+      if (moderation.removed) {
+        chips.appendChild(
+          createCommunityPill('Удалено модератором', 'phab-admin-community-feed-chip phab-admin-community-feed-chip-strong')
+        );
+      }
+      if (chips.childNodes.length > 0) {
+        content.appendChild(chips);
       }
 
-      var text = document.createElement('div');
-      text.className = 'phab-admin-community-preview-text';
-      text.textContent = post.body || 'Без текста';
-      preview.appendChild(text);
+      if (variant === 'game' || variant === 'tournament' || variant === 'event') {
+        var schedule = document.createElement('div');
+        schedule.className = 'phab-admin-community-lk-game-meta';
+        schedule.textContent =
+          formatCommunityPreviewTimeRange(post) + ' • ' + buildCommunityPreviewLocation(post, community);
+        content.appendChild(schedule);
+
+        if (post.previewLabel) {
+          var previewLine = document.createElement('div');
+          previewLine.className = 'phab-admin-community-preview-text';
+          previewLine.style.marginTop = '10px';
+          previewLine.textContent = String(post.previewLabel);
+          content.appendChild(previewLine);
+        }
+
+        var footer = document.createElement('div');
+        footer.className = 'phab-admin-community-lk-game-footer';
+        content.appendChild(footer);
+
+        var participants = document.createElement('div');
+        participants.className = 'phab-admin-community-lk-participants';
+        if (normalizeArray(post.participants).length > 0) {
+          normalizeArray(post.participants).forEach(function (participant, index) {
+            participants.appendChild(createCommunityParticipantAvatar(participant, index));
+          });
+        } else {
+          participants.appendChild(createCommunityPill('Состав уточняется', 'phab-admin-community-feed-chip'));
+        }
+        footer.appendChild(participants);
+
+        var cta = document.createElement('button');
+        cta.type = 'button';
+        cta.className = 'phab-admin-community-lk-primary-cta';
+        cta.textContent = String(post.ctaLabel || 'Открыть');
+        cta.addEventListener('click', function () {
+          setCommunityPreviewActionNotice(post.ctaLabel || 'Открыть');
+        });
+        footer.appendChild(cta);
+      } else {
+        var newsBody = document.createElement('div');
+        newsBody.className = 'phab-admin-community-lk-news-body';
+        content.appendChild(newsBody);
+
+        var textBlock = document.createElement('div');
+        newsBody.appendChild(textBlock);
+
+        var text = document.createElement('div');
+        text.className = 'phab-admin-community-preview-text';
+        text.textContent = post.body || 'Без текста';
+        textBlock.appendChild(text);
+
+        if (post.imageUrl) {
+          var imageWrap = document.createElement('div');
+          imageWrap.className = 'phab-admin-community-lk-inline-image';
+          var image = document.createElement('img');
+          image.alt = String(post.title || 'Публикация сообщества');
+          image.src = String(post.imageUrl);
+          imageWrap.appendChild(image);
+          newsBody.appendChild(imageWrap);
+        }
+
+        var engagement = document.createElement('div');
+        engagement.className = 'phab-admin-community-lk-engagement';
+        engagement.textContent =
+          '♥ ' + String(post.likesCount || 0) + ' • 💬 ' + String(post.commentsCount || 0);
+        content.appendChild(engagement);
+      }
 
       var actions = document.createElement('div');
-      actions.className = 'phab-admin-community-preview-actions';
-      actionItems.forEach(function (item) {
+      actions.className = 'phab-admin-community-preview-actions phab-admin-community-preview-actions-moderation';
+      normalizeArray(actionItems).forEach(function (item) {
         actions.appendChild(
-          createCommunityActionButton(item.label, item.className, function () {
+          createCommunityActionButton(item.label, item.className, item.onClick || function () {
             setCommunityPreviewActionNotice(item.label);
           })
         );
@@ -10926,7 +11627,7 @@
         MODS: admins,
         MEMBERS: regular,
         NEW: model.pendingMembers,
-        BANNED: []
+        BANNED: model.bannedMembers
       };
     }
 
@@ -11093,7 +11794,7 @@
     }
 
     function setCommunityPreviewActionNotice(label) {
-      setStatus(label + ': для контента и чата нужен отдельный moderation API.', false);
+      setStatus(label + ': для синхронизации с боевым ЛК нужен отдельный moderation API.', false);
     }
 
     function createCommunityStatusBadge(descriptor) {
@@ -11124,6 +11825,7 @@
 
     function buildCommunityMemberActions(community, member, isPending) {
       var isOwner = String(member.role || '').toUpperCase() === 'OWNER';
+      var isBanned = String(member.status || '').toUpperCase() === 'BANNED';
       if (isPending || String(member.status || '').toUpperCase() === 'PENDING') {
         return [
           {
@@ -11143,6 +11845,30 @@
             label: 'В бан',
             loadingLabel: 'Баним...',
             successText: 'Пользователь заблокирован',
+            tone: 'danger'
+          }
+        ];
+      }
+
+      if (isBanned) {
+        return [
+          {
+            action: 'UNBAN',
+            label: 'Вернуть',
+            loadingLabel: 'Возвращаем...',
+            successText: 'Участник возвращён из бана'
+          },
+          {
+            action: 'WARN',
+            label: 'Предупредить',
+            loadingLabel: 'Фиксируем...',
+            successText: 'Предупреждение записано'
+          },
+          {
+            action: 'REMOVE',
+            label: 'Удалить',
+            loadingLabel: 'Удаляем...',
+            successText: 'Участник удалён окончательно',
             tone: 'danger'
           }
         ];
@@ -11467,6 +12193,8 @@
 
     function renderCommunityMembersTab(community, model) {
       var card = createCommunitySectionCard('Участники', 'Владельцы, модераторы, обычные участники и новые');
+      card.card.classList.add('phab-admin-community-section-card-fill');
+      card.body.classList.add('phab-admin-community-section-body-fill');
       dom.communityAdminGrid.appendChild(card.card);
 
       var segments = document.createElement('div');
@@ -11479,7 +12207,8 @@
         { key: 'OWNERS', label: 'Владельцы' },
         { key: 'MODS', label: 'Модераторы' },
         { key: 'MEMBERS', label: 'Участники' },
-        { key: 'NEW', label: 'Новые' }
+        { key: 'NEW', label: 'Новые' },
+        { key: 'BANNED', label: 'В бане' }
       ].forEach(function (item) {
         var button = document.createElement('button');
         button.type = 'button';
@@ -11496,11 +12225,19 @@
       });
 
       var list = document.createElement('div');
-      list.className = 'phab-admin-settings-list';
+      list.className = 'phab-admin-settings-list phab-admin-community-members-list';
       card.body.appendChild(list);
-      var members = segmentMap[state.communityMembersSegment] || segmentMap.ALL || [];
+      var currentSegment = segmentMap[state.communityMembersSegment]
+        ? state.communityMembersSegment
+        : 'ALL';
+      var members = segmentMap[currentSegment] || segmentMap.ALL || [];
       if (members.length === 0) {
-        appendCommunityListEmpty(list, 'Нет участников для выбранного сегмента');
+        appendCommunityListEmpty(
+          list,
+          currentSegment === 'BANNED'
+            ? 'Сейчас в бане никого нет'
+            : 'Нет участников для выбранного сегмента'
+        );
       } else {
         members
           .slice()
@@ -11515,7 +12252,7 @@
               buildCommunityMemberActions(
                 community,
                 member,
-                state.communityMembersSegment === 'NEW'
+                currentSegment === 'NEW'
               )
             );
           });
@@ -11595,17 +12332,7 @@
       }
 
       model.feedPosts.forEach(function (post) {
-        card.body.appendChild(
-          createCommunityFeedCard(post, [
-            { label: 'Скрыть', className: 'phab-admin-community-preview-action' },
-            { label: 'Закрепить', className: 'phab-admin-community-preview-action' },
-            { label: 'Предупредить автора', className: 'phab-admin-community-preview-action' },
-            {
-              label: 'Удалить',
-              className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger'
-            }
-          ])
-        );
+        card.body.appendChild(createCommunityFeedCard(post, createCommunityFeedActionItems(community, post), community));
       });
     }
 
@@ -11732,6 +12459,60 @@
       shell.className = 'phab-admin-community-preview-frame';
       dom.communityPreviewBody.appendChild(shell);
 
+      var mobileHead = document.createElement('div');
+      mobileHead.className = 'phab-admin-community-lk-head';
+      shell.appendChild(mobileHead);
+
+      var avatar = document.createElement('div');
+      avatar.className = 'phab-admin-community-avatar';
+      renderCommunityAvatarNode(avatar, community);
+      mobileHead.appendChild(avatar);
+
+      var mobileHeadMain = document.createElement('div');
+      mobileHeadMain.className = 'phab-admin-community-lk-head-main';
+      mobileHead.appendChild(mobileHeadMain);
+
+      var mobileName = document.createElement('div');
+      mobileName.className = 'phab-admin-community-lk-name';
+      mobileName.textContent = String(community.name || 'Сообщество');
+      mobileHeadMain.appendChild(mobileName);
+
+      var mobileSubtitle = document.createElement('div');
+      mobileSubtitle.className = 'phab-admin-community-lk-subtitle';
+      mobileSubtitle.textContent = [
+        community.stationName || community.stationId || 'Станция не указана',
+        community.city || null,
+        isCommunityVerified(community) ? 'верифицировано' : null
+      ]
+        .filter(Boolean)
+        .join(' • ');
+      mobileHeadMain.appendChild(mobileSubtitle);
+
+      var mobileActions = document.createElement('div');
+      mobileActions.className = 'phab-admin-community-lk-head-actions';
+      mobileHead.appendChild(mobileActions);
+
+      var moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'phab-admin-community-lk-circle-btn';
+      moreBtn.textContent = '⋯';
+      moreBtn.addEventListener('click', function () {
+        state.communityPreviewTab = 'about';
+        renderCommunityDetails();
+      });
+      mobileActions.appendChild(moreBtn);
+
+      var resetBtn = document.createElement('button');
+      resetBtn.type = 'button';
+      resetBtn.className = 'phab-admin-community-lk-circle-btn';
+      resetBtn.textContent = '×';
+      resetBtn.addEventListener('click', function () {
+        state.communityPreviewFeedSegment = 'ALL';
+        state.communityPreviewTab = 'feed';
+        renderCommunityDetails();
+      });
+      mobileActions.appendChild(resetBtn);
+
       var previewTabs = document.createElement('div');
       previewTabs.className = 'phab-admin-community-preview-tabs';
       shell.appendChild(previewTabs);
@@ -11753,6 +12534,32 @@
         });
         previewTabs.appendChild(button);
       });
+
+      if (state.communityPreviewTab === 'feed') {
+        var segments = document.createElement('div');
+        segments.className = 'phab-admin-community-lk-segments';
+        shell.appendChild(segments);
+        [
+          { key: 'ALL', label: 'Все' },
+          { key: 'GAME', label: 'Игры' },
+          { key: 'EVENT', label: 'События' },
+          { key: 'NEWS', label: 'Новости' }
+        ].forEach(function (item) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className =
+            'phab-admin-community-lk-segment' +
+            (String(state.communityPreviewFeedSegment || 'ALL') === item.key
+              ? ' phab-admin-community-lk-segment-active'
+              : '');
+          button.textContent = item.label;
+          button.addEventListener('click', function () {
+            state.communityPreviewFeedSegment = item.key;
+            renderCommunityDetails();
+          });
+          segments.appendChild(button);
+        });
+      }
 
       if (state.communityPreviewTab === 'chat') {
         if (model.previewMessages.length === 0) {
@@ -11871,6 +12678,8 @@
         return;
       }
 
+      var previewPosts = filterCommunityPreviewFeedPosts(model.feedPosts).slice(0, 6);
+
       if (state.communityFeedLoadingId === community.id) {
         shell.appendChild(
           createCommunityPill('Подтягиваем живую ленту сообщества...', 'phab-admin-community-signal')
@@ -11884,23 +12693,13 @@
         );
       }
 
-      if (model.previewPosts.length === 0) {
+      if (previewPosts.length === 0) {
         appendCommunityListEmpty(shell, 'Лента сообщества пока пуста');
         return;
       }
 
-      model.previewPosts.forEach(function (post) {
-        shell.appendChild(
-          createCommunityFeedCard(post, [
-            { label: 'Скрыть', className: 'phab-admin-community-preview-action' },
-            { label: 'Закрепить', className: 'phab-admin-community-preview-action' },
-            { label: 'Ограничить автора', className: 'phab-admin-community-preview-action' },
-            {
-              label: 'Удалить',
-              className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger'
-            }
-          ])
-        );
+      previewPosts.forEach(function (post) {
+        shell.appendChild(createCommunityFeedCard(post, createCommunityFeedActionItems(community, post), community));
       });
     }
 
@@ -11929,7 +12728,7 @@
       ensureCommunityLiveData(community).catch(handleError);
 
       var model = buildCommunityModeratorModel(community);
-      model.feedPosts = getCommunityFeedPosts(community, model);
+      model.feedPosts = applyCommunityFeedModeration(community.id, getCommunityFeedPosts(community, model));
       model.previewPosts = model.feedPosts.slice(0, 3);
       model.previewMessages = getCommunityPreviewMessages(community, model);
       model.rankingRows = getCommunityRankingRows(community, model);

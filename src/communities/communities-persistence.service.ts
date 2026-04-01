@@ -38,6 +38,7 @@ export type CommunityMemberManageAction =
   | 'APPROVE'
   | 'REMOVE'
   | 'BAN'
+  | 'UNBAN'
   | 'PROMOTE'
   | 'DEMOTE'
   | 'WARN';
@@ -215,14 +216,16 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     updated.pendingMembers = pendingFiltered;
     updated.bannedMembers = bannedFiltered;
 
-    if (mutation.action === 'APPROVE') {
+    if (mutation.action === 'APPROVE' || mutation.action === 'UNBAN') {
       updated.members = [
         this.buildStoredMember(existingMember, mutation.member, {
           status: 'ACTIVE',
           joinedAt:
             this.pickString(mutation.member.joinedAt)
             ?? this.pickString(existingMember?.joinedAt)
-            ?? now
+            ?? now,
+          bannedAt: undefined,
+          bannedBy: undefined
         }),
         ...membersFiltered
       ];
@@ -528,6 +531,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       createdBy: this.normalizeActor(document.createdBy),
       members,
       pendingMembers,
+      bannedMembers,
       details: this.stripObjectId(document)
     };
   }
