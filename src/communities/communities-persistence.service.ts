@@ -76,6 +76,29 @@ export interface CommunitiesCreateFeedItemMutation {
   actor?: CommunityActor;
 }
 
+export interface CommunitiesUpdateFeedItemMutation {
+  kind?: CommunityFeedItemKind;
+  title?: string;
+  body?: string;
+  imageUrl?: string | null;
+  previewLabel?: string;
+  ctaLabel?: string;
+  startAt?: string;
+  endAt?: string;
+  stationName?: string;
+  courtName?: string;
+  levelLabel?: string;
+  likesCount?: number;
+  commentsCount?: number;
+  priority?: number;
+  placement?: string;
+  authorName?: string;
+  participants?: CommunityFeedParticipantInput[];
+  tags?: string[];
+  details?: Record<string, unknown>;
+  actor?: CommunityActor;
+}
+
 export interface CommunitiesDeleteFeedItemResult {
   ok: true;
   mode: 'deleted' | 'suppressed';
@@ -501,6 +524,130 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
 
     await collection.insertOne(payload as OptionalId<MongoCommunityFeedDocument>);
     return this.toFeedItem(payload);
+  }
+
+  async updateFeedItem(
+    communityId: string,
+    feedItemId: string,
+    mutation: CommunitiesUpdateFeedItemMutation
+  ): Promise<CommunityFeedItem | null> {
+    const now = new Date().toISOString();
+    const actor = this.toActorRecord(mutation.actor, now);
+    const setPayload: Record<string, unknown> = {
+      updatedAt: now
+    };
+
+    if (mutation.kind !== undefined) {
+      setPayload.kind = mutation.kind;
+      setPayload.type = mutation.kind;
+      setPayload.isAdvertisement = mutation.kind === 'AD';
+      setPayload.ad = mutation.kind === 'AD';
+    }
+    if (mutation.title !== undefined) {
+      setPayload.title = mutation.title.trim();
+    }
+    if (mutation.body !== undefined) {
+      const body = this.pickString(mutation.body);
+      setPayload.body = body ?? null;
+      setPayload.description = body ?? null;
+      setPayload.content = body ?? null;
+    }
+    if (mutation.imageUrl !== undefined) {
+      const imageUrl = this.pickNullableString(mutation.imageUrl);
+      setPayload.imageUrl = imageUrl ?? null;
+      setPayload.image = imageUrl ?? null;
+      setPayload.photo = imageUrl ?? null;
+    }
+    if (mutation.previewLabel !== undefined) {
+      const previewLabel = this.pickString(mutation.previewLabel);
+      setPayload.previewLabel = previewLabel ?? null;
+      setPayload.label = previewLabel ?? null;
+    }
+    if (mutation.ctaLabel !== undefined) {
+      const ctaLabel = this.pickString(mutation.ctaLabel);
+      setPayload.ctaLabel = ctaLabel ?? null;
+      setPayload.actionLabel = ctaLabel ?? null;
+      setPayload.buttonLabel = ctaLabel ?? null;
+    }
+    if (mutation.startAt !== undefined) {
+      setPayload.startAt = this.pickString(mutation.startAt) ?? null;
+    }
+    if (mutation.endAt !== undefined) {
+      setPayload.endAt = this.pickString(mutation.endAt) ?? null;
+    }
+    if (mutation.stationName !== undefined) {
+      setPayload.stationName = this.pickString(mutation.stationName) ?? null;
+    }
+    if (mutation.courtName !== undefined) {
+      setPayload.courtName = this.pickString(mutation.courtName) ?? null;
+    }
+    if (mutation.levelLabel !== undefined) {
+      setPayload.levelLabel = this.pickString(mutation.levelLabel) ?? null;
+    }
+    if (mutation.likesCount !== undefined) {
+      setPayload.likesCount = this.pickCountNumber(mutation.likesCount) ?? 0;
+    }
+    if (mutation.commentsCount !== undefined) {
+      setPayload.commentsCount = this.pickCountNumber(mutation.commentsCount) ?? 0;
+    }
+    if (mutation.priority !== undefined) {
+      setPayload.priority = this.pickNumeric(mutation.priority) ?? 0;
+    }
+    if (mutation.placement !== undefined) {
+      setPayload.placement = this.pickString(mutation.placement) ?? null;
+    }
+    if (mutation.authorName !== undefined) {
+      setPayload.authorName = this.pickString(mutation.authorName) ?? null;
+    }
+    if (mutation.participants !== undefined) {
+      setPayload.participants = mutation.participants
+        .map((entry) => this.normalizeFeedParticipantInput(entry))
+        .filter((entry): entry is CommunityFeedParticipant => entry !== null);
+    }
+    if (mutation.tags !== undefined) {
+      setPayload.tags = this.dedupeStrings(mutation.tags ?? []);
+    }
+    if (mutation.details !== undefined) {
+      setPayload.details = this.isRecord(mutation.details) ? mutation.details : null;
+    }
+    if (actor) {
+      setPayload.updatedBy = actor;
+    }
+
+    const collections = await this.readFeedCollections();
+    for (const candidate of collections) {
+      try {
+        const filter = {
+          $and: [
+            this.buildCommunityFeedFilter(communityId),
+            this.buildFeedItemFilter(feedItemId)
+          ]
+        } as Filter<MongoCommunityFeedDocument>;
+        const existing = await candidate.collection.findOne(filter);
+        if (!existing) {
+          continue;
+        }
+        const updated = {
+          ...existing,
+          ...setPayload
+        } as MongoCommunityFeedDocument;
+        await candidate.collection.updateOne(
+          existing._id !== undefined
+            ? ({ _id: existing._id } as Filter<MongoCommunityFeedDocument>)
+            : filter,
+          { $set: setPayload }
+        );
+        await this.clearFeedItemModeration(communityId, feedItemId);
+        return this.toFeedItem(updated);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to update feed item ${feedItemId} in ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
+    }
+
+    const override = await this.upsertFeedItemOverride(communityId, feedItemId, mutation);
+    return this.toFeedModerationItem(override);
   }
 
   async deleteFeedItem(
@@ -1030,6 +1177,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   }
 
   private toFeedModerationItem(document: MongoCommunityFeedModerationDocument): CommunityFeedItem | null {
+    const action = String(document.action ?? '').trim().toUpperCase();
+    const suppressed = document.suppressed === true || action === 'DELETE';
     const id =
       this.pickString(document.feedItemId)
       ?? this.pickString(document.itemId)
@@ -1044,12 +1193,96 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    const kind = this.normalizeFeedItemKind(
+      document.kind
+      ?? document.type
+      ?? (document.isAdvertisement === true || document.ad === true ? 'AD' : undefined)
+    );
+    const participants = this.toObjectArray(document.participants)
+      .map((entry) => this.normalizeFeedParticipant(entry))
+      .filter((entry): entry is CommunityFeedParticipant => entry !== null);
+    if (suppressed) {
+      return {
+        id,
+        communityId,
+        kind,
+        status: 'HIDDEN',
+        title: this.pickString(document.title) ?? `suppressed:${id}`,
+        updatedAt: this.pickString(document.updatedAt) ?? undefined,
+        publishedAt:
+          this.pickString(document.updatedAt)
+          ?? this.pickString(document.createdAt)
+          ?? undefined,
+        details: {
+          ...this.stripFeedModerationObjectId(document),
+          source: 'COMMUNITY_MODERATION',
+          moderationAction: 'DELETE',
+          suppressed: true
+        }
+      };
+    }
+
     return {
       id,
       communityId,
-      kind: this.normalizeFeedItemKind(document.kind ?? 'NEWS'),
-      status: 'HIDDEN',
-      title: this.pickString(document.title) ?? `suppressed:${id}`,
+      kind,
+      status: this.normalizeFeedItemStatus(document.status ?? 'PUBLISHED'),
+      title: this.pickString(document.title) ?? `override:${id}`,
+      body:
+        this.pickString(document.body)
+        ?? this.pickString(document.description)
+        ?? this.pickString(document.content)
+        ?? undefined,
+      imageUrl:
+        this.pickNullableString(document.imageUrl ?? document.image ?? document.photo) ?? undefined,
+      previewLabel:
+        this.pickString(document.previewLabel)
+        ?? this.pickString(document.label)
+        ?? undefined,
+      ctaLabel:
+        this.pickString(document.ctaLabel)
+        ?? this.pickString(document.actionLabel)
+        ?? this.pickString(document.buttonLabel)
+        ?? undefined,
+      startAt:
+        this.pickString(document.startAt)
+        ?? this.pickString(document.startsAt)
+        ?? undefined,
+      endAt:
+        this.pickString(document.endAt)
+        ?? this.pickString(document.endsAt)
+        ?? undefined,
+      stationName:
+        this.pickString(document.stationName)
+        ?? this.pickString(document.clubName)
+        ?? undefined,
+      courtName:
+        this.pickString(document.courtName)
+        ?? this.pickString(document.court)
+        ?? this.pickString(document.venueName)
+        ?? undefined,
+      levelLabel:
+        this.pickString(document.levelLabel)
+        ?? this.pickString(document.rating)
+        ?? this.pickString(document.level)
+        ?? undefined,
+      reportsCount: this.pickCountNumber(document.reportsCount ?? document.flagsCount) ?? 0,
+      likesCount:
+        this.pickCountNumber(document.likesCount ?? document.likes ?? document.reactionsCount) ?? 0,
+      commentsCount:
+        this.pickCountNumber(document.commentsCount ?? document.comments ?? document.repliesCount) ?? 0,
+      isAdvertisement:
+        this.pickBoolean(document.isAdvertisement ?? document.ad)
+        ?? kind === 'AD',
+      priority: this.pickNumeric(document.priority),
+      placement: this.pickString(document.placement) ?? undefined,
+      tags: this.toStringArray(document.tags),
+      authorName:
+        this.pickString(document.authorName)
+        ?? this.pickString(document.memberName)
+        ?? undefined,
+      createdBy: this.normalizeActor(document.createdBy),
+      participants,
       updatedAt: this.pickString(document.updatedAt) ?? undefined,
       publishedAt:
         this.pickString(document.updatedAt)
@@ -1058,8 +1291,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       details: {
         ...this.stripFeedModerationObjectId(document),
         source: 'COMMUNITY_MODERATION',
-        moderationAction: 'DELETE',
-        suppressed: true
+        moderationAction: action || 'UPDATE',
+        override: true
       }
     };
   }
@@ -1483,6 +1716,84 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     if (lastError) {
       throw lastError;
     }
+  }
+
+  private async upsertFeedItemOverride(
+    communityId: string,
+    feedItemId: string,
+    mutation: CommunitiesUpdateFeedItemMutation
+  ): Promise<MongoCommunityFeedModerationDocument> {
+    const collection = await this.primaryFeedModerationCollection();
+    const now = new Date().toISOString();
+    const actor = this.toActorRecord(mutation.actor, now);
+    const kind = mutation.kind ?? 'NEWS';
+    const participants = (mutation.participants ?? [])
+      .map((entry) => this.normalizeFeedParticipantInput(entry))
+      .filter((entry): entry is CommunityFeedParticipant => entry !== null);
+    const payload: MongoCommunityFeedModerationDocument = {
+      id: `${communityId}:${feedItemId}:UPDATE`,
+      communityId,
+      community_id: communityId,
+      sourceCommunityId: communityId,
+      feedItemId,
+      itemId: feedItemId,
+      postId: feedItemId,
+      uuid: feedItemId,
+      source: 'COMMUNITY_MODERATION',
+      action: 'UPDATE',
+      status: 'PUBLISHED',
+      kind,
+      type: kind,
+      title: this.pickString(mutation.title) ?? 'Публикация сообщества',
+      body: this.pickString(mutation.body) ?? null,
+      description: this.pickString(mutation.body) ?? null,
+      content: this.pickString(mutation.body) ?? null,
+      imageUrl: this.pickNullableString(mutation.imageUrl) ?? null,
+      image: this.pickNullableString(mutation.imageUrl) ?? null,
+      photo: this.pickNullableString(mutation.imageUrl) ?? null,
+      previewLabel: this.pickString(mutation.previewLabel) ?? null,
+      label: this.pickString(mutation.previewLabel) ?? null,
+      ctaLabel: this.pickString(mutation.ctaLabel) ?? null,
+      actionLabel: this.pickString(mutation.ctaLabel) ?? null,
+      buttonLabel: this.pickString(mutation.ctaLabel) ?? null,
+      startAt: this.pickString(mutation.startAt) ?? null,
+      endAt: this.pickString(mutation.endAt) ?? null,
+      stationName: this.pickString(mutation.stationName) ?? null,
+      courtName: this.pickString(mutation.courtName) ?? null,
+      levelLabel: this.pickString(mutation.levelLabel) ?? null,
+      likesCount: this.pickCountNumber(mutation.likesCount) ?? 0,
+      commentsCount: this.pickCountNumber(mutation.commentsCount) ?? 0,
+      reportsCount: 0,
+      isAdvertisement: kind === 'AD',
+      ad: kind === 'AD',
+      placement: this.pickString(mutation.placement) ?? 'feed',
+      priority: this.pickNumeric(mutation.priority) ?? 0,
+      tags: this.dedupeStrings(mutation.tags ?? []),
+      participants,
+      authorName: this.pickString(mutation.authorName) ?? 'Админка',
+      createdBy: actor ?? undefined,
+      updatedBy: actor ?? undefined,
+      updatedAt: now,
+      details: this.isRecord(mutation.details) ? mutation.details : undefined
+    };
+
+    await collection.updateOne(
+      this.buildFeedItemModerationFilter(communityId, feedItemId),
+      {
+        $set: payload,
+        $setOnInsert: {
+          createdAt: now,
+          publishedAt: now
+        }
+      },
+      { upsert: true }
+    );
+
+    return {
+      ...payload,
+      createdAt: now,
+      publishedAt: now
+    };
   }
 
   private async clearFeedItemModeration(communityId: string, feedItemId: string): Promise<void> {

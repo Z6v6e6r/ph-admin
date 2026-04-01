@@ -153,6 +153,7 @@
   var FFC_FAVICON_URL = 'https://ffc.team/favicon.ico';
   var MOBILE_CHAT_BREAKPOINT_PX = 767;
   var COMMUNITY_FEED_PREVIEW_LIMIT = 10;
+  var COMMUNITY_CHAT_PREVIEW_LIMIT = 20;
   var DEFAULT_QUICK_REPLY_OPTIONS = [
     { label: 'Сертификат', text: 'Сертификат' },
     { label: 'Оплата', text: 'Оплата' },
@@ -1768,6 +1769,15 @@
         color:#7b52f1;
         font-size:18px;
         cursor:pointer;
+      }
+      .phab-admin-community-lk-side-action svg{
+        width:16px;
+        height:16px;
+        stroke:currentColor;
+        fill:none;
+        stroke-width:1.8;
+        stroke-linecap:round;
+        stroke-linejoin:round;
       }
       .phab-admin-community-feed-media{
         margin-top:12px;
@@ -3554,11 +3564,40 @@
             params.toString()
         );
       },
+      getCommunityChatMessages: function (communityId, query) {
+        var params = new URLSearchParams();
+        if (query && query.phone) {
+          params.set('phone', String(query.phone));
+        }
+        if (query && query.clientId) {
+          params.set('clientId', String(query.clientId));
+        }
+        if (query && query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query && query.beforeTs !== undefined && query.beforeTs !== null) {
+          params.set('beforeTs', String(query.beforeTs));
+        }
+        params.set('_ts', String(Date.now()));
+        return requestDirectJson(
+          '/lk/communities/' +
+            encodeURIComponent(communityId) +
+            '/messages?' +
+            params.toString()
+        );
+      },
       getCommunityManagedFeed: function (communityId) {
         return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'GET');
       },
       createCommunityFeedItem: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'POST', payload);
+      },
+      updateCommunityFeedItem: function (communityId, feedItemId, payload) {
+        return request(
+          '/communities/' + encodeURIComponent(communityId) + '/feed-items/' + encodeURIComponent(feedItemId),
+          'PATCH',
+          payload
+        );
       },
       deleteCommunityFeedItem: function (communityId, feedItemId) {
         return request(
@@ -5123,6 +5162,43 @@
     gameChatSendBtn.textContent = 'Отправить';
     gameChatCompose.appendChild(gameChatSendBtn);
 
+    var communityFeedEditorModal = document.createElement('div');
+    communityFeedEditorModal.className = 'phab-admin-modal phab-admin-hidden';
+    overlayHost.appendChild(communityFeedEditorModal);
+
+    var communityFeedEditorCard = document.createElement('div');
+    communityFeedEditorCard.className = 'phab-admin-modal-card';
+    communityFeedEditorModal.appendChild(communityFeedEditorCard);
+
+    var communityFeedEditorHead = document.createElement('div');
+    communityFeedEditorHead.className = 'phab-admin-modal-head';
+    communityFeedEditorCard.appendChild(communityFeedEditorHead);
+
+    var communityFeedEditorTitle = document.createElement('div');
+    communityFeedEditorTitle.className = 'phab-admin-modal-title';
+    communityFeedEditorTitle.textContent = 'Редактировать публикацию';
+    communityFeedEditorHead.appendChild(communityFeedEditorTitle);
+
+    var communityFeedEditorActions = document.createElement('div');
+    communityFeedEditorActions.className = 'phab-admin-modal-actions';
+    communityFeedEditorHead.appendChild(communityFeedEditorActions);
+
+    var communityFeedEditorSaveBtn = document.createElement('button');
+    communityFeedEditorSaveBtn.className = 'phab-admin-btn';
+    communityFeedEditorSaveBtn.type = 'button';
+    communityFeedEditorSaveBtn.textContent = 'Сохранить';
+    communityFeedEditorActions.appendChild(communityFeedEditorSaveBtn);
+
+    var communityFeedEditorCloseBtn = document.createElement('button');
+    communityFeedEditorCloseBtn.className = 'phab-admin-modal-close';
+    communityFeedEditorCloseBtn.type = 'button';
+    communityFeedEditorCloseBtn.textContent = '×';
+    communityFeedEditorActions.appendChild(communityFeedEditorCloseBtn);
+
+    var communityFeedEditorBody = document.createElement('div');
+    communityFeedEditorBody.className = 'phab-admin-modal-body';
+    communityFeedEditorCard.appendChild(communityFeedEditorBody);
+
     var mobileFiltersSheet = document.createElement('div');
     mobileFiltersSheet.className = 'phab-admin-bottom-sheet phab-admin-hidden';
     overlayHost.appendChild(mobileFiltersSheet);
@@ -5288,6 +5364,12 @@
       gameChatCloseBtn: gameChatCloseBtn,
       gameChatInput: gameChatInput,
       gameChatSendBtn: gameChatSendBtn,
+      communityFeedEditorModal: communityFeedEditorModal,
+      communityFeedEditorCard: communityFeedEditorCard,
+      communityFeedEditorTitle: communityFeedEditorTitle,
+      communityFeedEditorBody: communityFeedEditorBody,
+      communityFeedEditorSaveBtn: communityFeedEditorSaveBtn,
+      communityFeedEditorCloseBtn: communityFeedEditorCloseBtn,
       gamesPageSizeSelect: gamesPageSizeSelect,
       gamesPrevPageBtn: gamesPrevPageBtn,
       gamesNextPageBtn: gamesNextPageBtn,
@@ -5602,11 +5684,20 @@
       communityFeedLoadedById: Object.create(null),
       communityFeedErrorById: Object.create(null),
       communityFeedLoadingId: null,
+      communityFeedHasMoreById: Object.create(null),
+      communityFeedNextBeforeTsById: Object.create(null),
+      communityFeedLoadingMoreId: null,
+      communityChatById: Object.create(null),
+      communityChatLoadedById: Object.create(null),
+      communityChatErrorById: Object.create(null),
+      communityChatLoadingId: null,
       communityRankingById: Object.create(null),
       communityRankingLoadedById: Object.create(null),
       communityRankingErrorById: Object.create(null),
       communityRankingLoadingId: null,
       communityFeedCreatingId: null,
+      communityFeedEditor: null,
+      communityFeedEditingKey: null,
       communitySavingId: null,
       communityDeletingId: null,
       communityManagingKey: null,
@@ -10160,6 +10251,11 @@
       delete state.communityFeedModerationById[key];
       delete state.communityFeedLoadedById[key];
       delete state.communityFeedErrorById[key];
+      delete state.communityFeedHasMoreById[key];
+      delete state.communityFeedNextBeforeTsById[key];
+      delete state.communityChatById[key];
+      delete state.communityChatLoadedById[key];
+      delete state.communityChatErrorById[key];
       delete state.communityRankingById[key];
       delete state.communityRankingLoadedById[key];
       delete state.communityRankingErrorById[key];
@@ -10296,6 +10392,257 @@
       } finally {
         state.communityFeedCreatingId = null;
         renderCommunityDetails();
+      }
+    }
+
+    function formatDateTimeLocalInputValue(value) {
+      if (!value) {
+        return '';
+      }
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return '';
+      }
+      var year = String(d.getFullYear());
+      var month = String(d.getMonth() + 1).padStart(2, '0');
+      var day = String(d.getDate()).padStart(2, '0');
+      var hours = String(d.getHours()).padStart(2, '0');
+      var minutes = String(d.getMinutes()).padStart(2, '0');
+      return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+    }
+
+    function collectCommunityFeedParticipants(rawValue) {
+      return String(rawValue || '')
+        .split(',')
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(Boolean)
+        .map(function (name) {
+          return { name: name };
+        });
+    }
+
+    function collectCommunityFeedTags(rawValue) {
+      return String(rawValue || '')
+        .split(',')
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(Boolean);
+    }
+
+    function buildCommunityFeedFormPayload(fields) {
+      return {
+        kind: String(fields.kind.value || 'NEWS').trim().toUpperCase(),
+        title: String(fields.title.value || '').trim(),
+        body: String(fields.body.value || '').trim(),
+        previewLabel: String(fields.preview.value || '').trim(),
+        ctaLabel: String(fields.cta.value || '').trim(),
+        imageUrl: String(fields.image.value || '').trim() || null,
+        startAt: fields.start.value ? new Date(fields.start.value).toISOString() : undefined,
+        endAt: fields.end.value ? new Date(fields.end.value).toISOString() : undefined,
+        stationName: String(fields.station.value || '').trim(),
+        courtName: String(fields.court.value || '').trim(),
+        levelLabel: String(fields.level.value || '').trim(),
+        authorName: String(fields.author.value || '').trim(),
+        participants: collectCommunityFeedParticipants(fields.participants.value),
+        tags: collectCommunityFeedTags(fields.tags.value)
+      };
+    }
+
+    function closeCommunityFeedEditorModal() {
+      state.communityFeedEditor = null;
+      state.communityFeedEditingKey = null;
+      dom.communityFeedEditorSaveBtn.disabled = false;
+      dom.communityFeedEditorSaveBtn.textContent = 'Сохранить';
+      dom.communityFeedEditorTitle.textContent = 'Редактировать публикацию';
+      clearNode(dom.communityFeedEditorBody);
+      dom.communityFeedEditorModal.classList.add('phab-admin-hidden');
+    }
+
+    function openCommunityFeedEditor(community, post) {
+      if (!community || !post) {
+        return;
+      }
+      if (isSyntheticCommunityFeedPost(post)) {
+        state.communityCenterTab = 'settings';
+        renderCommunityDetails();
+        setStatus('Системные карточки редактируются через настройки сообщества.', false);
+        return;
+      }
+
+      var feedItemId = getCommunityFeedPostPersistenceId(post);
+      if (!feedItemId) {
+        setStatus('Не удалось определить id публикации для редактирования.', true);
+        return;
+      }
+
+      clearNode(dom.communityFeedEditorBody);
+      dom.communityFeedEditorTitle.textContent = 'Редактировать публикацию';
+
+      var form = document.createElement('div');
+      form.className = 'phab-admin-community-form-grid';
+      dom.communityFeedEditorBody.appendChild(form);
+
+      var kindSelect = document.createElement('select');
+      kindSelect.className = 'phab-admin-input';
+      [
+        { value: 'NEWS', label: 'Новость' },
+        { value: 'GAME', label: 'Игра' },
+        { value: 'TOURNAMENT', label: 'Турнир' },
+        { value: 'EVENT', label: 'Событие' },
+        { value: 'AD', label: 'Реклама / промо' }
+      ].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        kindSelect.appendChild(option);
+      });
+      kindSelect.value = String(post.kind || 'NEWS').trim().toUpperCase();
+      appendCommunityFormField(form, 'Тип карточки', kindSelect);
+
+      var titleInput = document.createElement('input');
+      titleInput.className = 'phab-admin-input';
+      titleInput.value = String(post.title || '');
+      appendCommunityFormField(form, 'Заголовок', titleInput);
+
+      var previewInput = document.createElement('input');
+      previewInput.className = 'phab-admin-input';
+      previewInput.value = String(post.previewLabel || '');
+      appendCommunityFormField(form, 'Подпись / превью', previewInput);
+
+      var ctaInput = document.createElement('input');
+      ctaInput.className = 'phab-admin-input';
+      ctaInput.value = String(post.ctaLabel || '');
+      appendCommunityFormField(form, 'Текст CTA', ctaInput);
+
+      var imageInput = document.createElement('input');
+      imageInput.className = 'phab-admin-input';
+      imageInput.value = String(post.imageUrl || '');
+      appendCommunityFormField(form, 'Изображение', imageInput);
+
+      var startInput = document.createElement('input');
+      startInput.type = 'datetime-local';
+      startInput.className = 'phab-admin-input';
+      startInput.value = formatDateTimeLocalInputValue(post.startAt || post.publishedAt);
+      appendCommunityFormField(form, 'Начало', startInput);
+
+      var endInput = document.createElement('input');
+      endInput.type = 'datetime-local';
+      endInput.className = 'phab-admin-input';
+      endInput.value = formatDateTimeLocalInputValue(post.endAt);
+      appendCommunityFormField(form, 'Конец', endInput);
+
+      var stationInput = document.createElement('input');
+      stationInput.className = 'phab-admin-input';
+      stationInput.value = String(post.stationName || community.stationName || community.stationId || '');
+      appendCommunityFormField(form, 'Станция / клуб', stationInput);
+
+      var courtInput = document.createElement('input');
+      courtInput.className = 'phab-admin-input';
+      courtInput.value = String(post.courtName || '');
+      appendCommunityFormField(form, 'Корт / площадка', courtInput);
+
+      var levelInput = document.createElement('input');
+      levelInput.className = 'phab-admin-input';
+      levelInput.value = String(post.levelLabel || '');
+      appendCommunityFormField(form, 'Уровень', levelInput);
+
+      var authorInput = document.createElement('input');
+      authorInput.className = 'phab-admin-input';
+      authorInput.value = String(post.authorName || '');
+      appendCommunityFormField(form, 'Автор', authorInput);
+
+      var participantsInput = document.createElement('textarea');
+      participantsInput.className = 'phab-admin-input';
+      participantsInput.rows = 3;
+      participantsInput.value = normalizeArray(post.participants)
+        .map(function (participant) {
+          return String(participant && participant.name || '').trim();
+        })
+        .filter(Boolean)
+        .join(', ');
+      appendCommunityFormField(form, 'Участники', participantsInput, true);
+
+      var tagsInput = document.createElement('input');
+      tagsInput.className = 'phab-admin-input';
+      tagsInput.value = normalizeArray(post.tags).join(', ');
+      appendCommunityFormField(form, 'Теги', tagsInput, true);
+
+      var bodyInput = document.createElement('textarea');
+      bodyInput.className = 'phab-admin-input';
+      bodyInput.rows = 6;
+      bodyInput.value = String(post.body || '');
+      appendCommunityFormField(form, 'Описание', bodyInput, true);
+
+      state.communityFeedEditor = {
+        communityId: String(community.id || ''),
+        feedItemId: feedItemId,
+        form: {
+          kind: kindSelect,
+          title: titleInput,
+          preview: previewInput,
+          cta: ctaInput,
+          image: imageInput,
+          start: startInput,
+          end: endInput,
+          station: stationInput,
+          court: courtInput,
+          level: levelInput,
+          author: authorInput,
+          participants: participantsInput,
+          tags: tagsInput,
+          body: bodyInput
+        }
+      };
+
+      dom.communityFeedEditorModal.classList.remove('phab-admin-hidden');
+      window.setTimeout(function () {
+        titleInput.focus();
+        titleInput.select();
+      }, 0);
+    }
+
+    async function saveCommunityFeedEditor() {
+      var editor = state.communityFeedEditor;
+      if (!editor || !editor.form) {
+        return;
+      }
+
+      var communityId = String(editor.communityId || '');
+      var feedItemId = String(editor.feedItemId || '');
+      var community = state.communities.find(function (item) {
+        return String(item && item.id || '') === communityId;
+      }) || null;
+      if (!communityId || !feedItemId || !community) {
+        throw new Error('Не удалось определить сообщество или публикацию для сохранения.');
+      }
+
+      var payload = buildCommunityFeedFormPayload(editor.form);
+      if (!payload.title) {
+        throw new Error('Укажите заголовок публикации.');
+      }
+
+      var editingKey = communityId + ':' + feedItemId;
+      state.communityFeedEditingKey = editingKey;
+      dom.communityFeedEditorSaveBtn.disabled = true;
+      dom.communityFeedEditorSaveBtn.textContent = 'Сохраняем...';
+      try {
+        await api.updateCommunityFeedItem(communityId, feedItemId, payload);
+        await refreshCommunityManagedFeed(community);
+        setStatus('Публикация обновлена', false);
+        closeCommunityFeedEditorModal();
+        renderCommunityDetails();
+      } finally {
+        if (state.communityFeedEditingKey === editingKey) {
+          state.communityFeedEditingKey = null;
+        }
+        if (!state.communityFeedEditor) {
+          return;
+        }
+        dom.communityFeedEditorSaveBtn.disabled = false;
+        dom.communityFeedEditorSaveBtn.textContent = 'Сохранить';
       }
     }
 
@@ -10827,6 +11174,107 @@
         });
     }
 
+    function extractCommunityFeedMeta(payload, posts, requestedLimit) {
+      var record = normalizeObject(payload);
+      var explicitHasMore = typeof record.hasMore === 'boolean' ? record.hasMore : null;
+      var explicitNextBeforeTs =
+        normalizeCommunityCount(record.nextBeforeTs) ||
+        normalizeCommunityCount(record.nextBefore) ||
+        null;
+      var inferredNextBeforeTs = null;
+      if (Array.isArray(posts) && posts.length > 0) {
+        inferredNextBeforeTs = getCommunityTimestampValue({
+          lastActivityAt: posts[posts.length - 1].publishedAt || posts[posts.length - 1].createdAt || ''
+        });
+        if (!inferredNextBeforeTs) {
+          inferredNextBeforeTs = null;
+        }
+      }
+      var fallbackHasMore =
+        Array.isArray(posts) &&
+        posts.length >= Math.max(1, Number(requestedLimit || COMMUNITY_FEED_PREVIEW_LIMIT));
+      return {
+        hasMore: explicitHasMore !== null ? explicitHasMore : Boolean(fallbackHasMore && inferredNextBeforeTs),
+        nextBeforeTs: explicitNextBeforeTs || inferredNextBeforeTs || null
+      };
+    }
+
+    function mergeCommunityFeedPages(existing, incoming) {
+      var byId = Object.create(null);
+      normalizeArray(existing).forEach(function (item) {
+        if (item && item.id) {
+          byId[String(item.id)] = item;
+        }
+      });
+      normalizeArray(incoming).forEach(function (item) {
+        if (!item || !item.id) {
+          return;
+        }
+        byId[String(item.id)] = item;
+      });
+      return Object.keys(byId)
+        .map(function (key) {
+          return byId[key];
+        })
+        .sort(function (left, right) {
+          return getCommunityTimestampValue({ lastActivityAt: right.publishedAt }) -
+            getCommunityTimestampValue({ lastActivityAt: left.publishedAt });
+        });
+    }
+
+    function normalizeCommunityChatMessageEntry(value, index, community) {
+      var source = normalizeObject(value);
+      var author = normalizeObject(source.author || source.sender);
+      var text =
+        pickCommunityRecordText(source, ['text', 'body', 'message', 'description']) || '';
+      if (!text) {
+        return null;
+      }
+      return {
+        id: pickCommunityRecordText(source, ['id', 'messageId', 'uuid']) || 'msg-' + index,
+        communityId:
+          pickCommunityRecordText(source, ['communityId']) || String((community && community.id) || ''),
+        authorId:
+          pickCommunityRecordText(source, ['authorId']) ||
+          pickCommunityRecordText(author, ['id', 'clientId', 'userId', 'uuid']) ||
+          '',
+        authorPhone:
+          normalizeCommunityFeedPhone(
+            source.authorPhone || author.phone || author.phoneNorm || author.phoneNumber || author.mobile
+          ) || '',
+        authorName:
+          pickCommunityRecordText(source, ['authorName']) ||
+          pickCommunityRecordText(author, ['name', 'displayName', 'fullName']) ||
+          'Игрок',
+        authorAvatar:
+          pickCommunityRecordText(source, ['authorAvatar']) ||
+          pickCommunityRecordText(author, ['avatar', 'photo', 'imageUrl']) ||
+          '',
+        text: text,
+        createdAt:
+          pickCommunityRecordText(source, ['createdAt', 'publishedAt']) ||
+          String((community && (community.updatedAt || community.createdAt)) || ''),
+        flagged: Boolean(source.flagged || source.reported || source.suspicious),
+        reportsCount:
+          normalizeCommunityCount(
+            pickCommunityRecordNumber(source, ['reportsCount', 'complaintsCount', 'flagsCount'])
+          ) || 0,
+        raw: source
+      };
+    }
+
+    function extractCommunityChatMessages(payload, community) {
+      return extractCommunityResponseArray(payload, ['messages', 'items', 'data', 'result'])
+        .map(function (item, index) {
+          return normalizeCommunityChatMessageEntry(item, index, community);
+        })
+        .filter(Boolean)
+        .sort(function (left, right) {
+          return getCommunityTimestampValue({ lastActivityAt: left.createdAt }) -
+            getCommunityTimestampValue({ lastActivityAt: right.createdAt });
+        });
+    }
+
     function extractCommunityRankingRows(payload) {
       var rowsSource = normalizeObject(payload).rows || payload;
       return extractCommunityResponseArray(rowsSource, ['rows', 'items', 'data', 'result'])
@@ -10877,6 +11325,8 @@
       var communityId = String(community.id);
       var needsFeed =
         !state.communityFeedLoadedById[communityId] && state.communityFeedLoadingId !== communityId;
+      var needsChat =
+        !state.communityChatLoadedById[communityId] && state.communityChatLoadingId !== communityId;
       var needsManagedFeed =
         !state.communityManagedFeedLoadedById[communityId] &&
         state.communityManagedFeedLoadingId !== communityId;
@@ -10884,7 +11334,7 @@
         !state.communityRankingLoadedById[communityId] &&
         state.communityRankingLoadingId !== communityId;
 
-      if (!needsFeed && !needsRanking && !needsManagedFeed) {
+      if (!needsFeed && !needsChat && !needsRanking && !needsManagedFeed) {
         return;
       }
 
@@ -10895,6 +11345,11 @@
           state.communityFeedLoadedById[communityId] = true;
           state.communityFeedErrorById[communityId] =
             'Не удалось определить phone/clientId для загрузки живой ленты.';
+        }
+        if (needsChat) {
+          state.communityChatLoadedById[communityId] = true;
+          state.communityChatErrorById[communityId] =
+            'Не удалось определить phone/clientId для загрузки чата сообщества.';
         }
         if (needsRanking) {
           state.communityRankingLoadedById[communityId] = true;
@@ -10908,6 +11363,10 @@
       if (needsFeed) {
         state.communityFeedLoadingId = communityId;
         delete state.communityFeedErrorById[communityId];
+      }
+      if (needsChat) {
+        state.communityChatLoadingId = communityId;
+        delete state.communityChatErrorById[communityId];
       }
       if (needsManagedFeed) {
         state.communityManagedFeedLoadingId = communityId;
@@ -10929,6 +11388,15 @@
               })
             : Promise.reject(new Error('Не удалось определить phone/clientId для загрузки живой ленты.'))
           : Promise.resolve(null);
+        var chatPromise = needsChat
+          ? hasIdentity
+            ? api.getCommunityChatMessages(communityId, {
+                phone: identity.phone,
+                clientId: identity.clientId,
+                limit: COMMUNITY_CHAT_PREVIEW_LIMIT
+              })
+            : Promise.reject(new Error('Не удалось определить phone/clientId для загрузки чата сообщества.'))
+          : Promise.resolve(null);
         var rankingPromise = needsRanking
           ? hasIdentity
             ? api.getCommunityRanking(communityId, {
@@ -10941,21 +11409,48 @@
           ? api.getCommunityManagedFeed(communityId)
           : Promise.resolve(null);
 
-        var results = await Promise.allSettled([feedPromise, rankingPromise, managedFeedPromise]);
+        var results = await Promise.allSettled([
+          feedPromise,
+          chatPromise,
+          rankingPromise,
+          managedFeedPromise
+        ]);
         var feedResult = results[0];
-        var rankingResult = results[1];
-        var managedFeedResult = results[2];
+        var chatResult = results[1];
+        var rankingResult = results[2];
+        var managedFeedResult = results[3];
 
         if (needsFeed) {
           state.communityFeedLoadedById[communityId] = true;
           if (feedResult.status === 'fulfilled') {
-            state.communityFeedById[communityId] = extractCommunityFeedPosts(feedResult.value, community);
+            var feedPosts = extractCommunityFeedPosts(feedResult.value, community);
+            var feedMeta = extractCommunityFeedMeta(
+              feedResult.value,
+              feedPosts,
+              COMMUNITY_FEED_PREVIEW_LIMIT
+            );
+            state.communityFeedById[communityId] = feedPosts;
+            state.communityFeedHasMoreById[communityId] = feedMeta.hasMore;
+            state.communityFeedNextBeforeTsById[communityId] = feedMeta.nextBeforeTs;
             delete state.communityFeedErrorById[communityId];
           } else {
             state.communityFeedErrorById[communityId] =
               feedResult.reason && feedResult.reason.message
                 ? String(feedResult.reason.message)
                 : 'Не удалось загрузить живую ленту сообщества.';
+          }
+        }
+
+        if (needsChat) {
+          state.communityChatLoadedById[communityId] = true;
+          if (chatResult.status === 'fulfilled') {
+            state.communityChatById[communityId] = extractCommunityChatMessages(chatResult.value, community);
+            delete state.communityChatErrorById[communityId];
+          } else {
+            state.communityChatErrorById[communityId] =
+              chatResult.reason && chatResult.reason.message
+                ? String(chatResult.reason.message)
+                : 'Не удалось загрузить чат сообщества.';
           }
         }
 
@@ -10989,6 +11484,9 @@
         if (state.communityFeedLoadingId === communityId) {
           state.communityFeedLoadingId = null;
         }
+        if (state.communityChatLoadingId === communityId) {
+          state.communityChatLoadingId = null;
+        }
         if (state.communityManagedFeedLoadingId === communityId) {
           state.communityManagedFeedLoadingId = null;
         }
@@ -10997,6 +11495,85 @@
         }
         renderCommunityDetails();
       }
+    }
+
+    async function loadMoreCommunityFeed(community) {
+      if (!community || !community.id) {
+        return;
+      }
+      var communityId = String(community.id);
+      if (
+        state.communityFeedLoadingId === communityId ||
+        state.communityFeedLoadingMoreId === communityId ||
+        state.communityFeedHasMoreById[communityId] !== true
+      ) {
+        return;
+      }
+
+      var beforeTs = Number(state.communityFeedNextBeforeTsById[communityId] || 0);
+      if (!Number.isFinite(beforeTs) || beforeTs <= 0) {
+        state.communityFeedHasMoreById[communityId] = false;
+        return;
+      }
+
+      var identity = resolveCommunityAccessIdentity(community);
+      if (!identity || (!identity.phone && !identity.clientId)) {
+        state.communityFeedErrorById[communityId] =
+          'Не удалось определить phone/clientId для догрузки ленты.';
+        renderCommunityDetails();
+        return;
+      }
+
+      state.communityFeedLoadingMoreId = communityId;
+      renderCommunityDetails();
+      try {
+        var response = await api.getCommunityFeed(communityId, {
+          phone: identity.phone,
+          clientId: identity.clientId,
+          limit: COMMUNITY_FEED_PREVIEW_LIMIT,
+          beforeTs: beforeTs
+        });
+        var nextPosts = extractCommunityFeedPosts(response, community);
+        var meta = extractCommunityFeedMeta(response, nextPosts, COMMUNITY_FEED_PREVIEW_LIMIT);
+        state.communityFeedById[communityId] = mergeCommunityFeedPages(
+          state.communityFeedById[communityId],
+          nextPosts
+        );
+        state.communityFeedHasMoreById[communityId] = meta.hasMore;
+        state.communityFeedNextBeforeTsById[communityId] = meta.nextBeforeTs;
+        delete state.communityFeedErrorById[communityId];
+      } catch (error) {
+        state.communityFeedErrorById[communityId] =
+          error && error.message ? String(error.message) : 'Не удалось догрузить ленту сообщества.';
+      } finally {
+        if (state.communityFeedLoadingMoreId === communityId) {
+          state.communityFeedLoadingMoreId = null;
+        }
+        renderCommunityDetails();
+      }
+    }
+
+    function maybeLoadMoreCommunityFeedFromScroll(container) {
+      if (!container || state.activeTab !== 'communities') {
+        return;
+      }
+      var community = getSelectedCommunity();
+      if (!community) {
+        return;
+      }
+      var allowPreview =
+        container === dom.communityPreviewBody && String(state.communityPreviewTab || 'feed') === 'feed';
+      var allowCenter =
+        container === dom.communityAdminGrid && String(state.communityCenterTab || 'overview') === 'content';
+      if (!allowPreview && !allowCenter) {
+        return;
+      }
+      var distanceToBottom =
+        container.scrollHeight - container.clientHeight - container.scrollTop;
+      if (distanceToBottom > 220) {
+        return;
+      }
+      loadMoreCommunityFeed(community).catch(handleError);
     }
 
     function pickCommunityStringValue(community, keys) {
@@ -11414,7 +11991,15 @@
       return getCommunityFeedPosts(community, model).slice(0, 3);
     }
 
-    function getCommunityPreviewMessages(community, model) {
+    function getCommunityChatMessages(community, model) {
+      var liveChat = state.communityChatById[community.id];
+      if (Array.isArray(liveChat)) {
+        return liveChat.slice();
+      }
+      if (state.communityChatLoadedById[community.id]) {
+        return [];
+      }
+
       var list = pickCommunityArrayValue(community, [
         'chatPreview',
         'previewMessages',
@@ -11444,7 +12029,7 @@
         });
 
       if (list.length > 0) {
-        return list.slice(0, 4);
+        return list.slice();
       }
 
       var synthetic = [];
@@ -11478,7 +12063,12 @@
           reportsCount: 0
         });
       }
-      return synthetic.slice(0, 4);
+      return synthetic.slice(0, 6);
+    }
+
+    function getCommunityPreviewMessages(community, model) {
+      var messages = getCommunityChatMessages(community, model);
+      return messages.length > 4 ? messages.slice(messages.length - 4) : messages;
     }
 
     function getCommunityRankingRows(community, model) {
@@ -11667,6 +12257,7 @@
         activityScore:
           chatActivity + posts7d * 3 + unreadEventsCount * 2 + Math.round(getCommunityTimestampValue(community) / 86400000),
         feedPosts: [],
+        chatMessages: [],
         previewPosts: [],
         previewMessages: [],
         rankingRows: [],
@@ -11925,10 +12516,14 @@
       var sideAction = document.createElement('button');
       sideAction.type = 'button';
       sideAction.className = 'phab-admin-community-lk-side-action';
-      sideAction.setAttribute('aria-label', 'Модераторские действия');
-      sideAction.textContent = '◌';
+      sideAction.setAttribute('aria-label', 'Редактировать публикацию');
+      sideAction.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M12 20h9"/>' +
+        '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>' +
+        '</svg>';
       sideAction.addEventListener('click', function () {
-        setCommunityPreviewActionNotice('Открыть карточку');
+        openCommunityFeedEditor(community, post);
       });
       head.appendChild(sideAction);
 
@@ -12978,6 +13573,15 @@
           )
         );
       }
+      if (state.communityFeedLoadingMoreId === community.id) {
+        feedIntro.appendChild(
+          createCommunityPill('Подгружаем ещё события и публикации...', 'phab-admin-community-signal')
+        );
+      } else if (state.communityFeedHasMoreById[community.id]) {
+        feedIntro.appendChild(
+          createCommunityPill('Листайте ниже для следующей страницы', 'phab-admin-community-mini-chip')
+        );
+      }
       card.body.appendChild(feedIntro);
 
       if (model.feedPosts.length === 0) {
@@ -12993,7 +13597,28 @@
     function renderCommunityChatTab(community, model) {
       var card = createCommunitySectionCard('Чат', 'Подозрительные сообщения и live preview');
       dom.communityAdminGrid.appendChild(card.card);
-      model.previewMessages.forEach(function (message) {
+      var chatIntro = document.createElement('div');
+      chatIntro.className = 'phab-admin-community-risk-row';
+      if (state.communityChatLoadingId === community.id) {
+        chatIntro.appendChild(createCommunityPill('Загружаем live chat...', 'phab-admin-community-signal'));
+      } else if (state.communityChatErrorById[community.id]) {
+        chatIntro.appendChild(
+          createCommunityPill(
+            'Чат: ' + String(state.communityChatErrorById[community.id]),
+            'phab-admin-community-signal phab-admin-community-signal-strong'
+          )
+        );
+      } else if (state.communityChatLoadedById[community.id]) {
+        chatIntro.appendChild(createCommunityPill('Источник: live chat', 'phab-admin-community-mini-chip'));
+      }
+      card.body.appendChild(chatIntro);
+
+      if (model.chatMessages.length === 0) {
+        appendCommunityListEmpty(card.body, 'Сообщений сообщества пока нет');
+        return;
+      }
+
+      model.chatMessages.forEach(function (message) {
         var preview = document.createElement('div');
         preview.className = 'phab-admin-community-preview-card';
         var top = document.createElement('div');
@@ -13218,6 +13843,18 @@
       }
 
       if (state.communityPreviewTab === 'chat') {
+        if (state.communityChatLoadingId === community.id) {
+          shell.appendChild(
+            createCommunityPill('Подтягиваем живые сообщения сообщества...', 'phab-admin-community-signal')
+          );
+        } else if (state.communityChatErrorById[community.id]) {
+          shell.appendChild(
+            createCommunityPill(
+              String(state.communityChatErrorById[community.id]),
+              'phab-admin-community-signal phab-admin-community-signal-strong'
+            )
+          );
+        }
         if (model.previewMessages.length === 0) {
           appendCommunityListEmpty(shell, 'Сообщений для превью пока нет');
           return;
@@ -13334,11 +13971,15 @@
         return;
       }
 
-      var previewPosts = filterCommunityPreviewFeedPosts(model.feedPosts).slice(0, 6);
+      var previewPosts = filterCommunityPreviewFeedPosts(model.feedPosts);
 
       if (state.communityFeedLoadingId === community.id) {
         shell.appendChild(
           createCommunityPill('Подтягиваем живую ленту сообщества...', 'phab-admin-community-signal')
+        );
+      } else if (state.communityFeedLoadingMoreId === community.id) {
+        shell.appendChild(
+          createCommunityPill('Подгружаем следующую страницу...', 'phab-admin-community-signal')
         );
       } else if (state.communityFeedErrorById[community.id]) {
         shell.appendChild(
@@ -13346,6 +13987,10 @@
             String(state.communityFeedErrorById[community.id]),
             'phab-admin-community-signal phab-admin-community-signal-strong'
           )
+        );
+      } else if (state.communityFeedHasMoreById[community.id]) {
+        shell.appendChild(
+          createCommunityPill('Прокрутите ниже, чтобы догрузить ещё', 'phab-admin-community-mini-chip')
         );
       }
 
@@ -13386,6 +14031,7 @@
       var model = buildCommunityModeratorModel(community);
       model.feedPosts = applyCommunityFeedModeration(community.id, getCommunityFeedPosts(community, model));
       model.previewPosts = model.feedPosts.slice(0, 3);
+      model.chatMessages = getCommunityChatMessages(community, model);
       model.previewMessages = getCommunityPreviewMessages(community, model);
       model.rankingRows = getCommunityRankingRows(community, model);
       model.previewRankingRows = model.rankingRows.slice(0, 5);
@@ -14813,6 +15459,12 @@
       dom.dialogsScrollBody.addEventListener('scroll', function () {
         loadMoreDialogsIfNeeded().catch(handleError);
       });
+      dom.communityAdminGrid.addEventListener('scroll', function () {
+        maybeLoadMoreCommunityFeedFromScroll(dom.communityAdminGrid);
+      });
+      dom.communityPreviewBody.addEventListener('scroll', function () {
+        maybeLoadMoreCommunityFeedFromScroll(dom.communityPreviewBody);
+      });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
         state.gamesPageSize = next === 50 ? 50 : 15;
@@ -14979,6 +15631,17 @@
           closeGameChatModal();
         }
       });
+      dom.communityFeedEditorCloseBtn.addEventListener('click', function () {
+        closeCommunityFeedEditorModal();
+      });
+      dom.communityFeedEditorModal.addEventListener('click', function (event) {
+        if (event.target === dom.communityFeedEditorModal) {
+          closeCommunityFeedEditorModal();
+        }
+      });
+      dom.communityFeedEditorSaveBtn.addEventListener('click', function () {
+        saveCommunityFeedEditor().catch(handleError);
+      });
       dom.gameChatSendBtn.addEventListener('click', function () {
         sendGameChatMessage().catch(handleError);
       });
@@ -14990,6 +15653,10 @@
       });
       documentKeydownHandler = function (event) {
         if (event.key !== 'Escape') {
+          return;
+        }
+        if (!dom.communityFeedEditorModal.classList.contains('phab-admin-hidden')) {
+          closeCommunityFeedEditorModal();
           return;
         }
         if (!dom.gameChatModal.classList.contains('phab-admin-hidden')) {
@@ -15048,7 +15715,13 @@
       if (windowResizeHandler) {
         window.removeEventListener('resize', windowResizeHandler);
       }
-      [dom.gameModal, dom.eventModal, dom.gameChatModal, dom.mobileFiltersSheet].forEach(function (node) {
+      [
+        dom.gameModal,
+        dom.eventModal,
+        dom.gameChatModal,
+        dom.communityFeedEditorModal,
+        dom.mobileFiltersSheet
+      ].forEach(function (node) {
         if (node && node.parentNode) {
           node.parentNode.removeChild(node);
         }

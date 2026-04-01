@@ -14,6 +14,7 @@ import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CreateCommunityFeedItemDto } from './dto/create-community-feed-item.dto';
 import { ManageCommunityMemberDto } from './dto/manage-community-member.dto';
+import { UpdateCommunityFeedItemDto } from './dto/update-community-feed-item.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
 import { Community, CommunityFeedItem } from './communities.types';
 import { CommunitiesService } from './communities.service';
@@ -91,6 +92,25 @@ export class CommunitiesController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.communitiesService.createFeedItem(id, {
+      ...dto,
+      actor: {
+        id: user.id,
+        name: user.title || user.login || user.id
+      }
+    });
+  }
+
+  @Patch(':id/feed-items/:feedItemId')
+  updateFeedItem(
+    @Param('id') id: string,
+    @Param('feedItemId') feedItemId: string,
+    @Body() dto: UpdateCommunityFeedItemDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<CommunityFeedItem> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.communitiesService.updateFeedItem(id, feedItemId, {
       ...dto,
       actor: {
         id: user.id,

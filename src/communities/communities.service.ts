@@ -9,6 +9,7 @@ import {
   CommunitiesDeleteFeedItemResult,
   CommunitiesManageMemberMutation,
   CommunitiesPersistenceService,
+  CommunitiesUpdateFeedItemMutation,
   CommunitiesUpdateMutation
 } from './communities-persistence.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
@@ -106,6 +107,29 @@ export class CommunitiesService {
     const item = await this.communitiesPersistence.createFeedItem(id, mutation);
     if (!item) {
       throw new NotFoundException(`Community with id ${id} not found`);
+    }
+    return item;
+  }
+
+  async updateFeedItem(
+    id: string,
+    feedItemId: string,
+    mutation: CommunitiesUpdateFeedItemMutation
+  ): Promise<CommunityFeedItem> {
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new InternalServerErrorException(
+        'Communities moderation requires MongoDB source configuration'
+      );
+    }
+
+    await this.findById(id);
+    if (mutation.title !== undefined && !String(mutation.title).trim()) {
+      throw new BadRequestException('Feed item title cannot be empty');
+    }
+
+    const item = await this.communitiesPersistence.updateFeedItem(id, feedItemId, mutation);
+    if (!item) {
+      throw new NotFoundException(`Feed item with id ${feedItemId} not found`);
     }
     return item;
   }
