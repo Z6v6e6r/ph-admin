@@ -23,7 +23,6 @@ import { CommunitiesService } from './communities.service';
 @Roles(
   Role.SUPER_ADMIN,
   Role.SUPPORT,
-  Role.STATION_ADMIN,
   Role.MANAGER,
   Role.TOURNAMENT_MANAGER,
   Role.GAME_MANAGER

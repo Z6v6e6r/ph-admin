@@ -468,6 +468,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       .map((entry) => this.normalizeFeedParticipantInput(entry))
       .filter((entry): entry is CommunityFeedParticipant => entry !== null);
     const kind = mutation.kind;
+    const storedKind = this.resolveStoredFeedDocumentKind(kind);
     const normalizedTags = this.dedupeStrings(mutation.tags ?? []);
     const imageUrl = this.pickNullableString(mutation.imageUrl);
 
@@ -477,8 +478,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       communityId: communityId,
       communityName: community?.name ?? this.pickString(communityMatch.document.name) ?? undefined,
       communitySlug: community?.slug ?? this.pickString(communityMatch.document.slug) ?? undefined,
-      kind,
-      type: kind,
+      kind: storedKind,
+      type: storedKind,
       status: 'PUBLISHED',
       title: mutation.title.trim(),
       body: this.pickString(mutation.body) ?? undefined,
@@ -538,8 +539,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     };
 
     if (mutation.kind !== undefined) {
-      setPayload.kind = mutation.kind;
-      setPayload.type = mutation.kind;
+      const storedKind = this.resolveStoredFeedDocumentKind(mutation.kind);
+      setPayload.kind = storedKind;
+      setPayload.type = storedKind;
       setPayload.isAdvertisement = mutation.kind === 'AD';
       setPayload.ad = mutation.kind === 'AD';
     }
@@ -1550,6 +1552,19 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return 'NEWS';
     }
     return 'NEWS';
+  }
+
+  private resolveStoredFeedDocumentKind(
+    kind: CommunityFeedItemKind | undefined
+  ): 'PHOTO' | 'GAME' | 'TOURNAMENT' {
+    const normalized = String(kind ?? '').trim().toUpperCase();
+    if (normalized === 'GAME') {
+      return 'GAME';
+    }
+    if (normalized === 'TOURNAMENT') {
+      return 'TOURNAMENT';
+    }
+    return 'PHOTO';
   }
 
   private normalizeFeedItemStatus(value: unknown): CommunityFeedItemStatus {

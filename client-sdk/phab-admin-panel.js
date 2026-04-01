@@ -5551,6 +5551,16 @@
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER', 'STATION_ADMIN']);
   }
 
+  function canAccessCommunities(cfg) {
+    return hasAnyRole(cfg, [
+      'SUPER_ADMIN',
+      'MANAGER',
+      'SUPPORT',
+      'GAME_MANAGER',
+      'TOURNAMENT_MANAGER'
+    ]);
+  }
+
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
   var DIALOG_FILTER_NO_PHONE = '__NO_PHONE__';
   var STORAGE_KEY_INCLUDE_SERVICE_MESSAGES = 'phab_admin_include_service_messages';
@@ -5785,12 +5795,13 @@
 
     function populateMobileTabSelect() {
       clearNode(dom.mobileTabSelect);
+      var hideCommunitiesTab = !canAccessCommunities(cfg);
       [
         { value: 'messages', label: 'Диалоги' },
         { value: 'games', label: 'Игры' },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
         { value: 'tournaments', label: 'Турниры' },
-        { value: 'communities', label: 'Сообщества' },
+        { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
         { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin }
       ]
@@ -5804,6 +5815,9 @@
           dom.mobileTabSelect.appendChild(option);
         });
       dom.mobileTabSelect.value = state.activeTab;
+      if (dom.mobileTabSelect.value !== state.activeTab) {
+        dom.mobileTabSelect.value = 'messages';
+      }
     }
 
     function getAudioContextConstructor() {
@@ -10451,6 +10465,25 @@
       };
     }
 
+    function isSameCommunityFeedFormValue(left, right) {
+      if (Array.isArray(left) || Array.isArray(right)) {
+        return JSON.stringify(normalizeArray(left)) === JSON.stringify(normalizeArray(right));
+      }
+      return left === right;
+    }
+
+    function buildCommunityFeedFormDiffPayload(initialPayload, nextPayload) {
+      var payload = {};
+      var keys = Object.keys(nextPayload);
+      for (var i = 0; i < keys.length; i += 1) {
+        var key = keys[i];
+        if (!isSameCommunityFeedFormValue(initialPayload ? initialPayload[key] : undefined, nextPayload[key])) {
+          payload[key] = nextPayload[key];
+        }
+      }
+      return payload;
+    }
+
     function closeCommunityFeedEditorModal() {
       state.communityFeedEditor = null;
       state.communityFeedEditingKey = null;
@@ -10579,6 +10612,22 @@
       state.communityFeedEditor = {
         communityId: String(community.id || ''),
         feedItemId: feedItemId,
+        initialPayload: buildCommunityFeedFormPayload({
+          kind: kindSelect,
+          title: titleInput,
+          preview: previewInput,
+          cta: ctaInput,
+          image: imageInput,
+          start: startInput,
+          end: endInput,
+          station: stationInput,
+          court: courtInput,
+          level: levelInput,
+          author: authorInput,
+          participants: participantsInput,
+          tags: tagsInput,
+          body: bodyInput
+        }),
         form: {
           kind: kindSelect,
           title: titleInput,
@@ -10619,9 +10668,14 @@
         throw new Error('Не удалось определить сообщество или публикацию для сохранения.');
       }
 
-      var payload = buildCommunityFeedFormPayload(editor.form);
-      if (!payload.title) {
+      var nextPayload = buildCommunityFeedFormPayload(editor.form);
+      if (!nextPayload.title) {
         throw new Error('Укажите заголовок публикации.');
+      }
+      var payload = buildCommunityFeedFormDiffPayload(editor.initialPayload || {}, nextPayload);
+      if (!Object.keys(payload).length) {
+        setStatus('Изменений нет', false);
+        return;
       }
 
       var editingKey = communityId + ':' + feedItemId;
@@ -10985,6 +11039,31 @@
       return toCommunityText(kind) || 'Лента';
     }
 
+    function normalizeCommunityFeedKind(kind) {
+      var normalized = String(kind || '').trim().toUpperCase();
+      if (
+        normalized === 'AD' ||
+        normalized === 'ADS' ||
+        normalized === 'PROMO' ||
+        normalized === 'ADVERTISEMENT' ||
+        normalized === 'BANNER'
+      ) {
+        return 'AD';
+      }
+      if (
+        normalized === 'PHOTO' ||
+        normalized === 'POST' ||
+        normalized === 'SYSTEM' ||
+        normalized === 'NEWS'
+      ) {
+        return 'NEWS';
+      }
+      if (normalized === 'GAME' || normalized === 'TOURNAMENT' || normalized === 'EVENT') {
+        return normalized;
+      }
+      return 'NEWS';
+    }
+
     function normalizeCommunityPreviewParticipants(value) {
       return normalizeArray(value)
         .map(function (item, index) {
@@ -11034,10 +11113,7 @@
         pickCommunityRecordText(source, ['kind', 'type', 'cardType', 'module', 'placementType']) ||
         (source.isAdvertisement === true || source.ad === true || source.promo === true ? 'AD' : null) ||
         'PHOTO';
-      var kind = String(kindSource).toUpperCase();
-      if (['ADS', 'PROMO', 'ADVERTISEMENT', 'BANNER'].indexOf(kind) >= 0) {
-        kind = 'AD';
-      }
+      var kind = normalizeCommunityFeedKind(kindSource);
       var title =
         pickCommunityRecordsText(sources, ['title', 'name', 'header']) ||
         pickCommunityRecordsText(sources, ['body', 'text', 'description']) ||
@@ -14960,6 +15036,14 @@
     }
 
     async function loadCommunities() {
+      if (!canAccessCommunities(cfg)) {
+        state.communities = [];
+        state.selectedCommunityId = null;
+        if (state.activeTab === 'communities') {
+          switchTab('messages');
+        }
+        return;
+      }
       state.communities = sortCommunities((await api.getCommunities()) || []);
       if (
         state.selectedCommunityId &&
@@ -15183,6 +15267,9 @@
       if (isRestrictedStationAdmin && ['logs', 'analytics', 'settings'].indexOf(nextTab) >= 0) {
         nextTab = 'messages';
       }
+      if (!canAccessCommunities(cfg) && nextTab === 'communities') {
+        nextTab = 'messages';
+      }
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
@@ -15192,6 +15279,7 @@
       var isAnalytics = nextTab === 'analytics';
       var isSettings = nextTab === 'settings';
       var hideLogsTab = isRestrictedStationAdmin;
+      var hideCommunitiesTab = !canAccessCommunities(cfg);
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
 
@@ -15204,7 +15292,9 @@
       dom.tabTournaments.className =
         'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '');
       dom.tabCommunities.className =
-        'phab-admin-tab' + (isCommunities ? ' phab-admin-tab-active' : '');
+        'phab-admin-tab' +
+        (isCommunities ? ' phab-admin-tab-active' : '') +
+        (hideCommunitiesTab ? ' phab-admin-hidden' : '');
       dom.tabAnalytics.className =
         'phab-admin-tab' +
         (isAnalytics ? ' phab-admin-tab-active' : '') +
