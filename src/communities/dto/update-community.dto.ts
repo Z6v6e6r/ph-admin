@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -51,6 +52,10 @@ export class UpdateCommunityDto {
   @IsString()
   @MaxLength(500_000)
   logo?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isVerified?: boolean;
 
   @IsOptional()
   @IsArray()

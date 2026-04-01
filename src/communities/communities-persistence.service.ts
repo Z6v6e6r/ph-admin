@@ -25,6 +25,7 @@ export interface CommunitiesUpdateMutation {
   status?: string;
   description?: string;
   city?: string;
+  isVerified?: boolean;
   visibility?: CommunityVisibility;
   joinRule?: CommunityJoinRule;
   minimumLevel?: string;
@@ -147,6 +148,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
     if (mutation.city !== undefined) {
       updated.city = mutation.city.trim();
+    }
+    if (mutation.isVerified !== undefined) {
+      updated.isVerified = mutation.isVerified;
+      updated.verified = mutation.isVerified;
     }
     if (mutation.visibility !== undefined) {
       updated.visibility = mutation.visibility;
@@ -475,6 +480,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       source: 'MONGODB',
       name,
       slug: this.pickString(document.slug) ?? undefined,
+      isVerified: this.pickBoolean(
+        document.isVerified
+        ?? document.verified
+        ?? document.isOfficial
+        ?? document.official
+      ) ?? undefined,
       logo: this.pickNullableString(document.logo),
       description:
         this.pickString(document.description) ?? this.pickString(document.body) ?? undefined,
@@ -848,6 +859,34 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
     const normalized = this.pickString(value);
     return normalized ?? undefined;
+  }
+
+  private pickBoolean(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) {
+        return true;
+      }
+      if (value === 0) {
+        return false;
+      }
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) {
+        return undefined;
+      }
+      if (['true', '1', 'yes', 'on', 'verified'].includes(normalized)) {
+        return true;
+      }
+      if (['false', '0', 'no', 'off', 'unverified'].includes(normalized)) {
+        return false;
+      }
+    }
+    return undefined;
   }
 
   private pickNumeric(value: unknown): number | undefined {

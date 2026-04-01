@@ -249,6 +249,11 @@ export class LkPadelHubClientService {
       source: 'LK_PADELHUB',
       name,
       slug: this.readString(raw.slug),
+      isVerified:
+        this.readBoolean(raw.isVerified)
+        ?? this.readBoolean(raw.verified)
+        ?? this.readBoolean(raw.isOfficial)
+        ?? this.readBoolean(raw.official),
       logo:
         this.readString(raw.logo) ??
         this.readString(raw.logoUrl) ??
@@ -470,6 +475,35 @@ export class LkPadelHubClientService {
     }
     const parsed = Number(value.trim());
     return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private readBoolean(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) {
+        return true;
+      }
+      if (value === 0) {
+        return false;
+      }
+      return undefined;
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    if (['true', '1', 'yes', 'on', 'verified'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'off', 'unverified'].includes(normalized)) {
+      return false;
+    }
+    return undefined;
   }
 
   private readStringArray(value: unknown): string[] | undefined {

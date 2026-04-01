@@ -41,6 +41,7 @@ export interface Community {
   source: CommunitySource;
   name: string;
   slug?: string;
+  isVerified?: boolean;
   logo?: string | null;
   description?: string;
   city?: string;

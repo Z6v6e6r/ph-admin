@@ -1183,6 +1183,15 @@
       .phab-admin-community-avatar{
         width:44px;
         height:44px;
+        position:relative;
+        overflow:visible;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+      }
+      .phab-admin-community-avatar-media{
+        width:100%;
+        height:100%;
         border-radius:16px;
         border:1px solid rgba(51,0,32,.1);
         background:linear-gradient(135deg,rgba(221,200,252,.9),rgba(182,253,255,.88));
@@ -1194,11 +1203,36 @@
         font-size:13px;
         color:var(--cup-wine);
       }
-      .phab-admin-community-avatar img{
+      .phab-admin-community-avatar-media img{
         width:100%;
         height:100%;
         object-fit:cover;
         display:block;
+      }
+      .phab-admin-community-avatar-verified{
+        position:absolute;
+        right:-4px;
+        bottom:-4px;
+        width:20px;
+        height:20px;
+        border-radius:999px;
+        background:linear-gradient(135deg,#2e8cff,#0c61ff);
+        color:#fff;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        box-shadow:0 8px 18px rgba(12,97,255,.32);
+        border:2px solid rgba(255,255,255,.98);
+      }
+      .phab-admin-community-avatar-verified svg{
+        width:10px;
+        height:10px;
+        display:block;
+        fill:none;
+        stroke:currentColor;
+        stroke-width:3;
+        stroke-linecap:round;
+        stroke-linejoin:round;
       }
       .phab-admin-community-card-title{
         font-size:18px;
@@ -1266,6 +1300,11 @@
         background:rgba(255,70,78,.12);
         color:#be1d2a;
       }
+      .phab-admin-community-mini-chip-verified{
+        background:linear-gradient(135deg,rgba(46,140,255,.16),rgba(12,97,255,.2));
+        color:#0b56db;
+        border-color:rgba(12,97,255,.18);
+      }
       .phab-admin-community-risk{
         background:rgba(255,232,145,.46);
         color:#915f00;
@@ -1317,6 +1356,19 @@
         height:62px;
         border-radius:20px;
       }
+      .phab-admin-community-main-avatar .phab-admin-community-avatar-media{
+        border-radius:20px;
+      }
+      .phab-admin-community-main-avatar .phab-admin-community-avatar-verified{
+        width:24px;
+        height:24px;
+        right:-5px;
+        bottom:-5px;
+      }
+      .phab-admin-community-main-avatar .phab-admin-community-avatar-verified svg{
+        width:12px;
+        height:12px;
+      }
       .phab-admin-community-main-title{
         font-size:22px;
         line-height:1.04;
@@ -1353,6 +1405,10 @@
       .phab-admin-community-main-action-warn{
         background:rgba(255,232,145,.62);
         color:#855500;
+      }
+      .phab-admin-community-main-action-accent{
+        background:linear-gradient(135deg,rgba(46,140,255,.16),rgba(12,97,255,.22));
+        color:#0b56db;
       }
       .phab-admin-community-main-tags{
         display:flex;
@@ -10183,17 +10239,75 @@
       return (source.charAt(0) || 'C').toUpperCase();
     }
 
+    function isCommunityVerified(community) {
+      if (!community) {
+        return false;
+      }
+      if (community.isVerified === true) {
+        return true;
+      }
+      if (community.isVerified === false) {
+        return false;
+      }
+
+      var details = normalizeObject(community.details);
+      var candidates = [
+        community.verified,
+        details.isVerified,
+        details.verified,
+        details.isOfficial,
+        details.official
+      ];
+
+      for (var i = 0; i < candidates.length; i += 1) {
+        var value = candidates[i];
+        if (value === true) {
+          return true;
+        }
+        if (value === false) {
+          return false;
+        }
+        var normalized = String(value || '').trim().toLowerCase();
+        if (!normalized) {
+          continue;
+        }
+        if (['true', '1', 'yes', 'on', 'verified'].indexOf(normalized) >= 0) {
+          return true;
+        }
+        if (['false', '0', 'no', 'off', 'unverified'].indexOf(normalized) >= 0) {
+          return false;
+        }
+      }
+
+      return false;
+    }
+
     function renderCommunityAvatarNode(node, community) {
       clearNode(node);
+      var media = document.createElement('div');
+      media.className = 'phab-admin-community-avatar-media';
       var logo = String((community && community.logo) || '').trim();
       if (logo) {
         var img = document.createElement('img');
         img.alt = String((community && community.name) || 'Сообщество');
         img.src = logo;
-        node.appendChild(img);
-        return;
+        media.appendChild(img);
+      } else {
+        media.textContent = getCommunityIdentityLetter(community);
       }
-      node.textContent = getCommunityIdentityLetter(community);
+      node.appendChild(media);
+
+      if (isCommunityVerified(community)) {
+        var badge = document.createElement('span');
+        badge.className = 'phab-admin-community-avatar-verified';
+        badge.setAttribute('aria-label', 'Верифицировано');
+        badge.title = 'Верифицировано';
+        badge.innerHTML =
+          '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+          '<path d="M3.5 8.5l2.4 2.4L12.5 4.8"/>' +
+          '</svg>';
+        node.appendChild(badge);
+      }
     }
 
     function getCommunityStatusDescriptor(community) {
@@ -11273,6 +11387,11 @@
       slugInput.disabled = true;
       appendCommunityFormField(form, 'Slug', slugInput);
 
+      var verifiedInput = document.createElement('input');
+      verifiedInput.type = 'checkbox';
+      verifiedInput.checked = isCommunityVerified(community);
+      appendCommunityFormField(form, 'Верификация', verifiedInput);
+
       var tagsInput = document.createElement('input');
       tagsInput.className = 'phab-admin-input';
       tagsInput.value = getCommunityFocusTags(community).join(', ');
@@ -11331,6 +11450,7 @@
               : String(visibilitySelect.value || 'OPEN').toUpperCase(),
           joinRule: String(joinRuleSelect.value || 'INSTANT').toUpperCase(),
           minimumLevel: String(levelInput.value || '').trim(),
+          isVerified: Boolean(verifiedInput.checked),
           focusTags: String(tagsInput.value || '')
             .split(',')
             .map(function (item) {
@@ -11724,6 +11844,7 @@
         aboutCard.appendChild(aboutGrid);
         [
           ['Статус', model.status.label],
+          ['Верификация', isCommunityVerified(community) ? 'Подтверждено' : 'Не подтверждено'],
           ['Видимость', getCommunityVisibilityLabel(community.visibility)],
           ['Вступление', getCommunityJoinRuleLabel(community.joinRule)],
           ['Мин. уровень', String(community.minimumLevel || 'Не задан')],
@@ -11830,6 +11951,11 @@
         .join(' · ');
 
       dom.communityTags.appendChild(createCommunityStatusBadge(model.status));
+      if (isCommunityVerified(community)) {
+        dom.communityTags.appendChild(
+          createCommunityPill('Верифицировано', 'phab-admin-community-mini-chip phab-admin-community-mini-chip-verified')
+        );
+      }
       dom.communityTags.appendChild(
         createCommunityPill(
           getCommunityVisibilityLabel(community.visibility),
@@ -11923,6 +12049,18 @@
             saveCommunitySettings(community.id, {
               status: 'MODERATION',
               joinRule: 'MODERATED'
+            }).catch(handleError);
+          },
+          state.communitySavingId === community.id
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          isCommunityVerified(community) ? 'Снять галочку' : 'Верифицировать',
+          'phab-admin-community-main-action phab-admin-community-main-action-accent',
+          function () {
+            saveCommunitySettings(community.id, {
+              isVerified: !isCommunityVerified(community)
             }).catch(handleError);
           },
           state.communitySavingId === community.id
