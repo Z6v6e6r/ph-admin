@@ -1,9 +1,13 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const requestBodyLimit = String(process.env.REQUEST_BODY_LIMIT ?? '2mb').trim() || '2mb';
+  app.use(json({ limit: requestBodyLimit }));
+  app.use(urlencoded({ extended: true, limit: requestBodyLimit }));
   const trustProxy = String(process.env.TRUST_PROXY ?? '').toLowerCase();
   if (trustProxy === '1' || trustProxy === 'true' || trustProxy === 'yes') {
     const httpAdapter = app.getHttpAdapter();

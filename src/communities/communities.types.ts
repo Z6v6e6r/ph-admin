@@ -14,6 +14,8 @@ export type CommunityVisibility = 'OPEN' | 'CLOSED';
 export type CommunityJoinRule = 'INSTANT' | 'MODERATED' | 'INVITE_ONLY';
 export type CommunityMemberRole = 'OWNER' | 'ADMIN' | 'MEMBER';
 export type CommunityMemberStatus = 'ACTIVE' | 'PENDING' | 'BANNED';
+export type CommunityFeedItemKind = 'NEWS' | 'GAME' | 'TOURNAMENT' | 'EVENT' | 'AD';
+export type CommunityFeedItemStatus = 'DRAFT' | 'PUBLISHED' | 'HIDDEN';
 
 export interface CommunityActor {
   id?: string;
@@ -34,6 +36,45 @@ export interface CommunityMember {
   lastActiveAt?: string;
   warningsCount?: number;
   complaintsCount?: number;
+}
+
+export interface CommunityFeedParticipant {
+  id?: string;
+  name: string;
+  avatar?: string | null;
+  shortName?: string;
+  levelLabel?: string;
+}
+
+export interface CommunityFeedItem {
+  id: string;
+  communityId: string;
+  kind: CommunityFeedItemKind;
+  status: CommunityFeedItemStatus;
+  title: string;
+  body?: string;
+  imageUrl?: string | null;
+  previewLabel?: string;
+  ctaLabel?: string;
+  startAt?: string;
+  endAt?: string;
+  stationName?: string;
+  courtName?: string;
+  levelLabel?: string;
+  reportsCount?: number;
+  likesCount?: number;
+  commentsCount?: number;
+  isAdvertisement?: boolean;
+  priority?: number;
+  placement?: string;
+  tags?: string[];
+  authorName?: string;
+  createdBy?: CommunityActor;
+  participants?: CommunityFeedParticipant[];
+  createdAt?: string;
+  updatedAt?: string;
+  publishedAt?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface Community {
@@ -72,5 +113,6 @@ export interface Community {
   members?: CommunityMember[];
   pendingMembers?: CommunityMember[];
   bannedMembers?: CommunityMember[];
+  feedItems?: CommunityFeedItem[];
   details?: Record<string, unknown>;
 }

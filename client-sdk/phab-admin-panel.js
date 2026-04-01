@@ -1703,6 +1703,11 @@
         border-color:rgba(255,138,0,.22);
         box-shadow:0 10px 24px rgba(255,138,0,.08);
       }
+      .phab-admin-community-feed-card--ad{
+        border-color:rgba(255,132,44,.24);
+        background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(255,248,241,.96));
+        box-shadow:0 12px 26px rgba(255,132,44,.1);
+      }
       .phab-admin-community-feed-card--news{
         border-color:rgba(97,7,136,.15);
       }
@@ -1875,6 +1880,33 @@
         gap:12px;
         margin-top:12px;
         align-items:start;
+      }
+      .phab-admin-community-lk-ad-body{
+        display:flex;
+        flex-direction:column;
+        gap:12px;
+        margin-top:12px;
+      }
+      .phab-admin-community-lk-ad-hero{
+        border-radius:18px;
+        overflow:hidden;
+        background:linear-gradient(135deg,rgba(255,243,232,.98),rgba(255,255,255,.94));
+        min-height:170px;
+        border:1px solid rgba(255,132,44,.18);
+      }
+      .phab-admin-community-lk-ad-hero img{
+        display:block;
+        width:100%;
+        height:100%;
+        min-height:170px;
+        object-fit:cover;
+      }
+      .phab-admin-community-lk-ad-footer{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        margin-top:14px;
       }
       .phab-admin-community-lk-inline-image{
         width:108px;
@@ -2923,6 +2955,10 @@
           flex-direction:column;
           align-items:flex-start;
         }
+        .phab-admin-community-lk-ad-footer{
+          flex-direction:column;
+          align-items:flex-start;
+        }
         .phab-admin-settings-grid{grid-template-columns:1fr}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
@@ -3516,6 +3552,18 @@
             encodeURIComponent(communityId) +
             '/feed?' +
             params.toString()
+        );
+      },
+      getCommunityManagedFeed: function (communityId) {
+        return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'GET');
+      },
+      createCommunityFeedItem: function (communityId, payload) {
+        return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'POST', payload);
+      },
+      deleteCommunityFeedItem: function (communityId, feedItemId) {
+        return request(
+          '/communities/' + encodeURIComponent(communityId) + '/feed-items/' + encodeURIComponent(feedItemId),
+          'DELETE'
         );
       },
       getCommunityRanking: function (communityId, query) {
@@ -5543,6 +5591,10 @@
       communityPreviewFeedSegment: 'ALL',
       communityMembersSegment: 'ALL',
       communityFeedById: Object.create(null),
+      communityManagedFeedById: Object.create(null),
+      communityManagedFeedLoadedById: Object.create(null),
+      communityManagedFeedErrorById: Object.create(null),
+      communityManagedFeedLoadingId: null,
       communityFeedModerationById: Object.create(null),
       communityFeedLoadedById: Object.create(null),
       communityFeedErrorById: Object.create(null),
@@ -5551,6 +5603,7 @@
       communityRankingLoadedById: Object.create(null),
       communityRankingErrorById: Object.create(null),
       communityRankingLoadingId: null,
+      communityFeedCreatingId: null,
       communitySavingId: null,
       communityManagingKey: null,
       tournamentsColumnWidths: {},
@@ -9960,6 +10013,100 @@
       return normalizeArray(community && community.tags);
     }
 
+    function normalizeCommunitySettingsText(value) {
+      return String(value || '').trim();
+    }
+
+    function normalizeCommunitySettingsLogo(value) {
+      var normalized = normalizeCommunitySettingsText(value);
+      return normalized || null;
+    }
+
+    function normalizeCommunitySettingsTags(value) {
+      return String(value || '')
+        .split(',')
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(Boolean);
+    }
+
+    function areCommunitySettingsArraysEqual(left, right) {
+      var normalizedLeft = normalizeArray(left);
+      var normalizedRight = normalizeArray(right);
+      if (normalizedLeft.length !== normalizedRight.length) {
+        return false;
+      }
+      for (var index = 0; index < normalizedLeft.length; index += 1) {
+        if (String(normalizedLeft[index]) !== String(normalizedRight[index])) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function buildCommunitySettingsPayload(community, values) {
+      var payload = {};
+      var nextStatus = String(values.status || 'ACTIVE').trim().toUpperCase();
+      var nextVisibility =
+        nextStatus === 'HIDDEN' || nextStatus === 'PRIVATE' || nextStatus === 'PAUSED'
+          ? 'CLOSED'
+          : String(values.visibility || 'OPEN').trim().toUpperCase();
+      var nextName = normalizeCommunitySettingsText(values.name);
+      var nextCity = normalizeCommunitySettingsText(values.city);
+      var nextJoinRule = String(values.joinRule || 'INSTANT').trim().toUpperCase();
+      var nextMinimumLevel = normalizeCommunitySettingsText(values.minimumLevel);
+      var nextVerified = Boolean(values.isVerified);
+      var nextTags = normalizeCommunitySettingsTags(values.focusTags);
+      var nextLogo = normalizeCommunitySettingsLogo(values.logo);
+      var nextDescription = normalizeCommunitySettingsText(values.description);
+      var nextRules = normalizeCommunitySettingsText(values.rules);
+
+      if (nextName !== normalizeCommunitySettingsText(community && community.name)) {
+        payload.name = nextName;
+      }
+      if (nextStatus !== String((community && community.status) || 'ACTIVE').trim().toUpperCase()) {
+        payload.status = nextStatus;
+      }
+      if (
+        nextVisibility !== String((community && community.visibility) || 'OPEN').trim().toUpperCase()
+      ) {
+        payload.visibility = nextVisibility;
+      }
+      if (nextCity !== normalizeCommunitySettingsText(community && community.city)) {
+        payload.city = nextCity;
+      }
+      if (
+        nextJoinRule !== String((community && community.joinRule) || 'INSTANT').trim().toUpperCase()
+      ) {
+        payload.joinRule = nextJoinRule;
+      }
+      if (
+        nextMinimumLevel !==
+        normalizeCommunitySettingsText(community && community.minimumLevel)
+      ) {
+        payload.minimumLevel = nextMinimumLevel;
+      }
+      if (nextVerified !== isCommunityVerified(community)) {
+        payload.isVerified = nextVerified;
+      }
+      if (!areCommunitySettingsArraysEqual(nextTags, getCommunityFocusTags(community))) {
+        payload.focusTags = nextTags;
+      }
+      if (nextLogo !== normalizeCommunitySettingsLogo(community && community.logo)) {
+        payload.logo = nextLogo;
+      }
+      if (
+        nextDescription !== normalizeCommunitySettingsText(community && community.description)
+      ) {
+        payload.description = nextDescription;
+      }
+      if (nextRules !== normalizeCommunitySettingsText(community && community.rules)) {
+        payload.rules = nextRules;
+      }
+      return payload;
+    }
+
     function getCommunityMemberKey(member) {
       if (!member) {
         return 'unknown';
@@ -10011,6 +10158,128 @@
       }
     }
 
+    function extractManagedCommunityFeedItems(payload, community) {
+      var items = Array.isArray(payload)
+        ? payload
+        : extractCommunityResponseArray(payload, ['items', 'data', 'result']);
+      return normalizeArray(items)
+        .map(function (item, index) {
+          return normalizeCommunityFeedPostEntry(item, index, community);
+        })
+        .filter(Boolean);
+    }
+
+    function mergeCommunityFeedCollections(communityId, primary, secondary) {
+      var map = Object.create(null);
+      normalizeArray(primary).forEach(function (item) {
+        if (item && item.id) {
+          map[String(item.id)] = item;
+        }
+      });
+      normalizeArray(secondary).forEach(function (item) {
+        if (item && item.id && !map[String(item.id)]) {
+          map[String(item.id)] = item;
+        }
+      });
+      return Object.keys(map).map(function (key) {
+        return map[key];
+      });
+    }
+
+    async function refreshCommunityManagedFeed(community) {
+      if (!community || !community.id) {
+        return [];
+      }
+      var communityId = String(community.id);
+      state.communityManagedFeedLoadingId = communityId;
+      delete state.communityManagedFeedErrorById[communityId];
+      renderCommunityDetails();
+      try {
+        var response = await api.getCommunityManagedFeed(communityId);
+        var items = extractManagedCommunityFeedItems(response, community);
+        state.communityManagedFeedById[communityId] = items;
+        state.communityManagedFeedLoadedById[communityId] = true;
+        delete state.communityManagedFeedErrorById[communityId];
+        return items;
+      } catch (error) {
+        state.communityManagedFeedLoadedById[communityId] = true;
+        state.communityManagedFeedErrorById[communityId] =
+          error && error.message ? String(error.message) : 'Не удалось загрузить feed-карточки админки.';
+        return [];
+      } finally {
+        if (state.communityManagedFeedLoadingId === communityId) {
+          state.communityManagedFeedLoadingId = null;
+        }
+        renderCommunityDetails();
+      }
+    }
+
+    async function createCommunityFeedItem(community, payload) {
+      var communityId = String(community && community.id || '');
+      if (!communityId) {
+        return;
+      }
+      state.communityFeedCreatingId = communityId;
+      renderCommunityDetails();
+      try {
+        await api.createCommunityFeedItem(communityId, payload);
+        await refreshCommunityManagedFeed(community);
+        setStatus('Карточка добавлена в админскую ленту сообщества', false);
+      } finally {
+        state.communityFeedCreatingId = null;
+        renderCommunityDetails();
+      }
+    }
+
+    function isAdminManagedCommunityPost(community, post) {
+      var raw = normalizeObject(post && post.raw);
+      var communityId = String(community && community.id || '');
+      var postId = String(post && post.id || '');
+      var managedFeed = normalizeArray(state.communityManagedFeedById[communityId]);
+      var existsInManagedFeed = managedFeed.some(function (item) {
+        return item && String(item.id || '') === postId;
+      });
+      return Boolean(
+        existsInManagedFeed ||
+        raw.source === 'ADMIN_PANEL' ||
+        raw.createdBy ||
+        raw.feedItemId ||
+        raw.itemId ||
+        (raw.details && raw.details.source === 'ADMIN_PANEL')
+      );
+    }
+
+    async function deleteCommunityFeedItem(community, post) {
+      var communityId = String(community && community.id || '');
+      var postId = String(post && post.id || '');
+      if (!communityId || !postId) {
+        return;
+      }
+      state.communityFeedCreatingId = communityId;
+      renderCommunityDetails();
+      try {
+        await api.deleteCommunityFeedItem(communityId, postId);
+        if (Array.isArray(state.communityManagedFeedById[communityId])) {
+          state.communityManagedFeedById[communityId] = state.communityManagedFeedById[communityId].filter(function (item) {
+            return String(item && item.id || '') !== postId;
+          });
+        }
+        if (Array.isArray(state.communityFeedById[communityId])) {
+          state.communityFeedById[communityId] = state.communityFeedById[communityId].filter(function (item) {
+            return String(item && item.id || '') !== postId;
+          });
+        }
+        if (state.communityFeedModerationById[communityId]) {
+          delete state.communityFeedModerationById[communityId][postId];
+        }
+        await refreshCommunityManagedFeed(community);
+        setStatus('Карточка удалена из админской ленты', false);
+      } finally {
+        state.communityFeedCreatingId = null;
+        renderCommunityDetails();
+      }
+    }
+
     function getCommunityFeedModerationBucket(communityId) {
       var key = String(communityId || '');
       if (!key) {
@@ -10048,12 +10317,14 @@
           var leftState = normalizeObject(left.moderation);
           var rightState = normalizeObject(right.moderation);
           var leftWeight =
+            (Number(left.priority || 0) * 24) +
             (leftState.pinned ? 1000 : 0) +
             (leftState.promoted ? 240 : 0) +
             (Number(leftState.rank || 0) * 12) -
             (leftState.hidden ? 2000 : 0) -
             (leftState.removed ? 4000 : 0);
           var rightWeight =
+            (Number(right.priority || 0) * 24) +
             (rightState.pinned ? 1000 : 0) +
             (rightState.promoted ? 240 : 0) +
             (Number(rightState.rank || 0) * 12) -
@@ -10231,6 +10502,18 @@
 
     function getCommunityPostKindLabel(kind) {
       var normalized = String(kind || '').trim().toUpperCase();
+      if (
+        normalized === 'AD' ||
+        normalized === 'ADS' ||
+        normalized === 'PROMO' ||
+        normalized === 'ADVERTISEMENT' ||
+        normalized === 'BANNER'
+      ) {
+        return 'Реклама';
+      }
+      if (normalized === 'NEWS') {
+        return 'Новости';
+      }
       if (normalized === 'GAME') {
         return 'Игра';
       }
@@ -10292,7 +10575,14 @@
       var eventSource = normalizeObject(source.event || source.game || source.match || source.tournament);
       var venueSource = normalizeObject(source.venue || source.location || source.place);
       var sources = [source, eventSource, venueSource];
-      var kind = String(pickCommunityRecordText(source, ['kind', 'type']) || 'PHOTO').toUpperCase();
+      var kindSource =
+        pickCommunityRecordText(source, ['kind', 'type', 'cardType', 'module', 'placementType']) ||
+        (source.isAdvertisement === true || source.ad === true || source.promo === true ? 'AD' : null) ||
+        'PHOTO';
+      var kind = String(kindSource).toUpperCase();
+      if (['ADS', 'PROMO', 'ADVERTISEMENT', 'BANNER'].indexOf(kind) >= 0) {
+        kind = 'AD';
+      }
       var title =
         pickCommunityRecordsText(sources, ['title', 'name', 'header']) ||
         pickCommunityRecordsText(sources, ['body', 'text', 'description']) ||
@@ -10340,6 +10630,10 @@
           pickCommunityRecordsText(sources, ['courtName', 'court', 'courtLabel', 'venueName']) || '',
         levelLabel:
           pickCommunityRecordsText(sources, ['levelLabel', 'rating', 'level']) || '',
+        priority:
+          normalizeCommunityCount(
+            pickCommunityRecordsNumber(sources, ['priority', 'sortOrder', 'weight'])
+          ) || 0,
         reportsCount:
           normalizeCommunityCount(
             pickCommunityRecordsNumber(sources, [
@@ -10366,6 +10660,11 @@
               'messagesCount'
             ])
           ) || 0,
+        isAdvertisement:
+          source.isAdvertisement === true ||
+          source.ad === true ||
+          source.promo === true ||
+          kind === 'AD',
         imageUrl: pickCommunityRecordText(source, ['imageUrl', 'image', 'photo']),
         previewLabel: pickCommunityRecordText(source, ['previewLabel', 'preview', 'label']),
         ctaLabel:
@@ -10374,6 +10673,8 @@
             ? 'Внести результаты игры'
             : kind === 'TOURNAMENT' || kind === 'EVENT'
               ? 'Открыть событие'
+              : kind === 'AD'
+                ? 'Открыть'
               : 'Открыть'),
         participants: participants,
         raw: source
@@ -10468,16 +10769,20 @@
       var communityId = String(community.id);
       var needsFeed =
         !state.communityFeedLoadedById[communityId] && state.communityFeedLoadingId !== communityId;
+      var needsManagedFeed =
+        !state.communityManagedFeedLoadedById[communityId] &&
+        state.communityManagedFeedLoadingId !== communityId;
       var needsRanking =
         !state.communityRankingLoadedById[communityId] &&
         state.communityRankingLoadingId !== communityId;
 
-      if (!needsFeed && !needsRanking) {
+      if (!needsFeed && !needsRanking && !needsManagedFeed) {
         return;
       }
 
       var identity = resolveCommunityAccessIdentity(community);
-      if (!identity || (!identity.phone && !identity.clientId)) {
+      var hasIdentity = Boolean(identity && (identity.phone || identity.clientId));
+      if (!hasIdentity && !needsManagedFeed) {
         if (needsFeed) {
           state.communityFeedLoadedById[communityId] = true;
           state.communityFeedErrorById[communityId] =
@@ -10496,6 +10801,10 @@
         state.communityFeedLoadingId = communityId;
         delete state.communityFeedErrorById[communityId];
       }
+      if (needsManagedFeed) {
+        state.communityManagedFeedLoadingId = communityId;
+        delete state.communityManagedFeedErrorById[communityId];
+      }
       if (needsRanking) {
         state.communityRankingLoadingId = communityId;
         delete state.communityRankingErrorById[communityId];
@@ -10503,57 +10812,77 @@
       renderCommunityDetails();
 
       try {
-        var requests = [];
-        if (needsFeed) {
-          requests.push(
-            api.getCommunityFeed(communityId, {
-              phone: identity.phone,
-              clientId: identity.clientId,
-              limit: COMMUNITY_FEED_PREVIEW_LIMIT
-            })
-          );
-        } else {
-          requests.push(Promise.resolve(null));
-        }
-        if (needsRanking) {
-          requests.push(
-            api.getCommunityRanking(communityId, {
-              phone: identity.phone,
-              clientId: identity.clientId
-            })
-          );
-        } else {
-          requests.push(Promise.resolve(null));
-        }
+        var feedPromise = needsFeed
+          ? hasIdentity
+            ? api.getCommunityFeed(communityId, {
+                phone: identity.phone,
+                clientId: identity.clientId,
+                limit: COMMUNITY_FEED_PREVIEW_LIMIT
+              })
+            : Promise.reject(new Error('Не удалось определить phone/clientId для загрузки живой ленты.'))
+          : Promise.resolve(null);
+        var rankingPromise = needsRanking
+          ? hasIdentity
+            ? api.getCommunityRanking(communityId, {
+                phone: identity.phone,
+                clientId: identity.clientId
+              })
+            : Promise.reject(new Error('Не удалось определить phone/clientId для загрузки рейтинга.'))
+          : Promise.resolve(null);
+        var managedFeedPromise = needsManagedFeed
+          ? api.getCommunityManagedFeed(communityId)
+          : Promise.resolve(null);
 
-        var results = await Promise.all(requests);
-        var feedResponse = results[0];
-        var rankingResponse = results[1];
+        var results = await Promise.allSettled([feedPromise, rankingPromise, managedFeedPromise]);
+        var feedResult = results[0];
+        var rankingResult = results[1];
+        var managedFeedResult = results[2];
 
-        if (needsFeed) {
-          state.communityFeedById[communityId] = extractCommunityFeedPosts(feedResponse, community);
-          state.communityFeedLoadedById[communityId] = true;
-          delete state.communityFeedErrorById[communityId];
-        }
-
-        if (needsRanking) {
-          state.communityRankingById[communityId] = extractCommunityRankingRows(rankingResponse);
-          state.communityRankingLoadedById[communityId] = true;
-          delete state.communityRankingErrorById[communityId];
-        }
-      } catch (error) {
-        var errorText = error && error.message ? String(error.message) : 'Не удалось загрузить данные сообщества';
         if (needsFeed) {
           state.communityFeedLoadedById[communityId] = true;
-          state.communityFeedErrorById[communityId] = errorText;
+          if (feedResult.status === 'fulfilled') {
+            state.communityFeedById[communityId] = extractCommunityFeedPosts(feedResult.value, community);
+            delete state.communityFeedErrorById[communityId];
+          } else {
+            state.communityFeedErrorById[communityId] =
+              feedResult.reason && feedResult.reason.message
+                ? String(feedResult.reason.message)
+                : 'Не удалось загрузить живую ленту сообщества.';
+          }
         }
+
         if (needsRanking) {
           state.communityRankingLoadedById[communityId] = true;
-          state.communityRankingErrorById[communityId] = errorText;
+          if (rankingResult.status === 'fulfilled') {
+            state.communityRankingById[communityId] = extractCommunityRankingRows(rankingResult.value);
+            delete state.communityRankingErrorById[communityId];
+          } else {
+            state.communityRankingErrorById[communityId] =
+              rankingResult.reason && rankingResult.reason.message
+                ? String(rankingResult.reason.message)
+                : 'Не удалось загрузить рейтинг сообщества.';
+          }
+        }
+
+        if (needsManagedFeed) {
+          state.communityManagedFeedLoadedById[communityId] = true;
+          if (managedFeedResult.status === 'fulfilled') {
+            state.communityManagedFeedById[communityId] =
+              extractManagedCommunityFeedItems(managedFeedResult.value, community);
+            delete state.communityManagedFeedErrorById[communityId];
+          } else {
+            state.communityManagedFeedErrorById[communityId] =
+              managedFeedResult.reason && managedFeedResult.reason.message
+                ? String(managedFeedResult.reason.message)
+                : 'Не удалось загрузить карточки админской ленты.';
+          }
         }
       } finally {
         if (state.communityFeedLoadingId === communityId) {
           state.communityFeedLoadingId = null;
+        }
+        if (state.communityManagedFeedLoadingId === communityId) {
+          state.communityManagedFeedLoadingId = null;
         }
         if (state.communityRankingLoadingId === communityId) {
           state.communityRankingLoadingId = null;
@@ -10891,11 +11220,12 @@
 
     function getCommunityFeedPosts(community, model) {
       var liveFeed = state.communityFeedById[community.id];
+      var managedFeed = state.communityManagedFeedById[community.id];
       if (Array.isArray(liveFeed)) {
-        return liveFeed.slice();
+        return mergeCommunityFeedCollections(community.id, managedFeed, liveFeed);
       }
       if (state.communityFeedLoadedById[community.id]) {
-        return [];
+        return Array.isArray(managedFeed) ? managedFeed.slice() : [];
       }
 
       var list = pickCommunityArrayValue(community, ['feedPreview', 'previewPosts', 'feedPosts', 'posts', 'feed'])
@@ -10907,7 +11237,11 @@
         });
 
       if (list.length > 0) {
-        return list.slice(0, COMMUNITY_FEED_PREVIEW_LIMIT);
+        return mergeCommunityFeedCollections(
+          community.id,
+          managedFeed,
+          list.slice(0, COMMUNITY_FEED_PREVIEW_LIMIT)
+        );
       }
 
       var synthetic = [];
@@ -10957,7 +11291,11 @@
         });
       }
 
-      return synthetic.slice(0, COMMUNITY_FEED_PREVIEW_LIMIT);
+      return mergeCommunityFeedCollections(
+        community.id,
+        managedFeed,
+        synthetic.slice(0, COMMUNITY_FEED_PREVIEW_LIMIT)
+      );
     }
 
     function getCommunityPreviewPosts(community, model) {
@@ -11227,6 +11565,9 @@
 
     function getCommunityPostVariant(post) {
       var normalized = String(post && post.kind || '').trim().toUpperCase();
+      if (normalized === 'AD') {
+        return 'ad';
+      }
       if (normalized === 'GAME') {
         return 'game';
       }
@@ -11293,10 +11634,16 @@
 
     function getCommunityPreviewFeedSegmentKey(post) {
       var variant = getCommunityPostVariant(post);
+      if (variant === 'ad') {
+        return 'AD';
+      }
       if (variant === 'game') {
         return 'GAME';
       }
-      if (variant === 'tournament' || variant === 'event') {
+      if (variant === 'tournament') {
+        return 'TOURNAMENT';
+      }
+      if (variant === 'event') {
         return 'EVENT';
       }
       return 'NEWS';
@@ -11358,7 +11705,7 @@
         }
       ];
 
-      if (variant === 'game' || variant === 'tournament' || variant === 'event') {
+      if (variant === 'game' || variant === 'tournament' || variant === 'event' || variant === 'ad') {
         items.push({
           label: moderation.promoted ? 'Снять буст' : 'Продвинуть',
           className: 'phab-admin-community-preview-action phab-admin-community-preview-action-accent',
@@ -11398,9 +11745,15 @@
         }
       });
       items.push({
-        label: moderation.removed ? 'Вернуть' : 'Удалить',
+        label: isAdminManagedCommunityPost(community, post)
+          ? 'Удалить из админки'
+          : moderation.removed ? 'Вернуть' : 'Удалить',
         className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger',
         onClick: function () {
+          if (isAdminManagedCommunityPost(community, post)) {
+            deleteCommunityFeedItem(community, post).catch(handleError);
+            return;
+          }
           setCommunityFeedModerationState(
             community.id,
             post.id,
@@ -11451,7 +11804,7 @@
       kicker.textContent = String(post.kicker || 'Публикация') + ' · ' + formatDateTimeFull(post.publishedAt);
       var title = document.createElement('div');
       title.className = 'phab-admin-community-preview-title';
-      title.style.fontSize = variant === 'news' ? '18px' : '20px';
+      title.style.fontSize = variant === 'game' || variant === 'tournament' || variant === 'event' ? '20px' : '18px';
       title.textContent = post.title;
       left.appendChild(kicker);
       left.appendChild(title);
@@ -11470,7 +11823,9 @@
       var chips = document.createElement('div');
       chips.className = 'phab-admin-community-feed-meta';
       [
-        buildCommunityPreviewLocation(post, community),
+        variant === 'ad'
+          ? (post.previewLabel || post.placement || 'Рекламный блок')
+          : buildCommunityPreviewLocation(post, community),
         post.authorName ? 'Автор: ' + String(post.authorName) : null,
         post.levelLabel ? 'Уровень: ' + String(post.levelLabel) : null,
         post.ctaLabel ? 'CTA: ' + String(post.ctaLabel) : null
@@ -11554,6 +11909,44 @@
           setCommunityPreviewActionNotice(post.ctaLabel || 'Открыть');
         });
         footer.appendChild(cta);
+      } else if (variant === 'ad') {
+        var adBody = document.createElement('div');
+        adBody.className = 'phab-admin-community-lk-ad-body';
+        content.appendChild(adBody);
+
+        if (post.imageUrl) {
+          var hero = document.createElement('div');
+          hero.className = 'phab-admin-community-lk-ad-hero';
+          var heroImage = document.createElement('img');
+          heroImage.alt = String(post.title || 'Рекламная карточка');
+          heroImage.src = String(post.imageUrl);
+          hero.appendChild(heroImage);
+          adBody.appendChild(hero);
+        }
+
+        var adText = document.createElement('div');
+        adText.className = 'phab-admin-community-preview-text';
+        adText.textContent = post.body || 'Промо-блок сообщества';
+        adBody.appendChild(adText);
+
+        var adFooter = document.createElement('div');
+        adFooter.className = 'phab-admin-community-lk-ad-footer';
+        content.appendChild(adFooter);
+
+        var engagement = document.createElement('div');
+        engagement.className = 'phab-admin-community-lk-engagement';
+        engagement.textContent =
+          '♥ ' + String(post.likesCount || 0) + ' • 💬 ' + String(post.commentsCount || 0);
+        adFooter.appendChild(engagement);
+
+        var adCta = document.createElement('button');
+        adCta.type = 'button';
+        adCta.className = 'phab-admin-community-lk-primary-cta';
+        adCta.textContent = String(post.ctaLabel || 'Открыть');
+        adCta.addEventListener('click', function () {
+          setCommunityPreviewActionNotice(post.ctaLabel || 'Открыть');
+        });
+        adFooter.appendChild(adCta);
       } else {
         var newsBody = document.createElement('div');
         newsBody.className = 'phab-admin-community-lk-news-body';
@@ -12165,28 +12558,24 @@
       saveBtn.textContent =
         state.communitySavingId === community.id ? 'Сохраняем...' : 'Сохранить настройки';
       saveBtn.addEventListener('click', function () {
-        var nextStatus = String(statusSelect.value || 'ACTIVE').toUpperCase();
-        saveCommunitySettings(community.id, {
+        var payload = buildCommunitySettingsPayload(community, {
           name: String(nameInput.value || '').trim(),
-          status: nextStatus,
+          status: statusSelect.value,
           city: String(cityInput.value || '').trim(),
-          visibility:
-            nextStatus === 'HIDDEN' || nextStatus === 'PRIVATE' || nextStatus === 'PAUSED'
-              ? 'CLOSED'
-              : String(visibilitySelect.value || 'OPEN').toUpperCase(),
-          joinRule: String(joinRuleSelect.value || 'INSTANT').toUpperCase(),
+          visibility: visibilitySelect.value,
+          joinRule: joinRuleSelect.value,
           minimumLevel: String(levelInput.value || '').trim(),
           isVerified: Boolean(verifiedInput.checked),
-          focusTags: String(tagsInput.value || '')
-            .split(',')
-            .map(function (item) {
-              return String(item || '').trim();
-            })
-            .filter(Boolean),
+          focusTags: tagsInput.value,
           logo: String(logoInput.value || '').trim() || null,
           description: String(descriptionInput.value || '').trim(),
           rules: String(rulesInput.value || '').trim()
-        }).catch(handleError);
+        });
+        if (!Object.keys(payload).length) {
+          setStatus('Изменений нет', false);
+          return;
+        }
+        saveCommunitySettings(community.id, payload).catch(handleError);
       });
       saveActions.appendChild(saveBtn);
     }
@@ -12308,6 +12697,142 @@
     }
 
     function renderCommunityContentTab(community, model) {
+      var composerCard = createCommunitySectionCard(
+        'Новая карточка',
+        'Создание news / game / tournament / ad карточек для ленты сообщества'
+      );
+      dom.communityAdminGrid.appendChild(composerCard.card);
+
+      var composerForm = document.createElement('div');
+      composerForm.className = 'phab-admin-community-form-grid';
+      composerCard.body.appendChild(composerForm);
+
+      var kindSelect = document.createElement('select');
+      kindSelect.className = 'phab-admin-input';
+      [
+        { value: 'NEWS', label: 'Новость' },
+        { value: 'GAME', label: 'Игра' },
+        { value: 'TOURNAMENT', label: 'Турнир' },
+        { value: 'AD', label: 'Реклама / промо' }
+      ].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        kindSelect.appendChild(option);
+      });
+      appendCommunityFormField(composerForm, 'Тип карточки', kindSelect);
+
+      var titleInput = document.createElement('input');
+      titleInput.className = 'phab-admin-input';
+      titleInput.placeholder = 'Например: Игра в Дурака';
+      appendCommunityFormField(composerForm, 'Заголовок', titleInput);
+
+      var previewInput = document.createElement('input');
+      previewInput.className = 'phab-admin-input';
+      previewInput.placeholder = 'Терехово • Корт №9 панорамик';
+      appendCommunityFormField(composerForm, 'Подпись / превью', previewInput);
+
+      var ctaInput = document.createElement('input');
+      ctaInput.className = 'phab-admin-input';
+      ctaInput.placeholder = 'Открыть / Внести результаты игры';
+      appendCommunityFormField(composerForm, 'Текст CTA', ctaInput);
+
+      var imageInput = document.createElement('input');
+      imageInput.className = 'phab-admin-input';
+      imageInput.placeholder = 'https://... или data:image/...';
+      appendCommunityFormField(composerForm, 'Изображение', imageInput);
+
+      var startInput = document.createElement('input');
+      startInput.type = 'datetime-local';
+      startInput.className = 'phab-admin-input';
+      appendCommunityFormField(composerForm, 'Начало', startInput);
+
+      var endInput = document.createElement('input');
+      endInput.type = 'datetime-local';
+      endInput.className = 'phab-admin-input';
+      appendCommunityFormField(composerForm, 'Конец', endInput);
+
+      var stationInput = document.createElement('input');
+      stationInput.className = 'phab-admin-input';
+      stationInput.value = String(community.stationName || community.stationId || '');
+      appendCommunityFormField(composerForm, 'Станция / клуб', stationInput);
+
+      var courtInput = document.createElement('input');
+      courtInput.className = 'phab-admin-input';
+      courtInput.placeholder = 'Корт №5 панорамик';
+      appendCommunityFormField(composerForm, 'Корт / площадка', courtInput);
+
+      var levelInput = document.createElement('input');
+      levelInput.className = 'phab-admin-input';
+      levelInput.placeholder = 'D+, C, C+';
+      appendCommunityFormField(composerForm, 'Уровень', levelInput);
+
+      var authorInput = document.createElement('input');
+      authorInput.className = 'phab-admin-input';
+      authorInput.placeholder = 'Alexey Sergeev';
+      appendCommunityFormField(composerForm, 'Автор', authorInput);
+
+      var participantsInput = document.createElement('textarea');
+      participantsInput.className = 'phab-admin-input';
+      participantsInput.rows = 3;
+      participantsInput.placeholder = 'Имена участников через запятую';
+      appendCommunityFormField(composerForm, 'Участники', participantsInput, true);
+
+      var tagsInput = document.createElement('input');
+      tagsInput.className = 'phab-admin-input';
+      tagsInput.placeholder = 'игра, сообщество, турнир';
+      appendCommunityFormField(composerForm, 'Теги', tagsInput, true);
+
+      var bodyInput = document.createElement('textarea');
+      bodyInput.className = 'phab-admin-input';
+      bodyInput.rows = 4;
+      bodyInput.placeholder = 'Описание карточки';
+      appendCommunityFormField(composerForm, 'Описание', bodyInput, true);
+
+      var composerActions = document.createElement('div');
+      composerActions.className = 'phab-admin-community-form-actions';
+      composerCard.body.appendChild(composerActions);
+
+      var createBtn = document.createElement('button');
+      createBtn.type = 'button';
+      createBtn.className = 'phab-admin-btn-secondary';
+      createBtn.disabled = state.communityFeedCreatingId === community.id;
+      createBtn.textContent =
+        state.communityFeedCreatingId === community.id ? 'Создаём...' : 'Создать карточку';
+      createBtn.addEventListener('click', function () {
+        var kind = String(kindSelect.value || 'NEWS').toUpperCase();
+        createCommunityFeedItem(community, {
+          kind: kind,
+          title: String(titleInput.value || '').trim(),
+          body: String(bodyInput.value || '').trim(),
+          previewLabel: String(previewInput.value || '').trim(),
+          ctaLabel: String(ctaInput.value || '').trim(),
+          imageUrl: String(imageInput.value || '').trim() || null,
+          startAt: startInput.value ? new Date(startInput.value).toISOString() : undefined,
+          endAt: endInput.value ? new Date(endInput.value).toISOString() : undefined,
+          stationName: String(stationInput.value || '').trim(),
+          courtName: String(courtInput.value || '').trim(),
+          levelLabel: String(levelInput.value || '').trim(),
+          authorName: String(authorInput.value || '').trim(),
+          participants: String(participantsInput.value || '')
+            .split(',')
+            .map(function (item) {
+              return String(item || '').trim();
+            })
+            .filter(Boolean)
+            .map(function (name) {
+              return { name: name };
+            }),
+          tags: String(tagsInput.value || '')
+            .split(',')
+            .map(function (item) {
+              return String(item || '').trim();
+            })
+            .filter(Boolean)
+        }).catch(handleError);
+      });
+      composerActions.appendChild(createBtn);
+
       var card = createCommunitySectionCard('Контент', 'Превью публикаций и быстрые модераторские действия');
       dom.communityAdminGrid.appendChild(card.card);
       var feedIntro = document.createElement('div');
@@ -12323,6 +12848,23 @@
         );
       } else if (state.communityFeedLoadedById[community.id]) {
         feedIntro.appendChild(createCommunityPill('Источник: live feed', 'phab-admin-community-mini-chip'));
+      }
+      if (state.communityManagedFeedLoadingId === community.id) {
+        feedIntro.appendChild(createCommunityPill('Подтягиваем карточки админки...', 'phab-admin-community-signal'));
+      } else if (state.communityManagedFeedErrorById[community.id]) {
+        feedIntro.appendChild(
+          createCommunityPill(
+            'Админка: ' + String(state.communityManagedFeedErrorById[community.id]),
+            'phab-admin-community-signal phab-admin-community-signal-strong'
+          )
+        );
+      } else if (state.communityManagedFeedLoadedById[community.id]) {
+        feedIntro.appendChild(
+          createCommunityPill(
+            'Карточек из админки: ' + String((state.communityManagedFeedById[community.id] || []).length),
+            'phab-admin-community-mini-chip'
+          )
+        );
       }
       card.body.appendChild(feedIntro);
 
@@ -12542,8 +13084,10 @@
         [
           { key: 'ALL', label: 'Все' },
           { key: 'GAME', label: 'Игры' },
+          { key: 'TOURNAMENT', label: 'Турниры' },
           { key: 'EVENT', label: 'События' },
-          { key: 'NEWS', label: 'Новости' }
+          { key: 'NEWS', label: 'Новости' },
+          { key: 'AD', label: 'Реклама' }
         ].forEach(function (item) {
           var button = document.createElement('button');
           button.type = 'button';

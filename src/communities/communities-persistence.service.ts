@@ -4,10 +4,14 @@ import {
   Logger,
   OnModuleDestroy
 } from '@nestjs/common';
-import { Collection, Db, Document, Filter, MongoClient, ObjectId } from 'mongodb';
+import { Collection, Db, Document, Filter, MongoClient, ObjectId, OptionalId } from 'mongodb';
 import {
   Community,
   CommunityActor,
+  CommunityFeedItem,
+  CommunityFeedItemKind,
+  CommunityFeedItemStatus,
+  CommunityFeedParticipant,
   CommunityJoinRule,
   CommunityMember,
   CommunityMemberRole,
@@ -17,6 +21,10 @@ import {
 } from './communities.types';
 
 type MongoCommunityDocument = Document & {
+  _id?: unknown;
+};
+
+type MongoCommunityFeedDocument = Document & {
   _id?: unknown;
 };
 
@@ -32,6 +40,36 @@ export interface CommunitiesUpdateMutation {
   rules?: string;
   logo?: string | null;
   focusTags?: string[];
+}
+
+export interface CommunityFeedParticipantInput {
+  id?: string;
+  name: string;
+  avatar?: string | null;
+  levelLabel?: string;
+}
+
+export interface CommunitiesCreateFeedItemMutation {
+  kind: CommunityFeedItemKind;
+  title: string;
+  body?: string;
+  imageUrl?: string | null;
+  previewLabel?: string;
+  ctaLabel?: string;
+  startAt?: string;
+  endAt?: string;
+  stationName?: string;
+  courtName?: string;
+  levelLabel?: string;
+  likesCount?: number;
+  commentsCount?: number;
+  priority?: number;
+  placement?: string;
+  authorName?: string;
+  participants?: CommunityFeedParticipantInput[];
+  tags?: string[];
+  details?: Record<string, unknown>;
+  actor?: CommunityActor;
 }
 
 export type CommunityMemberManageAction =
@@ -77,6 +115,18 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   private readonly collectionNames = this.dedupeStrings([
     this.readEnv('COMMUNITIES_MONGODB_COLLECTION'),
     'lk_communities'
+  ]);
+  private readonly feedMongoDbNames = this.dedupeStrings([
+    this.readEnv('COMMUNITIES_FEED_MONGODB_DB'),
+    this.readEnv('COMMUNITIES_MONGODB_DB'),
+    this.readEnv('GAMES_MONGODB_DB'),
+    'games',
+    this.readEnv('MONGODB_DB'),
+    'ph_admin'
+  ]);
+  private readonly feedCollectionNames = this.dedupeStrings([
+    this.readEnv('COMMUNITIES_FEED_MONGODB_COLLECTION'),
+    'lk_community_feed'
   ]);
   private readonly inviteBaseUrl =
     this.readEnv('COMMUNITIES_INVITE_BASE_URL')
@@ -286,10 +336,138 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return this.toCommunity(updated);
   }
 
+  async listFeedItems(communityId: string): Promise<CommunityFeedItem[]> {
+    const collections = await this.readFeedCollections();
+    const items: CommunityFeedItem[] = [];
+
+    for (const candidate of collections) {
+      const documents = await candidate.collection
+        .find(this.buildCommunityFeedFilter(communityId))
+        .sort({ priority: -1, publishedAt: -1, createdAt: -1, _id: -1 })
+        .toArray();
+      documents.forEach((document) => {
+        const item = this.toFeedItem(document);
+        if (item) {
+          items.push(item);
+        }
+      });
+    }
+
+    return this.dedupeFeedItems(items).sort((left, right) => {
+      const rightPriority = right.priority ?? 0;
+      const leftPriority = left.priority ?? 0;
+      if (rightPriority !== leftPriority) {
+        return rightPriority - leftPriority;
+      }
+      return String(right.publishedAt ?? right.createdAt ?? '').localeCompare(
+        String(left.publishedAt ?? left.createdAt ?? '')
+      );
+    });
+  }
+
+  async createFeedItem(
+    communityId: string,
+    mutation: CommunitiesCreateFeedItemMutation
+  ): Promise<CommunityFeedItem | null> {
+    const communityMatch = await this.findDocumentWithSourceById(communityId);
+    if (!communityMatch) {
+      return null;
+    }
+
+    const collection = await this.primaryFeedCollection();
+    const now = new Date().toISOString();
+    const itemId = new ObjectId().toHexString();
+    const community = this.toCommunity(communityMatch.document);
+    const actor = this.toActorRecord(mutation.actor, now);
+    const participants = (mutation.participants ?? [])
+      .map((entry) => this.normalizeFeedParticipantInput(entry))
+      .filter((entry): entry is CommunityFeedParticipant => entry !== null);
+    const kind = mutation.kind;
+    const normalizedTags = this.dedupeStrings(mutation.tags ?? []);
+    const imageUrl = this.pickNullableString(mutation.imageUrl);
+
+    const payload: MongoCommunityFeedDocument = {
+      id: itemId,
+      feedItemId: itemId,
+      communityId: communityId,
+      communityName: community?.name ?? this.pickString(communityMatch.document.name) ?? undefined,
+      communitySlug: community?.slug ?? this.pickString(communityMatch.document.slug) ?? undefined,
+      kind,
+      type: kind,
+      status: 'PUBLISHED',
+      title: mutation.title.trim(),
+      body: this.pickString(mutation.body) ?? undefined,
+      description: this.pickString(mutation.body) ?? undefined,
+      content: this.pickString(mutation.body) ?? undefined,
+      imageUrl: imageUrl ?? null,
+      image: imageUrl ?? null,
+      photo: imageUrl ?? null,
+      previewLabel: this.pickString(mutation.previewLabel) ?? undefined,
+      label: this.pickString(mutation.previewLabel) ?? undefined,
+      ctaLabel: this.pickString(mutation.ctaLabel) ?? undefined,
+      actionLabel: this.pickString(mutation.ctaLabel) ?? undefined,
+      buttonLabel: this.pickString(mutation.ctaLabel) ?? undefined,
+      startAt: this.pickString(mutation.startAt) ?? undefined,
+      endAt: this.pickString(mutation.endAt) ?? undefined,
+      stationName:
+        this.pickString(mutation.stationName)
+        ?? community?.stationName
+        ?? undefined,
+      courtName: this.pickString(mutation.courtName) ?? undefined,
+      levelLabel: this.pickString(mutation.levelLabel) ?? undefined,
+      likesCount: this.pickCountNumber(mutation.likesCount) ?? 0,
+      commentsCount: this.pickCountNumber(mutation.commentsCount) ?? 0,
+      reportsCount: 0,
+      isAdvertisement: kind === 'AD',
+      ad: kind === 'AD',
+      placement: this.pickString(mutation.placement) ?? 'feed',
+      priority: this.pickNumeric(mutation.priority) ?? 0,
+      tags: normalizedTags,
+      participants: participants,
+      authorName:
+        this.pickString(mutation.authorName)
+        ?? actor?.name
+        ?? community?.name
+        ?? 'Админка',
+      createdBy: actor ?? undefined,
+      source: 'ADMIN_PANEL',
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: now,
+      details: this.isRecord(mutation.details) ? mutation.details : undefined
+    };
+
+    await collection.insertOne(payload as OptionalId<MongoCommunityFeedDocument>);
+    return this.toFeedItem(payload);
+  }
+
+  async deleteFeedItem(communityId: string, feedItemId: string): Promise<boolean> {
+    const collections = await this.readFeedCollections();
+    let deleted = false;
+    for (const candidate of collections) {
+      const result = await candidate.collection.deleteOne({
+        $and: [
+          this.buildCommunityFeedFilter(communityId),
+          this.buildFeedItemFilter(feedItemId)
+        ]
+      } as Filter<MongoCommunityFeedDocument>);
+      if ((result.deletedCount ?? 0) > 0) {
+        deleted = true;
+      }
+    }
+    return deleted;
+  }
+
   private async primaryCollection(): Promise<Collection<MongoCommunityDocument>> {
     const dbName = this.mongoDbNames[0] || 'games';
     const collectionName = this.collectionNames[0] || 'lk_communities';
     return this.collection(dbName, collectionName);
+  }
+
+  private async primaryFeedCollection(): Promise<Collection<MongoCommunityFeedDocument>> {
+    const dbName = this.feedMongoDbNames[0] || 'games';
+    const collectionName = this.feedCollectionNames[0] || 'lk_community_feed';
+    return this.feedCollection(dbName, collectionName);
   }
 
   private async database(dbName: string): Promise<Db> {
@@ -339,6 +517,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return db.collection<MongoCommunityDocument>(collectionName);
   }
 
+  private async feedCollection(
+    dbName: string,
+    collectionName: string
+  ): Promise<Collection<MongoCommunityFeedDocument>> {
+    const db = await this.database(dbName);
+    return db.collection<MongoCommunityFeedDocument>(collectionName);
+  }
+
   private buildIdFilter(id: string): Filter<MongoCommunityDocument> {
     const normalizedId = String(id ?? '').trim();
     const variants: Record<string, unknown>[] = [
@@ -353,6 +539,32 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return {
       $or: variants
     } as Filter<MongoCommunityDocument>;
+  }
+
+  private buildCommunityFeedFilter(communityId: string): Filter<MongoCommunityFeedDocument> {
+    const normalizedId = String(communityId ?? '').trim();
+    return {
+      $or: [
+        { communityId: normalizedId },
+        { community_id: normalizedId },
+        { sourceCommunityId: normalizedId }
+      ]
+    } as Filter<MongoCommunityFeedDocument>;
+  }
+
+  private buildFeedItemFilter(feedItemId: string): Filter<MongoCommunityFeedDocument> {
+    const normalizedId = String(feedItemId ?? '').trim();
+    const variants: Record<string, unknown>[] = [
+      { id: normalizedId },
+      { feedItemId: normalizedId },
+      { itemId: normalizedId }
+    ];
+    if (ObjectId.isValid(normalizedId)) {
+      variants.push({ _id: new ObjectId(normalizedId) });
+    }
+    return {
+      $or: variants
+    } as Filter<MongoCommunityFeedDocument>;
   }
 
   private async readCollections(
@@ -387,6 +599,42 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         dbName: 'games',
         collectionName: 'lk_communities',
         collection: fallback
+      });
+    }
+
+    return result;
+  }
+
+  private async readFeedCollections(): Promise<
+    Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityFeedDocument>;
+    }>
+  > {
+    const result: Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityFeedDocument>;
+    }> = [];
+
+    for (const dbName of this.feedMongoDbNames.length > 0 ? this.feedMongoDbNames : ['games']) {
+      for (const collectionName of this.feedCollectionNames.length > 0
+        ? this.feedCollectionNames
+        : ['lk_community_feed']) {
+        result.push({
+          dbName,
+          collectionName,
+          collection: await this.feedCollection(dbName, collectionName)
+        });
+      }
+    }
+
+    if (result.length === 0) {
+      result.push({
+        dbName: 'games',
+        collectionName: 'lk_community_feed',
+        collection: await this.feedCollection('games', 'lk_community_feed')
       });
     }
 
@@ -533,6 +781,104 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       pendingMembers,
       bannedMembers,
       details: this.stripObjectId(document)
+    };
+  }
+
+  private toFeedItem(document: MongoCommunityFeedDocument): CommunityFeedItem | null {
+    const id =
+      this.pickString(document.id)
+      ?? this.pickString(document.feedItemId)
+      ?? this.pickString(document.itemId)
+      ?? this.readObjectId(document._id);
+    const communityId =
+      this.pickString(document.communityId)
+      ?? this.pickString(document.community_id)
+      ?? this.pickString(document.sourceCommunityId);
+    const title =
+      this.pickString(document.title)
+      ?? this.pickString(document.name)
+      ?? this.pickString(document.header);
+    if (!id || !communityId || !title) {
+      return null;
+    }
+
+    const kind = this.normalizeFeedItemKind(
+      document.kind
+      ?? document.type
+      ?? (document.isAdvertisement === true || document.ad === true ? 'AD' : undefined)
+    );
+    const participants = this.toObjectArray(document.participants)
+      .map((entry) => this.normalizeFeedParticipant(entry))
+      .filter((entry): entry is CommunityFeedParticipant => entry !== null);
+
+    return {
+      id,
+      communityId,
+      kind,
+      status: this.normalizeFeedItemStatus(document.status),
+      title,
+      body:
+        this.pickString(document.body)
+        ?? this.pickString(document.description)
+        ?? this.pickString(document.content)
+        ?? undefined,
+      imageUrl:
+        this.pickNullableString(document.imageUrl ?? document.image ?? document.photo) ?? undefined,
+      previewLabel:
+        this.pickString(document.previewLabel)
+        ?? this.pickString(document.label)
+        ?? undefined,
+      ctaLabel:
+        this.pickString(document.ctaLabel)
+        ?? this.pickString(document.actionLabel)
+        ?? this.pickString(document.buttonLabel)
+        ?? undefined,
+      startAt:
+        this.pickString(document.startAt)
+        ?? this.pickString(document.startsAt)
+        ?? undefined,
+      endAt:
+        this.pickString(document.endAt)
+        ?? this.pickString(document.endsAt)
+        ?? undefined,
+      stationName:
+        this.pickString(document.stationName)
+        ?? this.pickString(document.clubName)
+        ?? undefined,
+      courtName:
+        this.pickString(document.courtName)
+        ?? this.pickString(document.court)
+        ?? this.pickString(document.venueName)
+        ?? undefined,
+      levelLabel:
+        this.pickString(document.levelLabel)
+        ?? this.pickString(document.rating)
+        ?? this.pickString(document.level)
+        ?? undefined,
+      reportsCount: this.pickCountNumber(document.reportsCount ?? document.flagsCount) ?? 0,
+      likesCount:
+        this.pickCountNumber(document.likesCount ?? document.likes ?? document.reactionsCount) ?? 0,
+      commentsCount:
+        this.pickCountNumber(document.commentsCount ?? document.comments ?? document.repliesCount) ?? 0,
+      isAdvertisement:
+        this.pickBoolean(document.isAdvertisement ?? document.ad)
+        ?? kind === 'AD',
+      priority: this.pickNumeric(document.priority),
+      placement: this.pickString(document.placement) ?? undefined,
+      tags: this.toStringArray(document.tags),
+      authorName:
+        this.pickString(document.authorName)
+        ?? this.pickString(document.memberName)
+        ?? undefined,
+      createdBy: this.normalizeActor(document.createdBy),
+      participants,
+      createdAt: this.pickString(document.createdAt) ?? undefined,
+      updatedAt: this.pickString(document.updatedAt) ?? undefined,
+      publishedAt:
+        this.pickString(document.publishedAt)
+        ?? this.pickString(document.createdAt)
+        ?? undefined,
+      details: this.stripFeedObjectId(document)
     };
   }
 
@@ -771,6 +1117,77 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return fallbackStatus;
   }
 
+  private normalizeFeedItemKind(value: unknown): CommunityFeedItemKind {
+    const normalized = String(value ?? '').trim().toUpperCase();
+    if (
+      normalized === 'NEWS' ||
+      normalized === 'GAME' ||
+      normalized === 'TOURNAMENT' ||
+      normalized === 'EVENT' ||
+      normalized === 'AD'
+    ) {
+      return normalized;
+    }
+    if (['PROMO', 'ADVERTISEMENT', 'ADVERT', 'BANNER'].includes(normalized)) {
+      return 'AD';
+    }
+    if (['POST', 'PHOTO', 'SYSTEM'].includes(normalized)) {
+      return 'NEWS';
+    }
+    return 'NEWS';
+  }
+
+  private normalizeFeedItemStatus(value: unknown): CommunityFeedItemStatus {
+    const normalized = String(value ?? '').trim().toUpperCase();
+    if (normalized === 'DRAFT' || normalized === 'PUBLISHED' || normalized === 'HIDDEN') {
+      return normalized;
+    }
+    return 'PUBLISHED';
+  }
+
+  private normalizeFeedParticipant(value: unknown): CommunityFeedParticipant | null {
+    if (!this.isRecord(value)) {
+      return null;
+    }
+
+    const id =
+      this.pickString(value.id) ?? this.pickString(value.clientId) ?? this.pickString(value.userId);
+    const name =
+      this.pickString(value.name)
+      ?? this.pickString(value.displayName)
+      ?? this.joinNameParts(value.firstName, value.lastName);
+    if (!name && !id) {
+      return null;
+    }
+
+    return {
+      id: id ?? undefined,
+      name: name ?? 'Игрок',
+      avatar: this.pickNullableString(value.avatar ?? value.avatarUrl ?? value.photo),
+      shortName: this.pickString(value.shortName) ?? undefined,
+      levelLabel:
+        this.pickString(value.levelLabel)
+        ?? this.pickString(value.rating)
+        ?? this.pickString(value.level)
+        ?? undefined
+    };
+  }
+
+  private normalizeFeedParticipantInput(value: CommunityFeedParticipantInput): CommunityFeedParticipant | null {
+    const name = this.pickString(value.name);
+    if (!name) {
+      return null;
+    }
+
+    return {
+      id: this.pickString(value.id) ?? undefined,
+      name,
+      avatar: value.avatar === null ? null : this.pickNullableString(value.avatar),
+      shortName: name.slice(0, 1).toUpperCase(),
+      levelLabel: this.pickString(value.levelLabel) ?? undefined
+    };
+  }
+
   private readWarningsCount(value: unknown): number {
     if (!this.isRecord(value)) {
       return 0;
@@ -815,6 +1232,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   }
 
   private stripObjectId(value: MongoCommunityDocument): Record<string, unknown> {
+    const result = { ...value } as Record<string, unknown>;
+    delete result._id;
+    return result;
+  }
+
+  private stripFeedObjectId(value: MongoCommunityFeedDocument): Record<string, unknown> {
     const result = { ...value } as Record<string, unknown>;
     delete result._id;
     return result;
@@ -933,5 +1356,13 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
           .filter((entry) => entry.length > 0)
       )
     );
+  }
+
+  private dedupeFeedItems(items: CommunityFeedItem[]): CommunityFeedItem[] {
+    const map = new Map<string, CommunityFeedItem>();
+    items.forEach((item) => {
+      map.set(item.id, item);
+    });
+    return Array.from(map.values());
   }
 }

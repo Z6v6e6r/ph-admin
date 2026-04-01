@@ -5,12 +5,13 @@ import {
   NotFoundException
 } from '@nestjs/common';
 import {
+  CommunitiesCreateFeedItemMutation,
   CommunitiesManageMemberMutation,
   CommunitiesPersistenceService,
   CommunitiesUpdateMutation
 } from './communities-persistence.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
-import { Community } from './communities.types';
+import { Community, CommunityFeedItem } from './communities.types';
 
 @Injectable()
 export class CommunitiesService {
@@ -61,6 +62,51 @@ export class CommunitiesService {
       throw new NotFoundException(`Community with id ${id} not found`);
     }
     return community;
+  }
+
+  async listFeedItems(id: string): Promise<CommunityFeedItem[]> {
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new InternalServerErrorException(
+        'Communities moderation requires MongoDB source configuration'
+      );
+    }
+
+    await this.findById(id);
+    return this.communitiesPersistence.listFeedItems(id);
+  }
+
+  async createFeedItem(
+    id: string,
+    mutation: CommunitiesCreateFeedItemMutation
+  ): Promise<CommunityFeedItem> {
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new InternalServerErrorException(
+        'Communities moderation requires MongoDB source configuration'
+      );
+    }
+
+    if (!String(mutation.title ?? '').trim()) {
+      throw new BadRequestException('Feed item title cannot be empty');
+    }
+
+    const item = await this.communitiesPersistence.createFeedItem(id, mutation);
+    if (!item) {
+      throw new NotFoundException(`Community with id ${id} not found`);
+    }
+    return item;
+  }
+
+  async deleteFeedItem(id: string, feedItemId: string): Promise<void> {
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new InternalServerErrorException(
+        'Communities moderation requires MongoDB source configuration'
+      );
+    }
+
+    const deleted = await this.communitiesPersistence.deleteFeedItem(id, feedItemId);
+    if (!deleted) {
+      throw new NotFoundException(`Feed item with id ${feedItemId} not found`);
+    }
   }
 
   async manageMember(
