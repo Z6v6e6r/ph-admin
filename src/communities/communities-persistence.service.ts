@@ -355,23 +355,20 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return false;
     }
 
-    const fallback = await this.primaryCollection();
-    const collections = await this.readCollections(fallback);
-    const filter = this.buildIdFilter(id);
-    let deleted = false;
-
-    for (const candidate of collections) {
-      const result = await candidate.collection.deleteMany(filter);
-      if ((result.deletedCount ?? 0) > 0) {
-        deleted = true;
-      }
-    }
+    const deleteResult = match.document._id !== undefined
+      ? await match.collection.deleteOne({ _id: match.document._id } as Filter<MongoCommunityDocument>)
+      : await match.collection.deleteOne(this.buildIdFilter(id));
+    const deleted = (deleteResult.deletedCount ?? 0) > 0;
 
     if (!deleted) {
       return false;
     }
 
-    await this.deleteCommunityFeedArtifacts(id);
+    await this.deleteCommunityFeedArtifacts(id).catch((error) => {
+      this.logger.warn(
+        `Community ${id} deleted, but feed cleanup failed: ${String(error)}`
+      );
+    });
     return true;
   }
 
@@ -380,30 +377,42 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const items: CommunityFeedItem[] = [];
 
     for (const candidate of collections) {
-      const documents = await candidate.collection
-        .find(this.buildCommunityFeedFilter(communityId))
-        .sort({ priority: -1, publishedAt: -1, createdAt: -1, _id: -1 })
-        .toArray();
-      documents.forEach((document) => {
-        const item = this.toFeedItem(document);
-        if (item) {
-          items.push(item);
-        }
-      });
+      try {
+        const documents = await candidate.collection
+          .find(this.buildCommunityFeedFilter(communityId))
+          .sort({ priority: -1, publishedAt: -1, createdAt: -1, _id: -1 })
+          .toArray();
+        documents.forEach((document) => {
+          const item = this.toFeedItem(document);
+          if (item) {
+            items.push(item);
+          }
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to read community feed items from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
     }
 
     const moderationCollections = await this.readFeedModerationCollections();
     for (const candidate of moderationCollections) {
-      const documents = await candidate.collection
-        .find(this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>)
-        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
-        .toArray();
-      documents.forEach((document) => {
-        const item = this.toFeedModerationItem(document);
-        if (item) {
-          items.push(item);
-        }
-      });
+      try {
+        const documents = await candidate.collection
+          .find(this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>)
+          .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+          .toArray();
+        documents.forEach((document) => {
+          const item = this.toFeedModerationItem(document);
+          if (item) {
+            items.push(item);
+          }
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to read community feed moderation from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
     }
 
     return this.dedupeFeedItems(items).sort((left, right) => {
@@ -501,14 +510,20 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const collections = await this.readFeedCollections();
     let deleted = false;
     for (const candidate of collections) {
-      const result = await candidate.collection.deleteOne({
-        $and: [
-          this.buildCommunityFeedFilter(communityId),
-          this.buildFeedItemFilter(feedItemId)
-        ]
-      } as Filter<MongoCommunityFeedDocument>);
-      if ((result.deletedCount ?? 0) > 0) {
-        deleted = true;
+      try {
+        const result = await candidate.collection.deleteMany({
+          $and: [
+            this.buildCommunityFeedFilter(communityId),
+            this.buildFeedItemFilter(feedItemId)
+          ]
+        } as Filter<MongoCommunityFeedDocument>);
+        if ((result.deletedCount ?? 0) > 0) {
+          deleted = true;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to delete feed item ${feedItemId} from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
       }
     }
     if (deleted) {
@@ -1419,61 +1434,95 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   }
 
   private async suppressFeedItem(communityId: string, feedItemId: string): Promise<void> {
-    const collection = await this.primaryFeedModerationCollection();
     const now = new Date().toISOString();
-    await collection.updateOne(
-      this.buildFeedItemModerationFilter(communityId, feedItemId),
-      {
-        $set: {
-          id: `${communityId}:${feedItemId}:DELETE`,
-          communityId,
-          community_id: communityId,
-          sourceCommunityId: communityId,
-          feedItemId,
-          itemId: feedItemId,
-          postId: feedItemId,
-          uuid: feedItemId,
-          source: 'COMMUNITY_MODERATION',
-          action: 'DELETE',
-          status: 'HIDDEN',
-          kind: 'NEWS',
-          title: `suppressed:${feedItemId}`,
-          suppressed: true,
-          updatedAt: now,
-          details: {
-            source: 'COMMUNITY_MODERATION',
-            moderationAction: 'DELETE',
-            suppressed: true
-          }
-        },
-        $setOnInsert: {
-          createdAt: now
-        }
-      },
-      { upsert: true }
-    );
+    const collections = await this.readFeedModerationCollections();
+    let lastError: unknown;
+
+    for (const candidate of collections) {
+      try {
+        await candidate.collection.updateOne(
+          this.buildFeedItemModerationFilter(communityId, feedItemId),
+          {
+            $set: {
+              id: `${communityId}:${feedItemId}:DELETE`,
+              communityId,
+              community_id: communityId,
+              sourceCommunityId: communityId,
+              feedItemId,
+              itemId: feedItemId,
+              postId: feedItemId,
+              uuid: feedItemId,
+              source: 'COMMUNITY_MODERATION',
+              action: 'DELETE',
+              status: 'HIDDEN',
+              kind: 'NEWS',
+              title: `suppressed:${feedItemId}`,
+              suppressed: true,
+              updatedAt: now,
+              details: {
+                source: 'COMMUNITY_MODERATION',
+                moderationAction: 'DELETE',
+                suppressed: true
+              }
+            },
+            $setOnInsert: {
+              createdAt: now
+            }
+          },
+          { upsert: true }
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(
+          `Failed to write feed moderation tombstone to ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
   }
 
   private async clearFeedItemModeration(communityId: string, feedItemId: string): Promise<void> {
     const collections = await this.readFeedModerationCollections();
     for (const candidate of collections) {
-      await candidate.collection.deleteMany(
-        this.buildFeedItemModerationFilter(communityId, feedItemId)
-      );
+      try {
+        await candidate.collection.deleteMany(
+          this.buildFeedItemModerationFilter(communityId, feedItemId)
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to clear feed moderation for ${feedItemId} from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
     }
   }
 
   private async deleteCommunityFeedArtifacts(communityId: string): Promise<void> {
     const feedCollections = await this.readFeedCollections();
     for (const candidate of feedCollections) {
-      await candidate.collection.deleteMany(this.buildCommunityFeedFilter(communityId));
+      try {
+        await candidate.collection.deleteMany(this.buildCommunityFeedFilter(communityId));
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cleanup community feed from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
     }
 
     const moderationCollections = await this.readFeedModerationCollections();
     for (const candidate of moderationCollections) {
-      await candidate.collection.deleteMany(
-        this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>
-      );
+      try {
+        await candidate.collection.deleteMany(
+          this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cleanup community feed moderation from ${candidate.dbName}.${candidate.collectionName}: ${String(error)}`
+        );
+      }
     }
   }
 
