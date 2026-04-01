@@ -3585,6 +3585,9 @@
       updateCommunity: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId), 'PATCH', payload);
       },
+      deleteCommunity: function (communityId) {
+        return request('/communities/' + encodeURIComponent(communityId), 'DELETE');
+      },
       manageCommunityMember: function (communityId, payload) {
         return request(
           '/communities/' + encodeURIComponent(communityId) + '/members/manage',
@@ -5605,6 +5608,7 @@
       communityRankingLoadingId: null,
       communityFeedCreatingId: null,
       communitySavingId: null,
+      communityDeletingId: null,
       communityManagingKey: null,
       tournamentsColumnWidths: {},
       tournamentsColumnWidths: {},
@@ -10144,6 +10148,41 @@
       state.selectedCommunityId = updatedCommunity.id;
     }
 
+    function clearCommunityCachedState(communityId) {
+      var key = String(communityId || '');
+      if (!key) {
+        return;
+      }
+      delete state.communityFeedById[key];
+      delete state.communityManagedFeedById[key];
+      delete state.communityManagedFeedLoadedById[key];
+      delete state.communityManagedFeedErrorById[key];
+      delete state.communityFeedModerationById[key];
+      delete state.communityFeedLoadedById[key];
+      delete state.communityFeedErrorById[key];
+      delete state.communityRankingById[key];
+      delete state.communityRankingLoadedById[key];
+      delete state.communityRankingErrorById[key];
+    }
+
+    function removeCommunityRecord(communityId) {
+      var key = String(communityId || '');
+      if (!key) {
+        return;
+      }
+      state.communities = sortCommunities(
+        state.communities.filter(function (community) {
+          return String(community && community.id || '') !== key;
+        })
+      );
+      clearCommunityCachedState(key);
+      if (state.selectedCommunityId === key) {
+        state.selectedCommunityId = state.communities.length > 0
+          ? String(state.communities[0].id || '')
+          : null;
+      }
+    }
+
     async function saveCommunitySettings(communityId, payload) {
       state.communitySavingId = communityId;
       renderCommunityDetails();
@@ -10155,6 +10194,29 @@
       } finally {
         state.communitySavingId = null;
         renderCommunityDetails();
+      }
+    }
+
+    async function deleteCommunity(community) {
+      var communityId = String(community && community.id || '');
+      if (!communityId) {
+        return;
+      }
+      var communityName = String(community && community.name || 'сообщество');
+      if (!window.confirm('Удалить сообщество "' + communityName + '"? Это действие необратимо.')) {
+        return;
+      }
+      state.communityDeletingId = communityId;
+      renderCommunities();
+      try {
+        await api.deleteCommunity(communityId);
+        removeCommunityRecord(communityId);
+        setStatus('Сообщество удалено', false);
+      } finally {
+        if (state.communityDeletingId === communityId) {
+          state.communityDeletingId = null;
+        }
+        renderCommunities();
       }
     }
 
@@ -10171,13 +10233,19 @@
 
     function mergeCommunityFeedCollections(communityId, primary, secondary) {
       var map = Object.create(null);
+      var suppressed = Object.create(null);
       normalizeArray(primary).forEach(function (item) {
         if (item && item.id) {
+          if (isSuppressedCommunityFeedPost(item)) {
+            suppressed[String(item.id)] = true;
+            delete map[String(item.id)];
+            return;
+          }
           map[String(item.id)] = item;
         }
       });
       normalizeArray(secondary).forEach(function (item) {
-        if (item && item.id && !map[String(item.id)]) {
+        if (item && item.id && !map[String(item.id)] && !suppressed[String(item.id)]) {
           map[String(item.id)] = item;
         }
       });
@@ -10231,6 +10299,35 @@
       }
     }
 
+    function getCommunityFeedPostPersistenceId(post) {
+      return String(
+        (post && (post.persistedId || post.id)) || ''
+      ).trim();
+    }
+
+    function isSuppressedCommunityFeedPost(post) {
+      var raw = normalizeObject(post && post.raw);
+      var details = normalizeObject(raw.details);
+      var status = String((post && post.status) || raw.status || '').trim().toUpperCase();
+      return Boolean(
+        raw.suppressed === true ||
+        details.suppressed === true ||
+        details.moderationAction === 'DELETE' ||
+        (status === 'HIDDEN' &&
+          (raw.source === 'COMMUNITY_MODERATION' || details.source === 'COMMUNITY_MODERATION'))
+      );
+    }
+
+    function isSyntheticCommunityFeedPost(post) {
+      if (!post) {
+        return true;
+      }
+      if (post.synthetic === true) {
+        return true;
+      }
+      return !getCommunityFeedPostPersistenceId(post);
+    }
+
     function isAdminManagedCommunityPost(community, post) {
       var raw = normalizeObject(post && post.raw);
       var communityId = String(community && community.id || '');
@@ -10251,29 +10348,35 @@
 
     async function deleteCommunityFeedItem(community, post) {
       var communityId = String(community && community.id || '');
-      var postId = String(post && post.id || '');
+      var postId = getCommunityFeedPostPersistenceId(post);
+      var localPostId = String(post && post.id || '');
       if (!communityId || !postId) {
         return;
       }
       state.communityFeedCreatingId = communityId;
       renderCommunityDetails();
       try {
-        await api.deleteCommunityFeedItem(communityId, postId);
+        var response = await api.deleteCommunityFeedItem(communityId, postId);
         if (Array.isArray(state.communityManagedFeedById[communityId])) {
           state.communityManagedFeedById[communityId] = state.communityManagedFeedById[communityId].filter(function (item) {
-            return String(item && item.id || '') !== postId;
+            return String(item && item.id || '') !== localPostId;
           });
         }
         if (Array.isArray(state.communityFeedById[communityId])) {
           state.communityFeedById[communityId] = state.communityFeedById[communityId].filter(function (item) {
-            return String(item && item.id || '') !== postId;
+            return String(item && item.id || '') !== localPostId;
           });
         }
         if (state.communityFeedModerationById[communityId]) {
-          delete state.communityFeedModerationById[communityId][postId];
+          delete state.communityFeedModerationById[communityId][localPostId];
         }
         await refreshCommunityManagedFeed(community);
-        setStatus('Карточка удалена из админской ленты', false);
+        setStatus(
+          response && response.mode === 'suppressed'
+            ? 'Карточка скрыта модерацией из ленты сообщества'
+            : 'Карточка удалена из сообщества',
+          false
+        );
       } finally {
         state.communityFeedCreatingId = null;
         renderCommunityDetails();
@@ -10312,6 +10415,9 @@
         .map(function (post) {
           var moderation = getCommunityFeedModerationState(communityId, post && post.id);
           return Object.assign({}, post, { moderation: moderation });
+        })
+        .filter(function (post) {
+          return normalizeObject(post && post.moderation).removed !== true;
         })
         .sort(function (left, right) {
           var leftState = normalizeObject(left.moderation);
@@ -10575,6 +10681,8 @@
       var eventSource = normalizeObject(source.event || source.game || source.match || source.tournament);
       var venueSource = normalizeObject(source.venue || source.location || source.place);
       var sources = [source, eventSource, venueSource];
+      var persistedId =
+        pickCommunityRecordText(source, ['id', 'postId', 'uuid', 'feedItemId', 'itemId']) || '';
       var kindSource =
         pickCommunityRecordText(source, ['kind', 'type', 'cardType', 'module', 'placementType']) ||
         (source.isAdvertisement === true || source.ad === true || source.promo === true ? 'AD' : null) ||
@@ -10606,10 +10714,10 @@
         participants = normalizeCommunityPreviewParticipants(source.members);
       }
       return {
-        id:
-          pickCommunityRecordText(source, ['id', 'postId', 'uuid']) ||
-          String((community && community.id) || 'community') + ':post:' + String(index),
+        id: persistedId || String((community && community.id) || 'community') + ':post:' + String(index),
+        persistedId: persistedId || undefined,
         kind: kind,
+        status: pickCommunityRecordText(source, ['status']) || undefined,
         kicker: getCommunityPostKindLabel(kind),
         title: title,
         body: body,
@@ -11248,6 +11356,7 @@
       if (String(community.description || '').trim()) {
         synthetic.push({
           id: community.id + ':desc',
+          synthetic: true,
           kicker: 'Новости',
           title: 'О сообществе',
           body: String(community.description || '').trim(),
@@ -11259,6 +11368,7 @@
       if (String(community.rules || '').trim()) {
         synthetic.push({
           id: community.id + ':rules',
+          synthetic: true,
           kicker: 'Закреп',
           title: 'Правила сообщества',
           body: String(community.rules || '').trim(),
@@ -11270,6 +11380,7 @@
       if (model.pendingMembers.length > 0) {
         synthetic.push({
           id: community.id + ':pending',
+          synthetic: true,
           kicker: 'Новый участник',
           title: String(model.pendingMembers[0].name || 'Новая заявка'),
           body: 'Ожидает решения модератора.',
@@ -11282,6 +11393,7 @@
       if (synthetic.length === 0) {
         synthetic.push({
           id: community.id + ':empty',
+          synthetic: true,
           kicker: 'Лента',
           title: 'Пока без контента',
           body: 'Как только появятся публикации или превью из ЛК, здесь будет живой модераторский просмотр.',
@@ -11745,12 +11857,12 @@
         }
       });
       items.push({
-        label: isAdminManagedCommunityPost(community, post)
-          ? 'Удалить из админки'
-          : moderation.removed ? 'Вернуть' : 'Удалить',
+        label: isSyntheticCommunityFeedPost(post)
+          ? (moderation.removed ? 'Вернуть' : 'Удалить')
+          : 'Удалить',
         className: 'phab-admin-community-preview-action phab-admin-community-preview-action-danger',
         onClick: function () {
-          if (isAdminManagedCommunityPost(community, post)) {
+          if (!isSyntheticCommunityFeedPost(post)) {
             deleteCommunityFeedItem(community, post).catch(handleError);
             return;
           }
@@ -13382,6 +13494,16 @@
             }).catch(handleError);
           },
           state.communitySavingId === community.id
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          state.communityDeletingId === community.id ? 'Удаляем...' : 'Удалить сообщество',
+          'phab-admin-community-main-action phab-admin-community-main-action-danger',
+          function () {
+            deleteCommunity(community).catch(handleError);
+          },
+          state.communityDeletingId === community.id
         )
       );
       dom.communityActions.appendChild(

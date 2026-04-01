@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   CommunitiesCreateFeedItemMutation,
+  CommunitiesDeleteFeedItemResult,
   CommunitiesManageMemberMutation,
   CommunitiesPersistenceService,
   CommunitiesUpdateMutation
@@ -64,6 +65,19 @@ export class CommunitiesService {
     return community;
   }
 
+  async delete(id: string): Promise<void> {
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new InternalServerErrorException(
+        'Communities moderation requires MongoDB source configuration'
+      );
+    }
+
+    const deleted = await this.communitiesPersistence.deleteCommunity(id);
+    if (!deleted) {
+      throw new NotFoundException(`Community with id ${id} not found`);
+    }
+  }
+
   async listFeedItems(id: string): Promise<CommunityFeedItem[]> {
     if (!this.communitiesPersistence.isEnabled()) {
       throw new InternalServerErrorException(
@@ -96,17 +110,18 @@ export class CommunitiesService {
     return item;
   }
 
-  async deleteFeedItem(id: string, feedItemId: string): Promise<void> {
+  async deleteFeedItem(
+    id: string,
+    feedItemId: string
+  ): Promise<CommunitiesDeleteFeedItemResult> {
     if (!this.communitiesPersistence.isEnabled()) {
       throw new InternalServerErrorException(
         'Communities moderation requires MongoDB source configuration'
       );
     }
 
-    const deleted = await this.communitiesPersistence.deleteFeedItem(id, feedItemId);
-    if (!deleted) {
-      throw new NotFoundException(`Feed item with id ${feedItemId} not found`);
-    }
+    await this.findById(id);
+    return this.communitiesPersistence.deleteFeedItem(id, feedItemId);
   }
 
   async manageMember(

@@ -58,6 +58,18 @@ export class CommunitiesController {
     return this.communitiesService.update(id, dto);
   }
 
+  @Delete(':id')
+  async deleteCommunity(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<{ ok: true }> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    await this.communitiesService.delete(id);
+    return { ok: true };
+  }
+
   @Get(':id/feed-items')
   listFeedItems(
     @Param('id') id: string,
@@ -92,12 +104,11 @@ export class CommunitiesController {
     @Param('id') id: string,
     @Param('feedItemId') feedItemId: string,
     @CurrentUser() user?: RequestUser
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true; mode: 'deleted' | 'suppressed' }> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    await this.communitiesService.deleteFeedItem(id, feedItemId);
-    return { ok: true };
+    return this.communitiesService.deleteFeedItem(id, feedItemId);
   }
 
   @Post(':id/members/manage')

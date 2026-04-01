@@ -28,6 +28,10 @@ type MongoCommunityFeedDocument = Document & {
   _id?: unknown;
 };
 
+type MongoCommunityFeedModerationDocument = Document & {
+  _id?: unknown;
+};
+
 export interface CommunitiesUpdateMutation {
   name?: string;
   status?: string;
@@ -70,6 +74,11 @@ export interface CommunitiesCreateFeedItemMutation {
   tags?: string[];
   details?: Record<string, unknown>;
   actor?: CommunityActor;
+}
+
+export interface CommunitiesDeleteFeedItemResult {
+  ok: true;
+  mode: 'deleted' | 'suppressed';
 }
 
 export type CommunityMemberManageAction =
@@ -127,6 +136,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   private readonly feedCollectionNames = this.dedupeStrings([
     this.readEnv('COMMUNITIES_FEED_MONGODB_COLLECTION'),
     'lk_community_feed'
+  ]);
+  private readonly feedModerationCollectionNames = this.dedupeStrings([
+    this.readEnv('COMMUNITIES_FEED_MODERATION_MONGODB_COLLECTION'),
+    'lk_community_feed_moderation'
   ]);
   private readonly inviteBaseUrl =
     this.readEnv('COMMUNITIES_INVITE_BASE_URL')
@@ -336,6 +349,32 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return this.toCommunity(updated);
   }
 
+  async deleteCommunity(id: string): Promise<boolean> {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match) {
+      return false;
+    }
+
+    const fallback = await this.primaryCollection();
+    const collections = await this.readCollections(fallback);
+    const filter = this.buildIdFilter(id);
+    let deleted = false;
+
+    for (const candidate of collections) {
+      const result = await candidate.collection.deleteMany(filter);
+      if ((result.deletedCount ?? 0) > 0) {
+        deleted = true;
+      }
+    }
+
+    if (!deleted) {
+      return false;
+    }
+
+    await this.deleteCommunityFeedArtifacts(id);
+    return true;
+  }
+
   async listFeedItems(communityId: string): Promise<CommunityFeedItem[]> {
     const collections = await this.readFeedCollections();
     const items: CommunityFeedItem[] = [];
@@ -347,6 +386,20 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         .toArray();
       documents.forEach((document) => {
         const item = this.toFeedItem(document);
+        if (item) {
+          items.push(item);
+        }
+      });
+    }
+
+    const moderationCollections = await this.readFeedModerationCollections();
+    for (const candidate of moderationCollections) {
+      const documents = await candidate.collection
+        .find(this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>)
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .toArray();
+      documents.forEach((document) => {
+        const item = this.toFeedModerationItem(document);
         if (item) {
           items.push(item);
         }
@@ -441,7 +494,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return this.toFeedItem(payload);
   }
 
-  async deleteFeedItem(communityId: string, feedItemId: string): Promise<boolean> {
+  async deleteFeedItem(
+    communityId: string,
+    feedItemId: string
+  ): Promise<CommunitiesDeleteFeedItemResult> {
     const collections = await this.readFeedCollections();
     let deleted = false;
     for (const candidate of collections) {
@@ -455,7 +511,19 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         deleted = true;
       }
     }
-    return deleted;
+    if (deleted) {
+      await this.clearFeedItemModeration(communityId, feedItemId);
+      return {
+        ok: true,
+        mode: 'deleted'
+      };
+    }
+
+    await this.suppressFeedItem(communityId, feedItemId);
+    return {
+      ok: true,
+      mode: 'suppressed'
+    };
   }
 
   private async primaryCollection(): Promise<Collection<MongoCommunityDocument>> {
@@ -468,6 +536,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const dbName = this.feedMongoDbNames[0] || 'games';
     const collectionName = this.feedCollectionNames[0] || 'lk_community_feed';
     return this.feedCollection(dbName, collectionName);
+  }
+
+  private async primaryFeedModerationCollection(): Promise<Collection<MongoCommunityFeedModerationDocument>> {
+    const dbName = this.feedMongoDbNames[0] || 'games';
+    const collectionName = this.feedModerationCollectionNames[0] || 'lk_community_feed_moderation';
+    return this.feedModerationCollection(dbName, collectionName);
   }
 
   private async database(dbName: string): Promise<Db> {
@@ -525,6 +599,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return db.collection<MongoCommunityFeedDocument>(collectionName);
   }
 
+  private async feedModerationCollection(
+    dbName: string,
+    collectionName: string
+  ): Promise<Collection<MongoCommunityFeedModerationDocument>> {
+    const db = await this.database(dbName);
+    return db.collection<MongoCommunityFeedModerationDocument>(collectionName);
+  }
+
   private buildIdFilter(id: string): Filter<MongoCommunityDocument> {
     const normalizedId = String(id ?? '').trim();
     const variants: Record<string, unknown>[] = [
@@ -557,7 +639,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const variants: Record<string, unknown>[] = [
       { id: normalizedId },
       { feedItemId: normalizedId },
-      { itemId: normalizedId }
+      { itemId: normalizedId },
+      { postId: normalizedId },
+      { uuid: normalizedId }
     ];
     if (ObjectId.isValid(normalizedId)) {
       variants.push({ _id: new ObjectId(normalizedId) });
@@ -565,6 +649,18 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return {
       $or: variants
     } as Filter<MongoCommunityFeedDocument>;
+  }
+
+  private buildFeedItemModerationFilter(
+    communityId: string,
+    feedItemId: string
+  ): Filter<MongoCommunityFeedModerationDocument> {
+    return {
+      $and: [
+        this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>,
+        this.buildFeedItemFilter(feedItemId) as Filter<MongoCommunityFeedModerationDocument>
+      ]
+    } as Filter<MongoCommunityFeedModerationDocument>;
   }
 
   private async readCollections(
@@ -635,6 +731,42 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         dbName: 'games',
         collectionName: 'lk_community_feed',
         collection: await this.feedCollection('games', 'lk_community_feed')
+      });
+    }
+
+    return result;
+  }
+
+  private async readFeedModerationCollections(): Promise<
+    Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityFeedModerationDocument>;
+    }>
+  > {
+    const result: Array<{
+      dbName: string;
+      collectionName: string;
+      collection: Collection<MongoCommunityFeedModerationDocument>;
+    }> = [];
+
+    for (const dbName of this.feedMongoDbNames.length > 0 ? this.feedMongoDbNames : ['games']) {
+      for (const collectionName of this.feedModerationCollectionNames.length > 0
+        ? this.feedModerationCollectionNames
+        : ['lk_community_feed_moderation']) {
+        result.push({
+          dbName,
+          collectionName,
+          collection: await this.feedModerationCollection(dbName, collectionName)
+        });
+      }
+    }
+
+    if (result.length === 0) {
+      result.push({
+        dbName: 'games',
+        collectionName: 'lk_community_feed_moderation',
+        collection: await this.feedModerationCollection('games', 'lk_community_feed_moderation')
       });
     }
 
@@ -879,6 +1011,41 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         ?? this.pickString(document.createdAt)
         ?? undefined,
       details: this.stripFeedObjectId(document)
+    };
+  }
+
+  private toFeedModerationItem(document: MongoCommunityFeedModerationDocument): CommunityFeedItem | null {
+    const id =
+      this.pickString(document.feedItemId)
+      ?? this.pickString(document.itemId)
+      ?? this.pickString(document.postId)
+      ?? this.pickString(document.uuid)
+      ?? this.pickString(document.id);
+    const communityId =
+      this.pickString(document.communityId)
+      ?? this.pickString(document.community_id)
+      ?? this.pickString(document.sourceCommunityId);
+    if (!id || !communityId) {
+      return null;
+    }
+
+    return {
+      id,
+      communityId,
+      kind: this.normalizeFeedItemKind(document.kind ?? 'NEWS'),
+      status: 'HIDDEN',
+      title: this.pickString(document.title) ?? `suppressed:${id}`,
+      updatedAt: this.pickString(document.updatedAt) ?? undefined,
+      publishedAt:
+        this.pickString(document.updatedAt)
+        ?? this.pickString(document.createdAt)
+        ?? undefined,
+      details: {
+        ...this.stripFeedModerationObjectId(document),
+        source: 'COMMUNITY_MODERATION',
+        moderationAction: 'DELETE',
+        suppressed: true
+      }
     };
   }
 
@@ -1241,6 +1408,73 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const result = { ...value } as Record<string, unknown>;
     delete result._id;
     return result;
+  }
+
+  private stripFeedModerationObjectId(
+    value: MongoCommunityFeedModerationDocument
+  ): Record<string, unknown> {
+    const result = { ...value } as Record<string, unknown>;
+    delete result._id;
+    return result;
+  }
+
+  private async suppressFeedItem(communityId: string, feedItemId: string): Promise<void> {
+    const collection = await this.primaryFeedModerationCollection();
+    const now = new Date().toISOString();
+    await collection.updateOne(
+      this.buildFeedItemModerationFilter(communityId, feedItemId),
+      {
+        $set: {
+          id: `${communityId}:${feedItemId}:DELETE`,
+          communityId,
+          community_id: communityId,
+          sourceCommunityId: communityId,
+          feedItemId,
+          itemId: feedItemId,
+          postId: feedItemId,
+          uuid: feedItemId,
+          source: 'COMMUNITY_MODERATION',
+          action: 'DELETE',
+          status: 'HIDDEN',
+          kind: 'NEWS',
+          title: `suppressed:${feedItemId}`,
+          suppressed: true,
+          updatedAt: now,
+          details: {
+            source: 'COMMUNITY_MODERATION',
+            moderationAction: 'DELETE',
+            suppressed: true
+          }
+        },
+        $setOnInsert: {
+          createdAt: now
+        }
+      },
+      { upsert: true }
+    );
+  }
+
+  private async clearFeedItemModeration(communityId: string, feedItemId: string): Promise<void> {
+    const collections = await this.readFeedModerationCollections();
+    for (const candidate of collections) {
+      await candidate.collection.deleteMany(
+        this.buildFeedItemModerationFilter(communityId, feedItemId)
+      );
+    }
+  }
+
+  private async deleteCommunityFeedArtifacts(communityId: string): Promise<void> {
+    const feedCollections = await this.readFeedCollections();
+    for (const candidate of feedCollections) {
+      await candidate.collection.deleteMany(this.buildCommunityFeedFilter(communityId));
+    }
+
+    const moderationCollections = await this.readFeedModerationCollections();
+    for (const candidate of moderationCollections) {
+      await candidate.collection.deleteMany(
+        this.buildCommunityFeedFilter(communityId) as Filter<MongoCommunityFeedModerationDocument>
+      );
+    }
   }
 
   private normalizePhone(value: unknown): string | null {
