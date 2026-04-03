@@ -3853,13 +3853,13 @@
       sendMessage: function (dialogId, text, attachments) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
           text: text,
-          attachments: normalizeMessageAttachments(attachments)
+          attachments: attachments
         });
       },
       sendLegacyMessage: function (threadId, text, attachments) {
         return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'POST', {
           text: text,
-          attachments: normalizeMessageAttachments(attachments)
+          attachments: attachments
         });
       },
       setLegacyDialogResolution: function (threadId, resolved) {
