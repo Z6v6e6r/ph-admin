@@ -4864,46 +4864,12 @@
     communitiesListHeadTitle.textContent = 'Сообщества';
     communitiesListHead.appendChild(communitiesListHeadTitle);
 
-    var communitiesListHeadSubtitle = document.createElement('div');
-    communitiesListHeadSubtitle.className = 'phab-admin-community-pane-subtitle';
-    communitiesListHeadSubtitle.textContent =
-      'Рабочая панель модератора: поиск, фильтры, риски и быстрые действия.';
-    communitiesListHead.appendChild(communitiesListHeadSubtitle);
-
     var communitySearchInput = document.createElement('input');
     communitySearchInput.className = 'phab-admin-input phab-admin-community-search';
     communitySearchInput.type = 'search';
     communitySearchInput.placeholder = 'Поиск по названию, станции, тегам...';
     communitySearchInput.setAttribute('aria-label', 'Поиск сообществ');
     communitiesListHead.appendChild(communitySearchInput);
-
-    var communitiesToolbar = document.createElement('div');
-    communitiesToolbar.className = 'phab-admin-community-toolbar';
-    communitiesListPane.appendChild(communitiesToolbar);
-
-    var communityStationFilter = document.createElement('select');
-    communityStationFilter.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communityStationFilter);
-
-    var communityStatusFilter = document.createElement('select');
-    communityStatusFilter.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communityStatusFilter);
-
-    var communityLevelFilter = document.createElement('select');
-    communityLevelFilter.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communityLevelFilter);
-
-    var communityAccessFilter = document.createElement('select');
-    communityAccessFilter.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communityAccessFilter);
-
-    var communityActivityFilter = document.createElement('select');
-    communityActivityFilter.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communityActivityFilter);
-
-    var communitySortSelect = document.createElement('select');
-    communitySortSelect.className = 'phab-admin-community-toolbar-select';
-    communitiesToolbar.appendChild(communitySortSelect);
 
     var communitiesListBody = document.createElement('div');
     communitiesListBody.className = 'phab-admin-community-list-body';
@@ -5682,12 +5648,6 @@
       analyticsDialogsSummary: analyticsDialogsSummary,
       tournamentsTable: tournamentsTable,
       communitySearchInput: communitySearchInput,
-      communityStationFilter: communityStationFilter,
-      communityStatusFilter: communityStatusFilter,
-      communityLevelFilter: communityLevelFilter,
-      communityAccessFilter: communityAccessFilter,
-      communityActivityFilter: communityActivityFilter,
-      communitySortSelect: communitySortSelect,
       communitiesList: communitiesList,
       communitiesDetailPane: communitiesDetailPane,
       communitiesPreviewPane: communitiesPreviewPane,
@@ -6040,12 +6000,6 @@
     dom.analyticsDialogsToInput.value = state.analyticsDialogsFilterTo;
     dom.analyticsDialogsFormatInput.value = state.analyticsDialogsExportFormat;
     dom.communitySearchInput.value = state.communitiesSearchQuery;
-    dom.communityStationFilter.value = state.communitiesStationFilter;
-    dom.communityStatusFilter.value = state.communitiesStatusFilter;
-    dom.communityLevelFilter.value = state.communitiesLevelFilter;
-    dom.communityAccessFilter.value = state.communitiesAccessFilter;
-    dom.communityActivityFilter.value = state.communitiesActivityFilter;
-    dom.communitySortSelect.value = state.communitiesSortField;
 
     function getStatusIconMarkup(isError) {
       if (isError) {
@@ -14580,100 +14534,6 @@
     function renderCommunities() {
       clearNode(dom.communitiesList);
 
-      var stations = ['ALL'];
-      var activities = ['ALL'];
-      state.communities.forEach(function (community) {
-        var station = String(community.stationName || community.stationId || 'NONE');
-        if (stations.indexOf(station) === -1) {
-          stations.push(station);
-        }
-        buildCommunityModeratorModel(community).activityTypes.forEach(function (type) {
-          if (activities.indexOf(type) === -1) {
-            activities.push(type);
-          }
-        });
-      });
-
-      ensureCommunitySelectOptions(
-        dom.communityStationFilter,
-        stations.map(function (value) {
-          return {
-            value: value,
-            label: value === 'ALL' ? 'Все станции' : value === 'NONE' ? 'Без станции' : value
-          };
-        }),
-        state.communitiesStationFilter
-      );
-      state.communitiesStationFilter = String(dom.communityStationFilter.value || 'ALL');
-
-      ensureCommunitySelectOptions(
-        dom.communityStatusFilter,
-        [
-          { value: 'ALL', label: 'Любой статус' },
-          { value: 'OPEN', label: 'Открыто' },
-          { value: 'CLOSED', label: 'Закрыто' },
-          { value: 'HIDDEN', label: 'Скрыто' },
-          { value: 'PAUSED', label: 'На паузе' },
-          { value: 'MODERATION', label: 'На проверке' }
-        ],
-        state.communitiesStatusFilter
-      );
-      state.communitiesStatusFilter = String(dom.communityStatusFilter.value || 'ALL');
-
-      ensureCommunitySelectOptions(
-        dom.communityLevelFilter,
-        [
-          { value: 'ALL', label: 'Любой уровень' },
-          { value: 'D', label: 'D' },
-          { value: 'D+', label: 'D+' },
-          { value: 'C', label: 'C' },
-          { value: 'C+', label: 'C+' },
-          { value: 'B', label: 'B' },
-          { value: 'B+', label: 'B+' },
-          { value: 'A', label: 'A' }
-        ],
-        state.communitiesLevelFilter
-      );
-      state.communitiesLevelFilter = String(dom.communityLevelFilter.value || 'ALL');
-
-      ensureCommunitySelectOptions(
-        dom.communityAccessFilter,
-        [
-          { value: 'ALL', label: 'Любой доступ' },
-          { value: 'OPEN', label: 'Каталог открыт' },
-          { value: 'CLOSED', label: 'Скрыт из каталога' },
-          { value: 'INSTANT', label: 'Свободный вход' },
-          { value: 'MODERATED', label: 'Через заявку' },
-          { value: 'INVITE_ONLY', label: 'По инвайту' }
-        ],
-        state.communitiesAccessFilter
-      );
-      state.communitiesAccessFilter = String(dom.communityAccessFilter.value || 'ALL');
-
-      ensureCommunitySelectOptions(
-        dom.communityActivityFilter,
-        activities.map(function (value) {
-          return {
-            value: value,
-            label: value === 'ALL' ? 'Любая активность' : value
-          };
-        }),
-        state.communitiesActivityFilter
-      );
-      state.communitiesActivityFilter = String(dom.communityActivityFilter.value || 'ALL');
-
-      ensureCommunitySelectOptions(
-        dom.communitySortSelect,
-        [
-          { value: 'activity', label: 'Сортировка: активность' },
-          { value: 'pending', label: 'Сортировка: заявки' },
-          { value: 'reports', label: 'Сортировка: жалобы' },
-          { value: 'growth', label: 'Сортировка: рост' }
-        ],
-        state.communitiesSortField
-      );
-      state.communitiesSortField = String(dom.communitySortSelect.value || 'activity');
-
       var filteredCommunities = sortCommunitiesForModeration(state.communities).filter(function (community) {
         return filterCommunitiesForModeration(community);
       });
@@ -14780,9 +14640,7 @@
 
         var riskRow = document.createElement('div');
         riskRow.className = 'phab-admin-community-risk-row';
-        if (model.riskFlags.length === 0) {
-          riskRow.appendChild(createCommunityPill('Стабильно', 'phab-admin-community-risk'));
-        } else {
+        if (model.riskFlags.length > 0) {
           model.riskFlags.slice(0, 3).forEach(function (risk) {
             riskRow.appendChild(
               createCommunityPill(
@@ -14793,7 +14651,9 @@
             );
           });
         }
-        selectBtn.appendChild(riskRow);
+        if (riskRow.childNodes.length > 0) {
+          selectBtn.appendChild(riskRow);
+        }
 
         var actions = document.createElement('div');
         actions.className = 'phab-admin-community-card-actions';
@@ -15792,19 +15652,6 @@
         event.preventDefault();
         state.communitiesSearchQuery = String(dom.communitySearchInput.value || '').trim();
         renderCommunities();
-      });
-      [
-        ['communityStationFilter', 'communitiesStationFilter'],
-        ['communityStatusFilter', 'communitiesStatusFilter'],
-        ['communityLevelFilter', 'communitiesLevelFilter'],
-        ['communityAccessFilter', 'communitiesAccessFilter'],
-        ['communityActivityFilter', 'communitiesActivityFilter'],
-        ['communitySortSelect', 'communitiesSortField']
-      ].forEach(function (item) {
-        dom[item[0]].addEventListener('change', function () {
-          state[item[1]] = String(dom[item[0]].value || 'ALL');
-          renderCommunities();
-        });
       });
       dom.dialogFiltersBtn.addEventListener('click', function () {
         if (dom.dialogFiltersBtn.disabled) {
