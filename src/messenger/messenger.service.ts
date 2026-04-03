@@ -161,7 +161,15 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       this.aiSuggestions.clear();
 
       for (const thread of state.threads) {
-        this.threads.set(thread.id, thread);
+        const normalizedThread: ChatThread = {
+          ...thread,
+          isResolved: thread.isResolved === true,
+          resolvedAt: thread.isResolved === true ? thread.resolvedAt : undefined,
+          resolvedByUserId: thread.isResolved === true
+            ? thread.resolvedByUserId
+            : undefined
+        };
+        this.threads.set(normalizedThread.id, normalizedThread);
         this.messages.set(thread.id, []);
         this.pendingStaffResponses.set(thread.id, []);
         this.responseMetrics.set(thread.id, []);
@@ -232,6 +240,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       subject: dto.subject,
       assignedSupportId: dto.assignedSupportId,
       status: ThreadStatus.OPEN,
+      isResolved: false,
       createdAt: now,
       updatedAt: now
     };
@@ -339,6 +348,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       this.registerStaffResponseMetrics(thread, message, user.id);
     } else {
       thread.lastClientReadAt = createdAt;
+      thread.isResolved = false;
+      thread.resolvedAt = undefined;
+      thread.resolvedByUserId = undefined;
       this.registerPendingClientResponse(thread, message);
     }
 
@@ -379,6 +391,33 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     this.threads.set(threadId, updated);
     this.persistence.persistThread(updated);
     return updated;
+  }
+
+  setThreadResolution(
+    threadId: string,
+    resolved: boolean,
+    user: RequestUser
+  ): StationDialogSummary {
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    this.ensureStaffAccess(user);
+
+    if (!this.hasStaffAccess(user, thread.stationId, thread.connector, 'write')) {
+      throw new ForbiddenException('Staff cannot update thread resolution');
+    }
+
+    const now = new Date().toISOString();
+    thread.isResolved = resolved;
+    thread.resolvedAt = resolved ? now : undefined;
+    thread.resolvedByUserId = resolved ? user.id : undefined;
+    thread.updatedAt = now;
+    if (resolved) {
+      this.pendingStaffResponses.set(thread.id, []);
+    }
+
+    this.threads.set(thread.id, thread);
+    this.persistence.persistThread(thread);
+    return this.buildDialogSummary(thread, user);
   }
 
   listConnectors(user: RequestUser): ConnectorSummary[] {
@@ -998,6 +1037,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       clientId: thread.clientId,
       subject: thread.subject,
       status: thread.status,
+      isResolved: thread.isResolved === true,
+      resolvedAt: thread.isResolved === true ? thread.resolvedAt : undefined,
+      resolvedByUserId: thread.isResolved === true ? thread.resolvedByUserId : undefined,
       lastMessageAt: thread.lastMessageAt,
       lastRankingMessageAt: thread.lastRankingMessageAt,
       unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),

@@ -647,8 +647,15 @@ export class MessengerController {
     resolved: boolean,
     user: RequestUser
   ): StationDialogSummary {
-    const summary = this.supportService.setDialogResolution(dialogId, resolved, user);
-    return this.mapSupportDialogToLegacy(summary);
+    try {
+      return this.messengerService.setThreadResolution(dialogId, resolved, user);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) {
+        throw error;
+      }
+      const summary = this.supportService.setDialogResolution(dialogId, resolved, user);
+      return this.mapSupportDialogToLegacy(summary);
+    }
   }
 
   private async listCompatibleMessages(

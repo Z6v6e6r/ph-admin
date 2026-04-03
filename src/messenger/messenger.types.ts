@@ -37,6 +37,9 @@ export interface ChatThread {
   subject?: string;
   assignedSupportId?: string;
   status: ThreadStatus;
+  isResolved?: boolean;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
   lastMessageAt?: string;
   lastRankingMessageAt?: string;
   lastStaffReadAt?: string;
