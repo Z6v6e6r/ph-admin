@@ -129,6 +129,52 @@
     return normalized.length > 1 ? label + ' (+' + String(normalized.length - 1) + ')' : label;
   }
 
+  function createRichTextFragment(value) {
+    var fragment = document.createDocumentFragment();
+    var source = String(value || '');
+    var pattern = /(\*\*[^*]+\*\*|\*[^*\n]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+    var lastIndex = 0;
+    var match;
+
+    while ((match = pattern.exec(source)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(source.slice(lastIndex, match.index)));
+      }
+
+      var token = match[0];
+      if (token.indexOf('**') === 0 && token.lastIndexOf('**') === token.length - 2) {
+        var strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        fragment.appendChild(strong);
+      } else if (token.indexOf('*') === 0 && token.lastIndexOf('*') === token.length - 1) {
+        var em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        fragment.appendChild(em);
+      } else {
+        var label = token.replace(/^\[/, '').replace(/\]\(https?:\/\/[^)\s]+\)$/, '');
+        var hrefMatch = token.match(/\]\((https?:\/\/[^)\s]+)\)$/);
+        var link = document.createElement('a');
+        link.href = hrefMatch && hrefMatch[1] ? hrefMatch[1] : '#';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = label || link.href;
+        fragment.appendChild(link);
+      }
+
+      lastIndex = pattern.lastIndex;
+    }
+
+    if (lastIndex < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(lastIndex)));
+    }
+
+    return fragment;
+  }
+
+  function appendRichTextContent(target, text) {
+    target.appendChild(createRichTextFragment(text));
+  }
+
   function getMessageAttachmentsTotalSize(attachments) {
     return normalizeMessageAttachments(attachments).reduce(function (sum, attachment) {
       return sum + Math.max(0, Number(attachment.size || 0));
@@ -284,6 +330,7 @@
       '.phab-select,.phab-input{width:100%;min-width:0;box-sizing:border-box;border:1px solid #c6d3cd;border-radius:9px;padding:9px 10px;font:500 13px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
       '.phab-messages{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:12px 12px 8px;background:#fff}' +
       '.phab-msg{max-width:82%;margin:0 0 8px;padding:8px 10px;border-radius:10px;font:500 13px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;white-space:pre-wrap;word-break:break-word}' +
+      '.phab-msg-text a{color:inherit;font-weight:700;text-decoration:underline;text-underline-offset:2px}' +
       '.phab-msg-client{margin-left:auto;background:#106f52;color:#fff;border-bottom-right-radius:4px}' +
       '.phab-msg-staff{margin-right:auto;background:#eef4f1;color:#1c342d;border-bottom-left-radius:4px}' +
       '.phab-msg-attachments{display:grid;gap:8px;margin-bottom:8px}' +
@@ -973,8 +1020,11 @@
         }
 
         var text = document.createElement('div');
-        text.textContent =
-          String(message.text || '').trim() || formatAttachmentPreview(attachments);
+        text.className = 'phab-msg-text';
+        appendRichTextContent(
+          text,
+          String(message.text || '').trim() || formatAttachmentPreview(attachments)
+        );
         item.appendChild(text);
 
         var meta = document.createElement('span');

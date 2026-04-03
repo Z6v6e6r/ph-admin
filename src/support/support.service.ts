@@ -1830,7 +1830,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       createdAt,
       senderId: 'system',
       senderRole: 'SYSTEM',
-      senderName: 'Система · Автоответ',
+      senderName: this.buildQuickReplyAutoResponseSenderName(rule.title),
       stationId: dialog.stationId,
       stationName: dialog.stationName,
       meta: {
@@ -2589,6 +2589,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return String(message.senderName ?? '')
       .toLowerCase()
       .includes('автоответ');
+  }
+
+  private buildQuickReplyAutoResponseSenderName(ruleTitle?: string): string {
+    const normalizedTitle = String(ruleTitle ?? '').trim();
+    return normalizedTitle
+      ? `Система · Автоответ · ${normalizedTitle}`
+      : 'Система · Автоответ';
   }
 
   private formatDialogPreview(message?: SupportMessage): string | undefined {

@@ -1654,6 +1654,13 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       .includes('автоответ');
   }
 
+  private buildQuickReplyAutoResponseSenderName(ruleTitle?: string): string {
+    const normalizedTitle = String(ruleTitle ?? '').trim();
+    return normalizedTitle
+      ? `Система · Автоответ · ${normalizedTitle}`
+      : 'Система · Автоответ';
+  }
+
   private resolveMessagesLimit(rawLimit?: number): number {
     if (!Number.isFinite(rawLimit) || Number(rawLimit) <= 0) {
       return 100;
@@ -1880,7 +1887,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       senderId: 'system',
       senderRole: Role.SUPPORT,
       senderRoleRaw: 'SYSTEM',
-      senderName: 'Система · Автоответ',
+      senderName: this.buildQuickReplyAutoResponseSenderName(rule.title),
       origin: MessageOrigin.HUMAN,
       direction: 'SYSTEM',
       text: rule.responseText,
@@ -1951,7 +1958,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
         senderId: 'system',
         senderRole: Role.SUPPORT,
         senderRoleRaw: 'SYSTEM',
-        senderName: 'Система · Автоответ',
+        senderName: this.buildQuickReplyAutoResponseSenderName(rule.title),
         origin: MessageOrigin.HUMAN,
         direction: 'SYSTEM',
         text: rule.responseText,
