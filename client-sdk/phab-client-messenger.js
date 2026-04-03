@@ -298,7 +298,7 @@
       '.phab-file-hidden{display:none}' +
       '.phab-send{border:none;border-radius:9px;padding:0 14px;background:#116149;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer}' +
       '.phab-hint{padding:8px 12px;color:#4b5e58;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
-      '.phab-body-lock{overflow:hidden!important;touch-action:none!important}' +
+      '.phab-body-lock{overflow:hidden!important;overscroll-behavior:none!important;touch-action:none!important}' +
       '.phab-promo-intro{display:none}' +
       '.phab-launcher-promo{padding:14px 24px;background:linear-gradient(90deg,#ef7683 0%,#67d0e6 100%);font:700 15px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 14px 34px rgba(82,112,132,.28)}' +
       '.phab-panel-promo{width:390px;max-width:calc(100vw - 16px);height:min(640px,calc(100dvh - 96px));max-height:calc(100dvh - 96px);border:1px solid rgba(255,255,255,.9);border-radius:28px;background:linear-gradient(180deg,#fff8f4 0%,#f8f0ed 46%,#f3f8fb 100%);overflow:hidden;box-shadow:0 24px 70px rgba(79,88,113,.24)}' +
@@ -607,6 +607,8 @@
     var mobileViewportQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(max-width: 640px)')
       : null;
+    var visualViewportTarget = window.visualViewport || null;
+    var bodyScrollLockState = null;
 
     function setStatus(text) {
       dom.status.textContent = text;
@@ -627,15 +629,135 @@
       return Number(window.innerWidth || 0) <= 640;
     }
 
+    function resetPanelViewport() {
+      dom.panel.style.top = '';
+      dom.panel.style.bottom = '';
+      dom.panel.style.height = '';
+      dom.panel.style.maxHeight = '';
+    }
+
+    function syncPanelViewport() {
+      if (!promoMode || !isMobileViewport() || !state.open) {
+        resetPanelViewport();
+        return;
+      }
+
+      if (!visualViewportTarget) {
+        return;
+      }
+
+      var viewportHeight = Math.max(320, Math.round(Number(visualViewportTarget.height || 0)));
+      var offsetTop = Math.max(0, Math.round(Number(visualViewportTarget.offsetTop || 0)));
+      if (!viewportHeight) {
+        resetPanelViewport();
+        return;
+      }
+
+      dom.panel.style.top = offsetTop + 'px';
+      dom.panel.style.bottom = 'auto';
+      dom.panel.style.height = viewportHeight + 'px';
+      dom.panel.style.maxHeight = viewportHeight + 'px';
+    }
+
+    function lockBodyScroll() {
+      if (bodyScrollLockState || !document.body || !document.body.style) {
+        return;
+      }
+
+      var root = document.documentElement;
+      var bodyStyle = document.body.style;
+      var rootStyle = root && root.style ? root.style : null;
+      var scrollY = Math.max(
+        0,
+        Math.round(
+          Number(
+            window.scrollY ||
+              window.pageYOffset ||
+              (root ? root.scrollTop : 0) ||
+              document.body.scrollTop ||
+              0
+          )
+        )
+      );
+
+      bodyScrollLockState = {
+        scrollY: scrollY,
+        body: {
+          position: bodyStyle.position,
+          top: bodyStyle.top,
+          left: bodyStyle.left,
+          right: bodyStyle.right,
+          width: bodyStyle.width,
+          overflow: bodyStyle.overflow,
+          touchAction: bodyStyle.touchAction
+        },
+        root: rootStyle
+          ? {
+              overflow: rootStyle.overflow,
+              overscrollBehavior: rootStyle.overscrollBehavior
+            }
+          : null
+      };
+
+      document.body.classList.add('phab-body-lock');
+      bodyStyle.position = 'fixed';
+      bodyStyle.top = '-' + scrollY + 'px';
+      bodyStyle.left = '0';
+      bodyStyle.right = '0';
+      bodyStyle.width = '100%';
+      bodyStyle.overflow = 'hidden';
+      bodyStyle.touchAction = 'none';
+      if (rootStyle) {
+        rootStyle.overflow = 'hidden';
+        rootStyle.overscrollBehavior = 'none';
+      }
+    }
+
+    function unlockBodyScroll() {
+      if (!document.body || !document.body.style) {
+        bodyScrollLockState = null;
+        return;
+      }
+
+      document.body.classList.remove('phab-body-lock');
+
+      if (!bodyScrollLockState) {
+        return;
+      }
+
+      var bodyStyle = document.body.style;
+      var root = document.documentElement;
+      var rootStyle = root && root.style ? root.style : null;
+      var restoreScrollY = Math.max(0, Number(bodyScrollLockState.scrollY || 0));
+
+      bodyStyle.position = bodyScrollLockState.body.position;
+      bodyStyle.top = bodyScrollLockState.body.top;
+      bodyStyle.left = bodyScrollLockState.body.left;
+      bodyStyle.right = bodyScrollLockState.body.right;
+      bodyStyle.width = bodyScrollLockState.body.width;
+      bodyStyle.overflow = bodyScrollLockState.body.overflow;
+      bodyStyle.touchAction = bodyScrollLockState.body.touchAction;
+
+      if (rootStyle && bodyScrollLockState.root) {
+        rootStyle.overflow = bodyScrollLockState.root.overflow;
+        rootStyle.overscrollBehavior = bodyScrollLockState.root.overscrollBehavior;
+      }
+
+      bodyScrollLockState = null;
+      window.scrollTo(0, restoreScrollY);
+    }
+
     function syncBodyLock() {
       if (!promoMode || !document.body || !document.body.classList) {
+        syncPanelViewport();
         return;
       }
       if (state.open && isMobileViewport()) {
-        document.body.classList.add('phab-body-lock');
+        lockBodyScroll();
       } else {
-        document.body.classList.remove('phab-body-lock');
+        unlockBodyScroll();
       }
+      syncPanelViewport();
     }
 
     function setBadge(count) {
@@ -1303,6 +1425,16 @@
         }
       });
 
+      dom.input.addEventListener('focus', function () {
+        window.setTimeout(syncBodyLock, 50);
+        window.setTimeout(syncBodyLock, 250);
+      });
+
+      dom.input.addEventListener('blur', function () {
+        window.setTimeout(syncBodyLock, 50);
+        window.setTimeout(syncBodyLock, 250);
+      });
+
       dom.stationSelect.addEventListener('change', function () {
         if (shouldHideStationSelect()) {
           return;
@@ -1331,6 +1463,10 @@
 
       window.addEventListener('resize', syncBodyLock);
       window.addEventListener('orientationchange', syncBodyLock);
+      if (visualViewportTarget) {
+        visualViewportTarget.addEventListener('resize', syncBodyLock);
+        visualViewportTarget.addEventListener('scroll', syncBodyLock);
+      }
       syncBodyLock();
     }
 
@@ -1342,6 +1478,10 @@
       }
       window.removeEventListener('resize', syncBodyLock);
       window.removeEventListener('orientationchange', syncBodyLock);
+      if (visualViewportTarget) {
+        visualViewportTarget.removeEventListener('resize', syncBodyLock);
+        visualViewportTarget.removeEventListener('scroll', syncBodyLock);
+      }
       dom.launcher.remove();
       dom.panel.remove();
       syncBodyLock();
