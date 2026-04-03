@@ -20,7 +20,8 @@
     'MAX_BOT',
     'MAX_ACADEMY_BOT',
     'LK_WEB_MESSENGER',
-    'LK_ACADEMY_WEB_MESSENGER'
+    'LK_ACADEMY_WEB_MESSENGER',
+    'PROMO_WEB_MESSENGER'
   ];
   var CONNECTOR_CONFIG_PRESETS = {
     MAX_BOT: {
@@ -119,6 +120,30 @@
         resolveStationAliasByName: true
       }
     },
+    PROMO_WEB_MESSENGER: {
+      label: 'Promo Web Messenger',
+      description: 'Диалоги и сообщения с сайта/лендинга PROMO',
+      fields: [
+        'inboundEnabled: включить прием входящих из WEB',
+        'widgetEnabled: разрешить web-виджет',
+        'ingestPath: ожидаемый путь входящих событий',
+        'sourceTag: тег источника в metadata',
+        'syncFromMongoEnabled: подтягивать внешние записи из Mongo',
+        'syncIntervalMs: частота синхронизации (мс)',
+        'mapAuthorizedAsVerified: AUTHORIZED => VERIFIED',
+        'resolveStationAliasByName: добавлять alias станции promo'
+      ],
+      template: {
+        inboundEnabled: true,
+        widgetEnabled: true,
+        ingestPath: '/promo/support/dialogs/events',
+        sourceTag: 'promo_support_widget',
+        syncFromMongoEnabled: true,
+        syncIntervalMs: 5000,
+        mapAuthorizedAsVerified: true,
+        resolveStationAliasByName: true
+      }
+    },
     TG_BOT: {
       label: 'Telegram Bot',
       description: 'Базовый preset TG',
@@ -135,6 +160,7 @@
     'MAX_ACADEMY_BOT',
     'LK_WEB_MESSENGER',
     'LK_ACADEMY_WEB_MESSENGER',
+    'PROMO_WEB_MESSENGER',
     'EMAIL',
     'PHONE_CALL',
     'BITRIX'
@@ -154,6 +180,9 @@
   var MOBILE_CHAT_BREAKPOINT_PX = 767;
   var COMMUNITY_FEED_PREVIEW_LIMIT = 10;
   var COMMUNITY_CHAT_PREVIEW_LIMIT = 20;
+  var MAX_MESSAGE_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
+  var MAX_MESSAGE_ATTACHMENT_SIZE_BYTES = 4 * 1024 * 1024;
+  var MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024;
   var DEFAULT_QUICK_REPLY_OPTIONS = [
     { label: 'Сертификат', text: 'Сертификат' },
     { label: 'Оплата', text: 'Оплата' },
@@ -1547,24 +1576,26 @@
       }
       .phab-admin-community-overview-grid{
         display:grid;
-        grid-template-columns:repeat(3,minmax(0,1fr));
-        gap:10px;
+        grid-template-columns:repeat(6,minmax(0,1fr));
+        gap:6px;
       }
       .phab-admin-community-overview-card{
-        padding:12px;
-        border-radius:16px;
+        padding:7px 8px;
+        border-radius:12px;
         background:linear-gradient(180deg,rgba(247,243,255,.98),rgba(255,255,255,.96));
         border:1px solid rgba(51,0,32,.08);
       }
       .phab-admin-community-overview-card strong{
         display:block;
-        font-size:22px;
+        font-size:16px;
+        line-height:1;
         color:var(--cup-wine);
       }
       .phab-admin-community-overview-card span{
         display:block;
-        margin-top:6px;
-        font-size:11px;
+        margin-top:4px;
+        font-size:10px;
+        line-height:1.2;
         color:rgba(51,0,32,.64);
       }
       .phab-admin-community-form-grid{
@@ -1595,7 +1626,7 @@
         flex-wrap:wrap;
         gap:8px;
       }
-      .phab-admin-community-members-list{
+      .phab-admin-settings-list.phab-admin-community-members-list{
         flex:1;
         min-height:0;
         max-height:none;
@@ -1634,7 +1665,7 @@
       }
       .phab-admin-community-lk-head{
         display:grid;
-        grid-template-columns:60px minmax(0,1fr) auto;
+        grid-template-columns:60px minmax(0,1fr);
         gap:12px;
         align-items:center;
         padding:4px 2px 14px;
@@ -1666,41 +1697,65 @@
         font-size:12px;
         color:rgba(51,0,32,.62);
       }
-      .phab-admin-community-lk-head-actions{
-        display:flex;
-        gap:8px;
-      }
-      .phab-admin-community-lk-circle-btn{
-        width:40px;
-        height:40px;
-        border:none;
-        border-radius:999px;
-        cursor:pointer;
-        background:rgba(255,255,255,.96);
-        box-shadow:0 8px 20px rgba(51,0,32,.08);
-        color:rgba(51,0,32,.6);
-        font-size:18px;
-        font-weight:800;
-      }
       .phab-admin-community-lk-segments{
         display:flex;
         flex-wrap:wrap;
-        gap:8px;
+        gap:6px;
         margin:-2px 0 14px;
       }
       .phab-admin-community-lk-segment{
+        display:inline-flex;
+        align-items:center;
+        gap:0;
+        min-width:40px;
+        min-height:40px;
         border:none;
         cursor:pointer;
         border-radius:999px;
-        padding:8px 14px;
+        padding:8px;
         background:rgba(246,241,255,.96);
         color:rgba(51,0,32,.76);
         font-size:12px;
         font-weight:900;
+        line-height:1;
+        transition:
+          background .2s ease,
+          color .2s ease,
+          box-shadow .2s ease,
+          padding .2s ease,
+          gap .2s ease;
       }
       .phab-admin-community-lk-segment-active{
+        gap:8px;
+        padding:8px 14px;
         background:linear-gradient(90deg,rgba(37,31,44,.96),rgba(30,28,38,.92));
         color:#fff;
+        box-shadow:0 10px 20px rgba(51,0,32,.12);
+      }
+      .phab-admin-community-lk-segment-icon{
+        width:18px;
+        height:18px;
+        flex:0 0 18px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+      }
+      .phab-admin-community-lk-segment-icon svg{
+        width:18px;
+        height:18px;
+        display:block;
+        fill:none;
+        stroke:currentColor;
+        stroke-width:2;
+        stroke-linecap:round;
+        stroke-linejoin:round;
+      }
+      .phab-admin-community-lk-segment-label{
+        display:none;
+        white-space:nowrap;
+      }
+      .phab-admin-community-lk-segment-active .phab-admin-community-lk-segment-label{
+        display:inline;
       }
       .phab-admin-community-preview-tabs{
         display:flex;
@@ -2156,6 +2211,24 @@
       .phab-admin-message-text{
         display:block;
       }
+      .phab-admin-message-attachments{
+        display:grid;
+        gap:8px;
+        margin-bottom:8px;
+      }
+      .phab-admin-message-image-link{
+        display:block;
+        border-radius:12px;
+        overflow:hidden;
+        text-decoration:none;
+      }
+      .phab-admin-message-image{
+        display:block;
+        width:min(280px,100%);
+        max-height:320px;
+        object-fit:cover;
+        border-radius:12px;
+      }
       .phab-admin-message-client{
         margin-right:auto;
         background:rgba(182,253,255,.72);
@@ -2228,6 +2301,34 @@
         display:flex;
         gap:8px;
         align-items:center;
+      }
+      .phab-admin-compose-attachments{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-attachment-chip{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        padding:6px 8px;
+        border-radius:999px;
+        border:1px solid rgba(51,0,32,.14);
+        background:rgba(255,255,255,.9);
+        color:var(--cup-wine);
+        font-size:11px;
+        font-weight:700;
+      }
+      .phab-admin-attachment-chip button{
+        border:none;
+        background:transparent;
+        color:inherit;
+        font:inherit;
+        cursor:pointer;
+        padding:0 2px;
+      }
+      .phab-admin-file-input-hidden{
+        display:none;
       }
       .phab-admin-quick-replies{
         display:none;
@@ -2966,7 +3067,7 @@
         .phab-admin-dialog-cabinet{grid-column:auto;grid-row:2}
         .phab-admin-community-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
         .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
-        .phab-admin-community-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-admin-community-overview-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
         .phab-admin-community-form-grid{grid-template-columns:1fr}
         .phab-admin-community-main-head{
           flex-direction:column;
@@ -3186,7 +3287,7 @@
           border-radius:20px;
         }
         .phab-admin-community-lk-head{
-          grid-template-columns:52px minmax(0,1fr) auto;
+          grid-template-columns:52px minmax(0,1fr);
           gap:10px;
           padding:2px 2px 12px;
         }
@@ -3201,15 +3302,24 @@
           margin-top:4px;
           font-size:11px;
         }
-        .phab-admin-community-lk-circle-btn{
-          width:36px;
-          height:36px;
-          font-size:16px;
-        }
         .phab-admin-community-lk-segments,
         .phab-admin-community-preview-tabs{
           gap:6px;
           margin-bottom:10px;
+        }
+        .phab-admin-community-lk-segment{
+          min-width:36px;
+          min-height:36px;
+          padding:7px;
+        }
+        .phab-admin-community-lk-segment-active{
+          padding:7px 11px;
+        }
+        .phab-admin-community-lk-segment-icon,
+        .phab-admin-community-lk-segment-icon svg{
+          width:16px;
+          height:16px;
+          flex-basis:16px;
         }
         .phab-admin-community-lk-date-badge{
           flex-basis:48px;
@@ -3311,10 +3421,6 @@
         }
         .phab-admin-community-lk-head{
           grid-template-columns:52px minmax(0,1fr);
-        }
-        .phab-admin-community-lk-head-actions{
-          grid-column:1 / -1;
-          justify-content:flex-end;
         }
         .phab-admin-mobile-tab-select{
           max-width:140px;
@@ -3583,7 +3689,7 @@
         .phab-admin-detail-row{grid-template-columns:1fr}
         .phab-admin-community-toolbar{grid-template-columns:1fr}
         .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
-        .phab-admin-community-overview-grid{grid-template-columns:1fr}
+        .phab-admin-community-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
         .phab-admin-community-about-grid{grid-template-columns:1fr}
         .phab-admin-community-main-body,
         .phab-admin-community-preview-body{padding:10px}
@@ -3744,14 +3850,16 @@
           'GET'
         );
       },
-      sendMessage: function (dialogId, text) {
+      sendMessage: function (dialogId, text, attachments) {
         return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
-          text: text
+          text: text,
+          attachments: normalizeMessageAttachments(attachments)
         });
       },
-      sendLegacyMessage: function (threadId, text) {
+      sendLegacyMessage: function (threadId, text, attachments) {
         return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'POST', {
-          text: text
+          text: text,
+          attachments: normalizeMessageAttachments(attachments)
         });
       },
       setLegacyDialogResolution: function (threadId, resolved) {
@@ -4532,9 +4640,26 @@
     quickReplies.className = 'phab-admin-quick-replies';
     compose.appendChild(quickReplies);
 
+    var pendingAttachments = document.createElement('div');
+    pendingAttachments.className = 'phab-admin-compose-attachments';
+    compose.appendChild(pendingAttachments);
+
+    var attachmentInput = document.createElement('input');
+    attachmentInput.className = 'phab-admin-file-input-hidden';
+    attachmentInput.type = 'file';
+    attachmentInput.accept = 'image/*';
+    attachmentInput.multiple = true;
+    compose.appendChild(attachmentInput);
+
     var composeRow = document.createElement('div');
     composeRow.className = 'phab-admin-compose-row';
     compose.appendChild(composeRow);
+
+    var attachBtn = document.createElement('button');
+    attachBtn.className = 'phab-admin-btn-secondary';
+    attachBtn.type = 'button';
+    attachBtn.textContent = 'Фото';
+    composeRow.appendChild(attachBtn);
 
     var input = document.createElement('input');
     input.className = 'phab-admin-input';
@@ -5178,7 +5303,7 @@
 
     var accessRoutesInput = document.createElement('input');
     accessRoutesInput.className = 'phab-admin-settings-input';
-    accessRoutesInput.placeholder = 'TG_BOT, MAX_BOT, MAX_ACADEMY_BOT';
+    accessRoutesInput.placeholder = 'TG_BOT, MAX_BOT, MAX_ACADEMY_BOT, PROMO_WEB_MESSENGER';
     accessForm.appendChild(accessRoutesInput);
 
     var accessReadWrap = document.createElement('label');
@@ -5604,6 +5729,9 @@
       dialogTags: dialogTags,
       messagesBox: messagesBox,
       quickReplies: quickReplies,
+      pendingAttachments: pendingAttachments,
+      attachmentInput: attachmentInput,
+      attachBtn: attachBtn,
       input: input,
       sendBtn: sendBtn,
       mobileFiltersSheet: mobileFiltersSheet,
@@ -5905,6 +6033,7 @@
       messagesLoading: false,
       messagesLoadingThreadId: null,
       messagesCacheByThreadId: Object.create(null),
+      pendingMessageAttachments: [],
       messagesFetchPromisesByThreadId: Object.create(null),
       vivaLookupPromisesByDialogId: Object.create(null),
       games: [],
@@ -6050,6 +6179,67 @@
       dom.status.className = isError
         ? 'phab-admin-status phab-admin-status-error'
         : 'phab-admin-status';
+    }
+
+    function resetPendingMessageAttachments() {
+      state.pendingMessageAttachments = [];
+      dom.attachmentInput.value = '';
+      renderPendingMessageAttachments();
+    }
+
+    function removePendingMessageAttachment(index) {
+      state.pendingMessageAttachments = state.pendingMessageAttachments.filter(function (_item, itemIndex) {
+        return itemIndex !== index;
+      });
+      renderPendingMessageAttachments();
+    }
+
+    function renderPendingMessageAttachments() {
+      clearNode(dom.pendingAttachments);
+      normalizeMessageAttachments(state.pendingMessageAttachments).forEach(function (attachment, index) {
+        var chip = document.createElement('span');
+        chip.className = 'phab-admin-attachment-chip';
+
+        var label = document.createElement('span');
+        label.textContent =
+          (attachment.name || 'Фото') +
+          (attachment.size ? ' · ' + formatFileSize(attachment.size) : '');
+        chip.appendChild(label);
+
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.textContent = '×';
+        removeBtn.setAttribute('aria-label', 'Убрать фото');
+        removeBtn.addEventListener('click', function () {
+          removePendingMessageAttachment(index);
+        });
+        chip.appendChild(removeBtn);
+
+        dom.pendingAttachments.appendChild(chip);
+      });
+    }
+
+    async function appendPendingMessageAttachmentsFromFiles(files) {
+      var fileList = Array.prototype.slice.call(files || []);
+      if (fileList.length === 0) {
+        return;
+      }
+
+      var existing = normalizeMessageAttachments(state.pendingMessageAttachments);
+      for (var i = 0; i < fileList.length; i += 1) {
+        if (existing.length >= 10) {
+          break;
+        }
+        var attachment = await compressImageFileAttachment(fileList[i]);
+        var nextTotalSize = getMessageAttachmentsTotalSize(existing) + Math.max(0, Number(attachment.size || 0));
+        if (nextTotalSize > MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) {
+          throw new Error('Слишком большой общий объем фото в сообщении. Оставьте до ' + formatFileSize(MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) + '.');
+        }
+        existing.push(attachment);
+      }
+      state.pendingMessageAttachments = existing;
+      dom.attachmentInput.value = '';
+      renderPendingMessageAttachments();
     }
 
     function populateMobileTabSelect() {
@@ -6368,6 +6558,9 @@
         return;
       }
       var wasSelected = state.selectedThreadId === dialogId;
+      if (!wasSelected) {
+        resetPendingMessageAttachments();
+      }
       state.selectedThreadId = dialogId;
       if (isMobileChatMode()) {
         state.mobileConversationOpen = true;
@@ -6414,7 +6607,11 @@
           brand: brand
         };
       }
-      if (connector === 'LK_WEB_MESSENGER' || connector === 'LK_ACADEMY_WEB_MESSENGER') {
+      if (
+        connector === 'LK_WEB_MESSENGER' ||
+        connector === 'LK_ACADEMY_WEB_MESSENGER' ||
+        connector === 'PROMO_WEB_MESSENGER'
+      ) {
         return {
           messengerKey: 'web',
           messengerLabel: 'Web',
@@ -6787,6 +6984,136 @@
       }
       var precision = unitIndex === 0 || value >= 10 ? 0 : 1;
       return value.toFixed(precision).replace(/\.0$/, '') + ' ' + units[unitIndex];
+    }
+
+    function normalizeMessageAttachments(value) {
+      return normalizeArray(value)
+        .map(function (item) {
+          var attachment = normalizeObject(item);
+          var type = String(attachment.type || '').trim().toUpperCase();
+          var url = String(attachment.url || '').trim();
+          if (type !== 'IMAGE' || !url) {
+            return null;
+          }
+          return {
+            id: String(attachment.id || 'attachment-' + Math.random().toString(36).slice(2, 10)),
+            type: 'IMAGE',
+            url: url,
+            name: String(attachment.name || '').trim() || undefined,
+            mimeType: String(attachment.mimeType || '').trim() || undefined,
+            size: Number.isFinite(Number(attachment.size))
+              ? Math.max(0, Math.floor(Number(attachment.size)))
+              : undefined
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 10);
+    }
+
+    function formatAttachmentPreview(attachments) {
+      var normalized = normalizeMessageAttachments(attachments);
+      if (normalized.length === 0) {
+        return '';
+      }
+      var first = normalized[0];
+      var label = first.name ? 'Фото: ' + first.name : 'Фото';
+      return normalized.length > 1 ? label + ' (+' + String(normalized.length - 1) + ')' : label;
+    }
+
+    function getMessageAttachmentsTotalSize(attachments) {
+      return normalizeMessageAttachments(attachments).reduce(function (sum, attachment) {
+        return sum + Math.max(0, Number(attachment.size || 0));
+      }, 0);
+    }
+
+    function readImageFileAsDataUrl(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          resolve(String(reader.result || ''));
+        };
+        reader.onerror = function () {
+          reject(new Error('Не удалось прочитать фото'));
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function loadImageFromDataUrl(dataUrl) {
+      return new Promise(function (resolve, reject) {
+        var image = new Image();
+        image.onload = function () {
+          resolve(image);
+        };
+        image.onerror = function () {
+          reject(new Error('Не удалось обработать фото'));
+        };
+        image.src = dataUrl;
+      });
+    }
+
+    async function compressImageFileAttachment(file) {
+      if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) {
+        throw new Error('Можно прикреплять только изображения');
+      }
+
+      if (Number(file.size || 0) > MAX_MESSAGE_SOURCE_IMAGE_BYTES) {
+        throw new Error('Фото "' + String(file.name || 'image') + '" слишком тяжелое. Выберите файл до ' + formatFileSize(MAX_MESSAGE_SOURCE_IMAGE_BYTES) + '.');
+      }
+
+      var originalDataUrl = await readImageFileAsDataUrl(file);
+      var image = await loadImageFromDataUrl(originalDataUrl);
+      var maxSide = 1400;
+      var width = image.naturalWidth || image.width || 0;
+      var height = image.naturalHeight || image.height || 0;
+      if (!width || !height) {
+        if (Number(file.size || 0) > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+          throw new Error('Фото "' + String(file.name || 'image') + '" слишком большое для отправки. Максимум ' + formatFileSize(MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) + '.');
+        }
+        return {
+          id: 'img-' + Math.random().toString(36).slice(2, 10),
+          type: 'IMAGE',
+          url: originalDataUrl,
+          name: String(file.name || 'photo'),
+          mimeType: String(file.type || 'image/jpeg'),
+          size: Number(file.size || 0)
+        };
+      }
+
+      var scale = Math.min(1, maxSide / Math.max(width, height));
+      var targetWidth = Math.max(1, Math.round(width * scale));
+      var targetHeight = Math.max(1, Math.round(height * scale));
+      var canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      var context = canvas.getContext('2d');
+      if (!context) {
+        return {
+          id: 'img-' + Math.random().toString(36).slice(2, 10),
+          type: 'IMAGE',
+          url: originalDataUrl,
+          name: String(file.name || 'photo'),
+          mimeType: String(file.type || 'image/jpeg'),
+          size: Number(file.size || 0)
+        };
+      }
+      context.drawImage(image, 0, 0, targetWidth, targetHeight);
+      var mimeType = String(file.type || '').toLowerCase() === 'image/png'
+        ? 'image/png'
+        : 'image/jpeg';
+      var dataUrl = canvas.toDataURL(mimeType, 0.84);
+      var estimatedSize = Math.round((dataUrl.length * 3) / 4);
+      if (estimatedSize > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+        throw new Error('Фото "' + String(file.name || 'image') + '" слишком большое даже после сжатия. Максимум ' + formatFileSize(MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) + '.');
+      }
+      return {
+        id: 'img-' + Math.random().toString(36).slice(2, 10),
+        type: 'IMAGE',
+        url: dataUrl,
+        name: String(file.name || 'photo'),
+        mimeType: mimeType,
+        size: estimatedSize
+      };
     }
 
     function extractGamePhotos(game) {
@@ -8990,7 +9317,16 @@
 
     function normalizeSupportMessages(messages) {
       return (Array.isArray(messages) ? messages : []).map(function (message) {
-        return Object.assign({ dataSource: 'support' }, message);
+        var attachments = normalizeMessageAttachments(message.attachments);
+        return Object.assign(
+          { dataSource: 'support' },
+          message,
+          {
+            text: String(message.text || '').trim() || formatAttachmentPreview(attachments),
+            attachments: attachments.length > 0 ? attachments : undefined,
+            kind: String(message.kind || '').trim().toUpperCase() || (attachments.length > 0 ? 'MEDIA' : 'TEXT')
+          }
+        );
       });
     }
 
@@ -9001,13 +9337,16 @@
         var direction = String(message.direction || '').toUpperCase();
         var isSystem = direction === 'SYSTEM' || senderRoleRaw === 'SYSTEM';
         var senderName = String(message.senderName || '').trim();
+        var attachments = normalizeMessageAttachments(message.attachments);
+        var text = String(message.text || '').trim() || formatAttachmentPreview(attachments);
         return {
           id: message.id,
           dataSource: 'messenger',
-          text: message.text || '',
+          text: text,
+          attachments: attachments.length > 0 ? attachments : undefined,
           createdAt: message.createdAt,
           connector: '',
-          kind: 'TEXT',
+          kind: String(message.kind || '').trim().toUpperCase() || (attachments.length > 0 ? 'MEDIA' : 'TEXT'),
           direction: isSystem ? 'SYSTEM' : (senderRole === 'CLIENT' ? 'INBOUND' : 'OUTBOUND'),
           senderRole: isSystem ? 'SYSTEM' : senderRole,
           senderRoleRaw: senderRoleRaw,
@@ -9101,6 +9440,7 @@
     function MessageBubble(message) {
       var isSystem = message.direction === 'SYSTEM' || message.senderRole === 'SYSTEM';
       var own = !isSystem && message.direction !== 'INBOUND' && message.senderRole !== 'CLIENT';
+      var attachments = normalizeMessageAttachments(message && message.attachments);
       var div = document.createElement('div');
       div.className =
         'phab-admin-message ' +
@@ -9109,6 +9449,28 @@
           : own
             ? 'phab-admin-message-staff'
             : 'phab-admin-message-client');
+
+      if (attachments.length > 0) {
+        var attachmentsWrap = document.createElement('div');
+        attachmentsWrap.className = 'phab-admin-message-attachments';
+        attachments.forEach(function (attachment) {
+          var link = document.createElement('a');
+          link.className = 'phab-admin-message-image-link';
+          link.href = attachment.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+
+          var image = document.createElement('img');
+          image.className = 'phab-admin-message-image';
+          image.src = attachment.url;
+          image.alt = attachment.name || 'Фото';
+          image.loading = 'lazy';
+          link.appendChild(image);
+
+          attachmentsWrap.appendChild(link);
+        });
+        div.appendChild(attachmentsWrap);
+      }
 
       var text = document.createElement('span');
       text.className = 'phab-admin-message-text';
@@ -9163,8 +9525,10 @@
       if (!state.selectedThreadId) {
         dom.input.disabled = true;
         dom.sendBtn.disabled = true;
+        dom.attachBtn.disabled = true;
         dom.input.placeholder = 'Выберите чат слева...';
         renderQuickReplies(null);
+        resetPendingMessageAttachments();
         var hint = document.createElement('div');
         hint.className = 'phab-admin-empty';
         hint.textContent = 'Выберите чат слева, чтобы открыть переписку';
@@ -9181,6 +9545,7 @@
         var dialogIsActiveForUser = selectedDialog.isActiveForUser !== false;
         dom.input.disabled = !dialogIsActiveForUser;
         dom.sendBtn.disabled = !dialogIsActiveForUser;
+        dom.attachBtn.disabled = !dialogIsActiveForUser;
         dom.input.placeholder = dialogIsActiveForUser
           ? 'Ответ сотрудника...'
           : 'Чат неактивен для вашей станции';
@@ -11323,6 +11688,42 @@
       return 'NEWS';
     }
 
+    function isCommunityMemberJoinFeedEntry(source, title, body) {
+      var record = normalizeObject(source);
+      var normalizedAction = String(
+        pickCommunityRecordText(record, [
+          'actionType',
+          'eventType',
+          'systemType',
+          'notificationType',
+          'activityType',
+          'type',
+          'kind'
+        ]) || ''
+      )
+        .trim()
+        .toUpperCase();
+
+      if (
+        normalizedAction === 'MEMBER_JOINED' ||
+        normalizedAction === 'JOINED_COMMUNITY' ||
+        normalizedAction === 'COMMUNITY_MEMBER_JOINED' ||
+        normalizedAction === 'NEW_MEMBER' ||
+        normalizedAction === 'NEW_PARTICIPANT'
+      ) {
+        return true;
+      }
+
+      var normalizedText = String([title, body].filter(Boolean).join(' ')).toLowerCase();
+      return (
+        normalizedText.indexOf('новый участник') !== -1 ||
+        normalizedText.indexOf('вступил в сообщество') !== -1 ||
+        normalizedText.indexOf('вступила в сообщество') !== -1 ||
+        normalizedText.indexOf('присоединился к сообществу') !== -1 ||
+        normalizedText.indexOf('присоединилась к сообществу') !== -1
+      );
+    }
+
     function normalizeCommunityPreviewParticipants(value) {
       return normalizeArray(value)
         .map(function (item, index) {
@@ -11379,6 +11780,9 @@
         'Публикация сообщества';
       var body =
         pickCommunityRecordsText(sources, ['body', 'text', 'description', 'content']) || '';
+      if (isCommunityMemberJoinFeedEntry(source, title, body)) {
+        kind = 'EVENT';
+      }
       var author =
         pickCommunityRecordsText(sources, ['authorName', 'memberName']) ||
         pickCommunityRecordText(source.author, ['name', 'displayName']) ||
@@ -12316,6 +12720,7 @@
         synthetic.push({
           id: community.id + ':pending',
           synthetic: true,
+          kind: 'EVENT',
           kicker: 'Новый участник',
           title: String(model.pendingMembers[0].name || 'Новая заявка'),
           body: 'Ожидает решения модератора.',
@@ -12708,6 +13113,26 @@
         return 'EVENT';
       }
       return 'NEWS';
+    }
+
+    function getCommunityPreviewFeedSegmentIconMarkup(segmentKey) {
+      var key = String(segmentKey || 'ALL').toUpperCase();
+      if (key === 'GAME') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12h8M12 8v8"/><path d="M7.5 7.5c1.3-.9 2.8-1.5 4.5-1.5s3.2.6 4.5 1.5c1.9 1.4 3.5 4 3.5 7.2 0 1.8-1.1 3.3-2.8 3.3-.9 0-1.7-.4-2.3-1.1l-1.2-1.4H10.3l-1.2 1.4c-.6.7-1.4 1.1-2.3 1.1C5.1 18 4 16.5 4 14.7c0-3.2 1.6-5.8 3.5-7.2Z"/></svg>';
+      }
+      if (key === 'TOURNAMENT') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h8v4c0 2.2-1.8 4-4 4s-4-1.8-4-4V5Z"/><path d="M10 17h4M12 13v4"/><path d="M8 7H5c0 2.6 1.6 4 3.4 4.6M16 7h3c0 2.6-1.6 4-3.4 4.6"/></svg>';
+      }
+      if (key === 'EVENT') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3M17 3v3M5 9h14"/><path d="M6.5 5h11A1.5 1.5 0 0 1 19 6.5v11A1.5 1.5 0 0 1 17.5 19h-11A1.5 1.5 0 0 1 5 17.5v-11A1.5 1.5 0 0 1 6.5 5Z"/><path d="M9 13h3M9 16h5"/></svg>';
+      }
+      if (key === 'NEWS') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h10M7 16h6"/><path d="M6.5 4h11A1.5 1.5 0 0 1 19 5.5v13A1.5 1.5 0 0 1 17.5 20h-11A1.5 1.5 0 0 1 5 18.5v-13A1.5 1.5 0 0 1 6.5 4Z"/></svg>';
+      }
+      if (key === 'AD') {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11v2c0 .8.6 1.4 1.4 1.5L11 15l5 3V6l-5 3-4.6.5C5.6 9.6 5 10.2 5 11Z"/><path d="M9 15.5 10 20"/><path d="M19 10.5v3"/></svg>';
+      }
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h4v4H7V7ZM13 7h4v4h-4V7ZM7 13h4v4H7v-4ZM13 13h4v4h-4v-4Z"/></svg>';
     }
 
     function filterCommunityPreviewFeedPosts(posts) {
@@ -14125,31 +14550,6 @@
         .join(' • ');
       mobileHeadMain.appendChild(mobileSubtitle);
 
-      var mobileActions = document.createElement('div');
-      mobileActions.className = 'phab-admin-community-lk-head-actions';
-      mobileHead.appendChild(mobileActions);
-
-      var moreBtn = document.createElement('button');
-      moreBtn.type = 'button';
-      moreBtn.className = 'phab-admin-community-lk-circle-btn';
-      moreBtn.textContent = '⋯';
-      moreBtn.addEventListener('click', function () {
-        state.communityPreviewTab = 'about';
-        renderCommunityDetails();
-      });
-      mobileActions.appendChild(moreBtn);
-
-      var resetBtn = document.createElement('button');
-      resetBtn.type = 'button';
-      resetBtn.className = 'phab-admin-community-lk-circle-btn';
-      resetBtn.textContent = '×';
-      resetBtn.addEventListener('click', function () {
-        state.communityPreviewFeedSegment = 'ALL';
-        state.communityPreviewTab = 'feed';
-        renderCommunityDetails();
-      });
-      mobileActions.appendChild(resetBtn);
-
       var previewTabs = document.createElement('div');
       previewTabs.className = 'phab-admin-community-preview-tabs';
       shell.appendChild(previewTabs);
@@ -14191,7 +14591,19 @@
             (String(state.communityPreviewFeedSegment || 'ALL') === item.key
               ? ' phab-admin-community-lk-segment-active'
               : '');
-          button.textContent = item.label;
+          button.setAttribute('aria-label', item.label);
+          button.title = item.label;
+
+          var iconNode = document.createElement('span');
+          iconNode.className = 'phab-admin-community-lk-segment-icon';
+          iconNode.innerHTML = getCommunityPreviewFeedSegmentIconMarkup(item.key);
+          button.appendChild(iconNode);
+
+          var labelNode = document.createElement('span');
+          labelNode.className = 'phab-admin-community-lk-segment-label';
+          labelNode.textContent = item.label;
+          button.appendChild(labelNode);
+
           button.addEventListener('click', function () {
             state.communityPreviewFeedSegment = item.key;
             renderCommunityDetails();
@@ -15437,19 +15849,24 @@
 
     async function sendMessage() {
       var text = String(dom.input.value || '').trim();
-      if (!text || !state.selectedThreadId) {
+      var attachments = normalizeMessageAttachments(state.pendingMessageAttachments);
+      if ((!text && attachments.length === 0) || !state.selectedThreadId) {
         return;
       }
 
       dom.sendBtn.disabled = true;
+      dom.attachBtn.disabled = true;
       try {
-        await api.sendLegacyMessage(state.selectedThreadId, text);
+        await api.sendLegacyMessage(state.selectedThreadId, text, attachments);
         dom.input.value = '';
+        resetPendingMessageAttachments();
         await loadDialogs();
         await loadMessages({ forceRender: true, forceScrollBottom: true });
         setStatus('Сообщение отправлено', false);
       } finally {
         dom.sendBtn.disabled = false;
+        var selectedDialog = getSelectedDialog();
+        dom.attachBtn.disabled = selectedDialog ? selectedDialog.isActiveForUser === false : !state.selectedThreadId;
       }
     }
 
@@ -15852,6 +16269,15 @@
       });
       dom.sendBtn.addEventListener('click', function () {
         sendMessage().catch(handleError);
+      });
+      dom.attachBtn.addEventListener('click', function () {
+        if (!state.selectedThreadId || dom.attachBtn.disabled) {
+          return;
+        }
+        dom.attachmentInput.click();
+      });
+      dom.attachmentInput.addEventListener('change', function () {
+        appendPendingMessageAttachmentsFromFiles(dom.attachmentInput.files).catch(handleError);
       });
       dom.input.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
