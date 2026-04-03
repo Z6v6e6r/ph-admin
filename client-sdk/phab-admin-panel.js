@@ -1417,38 +1417,56 @@
       }
       .phab-admin-community-main-tags{
         display:flex;
-        flex-wrap:wrap;
-        gap:6px;
-        margin-top:10px;
+        flex-wrap:nowrap;
+        gap:4px;
+        margin-top:8px;
+        max-width:100%;
+        min-width:0;
+        overflow-x:auto;
+        overflow-y:hidden;
+        scrollbar-width:none;
+        -webkit-overflow-scrolling:touch;
+      }
+      .phab-admin-community-main-tags::-webkit-scrollbar{
+        display:none;
+      }
+      .phab-admin-community-main-tags > *{
+        flex:0 0 auto;
+        white-space:nowrap;
       }
       .phab-admin-community-summary{
         display:grid;
-        grid-template-columns:repeat(4,minmax(0,1fr));
-        gap:10px;
-        padding:12px 14px;
+        grid-template-columns:repeat(8,minmax(0,1fr));
+        gap:6px;
+        padding:8px 12px;
         border-bottom:1px solid rgba(51,0,32,.08);
         background:rgba(255,255,255,.76);
       }
       .phab-admin-community-stat{
         min-width:0;
-        padding:11px 12px;
-        border-radius:16px;
+        padding:5px 7px;
+        border-radius:10px;
         border:1px solid rgba(51,0,32,.1);
         background:rgba(255,255,255,.96);
-        box-shadow:0 8px 18px rgba(51,0,32,.05);
+        box-shadow:0 4px 10px rgba(51,0,32,.04);
       }
       .phab-admin-community-stat-label{
         display:block;
-        font-size:10px;
+        font-size:8px;
         font-weight:800;
+        line-height:1;
         letter-spacing:.06em;
         text-transform:uppercase;
         color:rgba(51,0,32,.58);
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
       .phab-admin-community-stat-value{
         display:block;
-        margin-top:7px;
-        font-size:20px;
+        margin-top:3px;
+        font-size:14px;
+        line-height:1;
         font-weight:800;
         color:var(--cup-wine);
       }
@@ -1523,6 +1541,9 @@
         margin-top:4px;
         font-size:11px;
         color:rgba(51,0,32,.58);
+      }
+      .phab-admin-community-section-subtitle:first-child{
+        margin-top:0;
       }
       .phab-admin-community-overview-grid{
         display:grid;
@@ -3119,20 +3140,21 @@
           max-width:260px;
         }
         .phab-admin-community-main-tags{
-          gap:5px;
-          margin-top:8px;
+          gap:4px;
+          margin-top:6px;
         }
         .phab-admin-community-summary{
-          gap:8px;
-          padding:10px 12px;
+          grid-template-columns:repeat(8,minmax(0,1fr));
+          gap:6px;
+          padding:8px 10px;
         }
         .phab-admin-community-stat{
-          padding:9px 10px;
-          border-radius:14px;
+          padding:5px 6px;
+          border-radius:10px;
         }
         .phab-admin-community-stat-value{
-          margin-top:5px;
-          font-size:18px;
+          margin-top:2px;
+          font-size:13px;
         }
         .phab-admin-community-tabs{
           gap:6px;
@@ -3560,7 +3582,7 @@
         .phab-admin-modal-card{max-height:calc(100dvh - 16px)}
         .phab-admin-detail-row{grid-template-columns:1fr}
         .phab-admin-community-toolbar{grid-template-columns:1fr}
-        .phab-admin-community-summary{grid-template-columns:1fr}
+        .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
         .phab-admin-community-overview-grid{grid-template-columns:1fr}
         .phab-admin-community-about-grid{grid-template-columns:1fr}
         .phab-admin-community-main-body,
@@ -12163,27 +12185,48 @@
       return card;
     }
 
+    function isCommunitySectionTitleDuplicated(title) {
+      var activeLabelByTab = {
+        overview: 'Обзор',
+        settings: 'Настройки',
+        participants: 'Участники',
+        applications: 'Заявки',
+        content: 'Контент',
+        chat: 'Чат',
+        rating: 'Рейтинг'
+      };
+      return String(title || '') === String(activeLabelByTab[state.communityCenterTab] || '');
+    }
+
     function createCommunitySectionCard(title, subtitle) {
       var card = document.createElement('section');
       card.className = 'phab-admin-community-section-card';
 
-      var head = document.createElement('div');
-      head.className = 'phab-admin-community-section-head';
-      card.appendChild(head);
+      var head = null;
+      var shouldRenderTitle = !isCommunitySectionTitleDuplicated(title);
+      var shouldRenderSubtitle = Boolean(subtitle);
 
-      var textWrap = document.createElement('div');
-      head.appendChild(textWrap);
+      if (shouldRenderTitle || shouldRenderSubtitle) {
+        head = document.createElement('div');
+        head.className = 'phab-admin-community-section-head';
+        card.appendChild(head);
 
-      var titleNode = document.createElement('div');
-      titleNode.className = 'phab-admin-community-section-title';
-      titleNode.textContent = title;
-      textWrap.appendChild(titleNode);
+        var textWrap = document.createElement('div');
+        head.appendChild(textWrap);
 
-      if (subtitle) {
-        var subtitleNode = document.createElement('div');
-        subtitleNode.className = 'phab-admin-community-section-subtitle';
-        subtitleNode.textContent = subtitle;
-        textWrap.appendChild(subtitleNode);
+        if (shouldRenderTitle) {
+          var titleNode = document.createElement('div');
+          titleNode.className = 'phab-admin-community-section-title';
+          titleNode.textContent = title;
+          textWrap.appendChild(titleNode);
+        }
+
+        if (shouldRenderSubtitle) {
+          var subtitleNode = document.createElement('div');
+          subtitleNode.className = 'phab-admin-community-section-subtitle';
+          subtitleNode.textContent = subtitle;
+          textWrap.appendChild(subtitleNode);
+        }
       }
 
       var body = document.createElement('div');
@@ -14397,9 +14440,6 @@
       if (community.moderationUrl) {
         externalLinks.push({ href: community.moderationUrl, label: 'Открыть модерацию' });
       }
-      if (community.publicUrl) {
-        externalLinks.push({ href: community.publicUrl, label: 'Публичная страница' });
-      }
       if (community.inviteLink) {
         externalLinks.push({ href: community.inviteLink, label: 'Инвайт' });
       }
@@ -14607,9 +14647,14 @@
         var activityRow = document.createElement('div');
         activityRow.className = 'phab-admin-community-activity-row';
         model.activityTypes.forEach(function (type) {
+          if (String(type || '').trim() === 'Чат') {
+            return;
+          }
           activityRow.appendChild(createCommunityPill(type, 'phab-admin-community-mini-chip'));
         });
-        selectBtn.appendChild(activityRow);
+        if (activityRow.childNodes.length > 0) {
+          selectBtn.appendChild(activityRow);
+        }
 
         var signalRow = document.createElement('div');
         signalRow.className = 'phab-admin-community-signal-row';
