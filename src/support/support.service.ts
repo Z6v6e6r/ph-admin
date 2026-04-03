@@ -788,7 +788,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const source = this.messages.get(dialog.id) ?? [];
     const regularMessages = source
       .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
-      .filter((message) => !this.isSystemDialogMessage(message))
+      .filter(
+        (message) =>
+          !this.isSystemDialogMessage(message) ||
+          (!includeService && this.isQuickReplyAutoResponseMessage(message))
+      )
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
     if (!includeService) {
@@ -2579,6 +2583,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       message.senderRole === 'SYSTEM' ||
       message.kind === SupportMessageKind.SYSTEM
     );
+  }
+
+  private isQuickReplyAutoResponseMessage(message: SupportMessage): boolean {
+    return String(message.senderName ?? '')
+      .toLowerCase()
+      .includes('автоответ');
   }
 
   private formatDialogPreview(message?: SupportMessage): string | undefined {

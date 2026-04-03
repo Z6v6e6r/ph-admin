@@ -283,7 +283,12 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     const limit = this.resolveMessagesLimit(options.limit);
     const source = this.messages.get(threadId) ?? [];
     const filtered = source
-      .filter((message) => (includeService ? true : !this.isSystemThreadMessage(message)))
+      .filter((message) =>
+        includeService
+          ? true
+          : !this.isSystemThreadMessage(message) ||
+            this.isQuickReplyAutoResponseThreadMessage(message)
+      )
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
     return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
@@ -1641,6 +1646,12 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     const direction = String(message.direction ?? '').trim().toUpperCase();
     const role = String(message.senderRoleRaw ?? message.senderRole ?? '').trim().toUpperCase();
     return direction === 'SYSTEM' || role === 'SYSTEM';
+  }
+
+  private isQuickReplyAutoResponseThreadMessage(message: ChatMessage): boolean {
+    return String(message.senderName ?? '')
+      .toLowerCase()
+      .includes('автоответ');
   }
 
   private resolveMessagesLimit(rawLimit?: number): number {
