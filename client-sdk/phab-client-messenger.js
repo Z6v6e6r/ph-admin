@@ -326,7 +326,7 @@
       '.phab-promo-card-brand{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:14px;background:rgba(255,255,255,.74);color:#6b4f4a;font:800 13px/1.1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;letter-spacing:.03em;text-transform:uppercase}' +
       '.phab-promo-card-text{margin-top:12px;color:#5a514f;font:700 15px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
       '.phab-promo-cta{width:100%;margin-top:14px;border:none;border-radius:999px;padding:14px 20px;background:linear-gradient(90deg,#ef7482 0%,#66d0e6 100%);color:#fff;font:700 15px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 12px 28px rgba(115,102,118,.2)}' +
-      '.phab-promo-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}' +
+      '.phab-promo-links{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin-top:12px}' +
       '.phab-promo-link{border:1px solid rgba(220,205,197,.82);border-radius:14px;padding:9px 8px;background:rgba(255,255,255,.66);color:#655d5b;font:600 11px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;text-align:center}' +
       '.phab-panel-promo .phab-msg{max-width:88%;padding:10px 14px;border-radius:18px;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 8px 20px rgba(120,91,85,.08)}' +
       '.phab-panel-promo .phab-msg-client{background:linear-gradient(90deg,#ef7f89 0%,#6ccde4 100%);color:#fff;border-bottom-right-radius:8px}' +
@@ -802,94 +802,20 @@
 
       var greeting = document.createElement('div');
       greeting.className = 'phab-promo-greeting';
-      greeting.textContent = 'Привет! Помогу выбрать формат: 👋 знакомство, падел или оба варианта?';
+      greeting.textContent =
+        'Привет! Чтобы получить ссылку на регистрацию в турнире, пришли скрин своего профиля в Teamo.';
       intro.appendChild(greeting);
-
-      var quickGrid = document.createElement('div');
-      quickGrid.className = 'phab-promo-quick-grid';
-      quickGrid.appendChild(
-        createPromoDraftButton(
-          'phab-promo-chip phab-promo-chip-pink',
-          '♡ Хочу познакомиться',
-          'Привет! Хочу познакомиться и найти пару/партнёра для падела.'
-        )
-      );
-      quickGrid.appendChild(
-        createPromoDraftButton(
-          'phab-promo-chip phab-promo-chip-blue',
-          '◐ Хочу поиграть',
-          'Привет! Хочу подобрать матч и поиграть в падел.'
-        )
-      );
-      quickGrid.appendChild(
-        createPromoDraftButton(
-          'phab-promo-chip phab-promo-chip-wide',
-          '✦ Хочу оба варианта',
-          'Привет! Хочу и познакомиться, и поиграть. Помогите выбрать формат участия.'
-        )
-      );
-      intro.appendChild(quickGrid);
-
-      var showcase = document.createElement('div');
-      showcase.className = 'phab-promo-showcase';
-
-      var visual = document.createElement('div');
-      visual.className = 'phab-promo-showcase-visual';
-
-      var avatar = document.createElement('div');
-      avatar.className = 'phab-promo-avatar';
-      visual.appendChild(avatar);
-
-      var copy = document.createElement('div');
-      copy.className = 'phab-promo-card-copy';
-
-      var brand = document.createElement('div');
-      brand.className = 'phab-promo-card-brand';
-      brand.textContent = '♡ TEAMO × PADLHUB';
-      copy.appendChild(brand);
-
-      var cardText = document.createElement('div');
-      cardText.className = 'phab-promo-card-text';
-      cardText.textContent = 'Найдите общий ритм: знакомство + игра';
-      copy.appendChild(cardText);
-
-      visual.appendChild(copy);
-      showcase.appendChild(visual);
-
-      showcase.appendChild(
-        createPromoDraftButton(
-          'phab-promo-cta',
-          'Подобрать сценарий ›',
-          'Привет! Помогите подобрать сценарий участия в Teamo × PadlHub.'
-        )
-      );
 
       var links = document.createElement('div');
       links.className = 'phab-promo-links';
       links.appendChild(
         createPromoDraftButton(
           'phab-promo-link',
-          '📷 Как работает промо',
-          'Расскажите, пожалуйста, как работает промо и какой скрин нужно отправить?'
-        )
-      );
-      links.appendChild(
-        createPromoDraftButton(
-          'phab-promo-link',
-          '👥 Подобрать матч',
-          'Хочу подобрать матч. Какие данные мне нужно прислать?'
-        )
-      );
-      links.appendChild(
-        createPromoDraftButton(
-          'phab-promo-link',
-          '☑ Условия участия',
+          'Условия участия',
           'Подскажите условия участия в промо Teamo × PadlHub.'
         )
       );
-      showcase.appendChild(links);
-
-      intro.appendChild(showcase);
+      intro.appendChild(links);
       dom.messages.appendChild(intro);
     }
 
