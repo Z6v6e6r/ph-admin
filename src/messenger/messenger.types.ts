@@ -1,3 +1,4 @@
+import { MessageAttachment } from '../common/messages/message-attachment.types';
 import { Role } from '../common/rbac/role.enum';
 import { VivaClientCabinetStatus } from '../integrations/viva/viva-admin.service';
 
@@ -6,7 +7,8 @@ export enum ConnectorRoute {
   MAX_BOT = 'MAX_BOT',
   MAX_ACADEMY_BOT = 'MAX_ACADEMY_BOT',
   LK_WEB_MESSENGER = 'LK_WEB_MESSENGER',
-  LK_ACADEMY_WEB_MESSENGER = 'LK_ACADEMY_WEB_MESSENGER'
+  LK_ACADEMY_WEB_MESSENGER = 'LK_ACADEMY_WEB_MESSENGER',
+  PROMO_WEB_MESSENGER = 'PROMO_WEB_MESSENGER'
 }
 
 export enum MessageOrigin {
@@ -56,6 +58,7 @@ export interface ChatMessage {
   origin: MessageOrigin;
   direction?: string;
   text: string;
+  attachments?: MessageAttachment[];
   createdAt: string;
 }
 

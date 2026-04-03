@@ -24,6 +24,7 @@ export class ClientScriptController {
   streamAdminPanel(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-admin-panel.js');
     response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
     response.sendFile(filePath);
   }
 
@@ -31,6 +32,7 @@ export class ClientScriptController {
   downloadAdminPanel(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-admin-panel.js');
     response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
     response.setHeader(
       'Content-Disposition',
       'attachment; filename="phab-admin-panel.js"'
@@ -42,6 +44,7 @@ export class ClientScriptController {
   streamScript(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-client-messenger.js');
     response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
     response.sendFile(filePath);
   }
 
@@ -49,6 +52,7 @@ export class ClientScriptController {
   downloadScript(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-client-messenger.js');
     response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
     response.setHeader(
       'Content-Disposition',
       'attachment; filename="phab-client-messenger.js"'
@@ -60,6 +64,7 @@ export class ClientScriptController {
   streamMessengerPushServiceWorker(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-messenger-push-sw.js');
     response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
     response.setHeader('Service-Worker-Allowed', '/');
     response.sendFile(filePath);
   }

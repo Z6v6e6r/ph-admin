@@ -388,8 +388,10 @@ export class WebPushService implements OnModuleInit {
     return (
       connector === ConnectorRoute.LK_WEB_MESSENGER ||
       connector === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER ||
+      connector === ConnectorRoute.PROMO_WEB_MESSENGER ||
       connector === SupportConnectorRoute.LK_WEB_MESSENGER ||
-      connector === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+      connector === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER ||
+      connector === SupportConnectorRoute.PROMO_WEB_MESSENGER
     );
   }
 

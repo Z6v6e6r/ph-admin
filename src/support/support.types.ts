@@ -1,3 +1,4 @@
+import { MessageAttachment } from '../common/messages/message-attachment.types';
 import { Role } from '../common/rbac/role.enum';
 
 export const SUPPORT_UNASSIGNED_STATION_ID = 'UNASSIGNED';
@@ -9,6 +10,7 @@ export enum SupportConnectorRoute {
   MAX_ACADEMY_BOT = 'MAX_ACADEMY_BOT',
   LK_WEB_MESSENGER = 'LK_WEB_MESSENGER',
   LK_ACADEMY_WEB_MESSENGER = 'LK_ACADEMY_WEB_MESSENGER',
+  PROMO_WEB_MESSENGER = 'PROMO_WEB_MESSENGER',
   EMAIL = 'EMAIL',
   PHONE_CALL = 'PHONE_CALL',
   BITRIX = 'BITRIX'
@@ -169,6 +171,7 @@ export interface SupportMessage {
   direction: SupportMessageDirection;
   kind: SupportMessageKind;
   text?: string;
+  attachments?: MessageAttachment[];
   createdAt: string;
   senderId: string;
   senderRole: SupportSenderRole;
@@ -316,6 +319,7 @@ export interface SupportDialogsExportMessage {
   senderRole: SupportSenderRole;
   senderName?: string;
   text?: string;
+  attachments?: MessageAttachment[];
   phone?: string;
   email?: string;
   externalUserId?: string;
@@ -400,6 +404,7 @@ export interface SupportOutboxCommand {
   clientId: string;
   connector: SupportConnectorRoute;
   text: string;
+  attachments?: MessageAttachment[];
   format?: 'markdown' | 'html';
   createdAt: string;
   status: SupportOutboxStatus;

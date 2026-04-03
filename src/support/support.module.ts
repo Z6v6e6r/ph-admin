@@ -3,6 +3,7 @@ import { MaxAcademySupportConnectorAdapter } from './connectors/max-academy-supp
 import { MaxSupportConnectorAdapter } from './connectors/max-support.connector';
 import { SupportConnectorRegistry } from './connectors/support-connector.registry';
 import { WebAcademySupportConnectorAdapter } from './connectors/web-academy-support.connector';
+import { WebPromoSupportConnectorAdapter } from './connectors/web-promo-support.connector';
 import { WebSupportConnectorAdapter } from './connectors/web-support.connector';
 import { SupportController } from './support.controller';
 import { SupportPersistenceService } from './support-persistence.service';
@@ -17,7 +18,8 @@ import { SupportService } from './support.service';
     MaxSupportConnectorAdapter,
     MaxAcademySupportConnectorAdapter,
     WebSupportConnectorAdapter,
-    WebAcademySupportConnectorAdapter
+    WebAcademySupportConnectorAdapter,
+    WebPromoSupportConnectorAdapter
   ],
   exports: [SupportService]
 })

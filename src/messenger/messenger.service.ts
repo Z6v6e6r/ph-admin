@@ -7,6 +7,10 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import {
+  MessageAttachment,
+  MessageAttachmentType
+} from '../common/messages/message-attachment.types';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { AiConnectorService } from './ai/ai-connector.service';
@@ -285,6 +289,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
     const senderRole = this.resolveSenderRole(user.roles);
     const createdAt = new Date().toISOString();
+    const text = String(dto.text ?? '').trim();
+    const attachments = this.normalizeMessageAttachments(dto.attachments);
+    this.ensureMessageHasBody(text, attachments);
     const message: ChatMessage = {
       id: randomUUID(),
       threadId,
@@ -292,7 +299,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       senderRole,
       senderName: this.buildStaffSenderName(user, senderRole),
       origin: MessageOrigin.HUMAN,
-      text: dto.text,
+      text: text || '',
+      attachments: attachments.length > 0 ? attachments : undefined,
       createdAt
     };
 
@@ -960,7 +968,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
       lastRankingMessageAt: thread.lastRankingMessageAt,
       unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
       pendingClientMessagesCount: this.countPendingClientMessages(thread.id),
-      lastMessageText: lastMessage?.text,
+      lastMessageText: this.formatMessagePreview(lastMessage),
       lastMessageSenderRole: lastMessage?.senderRole,
       averageStaffResponseTimeMs: responseStats.averageResponseTimeMs,
       lastStaffResponseTimeMs: responseStats.lastResponseTimeMs,
@@ -1511,16 +1519,24 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
     if (
       route === ConnectorRoute.LK_WEB_MESSENGER ||
-      route === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+      route === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER ||
+      route === ConnectorRoute.PROMO_WEB_MESSENGER
     ) {
       const isAcademyRoute = route === ConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+      const isPromoRoute = route === ConnectorRoute.PROMO_WEB_MESSENGER;
       return {
         inboundEnabled: true,
         widgetEnabled: true,
         ingestPath: isAcademyRoute
           ? '/lk-academy/support/dialogs/events'
-          : '/lk/support/dialogs/events',
-        sourceTag: isAcademyRoute ? 'lk_academy_support_widget' : 'lk_support_widget',
+          : isPromoRoute
+            ? '/promo/support/dialogs/events'
+            : '/lk/support/dialogs/events',
+        sourceTag: isAcademyRoute
+          ? 'lk_academy_support_widget'
+          : isPromoRoute
+            ? 'promo_support_widget'
+            : 'lk_support_widget',
         syncFromMongoEnabled: true,
         syncIntervalMs: 5000,
         mapAuthorizedAsVerified: true,
@@ -1800,6 +1816,91 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     this.storeSuggestion(thread.id, suggestion);
+  }
+
+  private ensureMessageHasBody(text?: string, attachments: MessageAttachment[] = []): void {
+    if (String(text ?? '').trim() || attachments.length > 0) {
+      return;
+    }
+    throw new BadRequestException('text or attachments are required');
+  }
+
+  private formatMessagePreview(message?: ChatMessage): string | undefined {
+    if (!message) {
+      return undefined;
+    }
+
+    const text = String(message.text ?? '').trim();
+    if (text) {
+      return text;
+    }
+
+    const attachments = this.normalizeMessageAttachments(message.attachments);
+    if (attachments.length === 0) {
+      return undefined;
+    }
+
+    const first = attachments[0];
+    const label = first.name ? `Фото: ${first.name}` : 'Фото';
+    return attachments.length > 1 ? `${label} (+${attachments.length - 1})` : label;
+  }
+
+  private normalizeMessageAttachments(rawAttachments?: unknown[]): MessageAttachment[] {
+    if (!Array.isArray(rawAttachments)) {
+      return [];
+    }
+
+    const attachments: MessageAttachment[] = [];
+    for (const rawAttachment of rawAttachments) {
+      const source =
+        rawAttachment && typeof rawAttachment === 'object' && !Array.isArray(rawAttachment)
+          ? (rawAttachment as Record<string, unknown>)
+          : undefined;
+      if (!source) {
+        continue;
+      }
+
+      const type = this.readStringValue(source['type'])?.toUpperCase();
+      const url = this.readStringValue(source['url']);
+      if (type !== MessageAttachmentType.IMAGE || !url || !this.isSupportedAttachmentUrl(url)) {
+        continue;
+      }
+
+      const rawSize = Number(source['size']);
+      attachments.push({
+        id: this.readStringValue(source['id']) ?? randomUUID(),
+        type: MessageAttachmentType.IMAGE,
+        url,
+        name: this.readStringValue(source['name']),
+        mimeType: this.readStringValue(source['mimeType']),
+        size: Number.isFinite(rawSize) && rawSize >= 0 ? Math.floor(rawSize) : undefined
+      });
+
+      if (attachments.length >= 10) {
+        break;
+      }
+    }
+
+    return attachments;
+  }
+
+  private isSupportedAttachmentUrl(url: string): boolean {
+    const normalizedUrl = String(url || '').trim();
+    return (
+      /^https?:\/\/\S+$/i.test(normalizedUrl) ||
+      /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\r\n]+$/i.test(normalizedUrl)
+    );
+  }
+
+  private readStringValue(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const normalized = value.trim();
+    return normalized || undefined;
   }
 
   private toTimestamp(value?: string): number {

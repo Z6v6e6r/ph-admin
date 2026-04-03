@@ -22,6 +22,10 @@ import {
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
+import {
+  MessageAttachment,
+  MessageAttachmentType
+} from '../common/messages/message-attachment.types';
 import type { VivaClientCabinetLookup } from '../integrations/viva/viva-admin.service';
 import {
   SUPPORT_UNASSIGNED_STATION_ID,
@@ -764,14 +768,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       : this.resolveAllowedReplyConnector(dialog, user);
     const createdAt = new Date().toISOString();
     const senderRole = this.resolveSenderRole(user.roles);
+    const attachments = this.normalizeMessageAttachments(dto.attachments);
+    const text = String(dto.text ?? '').trim();
+    this.ensureMessageHasBody(text, attachments);
     const message: SupportMessage = {
       id: randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
       connector,
       direction: SupportMessageDirection.OUTBOUND,
-      kind: SupportMessageKind.TEXT,
-      text: dto.text.trim(),
+      kind: attachments.length > 0 ? SupportMessageKind.MEDIA : SupportMessageKind.TEXT,
+      text: text || undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
       createdAt,
       senderId: user.id,
       senderRole,
@@ -1146,6 +1154,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           senderRole: message.senderRole,
           senderName: message.senderName,
           text: message.text,
+          attachments: message.attachments?.map((attachment) => ({ ...attachment })),
           phone: message.phone,
           email: message.email,
           externalUserId: message.externalUserId,
@@ -1611,6 +1620,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const text = String(dto.text ?? '').trim() || undefined;
     const ai = this.buildAiInsight(dto, text);
     const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
+    const attachments = this.normalizeMessageAttachments(dto.attachments);
     return {
       id: randomUUID(),
       dialogId: context.dialog.id,
@@ -1618,7 +1628,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       connector: dto.connector,
       direction: context.direction,
       kind: context.kind,
-      text: this.buildMessageText(context.kind, text, context.normalizedPhone, context.normalizedEmail, dto),
+      text: this.buildMessageText(
+        context.kind,
+        text,
+        context.normalizedPhone,
+        context.normalizedEmail,
+        dto,
+        attachments
+      ),
+      attachments: attachments.length > 0 ? attachments : undefined,
       createdAt: context.createdAt,
       senderId: context.senderRole === 'SYSTEM' ? 'system' : dto.externalUserId?.trim() || context.client.id,
       senderRole: context.senderRole,
@@ -1713,6 +1731,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const incomingTs = this.toTimestamp(message.createdAt);
     const incomingText = String(message.text ?? '').trim();
+    const incomingAttachmentsSignature = this.buildAttachmentsSignature(message.attachments);
     const incomingExternalUserId = this.normalizeIdentityValue(message.externalUserId);
     const incomingExternalChatId = this.normalizeIdentityValue(message.externalChatId);
     const incomingPhone = this.normalizePhone(message.phone);
@@ -1743,6 +1762,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
 
       if (String(candidate.text ?? '').trim() !== incomingText) {
+        continue;
+      }
+
+      if (this.buildAttachmentsSignature(candidate.attachments) !== incomingAttachmentsSignature) {
         continue;
       }
 
@@ -1847,6 +1870,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       clientId: dialog.clientId,
       connector,
       text: outboundPayload.text,
+      attachments: message.attachments?.map((attachment) => ({ ...attachment })),
       format: outboundPayload.format,
       createdAt: message.createdAt,
       status: SupportOutboxStatus.PENDING,
@@ -1861,6 +1885,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         dialogId: dialog.id,
         clientDisplayName: client.displayName,
         phones: client.phones,
+        attachmentsCount: Array.isArray(message.attachments) ? message.attachments.length : 0,
         formattedText: outboundPayload.formattedText
       }
     };
@@ -2308,7 +2333,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       case SupportMessageKind.CALL:
         return 'Звонок';
       case SupportMessageKind.MEDIA:
-        return 'Медиа';
+        return this.buildAttachmentsPreview(message.attachments) ?? 'Фото';
       case SupportMessageKind.COMMAND:
         return 'Команда';
       case SupportMessageKind.SYSTEM:
@@ -2846,7 +2871,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const text =
       this.readStringValue(rawMessage['text']) ??
       this.readStringValue(rawMessage['textPreview']);
-    const kind = this.normalizeLoadedKind(rawMessage['kind'], rawMessage['eventType'], text);
+    const attachments = this.normalizeMessageAttachments(this.readArray(rawMessage['attachments']));
+    const kind = this.normalizeLoadedKind(
+      rawMessage['kind'],
+      rawMessage['eventType'],
+      text,
+      attachments
+    );
     const clientId =
       this.readStringValue(rawMessage['clientId']) ??
       this.readStringValue(rawMessage['channelUserId']) ??
@@ -2893,6 +2924,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       direction,
       kind,
       text,
+      attachments: attachments.length > 0 ? attachments : undefined,
       createdAt,
       senderId,
       senderRole,
@@ -2957,7 +2989,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private normalizeLoadedKind(
     rawKind: unknown,
     rawEventType: unknown,
-    text?: string
+    text?: string,
+    attachments: MessageAttachment[] = []
   ): SupportMessageKind {
     const normalizedKind = this.readStringValue(rawKind)?.toUpperCase();
     const normalizedEventType = this.readStringValue(rawEventType)?.toUpperCase();
@@ -2978,6 +3011,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     if (normalizedEventType && normalizedEventType.includes('SYSTEM')) {
       return SupportMessageKind.SYSTEM;
+    }
+
+    if (attachments.length > 0) {
+      return SupportMessageKind.MEDIA;
     }
 
     const normalizedText = String(text ?? '').trim();
@@ -3155,6 +3192,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return undefined;
     }
     return value as Record<string, unknown>;
+  }
+
+  private readArray(value: unknown): unknown[] {
+    return Array.isArray(value) ? value : [];
   }
 
   private readStringValue(value: unknown): string | undefined {
@@ -3788,6 +3829,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     email?: string
   ): boolean {
     const text = String(dto.text ?? '').trim();
+    const attachments = this.normalizeMessageAttachments(dto.attachments);
     const normalizedEventType = String(dto.eventType ?? '')
       .trim()
       .toUpperCase();
@@ -3806,6 +3848,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     return Boolean(
       text ||
+        attachments.length > 0 ||
         phone ||
         email ||
         dto.selectedStationId ||
@@ -3821,6 +3864,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     normalizedEmail?: string
   ): SupportMessageKind {
     const text = String(dto.text ?? '').trim();
+    const attachments = this.normalizeMessageAttachments(dto.attachments);
     const normalizedEventType = String(dto.eventType ?? '')
       .trim()
       .toUpperCase();
@@ -3830,6 +3874,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     if (dto.selectedStationId) {
       return SupportMessageKind.STATION_SELECTION;
+    }
+    if (attachments.length > 0) {
+      return SupportMessageKind.MEDIA;
     }
     if (this.isLkConnector(dto.connector)) {
       if (text.startsWith('/')) {
@@ -3871,7 +3918,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     text: string | undefined,
     phone: string | undefined,
     email: string | undefined,
-    dto: IngestSupportEventDto
+    dto: IngestSupportEventDto,
+    attachments: MessageAttachment[] = []
   ): string | undefined {
     if (kind === SupportMessageKind.CONTACT && phone) {
       return `Клиент поделился номером: ${phone}`;
@@ -3885,7 +3933,110 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (kind === SupportMessageKind.EMAIL) {
       return text || `Получено email-обращение${email ? ` ${email}` : ''}`;
     }
+    if (kind === SupportMessageKind.MEDIA) {
+      return text || this.buildAttachmentsPreview(attachments) || 'Фото';
+    }
     return text;
+  }
+
+  private ensureMessageHasBody(text?: string, attachments: MessageAttachment[] = []): void {
+    if (String(text ?? '').trim() || attachments.length > 0) {
+      return;
+    }
+    throw new BadRequestException('text or attachments are required');
+  }
+
+  private normalizeMessageAttachments(rawAttachments?: unknown[]): MessageAttachment[] {
+    if (!Array.isArray(rawAttachments)) {
+      return [];
+    }
+
+    const attachments: MessageAttachment[] = [];
+    for (const rawAttachment of rawAttachments) {
+      const attachment = this.normalizeMessageAttachment(rawAttachment);
+      if (attachment) {
+        attachments.push(attachment);
+      }
+      if (attachments.length >= 10) {
+        break;
+      }
+    }
+
+    return attachments;
+  }
+
+  private normalizeMessageAttachment(rawAttachment: unknown): MessageAttachment | undefined {
+    const source = this.readRecord(rawAttachment);
+    if (!source) {
+      return undefined;
+    }
+
+    const typeRaw = this.readStringValue(source['type'])?.toUpperCase();
+    const type =
+      typeRaw === MessageAttachmentType.IMAGE ? MessageAttachmentType.IMAGE : undefined;
+    const url = this.readStringValue(source['url']);
+
+    if (!type || !url || !this.isSupportedAttachmentUrl(type, url)) {
+      return undefined;
+    }
+
+    const name = this.readStringValue(source['name']);
+    const mimeType = this.readStringValue(source['mimeType']);
+    const rawSize = Number(source['size']);
+    const size =
+      Number.isFinite(rawSize) && rawSize >= 0 ? Math.floor(rawSize) : undefined;
+
+    return {
+      id: this.readStringValue(source['id']) ?? randomUUID(),
+      type,
+      url,
+      name,
+      mimeType,
+      size
+    };
+  }
+
+  private isSupportedAttachmentUrl(type: MessageAttachmentType, url: string): boolean {
+    const normalizedUrl = String(url || '').trim();
+    if (!normalizedUrl) {
+      return false;
+    }
+
+    if (type === MessageAttachmentType.IMAGE) {
+      if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\r\n]+$/i.test(normalizedUrl)) {
+        return true;
+      }
+      return /^https?:\/\/\S+$/i.test(normalizedUrl);
+    }
+
+    return false;
+  }
+
+  private buildAttachmentsPreview(attachments?: MessageAttachment[]): string | undefined {
+    const normalizedAttachments = this.normalizeMessageAttachments(attachments);
+    if (normalizedAttachments.length === 0) {
+      return undefined;
+    }
+
+    const first = normalizedAttachments[0];
+    const label = first.name ? `Фото: ${first.name}` : 'Фото';
+    if (normalizedAttachments.length === 1) {
+      return label;
+    }
+    return `${label} (+${normalizedAttachments.length - 1})`;
+  }
+
+  private buildAttachmentsSignature(attachments?: MessageAttachment[]): string {
+    return this.normalizeMessageAttachments(attachments)
+      .map((attachment) =>
+        [
+          attachment.type,
+          String(attachment.url || '').trim(),
+          String(attachment.name || '').trim(),
+          String(attachment.size ?? '')
+        ].join(':')
+      )
+      .join('|');
   }
 
   private isActionableClientMessage(message: SupportMessage): boolean {
@@ -4329,7 +4480,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       .toUpperCase();
     return (
       normalized === SupportConnectorRoute.LK_WEB_MESSENGER ||
-      normalized === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER
+      normalized === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER ||
+      normalized === SupportConnectorRoute.PROMO_WEB_MESSENGER
     );
   }
 
@@ -4513,6 +4665,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return [
+      { key: 'promo', stationId: 'promo', stationName: 'PROMO' },
       { key: 'yas', stationId: 'Yasenevo', stationName: 'Ясенево' },
       { key: 'nagat', stationId: 'Nagatinskaya', stationName: 'Нагатинская' },
       { key: 'nagat_p', stationId: 'NagatinskayaP', stationName: 'Нагатинская Премиум' },

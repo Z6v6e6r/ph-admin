@@ -75,6 +75,7 @@ export interface SupportPersistenceRuntimeDiagnostics {
     maxBackendKey: string;
     webAcademyBackendKey: string;
     maxAcademyBackendKey: string;
+    promoWebBackendKey: string;
   };
   backends: SupportPersistenceBackendDiagnostics[];
 }
@@ -242,6 +243,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         ),
         maxAcademyBackendKey: this.resolveBackendKeyForConnector(
           SupportConnectorRoute.MAX_ACADEMY_BOT
+        ),
+        promoWebBackendKey: this.resolveBackendKeyForConnector(
+          SupportConnectorRoute.PROMO_WEB_MESSENGER
         )
       },
       backends: backendDiagnostics
@@ -772,7 +776,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   ): SupportPersistenceBackendKey {
     if (
       (connector === SupportConnectorRoute.LK_WEB_MESSENGER ||
-        connector === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER) &&
+        connector === SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER ||
+        connector === SupportConnectorRoute.PROMO_WEB_MESSENGER) &&
       this.backendConfigs.some((config) => config.key === 'web')
     ) {
       return 'web';
@@ -918,6 +923,18 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       ].includes(normalized)
     ) {
       return SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+    }
+    if (
+      [
+        'PROMO_WEB_MESSENGER',
+        'PROMO_WEB',
+        'WEB_PROMO',
+        'PROMO_WIDGET',
+        'SITE_WIDGET',
+        'PROMO'
+      ].includes(normalized)
+    ) {
+      return SupportConnectorRoute.PROMO_WEB_MESSENGER;
     }
     if (['TG_BOT', 'TG', 'TELEGRAM'].includes(normalized)) {
       return SupportConnectorRoute.TG_BOT;

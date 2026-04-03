@@ -1,6 +1,8 @@
 (function () {
   var DEFAULTS = {
     apiBaseUrl: '',
+    connectorRoute: 'LK_WEB_MESSENGER',
+    hideStationSelect: false,
     pollIntervalMs: 5000,
     title: 'Поддержка PadelHub',
     launcherText: 'Чат',
@@ -11,6 +13,9 @@
   };
 
   var STYLE_ID = 'phab-messenger-widget-style';
+  var MAX_MESSAGE_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
+  var MAX_MESSAGE_ATTACHMENT_SIZE_BYTES = 4 * 1024 * 1024;
+  var MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024;
 
   function nowIso() {
     return new Date().toISOString();
@@ -61,17 +66,180 @@
     return output;
   }
 
+  function normalizeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function normalizeObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  }
+
+  function formatFileSize(size) {
+    var bytes = Number(size);
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return '';
+    }
+    var units = ['Б', 'КБ', 'МБ', 'ГБ'];
+    var value = bytes;
+    var unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    var precision = unitIndex === 0 || value >= 10 ? 0 : 1;
+    return value.toFixed(precision).replace(/\.0$/, '') + ' ' + units[unitIndex];
+  }
+
+  function normalizeMessageAttachments(value) {
+    return normalizeArray(value)
+      .map(function (item) {
+        var attachment = normalizeObject(item);
+        var type = String(attachment.type || '').trim().toUpperCase();
+        var url = String(attachment.url || '').trim();
+        if (type !== 'IMAGE' || !url) {
+          return null;
+        }
+        return {
+          id: String(attachment.id || 'attachment-' + Math.random().toString(36).slice(2, 10)),
+          type: 'IMAGE',
+          url: url,
+          name: String(attachment.name || '').trim() || undefined,
+          mimeType: String(attachment.mimeType || '').trim() || undefined,
+          size: Number.isFinite(Number(attachment.size))
+            ? Math.max(0, Math.floor(Number(attachment.size)))
+            : undefined
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+  }
+
+  function formatAttachmentPreview(attachments) {
+    var normalized = normalizeMessageAttachments(attachments);
+    if (normalized.length === 0) {
+      return '';
+    }
+    var first = normalized[0];
+    var label = first.name ? 'Фото: ' + first.name : 'Фото';
+    return normalized.length > 1 ? label + ' (+' + String(normalized.length - 1) + ')' : label;
+  }
+
+  function getMessageAttachmentsTotalSize(attachments) {
+    return normalizeMessageAttachments(attachments).reduce(function (sum, attachment) {
+      return sum + Math.max(0, Number(attachment.size || 0));
+    }, 0);
+  }
+
+  function readImageFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ''));
+      };
+      reader.onerror = function () {
+        reject(new Error('Не удалось прочитать фото'));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageFromDataUrl(dataUrl) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () {
+        resolve(image);
+      };
+      image.onerror = function () {
+        reject(new Error('Не удалось обработать фото'));
+      };
+      image.src = dataUrl;
+    });
+  }
+
+  async function compressImageFileAttachment(file) {
+    if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) {
+      throw new Error('Можно прикреплять только изображения');
+    }
+
+    if (Number(file.size || 0) > MAX_MESSAGE_SOURCE_IMAGE_BYTES) {
+      throw new Error('Фото "' + String(file.name || 'image') + '" слишком тяжелое. Выберите файл до ' + formatFileSize(MAX_MESSAGE_SOURCE_IMAGE_BYTES) + '.');
+    }
+
+    var originalDataUrl = await readImageFileAsDataUrl(file);
+    var image = await loadImageFromDataUrl(originalDataUrl);
+    var maxSide = 1400;
+    var width = image.naturalWidth || image.width || 0;
+    var height = image.naturalHeight || image.height || 0;
+    if (!width || !height) {
+      if (Number(file.size || 0) > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+        throw new Error('Фото "' + String(file.name || 'image') + '" слишком большое для отправки. Максимум ' + formatFileSize(MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) + '.');
+      }
+      return {
+        id: 'img-' + Math.random().toString(36).slice(2, 10),
+        type: 'IMAGE',
+        url: originalDataUrl,
+        name: String(file.name || 'photo'),
+        mimeType: String(file.type || 'image/jpeg'),
+        size: Number(file.size || 0)
+      };
+    }
+
+    var scale = Math.min(1, maxSide / Math.max(width, height));
+    var targetWidth = Math.max(1, Math.round(width * scale));
+    var targetHeight = Math.max(1, Math.round(height * scale));
+    var canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    var context = canvas.getContext('2d');
+    if (!context) {
+      return {
+        id: 'img-' + Math.random().toString(36).slice(2, 10),
+        type: 'IMAGE',
+        url: originalDataUrl,
+        name: String(file.name || 'photo'),
+        mimeType: String(file.type || 'image/jpeg'),
+        size: Number(file.size || 0)
+      };
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+    var mimeType = String(file.type || '').toLowerCase() === 'image/png'
+      ? 'image/png'
+      : 'image/jpeg';
+    var dataUrl = canvas.toDataURL(mimeType, 0.84);
+    var estimatedSize = Math.round((dataUrl.length * 3) / 4);
+    if (estimatedSize > MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) {
+      throw new Error('Фото "' + String(file.name || 'image') + '" слишком большое даже после сжатия. Максимум ' + formatFileSize(MAX_MESSAGE_ATTACHMENT_SIZE_BYTES) + '.');
+    }
+    return {
+      id: 'img-' + Math.random().toString(36).slice(2, 10),
+      type: 'IMAGE',
+      url: dataUrl,
+      name: String(file.name || 'photo'),
+      mimeType: mimeType,
+      size: estimatedSize
+    };
+  }
+
   function mergeConfig(input) {
     var cfg = Object.assign({}, DEFAULTS, input || {});
     if (!cfg.apiBaseUrl) {
       throw new Error('PHAB widget: apiBaseUrl is required');
     }
     cfg.apiBaseUrl = String(cfg.apiBaseUrl).replace(/\/+$/, '');
+    cfg.connectorRoute = String(cfg.connectorRoute || DEFAULTS.connectorRoute)
+      .trim()
+      .toUpperCase() || DEFAULTS.connectorRoute;
+    cfg.hideStationSelect = normalizeBoolean(cfg.hideStationSelect, DEFAULTS.hideStationSelect);
     cfg.pollIntervalMs = Math.max(2000, Number(cfg.pollIntervalMs || DEFAULTS.pollIntervalMs));
     cfg.enableWebPush = normalizeBoolean(cfg.enableWebPush, DEFAULTS.enableWebPush);
     cfg.webPushServiceWorkerUrl = String(cfg.webPushServiceWorkerUrl || '').trim();
     if (!Array.isArray(cfg.stations)) {
       cfg.stations = [];
+    }
+    if (cfg.connectorRoute === 'PROMO_WEB_MESSENGER') {
+      cfg.stations = [{ id: 'promo', name: 'PROMO' }];
+      cfg.hideStationSelect = true;
     }
     return cfg;
   }
@@ -97,8 +265,16 @@
       '.phab-msg{max-width:82%;margin:0 0 8px;padding:8px 10px;border-radius:10px;font:500 13px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;white-space:pre-wrap;word-break:break-word}' +
       '.phab-msg-client{margin-left:auto;background:#106f52;color:#fff;border-bottom-right-radius:4px}' +
       '.phab-msg-staff{margin-right:auto;background:#eef4f1;color:#1c342d;border-bottom-left-radius:4px}' +
+      '.phab-msg-attachments{display:grid;gap:8px;margin-bottom:8px}' +
+      '.phab-msg-image-link{display:block;border-radius:10px;overflow:hidden;text-decoration:none}' +
+      '.phab-msg-image{display:block;width:min(240px,100%);max-height:260px;object-fit:cover;border-radius:10px}' +
       '.phab-msg-meta{display:block;margin-top:3px;font-size:10px;opacity:.7}' +
+      '.phab-attachments{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px 0;background:#fafcfa;border-top:1px solid #e6ece8}' +
+      '.phab-attachment-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;border:1px solid #d8e0dc;background:#fff;color:#17352d;font:600 11px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
+      '.phab-attachment-chip button{border:none;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 2px}' +
       '.phab-footer{padding:10px;border-top:1px solid #e6ece8;display:flex;gap:8px;background:#fafcfa}' +
+      '.phab-attach{border:1px solid #c6d3cd;border-radius:9px;padding:0 10px;background:#fff;color:#17352d;font:600 13px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer}' +
+      '.phab-file-hidden{display:none}' +
       '.phab-send{border:none;border-radius:9px;padding:0 14px;background:#116149;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer}' +
       '.phab-hint{padding:8px 12px;color:#4b5e58;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
       '@media(max-width:520px){.phab-panel{left:10px;right:10px;bottom:70px;width:auto;height:65vh}}';
@@ -155,9 +331,27 @@
     messages.className = 'phab-messages';
     body.appendChild(messages);
 
+    var attachments = document.createElement('div');
+    attachments.className = 'phab-attachments';
+    attachments.style.display = 'none';
+    panel.appendChild(attachments);
+
+    var fileInput = document.createElement('input');
+    fileInput.className = 'phab-file-hidden';
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.multiple = true;
+    panel.appendChild(fileInput);
+
     var footer = document.createElement('div');
     footer.className = 'phab-footer';
     panel.appendChild(footer);
+
+    var attach = document.createElement('button');
+    attach.className = 'phab-attach';
+    attach.type = 'button';
+    attach.textContent = 'Фото';
+    footer.appendChild(attach);
 
     var input = document.createElement('input');
     input.className = 'phab-input';
@@ -180,9 +374,13 @@
       badge: badge,
       panel: panel,
       status: status,
+      stationWrap: stationWrap,
       stationSelect: stationSelect,
       hint: hint,
       messages: messages,
+      attachments: attachments,
+      fileInput: fileInput,
+      attach: attach,
       input: input,
       send: send
     };
@@ -243,10 +441,13 @@
         });
       },
 
-      async sendMessage(threadId, text) {
+      async sendMessage(threadId, text, attachments) {
         return this.request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', {
           method: 'POST',
-          body: JSON.stringify({ text: text })
+          body: JSON.stringify({
+            text: text,
+            attachments: normalizeMessageAttachments(attachments)
+          })
         });
       },
 
@@ -288,6 +489,7 @@
       lastBadgeMessageAt: null,
       pushEndpoint: null,
       unreadCount: 0,
+      pendingAttachments: [],
       disposed: false
     };
 
@@ -355,9 +557,84 @@
       } catch (_err) {}
     }
 
+    function resetPendingAttachments() {
+      state.pendingAttachments = [];
+      dom.fileInput.value = '';
+      renderPendingAttachments();
+    }
+
+    function removePendingAttachment(index) {
+      state.pendingAttachments = state.pendingAttachments.filter(function (_item, itemIndex) {
+        return itemIndex !== index;
+      });
+      renderPendingAttachments();
+    }
+
+    function renderPendingAttachments() {
+      dom.attachments.innerHTML = '';
+      var attachments = normalizeMessageAttachments(state.pendingAttachments);
+      dom.attachments.style.display = attachments.length > 0 ? '' : 'none';
+
+      attachments.forEach(function (attachment, index) {
+        var chip = document.createElement('span');
+        chip.className = 'phab-attachment-chip';
+
+        var label = document.createElement('span');
+        label.textContent =
+          (attachment.name || 'Фото') +
+          (attachment.size ? ' · ' + formatFileSize(attachment.size) : '');
+        chip.appendChild(label);
+
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', 'Убрать фото');
+        remove.addEventListener('click', function () {
+          removePendingAttachment(index);
+        });
+        chip.appendChild(remove);
+
+        dom.attachments.appendChild(chip);
+      });
+    }
+
+    async function appendPendingAttachmentsFromFiles(files) {
+      var fileList = Array.prototype.slice.call(files || []);
+      if (fileList.length === 0) {
+        return;
+      }
+
+      var next = normalizeMessageAttachments(state.pendingAttachments);
+      for (var i = 0; i < fileList.length; i += 1) {
+        if (next.length >= 10) {
+          break;
+        }
+        var attachment = await compressImageFileAttachment(fileList[i]);
+        var nextTotalSize = getMessageAttachmentsTotalSize(next) + Math.max(0, Number(attachment.size || 0));
+        if (nextTotalSize > MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) {
+          throw new Error('Слишком большой общий объем фото в сообщении. Оставьте до ' + formatFileSize(MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) + '.');
+        }
+        next.push(attachment);
+      }
+      state.pendingAttachments = next;
+      dom.fileInput.value = '';
+      renderPendingAttachments();
+    }
+
+    function shouldHideStationSelect() {
+      return cfg.hideStationSelect === true || cfg.stations.length <= 1;
+    }
+
     function renderStations() {
       var stations = cfg.stations.slice();
       dom.stationSelect.innerHTML = '';
+      dom.stationWrap.style.display = shouldHideStationSelect() ? 'none' : '';
+
+      if (stations.length === 1 && !state.stationId) {
+        state.stationId = String(stations[0].id || '').trim() || null;
+        state.stationName = sanitizeStationName(stations[0].name, state.stationId) || null;
+        saveSession();
+      }
 
       var placeholder = document.createElement('option');
       placeholder.value = '';
@@ -381,8 +658,35 @@
       messages.forEach(function (message) {
         var item = document.createElement('div');
         var own = message.senderRole === 'CLIENT';
+        var attachments = normalizeMessageAttachments(message.attachments);
         item.className = 'phab-msg ' + (own ? 'phab-msg-client' : 'phab-msg-staff');
-        item.textContent = message.text || '';
+
+        if (attachments.length > 0) {
+          var attachmentsWrap = document.createElement('div');
+          attachmentsWrap.className = 'phab-msg-attachments';
+          attachments.forEach(function (attachment) {
+            var link = document.createElement('a');
+            link.className = 'phab-msg-image-link';
+            link.href = attachment.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+
+            var image = document.createElement('img');
+            image.className = 'phab-msg-image';
+            image.src = attachment.url;
+            image.alt = attachment.name || 'Фото';
+            image.loading = 'lazy';
+            link.appendChild(image);
+
+            attachmentsWrap.appendChild(link);
+          });
+          item.appendChild(attachmentsWrap);
+        }
+
+        var text = document.createElement('div');
+        text.textContent =
+          String(message.text || '').trim() || formatAttachmentPreview(attachments);
+        item.appendChild(text);
 
         var meta = document.createElement('span');
         meta.className = 'phab-msg-meta';
@@ -618,14 +922,14 @@
         return state.threadId;
       }
 
-      var selectedStationId = dom.stationSelect.value || state.stationId;
+      var selectedStationId = state.stationId || dom.stationSelect.value;
       if (!selectedStationId) {
         throw new Error('Станция не выбрана');
       }
 
       var stationName = resolveStationNameById(selectedStationId);
       var createPayload = {
-        connector: 'LK_WEB_MESSENGER',
+        connector: cfg.connectorRoute,
         stationId: selectedStationId,
         clientId: state.clientId,
         aiMode: 'SUGGEST'
@@ -682,7 +986,8 @@
 
     async function sendCurrentMessage() {
       var text = String(dom.input.value || '').trim();
-      if (!text) {
+      var attachments = normalizeMessageAttachments(state.pendingAttachments);
+      if (!text && attachments.length === 0) {
         return;
       }
       if (state.loading) {
@@ -691,13 +996,15 @@
 
       state.loading = true;
       dom.send.disabled = true;
+      dom.attach.disabled = true;
       setStatus('Отправка...');
 
       try {
         var threadId = await ensureThread();
         await ensureWebPushSubscription(true);
-        await api.sendMessage(threadId, text);
+        await api.sendMessage(threadId, text, attachments);
         dom.input.value = '';
+        resetPendingAttachments();
         await syncMessages(true);
         setStatus('Онлайн');
         showHint('Диалог активен: ' + (resolveStationLabel(state.stationId, state.stationName) || 'станция'));
@@ -707,6 +1014,7 @@
       } finally {
         state.loading = false;
         dom.send.disabled = false;
+        dom.attach.disabled = false;
       }
     }
 
@@ -752,7 +1060,11 @@
 
       if (state.stationId) {
         dom.stationSelect.value = state.stationId;
-        showHint('Станция: ' + resolveStationLabel(state.stationId, state.stationName));
+        if (shouldHideStationSelect()) {
+          showHint('Напишите сообщение, и мы ответим здесь');
+        } else {
+          showHint('Станция: ' + resolveStationLabel(state.stationId, state.stationName));
+        }
       }
 
       push.supported = canUseWebPush();
@@ -768,6 +1080,20 @@
         sendCurrentMessage().catch(function () {});
       });
 
+      dom.attach.addEventListener('click', function () {
+        if (state.loading) {
+          return;
+        }
+        dom.fileInput.click();
+      });
+
+      dom.fileInput.addEventListener('change', function () {
+        appendPendingAttachmentsFromFiles(dom.fileInput.files).catch(function (err) {
+          setStatus('Ошибка');
+          showHint(err && err.message ? err.message : 'Не удалось прикрепить фото');
+        });
+      });
+
       dom.input.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
           event.preventDefault();
@@ -776,6 +1102,9 @@
       });
 
       dom.stationSelect.addEventListener('change', function () {
+        if (shouldHideStationSelect()) {
+          return;
+        }
         if (!state.threadId) {
           var station = getStationById(dom.stationSelect.value);
           state.stationId = dom.stationSelect.value || null;

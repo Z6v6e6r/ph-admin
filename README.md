@@ -84,6 +84,7 @@ API работает на `http://localhost:3000/api`.
 - `TELEGRAM_DELIVERY_MODE=outbox|direct` (по умолчанию `outbox`; рекомендован для Node-RED)
 - `TELEGRAM_INTEGRATION_TOKEN=<token>` (опционально, защита outbox API для Node-RED)
 - `SUPPORT_INTEGRATION_TOKEN=<token>` (опционально, защита `support` integration endpoint'ов для Node-RED/внешних коннекторов)
+- `REQUEST_BODY_LIMIT=20mb` (опционально; лимит JSON body для текстов и фото-вложений в чатах)
 - `SUPPORT_MONGODB_URI=mongodb://...` (опционально; primary URI для `support`, иначе используется `MONGODB_URI`)
 - `SUPPORT_MONGODB_DB=dialog` (опционально; primary БД для `support`, иначе используется `MONGODB_DB`, затем `dialog`)
 - `SUPPORT_WEB_MONGODB_URI=mongodb://...` (опционально; URI backend-а для `LK_WEB_MESSENGER`, если не задан — используется primary URI)
@@ -126,6 +127,7 @@ npx web-push generate-vapid-keys
 - `MAX_BOT` -> `dialog`
 - `LK_ACADEMY_WEB_MESSENGER` -> `games` (или отдельная БД под Academy)
 - `MAX_ACADEMY_BOT` -> `dialog` (или отдельная БД под Academy)
+- `PROMO_WEB_MESSENGER` -> `games` (чат с сайта/лендинга, станция `promo`)
 
 Пример:
 
@@ -181,7 +183,7 @@ Dev fallback:
 - `x-user-id: <id>`
 - `x-user-roles: ROLE_1,ROLE_2` или `x-user-role: ROLE`
 - `x-station-ids: station_1,station_2` или `x-station-id: station_1` (для ограничения доступа сотрудника по станциям)
-- `x-connector-routes: MAX_ACADEMY_BOT,LK_ACADEMY_WEB_MESSENGER` или `x-connector-route: MAX_ACADEMY_BOT` (для ограничения доступа сотрудника по видам коннекторов; если заголовка нет, доступны все)
+- `x-connector-routes: MAX_ACADEMY_BOT,LK_ACADEMY_WEB_MESSENGER,PROMO_WEB_MESSENGER` или `x-connector-route: MAX_ACADEMY_BOT` (для ограничения доступа сотрудника по видам коннекторов; если заголовка нет, доступны все)
 
 Пример:
 
@@ -296,6 +298,21 @@ curl http://localhost:3000/api/games \
 
 - `MAX_ACADEMY_BOT`, `MAX_ACADEMY`, `ACADEMY_MAX_BOT`, `AF_MAX_BOT`, `AB_MAX_BOT`
 - `LK_ACADEMY_WEB_MESSENGER`, `LK_ACADEMY`, `ACADEMY_WEB`, `ACADEMY_LK`, `AF_LK`, `AB_LK`
+
+## PROMO WEB-коннектор
+
+Route и alias:
+
+- `PROMO_WEB_MESSENGER`
+- `PROMO_WEB`, `WEB_PROMO`, `PROMO_WIDGET`, `SITE_WIDGET`, `PROMO`
+
+Для сайта/лендинга используется станция:
+
+- `stationId = promo`
+- `stationName = PROMO`
+
+В access rules или `x-station-ids` доступ к PROMO задается как станция `promo`.
+В админке и web-виджете для `PROMO_WEB_MESSENGER` поддерживаются фото-вложения (`attachments[]`, `type=IMAGE`, `url` как `https://...` или `data:image/...`).
 
 Этап 1. Подготовка конфигурации (без клиентского трафика):
 
@@ -527,6 +544,7 @@ Node-RED env vars:
 <script>
   window.PHABMessengerWidget.init({
     apiBaseUrl: "https://YOUR_DOMAIN/api",
+    connectorRoute: "LK_WEB_MESSENGER",
     clientId: "client-12345",
     pollIntervalMs: 5000,
     enableWebPush: true,
@@ -543,8 +561,8 @@ Node-RED env vars:
 
 - рендерит чат-виджет на сайте
 - дает клиенту выбрать станцию
-- создает диалог с коннектором `LK_WEB_MESSENGER`
-- отправляет и получает сообщения
+- создает диалог с коннектором из `connectorRoute` (по умолчанию `LK_WEB_MESSENGER`)
+- отправляет и получает сообщения и фото
 - сохраняет сессию диалога в `localStorage`
 - регистрирует `service worker` и подписывает устройство на web push (если поддерживается браузером/доменом)
 
@@ -598,7 +616,23 @@ Node-RED env vars:
     userId: "station-admin-1",
     roles: ["STATION_ADMIN"],
     stationIds: ["station-msk-1"],
-    connectorRoutes: ["MAX_ACADEMY_BOT", "LK_ACADEMY_WEB_MESSENGER"]
+    connectorRoutes: ["MAX_ACADEMY_BOT", "LK_ACADEMY_WEB_MESSENGER", "PROMO_WEB_MESSENGER"]
+  });
+</script>
+```
+
+Пример PROMO-чата для Zero Block Tilda:
+
+```html
+<script src="https://YOUR_DOMAIN/api/client-script/messenger-widget.js"></script>
+<script>
+  window.PHABMessengerWidget.init({
+    apiBaseUrl: "https://YOUR_DOMAIN/api",
+    connectorRoute: "PROMO_WEB_MESSENGER",
+    clientId: "promo-client-" + Math.random().toString(36).slice(2, 10),
+    title: "PROMO",
+    launcherText: "Написать",
+    stations: [{ id: "promo", name: "PROMO" }]
   });
 </script>
 ```

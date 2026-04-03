@@ -1,12 +1,17 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
-  MinLength
+  MinLength,
+  ValidateNested
 } from 'class-validator';
+import { MessageAttachmentDto } from '../../common/messages/message-attachment.dto';
 import {
   SupportConnectorRoute,
   SupportMessageDirection,
@@ -139,6 +144,13 @@ export class IngestSupportEventDto {
   @IsString()
   @MaxLength(2000)
   text?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => MessageAttachmentDto)
+  attachments?: MessageAttachmentDto[];
 
   @IsOptional()
   @IsEnum(SupportMessageDirection)

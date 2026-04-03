@@ -687,7 +687,14 @@ export class MessengerController {
       if (!(error instanceof NotFoundException)) {
         throw error;
       }
-      const result = this.supportService.replyToDialog(threadId, { text: dto.text }, user);
+      const result = this.supportService.replyToDialog(
+        threadId,
+        {
+          text: dto.text,
+          attachments: dto.attachments
+        },
+        user
+      );
       return this.mapSupportMessageToLegacy(result.message);
     }
   }
@@ -1103,6 +1110,8 @@ export class MessengerController {
         return SupportConnectorRoute.LK_WEB_MESSENGER;
       case ConnectorRoute.LK_ACADEMY_WEB_MESSENGER:
         return SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+      case ConnectorRoute.PROMO_WEB_MESSENGER:
+        return SupportConnectorRoute.PROMO_WEB_MESSENGER;
       case ConnectorRoute.MAX_ACADEMY_BOT:
         return SupportConnectorRoute.MAX_ACADEMY_BOT;
       default:
@@ -1155,6 +1164,9 @@ export class MessengerController {
       origin: MessageOrigin.HUMAN,
       direction: message.direction,
       text: message.text || '',
+      attachments: Array.isArray(message.attachments)
+        ? message.attachments.map((attachment) => ({ ...attachment }))
+        : undefined,
       createdAt: message.createdAt
     };
   }
@@ -1167,6 +1179,8 @@ export class MessengerController {
         return ConnectorRoute.LK_WEB_MESSENGER;
       case SupportConnectorRoute.LK_ACADEMY_WEB_MESSENGER:
         return ConnectorRoute.LK_ACADEMY_WEB_MESSENGER;
+      case SupportConnectorRoute.PROMO_WEB_MESSENGER:
+        return ConnectorRoute.PROMO_WEB_MESSENGER;
       case SupportConnectorRoute.MAX_ACADEMY_BOT:
         return ConnectorRoute.MAX_ACADEMY_BOT;
       case SupportConnectorRoute.MAX_BOT:

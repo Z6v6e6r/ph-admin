@@ -10,7 +10,9 @@ import {
 @Injectable()
 export class AiConnectorService {
   analyzeDialog(threadId: string, messages: ChatMessage[]): DialogAiInsight {
-    const text = messages.map((message) => message.text.toLowerCase()).join(' ');
+    const text = messages
+      .map((message) => String(message.text ?? '').toLowerCase())
+      .join(' ');
     const topic = this.detectTopic(text);
     const sentiment = this.detectSentiment(text);
     const urgency = this.detectUrgency(text);
@@ -30,7 +32,7 @@ export class AiConnectorService {
   }
 
   buildSuggestion(insight: DialogAiInsight, clientText: string): string {
-    const normalizedText = clientText.trim();
+    const normalizedText = String(clientText ?? '').trim();
     const prefix =
       insight.urgency === AiUrgency.HIGH
         ? 'Thank you for the message. We marked this as high priority.'

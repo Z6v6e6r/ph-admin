@@ -5,7 +5,7 @@ import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
-  const requestBodyLimit = String(process.env.REQUEST_BODY_LIMIT ?? '2mb').trim() || '2mb';
+  const requestBodyLimit = String(process.env.REQUEST_BODY_LIMIT ?? '20mb').trim() || '20mb';
   app.use(json({ limit: requestBodyLimit }));
   app.use(urlencoded({ extended: true, limit: requestBodyLimit }));
   const trustProxy = String(process.env.TRUST_PROXY ?? '').toLowerCase();
