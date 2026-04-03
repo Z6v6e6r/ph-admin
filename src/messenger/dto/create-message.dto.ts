@@ -32,4 +32,11 @@ export class CreateMessageDto {
   @ValidateNested({ each: true })
   @Type(() => MessageAttachmentDto)
   attachments?: MessageAttachmentDto[];
+
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  quickReplyRuleId?: string;
 }

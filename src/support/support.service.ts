@@ -11,6 +11,12 @@ import {
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
+import { QuickRepliesService } from '../quick-replies/quick-replies.service';
+import {
+  QuickReplyMode,
+  QuickReplySourceType,
+  QuickReplyTriggerType
+} from '../quick-replies/quick-replies.types';
 import {
   SupportConnectorNormalizationHelpers,
   SupportStationMappingMatch
@@ -116,9 +122,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly outbox = new Map<string, SupportOutboxCommand>();
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly messageObservers: SupportMessageObserver[] = [];
+  private readonly noReplyQuickReplySignatures = new Set<string>();
   private readonly stationMappings = this.parseStationMappings();
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
+  private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
   private isPersistenceSyncInProgress = false;
   private initialPersistenceSyncCompleted = false;
   private lastPersistenceSyncStartedAt?: string;
@@ -128,25 +136,31 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   constructor(
     private readonly persistence: SupportPersistenceService,
-    private readonly connectorRegistry: SupportConnectorRegistry
+    private readonly connectorRegistry: SupportConnectorRegistry,
+    private readonly quickReplies: QuickRepliesService
   ) {}
 
   async onModuleInit(): Promise<void> {
     await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
+    this.ensureNoReplyQuickReplyTimer();
   }
 
   async onApplicationBootstrap(): Promise<void> {
     await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
+    this.ensureNoReplyQuickReplyTimer();
   }
 
   onModuleDestroy(): void {
-    if (!this.persistenceSyncTimer) {
-      return;
+    if (this.persistenceSyncTimer) {
+      clearInterval(this.persistenceSyncTimer);
+      this.persistenceSyncTimer = undefined;
     }
-    clearInterval(this.persistenceSyncTimer);
-    this.persistenceSyncTimer = undefined;
+    if (this.noReplyQuickReplyTimer) {
+      clearInterval(this.noReplyQuickReplyTimer);
+      this.noReplyQuickReplyTimer = undefined;
+    }
   }
 
   registerMessageObserver(observer: SupportMessageObserver): void {
@@ -347,6 +361,72 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }, this.persistenceSyncIntervalMs);
   }
 
+  private ensureNoReplyQuickReplyTimer(): void {
+    if (this.noReplyQuickReplyTimer) {
+      return;
+    }
+    this.noReplyQuickReplyTimer = setInterval(() => {
+      this.sweepNoReplyQuickReplies();
+    }, 30000);
+  }
+
+  private sweepNoReplyQuickReplies(): void {
+    for (const dialog of this.dialogs.values()) {
+      if (dialog.status !== SupportDialogStatus.OPEN || !this.canReplyToDialog(dialog)) {
+        continue;
+      }
+
+      const staffMessage = this.getLatestAwaitingClientStaffMessage(dialog.id);
+      if (!staffMessage) {
+        continue;
+      }
+
+      const connector =
+        dialog.lastReplyConnector ||
+        dialog.lastInboundConnector ||
+        dialog.connectors[0];
+      if (!connector) {
+        continue;
+      }
+
+      const context = this.buildQuickReplyMatchContext(
+        dialog,
+        connector,
+        this.getLatestClientMessage(dialog.id),
+        staffMessage.createdAt
+      );
+      const rule = this.quickReplies.findMatchingRules(
+        context,
+        QuickReplyMode.AUTO_REPLY
+      ).find(
+        (candidate) =>
+          candidate.triggerType === QuickReplyTriggerType.CLIENT_NO_REPLY_FOR
+      );
+      if (!rule) {
+        continue;
+      }
+
+      const signature = `${dialog.id}:${staffMessage.id}:${rule.id}`;
+      if (this.noReplyQuickReplySignatures.has(signature)) {
+        continue;
+      }
+      this.noReplyQuickReplySignatures.add(signature);
+      if (this.noReplyQuickReplySignatures.size > 5000) {
+        this.noReplyQuickReplySignatures.clear();
+        this.noReplyQuickReplySignatures.add(signature);
+      }
+
+      this.sendQuickReplyAutoResponse(
+        dialog,
+        this.getLatestClientMessage(dialog.id) ?? staffMessage,
+        connector,
+        rule,
+        context
+      );
+      this.persistDialog(dialog);
+    }
+  }
+
   private resolvePersistenceSyncIntervalMs(): number {
     const rawValue = Number(process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS ?? 0);
     if (!Number.isFinite(rawValue) || rawValue < 0) {
@@ -486,6 +566,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           this.outbox.set(outbox.id, outbox);
           this.persistence.persistOutboxCommand(outbox);
           dialog.lastReplyConnector = normalizedDto.connector;
+        }
+      }
+
+      if (
+        direction === SupportMessageDirection.INBOUND &&
+        this.canReplyToDialog(dialog) &&
+        this.isActionableClientMessage(message)
+      ) {
+        const autoReplyOutbox = this.trySendQuickReplyAutoResponse(
+          dialog,
+          message,
+          normalizedDto.connector
+        );
+        if (autoReplyOutbox) {
+          outbox = autoReplyOutbox;
         }
       }
     }
@@ -770,6 +865,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const senderRole = this.resolveSenderRole(user.roles);
     const attachments = this.normalizeMessageAttachments(dto.attachments);
     const text = String(dto.text ?? '').trim();
+    const lastClientMessage = this.getLatestClientMessage(dialog.id);
     this.ensureMessageHasBody(text, attachments);
     const message: SupportMessage = {
       id: randomUUID(),
@@ -812,6 +908,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (outbox) {
       this.outbox.set(outbox.id, outbox);
       this.persistence.persistOutboxCommand(outbox);
+    }
+
+    if (dto.quickReplyRuleId) {
+      this.quickReplies.registerUsage(
+        dto.quickReplyRuleId,
+        this.buildQuickReplyMatchContext(dialog, connector, lastClientMessage, message.createdAt),
+        user.id
+      );
     }
 
     return { dialog, message, outbox };
@@ -1656,6 +1760,174 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
   }
 
+  private trySendQuickReplyAutoResponse(
+    dialog: SupportDialog,
+    clientMessage: SupportMessage,
+    connector: SupportConnectorRoute
+  ): SupportOutboxCommand | undefined {
+    const context = this.buildQuickReplyMatchContext(
+      dialog,
+      connector,
+      clientMessage,
+      clientMessage.createdAt
+    );
+    const [rule] = this.quickReplies.findMatchingRules(
+      context,
+      QuickReplyMode.AUTO_REPLY
+    );
+    if (!rule) {
+      return undefined;
+    }
+
+    return this.sendQuickReplyAutoResponse(
+      dialog,
+      clientMessage,
+      connector,
+      rule,
+      context
+    );
+  }
+
+  private sendQuickReplyAutoResponse(
+    dialog: SupportDialog,
+    clientMessage: SupportMessage,
+    connector: SupportConnectorRoute,
+    rule: {
+      id: string;
+      title: string;
+      responseText: string;
+      responseAttachments?: MessageAttachment[];
+      mode: QuickReplyMode;
+    },
+    context: {
+      sourceType: QuickReplySourceType;
+      dialogId: string;
+      connector?: SupportConnectorRoute;
+      stationId?: string;
+      messageText?: string;
+      messageCreatedAt?: string;
+      hasAttachment?: boolean;
+      isFirstClientMessage?: boolean;
+      noClientReplyMinutes?: number;
+    }
+  ): SupportOutboxCommand | undefined {
+
+    const createdAt = new Date().toISOString();
+    const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
+    const serviceMessage: SupportMessage = {
+      id: randomUUID(),
+      dialogId: dialog.id,
+      clientId: dialog.clientId,
+      connector,
+      direction: SupportMessageDirection.SYSTEM,
+      kind: attachments.length > 0 ? SupportMessageKind.MEDIA : SupportMessageKind.SYSTEM,
+      text: rule.responseText,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      createdAt,
+      senderId: 'system',
+      senderRole: 'SYSTEM',
+      senderName: 'Система · Автоответ',
+      stationId: dialog.stationId,
+      stationName: dialog.stationName,
+      meta: {
+        quickReplyRuleId: rule.id,
+        quickReplyRuleTitle: rule.title,
+        quickReplyMode: rule.mode
+      }
+    };
+
+    this.appendMessage(dialog, serviceMessage);
+    dialog.lastReplyConnector = connector;
+    dialog.updatedAt = createdAt;
+    const outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
+    if (outbox) {
+      this.outbox.set(outbox.id, outbox);
+      this.persistence.persistOutboxCommand(outbox);
+    }
+
+    this.quickReplies.registerUsage(
+      rule.id,
+      this.buildQuickReplyMatchContext(dialog, connector, clientMessage, clientMessage.createdAt)
+    );
+
+    return outbox;
+  }
+
+  private buildQuickReplyMatchContext(
+    dialog: SupportDialog,
+    connector: SupportConnectorRoute,
+    clientMessage: SupportMessage | null,
+    messageCreatedAt?: string
+  ) {
+    return {
+      sourceType: QuickReplySourceType.SUPPORT,
+      dialogId: dialog.id,
+      connector,
+      stationId: dialog.stationId,
+      messageText: clientMessage?.text,
+      messageCreatedAt: messageCreatedAt ?? clientMessage?.createdAt,
+      hasAttachment: this.normalizeMessageAttachments(clientMessage?.attachments).length > 0,
+      isFirstClientMessage: this.isFirstClientMessage(dialog.id, clientMessage?.id),
+      noClientReplyMinutes: this.resolveNoClientReplyMinutes(dialog.id)
+    };
+  }
+
+  private getLatestClientMessage(dialogId: string): SupportMessage | null {
+    const dialogMessages = this.messages.get(dialogId) ?? [];
+    for (let index = dialogMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = dialogMessages[index];
+      if (candidate.direction === SupportMessageDirection.INBOUND) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private getLatestAwaitingClientStaffMessage(dialogId: string): SupportMessage | null {
+    const dialogMessages = this.messages.get(dialogId) ?? [];
+    for (let index = dialogMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = dialogMessages[index];
+      if (this.isSystemDialogMessage(candidate)) {
+        continue;
+      }
+      return candidate.direction === SupportMessageDirection.OUTBOUND
+        ? candidate
+        : null;
+    }
+    return null;
+  }
+
+  private isFirstClientMessage(dialogId: string, messageId?: string): boolean {
+    if (!messageId) {
+      return false;
+    }
+    const dialogMessages = this.messages.get(dialogId) ?? [];
+    for (const message of dialogMessages) {
+      if (message.direction !== SupportMessageDirection.INBOUND) {
+        continue;
+      }
+      return message.id === messageId;
+    }
+    return false;
+  }
+
+  private resolveNoClientReplyMinutes(dialogId: string): number | undefined {
+    const dialogMessages = (this.messages.get(dialogId) ?? []).filter(
+      (message) => !this.isSystemDialogMessage(message)
+    );
+    const lastMessage = dialogMessages[dialogMessages.length - 1];
+    if (!lastMessage || lastMessage.direction !== SupportMessageDirection.OUTBOUND) {
+      return undefined;
+    }
+
+    const elapsedMs = Date.now() - this.toTimestamp(lastMessage.createdAt);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+      return undefined;
+    }
+
+    return Math.floor(elapsedMs / 60000);
+  }
+
   private appendMessage(dialog: SupportDialog, message: SupportMessage): void {
     const existing = this.messages.get(dialog.id) ?? [];
     const messageTs = this.toTimestamp(message.createdAt);
@@ -1663,22 +1935,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const currentLastRankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
     const isSystemMessage = this.isSystemDialogMessage(message);
 
-    if (!isSystemMessage) {
-      if (existing.length === 0) {
+    if (existing.length === 0) {
+      existing.push(message);
+    } else {
+      const lastMessage = existing[existing.length - 1];
+      const lastMessageTs = this.toTimestamp(lastMessage.createdAt);
+
+      if (messageTs >= lastMessageTs) {
         existing.push(message);
       } else {
-        const lastMessage = existing[existing.length - 1];
-        const lastMessageTs = this.toTimestamp(lastMessage.createdAt);
-
-        if (messageTs >= lastMessageTs) {
-          existing.push(message);
-        } else {
-          const insertIndex = this.findMessageInsertIndex(existing, messageTs);
-          existing.splice(insertIndex, 0, message);
-        }
+        const insertIndex = this.findMessageInsertIndex(existing, messageTs);
+        existing.splice(insertIndex, 0, message);
       }
-      this.messages.set(dialog.id, existing);
     }
+    this.messages.set(dialog.id, existing);
 
     if (messageTs >= currentLastMessageTs) {
       dialog.lastMessageAt = message.createdAt;

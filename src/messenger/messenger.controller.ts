@@ -21,6 +21,13 @@ import {
   VivaAdminSettingsSnapshot,
   VivaClientCabinetLookup
 } from '../integrations/viva/viva-admin.service';
+import { CreateQuickReplyRuleDto } from '../quick-replies/dto/create-quick-reply-rule.dto';
+import { UpdateQuickReplyRuleDto } from '../quick-replies/dto/update-quick-reply-rule.dto';
+import { QuickRepliesService } from '../quick-replies/quick-replies.service';
+import {
+  QuickReplyRule,
+  QuickReplyUsageLog
+} from '../quick-replies/quick-replies.types';
 import { SupportService } from '../support/support.service';
 import {
   SupportAiInsight,
@@ -100,7 +107,8 @@ export class MessengerController {
   constructor(
     private readonly messengerService: MessengerService,
     private readonly supportService: SupportService,
-    private readonly vivaAdminService: VivaAdminService
+    private readonly vivaAdminService: VivaAdminService,
+    private readonly quickRepliesService: QuickRepliesService
   ) {}
 
   @Get('threads')
@@ -385,6 +393,44 @@ export class MessengerController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.messengerService.createAccessRule(dto, user);
+  }
+
+  @Post('settings/quick-replies')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  createQuickReplyRule(
+    @Body() dto: CreateQuickReplyRuleDto,
+    @CurrentUser() user?: RequestUser
+  ): QuickReplyRule {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.quickRepliesService.createRule(dto, user);
+  }
+
+  @Patch('settings/quick-replies/:ruleId')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  updateQuickReplyRule(
+    @Param('ruleId') ruleId: string,
+    @Body() dto: UpdateQuickReplyRuleDto,
+    @CurrentUser() user?: RequestUser
+  ): QuickReplyRule {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.quickRepliesService.updateRule(ruleId, dto, user);
+  }
+
+  @Get('settings/quick-replies/:ruleId/usages')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER, Role.SUPPORT)
+  listQuickReplyUsageLogs(
+    @Param('ruleId') ruleId: string,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
+    @CurrentUser() user?: RequestUser
+  ): QuickReplyUsageLog[] {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.quickRepliesService.listUsageLogs(ruleId, user, limit ?? 100);
   }
 
   @Patch('settings/access-rules/:ruleId')
@@ -691,7 +737,8 @@ export class MessengerController {
         threadId,
         {
           text: dto.text,
-          attachments: dto.attachments
+          attachments: dto.attachments,
+          quickReplyRuleId: dto.quickReplyRuleId
         },
         user
       );

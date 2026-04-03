@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleDestroy,
   OnModuleInit
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -13,6 +14,12 @@ import {
 } from '../common/messages/message-attachment.types';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
+import { QuickRepliesService } from '../quick-replies/quick-replies.service';
+import {
+  QuickReplyMode,
+  QuickReplySourceType,
+  QuickReplyTriggerType
+} from '../quick-replies/quick-replies.types';
 import { AiConnectorService } from './ai/ai-connector.service';
 import { MessengerPersistenceService } from './messenger-persistence.service';
 import { CreateAccessRuleDto } from './dto/create-access-rule.dto';
@@ -63,7 +70,7 @@ interface PendingStaffResponse {
 type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Promise<void>;
 
 @Injectable()
-export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
+export class MessengerService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly threads = new Map<string, ChatThread>();
   private readonly messages = new Map<string, ChatMessage[]>();
   private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
@@ -75,9 +82,12 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   private readonly connectorConfigs = new Map<string, MessengerConnectorConfig>();
   private readonly accessRules = new Map<string, MessengerAccessRule>();
   private readonly messageObservers: MessageObserver[] = [];
+  private readonly noReplyQuickReplySignatures = new Set<string>();
+  private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly aiConnector: AiConnectorService,
+    private readonly quickReplies: QuickRepliesService,
     private readonly persistence: MessengerPersistenceService
   ) {
     this.bootstrapSettingsDefaults();
@@ -85,10 +95,20 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
   async onModuleInit(): Promise<void> {
     await this.hydrateFromPersistence();
+    this.ensureNoReplyQuickReplyTimer();
   }
 
   async onApplicationBootstrap(): Promise<void> {
     await this.hydrateFromPersistence();
+    this.ensureNoReplyQuickReplyTimer();
+  }
+
+  onModuleDestroy(): void {
+    if (!this.noReplyQuickReplyTimer) {
+      return;
+    }
+    clearInterval(this.noReplyQuickReplyTimer);
+    this.noReplyQuickReplyTimer = undefined;
   }
 
   registerMessageObserver(observer: MessageObserver): void {
@@ -291,6 +311,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     const createdAt = new Date().toISOString();
     const text = String(dto.text ?? '').trim();
     const attachments = this.normalizeMessageAttachments(dto.attachments);
+    const lastClientMessage = this.isStaffRole(senderRole)
+      ? this.getLatestClientMessage(threadId)
+      : null;
     this.ensureMessageHasBody(text, attachments);
     const message: ChatMessage = {
       id: randomUUID(),
@@ -318,6 +341,13 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
 
     if (!this.isStaffRole(senderRole)) {
       this.handleAiAssistantOnClientMessage(thread, message);
+      this.handleQuickReplyAutoRules(thread, message);
+    } else if (dto.quickReplyRuleId) {
+      this.quickReplies.registerUsage(
+        dto.quickReplyRuleId,
+        this.buildQuickReplyMatchContext(thread, lastClientMessage, message.createdAt),
+        user.id
+      );
     }
 
     this.threads.set(thread.id, thread);
@@ -450,7 +480,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     return {
       stations: this.listStationConfigs(user),
       connectors: this.listConnectorConfigs(user),
-      accessRules: this.listAccessRules(user)
+      accessRules: this.listAccessRules(user),
+      quickReplies: this.quickReplies.listRules(user)
     };
   }
 
@@ -952,9 +983,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
   ): StationDialogSummary {
     const responseStats = this.getThreadResponseStats(thread.id);
     const insight = this.aiInsights.get(thread.id);
-    const threadMessages = this.messages.get(thread.id) ?? [];
-    const lastMessage =
-      threadMessages.length > 0 ? threadMessages[threadMessages.length - 1] : undefined;
+    const lastMessage = this.getLatestDialogPreviewMessage(thread.id);
 
     return {
       threadId: thread.id,
@@ -1711,6 +1740,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     this.messages.set(thread.id, existing);
 
     thread.lastMessageAt = message.createdAt;
+    if (!this.isSystemThreadMessage(message)) {
+      thread.lastRankingMessageAt = message.createdAt;
+    }
     thread.updatedAt = message.createdAt;
     this.threads.set(thread.id, thread);
     this.persistence.persistThread(thread);
@@ -1816,6 +1848,180 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap {
     }
 
     this.storeSuggestion(thread.id, suggestion);
+  }
+
+  private handleQuickReplyAutoRules(
+    thread: ChatThread,
+    clientMessage: ChatMessage
+  ): void {
+    const [rule] = this.quickReplies.findMatchingRules(
+      this.buildQuickReplyMatchContext(thread, clientMessage, clientMessage.createdAt),
+      QuickReplyMode.AUTO_REPLY
+    );
+    if (!rule) {
+      return;
+    }
+
+    const sentAt = new Date().toISOString();
+    const systemMessage: ChatMessage = {
+      id: randomUUID(),
+      threadId: thread.id,
+      senderId: 'system',
+      senderRole: Role.SUPPORT,
+      senderRoleRaw: 'SYSTEM',
+      senderName: 'Система · Автоответ',
+      origin: MessageOrigin.HUMAN,
+      direction: 'SYSTEM',
+      text: rule.responseText,
+      attachments:
+        this.normalizeMessageAttachments(rule.responseAttachments).length > 0
+          ? this.normalizeMessageAttachments(rule.responseAttachments)
+          : undefined,
+      createdAt: sentAt
+    };
+
+    this.appendMessage(thread, systemMessage);
+    this.quickReplies.registerUsage(
+      rule.id,
+      this.buildQuickReplyMatchContext(thread, clientMessage, clientMessage.createdAt)
+    );
+  }
+
+  private ensureNoReplyQuickReplyTimer(): void {
+    if (this.noReplyQuickReplyTimer) {
+      return;
+    }
+    this.noReplyQuickReplyTimer = setInterval(() => {
+      this.sweepNoReplyQuickReplies();
+    }, 30000);
+  }
+
+  private sweepNoReplyQuickReplies(): void {
+    for (const thread of this.threads.values()) {
+      if (thread.status !== ThreadStatus.OPEN) {
+        continue;
+      }
+
+      const staffMessage = this.getLatestAwaitingClientStaffMessage(thread.id);
+      if (!staffMessage) {
+        continue;
+      }
+
+      const context = this.buildQuickReplyMatchContext(
+        thread,
+        this.getLatestClientMessage(thread.id),
+        staffMessage.createdAt
+      );
+      const rule = this.quickReplies.findMatchingRules(
+        context,
+        QuickReplyMode.AUTO_REPLY
+      ).find(
+        (candidate) =>
+          candidate.triggerType === QuickReplyTriggerType.CLIENT_NO_REPLY_FOR
+      );
+      if (!rule) {
+        continue;
+      }
+
+      const signature = `${thread.id}:${staffMessage.id}:${rule.id}`;
+      if (this.noReplyQuickReplySignatures.has(signature)) {
+        continue;
+      }
+      this.noReplyQuickReplySignatures.add(signature);
+      if (this.noReplyQuickReplySignatures.size > 5000) {
+        this.noReplyQuickReplySignatures.clear();
+        this.noReplyQuickReplySignatures.add(signature);
+      }
+
+      const sentAt = new Date().toISOString();
+      this.appendMessage(thread, {
+        id: randomUUID(),
+        threadId: thread.id,
+        senderId: 'system',
+        senderRole: Role.SUPPORT,
+        senderRoleRaw: 'SYSTEM',
+        senderName: 'Система · Автоответ',
+        origin: MessageOrigin.HUMAN,
+        direction: 'SYSTEM',
+        text: rule.responseText,
+        attachments:
+          this.normalizeMessageAttachments(rule.responseAttachments).length > 0
+            ? this.normalizeMessageAttachments(rule.responseAttachments)
+            : undefined,
+        createdAt: sentAt
+      });
+      this.quickReplies.registerUsage(rule.id, context);
+    }
+  }
+
+  private buildQuickReplyMatchContext(
+    thread: ChatThread,
+    clientMessage: ChatMessage | null,
+    messageCreatedAt?: string
+  ) {
+    return {
+      sourceType: QuickReplySourceType.MESSENGER,
+      dialogId: thread.id,
+      connector: thread.connector,
+      stationId: thread.stationId,
+      messageText: clientMessage?.text,
+      messageCreatedAt: messageCreatedAt ?? clientMessage?.createdAt,
+      hasAttachment: this.normalizeMessageAttachments(clientMessage?.attachments).length > 0,
+      isFirstClientMessage: this.isFirstClientMessage(thread.id, clientMessage?.id),
+      noClientReplyMinutes: this.resolveNoClientReplyMinutes(thread.id)
+    };
+  }
+
+  private isFirstClientMessage(threadId: string, messageId?: string): boolean {
+    if (!messageId) {
+      return false;
+    }
+    const threadMessages = this.messages.get(threadId) ?? [];
+    for (const message of threadMessages) {
+      if (this.isStaffRole(message.senderRole) || this.isSystemThreadMessage(message)) {
+        continue;
+      }
+      return message.id === messageId;
+    }
+    return false;
+  }
+
+  private resolveNoClientReplyMinutes(threadId: string): number | undefined {
+    const threadMessages = (this.messages.get(threadId) ?? []).filter(
+      (message) => !this.isSystemThreadMessage(message)
+    );
+    const lastMessage = threadMessages[threadMessages.length - 1];
+    if (!lastMessage || !this.isStaffRole(lastMessage.senderRole)) {
+      return undefined;
+    }
+    const elapsedMs = Date.now() - this.toTimestamp(lastMessage.createdAt);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+      return undefined;
+    }
+    return Math.floor(elapsedMs / 60000);
+  }
+
+  private getLatestAwaitingClientStaffMessage(threadId: string): ChatMessage | null {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    for (let index = threadMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = threadMessages[index];
+      if (this.isSystemThreadMessage(candidate)) {
+        continue;
+      }
+      return this.isStaffRole(candidate.senderRole) ? candidate : null;
+    }
+    return null;
+  }
+
+  private getLatestDialogPreviewMessage(threadId: string): ChatMessage | undefined {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    for (let index = threadMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = threadMessages[index];
+      if (!this.isSystemThreadMessage(candidate)) {
+        return candidate;
+      }
+    }
+    return threadMessages[threadMessages.length - 1];
   }
 
   private ensureMessageHasBody(text?: string, attachments: MessageAttachment[] = []): void {

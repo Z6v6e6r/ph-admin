@@ -38,4 +38,11 @@ export class ReplySupportDialogDto {
   @IsOptional()
   @IsEnum(SupportConnectorRoute)
   connector?: SupportConnectorRoute;
+
+  @Transform(({ value }) => normalizeOptionalText(value))
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  quickReplyRuleId?: string;
 }

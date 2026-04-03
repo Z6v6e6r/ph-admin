@@ -1,6 +1,7 @@
 import { MessageAttachment } from '../common/messages/message-attachment.types';
 import { Role } from '../common/rbac/role.enum';
 import { VivaClientCabinetStatus } from '../integrations/viva/viva-admin.service';
+import { QuickReplyRule } from '../quick-replies/quick-replies.types';
 
 export enum ConnectorRoute {
   TG_BOT = 'TG_BOT',
@@ -114,6 +115,7 @@ export interface MessengerSettingsSnapshot {
   stations: MessengerStationConfig[];
   connectors: MessengerConnectorConfig[];
   accessRules: MessengerAccessRule[];
+  quickReplies: QuickReplyRule[];
 }
 
 export interface StationSummary {

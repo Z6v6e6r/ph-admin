@@ -189,6 +189,20 @@
     { label: 'Адрес', text: 'Адрес' },
     { label: 'Спасибо!', text: 'Спасибо!' }
   ];
+  var QUICK_REPLY_STATION_UNASSIGNED = 'UNASSIGNED';
+  var QUICK_REPLY_TRIGGER_OPTIONS = [
+    { value: 'EXACT_PHRASE', label: 'Фраза целиком' },
+    { value: 'KEYWORD', label: 'Ключевое слово' },
+    { value: 'KEYWORD_SET', label: 'Набор ключевых слов' },
+    { value: 'MESSAGE_TIME_RANGE', label: 'Время сообщения' },
+    { value: 'CLIENT_NO_REPLY_FOR', label: 'Нет ответа клиента' },
+    { value: 'FIRST_CLIENT_MESSAGE', label: 'Первое сообщение клиента' },
+    { value: 'HAS_ATTACHMENT', label: 'Сообщение с фото' }
+  ];
+  var QUICK_REPLY_MODE_OPTIONS = [
+    { value: 'SUGGESTION', label: 'Подсказка' },
+    { value: 'AUTO_REPLY', label: 'Автомат' }
+  ];
 
   function normalizeRoleValue(rawRole) {
     var normalized = String(rawRole || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
@@ -1618,6 +1632,19 @@
         gap:8px;
         margin-top:4px;
       }
+      .phab-admin-community-image-upload-row{
+        display:flex;
+        align-items:center;
+        gap:8px;
+      }
+      .phab-admin-community-image-upload-input{
+        flex:1 1 auto;
+        min-width:0;
+      }
+      .phab-admin-community-image-upload-btn{
+        flex:0 0 auto;
+        white-space:nowrap;
+      }
       .phab-admin-community-list-empty{
         padding:12px;
       }
@@ -2357,6 +2384,42 @@
         border-color:rgba(51,0,32,.26);
         transform:translateY(-1px);
       }
+      .phab-admin-quick-reply-suggestion{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        max-width:min(460px,80vw);
+        border-color:rgba(1,67,58,.22);
+        background:linear-gradient(180deg,rgba(255,255,255,.97) 0%,rgba(235,255,231,.95) 100%);
+        white-space:normal;
+        text-align:left;
+      }
+      .phab-admin-quick-reply-badge{
+        flex:0 0 auto;
+        padding:4px 8px;
+        border-radius:999px;
+        background:rgba(1,67,58,.1);
+        color:#01433a;
+        font-size:9px;
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.06em;
+      }
+      .phab-admin-rich-text,
+      .phab-admin-rich-text-inline{
+        white-space:pre-wrap;
+        word-break:break-word;
+      }
+      .phab-admin-rich-text a,
+      .phab-admin-rich-text-inline a{
+        color:var(--cup-blue);
+        font-weight:700;
+        text-decoration:none;
+      }
+      .phab-admin-rich-text a:hover,
+      .phab-admin-rich-text-inline a:hover{
+        text-decoration:underline;
+      }
       .phab-admin-bottom-sheet{
         position:fixed;
         inset:0;
@@ -2646,6 +2709,121 @@
         grid-template-columns:repeat(3,minmax(250px,1fr));
         gap:12px;
       }
+      .phab-admin-settings-tabs{
+        margin-bottom:10px;
+      }
+      .phab-admin-settings-pane{
+        min-width:0;
+      }
+      .phab-admin-settings-quick-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        margin-bottom:10px;
+      }
+      .phab-admin-settings-quick-title{
+        font-family:var(--cup-font-heading);
+        font-size:13px;
+        font-weight:800;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-quick-reply-table-wrap{
+        overflow:auto;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:16px;
+        background:rgba(255,255,255,.9);
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-admin-quick-reply-table{
+        width:100%;
+        min-width:1020px;
+        border-collapse:collapse;
+      }
+      .phab-admin-quick-reply-table th,
+      .phab-admin-quick-reply-table td{
+        padding:12px 10px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        text-align:left;
+        vertical-align:top;
+        font-size:12px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-quick-reply-table th{
+        background:linear-gradient(90deg,rgba(207,255,182,.82) 0%,rgba(255,255,255,.95) 100%);
+        font-size:10px;
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.05em;
+        white-space:nowrap;
+      }
+      .phab-admin-quick-reply-title-cell{
+        min-width:170px;
+        font-weight:800;
+      }
+      .phab-admin-quick-reply-meta-cell{
+        color:rgba(51,0,32,.72);
+      }
+      .phab-admin-quick-reply-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+      }
+      .phab-admin-quick-reply-status-switch{
+        gap:8px;
+        white-space:nowrap;
+      }
+      .phab-admin-quick-reply-status-switch .phab-admin-switch-text{
+        font-size:12px;
+      }
+      .phab-admin-quick-reply-editor{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:10px;
+      }
+      .phab-admin-quick-reply-editor-span2{
+        grid-column:span 2;
+      }
+      .phab-admin-quick-reply-toolbar{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-quick-reply-attachments{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-quick-reply-usage-list{
+        display:grid;
+        gap:8px;
+        max-height:260px;
+        overflow:auto;
+      }
+      .phab-admin-quick-reply-usage-item{
+        padding:10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:12px;
+        background:rgba(255,255,255,.95);
+        display:grid;
+        gap:6px;
+      }
+      .phab-admin-quick-reply-preview-link{
+        display:inline-block;
+        margin-top:6px;
+        border-radius:12px;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.14);
+      }
+      .phab-admin-quick-reply-preview-link img{
+        display:block;
+        width:100%;
+        max-width:180px;
+        height:110px;
+        object-fit:cover;
+      }
       .phab-admin-settings-card{
         background:rgba(255,255,255,.9);
         border:1px solid rgba(51,0,32,.16);
@@ -2679,11 +2857,16 @@
         gap:7px;
       }
       .phab-admin-settings-label{
+        display:grid;
+        gap:6px;
         font-size:10px;
         font-weight:800;
         letter-spacing:.04em;
         text-transform:uppercase;
         color:rgba(51,0,32,.8);
+      }
+      .phab-admin-settings-label .phab-admin-settings-input{
+        text-transform:none;
       }
       .phab-admin-settings-row{
         display:flex;
@@ -2765,6 +2948,10 @@
       .phab-admin-switch-input:focus-visible + .phab-admin-switch-track{
         outline:2px solid rgba(0,58,134,.45);
         outline-offset:2px;
+      }
+      .phab-admin-switch-input:disabled + .phab-admin-switch-track{
+        cursor:not-allowed;
+        opacity:.6;
       }
       .phab-admin-switch-text{
         font-size:13px;
@@ -3069,6 +3256,10 @@
         .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
         .phab-admin-community-overview-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
         .phab-admin-community-form-grid{grid-template-columns:1fr}
+        .phab-admin-community-image-upload-row{
+          flex-direction:column;
+          align-items:stretch;
+        }
         .phab-admin-community-main-head{
           flex-direction:column;
         }
@@ -3097,6 +3288,8 @@
           align-items:flex-start;
         }
         .phab-admin-settings-grid{grid-template-columns:1fr}
+        .phab-admin-quick-reply-editor{grid-template-columns:1fr}
+        .phab-admin-quick-reply-editor-span2{grid-column:auto}
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
         .phab-admin-header{padding:14px}
@@ -3850,11 +4043,14 @@
           'GET'
         );
       },
-      sendMessage: function (dialogId, text, attachments) {
+      sendMessage: function (dialogId, text, attachments, quickReplyRuleId) {
         var payload = { attachments: attachments };
         var messageText = String(text || '').trim();
         if (messageText) {
           payload.text = messageText;
+        }
+        if (String(quickReplyRuleId || '').trim()) {
+          payload.quickReplyRuleId = String(quickReplyRuleId).trim();
         }
         return request(
           '/support/dialogs/' + encodeURIComponent(dialogId) + '/reply',
@@ -3862,11 +4058,14 @@
           payload
         );
       },
-      sendLegacyMessage: function (threadId, text, attachments) {
+      sendLegacyMessage: function (threadId, text, attachments, quickReplyRuleId) {
         var payload = { attachments: attachments };
         var messageText = String(text || '').trim();
         if (messageText) {
           payload.text = messageText;
+        }
+        if (String(quickReplyRuleId || '').trim()) {
+          payload.quickReplyRuleId = String(quickReplyRuleId).trim();
         }
         return request(
           '/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages',
@@ -4065,6 +4264,30 @@
       },
       updateVivaSettings: function (payload) {
         return request('/messenger/settings/viva', 'PATCH', payload);
+      },
+      createQuickReplyRule: function (payload) {
+        return request('/messenger/settings/quick-replies', 'POST', payload);
+      },
+      updateQuickReplyRule: function (ruleId, payload) {
+        return request(
+          '/messenger/settings/quick-replies/' + encodeURIComponent(ruleId),
+          'PATCH',
+          payload
+        );
+      },
+      getQuickReplyUsageLogs: function (ruleId, limit) {
+        var params = new URLSearchParams();
+        if (limit !== undefined && limit !== null) {
+          params.set('limit', String(limit));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request(
+          '/messenger/settings/quick-replies/' +
+            encodeURIComponent(ruleId) +
+            '/usages' +
+            suffix,
+          'GET'
+        );
       },
       getAdminUsers: function () {
         return request('/auth/admin-users', 'GET');
@@ -5117,9 +5340,34 @@
     communityPreviewBody.className = 'phab-admin-community-preview-body';
     communitiesPreviewPane.appendChild(communityPreviewBody);
 
+    var settingsTabs = document.createElement('div');
+    settingsTabs.className = 'phab-admin-community-tabs phab-admin-settings-tabs';
+    settingsSection.appendChild(settingsTabs);
+
+    var settingsGeneralTabBtn = document.createElement('button');
+    settingsGeneralTabBtn.className =
+      'phab-admin-community-tab phab-admin-community-tab-active';
+    settingsGeneralTabBtn.type = 'button';
+    settingsGeneralTabBtn.textContent = 'Общие настройки';
+    settingsTabs.appendChild(settingsGeneralTabBtn);
+
+    var settingsQuickRepliesTabBtn = document.createElement('button');
+    settingsQuickRepliesTabBtn.className = 'phab-admin-community-tab';
+    settingsQuickRepliesTabBtn.type = 'button';
+    settingsQuickRepliesTabBtn.textContent = 'Быстрые ответы';
+    settingsTabs.appendChild(settingsQuickRepliesTabBtn);
+
+    var settingsGeneralPane = document.createElement('div');
+    settingsGeneralPane.className = 'phab-admin-settings-pane';
+    settingsSection.appendChild(settingsGeneralPane);
+
+    var settingsQuickRepliesPane = document.createElement('div');
+    settingsQuickRepliesPane.className = 'phab-admin-settings-pane phab-admin-hidden';
+    settingsSection.appendChild(settingsQuickRepliesPane);
+
     var settingsGrid = document.createElement('div');
     settingsGrid.className = 'phab-admin-settings-grid';
-    settingsSection.appendChild(settingsGrid);
+    settingsGeneralPane.appendChild(settingsGrid);
 
     var stationCard = document.createElement('div');
     stationCard.className = 'phab-admin-settings-card';
@@ -5451,6 +5699,280 @@
     staffInfo.textContent =
       'Список собран из текущей auth-конфигурации. Здесь видны суперадмины, управляющие и админы станций с их зонами доступа.';
     staffNote.appendChild(staffInfo);
+
+    var quickRepliesHead = document.createElement('div');
+    quickRepliesHead.className = 'phab-admin-settings-quick-head';
+    settingsQuickRepliesPane.appendChild(quickRepliesHead);
+
+    var quickRepliesTitle = document.createElement('div');
+    quickRepliesTitle.className = 'phab-admin-settings-quick-title';
+    quickRepliesTitle.textContent = 'Быстрые ответы для диалогов';
+    quickRepliesHead.appendChild(quickRepliesTitle);
+
+    var quickReplyCreateBtn = document.createElement('button');
+    quickReplyCreateBtn.className = 'phab-admin-btn';
+    quickReplyCreateBtn.type = 'button';
+    quickReplyCreateBtn.textContent = 'Добавить быстрый ответ';
+    quickRepliesHead.appendChild(quickReplyCreateBtn);
+
+    var quickReplyTableWrap = document.createElement('div');
+    quickReplyTableWrap.className = 'phab-admin-quick-reply-table-wrap';
+    settingsQuickRepliesPane.appendChild(quickReplyTableWrap);
+
+    var quickReplyTable = document.createElement('table');
+    quickReplyTable.className = 'phab-admin-quick-reply-table';
+    quickReplyTableWrap.appendChild(quickReplyTable);
+
+    var quickReplyModal = document.createElement('div');
+    quickReplyModal.className = 'phab-admin-modal phab-admin-hidden';
+    overlayHost.appendChild(quickReplyModal);
+
+    var quickReplyModalCard = document.createElement('div');
+    quickReplyModalCard.className = 'phab-admin-modal-card';
+    quickReplyModal.appendChild(quickReplyModalCard);
+
+    var quickReplyModalHead = document.createElement('div');
+    quickReplyModalHead.className = 'phab-admin-modal-head';
+    quickReplyModalCard.appendChild(quickReplyModalHead);
+
+    var quickReplyModalTitle = document.createElement('div');
+    quickReplyModalTitle.className = 'phab-admin-modal-title';
+    quickReplyModalTitle.textContent = 'Быстрый ответ';
+    quickReplyModalHead.appendChild(quickReplyModalTitle);
+
+    var quickReplyModalActions = document.createElement('div');
+    quickReplyModalActions.className = 'phab-admin-modal-actions';
+    quickReplyModalHead.appendChild(quickReplyModalActions);
+
+    var quickReplySaveBtn = document.createElement('button');
+    quickReplySaveBtn.className = 'phab-admin-btn';
+    quickReplySaveBtn.type = 'button';
+    quickReplySaveBtn.textContent = 'Сохранить';
+    quickReplyModalActions.appendChild(quickReplySaveBtn);
+
+    var quickReplyModalCloseBtn = document.createElement('button');
+    quickReplyModalCloseBtn.className = 'phab-admin-modal-close';
+    quickReplyModalCloseBtn.type = 'button';
+    quickReplyModalCloseBtn.textContent = '×';
+    quickReplyModalActions.appendChild(quickReplyModalCloseBtn);
+
+    var quickReplyModalBody = document.createElement('div');
+    quickReplyModalBody.className = 'phab-admin-modal-body';
+    quickReplyModalCard.appendChild(quickReplyModalBody);
+
+    var quickReplyEditorForm = document.createElement('div');
+    quickReplyEditorForm.className =
+      'phab-admin-detail-card phab-admin-detail-span-2';
+    quickReplyModalBody.appendChild(quickReplyEditorForm);
+
+    var quickReplyEditorHead = document.createElement('div');
+    quickReplyEditorHead.className = 'phab-admin-detail-head';
+    quickReplyEditorHead.innerHTML =
+      '<span class="phab-admin-detail-head-title">Параметры триггера и ответа</span>';
+    quickReplyEditorForm.appendChild(quickReplyEditorHead);
+
+    var quickReplyEditorBody = document.createElement('div');
+    quickReplyEditorBody.className = 'phab-admin-detail-body';
+    quickReplyEditorForm.appendChild(quickReplyEditorBody);
+
+    var quickReplyEditorGrid = document.createElement('div');
+    quickReplyEditorGrid.className = 'phab-admin-quick-reply-editor';
+    quickReplyEditorBody.appendChild(quickReplyEditorGrid);
+
+    var quickReplyTitleLabel = document.createElement('label');
+    quickReplyTitleLabel.className = 'phab-admin-settings-label';
+    quickReplyTitleLabel.textContent = 'Название правила';
+    quickReplyEditorGrid.appendChild(quickReplyTitleLabel);
+
+    var quickReplyTitleInput = document.createElement('input');
+    quickReplyTitleInput.className = 'phab-admin-settings-input';
+    quickReplyTitleInput.placeholder = 'Например: Адрес клуба';
+    quickReplyTitleLabel.appendChild(quickReplyTitleInput);
+
+    var quickReplyModeLabel = document.createElement('label');
+    quickReplyModeLabel.className = 'phab-admin-settings-label';
+    quickReplyModeLabel.textContent = 'Режим работы';
+    quickReplyEditorGrid.appendChild(quickReplyModeLabel);
+
+    var quickReplyModeInput = document.createElement('select');
+    quickReplyModeInput.className = 'phab-admin-settings-input';
+    QUICK_REPLY_MODE_OPTIONS.forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      quickReplyModeInput.appendChild(option);
+    });
+    quickReplyModeLabel.appendChild(quickReplyModeInput);
+
+    var quickReplyTriggerLabel = document.createElement('label');
+    quickReplyTriggerLabel.className = 'phab-admin-settings-label';
+    quickReplyTriggerLabel.textContent = 'Триггер';
+    quickReplyEditorGrid.appendChild(quickReplyTriggerLabel);
+
+    var quickReplyTriggerTypeInput = document.createElement('select');
+    quickReplyTriggerTypeInput.className = 'phab-admin-settings-input';
+    QUICK_REPLY_TRIGGER_OPTIONS.forEach(function (item) {
+      var option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label;
+      quickReplyTriggerTypeInput.appendChild(option);
+    });
+    quickReplyTriggerLabel.appendChild(quickReplyTriggerTypeInput);
+
+    var quickReplyStationLabel = document.createElement('label');
+    quickReplyStationLabel.className = 'phab-admin-settings-label';
+    quickReplyStationLabel.textContent = 'Станции';
+    quickReplyEditorGrid.appendChild(quickReplyStationLabel);
+
+    var quickReplyStationInput = document.createElement('select');
+    quickReplyStationInput.className = 'phab-admin-settings-input';
+    quickReplyStationInput.multiple = true;
+    quickReplyStationInput.size = 6;
+    quickReplyStationLabel.appendChild(quickReplyStationInput);
+
+    var quickReplyPhraseLabel = document.createElement('label');
+    quickReplyPhraseLabel.className = 'phab-admin-settings-label';
+    quickReplyPhraseLabel.textContent = 'Фраза / ключевое слово';
+    quickReplyEditorGrid.appendChild(quickReplyPhraseLabel);
+
+    var quickReplyPhraseInput = document.createElement('input');
+    quickReplyPhraseInput.className = 'phab-admin-settings-input';
+    quickReplyPhraseInput.placeholder = 'Например: как пройти';
+    quickReplyPhraseLabel.appendChild(quickReplyPhraseInput);
+
+    var quickReplyKeywordsLabel = document.createElement('label');
+    quickReplyKeywordsLabel.className = 'phab-admin-settings-label';
+    quickReplyKeywordsLabel.textContent = 'Набор ключевых слов (через запятую)';
+    quickReplyEditorGrid.appendChild(quickReplyKeywordsLabel);
+
+    var quickReplyKeywordsInput = document.createElement('input');
+    quickReplyKeywordsInput.className = 'phab-admin-settings-input';
+    quickReplyKeywordsInput.placeholder = 'бронь, цена, вечер';
+    quickReplyKeywordsLabel.appendChild(quickReplyKeywordsInput);
+
+    var quickReplyTimeLabel = document.createElement('label');
+    quickReplyTimeLabel.className = 'phab-admin-settings-label';
+    quickReplyTimeLabel.textContent = 'Диапазон времени сообщения';
+    quickReplyEditorGrid.appendChild(quickReplyTimeLabel);
+
+    var quickReplyTimeRow = document.createElement('div');
+    quickReplyTimeRow.className = 'phab-admin-settings-row-main';
+    quickReplyTimeLabel.appendChild(quickReplyTimeRow);
+
+    var quickReplyTimeFromInput = document.createElement('input');
+    quickReplyTimeFromInput.className = 'phab-admin-settings-input';
+    quickReplyTimeFromInput.type = 'time';
+    quickReplyTimeFromInput.value = '09:00';
+    quickReplyTimeRow.appendChild(quickReplyTimeFromInput);
+
+    var quickReplyTimeToInput = document.createElement('input');
+    quickReplyTimeToInput.className = 'phab-admin-settings-input';
+    quickReplyTimeToInput.type = 'time';
+    quickReplyTimeToInput.value = '21:00';
+    quickReplyTimeRow.appendChild(quickReplyTimeToInput);
+
+    var quickReplyNoReplyLabel = document.createElement('label');
+    quickReplyNoReplyLabel.className = 'phab-admin-settings-label';
+    quickReplyNoReplyLabel.textContent = 'Нет ответа клиента, минут';
+    quickReplyEditorGrid.appendChild(quickReplyNoReplyLabel);
+
+    var quickReplyNoReplyInput = document.createElement('input');
+    quickReplyNoReplyInput.className = 'phab-admin-settings-input';
+    quickReplyNoReplyInput.type = 'number';
+    quickReplyNoReplyInput.min = '1';
+    quickReplyNoReplyInput.max = '10080';
+    quickReplyNoReplyInput.step = '1';
+    quickReplyNoReplyInput.value = '60';
+    quickReplyNoReplyLabel.appendChild(quickReplyNoReplyInput);
+
+    var quickReplyTextWrap = document.createElement('div');
+    quickReplyTextWrap.className = 'phab-admin-quick-reply-editor-span2';
+    quickReplyEditorGrid.appendChild(quickReplyTextWrap);
+
+    var quickReplyTextLabel = document.createElement('label');
+    quickReplyTextLabel.className = 'phab-admin-settings-label';
+    quickReplyTextLabel.textContent = 'Текст ответа / подсказки';
+    quickReplyTextWrap.appendChild(quickReplyTextLabel);
+
+    var quickReplyToolbar = document.createElement('div');
+    quickReplyToolbar.className = 'phab-admin-quick-reply-toolbar';
+    quickReplyTextWrap.appendChild(quickReplyToolbar);
+
+    var quickReplyBoldBtn = document.createElement('button');
+    quickReplyBoldBtn.className = 'phab-admin-btn-secondary';
+    quickReplyBoldBtn.type = 'button';
+    quickReplyBoldBtn.textContent = 'Жирный';
+    quickReplyToolbar.appendChild(quickReplyBoldBtn);
+
+    var quickReplyItalicBtn = document.createElement('button');
+    quickReplyItalicBtn.className = 'phab-admin-btn-secondary';
+    quickReplyItalicBtn.type = 'button';
+    quickReplyItalicBtn.textContent = 'Курсив';
+    quickReplyToolbar.appendChild(quickReplyItalicBtn);
+
+    var quickReplyLinkBtn = document.createElement('button');
+    quickReplyLinkBtn.className = 'phab-admin-btn-secondary';
+    quickReplyLinkBtn.type = 'button';
+    quickReplyLinkBtn.textContent = 'Ссылка';
+    quickReplyToolbar.appendChild(quickReplyLinkBtn);
+
+    var quickReplyAttachBtn = document.createElement('button');
+    quickReplyAttachBtn.className = 'phab-admin-btn-secondary';
+    quickReplyAttachBtn.type = 'button';
+    quickReplyAttachBtn.textContent = 'Фото';
+    quickReplyToolbar.appendChild(quickReplyAttachBtn);
+
+    var quickReplyAttachmentInput = document.createElement('input');
+    quickReplyAttachmentInput.type = 'file';
+    quickReplyAttachmentInput.accept = 'image/*';
+    quickReplyAttachmentInput.multiple = true;
+    quickReplyAttachmentInput.className = 'phab-admin-file-input-hidden';
+    quickReplyTextWrap.appendChild(quickReplyAttachmentInput);
+
+    var quickReplyResponseInput = document.createElement('textarea');
+    quickReplyResponseInput.className = 'phab-admin-settings-input';
+    quickReplyResponseInput.rows = 8;
+    quickReplyResponseInput.placeholder =
+      'Можно использовать **жирный**, *курсив*, [ссылку](https://...)';
+    quickReplyTextWrap.appendChild(quickReplyResponseInput);
+
+    var quickReplyAttachmentsBox = document.createElement('div');
+    quickReplyAttachmentsBox.className = 'phab-admin-quick-reply-attachments';
+    quickReplyTextWrap.appendChild(quickReplyAttachmentsBox);
+
+    var quickReplyActiveWrap = document.createElement('label');
+    quickReplyActiveWrap.className = 'phab-admin-check';
+    quickReplyEditorGrid.appendChild(quickReplyActiveWrap);
+
+    var quickReplyActiveInput = document.createElement('input');
+    quickReplyActiveInput.type = 'checkbox';
+    quickReplyActiveInput.checked = true;
+    quickReplyActiveWrap.appendChild(quickReplyActiveInput);
+    quickReplyActiveWrap.appendChild(document.createTextNode('Правило активно'));
+
+    var quickReplyUsageCard = document.createElement('div');
+    quickReplyUsageCard.className = 'phab-admin-detail-card phab-admin-detail-span-2';
+    quickReplyModalBody.appendChild(quickReplyUsageCard);
+
+    var quickReplyUsageHead = document.createElement('div');
+    quickReplyUsageHead.className = 'phab-admin-detail-head';
+    quickReplyUsageCard.appendChild(quickReplyUsageHead);
+
+    var quickReplyUsageTitle = document.createElement('span');
+    quickReplyUsageTitle.className = 'phab-admin-detail-head-title';
+    quickReplyUsageTitle.textContent = 'История использований';
+    quickReplyUsageHead.appendChild(quickReplyUsageTitle);
+
+    var quickReplyUsageExportBtn = document.createElement('button');
+    quickReplyUsageExportBtn.className = 'phab-admin-detail-copy-btn';
+    quickReplyUsageExportBtn.type = 'button';
+    quickReplyUsageExportBtn.textContent = 'Экспорт CSV';
+    quickReplyUsageExportBtn.disabled = true;
+    quickReplyUsageHead.appendChild(quickReplyUsageExportBtn);
+
+    var quickReplyUsageList = document.createElement('div');
+    quickReplyUsageList.className = 'phab-admin-detail-body phab-admin-quick-reply-usage-list';
+    quickReplyUsageCard.appendChild(quickReplyUsageList);
 
     var gameModal = document.createElement('div');
     gameModal.className = 'phab-admin-modal phab-admin-hidden';
@@ -5825,6 +6347,40 @@
       communityPreviewTitle: communityPreviewTitle,
       communityPreviewMeta: communityPreviewMeta,
       communityPreviewBody: communityPreviewBody,
+      settingsGeneralTabBtn: settingsGeneralTabBtn,
+      settingsQuickRepliesTabBtn: settingsQuickRepliesTabBtn,
+      settingsGeneralPane: settingsGeneralPane,
+      settingsQuickRepliesPane: settingsQuickRepliesPane,
+      quickReplyCreateBtn: quickReplyCreateBtn,
+      quickReplyTable: quickReplyTable,
+      quickReplyModal: quickReplyModal,
+      quickReplyModalTitle: quickReplyModalTitle,
+      quickReplyModalBody: quickReplyModalBody,
+      quickReplySaveBtn: quickReplySaveBtn,
+      quickReplyModalCloseBtn: quickReplyModalCloseBtn,
+      quickReplyTitleInput: quickReplyTitleInput,
+      quickReplyModeInput: quickReplyModeInput,
+      quickReplyTriggerTypeInput: quickReplyTriggerTypeInput,
+      quickReplyStationInput: quickReplyStationInput,
+      quickReplyPhraseLabel: quickReplyPhraseLabel,
+      quickReplyPhraseInput: quickReplyPhraseInput,
+      quickReplyKeywordsLabel: quickReplyKeywordsLabel,
+      quickReplyKeywordsInput: quickReplyKeywordsInput,
+      quickReplyTimeLabel: quickReplyTimeLabel,
+      quickReplyTimeFromInput: quickReplyTimeFromInput,
+      quickReplyTimeToInput: quickReplyTimeToInput,
+      quickReplyNoReplyLabel: quickReplyNoReplyLabel,
+      quickReplyNoReplyInput: quickReplyNoReplyInput,
+      quickReplyResponseInput: quickReplyResponseInput,
+      quickReplyBoldBtn: quickReplyBoldBtn,
+      quickReplyItalicBtn: quickReplyItalicBtn,
+      quickReplyLinkBtn: quickReplyLinkBtn,
+      quickReplyAttachBtn: quickReplyAttachBtn,
+      quickReplyAttachmentInput: quickReplyAttachmentInput,
+      quickReplyAttachmentsBox: quickReplyAttachmentsBox,
+      quickReplyActiveInput: quickReplyActiveInput,
+      quickReplyUsageExportBtn: quickReplyUsageExportBtn,
+      quickReplyUsageList: quickReplyUsageList,
       stationList: stationList,
       stationIdInput: stationIdInput,
       stationNameInput: stationNameInput,
@@ -5964,6 +6520,171 @@
       'GAME_MANAGER',
       'TOURNAMENT_MANAGER'
     ]);
+  }
+
+  function canManageQuickReplySettings(cfg) {
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
+  function getQuickReplyTriggerLabel(triggerType) {
+    var normalized = String(triggerType || '').trim().toUpperCase();
+    for (var i = 0; i < QUICK_REPLY_TRIGGER_OPTIONS.length; i += 1) {
+      if (QUICK_REPLY_TRIGGER_OPTIONS[i].value === normalized) {
+        return QUICK_REPLY_TRIGGER_OPTIONS[i].label;
+      }
+    }
+    return normalized || 'Триггер';
+  }
+
+  function getQuickReplyModeLabel(mode) {
+    var normalized = String(mode || '').trim().toUpperCase();
+    for (var i = 0; i < QUICK_REPLY_MODE_OPTIONS.length; i += 1) {
+      if (QUICK_REPLY_MODE_OPTIONS[i].value === normalized) {
+        return QUICK_REPLY_MODE_OPTIONS[i].label;
+      }
+    }
+    return normalized || 'Подсказка';
+  }
+
+  function normalizeQuickReplyRule(rule) {
+    var item = normalizeObject(rule);
+    return {
+      id: String(item.id || '').trim(),
+      title: String(item.title || 'Быстрый ответ').trim(),
+      triggerType: String(item.triggerType || 'KEYWORD').trim().toUpperCase(),
+      triggerPhrase: String(item.triggerPhrase || '').trim(),
+      triggerKeywords: normalizeArray(item.triggerKeywords)
+        .map(function (keyword) {
+          return String(keyword || '').trim();
+        })
+        .filter(Boolean),
+      timeFrom: String(item.timeFrom || '').trim(),
+      timeTo: String(item.timeTo || '').trim(),
+      noClientReplyMinutes: Number(item.noClientReplyMinutes || 0),
+      stationIds: normalizeArray(item.stationIds)
+        .map(function (stationId) {
+          return String(stationId || '').trim();
+        })
+        .filter(Boolean),
+      mode: String(item.mode || 'SUGGESTION').trim().toUpperCase(),
+      responseText: String(item.responseText || '').trim(),
+      responseAttachments: normalizeMessageAttachments(item.responseAttachments),
+      isActive: item.isActive !== false,
+      usageCount: Math.max(0, Number(item.usageCount || 0)),
+      lastUsedAt: String(item.lastUsedAt || '').trim(),
+      createdAt: String(item.createdAt || '').trim(),
+      updatedAt: String(item.updatedAt || '').trim()
+    };
+  }
+
+  function normalizeQuickReplyUsageLog(entry) {
+    var item = normalizeObject(entry);
+    return {
+      id: String(item.id || '').trim(),
+      ruleId: String(item.ruleId || '').trim(),
+      ruleTitle: String(item.ruleTitle || '').trim(),
+      sourceType: String(item.sourceType || '').trim().toUpperCase(),
+      dialogId: String(item.dialogId || '').trim(),
+      connector: String(item.connector || '').trim(),
+      stationId: String(item.stationId || '').trim(),
+      clientRequestText: String(item.clientRequestText || '').trim(),
+      systemResponseText: String(item.systemResponseText || '').trim(),
+      usedByUserId: String(item.usedByUserId || '').trim(),
+      mode: String(item.mode || '').trim().toUpperCase(),
+      createdAt: String(item.createdAt || '').trim()
+    };
+  }
+
+  function getQuickReplyStationScope(rule) {
+    var stationIds = Array.isArray(rule && rule.stationIds) ? rule.stationIds : [];
+    if (stationIds.length === 0) {
+      return 'Все станции';
+    }
+    return stationIds
+      .map(function (stationId) {
+        if (stationId === QUICK_REPLY_STATION_UNASSIGNED) {
+          return 'Без станции';
+        }
+        return stationId;
+      })
+      .join(', ');
+  }
+
+  function getQuickReplyTriggerDescription(rule) {
+    var normalized = normalizeQuickReplyRule(rule);
+    if (normalized.triggerType === 'EXACT_PHRASE') {
+      return 'Фраза целиком: "' + normalized.triggerPhrase + '"';
+    }
+    if (normalized.triggerType === 'KEYWORD') {
+      return 'Ключевое слово: "' + normalized.triggerPhrase + '"';
+    }
+    if (normalized.triggerType === 'KEYWORD_SET') {
+      return 'Слова: ' + (normalized.triggerKeywords.join(', ') || '-');
+    }
+    if (normalized.triggerType === 'MESSAGE_TIME_RANGE') {
+      return 'Время сообщения: ' +
+        (normalized.timeFrom || '--:--') +
+        ' — ' +
+        (normalized.timeTo || '--:--');
+    }
+    if (normalized.triggerType === 'CLIENT_NO_REPLY_FOR') {
+      return 'Нет ответа клиента ' +
+        String(normalized.noClientReplyMinutes || 0) +
+        ' мин';
+    }
+    if (normalized.triggerType === 'FIRST_CLIENT_MESSAGE') {
+      return 'Первое сообщение клиента в диалоге';
+    }
+    if (normalized.triggerType === 'HAS_ATTACHMENT') {
+      return 'Входящее сообщение с фото';
+    }
+    return getQuickReplyTriggerLabel(normalized.triggerType);
+  }
+
+  function createRichTextFragment(value) {
+    var fragment = document.createDocumentFragment();
+    var source = String(value || '');
+    var pattern = /(\*\*[^*]+\*\*|\*[^*\n]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+    var lastIndex = 0;
+    var match;
+
+    while ((match = pattern.exec(source)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(source.slice(lastIndex, match.index)));
+      }
+
+      var token = match[0];
+      if (token.indexOf('**') === 0 && token.lastIndexOf('**') === token.length - 2) {
+        var strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        fragment.appendChild(strong);
+      } else if (token.indexOf('*') === 0 && token.lastIndexOf('*') === token.length - 1) {
+        var em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        fragment.appendChild(em);
+      } else {
+        var label = token.replace(/^\[/, '').replace(/\]\(https?:\/\/[^)\s]+\)$/, '');
+        var hrefMatch = token.match(/\]\((https?:\/\/[^)\s]+)\)$/);
+        var link = document.createElement('a');
+        link.href = hrefMatch && hrefMatch[1] ? hrefMatch[1] : '#';
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = label || link.href;
+        fragment.appendChild(link);
+      }
+
+      lastIndex = pattern.lastIndex;
+    }
+
+    if (lastIndex < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(lastIndex)));
+    }
+
+    return fragment;
+  }
+
+  function appendRichTextContent(target, text) {
+    target.appendChild(createRichTextFragment(text));
   }
 
   var DIALOG_FILTER_NO_STATION = '__NO_STATION__';
@@ -6119,13 +6840,19 @@
       communityManagingKey: null,
       tournamentsColumnWidths: {},
       tournamentsColumnWidths: {},
+      settingsSubtab: 'general',
       settings: {
         stations: [],
         connectors: [],
         accessRules: [],
         adminUsers: [],
-        viva: null
+        viva: null,
+        quickReplies: []
       },
+      quickReplyEditorRuleId: null,
+      quickReplyEditorAttachments: [],
+      quickReplyUsageLogs: [],
+      quickReplySuggestions: [],
       selectedGameId: null,
       selectedGame: null,
       selectedGameEventId: null,
@@ -6252,6 +6979,565 @@
       state.pendingMessageAttachments = existing;
       dom.attachmentInput.value = '';
       renderPendingMessageAttachments();
+    }
+
+    function setSettingsSubtab(nextSubtab) {
+      state.settingsSubtab =
+        nextSubtab === 'quickReplies' ? 'quickReplies' : 'general';
+      dom.settingsGeneralTabBtn.className =
+        'phab-admin-community-tab' +
+        (state.settingsSubtab === 'general'
+          ? ' phab-admin-community-tab-active'
+          : '');
+      dom.settingsQuickRepliesTabBtn.className =
+        'phab-admin-community-tab' +
+        (state.settingsSubtab === 'quickReplies'
+          ? ' phab-admin-community-tab-active'
+          : '');
+      dom.settingsGeneralPane.className =
+        state.settingsSubtab === 'general'
+          ? 'phab-admin-settings-pane'
+          : 'phab-admin-settings-pane phab-admin-hidden';
+      dom.settingsQuickRepliesPane.className =
+        state.settingsSubtab === 'quickReplies'
+          ? 'phab-admin-settings-pane'
+          : 'phab-admin-settings-pane phab-admin-hidden';
+    }
+
+    function populateQuickReplyStationOptions(selectedStationIds) {
+      var selectedMap = {};
+      normalizeArray(selectedStationIds).forEach(function (stationId) {
+        selectedMap[String(stationId || '').trim()] = true;
+      });
+      clearNode(dom.quickReplyStationInput);
+
+      var allOption = document.createElement('option');
+      allOption.value = '';
+      allOption.textContent = 'Все станции';
+      allOption.selected = Object.keys(selectedMap).length === 0;
+      dom.quickReplyStationInput.appendChild(allOption);
+
+      var noStationOption = document.createElement('option');
+      noStationOption.value = QUICK_REPLY_STATION_UNASSIGNED;
+      noStationOption.textContent = 'Без станции';
+      noStationOption.selected = Boolean(
+        selectedMap[QUICK_REPLY_STATION_UNASSIGNED]
+      );
+      dom.quickReplyStationInput.appendChild(noStationOption);
+
+      normalizeArray(state.settings && state.settings.stations)
+        .slice()
+        .sort(function (left, right) {
+          return String(left.stationId || '').localeCompare(
+            String(right.stationId || ''),
+            'ru'
+          );
+        })
+        .forEach(function (station) {
+          var option = document.createElement('option');
+          option.value = String(station.stationId || '').trim();
+          option.textContent =
+            String(station.stationName || station.stationId || '').trim() ||
+            option.value;
+          option.selected = Boolean(selectedMap[option.value]);
+          dom.quickReplyStationInput.appendChild(option);
+        });
+    }
+
+    function renderQuickReplyEditorAttachments() {
+      clearNode(dom.quickReplyAttachmentsBox);
+      normalizeMessageAttachments(state.quickReplyEditorAttachments).forEach(
+        function (attachment, index) {
+          var chip = document.createElement('span');
+          chip.className = 'phab-admin-attachment-chip';
+
+          var label = document.createElement('span');
+          label.textContent =
+            (attachment.name || 'Фото') +
+            (attachment.size ? ' · ' + formatFileSize(attachment.size) : '');
+          chip.appendChild(label);
+
+          var removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.textContent = '×';
+          removeBtn.setAttribute('aria-label', 'Убрать фото');
+          removeBtn.addEventListener('click', function () {
+            state.quickReplyEditorAttachments =
+              state.quickReplyEditorAttachments.filter(function (_item, itemIndex) {
+                return itemIndex !== index;
+              });
+            renderQuickReplyEditorAttachments();
+          });
+          chip.appendChild(removeBtn);
+
+          dom.quickReplyAttachmentsBox.appendChild(chip);
+        }
+      );
+    }
+
+    async function appendQuickReplyEditorAttachmentsFromFiles(files) {
+      var fileList = Array.prototype.slice.call(files || []);
+      if (fileList.length === 0) {
+        return;
+      }
+
+      var existing = normalizeMessageAttachments(state.quickReplyEditorAttachments);
+      for (var i = 0; i < fileList.length; i += 1) {
+        if (existing.length >= 10) {
+          break;
+        }
+        var attachment = await compressImageFileAttachment(fileList[i]);
+        var nextTotalSize =
+          getMessageAttachmentsTotalSize(existing) +
+          Math.max(0, Number(attachment.size || 0));
+        if (nextTotalSize > MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) {
+          throw new Error(
+            'Слишком большой общий объем фото в быстром ответе. Оставьте до ' +
+              formatFileSize(MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) +
+              '.'
+          );
+        }
+        existing.push(attachment);
+      }
+      state.quickReplyEditorAttachments = existing;
+      dom.quickReplyAttachmentInput.value = '';
+      renderQuickReplyEditorAttachments();
+    }
+
+    function syncQuickReplyTriggerFields() {
+      var triggerType = String(dom.quickReplyTriggerTypeInput.value || '')
+        .trim()
+        .toUpperCase();
+      var showPhrase =
+        triggerType === 'EXACT_PHRASE' || triggerType === 'KEYWORD';
+      var showKeywords = triggerType === 'KEYWORD_SET';
+      var showTime = triggerType === 'MESSAGE_TIME_RANGE';
+      var showNoReply = triggerType === 'CLIENT_NO_REPLY_FOR';
+
+      dom.quickReplyPhraseLabel.className = showPhrase
+        ? 'phab-admin-settings-label'
+        : 'phab-admin-settings-label phab-admin-hidden';
+      dom.quickReplyKeywordsLabel.className = showKeywords
+        ? 'phab-admin-settings-label'
+        : 'phab-admin-settings-label phab-admin-hidden';
+      dom.quickReplyTimeLabel.className = showTime
+        ? 'phab-admin-settings-label'
+        : 'phab-admin-settings-label phab-admin-hidden';
+      dom.quickReplyNoReplyLabel.className = showNoReply
+        ? 'phab-admin-settings-label'
+        : 'phab-admin-settings-label phab-admin-hidden';
+    }
+
+    function applyQuickReplyMarkdownWrap(prefix, suffix, fallbackText) {
+      var input = dom.quickReplyResponseInput;
+      var start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+      var end = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+      var current = String(input.value || '');
+      var selected = current.slice(start, end) || fallbackText;
+      var nextText =
+        current.slice(0, start) +
+        prefix +
+        selected +
+        suffix +
+        current.slice(end);
+      input.value = nextText;
+      input.focus();
+      var nextCursor = start + prefix.length + selected.length;
+      if (typeof input.setSelectionRange === 'function') {
+        input.setSelectionRange(prefix.length ? start + prefix.length : nextCursor, nextCursor);
+      }
+    }
+
+    function resetQuickReplyEditor(rule) {
+      var normalized = rule ? normalizeQuickReplyRule(rule) : null;
+      var canManage = canManageQuickReplySettings(cfg);
+      state.quickReplyEditorRuleId = normalized && normalized.id ? normalized.id : null;
+      state.quickReplyEditorAttachments =
+        normalized && normalized.responseAttachments
+          ? normalized.responseAttachments.slice()
+          : [];
+      state.quickReplyUsageLogs = [];
+
+      dom.quickReplyModalTitle.textContent = normalized
+        ? 'Редактировать быстрый ответ'
+        : 'Новый быстрый ответ';
+      dom.quickReplyTitleInput.value = normalized ? normalized.title : '';
+      dom.quickReplyModeInput.value = normalized ? normalized.mode : 'SUGGESTION';
+      dom.quickReplyTriggerTypeInput.value = normalized
+        ? normalized.triggerType
+        : 'KEYWORD';
+      dom.quickReplyPhraseInput.value = normalized
+        ? normalized.triggerPhrase || ''
+        : '';
+      dom.quickReplyKeywordsInput.value =
+        normalized && normalized.triggerKeywords
+          ? normalized.triggerKeywords.join(', ')
+          : '';
+      dom.quickReplyTimeFromInput.value = normalized && normalized.timeFrom
+        ? normalized.timeFrom
+        : '09:00';
+      dom.quickReplyTimeToInput.value = normalized && normalized.timeTo
+        ? normalized.timeTo
+        : '21:00';
+      dom.quickReplyNoReplyInput.value =
+        normalized && normalized.noClientReplyMinutes
+          ? String(normalized.noClientReplyMinutes)
+          : '60';
+      dom.quickReplyResponseInput.value = normalized
+        ? normalized.responseText || ''
+        : '';
+      dom.quickReplyActiveInput.checked = normalized
+        ? normalized.isActive !== false
+        : true;
+      dom.quickReplyTitleInput.disabled = !canManage;
+      dom.quickReplyModeInput.disabled = !canManage;
+      dom.quickReplyTriggerTypeInput.disabled = !canManage;
+      dom.quickReplyStationInput.disabled = !canManage;
+      dom.quickReplyPhraseInput.disabled = !canManage;
+      dom.quickReplyKeywordsInput.disabled = !canManage;
+      dom.quickReplyTimeFromInput.disabled = !canManage;
+      dom.quickReplyTimeToInput.disabled = !canManage;
+      dom.quickReplyNoReplyInput.disabled = !canManage;
+      dom.quickReplyResponseInput.disabled = !canManage;
+      dom.quickReplyActiveInput.disabled = !canManage;
+      dom.quickReplyBoldBtn.disabled = !canManage;
+      dom.quickReplyItalicBtn.disabled = !canManage;
+      dom.quickReplyLinkBtn.disabled = !canManage;
+      dom.quickReplyAttachBtn.disabled = !canManage;
+      dom.quickReplySaveBtn.className = canManage
+        ? 'phab-admin-btn'
+        : 'phab-admin-btn phab-admin-hidden';
+
+      populateQuickReplyStationOptions(
+        normalized && normalized.stationIds ? normalized.stationIds : []
+      );
+      syncQuickReplyTriggerFields();
+      renderQuickReplyEditorAttachments();
+      renderQuickReplyUsageLogs();
+    }
+
+    function closeQuickReplyEditor() {
+      dom.quickReplyModal.classList.add('phab-admin-hidden');
+      state.quickReplyEditorRuleId = null;
+      state.quickReplyEditorAttachments = [];
+      state.quickReplyUsageLogs = [];
+      clearNode(dom.quickReplyUsageList);
+    }
+
+    function openQuickReplyEditor(rule) {
+      resetQuickReplyEditor(rule || null);
+      dom.quickReplyModal.classList.remove('phab-admin-hidden');
+      dom.quickReplyTitleInput.focus();
+      if (rule && rule.id) {
+        loadQuickReplyUsageLogs(rule.id).catch(handleError);
+      }
+    }
+
+    function formatQuickReplyUsageStationLabel(stationId) {
+      var normalizedStationId = String(stationId || '').trim();
+      if (!normalizedStationId) {
+        return '';
+      }
+      if (normalizedStationId === QUICK_REPLY_STATION_UNASSIGNED) {
+        return 'Без станции';
+      }
+      return normalizedStationId;
+    }
+
+    function renderQuickReplyUsageLogs() {
+      clearNode(dom.quickReplyUsageList);
+      var logs = normalizeArray(state.quickReplyUsageLogs).map(normalizeQuickReplyUsageLog);
+      dom.quickReplyUsageExportBtn.disabled =
+        !state.quickReplyEditorRuleId || logs.length === 0;
+      if (!state.quickReplyEditorRuleId) {
+        var note = document.createElement('div');
+        note.className = 'phab-admin-empty';
+        note.textContent = 'История появится после сохранения и использования правила.';
+        dom.quickReplyUsageList.appendChild(note);
+        return;
+      }
+      if (logs.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Использований пока нет';
+        dom.quickReplyUsageList.appendChild(empty);
+        return;
+      }
+
+      logs.forEach(function (entry) {
+        var item = document.createElement('div');
+        item.className = 'phab-admin-quick-reply-usage-item';
+
+        var top = document.createElement('div');
+        top.className = 'phab-admin-settings-row-meta';
+        top.textContent =
+          formatDateTimeFull(entry.createdAt) +
+          ' · ' +
+          getQuickReplyModeLabel(entry.mode) +
+          (entry.connector ? ' · ' + entry.connector : '') +
+          (entry.stationId
+            ? ' · ' + formatQuickReplyUsageStationLabel(entry.stationId)
+            : '');
+        item.appendChild(top);
+
+        var requestRow = document.createElement('div');
+        requestRow.className = 'phab-admin-settings-row-meta';
+        requestRow.textContent = 'Запрос клиента:';
+        item.appendChild(requestRow);
+
+        var requestText = document.createElement('div');
+        requestText.className = 'phab-admin-rich-text';
+        appendRichTextContent(requestText, entry.clientRequestText || '-');
+        item.appendChild(requestText);
+
+        var responseRow = document.createElement('div');
+        responseRow.className = 'phab-admin-settings-row-meta';
+        responseRow.textContent = 'Ответ системы:';
+        item.appendChild(responseRow);
+
+        var responseText = document.createElement('div');
+        responseText.className = 'phab-admin-rich-text';
+        appendRichTextContent(responseText, entry.systemResponseText || '-');
+        item.appendChild(responseText);
+
+        dom.quickReplyUsageList.appendChild(item);
+      });
+    }
+
+    async function loadQuickReplyUsageLogs(ruleId) {
+      if (!ruleId) {
+        state.quickReplyUsageLogs = [];
+        renderQuickReplyUsageLogs();
+        return;
+      }
+      var targetRuleId = String(ruleId || '').trim();
+      var logs = (
+        (await api.getQuickReplyUsageLogs(ruleId, 100)) || []
+      )
+        .map(normalizeQuickReplyUsageLog)
+        .filter(function (entry) {
+          return Boolean(entry && entry.id);
+        });
+      if (state.quickReplyEditorRuleId !== targetRuleId) {
+        return;
+      }
+      state.quickReplyUsageLogs = logs;
+      renderQuickReplyUsageLogs();
+    }
+
+    function buildQuickReplyUsageCsv(logs, ruleTitle, ruleId) {
+      var headers = [
+        'Дата',
+        'ID правила',
+        'Правило',
+        'Режим',
+        'Источник',
+        'ID диалога',
+        'Коннектор',
+        'Станция',
+        'Кто отправил',
+        'Запрос клиента',
+        'Ответ системы'
+      ];
+      var lines = [headers.map(escapeCsvCell).join(',')];
+      normalizeArray(logs)
+        .map(normalizeQuickReplyUsageLog)
+        .forEach(function (entry) {
+          lines.push(
+            [
+              formatDateTimeFull(entry.createdAt),
+              entry.ruleId || ruleId || '',
+              entry.ruleTitle || ruleTitle || '',
+              getQuickReplyModeLabel(entry.mode),
+              entry.sourceType || '',
+              entry.dialogId || '',
+              entry.connector || '',
+              formatQuickReplyUsageStationLabel(entry.stationId),
+              entry.usedByUserId || '',
+              entry.clientRequestText || '',
+              entry.systemResponseText || ''
+            ]
+              .map(escapeCsvCell)
+              .join(',')
+          );
+        });
+      return '\uFEFF' + lines.join('\n');
+    }
+
+    function buildQuickReplyUsageCsvFileName(ruleId, ruleTitle) {
+      var normalizedRuleId = String(ruleId || '').trim() || 'rule';
+      var normalizedTitle = String(ruleTitle || 'quick-reply')
+        .trim()
+        .toLowerCase()
+        .replace(/[^0-9a-zа-яё_-]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+      return (
+        'quick-reply-usage-' +
+        (normalizedTitle || 'quick-reply') +
+        '-' +
+        normalizedRuleId +
+        '.csv'
+      );
+    }
+
+    function resolveQuickReplyRuleTitleById(ruleId) {
+      var targetRuleId = String(ruleId || '').trim();
+      if (!targetRuleId) {
+        return '';
+      }
+      if (state.quickReplyEditorRuleId === targetRuleId) {
+        return String(dom.quickReplyTitleInput.value || '').trim();
+      }
+      var rules = normalizeArray(state.settings && state.settings.quickReplies)
+        .map(normalizeQuickReplyRule);
+      for (var i = 0; i < rules.length; i += 1) {
+        if (rules[i] && rules[i].id === targetRuleId) {
+          return rules[i].title;
+        }
+      }
+      return '';
+    }
+
+    async function exportQuickReplyUsageLogs(ruleId) {
+      var targetRuleId = String(ruleId || '').trim();
+      if (!targetRuleId) {
+        setStatus('Сначала сохраните быстрый ответ, чтобы выгрузить историю', false);
+        return;
+      }
+
+      var logs = (
+        (await api.getQuickReplyUsageLogs(targetRuleId, 500)) || []
+      )
+        .map(normalizeQuickReplyUsageLog)
+        .filter(function (entry) {
+          return Boolean(entry && entry.id);
+        });
+
+      if (logs.length === 0) {
+        setStatus('У этого правила пока нет истории использований', false);
+        if (state.quickReplyEditorRuleId === targetRuleId) {
+          state.quickReplyUsageLogs = [];
+          renderQuickReplyUsageLogs();
+        }
+        return;
+      }
+
+      var ruleTitle = resolveQuickReplyRuleTitleById(targetRuleId) ||
+        logs[0].ruleTitle ||
+        'quick-reply';
+      if (state.quickReplyEditorRuleId === targetRuleId) {
+        state.quickReplyUsageLogs = logs;
+        renderQuickReplyUsageLogs();
+      }
+
+      downloadTextFile(
+        buildQuickReplyUsageCsvFileName(targetRuleId, ruleTitle),
+        buildQuickReplyUsageCsv(logs, ruleTitle, targetRuleId),
+        'text/csv;charset=utf-8'
+      );
+      setStatus(
+        'Выгрузка CSV готова: ' +
+          String(logs.length) +
+          ' записей по правилу "' +
+          ruleTitle +
+          '"',
+        false
+      );
+    }
+
+    function getSelectedQuickReplyStationIds() {
+      var result = [];
+      Array.prototype.slice
+        .call(dom.quickReplyStationInput.options || [])
+        .forEach(function (option) {
+          if (!option.selected || !String(option.value || '').trim()) {
+            return;
+          }
+          result.push(String(option.value).trim());
+        });
+      return result;
+    }
+
+    function buildQuickReplyPayloadFromEditor() {
+      var title = String(dom.quickReplyTitleInput.value || '').trim();
+      var responseText = String(dom.quickReplyResponseInput.value || '').trim();
+      if (!title) {
+        throw new Error('Укажите название быстрого ответа');
+      }
+      if (
+        !responseText &&
+        normalizeMessageAttachments(state.quickReplyEditorAttachments).length === 0
+      ) {
+        throw new Error('Заполните текст ответа или прикрепите фото');
+      }
+
+      var payload = {
+        title: title,
+        triggerType: String(dom.quickReplyTriggerTypeInput.value || 'KEYWORD').trim().toUpperCase(),
+        stationIds: getSelectedQuickReplyStationIds(),
+        mode: String(dom.quickReplyModeInput.value || 'SUGGESTION').trim().toUpperCase(),
+        responseText: responseText || 'Фото',
+        responseAttachments: normalizeMessageAttachments(state.quickReplyEditorAttachments),
+        isActive: Boolean(dom.quickReplyActiveInput.checked)
+      };
+
+      if (payload.triggerType === 'EXACT_PHRASE' || payload.triggerType === 'KEYWORD') {
+        payload.triggerPhrase = String(dom.quickReplyPhraseInput.value || '').trim();
+      }
+      if (payload.triggerType === 'KEYWORD_SET') {
+        payload.triggerKeywords = parseCsvInput(dom.quickReplyKeywordsInput.value);
+      }
+      if (payload.triggerType === 'MESSAGE_TIME_RANGE') {
+        payload.timeFrom = String(dom.quickReplyTimeFromInput.value || '').trim();
+        payload.timeTo = String(dom.quickReplyTimeToInput.value || '').trim();
+      }
+      if (payload.triggerType === 'CLIENT_NO_REPLY_FOR') {
+        payload.noClientReplyMinutes = Math.max(
+          1,
+          Math.floor(Number(dom.quickReplyNoReplyInput.value || 0))
+        );
+      }
+
+      return payload;
+    }
+
+    async function saveQuickReplyRule() {
+      var payload = buildQuickReplyPayloadFromEditor();
+      dom.quickReplySaveBtn.disabled = true;
+      try {
+        if (state.quickReplyEditorRuleId) {
+          await api.updateQuickReplyRule(state.quickReplyEditorRuleId, payload);
+          setStatus('Быстрый ответ обновлен', false);
+        } else {
+          var createdRule = await api.createQuickReplyRule(payload);
+          state.quickReplyEditorRuleId =
+            createdRule && createdRule.id ? String(createdRule.id).trim() : null;
+          setStatus('Быстрый ответ создан', false);
+        }
+        await loadSettings();
+        if (state.quickReplyEditorRuleId) {
+          await loadQuickReplyUsageLogs(state.quickReplyEditorRuleId);
+        }
+      } finally {
+        dom.quickReplySaveBtn.disabled = false;
+      }
+    }
+
+    async function updateQuickReplyRuleActive(rule, nextIsActive) {
+      if (!rule || !rule.id) {
+        return;
+      }
+      var resolvedIsActive =
+        typeof nextIsActive === 'boolean' ? nextIsActive : !rule.isActive;
+      await api.updateQuickReplyRule(rule.id, {
+        isActive: resolvedIsActive
+      });
+      await loadSettings();
+      setStatus(
+        resolvedIsActive ? 'Быстрый ответ включен' : 'Быстрый ответ выключен',
+        false
+      );
     }
 
     function populateMobileTabSelect() {
@@ -7962,6 +9248,15 @@
       return direction === 'SYSTEM' || senderRole === 'SYSTEM' || kind === 'SYSTEM';
     }
 
+    function isQuickReplyServiceMessage(message) {
+      if (!isSystemMessage(message)) {
+        return false;
+      }
+      return String(message && message.senderName || '')
+        .toLowerCase()
+        .indexOf('автоответ') >= 0;
+    }
+
     function isSystemDialog(dialog) {
       var senderRole = String(
         dialog && (dialog.lastMessageSenderRoleRaw || dialog.lastMessageSenderRole) || ''
@@ -8009,7 +9304,11 @@
       if (!message) {
         return false;
       }
-      if (isSystemMessage(message) && !shouldIncludeServiceMessages()) {
+      if (
+        isSystemMessage(message) &&
+        !isQuickReplyServiceMessage(message) &&
+        !shouldIncludeServiceMessages()
+      ) {
         return true;
       }
       if (isRestrictedStationAdmin && isSystemMessage(message) && isVivaOtpSystemMessage(message)) {
@@ -9381,36 +10680,247 @@
       });
     }
 
+    function normalizeQuickReplyTextMatch(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ');
+    }
+
+    function getQuickReplyTriggerSpecificity(triggerType) {
+      if (triggerType === 'EXACT_PHRASE') {
+        return 1;
+      }
+      if (triggerType === 'KEYWORD_SET') {
+        return 2;
+      }
+      if (triggerType === 'KEYWORD') {
+        return 3;
+      }
+      if (triggerType === 'CLIENT_NO_REPLY_FOR') {
+        return 4;
+      }
+      if (triggerType === 'FIRST_CLIENT_MESSAGE') {
+        return 5;
+      }
+      if (triggerType === 'MESSAGE_TIME_RANGE') {
+        return 6;
+      }
+      return 7;
+    }
+
+    function getLatestClientMessageForQuickReplies() {
+      var list = normalizeArray(state.rawMessages).length > 0
+        ? normalizeArray(state.rawMessages)
+        : normalizeArray(state.messages);
+      for (var index = list.length - 1; index >= 0; index -= 1) {
+        var message = list[index];
+        var direction = String(message && message.direction || '').trim().toUpperCase();
+        var senderRole = String(
+          message && (message.senderRoleRaw || message.senderRole) || ''
+        ).trim().toUpperCase();
+        if (
+          !isSystemMessage(message) &&
+          (direction === 'INBOUND' || senderRole === 'CLIENT')
+        ) {
+          return message;
+        }
+      }
+      return null;
+    }
+
+    function resolveQuickReplyNoClientReplyMinutes() {
+      var list = normalizeArray(state.rawMessages).length > 0
+        ? normalizeArray(state.rawMessages)
+        : normalizeArray(state.messages);
+      for (var index = list.length - 1; index >= 0; index -= 1) {
+        var message = list[index];
+        if (isSystemMessage(message)) {
+          continue;
+        }
+        var direction = String(message && message.direction || '').trim().toUpperCase();
+        var senderRole = String(
+          message && (message.senderRoleRaw || message.senderRole) || ''
+        ).trim().toUpperCase();
+        var own = direction !== 'INBOUND' && senderRole !== 'CLIENT';
+        if (!own) {
+          return null;
+        }
+        var ts = Date.parse(String(message.createdAt || ''));
+        if (!Number.isFinite(ts)) {
+          return null;
+        }
+        return Math.floor(Math.max(0, Date.now() - ts) / 60000);
+      }
+      return null;
+    }
+
+    function isFirstClientQuickReplyMessage(message) {
+      if (!message || !message.id) {
+        return false;
+      }
+      var list = normalizeArray(state.rawMessages).length > 0
+        ? normalizeArray(state.rawMessages)
+        : normalizeArray(state.messages);
+      for (var index = 0; index < list.length; index += 1) {
+        var candidate = list[index];
+        var direction = String(candidate && candidate.direction || '').trim().toUpperCase();
+        var senderRole = String(
+          candidate && (candidate.senderRoleRaw || candidate.senderRole) || ''
+        ).trim().toUpperCase();
+        if (
+          !isSystemMessage(candidate) &&
+          (direction === 'INBOUND' || senderRole === 'CLIENT')
+        ) {
+          return String(candidate.id || '') === String(message.id || '');
+        }
+      }
+      return false;
+    }
+
+    function buildQuickReplyDialogContext(dialog) {
+      var latestClientMessage = getLatestClientMessageForQuickReplies();
+      return {
+        stationId: dialog && dialog.stationId ? String(dialog.stationId).trim() : QUICK_REPLY_STATION_UNASSIGNED,
+        messageText: String(
+          (latestClientMessage && latestClientMessage.text) ||
+            (dialog && dialog.lastMessageText) ||
+            (dialog && dialog.subject) ||
+            ''
+        ),
+        messageCreatedAt: String(
+          (latestClientMessage && latestClientMessage.createdAt) ||
+            (dialog && dialog.lastMessageAt) ||
+            ''
+        ),
+        hasAttachment: normalizeMessageAttachments(
+          latestClientMessage && latestClientMessage.attachments
+        ).length > 0,
+        isFirstClientMessage: isFirstClientQuickReplyMessage(latestClientMessage),
+        noClientReplyMinutes: resolveQuickReplyNoClientReplyMinutes()
+      };
+    }
+
+    function quickReplyRuleMatchesStation(rule, stationId) {
+      var stationIds = Array.isArray(rule && rule.stationIds)
+        ? rule.stationIds
+        : [];
+      if (stationIds.length === 0) {
+        return true;
+      }
+      var normalizedStationId = String(stationId || QUICK_REPLY_STATION_UNASSIGNED).trim();
+      return stationIds.indexOf(normalizedStationId) >= 0;
+    }
+
+    function parseQuickReplyTimeMinutes(value) {
+      var match = String(value || '').trim().match(/^(\d{2}):(\d{2})$/);
+      if (!match) {
+        return -1;
+      }
+      var hours = Number(match[1]);
+      var minutes = Number(match[2]);
+      if (
+        !Number.isInteger(hours) ||
+        !Number.isInteger(minutes) ||
+        hours < 0 ||
+        hours > 23 ||
+        minutes < 0 ||
+        minutes > 59
+      ) {
+        return -1;
+      }
+      return hours * 60 + minutes;
+    }
+
+    function quickReplyRuleMatchesContext(rule, context) {
+      var normalizedRule = normalizeQuickReplyRule(rule);
+      var messageText = normalizeQuickReplyTextMatch(context.messageText);
+      if (normalizedRule.triggerType === 'EXACT_PHRASE') {
+        return messageText === normalizeQuickReplyTextMatch(normalizedRule.triggerPhrase);
+      }
+      if (normalizedRule.triggerType === 'KEYWORD') {
+        var keyword = normalizeQuickReplyTextMatch(normalizedRule.triggerPhrase);
+        return Boolean(keyword && messageText.indexOf(keyword) >= 0);
+      }
+      if (normalizedRule.triggerType === 'KEYWORD_SET') {
+        return (
+          normalizedRule.triggerKeywords.length > 0 &&
+          normalizedRule.triggerKeywords.every(function (keywordItem) {
+            return messageText.indexOf(normalizeQuickReplyTextMatch(keywordItem)) >= 0;
+          })
+        );
+      }
+      if (normalizedRule.triggerType === 'MESSAGE_TIME_RANGE') {
+        var createdAt = new Date(context.messageCreatedAt || '');
+        if (Number.isNaN(createdAt.getTime())) {
+          return false;
+        }
+        var currentMinutes = createdAt.getHours() * 60 + createdAt.getMinutes();
+        var fromMinutes = parseQuickReplyTimeMinutes(normalizedRule.timeFrom);
+        var toMinutes = parseQuickReplyTimeMinutes(normalizedRule.timeTo);
+        if (fromMinutes < 0 || toMinutes < 0) {
+          return false;
+        }
+        if (fromMinutes <= toMinutes) {
+          return currentMinutes >= fromMinutes && currentMinutes <= toMinutes;
+        }
+        return currentMinutes >= fromMinutes || currentMinutes <= toMinutes;
+      }
+      if (normalizedRule.triggerType === 'CLIENT_NO_REPLY_FOR') {
+        return (
+          Number(context.noClientReplyMinutes) >=
+          Math.max(1, Number(normalizedRule.noClientReplyMinutes || 0))
+        );
+      }
+      if (normalizedRule.triggerType === 'FIRST_CLIENT_MESSAGE') {
+        return context.isFirstClientMessage === true;
+      }
+      if (normalizedRule.triggerType === 'HAS_ATTACHMENT') {
+        return context.hasAttachment === true;
+      }
+      return false;
+    }
+
     function getQuickReplyOptions(dialog) {
-      var text = String(
-        dialog && (dialog.subject || dialog.lastMessageText || '') || ''
-      ).toLowerCase();
+      var rules = normalizeArray(state.settings && state.settings.quickReplies)
+        .map(normalizeQuickReplyRule)
+        .filter(function (rule) {
+          return Boolean(
+            rule &&
+              rule.id &&
+              rule.isActive &&
+              rule.mode === 'SUGGESTION'
+          );
+        });
+      var context = buildQuickReplyDialogContext(dialog);
+      var matches = rules
+        .filter(function (rule) {
+          return quickReplyRuleMatchesStation(rule, context.stationId);
+        })
+        .filter(function (rule) {
+          return quickReplyRuleMatchesContext(rule, context);
+        })
+        .sort(function (left, right) {
+          var bySpecificity =
+            getQuickReplyTriggerSpecificity(left.triggerType) -
+            getQuickReplyTriggerSpecificity(right.triggerType);
+          if (bySpecificity !== 0) {
+            return bySpecificity;
+          }
+          return Number(right.usageCount || 0) - Number(left.usageCount || 0);
+        });
 
-      if (text.indexOf('сертифик') >= 0) {
-        return [
-          { label: 'Сертификат', text: 'Сертификат' },
-          { label: 'Активация', text: 'Активация' },
-          { label: 'Оплата', text: 'Оплата' },
-          { label: 'Спасибо!', text: 'Спасибо!' }
-        ];
-      }
-
-      if (text.indexOf('оплат') >= 0 || text.indexOf('чек') >= 0) {
-        return [
-          { label: 'Оплата', text: 'Оплата' },
-          { label: 'Чек', text: 'Чек' },
-          { label: 'Возврат', text: 'Возврат' },
-          { label: 'Спасибо!', text: 'Спасибо!' }
-        ];
-      }
-
-      if (text.indexOf('адрес') >= 0 || text.indexOf('как пройти') >= 0) {
-        return [
-          { label: 'Адрес', text: 'Адрес' },
-          { label: 'Как пройти', text: 'Как пройти' },
-          { label: 'Режим', text: 'Режим работы' },
-          { label: 'Спасибо!', text: 'Спасибо!' }
-        ];
+      if (matches.length > 0) {
+        return matches.slice(0, 8).map(function (rule) {
+          return {
+            id: rule.id,
+            label: rule.title,
+            text: rule.responseText,
+            attachments: normalizeMessageAttachments(rule.responseAttachments),
+            rule: rule,
+            isSuggestionRule: true
+          };
+        });
       }
 
       return DEFAULT_QUICK_REPLY_OPTIONS.slice();
@@ -9426,14 +10936,66 @@
       dom.input.focus();
     }
 
+    async function sendQuickReplySuggestion(item) {
+      if (!item || !item.id || !state.selectedThreadId) {
+        return;
+      }
+      dom.sendBtn.disabled = true;
+      dom.attachBtn.disabled = true;
+      try {
+        await api.sendLegacyMessage(
+          state.selectedThreadId,
+          item.text,
+          normalizeMessageAttachments(item.attachments),
+          item.id
+        );
+        dom.input.value = '';
+        resetPendingMessageAttachments();
+        await loadDialogs();
+        await loadMessages({ forceRender: true, forceScrollBottom: true });
+        setStatus('Быстрый ответ отправлен', false);
+      } finally {
+        dom.sendBtn.disabled = false;
+        var selectedDialog = getSelectedDialog();
+        dom.attachBtn.disabled = selectedDialog
+          ? selectedDialog.isActiveForUser === false
+          : !state.selectedThreadId;
+      }
+    }
+
     function QuickReplies(dialog) {
       var fragment = document.createDocumentFragment();
       getQuickReplyOptions(dialog).forEach(function (item) {
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'phab-admin-quick-reply';
-        btn.textContent = item.label;
+        btn.className =
+          'phab-admin-quick-reply' +
+          (item.isSuggestionRule ? ' phab-admin-quick-reply-suggestion' : '');
+        if (item.isSuggestionRule) {
+          var badge = document.createElement('span');
+          badge.className = 'phab-admin-quick-reply-badge';
+          badge.textContent = 'Подсказка';
+          btn.appendChild(badge);
+
+          var label = document.createElement('span');
+          label.className = 'phab-admin-rich-text-inline';
+          appendRichTextContent(label, item.label + ': ' + item.text);
+          if (normalizeMessageAttachments(item.attachments).length > 0) {
+            label.appendChild(
+              document.createTextNode(
+                ' · ' + formatAttachmentPreview(item.attachments)
+              )
+            );
+          }
+          btn.appendChild(label);
+        } else {
+          btn.textContent = item.label;
+        }
         btn.addEventListener('click', function () {
+          if (item.isSuggestionRule) {
+            sendQuickReplySuggestion(item).catch(handleError);
+            return;
+          }
           applyQuickReply(item.text);
         });
         fragment.appendChild(btn);
@@ -9443,10 +11005,15 @@
 
     function renderQuickReplies(dialog) {
       clearNode(dom.quickReplies);
+      dom.quickReplies.style.display = 'none';
       if (!dialog || dialog.isActiveForUser === false) {
         return;
       }
-      dom.quickReplies.appendChild(QuickReplies(dialog));
+      var quickReplyContent = QuickReplies(dialog);
+      if (quickReplyContent && quickReplyContent.childNodes.length > 0) {
+        dom.quickReplies.appendChild(quickReplyContent);
+        dom.quickReplies.style.display = 'flex';
+      }
     }
 
     function MessageBubble(message) {
@@ -9485,15 +11052,15 @@
       }
 
       var text = document.createElement('span');
-      text.className = 'phab-admin-message-text';
-      text.textContent = message.text || '';
+      text.className = 'phab-admin-message-text phab-admin-rich-text';
+      appendRichTextContent(text, message.text || '');
       div.appendChild(text);
 
       var meta = document.createElement('span');
       meta.className = 'phab-admin-message-meta';
       var roleLabel = formatRoleLabel(String(message.senderRoleRaw || message.senderRole || '').toUpperCase());
       var sender = isSystem
-        ? 'Система'
+        ? (message.senderName || 'Система')
         : own
           ? (message.senderName || 'Сотрудник')
           : (message.senderName || 'Клиент');
@@ -14239,10 +15806,58 @@
       ctaInput.placeholder = 'Открыть / Внести результаты игры';
       appendCommunityFormField(composerForm, 'Текст CTA', ctaInput);
 
+      var imageUploadRow = document.createElement('div');
+      imageUploadRow.className = 'phab-admin-community-image-upload-row';
+
       var imageInput = document.createElement('input');
-      imageInput.className = 'phab-admin-input';
+      imageInput.className = 'phab-admin-input phab-admin-community-image-upload-input';
       imageInput.placeholder = 'https://... или data:image/...';
-      appendCommunityFormField(composerForm, 'Изображение', imageInput);
+      imageUploadRow.appendChild(imageInput);
+
+      var imageUploadBtn = document.createElement('button');
+      imageUploadBtn.type = 'button';
+      imageUploadBtn.className = 'phab-admin-btn-secondary phab-admin-community-image-upload-btn';
+      imageUploadBtn.textContent = 'С компьютера';
+      imageUploadRow.appendChild(imageUploadBtn);
+
+      var imageFileInput = document.createElement('input');
+      imageFileInput.type = 'file';
+      imageFileInput.accept = 'image/*';
+      imageFileInput.className = 'phab-admin-file-input-hidden';
+      imageUploadRow.appendChild(imageFileInput);
+
+      imageUploadBtn.addEventListener('click', function () {
+        imageFileInput.click();
+      });
+
+      imageFileInput.addEventListener('change', function () {
+        var file = imageFileInput.files && imageFileInput.files[0];
+        if (!file) {
+          return;
+        }
+
+        imageUploadBtn.disabled = true;
+        imageUploadBtn.textContent = 'Загружаем...';
+
+        compressImageFileAttachment(file)
+          .then(function (attachment) {
+            imageInput.value = String(attachment.url || '').trim();
+            imageInput.title = String(attachment.name || file.name || '').trim();
+            setStatus(
+              'Изображение прикреплено' +
+                (imageInput.title ? ': ' + imageInput.title : ''),
+              false
+            );
+          })
+          .catch(handleError)
+          .finally(function () {
+            imageFileInput.value = '';
+            imageUploadBtn.disabled = false;
+            imageUploadBtn.textContent = 'С компьютера';
+          });
+      });
+
+      appendCommunityFormField(composerForm, 'Изображение', imageUploadRow);
 
       var startInput = document.createElement('input');
       startInput.type = 'datetime-local';
@@ -15453,12 +17068,204 @@
       });
     }
 
+    function renderQuickReplyPreviewCell(cell, rule) {
+      var text = document.createElement('div');
+      text.className = 'phab-admin-rich-text';
+      appendRichTextContent(text, rule.responseText || '-');
+      cell.appendChild(text);
+
+      normalizeMessageAttachments(rule.responseAttachments)
+        .slice(0, 2)
+        .forEach(function (attachment) {
+          var link = document.createElement('a');
+          link.className = 'phab-admin-quick-reply-preview-link';
+          link.href = attachment.url;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+
+          var image = document.createElement('img');
+          image.src = attachment.url;
+          image.alt = attachment.name || 'Фото';
+          image.loading = 'lazy';
+          link.appendChild(image);
+          cell.appendChild(link);
+        });
+    }
+
+    function renderSettingsQuickReplies() {
+      clearNode(dom.quickReplyTable);
+      var canManageQuickReplies = canManageQuickReplySettings(cfg);
+      dom.quickReplyCreateBtn.className = canManageQuickReplies
+        ? 'phab-admin-btn'
+        : 'phab-admin-btn phab-admin-hidden';
+
+      var thead = document.createElement('thead');
+      dom.quickReplyTable.appendChild(thead);
+      var headRow = document.createElement('tr');
+      thead.appendChild(headRow);
+      [
+        'Правило',
+        'Триггер',
+        'Станции',
+        'Режим',
+        'Ответ',
+        'Использования',
+        'Статус',
+        'Действия'
+      ].forEach(function (label) {
+        var th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+      });
+
+      var tbody = document.createElement('tbody');
+      dom.quickReplyTable.appendChild(tbody);
+
+      var rules = normalizeArray(state.settings && state.settings.quickReplies)
+        .map(normalizeQuickReplyRule)
+        .filter(function (rule) {
+          return Boolean(rule && rule.id);
+        });
+
+      if (rules.length === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 8;
+        emptyCell.className = 'phab-admin-empty';
+        emptyCell.textContent =
+          'Быстрые ответы еще не настроены. Добавьте первое правило через кнопку сверху.';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        return;
+      }
+
+      rules.forEach(function (rule) {
+        var row = document.createElement('tr');
+        tbody.appendChild(row);
+
+        var titleCell = document.createElement('td');
+        titleCell.className = 'phab-admin-quick-reply-title-cell';
+        titleCell.textContent = rule.title;
+        row.appendChild(titleCell);
+
+        var triggerCell = document.createElement('td');
+        triggerCell.className = 'phab-admin-quick-reply-meta-cell';
+        triggerCell.textContent = getQuickReplyTriggerDescription(rule);
+        row.appendChild(triggerCell);
+
+        var stationsCell = document.createElement('td');
+        stationsCell.className = 'phab-admin-quick-reply-meta-cell';
+        stationsCell.textContent = getQuickReplyStationScope(rule);
+        row.appendChild(stationsCell);
+
+        var modeCell = document.createElement('td');
+        modeCell.textContent = getQuickReplyModeLabel(rule.mode);
+        row.appendChild(modeCell);
+
+        var responseCell = document.createElement('td');
+        renderQuickReplyPreviewCell(responseCell, rule);
+        row.appendChild(responseCell);
+
+        var usageCell = document.createElement('td');
+        usageCell.className = 'phab-admin-quick-reply-meta-cell';
+        usageCell.textContent =
+          String(rule.usageCount || 0) +
+          (rule.lastUsedAt
+            ? ' · ' + formatDateTimeFull(rule.lastUsedAt)
+            : ' · пока не использовался');
+        row.appendChild(usageCell);
+
+        var statusCell = document.createElement('td');
+        var statusSwitchLabel = document.createElement('label');
+        statusSwitchLabel.className =
+          'phab-admin-switch phab-admin-quick-reply-status-switch';
+        statusCell.appendChild(statusSwitchLabel);
+
+        var statusSwitchInput = document.createElement('input');
+        statusSwitchInput.type = 'checkbox';
+        statusSwitchInput.className = 'phab-admin-switch-input';
+        statusSwitchInput.checked = rule.isActive === true;
+        statusSwitchInput.disabled = !canManageQuickReplies;
+        statusSwitchInput.setAttribute(
+          'aria-label',
+          'Переключить правило "' + rule.title + '"'
+        );
+        statusSwitchLabel.appendChild(statusSwitchInput);
+
+        var statusSwitchTrack = document.createElement('span');
+        statusSwitchTrack.className = 'phab-admin-switch-track';
+        statusSwitchLabel.appendChild(statusSwitchTrack);
+
+        var statusSwitchText = document.createElement('span');
+        statusSwitchText.className = 'phab-admin-switch-text';
+        statusSwitchText.textContent = rule.isActive ? 'Активен' : 'Выключен';
+        statusSwitchLabel.appendChild(statusSwitchText);
+
+        if (canManageQuickReplies) {
+          statusSwitchInput.addEventListener('change', function () {
+            var nextIsActive = statusSwitchInput.checked;
+            statusSwitchText.textContent = nextIsActive ? 'Активен' : 'Выключен';
+            statusSwitchInput.disabled = true;
+            updateQuickReplyRuleActive(rule, nextIsActive).catch(function (error) {
+              statusSwitchInput.checked = rule.isActive === true;
+              statusSwitchText.textContent = rule.isActive ? 'Активен' : 'Выключен';
+              statusSwitchInput.disabled = false;
+              handleError(error);
+            });
+          });
+        }
+        row.appendChild(statusCell);
+
+        var actionsCell = document.createElement('td');
+        var actionsWrap = document.createElement('div');
+        actionsWrap.className = 'phab-admin-quick-reply-actions';
+        actionsCell.appendChild(actionsWrap);
+        row.appendChild(actionsCell);
+
+        var editBtn = document.createElement('button');
+        editBtn.className = 'phab-admin-btn-secondary';
+        editBtn.type = 'button';
+        editBtn.textContent = canManageQuickReplySettings(cfg)
+          ? 'Редактировать'
+          : 'Открыть';
+        editBtn.addEventListener('click', function () {
+          openQuickReplyEditor(rule);
+        });
+        actionsWrap.appendChild(editBtn);
+
+        var historyBtn = document.createElement('button');
+        historyBtn.className = 'phab-admin-btn-secondary';
+        historyBtn.type = 'button';
+        historyBtn.textContent = 'История';
+        historyBtn.addEventListener('click', function () {
+          openQuickReplyEditor(rule);
+        });
+        actionsWrap.appendChild(historyBtn);
+
+        var exportBtn = document.createElement('button');
+        exportBtn.className = 'phab-admin-btn-secondary';
+        exportBtn.type = 'button';
+        exportBtn.textContent = 'CSV';
+        exportBtn.addEventListener('click', function () {
+          exportBtn.disabled = true;
+          exportQuickReplyUsageLogs(rule.id)
+            .catch(handleError)
+            .finally(function () {
+              exportBtn.disabled = false;
+            });
+        });
+        actionsWrap.appendChild(exportBtn);
+      });
+    }
+
     function renderSettings() {
       renderSettingsStations();
       renderSettingsConnectors();
       renderSettingsAccessRules();
       renderSettingsViva();
       renderSettingsAdminUsers();
+      renderSettingsQuickReplies();
+      setSettingsSubtab(state.settingsSubtab);
     }
 
     async function loadDialogs(options) {
@@ -15681,7 +17488,8 @@
           connectors: [],
           accessRules: [],
           adminUsers: [],
-          viva: null
+          viva: null,
+          quickReplies: []
         };
         renderSettings();
         return;
@@ -15697,9 +17505,17 @@
           .filter(Boolean),
         accessRules: settings.accessRules || [],
         adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : [],
-        viva: vivaSettings
+        viva: vivaSettings,
+        quickReplies: (settings.quickReplies || [])
+          .map(normalizeQuickReplyRule)
+          .filter(function (rule) {
+            return Boolean(rule && rule.id);
+          })
       };
       renderSettings();
+      if (state.activeTab === 'messages') {
+        renderQuickReplies(getSelectedDialog());
+      }
     }
 
     async function saveVivaSettings() {
@@ -16075,6 +17891,12 @@
         switchTab('settings');
         loadSettings().catch(handleError);
       });
+      dom.settingsGeneralTabBtn.addEventListener('click', function () {
+        setSettingsSubtab('general');
+      });
+      dom.settingsQuickRepliesTabBtn.addEventListener('click', function () {
+        setSettingsSubtab('quickReplies');
+      });
       dom.messageModeToggle.addEventListener('change', function () {
         setIncludeServiceMessages(dom.messageModeToggle.checked).catch(handleError);
       });
@@ -16315,6 +18137,49 @@
       dom.vivaSaveBtn.addEventListener('click', function () {
         saveVivaSettings().catch(handleError);
       });
+      dom.quickReplyCreateBtn.addEventListener('click', function () {
+        openQuickReplyEditor(null);
+      });
+      dom.quickReplyModalCloseBtn.addEventListener('click', function () {
+        closeQuickReplyEditor();
+      });
+      dom.quickReplyModal.addEventListener('click', function (event) {
+        if (event.target === dom.quickReplyModal) {
+          closeQuickReplyEditor();
+        }
+      });
+      dom.quickReplySaveBtn.addEventListener('click', function () {
+        saveQuickReplyRule().catch(handleError);
+      });
+      dom.quickReplyUsageExportBtn.addEventListener('click', function () {
+        dom.quickReplyUsageExportBtn.disabled = true;
+        exportQuickReplyUsageLogs(state.quickReplyEditorRuleId)
+          .catch(handleError)
+          .finally(function () {
+            dom.quickReplyUsageExportBtn.disabled = !state.quickReplyEditorRuleId ||
+              normalizeArray(state.quickReplyUsageLogs).length === 0;
+          });
+      });
+      dom.quickReplyTriggerTypeInput.addEventListener('change', function () {
+        syncQuickReplyTriggerFields();
+      });
+      dom.quickReplyBoldBtn.addEventListener('click', function () {
+        applyQuickReplyMarkdownWrap('**', '**', 'текст');
+      });
+      dom.quickReplyItalicBtn.addEventListener('click', function () {
+        applyQuickReplyMarkdownWrap('*', '*', 'текст');
+      });
+      dom.quickReplyLinkBtn.addEventListener('click', function () {
+        applyQuickReplyMarkdownWrap('[', '](https://example.com)', 'ссылка');
+      });
+      dom.quickReplyAttachBtn.addEventListener('click', function () {
+        dom.quickReplyAttachmentInput.click();
+      });
+      dom.quickReplyAttachmentInput.addEventListener('change', function () {
+        appendQuickReplyEditorAttachmentsFromFiles(
+          dom.quickReplyAttachmentInput.files
+        ).catch(handleError);
+      });
       dom.gameModalCloseBtn.addEventListener('click', function () {
         closeGameModal();
       });
@@ -16370,6 +18235,10 @@
           closeCommunityFeedEditorModal();
           return;
         }
+        if (!dom.quickReplyModal.classList.contains('phab-admin-hidden')) {
+          closeQuickReplyEditor();
+          return;
+        }
         if (!dom.gameChatModal.classList.contains('phab-admin-hidden')) {
           closeGameChatModal();
           return;
@@ -16403,6 +18272,7 @@
       setStatus('Готово', false);
       bindEvents();
       setAnalyticsSubtab(state.analyticsSubtab);
+      await loadSettings();
       await refreshDialogsView();
       syncResponsiveChatLayout();
       pollTimer = window.setInterval(function () {
