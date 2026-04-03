@@ -1079,6 +1079,8 @@
         flex:1;
         min-height:0;
         height:100%;
+        overflow:auto;
+        scrollbar-gutter:stable;
       }
       .phab-admin-community-pane{
         background:rgba(255,255,255,.9);
@@ -1089,6 +1091,7 @@
         display:flex;
         flex-direction:column;
         min-height:0;
+        max-height:100%;
       }
       .phab-admin-community-pane-head{
         padding:14px 14px 12px;
@@ -1152,6 +1155,7 @@
         overflow:auto;
         flex:1;
         min-height:0;
+        scrollbar-gutter:stable;
       }
       .phab-admin-community-card{
         display:flex;
@@ -1476,6 +1480,7 @@
         overflow:auto;
         flex:1;
         min-height:0;
+        scrollbar-gutter:stable;
       }
       .phab-admin-community-stack{
         display:flex;
@@ -2973,6 +2978,282 @@
         .phab-admin-modal-body{grid-template-columns:1fr}
         .phab-admin-detail-span-2{grid-column:auto}
         .phab-admin-header{padding:14px}
+      }
+      @media (max-width:1440px), (max-height:900px){
+        .phab-admin-header{
+          padding:12px 14px 11px;
+        }
+        .phab-admin-brand-logo{
+          width:30px;
+          height:30px;
+          border-radius:9px;
+        }
+        .phab-admin-title{
+          font-size:16px;
+        }
+        .phab-admin-subtitle{
+          margin-top:2px;
+          font-size:11px;
+        }
+        .phab-admin-btn,
+        .phab-admin-btn-secondary{
+          padding:7px 11px;
+          border-radius:11px;
+          font-size:11px;
+        }
+        .phab-admin-tabs{
+          gap:6px;
+          padding:8px 10px 9px;
+        }
+        .phab-admin-tab{
+          padding:7px 11px;
+          font-size:10px;
+        }
+        .phab-admin-content{
+          padding:8px;
+        }
+        .phab-admin-communities-grid{
+          grid-template-columns:minmax(262px,300px) minmax(0,1.15fr) minmax(292px,.9fr);
+          gap:8px;
+        }
+        .phab-admin-community-pane{
+          border-radius:16px;
+        }
+        .phab-admin-community-pane-head{
+          padding:12px 12px 10px;
+        }
+        .phab-admin-community-pane-head-light{
+          padding:12px;
+        }
+        .phab-admin-community-pane-title{
+          font-size:12px;
+        }
+        .phab-admin-community-pane-subtitle{
+          margin-top:4px;
+          font-size:10px;
+        }
+        .phab-admin-community-search{
+          margin-top:10px;
+          padding:8px 10px;
+          border-radius:12px;
+        }
+        .phab-admin-community-toolbar{
+          gap:6px;
+          padding:8px 8px 0;
+        }
+        .phab-admin-community-toolbar-select{
+          padding:7px 9px;
+          border-radius:10px;
+          font-size:10px;
+        }
+        .phab-admin-community-list-body{
+          padding:8px;
+        }
+        .phab-admin-community-card{
+          gap:6px;
+          padding:8px;
+          border-radius:14px;
+        }
+        .phab-admin-community-card-head{
+          grid-template-columns:40px minmax(0,1fr) auto;
+          gap:8px;
+        }
+        .phab-admin-community-avatar{
+          width:40px;
+          height:40px;
+        }
+        .phab-admin-community-avatar-media{
+          border-radius:14px;
+          font-size:12px;
+        }
+        .phab-admin-community-avatar-verified{
+          width:18px;
+          height:18px;
+          right:-3px;
+          bottom:-3px;
+        }
+        .phab-admin-community-card-title{
+          font-size:16px;
+        }
+        .phab-admin-community-status-badge{
+          padding:5px 9px;
+          font-size:9px;
+        }
+        .phab-admin-community-mini-chip,
+        .phab-admin-community-signal,
+        .phab-admin-community-risk{
+          padding:4px 8px;
+          font-size:9px;
+        }
+        .phab-admin-community-card-action,
+        .phab-admin-community-main-action,
+        .phab-admin-community-preview-action{
+          padding:7px 10px;
+          border-radius:12px;
+          font-size:10px;
+        }
+        .phab-admin-community-main-head{
+          gap:10px;
+          padding:10px 12px;
+        }
+        .phab-admin-community-main-lead{
+          grid-template-columns:52px minmax(0,1fr);
+          gap:10px;
+        }
+        .phab-admin-community-main-avatar{
+          width:52px;
+          height:52px;
+        }
+        .phab-admin-community-main-avatar .phab-admin-community-avatar-media{
+          border-radius:16px;
+        }
+        .phab-admin-community-main-title{
+          font-size:18px;
+        }
+        .phab-admin-community-main-meta{
+          margin-top:4px;
+          font-size:11px;
+        }
+        .phab-admin-community-main-actions{
+          gap:6px;
+          max-width:260px;
+        }
+        .phab-admin-community-main-tags{
+          gap:5px;
+          margin-top:8px;
+        }
+        .phab-admin-community-summary{
+          gap:8px;
+          padding:10px 12px;
+        }
+        .phab-admin-community-stat{
+          padding:9px 10px;
+          border-radius:14px;
+        }
+        .phab-admin-community-stat-value{
+          margin-top:5px;
+          font-size:18px;
+        }
+        .phab-admin-community-tabs{
+          gap:6px;
+          padding:10px 12px 8px;
+        }
+        .phab-admin-community-tab,
+        .phab-admin-community-segment,
+        .phab-admin-community-lk-segment{
+          padding:7px 11px;
+          font-size:11px;
+        }
+        .phab-admin-community-main-body,
+        .phab-admin-community-preview-body{
+          padding:10px;
+        }
+        .phab-admin-community-stack{
+          gap:10px;
+        }
+        .phab-admin-community-section-card,
+        .phab-admin-community-preview-card{
+          padding:12px;
+          border-radius:16px;
+        }
+        .phab-admin-community-section-card-fill{
+          min-height:calc(100dvh - 330px);
+        }
+        .phab-admin-community-preview-frame{
+          padding:10px;
+          border-radius:20px;
+        }
+        .phab-admin-community-lk-head{
+          grid-template-columns:52px minmax(0,1fr) auto;
+          gap:10px;
+          padding:2px 2px 12px;
+        }
+        .phab-admin-community-lk-head .phab-admin-community-avatar{
+          width:52px;
+          height:52px;
+        }
+        .phab-admin-community-lk-name{
+          font-size:16px;
+        }
+        .phab-admin-community-lk-subtitle{
+          margin-top:4px;
+          font-size:11px;
+        }
+        .phab-admin-community-lk-circle-btn{
+          width:36px;
+          height:36px;
+          font-size:16px;
+        }
+        .phab-admin-community-lk-segments,
+        .phab-admin-community-preview-tabs{
+          gap:6px;
+          margin-bottom:10px;
+        }
+        .phab-admin-community-lk-date-badge{
+          flex-basis:48px;
+          padding:7px 5px;
+          border-radius:12px;
+        }
+        .phab-admin-community-lk-date-badge strong{
+          font-size:20px;
+        }
+        .phab-admin-community-lk-side-action{
+          width:36px;
+          height:36px;
+          border-radius:12px;
+        }
+        .phab-admin-community-feed-media{
+          margin-top:10px;
+          min-height:130px;
+          border-radius:14px;
+        }
+        .phab-admin-community-feed-media img{
+          max-height:180px;
+        }
+        .phab-admin-community-feed-chip{
+          padding:5px 9px;
+          font-size:10px;
+        }
+        .phab-admin-community-lk-game-meta,
+        .phab-admin-community-preview-text,
+        .phab-admin-community-lk-engagement{
+          margin-top:8px;
+          font-size:12px;
+        }
+        .phab-admin-community-preview-title{
+          margin-top:4px;
+          font-size:18px;
+        }
+        .phab-admin-community-lk-primary-cta{
+          padding:10px 14px;
+          border-radius:14px;
+          font-size:12px;
+        }
+        .phab-admin-community-about-item{
+          padding:10px;
+          border-radius:14px;
+        }
+        .phab-admin-community-about-item strong{
+          margin-top:5px;
+          font-size:13px;
+        }
+      }
+      @media (max-height:860px){
+        .phab-admin-communities-grid{
+          overflow:auto;
+        }
+        .phab-admin-community-main,
+        .phab-admin-community-preview-shell{
+          overflow:auto;
+        }
+        .phab-admin-community-main-body,
+        .phab-admin-community-preview-body{
+          overflow:visible;
+          flex:0 0 auto;
+        }
+        .phab-admin-community-section-card-fill{
+          min-height:auto;
+        }
       }
       @media (max-width:767px){
         .phab-admin-header{
@@ -5408,6 +5689,8 @@
       communityActivityFilter: communityActivityFilter,
       communitySortSelect: communitySortSelect,
       communitiesList: communitiesList,
+      communitiesDetailPane: communitiesDetailPane,
+      communitiesPreviewPane: communitiesPreviewPane,
       communityAvatar: communityAvatar,
       communityTitle: communityTitle,
       communityMeta: communityMeta,
@@ -11638,9 +11921,11 @@
         return;
       }
       var allowPreview =
-        container === dom.communityPreviewBody && String(state.communityPreviewTab || 'feed') === 'feed';
+        (container === dom.communityPreviewBody || container === dom.communitiesPreviewPane) &&
+        String(state.communityPreviewTab || 'feed') === 'feed';
       var allowCenter =
-        container === dom.communityAdminGrid && String(state.communityCenterTab || 'overview') === 'content';
+        (container === dom.communityAdminGrid || container === dom.communitiesDetailPane) &&
+        String(state.communityCenterTab || 'overview') === 'content';
       if (!allowPreview && !allowCenter) {
         return;
       }
@@ -15552,8 +15837,14 @@
       dom.communityAdminGrid.addEventListener('scroll', function () {
         maybeLoadMoreCommunityFeedFromScroll(dom.communityAdminGrid);
       });
+      dom.communitiesDetailPane.addEventListener('scroll', function () {
+        maybeLoadMoreCommunityFeedFromScroll(dom.communitiesDetailPane);
+      });
       dom.communityPreviewBody.addEventListener('scroll', function () {
         maybeLoadMoreCommunityFeedFromScroll(dom.communityPreviewBody);
+      });
+      dom.communitiesPreviewPane.addEventListener('scroll', function () {
+        maybeLoadMoreCommunityFeedFromScroll(dom.communitiesPreviewPane);
       });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
