@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -10,7 +10,16 @@ import {
 } from 'class-validator';
 import { MessageAttachmentDto } from '../../common/messages/message-attachment.dto';
 
+function normalizeOptionalText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return value === null || value === undefined ? undefined : String(value);
+  }
+  const text = value.trim();
+  return text ? text : undefined;
+}
+
 export class CreateMessageDto {
+  @Transform(({ value }) => normalizeOptionalText(value))
   @IsOptional()
   @IsString()
   @MinLength(1)
