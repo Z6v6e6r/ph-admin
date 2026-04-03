@@ -77,6 +77,30 @@ export interface CommunityFeedItem {
   details?: Record<string, unknown>;
 }
 
+export interface CommunityFeedTemplateSlot {
+  id: string;
+  startAt: string;
+  endAt: string;
+  availablePlaces: number;
+}
+
+export interface CommunityFeedTemplateOption {
+  id: string;
+  title: string;
+  description?: string;
+  levelLabel?: string;
+  ctaLabel?: string;
+  slots: CommunityFeedTemplateSlot[];
+}
+
+export interface CommunityFeedTemplateSlotsResponse {
+  communityId: string;
+  stationId: string;
+  stationName: string;
+  generatedAt: string;
+  items: CommunityFeedTemplateOption[];
+}
+
 export interface Community {
   id: string;
   source: CommunitySource;

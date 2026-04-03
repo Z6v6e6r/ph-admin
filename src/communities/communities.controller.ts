@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UnauthorizedException
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -16,7 +17,11 @@ import { CreateCommunityFeedItemDto } from './dto/create-community-feed-item.dto
 import { ManageCommunityMemberDto } from './dto/manage-community-member.dto';
 import { UpdateCommunityFeedItemDto } from './dto/update-community-feed-item.dto';
 import { UpdateCommunityDto } from './dto/update-community.dto';
-import { Community, CommunityFeedItem } from './communities.types';
+import {
+  Community,
+  CommunityFeedItem,
+  CommunityFeedTemplateSlotsResponse
+} from './communities.types';
 import { CommunitiesService } from './communities.service';
 
 @Controller('communities')
@@ -97,6 +102,18 @@ export class CommunitiesController {
         name: user.title || user.login || user.id
       }
     });
+  }
+
+  @Get(':id/feed-template-slots')
+  listFeedTemplateSlots(
+    @Param('id') id: string,
+    @Query('stationId') stationId?: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<CommunityFeedTemplateSlotsResponse> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.communitiesService.listFeedTemplateSlots(id, stationId);
   }
 
   @Patch(':id/feed-items/:feedItemId')

@@ -13,7 +13,74 @@ import {
   CommunitiesUpdateMutation
 } from './communities-persistence.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
-import { Community, CommunityFeedItem } from './communities.types';
+import {
+  Community,
+  CommunityFeedItem,
+  CommunityFeedTemplateOption,
+  CommunityFeedTemplateSlotsResponse
+} from './communities.types';
+
+interface CommunityFeedTemplatePreset {
+  id: string;
+  title: string;
+  description: string;
+  levelLabel?: string;
+  ctaLabel: string;
+  slotStartsMinutes: number[];
+  slotDurationMinutes: number;
+  capacityBase: number;
+}
+
+const COMMUNITY_FEED_TEMPLATE_PRESETS: CommunityFeedTemplatePreset[] = [
+  {
+    id: 'ultra-beginners',
+    title: 'Ультра-новички',
+    description: 'Для тех кто хочет попробовать',
+    ctaLabel: 'Записаться',
+    slotStartsMinutes: [10 * 60, 18 * 60],
+    slotDurationMinutes: 60,
+    capacityBase: 6
+  },
+  {
+    id: 'split-training',
+    title: 'Сплит-тренировка',
+    description: 'Тренировка в мини-группе с тренером',
+    levelLabel: 'D, D+, C',
+    ctaLabel: 'Записаться',
+    slotStartsMinutes: [11 * 60, 18 * 60 + 30],
+    slotDurationMinutes: 60,
+    capacityBase: 4
+  },
+  {
+    id: 'group-training',
+    title: 'Групповая тренировка',
+    description: 'Клубная тренировка в группе',
+    levelLabel: 'D, D+, C',
+    ctaLabel: 'Записаться',
+    slotStartsMinutes: [17 * 60 + 30, 19 * 60 + 30],
+    slotDurationMinutes: 90,
+    capacityBase: 8
+  },
+  {
+    id: 'game-with-coach',
+    title: 'Игра + тренер',
+    description: 'Матч с разбором от тренера',
+    levelLabel: 'D+',
+    ctaLabel: 'Записаться',
+    slotStartsMinutes: [11 * 60, 18 * 60 + 30],
+    slotDurationMinutes: 60,
+    capacityBase: 4
+  },
+  {
+    id: 'open-court',
+    title: 'Своя игра',
+    description: 'Свободная аренда корта',
+    ctaLabel: 'Записаться',
+    slotStartsMinutes: [9 * 60, 20 * 60],
+    slotDurationMinutes: 60,
+    capacityBase: 4
+  }
+];
 
 @Injectable()
 export class CommunitiesService {
@@ -173,5 +240,83 @@ export class CommunitiesService {
       throw new NotFoundException(`Community with id ${id} not found`);
     }
     return community;
+  }
+
+  async listFeedTemplateSlots(
+    id: string,
+    stationId?: string
+  ): Promise<CommunityFeedTemplateSlotsResponse> {
+    const community = await this.findById(id);
+    const normalizedStationId = String(stationId ?? community.stationId ?? '').trim() || id;
+    const normalizedCommunityStationId = String(community.stationId ?? '').trim();
+    const stationName =
+      normalizedStationId === normalizedCommunityStationId
+        ? String(community.stationName ?? community.stationId ?? normalizedStationId).trim() ||
+          normalizedStationId
+        : normalizedStationId;
+    const generatedAt = new Date();
+    const slotDay = this.buildTemplateDay(generatedAt);
+    const shiftMinutes = (this.buildTemplateSeed(normalizedStationId) % 2) * 30;
+
+    return {
+      communityId: community.id,
+      stationId: normalizedStationId,
+      stationName,
+      generatedAt: generatedAt.toISOString(),
+      items: COMMUNITY_FEED_TEMPLATE_PRESETS.map((preset) =>
+        this.buildCommunityFeedTemplateOption(
+          preset,
+          normalizedStationId,
+          slotDay,
+          shiftMinutes
+        )
+      )
+    };
+  }
+
+  private buildCommunityFeedTemplateOption(
+    preset: CommunityFeedTemplatePreset,
+    stationId: string,
+    slotDay: Date,
+    shiftMinutes: number
+  ): CommunityFeedTemplateOption {
+    return {
+      id: `${stationId}:${preset.id}`,
+      title: preset.title,
+      description: preset.description,
+      levelLabel: preset.levelLabel,
+      ctaLabel: preset.ctaLabel,
+      slots: preset.slotStartsMinutes.map((startMinutes, slotIndex) => {
+        const startsAt = new Date(slotDay.getTime());
+        startsAt.setMinutes(startMinutes + shiftMinutes, 0, 0);
+        const endsAt = new Date(startsAt.getTime());
+        endsAt.setMinutes(endsAt.getMinutes() + preset.slotDurationMinutes, 0, 0);
+        const seed = this.buildTemplateSeed(
+          `${stationId}:${preset.id}:${slotIndex}:${startsAt.toISOString()}`
+        );
+        return {
+          id: `${stationId}:${preset.id}:${slotIndex}:${startsAt.getTime()}`,
+          startAt: startsAt.toISOString(),
+          endAt: endsAt.toISOString(),
+          availablePlaces: 1 + (seed % Math.max(2, preset.capacityBase))
+        };
+      })
+    };
+  }
+
+  private buildTemplateDay(sourceDate: Date): Date {
+    const day = new Date(sourceDate.getTime());
+    day.setDate(day.getDate() + 1);
+    day.setHours(0, 0, 0, 0);
+    return day;
+  }
+
+  private buildTemplateSeed(value: string): number {
+    const source = String(value ?? '').trim();
+    let hash = 0;
+    for (let index = 0; index < source.length; index += 1) {
+      hash = (hash * 31 + source.charCodeAt(index)) % 1000003;
+    }
+    return Math.abs(hash);
   }
 }

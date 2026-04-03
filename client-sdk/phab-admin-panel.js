@@ -1143,6 +1143,10 @@
         color:var(--cup-white);
       }
       .phab-admin-community-pane-head-light{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:12px;
         padding:14px;
         background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(246,242,255,.86));
         border-bottom:1px solid rgba(51,0,32,.08);
@@ -1161,6 +1165,13 @@
       }
       .phab-admin-community-pane-head-light .phab-admin-community-pane-subtitle{
         color:rgba(51,0,32,.66);
+      }
+      .phab-admin-community-preview-head-main{
+        min-width:0;
+      }
+      .phab-admin-community-preview-add-btn{
+        flex:0 0 auto;
+        white-space:nowrap;
       }
       .phab-admin-community-search{
         margin-top:12px;
@@ -1644,6 +1655,74 @@
       .phab-admin-community-image-upload-btn{
         flex:0 0 auto;
         white-space:nowrap;
+      }
+      .phab-admin-community-template-card{
+        grid-column:1 / -1;
+      }
+      .phab-admin-community-template-card-body{
+        display:flex;
+        flex-direction:column;
+        gap:12px;
+      }
+      .phab-admin-community-template-controls{
+        display:grid;
+        grid-template-columns:minmax(180px,1fr) minmax(160px,220px);
+        gap:10px;
+      }
+      .phab-admin-community-template-slots{
+        display:flex;
+        flex-direction:column;
+        gap:10px;
+      }
+      .phab-admin-community-template-empty{
+        padding:12px;
+      }
+      .phab-admin-community-template-group{
+        border:1px solid rgba(97,7,136,.12);
+        border-radius:14px;
+        padding:12px;
+        background:linear-gradient(180deg,rgba(247,243,255,.96),rgba(255,255,255,.96));
+      }
+      .phab-admin-community-template-group-head{
+        display:flex;
+        justify-content:space-between;
+        gap:10px;
+        margin-bottom:10px;
+      }
+      .phab-admin-community-template-group-title{
+        font-size:12px;
+        font-weight:900;
+        color:var(--cup-wine);
+      }
+      .phab-admin-community-template-group-meta{
+        margin-top:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-community-template-slot-list{
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+      }
+      .phab-admin-community-template-slot{
+        display:flex;
+        align-items:flex-start;
+        gap:10px;
+        padding:10px 12px;
+        border-radius:12px;
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(51,0,32,.08);
+        font-size:12px;
+        color:rgba(51,0,32,.8);
+        cursor:pointer;
+      }
+      .phab-admin-community-template-slot input{
+        margin-top:2px;
+      }
+      .phab-admin-community-template-slot strong{
+        display:block;
+        color:var(--cup-wine);
+        font-size:12px;
       }
       .phab-admin-community-list-empty{
         padding:12px;
@@ -3260,6 +3339,15 @@
           flex-direction:column;
           align-items:stretch;
         }
+        .phab-admin-community-template-controls{
+          grid-template-columns:1fr;
+        }
+        .phab-admin-community-pane-head-light{
+          flex-direction:column;
+        }
+        .phab-admin-community-preview-add-btn{
+          width:100%;
+        }
         .phab-admin-community-main-head{
           flex-direction:column;
         }
@@ -4210,6 +4298,20 @@
       },
       getCommunityManagedFeed: function (communityId) {
         return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'GET');
+      },
+      getCommunityFeedTemplateSlots: function (communityId, query) {
+        var params = new URLSearchParams();
+        if (query && query.stationId) {
+          params.set('stationId', String(query.stationId));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request(
+          '/communities/' +
+            encodeURIComponent(communityId) +
+            '/feed-template-slots' +
+            suffix,
+          'GET'
+        );
       },
       createCommunityFeedItem: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId) + '/feed-items', 'POST', payload);
@@ -5325,16 +5427,28 @@
     communityPreviewHead.className = 'phab-admin-community-pane-head-light';
     communitiesPreviewPane.appendChild(communityPreviewHead);
 
+    var communityPreviewHeadMain = document.createElement('div');
+    communityPreviewHeadMain.className = 'phab-admin-community-preview-head-main';
+    communityPreviewHead.appendChild(communityPreviewHeadMain);
+
     var communityPreviewTitle = document.createElement('div');
     communityPreviewTitle.className = 'phab-admin-community-pane-title';
     communityPreviewTitle.textContent = 'Модерация сообщества';
-    communityPreviewHead.appendChild(communityPreviewTitle);
+    communityPreviewHeadMain.appendChild(communityPreviewTitle);
 
     var communityPreviewMeta = document.createElement('div');
     communityPreviewMeta.className = 'phab-admin-community-pane-subtitle';
     communityPreviewMeta.textContent =
       'Живой режим просмотра: лента, чат, рейтинг и карточка сообщества.';
-    communityPreviewHead.appendChild(communityPreviewMeta);
+    communityPreviewHeadMain.appendChild(communityPreviewMeta);
+
+    var communityPreviewCreateBtn = document.createElement('button');
+    communityPreviewCreateBtn.className =
+      'phab-admin-btn-secondary phab-admin-community-preview-add-btn';
+    communityPreviewCreateBtn.type = 'button';
+    communityPreviewCreateBtn.textContent = 'Добавить событие';
+    communityPreviewCreateBtn.disabled = true;
+    communityPreviewHead.appendChild(communityPreviewCreateBtn);
 
     var communityPreviewBody = document.createElement('div');
     communityPreviewBody.className = 'phab-admin-community-preview-body';
@@ -6111,6 +6225,12 @@
     communityFeedEditorActions.className = 'phab-admin-modal-actions';
     communityFeedEditorHead.appendChild(communityFeedEditorActions);
 
+    var communityFeedEditorTemplateBtn = document.createElement('button');
+    communityFeedEditorTemplateBtn.className = 'phab-admin-btn-secondary phab-admin-hidden';
+    communityFeedEditorTemplateBtn.type = 'button';
+    communityFeedEditorTemplateBtn.textContent = 'Шаблон';
+    communityFeedEditorActions.appendChild(communityFeedEditorTemplateBtn);
+
     var communityFeedEditorSaveBtn = document.createElement('button');
     communityFeedEditorSaveBtn.className = 'phab-admin-btn';
     communityFeedEditorSaveBtn.type = 'button';
@@ -6299,6 +6419,7 @@
       communityFeedEditorCard: communityFeedEditorCard,
       communityFeedEditorTitle: communityFeedEditorTitle,
       communityFeedEditorBody: communityFeedEditorBody,
+      communityFeedEditorTemplateBtn: communityFeedEditorTemplateBtn,
       communityFeedEditorSaveBtn: communityFeedEditorSaveBtn,
       communityFeedEditorCloseBtn: communityFeedEditorCloseBtn,
       gamesPageSizeSelect: gamesPageSizeSelect,
@@ -6346,6 +6467,7 @@
       communityAdminGrid: communityAdminGrid,
       communityPreviewTitle: communityPreviewTitle,
       communityPreviewMeta: communityPreviewMeta,
+      communityPreviewCreateBtn: communityPreviewCreateBtn,
       communityPreviewBody: communityPreviewBody,
       settingsGeneralTabBtn: settingsGeneralTabBtn,
       settingsQuickRepliesTabBtn: settingsQuickRepliesTabBtn,
@@ -12725,35 +12847,590 @@
       return payload;
     }
 
+    function getCommunityFeedEditorStationOptions(community) {
+      var map = Object.create(null);
+      var options = [];
+
+      function pushStation(stationId, stationName) {
+        var normalizedStationId = String(stationId || '').trim();
+        if (!normalizedStationId || map[normalizedStationId]) {
+          return;
+        }
+        map[normalizedStationId] = true;
+        options.push({
+          stationId: normalizedStationId,
+          stationName:
+            String(stationName || '').trim() ||
+            getStationNameFromSettings(normalizedStationId) ||
+            normalizedStationId
+        });
+      }
+
+      pushStation(community && community.stationId, community && community.stationName);
+      normalizeArray(state.settings && state.settings.stations).forEach(function (station) {
+        var item = normalizeObject(station);
+        if (item.isActive === false) {
+          return;
+        }
+        pushStation(item.stationId || item.id, item.stationName || item.name);
+      });
+
+      if (options.length === 0) {
+        pushStation(String((community && community.id) || 'community'), 'Станция сообщества');
+      }
+
+      return options;
+    }
+
+    function formatCommunityFeedTemplateSlotTime(value) {
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return '';
+      }
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+
+    function formatCommunityFeedTemplateSlotRange(slot) {
+      var startLabel = formatCommunityFeedTemplateSlotTime(slot && slot.startAt);
+      var endLabel = formatCommunityFeedTemplateSlotTime(slot && slot.endAt);
+      if (startLabel && endLabel) {
+        return startLabel + '-' + endLabel;
+      }
+      return startLabel || endLabel || 'Время уточняется';
+    }
+
+    function formatCommunityFeedTemplatePlacesCount(value) {
+      var count = Math.max(0, Math.floor(Number(value || 0)));
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) {
+        return String(count) + ' мест';
+      }
+      if (mod10 === 1) {
+        return String(count) + ' место';
+      }
+      if (mod10 >= 2 && mod10 <= 4) {
+        return String(count) + ' места';
+      }
+      return String(count) + ' мест';
+    }
+
+    function normalizeCommunityFeedTemplatePayload(payload, fallbackStationName) {
+      var source = normalizeObject(payload);
+      return {
+        stationId: String(source.stationId || '').trim(),
+        stationName:
+          String(source.stationName || '').trim() ||
+          String(fallbackStationName || '').trim(),
+        items: normalizeArray(source.items)
+          .map(function (item, itemIndex) {
+            var option = normalizeObject(item);
+            var title = String(option.title || '').trim();
+            if (!title) {
+              return null;
+            }
+            return {
+              id: String(option.id || 'template-' + itemIndex).trim(),
+              title: title,
+              description: String(option.description || '').trim(),
+              levelLabel: String(option.levelLabel || '').trim(),
+              ctaLabel: String(option.ctaLabel || 'Записаться').trim(),
+              slots: normalizeArray(option.slots)
+                .map(function (slot, slotIndex) {
+                  var slotRecord = normalizeObject(slot);
+                  var startAt = String(slotRecord.startAt || '').trim();
+                  var endAt = String(slotRecord.endAt || '').trim();
+                  if (!startAt && !endAt) {
+                    return null;
+                  }
+                  return {
+                    id:
+                      String(slotRecord.id || option.id + '-slot-' + slotIndex).trim() ||
+                      option.id + '-slot-' + slotIndex,
+                    startAt: startAt,
+                    endAt: endAt,
+                    availablePlaces: Math.max(
+                      0,
+                      Math.floor(Number(slotRecord.availablePlaces || 0))
+                    )
+                  };
+                })
+                .filter(Boolean)
+            };
+          })
+          .filter(Boolean)
+      };
+    }
+
+    function getSelectedCommunityFeedTemplateSlots(editor) {
+      var template = editor && editor.template;
+      if (!template || !template.selectedSlotsById) {
+        return [];
+      }
+      var selectedMap = template.selectedSlotsById;
+      var selected = [];
+      normalizeArray(template.items).forEach(function (item) {
+        normalizeArray(item.slots).forEach(function (slot) {
+          if (!selectedMap[String(slot && slot.id || '')]) {
+            return;
+          }
+          selected.push({
+            itemId: String(item.id || ''),
+            title: String(item.title || ''),
+            description: String(item.description || ''),
+            levelLabel: String(item.levelLabel || ''),
+            ctaLabel: String(item.ctaLabel || 'Записаться'),
+            slot: slot
+          });
+        });
+      });
+      selected.sort(function (left, right) {
+        return new Date(left.slot.startAt || left.slot.endAt || 0).getTime() -
+          new Date(right.slot.startAt || right.slot.endAt || 0).getTime();
+      });
+      return selected;
+    }
+
+    function buildCommunityFeedTemplateBodyText(editor) {
+      var template = editor && editor.template;
+      if (!template) {
+        return '';
+      }
+
+      var selectedSlots = getSelectedCommunityFeedTemplateSlots(editor);
+      if (selectedSlots.length === 0) {
+        return '';
+      }
+
+      var format = String(template.formatSelect && template.formatSelect.value || 'rich');
+      if (format === 'schedule') {
+        return selectedSlots
+          .map(function (entry) {
+            return (
+              formatCommunityFeedTemplateSlotRange(entry.slot) +
+              ' - ' +
+              entry.title +
+              (entry.levelLabel ? ' ' + entry.levelLabel : '') +
+              ' · ' +
+              formatCommunityFeedTemplatePlacesCount(entry.slot.availablePlaces)
+            );
+          })
+          .concat(['Успей записаться'])
+          .join('\n');
+      }
+
+      var lines = ['Свободное время для аренды и наши клубные форматы:'];
+      normalizeArray(template.items).forEach(function (item) {
+        var itemSlots = normalizeArray(item.slots).filter(function (slot) {
+          return template.selectedSlotsById[String(slot && slot.id || '')];
+        });
+        if (itemSlots.length === 0) {
+          return;
+        }
+        lines.push('');
+        lines.push(
+          '🔹 ' +
+            String(item.title || '') +
+            (item.description ? ' (' + String(item.description) + ')' : '')
+        );
+        if (item.levelLabel) {
+          lines.push('▫️ ' + String(item.levelLabel));
+        }
+        itemSlots.forEach(function (slot) {
+          lines.push(
+            '▫️ ' +
+              formatCommunityFeedTemplateSlotRange(slot) +
+              ' · ' +
+              formatCommunityFeedTemplatePlacesCount(slot.availablePlaces)
+          );
+        });
+        lines.push('');
+        lines.push(String(item.ctaLabel || 'Записаться'));
+      });
+      lines.push('');
+      lines.push('Встретимся на корте✅');
+      return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    function syncCommunityFeedTemplateSelection(editor) {
+      if (!editor || !editor.template || !editor.form) {
+        return;
+      }
+
+      var selectedSlots = getSelectedCommunityFeedTemplateSlots(editor);
+      var bodyText = buildCommunityFeedTemplateBodyText(editor);
+      var previousBody = String(editor.form.body.value || '');
+      if (
+        bodyText ||
+        !previousBody ||
+        previousBody === String(editor.template.lastBody || '')
+      ) {
+        editor.form.body.value = bodyText;
+      }
+      editor.template.lastBody = bodyText;
+
+      if (selectedSlots.length === 0) {
+        return;
+      }
+
+      var firstSlot = selectedSlots[0].slot || {};
+      var lastSlot = selectedSlots[selectedSlots.length - 1].slot || {};
+      if (firstSlot.startAt) {
+        editor.form.start.value = formatDateTimeLocalInputValue(firstSlot.startAt);
+      }
+      if (lastSlot.endAt) {
+        editor.form.end.value = formatDateTimeLocalInputValue(lastSlot.endAt);
+      }
+      if (!String(editor.form.title.value || '').trim()) {
+        editor.form.title.value = 'Свободные слоты и клубные форматы';
+      }
+      if (!String(editor.form.cta.value || '').trim()) {
+        editor.form.cta.value = 'Записаться';
+      }
+      if (String(editor.template.stationName || '').trim()) {
+        editor.form.station.value = String(editor.template.stationName || '').trim();
+      }
+
+      var levelsMap = Object.create(null);
+      selectedSlots.forEach(function (entry) {
+        if (entry.levelLabel) {
+          levelsMap[entry.levelLabel] = true;
+        }
+      });
+      var levels = Object.keys(levelsMap);
+      if (levels.length > 0) {
+        editor.form.level.value = levels.join(', ');
+      }
+      if (!String(editor.form.tags.value || '').trim()) {
+        editor.form.tags.value = 'расписание, сообщество, тренировки';
+      }
+    }
+
+    function renderCommunityFeedTemplateSlots(editor) {
+      var template = editor && editor.template;
+      if (!template || !template.slotsBox) {
+        return;
+      }
+
+      clearNode(template.slotsBox);
+      if (template.loading) {
+        appendCommunityListEmpty(template.slotsBox, 'Загружаем свободные слоты...');
+        return;
+      }
+      if (template.error) {
+        appendCommunityListEmpty(template.slotsBox, template.error);
+        return;
+      }
+      if (template.items.length === 0) {
+        appendCommunityListEmpty(template.slotsBox, 'Для выбранной станции слоты пока не найдены');
+        return;
+      }
+
+      template.items.forEach(function (item) {
+        var group = document.createElement('div');
+        group.className = 'phab-admin-community-template-group';
+        template.slotsBox.appendChild(group);
+
+        var head = document.createElement('div');
+        head.className = 'phab-admin-community-template-group-head';
+        group.appendChild(head);
+
+        var main = document.createElement('div');
+        head.appendChild(main);
+
+        var title = document.createElement('div');
+        title.className = 'phab-admin-community-template-group-title';
+        title.textContent = String(item.title || '');
+        main.appendChild(title);
+
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-community-template-group-meta';
+        meta.textContent = [item.description, item.levelLabel].filter(Boolean).join(' · ');
+        main.appendChild(meta);
+
+        head.appendChild(
+          createCommunityPill(
+            String(normalizeArray(item.slots).length) + ' слота',
+            'phab-admin-community-mini-chip'
+          )
+        );
+
+        var list = document.createElement('div');
+        list.className = 'phab-admin-community-template-slot-list';
+        group.appendChild(list);
+
+        normalizeArray(item.slots).forEach(function (slot) {
+          var label = document.createElement('label');
+          label.className = 'phab-admin-community-template-slot';
+          list.appendChild(label);
+
+          var checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = template.selectedSlotsById[String(slot.id || '')] === true;
+          label.appendChild(checkbox);
+
+          var slotInfo = document.createElement('div');
+          label.appendChild(slotInfo);
+
+          var slotTitle = document.createElement('strong');
+          slotTitle.textContent =
+            formatCommunityFeedTemplateSlotRange(slot) +
+            ' · ' +
+            formatCommunityFeedTemplatePlacesCount(slot.availablePlaces);
+          slotInfo.appendChild(slotTitle);
+
+          var slotMeta = document.createElement('div');
+          slotMeta.textContent = String(item.ctaLabel || 'Записаться');
+          slotInfo.appendChild(slotMeta);
+
+          checkbox.addEventListener('change', function () {
+            var slotId = String(slot.id || '');
+            if (checkbox.checked) {
+              template.selectedSlotsById[slotId] = true;
+            } else {
+              delete template.selectedSlotsById[slotId];
+            }
+            syncCommunityFeedTemplateSelection(editor);
+          });
+        });
+      });
+    }
+
+    async function loadCommunityFeedTemplateSlots(editor) {
+      if (!editor || !editor.template || !editor.communityId) {
+        return;
+      }
+      var template = editor.template;
+      var stationId = String(template.stationSelect && template.stationSelect.value || '').trim();
+      var stationName =
+        template.stationSelect && template.stationSelect.selectedOptions &&
+        template.stationSelect.selectedOptions[0]
+          ? String(template.stationSelect.selectedOptions[0].textContent || '').trim()
+          : stationId;
+      var requestToken = 'tpl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      template.requestToken = requestToken;
+      template.loading = true;
+      template.error = '';
+      template.items = [];
+      template.selectedSlotsById = Object.create(null);
+      template.stationName = stationName;
+      syncCommunityFeedTemplateSelection(editor);
+      renderCommunityFeedTemplateSlots(editor);
+
+      try {
+        var payload = await api.getCommunityFeedTemplateSlots(editor.communityId, {
+          stationId: stationId || undefined
+        });
+        if (state.communityFeedEditor !== editor || template.requestToken !== requestToken) {
+          return;
+        }
+        var normalizedPayload = normalizeCommunityFeedTemplatePayload(payload, stationName);
+        template.items = normalizedPayload.items;
+        template.stationName =
+          normalizedPayload.stationName &&
+          normalizedPayload.stationName !== normalizedPayload.stationId
+            ? normalizedPayload.stationName
+            : stationName;
+      } catch (error) {
+        if (state.communityFeedEditor !== editor || template.requestToken !== requestToken) {
+          return;
+        }
+        template.error =
+          error && error.message
+            ? String(error.message)
+            : 'Не удалось загрузить свободные слоты станции';
+      } finally {
+        if (state.communityFeedEditor !== editor || template.requestToken !== requestToken) {
+          return;
+        }
+        template.loading = false;
+        renderCommunityFeedTemplateSlots(editor);
+      }
+    }
+
+    function createCommunityFeedTemplatePanel(community) {
+      var templateCard = document.createElement('div');
+      templateCard.className =
+        'phab-admin-detail-card phab-admin-community-template-card phab-admin-hidden';
+
+      var templateHead = document.createElement('div');
+      templateHead.className = 'phab-admin-detail-head';
+      templateHead.innerHTML =
+        '<span class="phab-admin-detail-head-title">Шаблон по свободным слотам</span>';
+      templateCard.appendChild(templateHead);
+
+      var templateBody = document.createElement('div');
+      templateBody.className = 'phab-admin-detail-body phab-admin-community-template-card-body';
+      templateCard.appendChild(templateBody);
+
+      var controls = document.createElement('div');
+      controls.className = 'phab-admin-community-template-controls';
+      templateBody.appendChild(controls);
+
+      var stationLabel = document.createElement('label');
+      stationLabel.className = 'phab-admin-settings-label';
+      stationLabel.textContent = 'Станция';
+      controls.appendChild(stationLabel);
+
+      var stationSelect = document.createElement('select');
+      stationSelect.className = 'phab-admin-settings-input';
+      getCommunityFeedEditorStationOptions(community).forEach(function (station) {
+        var option = document.createElement('option');
+        option.value = station.stationId;
+        option.textContent = station.stationName;
+        stationSelect.appendChild(option);
+      });
+      stationLabel.appendChild(stationSelect);
+
+      var formatLabel = document.createElement('label');
+      formatLabel.className = 'phab-admin-settings-label';
+      formatLabel.textContent = 'Формат текста';
+      controls.appendChild(formatLabel);
+
+      var formatSelect = document.createElement('select');
+      formatSelect.className = 'phab-admin-settings-input';
+      [
+        { value: 'rich', label: 'Клубные форматы' },
+        { value: 'schedule', label: 'Списком по времени' }
+      ].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        formatSelect.appendChild(option);
+      });
+      formatLabel.appendChild(formatSelect);
+
+      var slotsBox = document.createElement('div');
+      slotsBox.className = 'phab-admin-community-template-slots';
+      templateBody.appendChild(slotsBox);
+
+      return {
+        card: templateCard,
+        stationSelect: stationSelect,
+        formatSelect: formatSelect,
+        slotsBox: slotsBox,
+        stationName:
+          stationSelect.options.length > 0
+            ? String(stationSelect.options[stationSelect.selectedIndex].textContent || '').trim()
+            : String((community && community.stationName) || (community && community.stationId) || ''),
+        items: [],
+        selectedSlotsById: Object.create(null),
+        loading: false,
+        error: '',
+        requestToken: '',
+        lastBody: '',
+        opened: false
+      };
+    }
+
+    function bindCommunityFeedTemplatePanel(editor) {
+      if (!editor || !editor.template) {
+        return;
+      }
+      editor.template.stationSelect.addEventListener('change', function () {
+        loadCommunityFeedTemplateSlots(editor).catch(handleError);
+      });
+      editor.template.formatSelect.addEventListener('change', function () {
+        syncCommunityFeedTemplateSelection(editor);
+      });
+    }
+
+    function toggleCommunityFeedTemplatePanel() {
+      var editor = state.communityFeedEditor;
+      if (!editor || !editor.template || String(editor.mode || '') !== 'create') {
+        return;
+      }
+
+      editor.template.opened = !editor.template.opened;
+      editor.template.card.className = editor.template.opened
+        ? 'phab-admin-detail-card phab-admin-community-template-card'
+        : 'phab-admin-detail-card phab-admin-community-template-card phab-admin-hidden';
+      dom.communityFeedEditorTemplateBtn.textContent = editor.template.opened
+        ? 'Скрыть шаблон'
+        : 'Шаблон';
+
+      if (editor.template.opened && editor.template.items.length === 0 && !editor.template.loading) {
+        loadCommunityFeedTemplateSlots(editor).catch(handleError);
+      }
+    }
+
+    function buildCommunityFeedEditorDraft(community) {
+      var stationName = String(
+        (community && (community.stationName || community.stationId)) || ''
+      );
+      return {
+        kind: 'EVENT',
+        title: 'Свободные слоты и клубные форматы',
+        body: '',
+        previewLabel: stationName,
+        ctaLabel: 'Записаться',
+        imageUrl: '',
+        startAt: '',
+        endAt: '',
+        stationName: stationName,
+        courtName: '',
+        levelLabel: '',
+        authorName: 'Администратор',
+        participants: [],
+        tags: ['расписание', 'сообщество', 'тренировки']
+      };
+    }
+
     function closeCommunityFeedEditorModal() {
       state.communityFeedEditor = null;
       state.communityFeedEditingKey = null;
       dom.communityFeedEditorSaveBtn.disabled = false;
       dom.communityFeedEditorSaveBtn.textContent = 'Сохранить';
+      dom.communityFeedEditorTemplateBtn.disabled = false;
+      dom.communityFeedEditorTemplateBtn.className = 'phab-admin-btn-secondary phab-admin-hidden';
+      dom.communityFeedEditorTemplateBtn.textContent = 'Шаблон';
       dom.communityFeedEditorTitle.textContent = 'Редактировать публикацию';
       clearNode(dom.communityFeedEditorBody);
       dom.communityFeedEditorModal.classList.add('phab-admin-hidden');
     }
 
-    function openCommunityFeedEditor(community, post) {
-      if (!community || !post) {
+    function openCommunityFeedEditor(community, post, options) {
+      var opts = options || {};
+      var editorMode = opts.mode === 'create' ? 'create' : 'edit';
+      var sourcePost = editorMode === 'create'
+        ? buildCommunityFeedEditorDraft(community)
+        : post;
+
+      if (!community || !sourcePost) {
         return;
       }
-      if (isSyntheticCommunityFeedPost(post)) {
+      if (editorMode !== 'create' && isSyntheticCommunityFeedPost(sourcePost)) {
         state.communityCenterTab = 'settings';
         renderCommunityDetails();
         setStatus('Системные карточки редактируются через настройки сообщества.', false);
         return;
       }
 
-      var feedItemId = getCommunityFeedPostPersistenceId(post);
-      if (!feedItemId) {
+      var feedItemId =
+        editorMode === 'create' ? '' : getCommunityFeedPostPersistenceId(sourcePost);
+      if (editorMode !== 'create' && !feedItemId) {
         setStatus('Не удалось определить id публикации для редактирования.', true);
         return;
       }
 
       clearNode(dom.communityFeedEditorBody);
-      dom.communityFeedEditorTitle.textContent = 'Редактировать публикацию';
+      dom.communityFeedEditorTitle.textContent =
+        editorMode === 'create'
+          ? 'Добавить событие в ленту'
+          : 'Редактировать публикацию';
+      dom.communityFeedEditorSaveBtn.textContent =
+        editorMode === 'create' ? 'Создать событие' : 'Сохранить';
+      dom.communityFeedEditorTemplateBtn.className =
+        editorMode === 'create'
+          ? 'phab-admin-btn-secondary'
+          : 'phab-admin-btn-secondary phab-admin-hidden';
+      dom.communityFeedEditorTemplateBtn.textContent = 'Шаблон';
+
+      var templateState = null;
+      if (editorMode === 'create') {
+        templateState = createCommunityFeedTemplatePanel(community);
+        dom.communityFeedEditorBody.appendChild(templateState.card);
+      }
 
       var form = document.createElement('div');
       form.className = 'phab-admin-community-form-grid';
@@ -12773,65 +13450,66 @@
         option.textContent = item.label;
         kindSelect.appendChild(option);
       });
-      kindSelect.value = String(post.kind || 'NEWS').trim().toUpperCase();
+      kindSelect.value = String(sourcePost.kind || 'NEWS').trim().toUpperCase();
       appendCommunityFormField(form, 'Тип карточки', kindSelect);
 
       var titleInput = document.createElement('input');
       titleInput.className = 'phab-admin-input';
-      titleInput.value = String(post.title || '');
+      titleInput.value = String(sourcePost.title || '');
       appendCommunityFormField(form, 'Заголовок', titleInput);
 
       var previewInput = document.createElement('input');
       previewInput.className = 'phab-admin-input';
-      previewInput.value = String(post.previewLabel || '');
+      previewInput.value = String(sourcePost.previewLabel || '');
       appendCommunityFormField(form, 'Подпись / превью', previewInput);
 
       var ctaInput = document.createElement('input');
       ctaInput.className = 'phab-admin-input';
-      ctaInput.value = String(post.ctaLabel || '');
+      ctaInput.value = String(sourcePost.ctaLabel || '');
       appendCommunityFormField(form, 'Текст CTA', ctaInput);
 
-      var imageInput = document.createElement('input');
-      imageInput.className = 'phab-admin-input';
-      imageInput.value = String(post.imageUrl || '');
-      appendCommunityFormField(form, 'Изображение', imageInput);
+      var imageControl = createCommunityImageUploadControl(String(sourcePost.imageUrl || ''));
+      var imageInput = imageControl.input;
+      appendCommunityFormField(form, 'Изображение', imageControl.root);
 
       var startInput = document.createElement('input');
       startInput.type = 'datetime-local';
       startInput.className = 'phab-admin-input';
-      startInput.value = formatDateTimeLocalInputValue(post.startAt || post.publishedAt);
+      startInput.value = formatDateTimeLocalInputValue(sourcePost.startAt || sourcePost.publishedAt);
       appendCommunityFormField(form, 'Начало', startInput);
 
       var endInput = document.createElement('input');
       endInput.type = 'datetime-local';
       endInput.className = 'phab-admin-input';
-      endInput.value = formatDateTimeLocalInputValue(post.endAt);
+      endInput.value = formatDateTimeLocalInputValue(sourcePost.endAt);
       appendCommunityFormField(form, 'Конец', endInput);
 
       var stationInput = document.createElement('input');
       stationInput.className = 'phab-admin-input';
-      stationInput.value = String(post.stationName || community.stationName || community.stationId || '');
+      stationInput.value = String(
+        sourcePost.stationName || community.stationName || community.stationId || ''
+      );
       appendCommunityFormField(form, 'Станция / клуб', stationInput);
 
       var courtInput = document.createElement('input');
       courtInput.className = 'phab-admin-input';
-      courtInput.value = String(post.courtName || '');
+      courtInput.value = String(sourcePost.courtName || '');
       appendCommunityFormField(form, 'Корт / площадка', courtInput);
 
       var levelInput = document.createElement('input');
       levelInput.className = 'phab-admin-input';
-      levelInput.value = String(post.levelLabel || '');
+      levelInput.value = String(sourcePost.levelLabel || '');
       appendCommunityFormField(form, 'Уровень', levelInput);
 
       var authorInput = document.createElement('input');
       authorInput.className = 'phab-admin-input';
-      authorInput.value = String(post.authorName || '');
+      authorInput.value = String(sourcePost.authorName || '');
       appendCommunityFormField(form, 'Автор', authorInput);
 
       var participantsInput = document.createElement('textarea');
       participantsInput.className = 'phab-admin-input';
       participantsInput.rows = 3;
-      participantsInput.value = normalizeArray(post.participants)
+      participantsInput.value = normalizeArray(sourcePost.participants)
         .map(function (participant) {
           return String(participant && participant.name || '').trim();
         })
@@ -12841,16 +13519,22 @@
 
       var tagsInput = document.createElement('input');
       tagsInput.className = 'phab-admin-input';
-      tagsInput.value = normalizeArray(post.tags).join(', ');
+      tagsInput.value = normalizeArray(sourcePost.tags).join(', ');
       appendCommunityFormField(form, 'Теги', tagsInput, true);
 
       var bodyInput = document.createElement('textarea');
       bodyInput.className = 'phab-admin-input';
       bodyInput.rows = 6;
-      bodyInput.value = String(post.body || '');
-      appendCommunityFormField(form, 'Описание', bodyInput, true);
+      bodyInput.value = String(sourcePost.body || '');
+      appendCommunityFormField(
+        form,
+        editorMode === 'create' ? 'Описание / текст сообщения' : 'Описание',
+        bodyInput,
+        true
+      );
 
       state.communityFeedEditor = {
+        mode: editorMode,
         communityId: String(community.id || ''),
         feedItemId: feedItemId,
         initialPayload: buildCommunityFeedFormPayload({
@@ -12884,8 +13568,13 @@
           participants: participantsInput,
           tags: tagsInput,
           body: bodyInput
-        }
+        },
+        template: templateState
       };
+
+      if (templateState) {
+        bindCommunityFeedTemplatePanel(state.communityFeedEditor);
+      }
 
       dom.communityFeedEditorModal.classList.remove('phab-admin-hidden');
       window.setTimeout(function () {
@@ -12905,7 +13594,8 @@
       var community = state.communities.find(function (item) {
         return String(item && item.id || '') === communityId;
       }) || null;
-      if (!communityId || !feedItemId || !community) {
+      var isCreateMode = String(editor.mode || 'edit') === 'create';
+      if (!communityId || !community || (!isCreateMode && !feedItemId)) {
         throw new Error('Не удалось определить сообщество или публикацию для сохранения.');
       }
 
@@ -12913,6 +13603,23 @@
       if (!nextPayload.title) {
         throw new Error('Укажите заголовок публикации.');
       }
+      if (isCreateMode) {
+        dom.communityFeedEditorSaveBtn.disabled = true;
+        dom.communityFeedEditorTemplateBtn.disabled = true;
+        dom.communityFeedEditorSaveBtn.textContent = 'Создаём...';
+        try {
+          await createCommunityFeedItem(community, nextPayload);
+          closeCommunityFeedEditorModal();
+        } finally {
+          if (state.communityFeedEditor) {
+            dom.communityFeedEditorSaveBtn.disabled = false;
+            dom.communityFeedEditorTemplateBtn.disabled = false;
+            dom.communityFeedEditorSaveBtn.textContent = 'Создать событие';
+          }
+        }
+        return;
+      }
+
       var payload = buildCommunityFeedFormDiffPayload(editor.initialPayload || {}, nextPayload);
       if (!Object.keys(payload).length) {
         setStatus('Изменений нет', false);
@@ -12922,6 +13629,7 @@
       var editingKey = communityId + ':' + feedItemId;
       state.communityFeedEditingKey = editingKey;
       dom.communityFeedEditorSaveBtn.disabled = true;
+      dom.communityFeedEditorTemplateBtn.disabled = true;
       dom.communityFeedEditorSaveBtn.textContent = 'Сохраняем...';
       try {
         await api.updateCommunityFeedItem(communityId, feedItemId, payload);
@@ -12937,6 +13645,7 @@
           return;
         }
         dom.communityFeedEditorSaveBtn.disabled = false;
+        dom.communityFeedEditorTemplateBtn.disabled = false;
         dom.communityFeedEditorSaveBtn.textContent = 'Сохранить';
       }
     }
@@ -14273,6 +14982,65 @@
 
       field.appendChild(control);
       return control;
+    }
+
+    function createCommunityImageUploadControl(initialValue) {
+      var imageUploadRow = document.createElement('div');
+      imageUploadRow.className = 'phab-admin-community-image-upload-row';
+
+      var imageInput = document.createElement('input');
+      imageInput.className = 'phab-admin-input phab-admin-community-image-upload-input';
+      imageInput.placeholder = 'https://... или data:image/...';
+      imageInput.value = String(initialValue || '');
+      imageUploadRow.appendChild(imageInput);
+
+      var imageUploadBtn = document.createElement('button');
+      imageUploadBtn.type = 'button';
+      imageUploadBtn.className = 'phab-admin-btn-secondary phab-admin-community-image-upload-btn';
+      imageUploadBtn.textContent = 'С компьютера';
+      imageUploadRow.appendChild(imageUploadBtn);
+
+      var imageFileInput = document.createElement('input');
+      imageFileInput.type = 'file';
+      imageFileInput.accept = 'image/*';
+      imageFileInput.className = 'phab-admin-file-input-hidden';
+      imageUploadRow.appendChild(imageFileInput);
+
+      imageUploadBtn.addEventListener('click', function () {
+        imageFileInput.click();
+      });
+
+      imageFileInput.addEventListener('change', function () {
+        var file = imageFileInput.files && imageFileInput.files[0];
+        if (!file) {
+          return;
+        }
+
+        imageUploadBtn.disabled = true;
+        imageUploadBtn.textContent = 'Загружаем...';
+
+        compressImageFileAttachment(file)
+          .then(function (attachment) {
+            imageInput.value = String(attachment.url || '').trim();
+            imageInput.title = String(attachment.name || file.name || '').trim();
+            setStatus(
+              'Изображение прикреплено' +
+                (imageInput.title ? ': ' + imageInput.title : ''),
+              false
+            );
+          })
+          .catch(handleError)
+          .finally(function () {
+            imageFileInput.value = '';
+            imageUploadBtn.disabled = false;
+            imageUploadBtn.textContent = 'С компьютера';
+          });
+      });
+
+      return {
+        root: imageUploadRow,
+        input: imageInput
+      };
     }
 
     function appendCommunityListEmpty(container, text) {
@@ -15820,6 +16588,7 @@
         { value: 'NEWS', label: 'Новость' },
         { value: 'GAME', label: 'Игра' },
         { value: 'TOURNAMENT', label: 'Турнир' },
+        { value: 'EVENT', label: 'Событие' },
         { value: 'AD', label: 'Реклама / промо' }
       ].forEach(function (item) {
         var option = document.createElement('option');
@@ -15844,58 +16613,9 @@
       ctaInput.placeholder = 'Открыть / Внести результаты игры';
       appendCommunityFormField(composerForm, 'Текст CTA', ctaInput);
 
-      var imageUploadRow = document.createElement('div');
-      imageUploadRow.className = 'phab-admin-community-image-upload-row';
-
-      var imageInput = document.createElement('input');
-      imageInput.className = 'phab-admin-input phab-admin-community-image-upload-input';
-      imageInput.placeholder = 'https://... или data:image/...';
-      imageUploadRow.appendChild(imageInput);
-
-      var imageUploadBtn = document.createElement('button');
-      imageUploadBtn.type = 'button';
-      imageUploadBtn.className = 'phab-admin-btn-secondary phab-admin-community-image-upload-btn';
-      imageUploadBtn.textContent = 'С компьютера';
-      imageUploadRow.appendChild(imageUploadBtn);
-
-      var imageFileInput = document.createElement('input');
-      imageFileInput.type = 'file';
-      imageFileInput.accept = 'image/*';
-      imageFileInput.className = 'phab-admin-file-input-hidden';
-      imageUploadRow.appendChild(imageFileInput);
-
-      imageUploadBtn.addEventListener('click', function () {
-        imageFileInput.click();
-      });
-
-      imageFileInput.addEventListener('change', function () {
-        var file = imageFileInput.files && imageFileInput.files[0];
-        if (!file) {
-          return;
-        }
-
-        imageUploadBtn.disabled = true;
-        imageUploadBtn.textContent = 'Загружаем...';
-
-        compressImageFileAttachment(file)
-          .then(function (attachment) {
-            imageInput.value = String(attachment.url || '').trim();
-            imageInput.title = String(attachment.name || file.name || '').trim();
-            setStatus(
-              'Изображение прикреплено' +
-                (imageInput.title ? ': ' + imageInput.title : ''),
-              false
-            );
-          })
-          .catch(handleError)
-          .finally(function () {
-            imageFileInput.value = '';
-            imageUploadBtn.disabled = false;
-            imageUploadBtn.textContent = 'С компьютера';
-          });
-      });
-
-      appendCommunityFormField(composerForm, 'Изображение', imageUploadRow);
+      var imageControl = createCommunityImageUploadControl('');
+      var imageInput = imageControl.input;
+      appendCommunityFormField(composerForm, 'Изображение', imageControl.root);
 
       var startInput = document.createElement('input');
       startInput.type = 'datetime-local';
@@ -16455,6 +17175,7 @@
           'Выберите сообщество слева, чтобы открыть модераторский интерфейс и параметры.';
         dom.communityPreviewTitle.textContent = 'Модерация сообщества';
         dom.communityPreviewMeta.textContent = 'Выберите карточку слева';
+        dom.communityPreviewCreateBtn.disabled = true;
         renderCommunityAvatarNode(dom.communityAvatar, { name: 'CM', logo: '' });
         appendCommunityListEmpty(dom.communityAdminGrid, 'Слева выберите сообщество для модерации.');
         appendCommunityListEmpty(dom.communityPreviewBody, 'Превью появится после выбора сообщества.');
@@ -16473,6 +17194,7 @@
       model.historyEntries = getCommunityHistoryEntries(community, model);
 
       renderCommunityAvatarNode(dom.communityAvatar, community);
+      dom.communityPreviewCreateBtn.disabled = false;
       dom.communityTitle.textContent = String(community.name || 'Сообщество');
       dom.communityMeta.textContent = [
         community.stationName || community.stationId || 'Без станции',
@@ -17987,6 +18709,13 @@
         state.communitiesSearchQuery = String(dom.communitySearchInput.value || '').trim();
         renderCommunities();
       });
+      dom.communityPreviewCreateBtn.addEventListener('click', function () {
+        var community = getSelectedCommunity();
+        if (!community) {
+          return;
+        }
+        openCommunityFeedEditor(community, null, { mode: 'create' });
+      });
       dom.dialogFiltersBtn.addEventListener('click', function () {
         if (dom.dialogFiltersBtn.disabled) {
           return;
@@ -18247,6 +18976,9 @@
       });
       dom.communityFeedEditorCloseBtn.addEventListener('click', function () {
         closeCommunityFeedEditorModal();
+      });
+      dom.communityFeedEditorTemplateBtn.addEventListener('click', function () {
+        toggleCommunityFeedTemplatePanel();
       });
       dom.communityFeedEditorModal.addEventListener('click', function (event) {
         if (event.target === dom.communityFeedEditorModal) {
