@@ -10869,30 +10869,41 @@
       return 7;
     }
 
-    function getLatestClientMessageForQuickReplies() {
-      var list = normalizeArray(state.rawMessages).length > 0
+    function getQuickReplyDialogMessages(dialog) {
+      var targetDialogId = String(
+        dialog && (dialog.dialogId || dialog.threadId) || ''
+      ).trim();
+      if (
+        !targetDialogId ||
+        String(state.messagesThreadId || '').trim() !== targetDialogId
+      ) {
+        return [];
+      }
+      return normalizeArray(state.rawMessages).length > 0
         ? normalizeArray(state.rawMessages)
         : normalizeArray(state.messages);
+    }
+
+    function getLatestClientMessageForQuickReplies(dialog) {
+      var list = getQuickReplyDialogMessages(dialog);
       for (var index = list.length - 1; index >= 0; index -= 1) {
         var message = list[index];
+        if (isSystemMessage(message)) {
+          continue;
+        }
         var direction = String(message && message.direction || '').trim().toUpperCase();
         var senderRole = String(
           message && (message.senderRoleRaw || message.senderRole) || ''
         ).trim().toUpperCase();
-        if (
-          !isSystemMessage(message) &&
-          (direction === 'INBOUND' || senderRole === 'CLIENT')
-        ) {
-          return message;
-        }
+        return direction === 'INBOUND' || senderRole === 'CLIENT'
+          ? message
+          : null;
       }
       return null;
     }
 
-    function resolveQuickReplyNoClientReplyMinutes() {
-      var list = normalizeArray(state.rawMessages).length > 0
-        ? normalizeArray(state.rawMessages)
-        : normalizeArray(state.messages);
+    function resolveQuickReplyNoClientReplyMinutes(dialog) {
+      var list = getQuickReplyDialogMessages(dialog);
       for (var index = list.length - 1; index >= 0; index -= 1) {
         var message = list[index];
         if (isSystemMessage(message)) {
@@ -10915,13 +10926,11 @@
       return null;
     }
 
-    function isFirstClientQuickReplyMessage(message) {
+    function isFirstClientQuickReplyMessage(dialog, message) {
       if (!message || !message.id) {
         return false;
       }
-      var list = normalizeArray(state.rawMessages).length > 0
-        ? normalizeArray(state.rawMessages)
-        : normalizeArray(state.messages);
+      var list = getQuickReplyDialogMessages(dialog);
       for (var index = 0; index < list.length; index += 1) {
         var candidate = list[index];
         var direction = String(candidate && candidate.direction || '').trim().toUpperCase();
@@ -10939,25 +10948,18 @@
     }
 
     function buildQuickReplyDialogContext(dialog) {
-      var latestClientMessage = getLatestClientMessageForQuickReplies();
+      var latestClientMessage = getLatestClientMessageForQuickReplies(dialog);
       return {
         stationId: dialog && dialog.stationId ? String(dialog.stationId).trim() : QUICK_REPLY_STATION_UNASSIGNED,
-        messageText: String(
-          (latestClientMessage && latestClientMessage.text) ||
-            (dialog && dialog.lastMessageText) ||
-            (dialog && dialog.subject) ||
-            ''
-        ),
+        messageText: String((latestClientMessage && latestClientMessage.text) || ''),
         messageCreatedAt: String(
-          (latestClientMessage && latestClientMessage.createdAt) ||
-            (dialog && dialog.lastMessageAt) ||
-            ''
+          (latestClientMessage && latestClientMessage.createdAt) || ''
         ),
         hasAttachment: normalizeMessageAttachments(
           latestClientMessage && latestClientMessage.attachments
         ).length > 0,
-        isFirstClientMessage: isFirstClientQuickReplyMessage(latestClientMessage),
-        noClientReplyMinutes: resolveQuickReplyNoClientReplyMinutes()
+        isFirstClientMessage: isFirstClientQuickReplyMessage(dialog, latestClientMessage),
+        noClientReplyMinutes: resolveQuickReplyNoClientReplyMinutes(dialog)
       };
     }
 
