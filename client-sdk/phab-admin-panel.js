@@ -6447,6 +6447,32 @@
     return Array.isArray(value) ? value : [];
   }
 
+  function normalizeMessageAttachments(value) {
+    return normalizeArray(value)
+      .map(function (item) {
+        var attachment = normalizeObject(item);
+        var type = String(attachment.type || '').trim().toUpperCase();
+        var url = String(attachment.url || '').trim();
+        if (type !== 'IMAGE' || !url) {
+          return null;
+        }
+        return {
+          id: String(
+            attachment.id || 'attachment-' + Math.random().toString(36).slice(2, 10)
+          ),
+          type: 'IMAGE',
+          url: url,
+          name: String(attachment.name || '').trim() || undefined,
+          mimeType: String(attachment.mimeType || '').trim() || undefined,
+          size: Number.isFinite(Number(attachment.size))
+            ? Math.max(0, Math.floor(Number(attachment.size)))
+            : undefined
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+  }
+
   function createTextChip(text, tone) {
     var chip = document.createElement('span');
     chip.className =
