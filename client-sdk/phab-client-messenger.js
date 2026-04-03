@@ -75,6 +75,10 @@
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   }
 
+  function isPromoConnectorRoute(connectorRoute) {
+    return String(connectorRoute || '').trim().toUpperCase() === 'PROMO_WEB_MESSENGER';
+  }
+
   function formatFileSize(size) {
     var bytes = Number(size);
     if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -243,9 +247,15 @@
     if (!Array.isArray(cfg.stations)) {
       cfg.stations = [];
     }
-    if (cfg.connectorRoute === 'PROMO_WEB_MESSENGER') {
+    if (isPromoConnectorRoute(cfg.connectorRoute)) {
       cfg.stations = [{ id: 'promo', name: 'PROMO' }];
       cfg.hideStationSelect = true;
+      if (!String(cfg.title || '').trim() || cfg.title === DEFAULTS.title) {
+        cfg.title = 'TEAMO × PADLHUB';
+      }
+      if (!String(cfg.launcherText || '').trim() || cfg.launcherText === DEFAULTS.launcherText) {
+        cfg.launcherText = 'Teamo × PadlHub';
+      }
     }
     return cfg;
   }
@@ -262,9 +272,13 @@
       '.phab-launcher-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;margin-left:8px;border-radius:10px;background:#d1362a;color:#fff;font-size:11px;line-height:18px;text-align:center}' +
       '.phab-panel{position:fixed;right:20px;bottom:74px;width:360px;max-width:calc(100vw - 20px);height:520px;max-height:70vh;background:#fff;border:1px solid #d8e0dc;border-radius:14px;display:flex;flex-direction:column;z-index:2147483001;box-shadow:0 20px 48px rgba(0,0,0,.18)}' +
       '.phab-panel-hidden{display:none}' +
-      '.phab-header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid #e6ece8;background:#f3f7f5}' +
+      '.phab-header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid #e6ece8;background:#f3f7f5}' +
+      '.phab-title-wrap{display:flex;flex-direction:column;gap:2px;min-width:0}' +
       '.phab-title{font:700 14px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;color:#17352d}' +
+      '.phab-subtitle{display:none;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;color:#4b5e58}' +
+      '.phab-header-right{display:flex;align-items:center;gap:8px;flex:0 0 auto}' +
       '.phab-status{font:500 12px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;color:#39564d}' +
+      '.phab-close{border:none;background:transparent;color:#39564d;font:700 22px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;padding:0 2px 2px}' +
       '.phab-body{flex:1;display:flex;flex-direction:column;min-height:0}' +
       '.phab-station-wrap{padding:12px 14px;border-bottom:1px solid #eef2f0;background:#fafcfa}' +
       '.phab-select,.phab-input{width:100%;box-sizing:border-box;border:1px solid #c6d3cd;border-radius:9px;padding:9px 10px;font:500 13px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
@@ -284,13 +298,56 @@
       '.phab-file-hidden{display:none}' +
       '.phab-send{border:none;border-radius:9px;padding:0 14px;background:#116149;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer}' +
       '.phab-hint{padding:8px 12px;color:#4b5e58;font:500 12px/1.35 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
-      '@media(max-width:520px){.phab-panel{left:10px;right:10px;bottom:70px;width:auto;height:65vh}}';
+      '.phab-promo-intro{display:none}' +
+      '.phab-launcher-promo{padding:14px 24px;background:linear-gradient(90deg,#ef7683 0%,#67d0e6 100%);font:700 15px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 14px 34px rgba(82,112,132,.28)}' +
+      '.phab-panel-promo{width:390px;max-width:calc(100vw - 16px);height:640px;max-height:calc(100vh - 96px);border:1px solid rgba(255,255,255,.9);border-radius:28px;background:linear-gradient(180deg,#fff8f4 0%,#f8f0ed 46%,#f3f8fb 100%);overflow:hidden;box-shadow:0 24px 70px rgba(79,88,113,.24)}' +
+      '.phab-panel-promo .phab-header{padding:18px 18px 14px;border-bottom:none;background:linear-gradient(135deg,#f7c2ba 0%,#fce9dd 38%,#b9eef5 100%)}' +
+      '.phab-panel-promo .phab-title{font:800 16px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;color:#773b3d;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.phab-panel-promo .phab-subtitle{display:block;font:600 14px/1.25 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;color:#4e4240}' +
+      '.phab-panel-promo .phab-status{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.65);color:#587066;font:700 11px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
+      '.phab-panel-promo .phab-status::before{content:"";width:8px;height:8px;border-radius:50%;background:#92cda6;display:inline-block}' +
+      '.phab-panel-promo .phab-close{width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.42);color:#7d6460;font-size:22px}' +
+      '.phab-panel-promo .phab-body{background:linear-gradient(180deg,#fff6f2 0%,#f9f2ee 100%)}' +
+      '.phab-panel-promo .phab-hint{display:none;margin:8px 14px 0;padding:10px 14px;border-radius:14px;background:rgba(255,255,255,.74);color:#725f59}' +
+      '.phab-panel-promo .phab-messages{padding:12px 12px 10px;background:transparent}' +
+      '.phab-panel-promo .phab-promo-intro{display:block;margin-bottom:14px}' +
+      '.phab-promo-greeting{padding:14px 16px;border-radius:18px;background:rgba(255,255,255,.82);color:#564843;font:600 14px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 8px 20px rgba(120,91,85,.08)}' +
+      '.phab-promo-quick-grid{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 14px}' +
+      '.phab-promo-chip{border:none;border-radius:999px;padding:11px 16px;color:#fff;font:700 13px/1.1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 10px 22px rgba(95,106,129,.18)}' +
+      '.phab-promo-chip-pink{background:linear-gradient(90deg,#ef7482 0%,#f5a0a2 100%)}' +
+      '.phab-promo-chip-blue{background:linear-gradient(90deg,#57bdcf 0%,#6fd7e5 100%)}' +
+      '.phab-promo-chip-wide{background:linear-gradient(90deg,#5eaecf 0%,#61d1df 100%)}' +
+      '.phab-promo-showcase{padding:10px;border-radius:24px;background:rgba(255,255,255,.64);border:1px solid rgba(244,205,195,.7);box-shadow:0 12px 26px rgba(120,91,85,.08)}' +
+      '.phab-promo-showcase-visual{position:relative;display:flex;gap:14px;align-items:center;padding:16px;border-radius:20px;background:linear-gradient(135deg,#fbd3c3 0%,#fff2e4 42%,#b8e9f3 100%);overflow:hidden}' +
+      '.phab-promo-showcase-visual::after{content:"";position:absolute;inset:auto -30px -40px auto;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.75) 0%,rgba(255,255,255,0) 70%)}' +
+      '.phab-promo-avatar{width:92px;height:92px;flex:0 0 auto;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff7f2 0 18%,transparent 19%),radial-gradient(circle at 64% 30%,#fff7f2 0 18%,transparent 19%),radial-gradient(circle at 50% 70%,#6db0d7 0 26%,transparent 27%),linear-gradient(145deg,#ffb7b7 0%,#f7d8be 45%,#a8e8ef 100%);border:4px solid rgba(255,255,255,.82);box-shadow:0 10px 20px rgba(99,97,112,.16)}' +
+      '.phab-promo-card-copy{position:relative;z-index:1;min-width:0}' +
+      '.phab-promo-card-brand{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:14px;background:rgba(255,255,255,.74);color:#6b4f4a;font:800 13px/1.1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;letter-spacing:.03em;text-transform:uppercase}' +
+      '.phab-promo-card-text{margin-top:12px;color:#5a514f;font:700 15px/1.3 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif}' +
+      '.phab-promo-cta{width:100%;margin-top:14px;border:none;border-radius:999px;padding:14px 20px;background:linear-gradient(90deg,#ef7482 0%,#66d0e6 100%);color:#fff;font:700 15px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 12px 28px rgba(115,102,118,.2)}' +
+      '.phab-promo-links{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}' +
+      '.phab-promo-link{border:1px solid rgba(220,205,197,.82);border-radius:14px;padding:9px 8px;background:rgba(255,255,255,.66);color:#655d5b;font:600 11px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;text-align:center}' +
+      '.phab-panel-promo .phab-msg{max-width:88%;padding:10px 14px;border-radius:18px;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;box-shadow:0 8px 20px rgba(120,91,85,.08)}' +
+      '.phab-panel-promo .phab-msg-client{background:linear-gradient(90deg,#ef7f89 0%,#6ccde4 100%);color:#fff;border-bottom-right-radius:8px}' +
+      '.phab-panel-promo .phab-msg-staff{background:rgba(255,255,255,.84);color:#574944;border-bottom-left-radius:8px}' +
+      '.phab-panel-promo .phab-msg-image{width:min(220px,100%);max-height:220px}' +
+      '.phab-panel-promo .phab-attachments{padding:8px 14px 0;background:transparent;border-top:none}' +
+      '.phab-panel-promo .phab-attachment-chip{border-color:rgba(220,205,197,.82);background:rgba(255,255,255,.74);color:#655d5b}' +
+      '.phab-panel-promo .phab-footer{padding:10px 12px 12px;border-top:none;background:transparent;align-items:center}' +
+      '.phab-panel-promo .phab-attach{height:44px;padding:0 13px;border-radius:16px;border:1px solid rgba(220,205,197,.82);background:rgba(255,255,255,.74);color:#7d706c;font-size:0}' +
+      '.phab-panel-promo .phab-attach::before{content:"📷";font-size:18px;line-height:1}' +
+      '.phab-panel-promo .phab-input{height:44px;border-radius:18px;border-color:rgba(220,205,197,.82);background:rgba(255,255,255,.78);padding:11px 14px;color:#5b4f4c}' +
+      '.phab-panel-promo .phab-input::placeholder{color:#897d79}' +
+      '.phab-panel-promo .phab-send{height:44px;border-radius:999px;padding:0 18px;background:linear-gradient(90deg,#ef7482 0%,#66d0e6 100%);box-shadow:0 10px 22px rgba(115,102,118,.18)}' +
+      '@media(max-width:520px){.phab-panel{left:10px;right:10px;bottom:70px;width:auto;height:65vh}.phab-panel-promo{left:8px;right:8px;bottom:72px;width:auto;height:78vh;max-height:calc(100vh - 88px)}.phab-promo-chip{padding:10px 14px;font-size:12px}.phab-promo-links{grid-template-columns:1fr}}';
     document.head.appendChild(style);
   }
 
   function createWidgetDom(cfg) {
+    var promoMode = isPromoConnectorRoute(cfg.connectorRoute);
+
     var launcher = document.createElement('button');
-    launcher.className = 'phab-launcher';
+    launcher.className = 'phab-launcher' + (promoMode ? ' phab-launcher-promo' : '');
     launcher.type = 'button';
     launcher.textContent = cfg.launcherText;
     launcher.setAttribute('data-phab-launcher', 'true');
@@ -305,22 +362,42 @@
     launcher.appendChild(badge);
 
     var panel = document.createElement('section');
-    panel.className = 'phab-panel phab-panel-hidden';
+    panel.className = 'phab-panel phab-panel-hidden' + (promoMode ? ' phab-panel-promo' : '');
     panel.setAttribute('data-phab-panel', 'true');
 
     var header = document.createElement('div');
     header.className = 'phab-header';
     panel.appendChild(header);
 
+    var titleWrap = document.createElement('div');
+    titleWrap.className = 'phab-title-wrap';
+    header.appendChild(titleWrap);
+
     var title = document.createElement('div');
     title.className = 'phab-title';
     title.textContent = cfg.title;
-    header.appendChild(title);
+    titleWrap.appendChild(title);
+
+    var subtitle = document.createElement('div');
+    subtitle.className = 'phab-subtitle';
+    subtitle.textContent = promoMode ? 'Найдите общий ритм' : '';
+    titleWrap.appendChild(subtitle);
+
+    var headerRight = document.createElement('div');
+    headerRight.className = 'phab-header-right';
+    header.appendChild(headerRight);
 
     var status = document.createElement('div');
     status.className = 'phab-status';
-    status.textContent = 'Ожидание';
-    header.appendChild(status);
+    status.textContent = promoMode ? 'На связи' : 'Ожидание';
+    headerRight.appendChild(status);
+
+    var close = document.createElement('button');
+    close.className = 'phab-close';
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Закрыть чат');
+    headerRight.appendChild(close);
 
     var body = document.createElement('div');
     body.className = 'phab-body';
@@ -368,7 +445,9 @@
     var input = document.createElement('input');
     input.className = 'phab-input';
     input.type = 'text';
-    input.placeholder = 'Введите сообщение...';
+    input.placeholder = promoMode
+      ? 'Напишите, что вам ближе: знакомство, игра или событие'
+      : 'Введите сообщение...';
     input.maxLength = 2000;
     input.setAttribute('data-phab-input', 'true');
     footer.appendChild(input);
@@ -387,6 +466,7 @@
       badge: badge,
       panel: panel,
       status: status,
+      close: close,
       stationWrap: stationWrap,
       stationSelect: stationSelect,
       hint: hint,
@@ -493,6 +573,7 @@
 
   function widgetInstance(rawConfig) {
     var cfg = mergeConfig(rawConfig);
+    var promoMode = isPromoConnectorRoute(cfg.connectorRoute);
     ensureStyle();
 
     var state = {
@@ -525,7 +606,11 @@
     }
 
     function showHint(text) {
-      dom.hint.textContent = text;
+      var value = String(text || '').trim();
+      dom.hint.textContent = value;
+      if (promoMode) {
+        dom.hint.style.display = value ? 'block' : 'none';
+      }
     }
 
     function setBadge(count) {
@@ -670,8 +755,122 @@
       }
     }
 
+    function createPromoDraftButton(className, text, draftText) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = className;
+      button.textContent = text;
+      button.addEventListener('click', function () {
+        setDraft(draftText);
+        showHint('');
+      });
+      return button;
+    }
+
+    function appendPromoIntro() {
+      if (!promoMode) {
+        return;
+      }
+
+      var intro = document.createElement('div');
+      intro.className = 'phab-promo-intro';
+
+      var greeting = document.createElement('div');
+      greeting.className = 'phab-promo-greeting';
+      greeting.textContent = 'Привет! Помогу выбрать формат: 👋 знакомство, падел или оба варианта?';
+      intro.appendChild(greeting);
+
+      var quickGrid = document.createElement('div');
+      quickGrid.className = 'phab-promo-quick-grid';
+      quickGrid.appendChild(
+        createPromoDraftButton(
+          'phab-promo-chip phab-promo-chip-pink',
+          '♡ Хочу познакомиться',
+          'Привет! Хочу познакомиться и найти пару/партнёра для падела.'
+        )
+      );
+      quickGrid.appendChild(
+        createPromoDraftButton(
+          'phab-promo-chip phab-promo-chip-blue',
+          '◐ Хочу поиграть',
+          'Привет! Хочу подобрать матч и поиграть в падел.'
+        )
+      );
+      quickGrid.appendChild(
+        createPromoDraftButton(
+          'phab-promo-chip phab-promo-chip-wide',
+          '✦ Хочу оба варианта',
+          'Привет! Хочу и познакомиться, и поиграть. Помогите выбрать формат участия.'
+        )
+      );
+      intro.appendChild(quickGrid);
+
+      var showcase = document.createElement('div');
+      showcase.className = 'phab-promo-showcase';
+
+      var visual = document.createElement('div');
+      visual.className = 'phab-promo-showcase-visual';
+
+      var avatar = document.createElement('div');
+      avatar.className = 'phab-promo-avatar';
+      visual.appendChild(avatar);
+
+      var copy = document.createElement('div');
+      copy.className = 'phab-promo-card-copy';
+
+      var brand = document.createElement('div');
+      brand.className = 'phab-promo-card-brand';
+      brand.textContent = '♡ TEAMO × PADLHUB';
+      copy.appendChild(brand);
+
+      var cardText = document.createElement('div');
+      cardText.className = 'phab-promo-card-text';
+      cardText.textContent = 'Найдите общий ритм: знакомство + игра';
+      copy.appendChild(cardText);
+
+      visual.appendChild(copy);
+      showcase.appendChild(visual);
+
+      showcase.appendChild(
+        createPromoDraftButton(
+          'phab-promo-cta',
+          'Подобрать сценарий ›',
+          'Привет! Помогите подобрать сценарий участия в Teamo × PadlHub.'
+        )
+      );
+
+      var links = document.createElement('div');
+      links.className = 'phab-promo-links';
+      links.appendChild(
+        createPromoDraftButton(
+          'phab-promo-link',
+          '📷 Как работает промо',
+          'Расскажите, пожалуйста, как работает промо и какой скрин нужно отправить?'
+        )
+      );
+      links.appendChild(
+        createPromoDraftButton(
+          'phab-promo-link',
+          '👥 Подобрать матч',
+          'Хочу подобрать матч. Какие данные мне нужно прислать?'
+        )
+      );
+      links.appendChild(
+        createPromoDraftButton(
+          'phab-promo-link',
+          '☑ Условия участия',
+          'Подскажите условия участия в промо Teamo × PadlHub.'
+        )
+      );
+      showcase.appendChild(links);
+
+      intro.appendChild(showcase);
+      dom.messages.appendChild(intro);
+    }
+
     function renderMessages(messages) {
       dom.messages.innerHTML = '';
+      appendPromoIntro();
       messages.forEach(function (message) {
         var item = document.createElement('div');
         var own = message.senderRole === 'CLIENT';
@@ -1023,8 +1222,12 @@
         dom.input.value = '';
         resetPendingAttachments();
         await syncMessages(true);
-        setStatus('Онлайн');
-        showHint('Диалог активен: ' + (resolveStationLabel(state.stationId, state.stationName) || 'станция'));
+        setStatus(promoMode ? 'На связи' : 'Онлайн');
+        showHint(
+          promoMode
+            ? ''
+            : 'Диалог активен: ' + (resolveStationLabel(state.stationId, state.stationName) || 'станция')
+        );
       } catch (err) {
         setStatus('Ошибка');
         showHint(err && err.message ? err.message : 'Не удалось отправить сообщение');
@@ -1071,7 +1274,7 @@
         dom.panel.classList.remove('phab-panel-hidden');
         syncMessages(true).catch(function () {});
         ensureWebPushSubscription(true).catch(function () {});
-        setStatus('Онлайн');
+        setStatus(promoMode ? 'На связи' : 'Онлайн');
         window.setTimeout(function () {
           if (!state.disposed && state.open) {
             dom.input.focus();
@@ -1102,10 +1305,12 @@
       if (state.stationId) {
         dom.stationSelect.value = state.stationId;
         if (shouldHideStationSelect()) {
-          showHint('Напишите сообщение, и мы ответим здесь');
+          showHint(promoMode ? '' : 'Напишите сообщение, и мы ответим здесь');
         } else {
           showHint('Станция: ' + resolveStationLabel(state.stationId, state.stationName));
         }
+      } else if (promoMode) {
+        showHint('');
       }
 
       push.supported = canUseWebPush();
@@ -1115,6 +1320,10 @@
 
       dom.launcher.addEventListener('click', function () {
         togglePanel();
+      });
+
+      dom.close.addEventListener('click', function () {
+        closePanel();
       });
 
       dom.send.addEventListener('click', function () {
