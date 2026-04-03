@@ -6435,6 +6435,18 @@
     return li;
   }
 
+  function isObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function normalizeObject(value) {
+    return isObject(value) ? value : {};
+  }
+
+  function normalizeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
   function createTextChip(text, tone) {
     var chip = document.createElement('span');
     chip.className =
