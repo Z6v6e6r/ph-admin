@@ -442,12 +442,16 @@
       },
 
       async sendMessage(threadId, text, attachments) {
+        var payload = {
+          attachments: normalizeMessageAttachments(attachments)
+        };
+        var messageText = String(text || '').trim();
+        if (messageText) {
+          payload.text = messageText;
+        }
         return this.request('/messenger/threads/' + encodeURIComponent(threadId) + '/messages', {
           method: 'POST',
-          body: JSON.stringify({
-            text: text,
-            attachments: normalizeMessageAttachments(attachments)
-          })
+          body: JSON.stringify(payload)
         });
       },
 

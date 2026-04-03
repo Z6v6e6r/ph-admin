@@ -3851,16 +3851,28 @@
         );
       },
       sendMessage: function (dialogId, text, attachments) {
-        return request('/support/dialogs/' + encodeURIComponent(dialogId) + '/reply', 'POST', {
-          text: text,
-          attachments: attachments
-        });
+        var payload = { attachments: attachments };
+        var messageText = String(text || '').trim();
+        if (messageText) {
+          payload.text = messageText;
+        }
+        return request(
+          '/support/dialogs/' + encodeURIComponent(dialogId) + '/reply',
+          'POST',
+          payload
+        );
       },
       sendLegacyMessage: function (threadId, text, attachments) {
-        return request('/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages', 'POST', {
-          text: text,
-          attachments: attachments
-        });
+        var payload = { attachments: attachments };
+        var messageText = String(text || '').trim();
+        if (messageText) {
+          payload.text = messageText;
+        }
+        return request(
+          '/messenger/dialogs/' + encodeURIComponent(threadId) + '/messages',
+          'POST',
+          payload
+        );
       },
       setLegacyDialogResolution: function (threadId, resolved) {
         return request(
