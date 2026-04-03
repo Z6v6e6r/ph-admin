@@ -3,6 +3,7 @@
     apiBaseUrl: '',
     connectorRoute: 'LK_WEB_MESSENGER',
     hideStationSelect: false,
+    hideLauncher: false,
     pollIntervalMs: 5000,
     title: 'Поддержка PadelHub',
     launcherText: 'Чат',
@@ -231,6 +232,11 @@
       .trim()
       .toUpperCase() || DEFAULTS.connectorRoute;
     cfg.hideStationSelect = normalizeBoolean(cfg.hideStationSelect, DEFAULTS.hideStationSelect);
+    cfg.launcherText = String(cfg.launcherText || '').trim();
+    cfg.hideLauncher = normalizeBoolean(cfg.hideLauncher, DEFAULTS.hideLauncher) || !cfg.launcherText;
+    if (!cfg.launcherText) {
+      cfg.launcherText = DEFAULTS.launcherText;
+    }
     cfg.pollIntervalMs = Math.max(2000, Number(cfg.pollIntervalMs || DEFAULTS.pollIntervalMs));
     cfg.enableWebPush = normalizeBoolean(cfg.enableWebPush, DEFAULTS.enableWebPush);
     cfg.webPushServiceWorkerUrl = String(cfg.webPushServiceWorkerUrl || '').trim();
@@ -252,6 +258,7 @@
     style.id = STYLE_ID;
     style.textContent =
       '.phab-launcher{position:fixed;right:20px;bottom:20px;z-index:2147483000;border:none;border-radius:999px;padding:12px 18px;background:#116149;color:#fff;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 10px 24px rgba(0,0,0,.18)}' +
+      '.phab-launcher-hidden{display:none}' +
       '.phab-launcher-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;margin-left:8px;border-radius:10px;background:#d1362a;color:#fff;font-size:11px;line-height:18px;text-align:center}' +
       '.phab-panel{position:fixed;right:20px;bottom:74px;width:360px;max-width:calc(100vw - 20px);height:520px;max-height:70vh;background:#fff;border:1px solid #d8e0dc;border-radius:14px;display:flex;flex-direction:column;z-index:2147483001;box-shadow:0 20px 48px rgba(0,0,0,.18)}' +
       '.phab-panel-hidden{display:none}' +
@@ -286,6 +293,10 @@
     launcher.className = 'phab-launcher';
     launcher.type = 'button';
     launcher.textContent = cfg.launcherText;
+    launcher.setAttribute('data-phab-launcher', 'true');
+    if (cfg.hideLauncher) {
+      launcher.className += ' phab-launcher-hidden';
+    }
 
     var badge = document.createElement('span');
     badge.className = 'phab-launcher-badge';
@@ -295,6 +306,7 @@
 
     var panel = document.createElement('section');
     panel.className = 'phab-panel phab-panel-hidden';
+    panel.setAttribute('data-phab-panel', 'true');
 
     var header = document.createElement('div');
     header.className = 'phab-header';
@@ -358,6 +370,7 @@
     input.type = 'text';
     input.placeholder = 'Введите сообщение...';
     input.maxLength = 2000;
+    input.setAttribute('data-phab-input', 'true');
     footer.appendChild(input);
 
     var send = document.createElement('button');
@@ -1045,16 +1058,40 @@
       }
     }
 
-    function togglePanel() {
-      state.open = !state.open;
+    function setDraft(text) {
+      dom.input.value = String(text || '').trim();
+      if (state.open) {
+        dom.input.focus();
+      }
+    }
+
+    function setPanelOpen(nextOpen) {
+      state.open = nextOpen === true;
       if (state.open) {
         dom.panel.classList.remove('phab-panel-hidden');
         syncMessages(true).catch(function () {});
         ensureWebPushSubscription(true).catch(function () {});
         setStatus('Онлайн');
+        window.setTimeout(function () {
+          if (!state.disposed && state.open) {
+            dom.input.focus();
+          }
+        }, 0);
       } else {
         dom.panel.classList.add('phab-panel-hidden');
       }
+    }
+
+    function openPanel() {
+      setPanelOpen(true);
+    }
+
+    function closePanel() {
+      setPanelOpen(false);
+    }
+
+    function togglePanel() {
+      setPanelOpen(!state.open);
     }
 
     async function init() {
@@ -1147,6 +1184,10 @@
     });
 
     return {
+      open: openPanel,
+      close: closePanel,
+      toggle: togglePanel,
+      setDraft: setDraft,
       destroy: destroy,
       getState: function () {
         return Object.assign({}, state);
@@ -1154,9 +1195,50 @@
     };
   }
 
+  var activeWidgetInstance = null;
+
   window.PHABMessengerWidget = {
     init: function (config) {
-      return widgetInstance(config || {});
+      if (activeWidgetInstance && typeof activeWidgetInstance.destroy === 'function') {
+        activeWidgetInstance.destroy();
+      }
+      activeWidgetInstance = widgetInstance(config || {});
+      return activeWidgetInstance;
+    },
+    open: function () {
+      if (activeWidgetInstance && typeof activeWidgetInstance.open === 'function') {
+        activeWidgetInstance.open();
+      }
+      return activeWidgetInstance;
+    },
+    close: function () {
+      if (activeWidgetInstance && typeof activeWidgetInstance.close === 'function') {
+        activeWidgetInstance.close();
+      }
+      return activeWidgetInstance;
+    },
+    toggle: function () {
+      if (activeWidgetInstance && typeof activeWidgetInstance.toggle === 'function') {
+        activeWidgetInstance.toggle();
+      }
+      return activeWidgetInstance;
+    },
+    setDraft: function (text) {
+      if (activeWidgetInstance && typeof activeWidgetInstance.setDraft === 'function') {
+        activeWidgetInstance.setDraft(text);
+      }
+      return activeWidgetInstance;
+    },
+    getState: function () {
+      return activeWidgetInstance && typeof activeWidgetInstance.getState === 'function'
+        ? activeWidgetInstance.getState()
+        : null;
+    },
+    destroy: function () {
+      if (activeWidgetInstance && typeof activeWidgetInstance.destroy === 'function') {
+        activeWidgetInstance.destroy();
+      }
+      activeWidgetInstance = null;
     }
   };
 })();
