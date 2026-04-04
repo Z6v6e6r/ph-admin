@@ -12386,9 +12386,12 @@
         { key: 'id', label: 'ID', minWidth: 130 },
         { key: 'name', label: 'Название', minWidth: 180 },
         { key: 'status', label: 'Статус', minWidth: 130 },
-        { key: 'gameId', label: 'Игра', minWidth: 130 },
+        { key: 'studioName', label: 'Клуб', minWidth: 160 },
+        { key: 'trainerName', label: 'Тренер', minWidth: 180 },
+        { key: 'exerciseTypeId', label: 'Тип', minWidth: 100 },
         { key: 'startsAt', label: 'Старт', minWidth: 150 },
-        { key: 'updatedAt', label: 'Обновлено', minWidth: 150 }
+        { key: 'updatedAt', label: 'Обновлено', minWidth: 150 },
+        { key: 'source', label: 'Источник', minWidth: 120 }
       ];
       var colgroup = document.createElement('colgroup');
       var colRefs = {};
@@ -12425,7 +12428,7 @@
       if (state.tournaments.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
-        td.colSpan = 6;
+        td.colSpan = columns.length;
         td.textContent = 'Нет турниров';
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -12438,9 +12441,12 @@
           tournament.id,
           tournament.name,
           tournament.status,
-          tournament.gameId || '-',
+          tournament.studioName || tournament.studioId || '-',
+          tournament.trainerName || tournament.trainerId || '-',
+          tournament.exerciseTypeId || tournament.gameId || '-',
           formatTime(tournament.startsAt),
-          formatTime(tournament.updatedAt)
+          formatTime(tournament.updatedAt),
+          tournament.source || '-'
         ].forEach(function (value) {
           var td = document.createElement('td');
           td.textContent = String(value || '-');

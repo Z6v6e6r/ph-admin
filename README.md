@@ -46,9 +46,14 @@ API работает на `http://localhost:3000/api`.
 - с параметрами, например:
   `http://localhost:3000/api/ui/admin?roles=SUPER_ADMIN&userId=local-admin`
 
-## Источник игр и турниров (ЛК ПадлХаб)
+## Источник игр и турниров
 
-Поддерживаются два режима:
+Игры по-прежнему читаются из ЛК ПадлХаб.
+
+Турниры в `/api/tournaments` сначала грузятся из Viva End-User виджета расписания,
+а если Viva недоступна или не отвечает, используется fallback на старый источник ЛК.
+
+Для ЛК ПадлХаб поддерживаются два режима:
 
 - `mock` (по умолчанию, если URL не заданы)
 - `http` (данные читаются из ЛК)
@@ -114,6 +119,11 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_ADMIN_PASSWORD=<password>` (опционально; пароль Viva для получения access token)
 - `VIVA_ADMIN_CACHE_TTL_MS=600000` (опционально; TTL кэша ссылок на ЛК клиентов)
 - `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
+- `VIVA_END_USER_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva End-User API для вкладки «Турниры»)
+- `VIVA_END_USER_WIDGET_ID=iSkq6G` (опционально; идентификатор end-user виджета расписания)
+- `VIVA_TOURNAMENT_EXERCISE_TYPE_IDS=839,1013` (опционально; какие `exerciseTypeIds` считать турнирами)
+- `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
+- `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
 
 VAPID ключи для web push можно сгенерировать командой:
 

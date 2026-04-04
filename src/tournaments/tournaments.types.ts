@@ -9,11 +9,16 @@ export enum TournamentStatus {
 
 export interface Tournament {
   id: string;
-  source: 'LK_PADELHUB';
+  source: 'LK_PADELHUB' | 'VIVA';
   name: string;
   status: TournamentStatus;
   rawStatus?: string;
   gameId?: string;
+  studioId?: string;
+  studioName?: string;
+  trainerId?: string;
+  trainerName?: string;
+  exerciseTypeId?: string;
   startsAt?: string;
   endsAt?: string;
   createdAt?: string;
