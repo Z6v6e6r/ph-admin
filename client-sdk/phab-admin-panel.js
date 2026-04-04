@@ -5340,9 +5340,82 @@
       'Выберите период и формат, затем нажмите «Выгрузить».';
     analyticsDialogsPane.appendChild(analyticsDialogsSummary);
 
+    var tournamentsControls = document.createElement('div');
+    tournamentsControls.className = 'phab-admin-logs-controls';
+    tournamentsSection.appendChild(tournamentsControls);
+
+    var tournamentsFilters = document.createElement('div');
+    tournamentsFilters.className = 'phab-admin-logs-filters';
+    tournamentsControls.appendChild(tournamentsFilters);
+
+    var tournamentsStationWrap = document.createElement('label');
+    tournamentsStationWrap.className = 'phab-admin-logs-filter';
+    tournamentsFilters.appendChild(tournamentsStationWrap);
+
+    var tournamentsStationLabel = document.createElement('span');
+    tournamentsStationLabel.className = 'phab-admin-settings-label';
+    tournamentsStationLabel.textContent = 'Станция';
+    tournamentsStationWrap.appendChild(tournamentsStationLabel);
+
+    var tournamentsStationInput = document.createElement('select');
+    tournamentsStationInput.className = 'phab-admin-settings-input';
+    tournamentsStationInput.style.width = '220px';
+    tournamentsStationWrap.appendChild(tournamentsStationInput);
+
+    var tournamentsFromWrap = document.createElement('label');
+    tournamentsFromWrap.className = 'phab-admin-logs-filter';
+    tournamentsFilters.appendChild(tournamentsFromWrap);
+
+    var tournamentsFromLabel = document.createElement('span');
+    tournamentsFromLabel.className = 'phab-admin-settings-label';
+    tournamentsFromLabel.textContent = 'С времени';
+    tournamentsFromWrap.appendChild(tournamentsFromLabel);
+
+    var tournamentsFromInput = document.createElement('input');
+    tournamentsFromInput.className = 'phab-admin-settings-input';
+    tournamentsFromInput.type = 'datetime-local';
+    tournamentsFromInput.style.width = '220px';
+    tournamentsFromWrap.appendChild(tournamentsFromInput);
+
+    var tournamentsToWrap = document.createElement('label');
+    tournamentsToWrap.className = 'phab-admin-logs-filter';
+    tournamentsFilters.appendChild(tournamentsToWrap);
+
+    var tournamentsToLabel = document.createElement('span');
+    tournamentsToLabel.className = 'phab-admin-settings-label';
+    tournamentsToLabel.textContent = 'По время';
+    tournamentsToWrap.appendChild(tournamentsToLabel);
+
+    var tournamentsToInput = document.createElement('input');
+    tournamentsToInput.className = 'phab-admin-settings-input';
+    tournamentsToInput.type = 'datetime-local';
+    tournamentsToInput.style.width = '220px';
+    tournamentsToWrap.appendChild(tournamentsToInput);
+
+    var tournamentsApplyBtn = document.createElement('button');
+    tournamentsApplyBtn.className = 'phab-admin-btn';
+    tournamentsApplyBtn.type = 'button';
+    tournamentsApplyBtn.textContent = 'Применить';
+    tournamentsFilters.appendChild(tournamentsApplyBtn);
+
+    var tournamentsResetBtn = document.createElement('button');
+    tournamentsResetBtn.className = 'phab-admin-btn-secondary';
+    tournamentsResetBtn.type = 'button';
+    tournamentsResetBtn.textContent = 'Сбросить';
+    tournamentsFilters.appendChild(tournamentsResetBtn);
+
+    var tournamentsSummary = document.createElement('div');
+    tournamentsSummary.className = 'phab-admin-games-page-info';
+    tournamentsSummary.textContent = 'Всего турниров: 0';
+    tournamentsControls.appendChild(tournamentsSummary);
+
+    var tournamentsTableWrap = document.createElement('div');
+    tournamentsTableWrap.className = 'phab-admin-games-table-wrap';
+    tournamentsSection.appendChild(tournamentsTableWrap);
+
     var tournamentsTable = document.createElement('table');
     tournamentsTable.className = 'phab-admin-games-table';
-    tournamentsSection.appendChild(tournamentsTable);
+    tournamentsTableWrap.appendChild(tournamentsTable);
 
     var communitiesGrid = document.createElement('div');
     communitiesGrid.className = 'phab-admin-communities-grid';
@@ -6507,6 +6580,12 @@
       analyticsDialogsFormatInput: analyticsDialogsFormatInput,
       analyticsDialogsExportBtn: analyticsDialogsExportBtn,
       analyticsDialogsSummary: analyticsDialogsSummary,
+      tournamentsStationInput: tournamentsStationInput,
+      tournamentsFromInput: tournamentsFromInput,
+      tournamentsToInput: tournamentsToInput,
+      tournamentsApplyBtn: tournamentsApplyBtn,
+      tournamentsResetBtn: tournamentsResetBtn,
+      tournamentsSummary: tournamentsSummary,
       tournamentsTable: tournamentsTable,
       communitySearchInput: communitySearchInput,
       communitiesList: communitiesList,
@@ -7015,6 +7094,9 @@
       analyticsDialogsFilterTo: getTodayDateInputValue(),
       analyticsDialogsExportFormat: 'json',
       tournaments: [],
+      tournamentsFilterStation: 'ALL',
+      tournamentsFilterFrom: '',
+      tournamentsFilterTo: '',
       tournamentEditor: null,
       communities: [],
       selectedCommunityId: null,
@@ -12436,7 +12518,158 @@
       }
     }
 
+    function buildTournamentStationFilterValue(tournament) {
+      var studioId = String(tournament && tournament.studioId || '').trim();
+      if (studioId) {
+        return 'id:' + studioId;
+      }
+      var studioName = String(tournament && tournament.studioName || '').trim();
+      if (studioName) {
+        return 'name:' + studioName.toLowerCase();
+      }
+      return 'none';
+    }
+
+    function buildTournamentStationFilterLabel(tournament) {
+      var studioName = String(tournament && tournament.studioName || '').trim();
+      if (studioName) {
+        return studioName;
+      }
+      var studioId = String(tournament && tournament.studioId || '').trim();
+      var stationName = getStationNameFromSettings(studioId);
+      if (stationName) {
+        return stationName;
+      }
+      if (studioId && !isUuidLikeStationLabel(studioId)) {
+        return studioId;
+      }
+      return 'Без станции';
+    }
+
+    function getTournamentStationFilterOptions() {
+      var byValue = Object.create(null);
+      var items = [];
+      normalizeArray(state.tournaments).forEach(function (tournament) {
+        var value = buildTournamentStationFilterValue(tournament);
+        if (byValue[value]) {
+          return;
+        }
+        byValue[value] = true;
+        items.push({
+          value: value,
+          label: buildTournamentStationFilterLabel(tournament)
+        });
+      });
+
+      items.sort(function (left, right) {
+        return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
+      });
+      return [{ value: 'ALL', label: 'Все станции' }].concat(items);
+    }
+
+    function parseTournamentFilterTimestamp(value) {
+      var raw = String(value || '').trim();
+      if (!raw) {
+        return NaN;
+      }
+      var timestamp = Date.parse(raw);
+      return Number.isNaN(timestamp) ? NaN : timestamp;
+    }
+
+    function getTournamentStartsAtTimestamp(tournament) {
+      var timestamp = Date.parse(String(tournament && tournament.startsAt || '').trim());
+      return Number.isNaN(timestamp) ? NaN : timestamp;
+    }
+
+    function getFilteredTournaments() {
+      var stationFilter = String(state.tournamentsFilterStation || 'ALL');
+      var fromTimestamp = parseTournamentFilterTimestamp(state.tournamentsFilterFrom);
+      var toTimestamp = parseTournamentFilterTimestamp(state.tournamentsFilterTo);
+
+      return normalizeArray(state.tournaments).filter(function (tournament) {
+        if (
+          stationFilter !== 'ALL' &&
+          buildTournamentStationFilterValue(tournament) !== stationFilter
+        ) {
+          return false;
+        }
+
+        var startsAtTimestamp = getTournamentStartsAtTimestamp(tournament);
+        if (
+          Number.isFinite(fromTimestamp) &&
+          (!Number.isFinite(startsAtTimestamp) || startsAtTimestamp < fromTimestamp)
+        ) {
+          return false;
+        }
+        if (
+          Number.isFinite(toTimestamp) &&
+          (!Number.isFinite(startsAtTimestamp) || startsAtTimestamp > toTimestamp)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    function renderTournamentFilters(filteredCount, totalCount) {
+      ensureCommunitySelectOptions(
+        dom.tournamentsStationInput,
+        getTournamentStationFilterOptions(),
+        String(state.tournamentsFilterStation || 'ALL')
+      );
+      state.tournamentsFilterStation = String(dom.tournamentsStationInput.value || 'ALL');
+      dom.tournamentsFromInput.value = String(state.tournamentsFilterFrom || '');
+      dom.tournamentsToInput.value = String(state.tournamentsFilterTo || '');
+
+      var hasFilters = Boolean(
+        String(state.tournamentsFilterStation || 'ALL') !== 'ALL' ||
+          String(state.tournamentsFilterFrom || '').trim() ||
+          String(state.tournamentsFilterTo || '').trim()
+      );
+      if (hasFilters) {
+        dom.tournamentsSummary.textContent =
+          'Показано ' + String(filteredCount) + ' из ' + String(totalCount) + ' турниров';
+        return;
+      }
+      dom.tournamentsSummary.textContent = 'Всего турниров: ' + String(totalCount);
+    }
+
+    function applyTournamentFilters() {
+      var nextStation = String(dom.tournamentsStationInput.value || 'ALL');
+      var nextFrom = String(dom.tournamentsFromInput.value || '').trim();
+      var nextTo = String(dom.tournamentsToInput.value || '').trim();
+      var fromTimestamp = parseTournamentFilterTimestamp(nextFrom);
+      var toTimestamp = parseTournamentFilterTimestamp(nextTo);
+
+      if (
+        Number.isFinite(fromTimestamp) &&
+        Number.isFinite(toTimestamp) &&
+        toTimestamp < fromTimestamp
+      ) {
+        setStatus('В фильтрах турниров поле "По время" должно быть не раньше "С времени"', true);
+        return;
+      }
+
+      state.tournamentsFilterStation = nextStation;
+      state.tournamentsFilterFrom = nextFrom;
+      state.tournamentsFilterTo = nextTo;
+      renderTournaments();
+    }
+
+    function resetTournamentFilters() {
+      state.tournamentsFilterStation = 'ALL';
+      state.tournamentsFilterFrom = '';
+      state.tournamentsFilterTo = '';
+      dom.tournamentsStationInput.value = 'ALL';
+      dom.tournamentsFromInput.value = '';
+      dom.tournamentsToInput.value = '';
+      renderTournaments();
+    }
+
     function renderTournaments() {
+      var tournaments = getFilteredTournaments();
+      renderTournamentFilters(tournaments.length, normalizeArray(state.tournaments).length);
       clearNode(dom.tournamentsTable);
 
       var columns = [
@@ -12485,17 +12718,20 @@
       var tbody = document.createElement('tbody');
       dom.tournamentsTable.appendChild(tbody);
 
-      if (state.tournaments.length === 0) {
+      if (tournaments.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
         td.colSpan = columns.length;
-        td.textContent = 'Нет турниров';
+        td.textContent =
+          normalizeArray(state.tournaments).length > 0
+            ? 'Нет турниров по выбранным фильтрам'
+            : 'Нет турниров';
         tr.appendChild(td);
         tbody.appendChild(tr);
         return;
       }
 
-      state.tournaments.forEach(function (tournament) {
+      tournaments.forEach(function (tournament) {
         var tr = document.createElement('tr');
 
         [
@@ -19322,6 +19558,26 @@
       });
       dom.analyticsDialogsExportBtn.addEventListener('click', function () {
         exportDialogsAnalytics().catch(handleError);
+      });
+      dom.tournamentsApplyBtn.addEventListener('click', function () {
+        applyTournamentFilters();
+      });
+      dom.tournamentsResetBtn.addEventListener('click', function () {
+        resetTournamentFilters();
+      });
+      dom.tournamentsStationInput.addEventListener('change', function () {
+        applyTournamentFilters();
+      });
+      [dom.tournamentsFromInput, dom.tournamentsToInput].forEach(function (input) {
+        input.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            applyTournamentFilters();
+          }
+        });
+        input.addEventListener('change', function () {
+          applyTournamentFilters();
+        });
       });
       dom.analyticsDialogsFormatInput.addEventListener('change', function () {
         state.analyticsDialogsExportFormat = String(dom.analyticsDialogsFormatInput.value || 'json')
