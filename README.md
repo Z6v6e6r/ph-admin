@@ -124,6 +124,23 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_TOURNAMENT_EXERCISE_TYPE_IDS=839,1013` (опционально; какие `exerciseTypeIds` считать турнирами)
 - `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
 - `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
+- `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
+- `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
+- `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
+- `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.ru/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир)
+
+Публичные endpoint'ы кастомных турниров:
+
+- `GET /api/tournaments/public/:slug` - публичная карточка турнира со skin, параметрами, участниками и waitlist
+- `POST /api/tournaments/public/:slug/access-check` - проверка допуска по уровню (`levelLabel`); если уровень не передан, сервис вернет статус онбординга
+- `POST /api/tournaments/public/:slug/registrations` - запись участника в турнир или waitlist
+- `POST /api/tournaments/public/:slug/mechanics-access` - проверка доступа к турнирной механике по номеру телефона
+
+Админские endpoint'ы кастомных турниров:
+
+- `POST /api/tournaments/custom/from-source/:sourceTournamentId` - создать кастомный турнир на основе турнира из Viva
+- `GET /api/tournaments/custom/:id` - получить кастомный турнир целиком для редактирования
+- `PATCH /api/tournaments/custom/:id` - обновить кастомный турнир, skin, участников, waitlist и телефоны доступа
 
 VAPID ключи для web push можно сгенерировать командой:
 

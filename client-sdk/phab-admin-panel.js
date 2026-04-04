@@ -4249,6 +4249,19 @@
       getTournaments: function () {
         return request('/tournaments', 'GET');
       },
+      getCustomTournament: function (tournamentId) {
+        return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'GET');
+      },
+      createCustomTournamentFromSource: function (sourceTournamentId, payload) {
+        return request(
+          '/tournaments/custom/from-source/' + encodeURIComponent(sourceTournamentId),
+          'POST',
+          payload
+        );
+      },
+      updateCustomTournament: function (tournamentId, payload) {
+        return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'PATCH', payload);
+      },
       getCommunities: function () {
         return request('/communities', 'GET');
       },
@@ -6247,6 +6260,43 @@
     communityFeedEditorBody.className = 'phab-admin-modal-body';
     communityFeedEditorCard.appendChild(communityFeedEditorBody);
 
+    var tournamentEditorModal = document.createElement('div');
+    tournamentEditorModal.className = 'phab-admin-modal phab-admin-hidden';
+    overlayHost.appendChild(tournamentEditorModal);
+
+    var tournamentEditorCard = document.createElement('div');
+    tournamentEditorCard.className = 'phab-admin-modal-card';
+    tournamentEditorModal.appendChild(tournamentEditorCard);
+
+    var tournamentEditorHead = document.createElement('div');
+    tournamentEditorHead.className = 'phab-admin-modal-head';
+    tournamentEditorCard.appendChild(tournamentEditorHead);
+
+    var tournamentEditorTitle = document.createElement('div');
+    tournamentEditorTitle.className = 'phab-admin-modal-title';
+    tournamentEditorTitle.textContent = 'Кастомный турнир';
+    tournamentEditorHead.appendChild(tournamentEditorTitle);
+
+    var tournamentEditorActions = document.createElement('div');
+    tournamentEditorActions.className = 'phab-admin-modal-actions';
+    tournamentEditorHead.appendChild(tournamentEditorActions);
+
+    var tournamentEditorSaveBtn = document.createElement('button');
+    tournamentEditorSaveBtn.className = 'phab-admin-btn';
+    tournamentEditorSaveBtn.type = 'button';
+    tournamentEditorSaveBtn.textContent = 'Сохранить';
+    tournamentEditorActions.appendChild(tournamentEditorSaveBtn);
+
+    var tournamentEditorCloseBtn = document.createElement('button');
+    tournamentEditorCloseBtn.className = 'phab-admin-modal-close';
+    tournamentEditorCloseBtn.type = 'button';
+    tournamentEditorCloseBtn.textContent = '×';
+    tournamentEditorActions.appendChild(tournamentEditorCloseBtn);
+
+    var tournamentEditorBody = document.createElement('div');
+    tournamentEditorBody.className = 'phab-admin-modal-body';
+    tournamentEditorCard.appendChild(tournamentEditorBody);
+
     var mobileFiltersSheet = document.createElement('div');
     mobileFiltersSheet.className = 'phab-admin-bottom-sheet phab-admin-hidden';
     overlayHost.appendChild(mobileFiltersSheet);
@@ -6422,6 +6472,12 @@
       communityFeedEditorTemplateBtn: communityFeedEditorTemplateBtn,
       communityFeedEditorSaveBtn: communityFeedEditorSaveBtn,
       communityFeedEditorCloseBtn: communityFeedEditorCloseBtn,
+      tournamentEditorModal: tournamentEditorModal,
+      tournamentEditorCard: tournamentEditorCard,
+      tournamentEditorTitle: tournamentEditorTitle,
+      tournamentEditorBody: tournamentEditorBody,
+      tournamentEditorSaveBtn: tournamentEditorSaveBtn,
+      tournamentEditorCloseBtn: tournamentEditorCloseBtn,
       gamesPageSizeSelect: gamesPageSizeSelect,
       gamesPrevPageBtn: gamesPrevPageBtn,
       gamesNextPageBtn: gamesNextPageBtn,
@@ -6959,6 +7015,7 @@
       analyticsDialogsFilterTo: getTodayDateInputValue(),
       analyticsDialogsExportFormat: 'json',
       tournaments: [],
+      tournamentEditor: null,
       communities: [],
       selectedCommunityId: null,
       communitiesSearchQuery: '',
@@ -12388,10 +12445,13 @@
         { key: 'status', label: 'Статус', minWidth: 130 },
         { key: 'studioName', label: 'Клуб', minWidth: 160 },
         { key: 'trainerName', label: 'Тренер', minWidth: 180 },
-        { key: 'exerciseTypeId', label: 'Тип', minWidth: 100 },
+        { key: 'tournamentType', label: 'Формат', minWidth: 120 },
+        { key: 'accessLevels', label: 'Уровни', minWidth: 170 },
+        { key: 'stats', label: 'Участники', minWidth: 150 },
         { key: 'startsAt', label: 'Старт', minWidth: 150 },
-        { key: 'updatedAt', label: 'Обновлено', minWidth: 150 },
-        { key: 'source', label: 'Источник', minWidth: 120 }
+        { key: 'publicUrl', label: 'Ссылка', minWidth: 140 },
+        { key: 'source', label: 'Источник', minWidth: 120 },
+        { key: 'actions', label: 'Действия', minWidth: 160 }
       ];
       var colgroup = document.createElement('colgroup');
       var colRefs = {};
@@ -12437,23 +12497,456 @@
 
       state.tournaments.forEach(function (tournament) {
         var tr = document.createElement('tr');
+
         [
           tournament.id,
           tournament.name,
-          tournament.status,
+          tournament.rawStatus || tournament.status,
           tournament.studioName || tournament.studioId || '-',
           tournament.trainerName || tournament.trainerId || '-',
-          tournament.exerciseTypeId || tournament.gameId || '-',
-          formatTime(tournament.startsAt),
-          formatTime(tournament.updatedAt),
-          tournament.source || '-'
+          tournament.tournamentType || tournament.exerciseTypeId || tournament.gameId || '-',
+          formatTournamentAccessLevels(tournament),
+          formatTournamentStats(tournament),
+          formatTime(tournament.startsAt)
         ].forEach(function (value) {
           var td = document.createElement('td');
           td.textContent = String(value || '-');
           tr.appendChild(td);
         });
+
+        var publicUrlCell = document.createElement('td');
+        if (tournament.publicUrl) {
+          var publicLink = document.createElement('a');
+          publicLink.className = 'phab-admin-dialog-link';
+          publicLink.href = String(tournament.publicUrl);
+          publicLink.target = '_blank';
+          publicLink.rel = 'noopener noreferrer';
+          publicLink.textContent = 'Открыть';
+          publicUrlCell.appendChild(publicLink);
+        } else {
+          publicUrlCell.textContent = '-';
+        }
+        tr.appendChild(publicUrlCell);
+
+        var sourceCell = document.createElement('td');
+        var sourceLabel = [tournament.source || '-'];
+        if (tournament.linkedCustomTournamentId) {
+          sourceLabel.push('custom');
+        }
+        sourceCell.textContent = sourceLabel.join(' · ');
+        tr.appendChild(sourceCell);
+
+        var actionsCell = document.createElement('td');
+        var manageBtn = document.createElement('button');
+        manageBtn.type = 'button';
+        manageBtn.className = 'phab-admin-btn-secondary';
+        manageBtn.textContent =
+          tournament.source === 'CUSTOM' || tournament.linkedCustomTournamentId
+            ? 'Редактировать'
+            : 'Создать';
+        manageBtn.addEventListener('click', function () {
+          openTournamentEditor(tournament).catch(handleError);
+        });
+        actionsCell.appendChild(manageBtn);
+        tr.appendChild(actionsCell);
+
         tbody.appendChild(tr);
       });
+    }
+
+    function formatTournamentAccessLevels(tournament) {
+      var values = normalizeArray(tournament && tournament.accessLevels);
+      return values.length > 0 ? values.join(', ') : 'Все';
+    }
+
+    function formatTournamentStats(tournament) {
+      var registered = Number(tournament && tournament.participantsCount || 0);
+      var paid = Number(tournament && tournament.paidParticipantsCount || 0);
+      var waitlist = Number(tournament && tournament.waitlistCount || 0);
+      var maxPlayers = Number(tournament && tournament.maxPlayers || 0);
+      var pieces = ['запись ' + String(registered), 'оплата ' + String(paid)];
+      if (waitlist > 0) {
+        pieces.push('лист ' + String(waitlist));
+      }
+      if (maxPlayers > 0) {
+        pieces.push('мест ' + String(maxPlayers));
+      }
+      return pieces.join(' · ');
+    }
+
+    function serializeTournamentParticipants(items) {
+      return normalizeArray(items)
+        .map(function (item) {
+          var parts = [];
+          if (item && item.name) {
+            parts.push(String(item.name));
+          }
+          if (item && item.phone) {
+            parts.push(String(item.phone));
+          }
+          if (item && item.levelLabel) {
+            parts.push(String(item.levelLabel));
+          }
+          if (item && item.paymentStatus) {
+            parts.push(String(item.paymentStatus).toLowerCase());
+          }
+          return parts.join(' | ');
+        })
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    function parseTournamentParticipantsText(rawValue, status) {
+      return String(rawValue || '')
+        .split(/\r?\n/)
+        .map(function (line) {
+          return String(line || '').trim();
+        })
+        .filter(Boolean)
+        .map(function (line) {
+          var parts = line.split('|').map(function (chunk) {
+            return String(chunk || '').trim();
+          });
+          if (!parts[0]) {
+            return null;
+          }
+          var participant = {
+            name: parts[0],
+            status: status
+          };
+          if (parts[1]) {
+            participant.phone = parts[1];
+          }
+          if (parts[2]) {
+            participant.levelLabel = parts[2];
+          }
+          if (status !== 'WAITLIST') {
+            participant.paymentStatus =
+              parts[3] && /paid|оплачен|да|yes/i.test(parts[3]) ? 'PAID' : 'UNPAID';
+          }
+          return participant;
+        })
+        .filter(Boolean);
+    }
+
+    function parseTournamentPhoneList(rawValue) {
+      return String(rawValue || '')
+        .split(/[\n,;]/)
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(Boolean);
+    }
+
+    function buildTournamentEditorPayload(form) {
+      return {
+        name: String(form.name.value || '').trim(),
+        startsAt: form.startsAt.value ? new Date(form.startsAt.value).toISOString() : undefined,
+        endsAt: form.endsAt.value ? new Date(form.endsAt.value).toISOString() : undefined,
+        tournamentType: String(form.tournamentType.value || '').trim(),
+        accessLevels: String(form.accessLevels.value || '')
+          .split(',')
+          .map(function (item) {
+            return String(item || '').trim().toUpperCase();
+          })
+          .filter(Boolean),
+        gender: String(form.gender.value || 'MIXED').trim().toUpperCase(),
+        maxPlayers: Math.max(2, Number(form.maxPlayers.value || 0) || 8),
+        slug: String(form.slug.value || '').trim() || undefined,
+        status: String(form.status.value || 'REGISTRATION').trim().toUpperCase(),
+        studioName: String(form.studioName.value || '').trim() || undefined,
+        trainerName: String(form.trainerName.value || '').trim() || undefined,
+        allowedManagerPhones: parseTournamentPhoneList(form.allowedManagerPhones.value),
+        participants: parseTournamentParticipantsText(form.participants.value, 'REGISTERED'),
+        waitlist: parseTournamentParticipantsText(form.waitlist.value, 'WAITLIST'),
+        skin: {
+          title: String(form.skinTitle.value || '').trim() || undefined,
+          subtitle: String(form.skinSubtitle.value || '').trim() || undefined,
+          description: String(form.skinDescription.value || '').trim() || undefined,
+          imageUrl: String(form.skinImageUrl.value || '').trim() || null,
+          ctaLabel: String(form.skinCtaLabel.value || '').trim() || undefined,
+          badgeLabel: String(form.skinBadgeLabel.value || '').trim() || undefined,
+          tags: String(form.skinTags.value || '')
+            .split(',')
+            .map(function (item) {
+              return String(item || '').trim();
+            })
+            .filter(Boolean)
+        }
+      };
+    }
+
+    function closeTournamentEditorModal() {
+      state.tournamentEditor = null;
+      dom.tournamentEditorSaveBtn.disabled = false;
+      dom.tournamentEditorSaveBtn.textContent = 'Сохранить';
+      dom.tournamentEditorTitle.textContent = 'Кастомный турнир';
+      clearNode(dom.tournamentEditorBody);
+      dom.tournamentEditorModal.classList.add('phab-admin-hidden');
+    }
+
+    async function openTournamentEditor(tournament) {
+      if (!tournament || !tournament.id) {
+        return;
+      }
+
+      var customTournament = null;
+      if (String(tournament.source || '') === 'CUSTOM') {
+        customTournament = await api.getCustomTournament(tournament.id);
+      } else if (tournament.linkedCustomTournamentId) {
+        customTournament = await api.getCustomTournament(tournament.linkedCustomTournamentId);
+      }
+
+      var sourceTournamentId =
+        String(tournament.source || '') === 'CUSTOM'
+          ? String((customTournament && customTournament.sourceTournamentId) || '')
+          : String(tournament.id || '');
+      var model = customTournament || tournament;
+      var skin = normalizeObject(model && model.skin);
+
+      clearNode(dom.tournamentEditorBody);
+      dom.tournamentEditorTitle.textContent = customTournament
+        ? 'Редактировать кастомный турнир'
+        : 'Создать кастомный турнир';
+      dom.tournamentEditorSaveBtn.textContent = customTournament ? 'Сохранить' : 'Создать';
+
+      var form = document.createElement('div');
+      form.className = 'phab-admin-community-form-grid';
+      dom.tournamentEditorBody.appendChild(form);
+
+      if (customTournament && customTournament.publicUrl) {
+        var publicLink = document.createElement('a');
+        publicLink.className = 'phab-admin-dialog-link';
+        publicLink.href = String(customTournament.publicUrl);
+        publicLink.target = '_blank';
+        publicLink.rel = 'noopener noreferrer';
+        publicLink.textContent = String(customTournament.publicUrl);
+        appendCommunityFormField(form, 'Публичная ссылка', publicLink, true);
+      }
+
+      var sourceInfo = document.createElement('div');
+      sourceInfo.className = 'phab-admin-empty';
+      sourceInfo.textContent = customTournament
+        ? 'Редактируется кастомный турнир'
+        : 'Источник: ' +
+          [tournament.name || '', tournament.studioName || '', formatTime(tournament.startsAt)]
+            .filter(Boolean)
+            .join(' · ');
+      appendCommunityFormField(form, 'Источник', sourceInfo, true);
+
+      var nameInput = document.createElement('input');
+      nameInput.className = 'phab-admin-input';
+      nameInput.value = String(model && model.name || '');
+      appendCommunityFormField(form, 'Название', nameInput);
+
+      var statusSelect = document.createElement('select');
+      statusSelect.className = 'phab-admin-input';
+      ['PLANNED', 'REGISTRATION', 'RUNNING', 'FINISHED', 'CANCELED', 'UNKNOWN'].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item;
+        option.textContent = item;
+        statusSelect.appendChild(option);
+      });
+      statusSelect.value = String((model && (model.rawStatus || model.status)) || 'REGISTRATION')
+        .trim()
+        .toUpperCase();
+      appendCommunityFormField(form, 'Статус', statusSelect);
+
+      var startsAtInput = document.createElement('input');
+      startsAtInput.type = 'datetime-local';
+      startsAtInput.className = 'phab-admin-input';
+      startsAtInput.value = formatDateTimeLocalInputValue(model && model.startsAt);
+      appendCommunityFormField(form, 'Дата и время старта', startsAtInput);
+
+      var endsAtInput = document.createElement('input');
+      endsAtInput.type = 'datetime-local';
+      endsAtInput.className = 'phab-admin-input';
+      endsAtInput.value = formatDateTimeLocalInputValue(model && model.endsAt);
+      appendCommunityFormField(form, 'Дата и время конца', endsAtInput);
+
+      var typeInput = document.createElement('input');
+      typeInput.className = 'phab-admin-input';
+      typeInput.value = String(model && model.tournamentType || '');
+      typeInput.placeholder = 'Американо / Мексикано / Cup / ...';
+      appendCommunityFormField(form, 'Тип турнира', typeInput);
+
+      var accessLevelsInput = document.createElement('input');
+      accessLevelsInput.className = 'phab-admin-input';
+      accessLevelsInput.value = normalizeArray(model && model.accessLevels).join(', ');
+      accessLevelsInput.placeholder = 'D, D+, D-D+, D-C';
+      appendCommunityFormField(form, 'Уровни доступа', accessLevelsInput);
+
+      var genderSelect = document.createElement('select');
+      genderSelect.className = 'phab-admin-input';
+      [
+        { value: 'MIXED', label: 'М/Ж' },
+        { value: 'MALE', label: 'М' },
+        { value: 'FEMALE', label: 'Ж' }
+      ].forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        genderSelect.appendChild(option);
+      });
+      genderSelect.value = String(model && model.gender || 'MIXED').toUpperCase();
+      appendCommunityFormField(form, 'Пол', genderSelect);
+
+      var maxPlayersInput = document.createElement('input');
+      maxPlayersInput.type = 'number';
+      maxPlayersInput.min = '2';
+      maxPlayersInput.className = 'phab-admin-input';
+      maxPlayersInput.value = String(Number(model && model.maxPlayers || 8) || 8);
+      appendCommunityFormField(form, 'Макс. участников', maxPlayersInput);
+
+      var studioNameInput = document.createElement('input');
+      studioNameInput.className = 'phab-admin-input';
+      studioNameInput.value = String(model && (model.studioName || model.studioId) || '');
+      appendCommunityFormField(form, 'Клуб', studioNameInput);
+
+      var trainerNameInput = document.createElement('input');
+      trainerNameInput.className = 'phab-admin-input';
+      trainerNameInput.value = String(model && (model.trainerName || model.trainerId) || '');
+      appendCommunityFormField(form, 'Тренер', trainerNameInput);
+
+      var slugInput = document.createElement('input');
+      slugInput.className = 'phab-admin-input';
+      slugInput.value = String(model && model.slug || '');
+      slugInput.placeholder = 'slug-ссылки, можно оставить пустым';
+      appendCommunityFormField(form, 'Slug', slugInput);
+
+      var allowedPhonesInput = document.createElement('textarea');
+      allowedPhonesInput.className = 'phab-admin-input';
+      allowedPhonesInput.rows = 3;
+      allowedPhonesInput.value = normalizeArray(model && model.allowedManagerPhones).join('\n');
+      allowedPhonesInput.placeholder = '+79991234567';
+      appendCommunityFormField(form, 'Телефоны с доступом к механике', allowedPhonesInput, true);
+
+      var participantsInput = document.createElement('textarea');
+      participantsInput.className = 'phab-admin-input';
+      participantsInput.rows = 5;
+      participantsInput.value = serializeTournamentParticipants(customTournament && customTournament.participants);
+      participantsInput.placeholder = 'Имя | +79991234567 | D+ | paid';
+      appendCommunityFormField(form, 'Участники', participantsInput, true);
+
+      var waitlistInput = document.createElement('textarea');
+      waitlistInput.className = 'phab-admin-input';
+      waitlistInput.rows = 4;
+      waitlistInput.value = serializeTournamentParticipants(customTournament && customTournament.waitlist);
+      waitlistInput.placeholder = 'Имя | +79991234567 | D+';
+      appendCommunityFormField(form, 'Лист ожидания', waitlistInput, true);
+
+      var skinTitleInput = document.createElement('input');
+      skinTitleInput.className = 'phab-admin-input';
+      skinTitleInput.value = String(skin.title || model.name || '');
+      appendCommunityFormField(form, 'Skin: заголовок', skinTitleInput);
+
+      var skinSubtitleInput = document.createElement('input');
+      skinSubtitleInput.className = 'phab-admin-input';
+      skinSubtitleInput.value = String(skin.subtitle || model.studioName || '');
+      appendCommunityFormField(form, 'Skin: подзаголовок', skinSubtitleInput);
+
+      var skinCtaInput = document.createElement('input');
+      skinCtaInput.className = 'phab-admin-input';
+      skinCtaInput.value = String(skin.ctaLabel || 'Записаться');
+      appendCommunityFormField(form, 'Skin: CTA', skinCtaInput);
+
+      var skinBadgeInput = document.createElement('input');
+      skinBadgeInput.className = 'phab-admin-input';
+      skinBadgeInput.value = String(skin.badgeLabel || '');
+      appendCommunityFormField(form, 'Skin: badge', skinBadgeInput);
+
+      var skinImageInput = document.createElement('input');
+      skinImageInput.className = 'phab-admin-input';
+      skinImageInput.value = String(skin.imageUrl || '');
+      appendCommunityFormField(form, 'Skin: image URL', skinImageInput);
+
+      var skinTagsInput = document.createElement('input');
+      skinTagsInput.className = 'phab-admin-input';
+      skinTagsInput.value = normalizeArray(skin.tags).join(', ');
+      appendCommunityFormField(form, 'Skin: теги', skinTagsInput);
+
+      var skinDescriptionInput = document.createElement('textarea');
+      skinDescriptionInput.className = 'phab-admin-input';
+      skinDescriptionInput.rows = 4;
+      skinDescriptionInput.value = String(skin.description || '');
+      appendCommunityFormField(form, 'Skin: описание', skinDescriptionInput, true);
+
+      var help = document.createElement('div');
+      help.className = 'phab-admin-empty';
+      help.textContent =
+        'Формат строк участников: Имя | Телефон | Уровень | paid. Для waitlist последняя колонка не обязательна.';
+      dom.tournamentEditorBody.appendChild(help);
+
+      state.tournamentEditor = {
+        sourceTournamentId: sourceTournamentId,
+        customTournamentId: customTournament ? String(customTournament.id || '') : '',
+        form: {
+          name: nameInput,
+          status: statusSelect,
+          startsAt: startsAtInput,
+          endsAt: endsAtInput,
+          tournamentType: typeInput,
+          accessLevels: accessLevelsInput,
+          gender: genderSelect,
+          maxPlayers: maxPlayersInput,
+          studioName: studioNameInput,
+          trainerName: trainerNameInput,
+          slug: slugInput,
+          allowedManagerPhones: allowedPhonesInput,
+          participants: participantsInput,
+          waitlist: waitlistInput,
+          skinTitle: skinTitleInput,
+          skinSubtitle: skinSubtitleInput,
+          skinCtaLabel: skinCtaInput,
+          skinBadgeLabel: skinBadgeInput,
+          skinImageUrl: skinImageInput,
+          skinTags: skinTagsInput,
+          skinDescription: skinDescriptionInput
+        }
+      };
+
+      dom.tournamentEditorModal.classList.remove('phab-admin-hidden');
+      window.setTimeout(function () {
+        nameInput.focus();
+        nameInput.select();
+      }, 0);
+    }
+
+    async function saveTournamentEditor() {
+      var editor = state.tournamentEditor;
+      if (!editor || !editor.form) {
+        return;
+      }
+
+      var payload = buildTournamentEditorPayload(editor.form);
+      if (!payload.name) {
+        throw new Error('Укажите название кастомного турнира.');
+      }
+      if (!payload.tournamentType) {
+        throw new Error('Укажите тип турнира.');
+      }
+
+      dom.tournamentEditorSaveBtn.disabled = true;
+      dom.tournamentEditorSaveBtn.textContent = editor.customTournamentId ? 'Сохраняем...' : 'Создаём...';
+      try {
+        if (editor.customTournamentId) {
+          await api.updateCustomTournament(editor.customTournamentId, payload);
+          setStatus('Кастомный турнир обновлён', false);
+        } else {
+          if (!editor.sourceTournamentId) {
+            throw new Error('Не удалось определить источник Viva-турнира.');
+          }
+          await api.createCustomTournamentFromSource(editor.sourceTournamentId, payload);
+          setStatus('Кастомный турнир создан', false);
+        }
+        await loadTournaments();
+        closeTournamentEditorModal();
+      } finally {
+        if (state.tournamentEditor) {
+          dom.tournamentEditorSaveBtn.disabled = false;
+          dom.tournamentEditorSaveBtn.textContent = 'Сохранить';
+        }
+      }
     }
 
     function getCommunityTimestampValue(community) {
@@ -18996,6 +19489,17 @@
       dom.communityFeedEditorSaveBtn.addEventListener('click', function () {
         saveCommunityFeedEditor().catch(handleError);
       });
+      dom.tournamentEditorCloseBtn.addEventListener('click', function () {
+        closeTournamentEditorModal();
+      });
+      dom.tournamentEditorModal.addEventListener('click', function (event) {
+        if (event.target === dom.tournamentEditorModal) {
+          closeTournamentEditorModal();
+        }
+      });
+      dom.tournamentEditorSaveBtn.addEventListener('click', function () {
+        saveTournamentEditor().catch(handleError);
+      });
       dom.gameChatSendBtn.addEventListener('click', function () {
         sendGameChatMessage().catch(handleError);
       });
@@ -19011,6 +19515,10 @@
         }
         if (!dom.communityFeedEditorModal.classList.contains('phab-admin-hidden')) {
           closeCommunityFeedEditorModal();
+          return;
+        }
+        if (!dom.tournamentEditorModal.classList.contains('phab-admin-hidden')) {
+          closeTournamentEditorModal();
           return;
         }
         if (!dom.quickReplyModal.classList.contains('phab-admin-hidden')) {
@@ -19079,6 +19587,7 @@
         dom.eventModal,
         dom.gameChatModal,
         dom.communityFeedEditorModal,
+        dom.tournamentEditorModal,
         dom.mobileFiltersSheet
       ].forEach(function (node) {
         if (node && node.parentNode) {
