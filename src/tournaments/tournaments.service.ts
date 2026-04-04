@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException
 } from '@nestjs/common';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
@@ -33,6 +34,8 @@ interface RegistrationInput {
 
 @Injectable()
 export class TournamentsService {
+  private readonly logger = new Logger(TournamentsService.name);
+
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
     private readonly vivaTournamentsService: VivaTournamentsService,
@@ -41,9 +44,7 @@ export class TournamentsService {
 
   async findAll(): Promise<Tournament[]> {
     const sourceTournaments = await this.listSourceTournaments();
-    const customTournaments = this.tournamentsPersistence.isEnabled()
-      ? await this.tournamentsPersistence.listCustomTournaments()
-      : [];
+    const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
     customTournaments.forEach((tournament) => {
       if (tournament.sourceTournamentId) {
@@ -77,9 +78,7 @@ export class TournamentsService {
   }
 
   async findById(id: string): Promise<Tournament> {
-    const customTournament = this.tournamentsPersistence.isEnabled()
-      ? await this.tournamentsPersistence.findCustomTournamentById(id)
-      : null;
+    const customTournament = await this.findCustomTournamentByIdSafe(id);
     if (customTournament) {
       return this.toTournamentListItem(customTournament);
     }
@@ -89,10 +88,7 @@ export class TournamentsService {
       throw new NotFoundException(`Tournament with id ${id} not found`);
     }
 
-    const linkedCustom =
-      this.tournamentsPersistence.isEnabled()
-        ? await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(tournament.id)
-        : null;
+    const linkedCustom = await this.findCustomTournamentBySourceIdSafe(tournament.id);
     return this.enrichSourceTournament(tournament, linkedCustom ?? undefined);
   }
 
@@ -295,6 +291,55 @@ export class TournamentsService {
     }
 
     return this.lkPadelHubClient.listTournaments();
+  }
+
+  private async listCustomTournamentsSafe(): Promise<CustomTournament[]> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return [];
+    }
+
+    try {
+      return await this.tournamentsPersistence.listCustomTournaments();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load custom tournaments, fallback to source only: ${String(error)}`
+      );
+      return [];
+    }
+  }
+
+  private async findCustomTournamentByIdSafe(id: string): Promise<CustomTournament | null> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      return await this.tournamentsPersistence.findCustomTournamentById(id);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to lookup custom tournament by id ${id}, fallback to source only: ${String(error)}`
+      );
+      return null;
+    }
+  }
+
+  private async findCustomTournamentBySourceIdSafe(
+    sourceTournamentId: string
+  ): Promise<CustomTournament | null> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      return await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
+        sourceTournamentId
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to lookup custom tournament by source id ${sourceTournamentId}: ${String(error)}`
+      );
+      return null;
+    }
   }
 
   private async findSourceTournamentById(id: string): Promise<Tournament | null> {
