@@ -12681,7 +12681,8 @@
         { key: 'tournamentType', label: 'Формат', minWidth: 120 },
         { key: 'accessLevels', label: 'Уровни', minWidth: 170 },
         { key: 'stats', label: 'Участники', minWidth: 150 },
-        { key: 'startsAt', label: 'Старт', minWidth: 150 },
+        { key: 'date', label: 'Дата', minWidth: 120 },
+        { key: 'time', label: 'Время', minWidth: 100 },
         { key: 'publicUrl', label: 'Ссылка', minWidth: 140 },
         { key: 'source', label: 'Источник', minWidth: 120 },
         { key: 'actions', label: 'Действия', minWidth: 160 }
@@ -12743,7 +12744,8 @@
           tournament.tournamentType || tournament.exerciseTypeId || tournament.gameId || '-',
           formatTournamentAccessLevels(tournament),
           formatTournamentStats(tournament),
-          formatTime(tournament.startsAt)
+          formatTournamentDate(tournament.startsAt),
+          formatTournamentClock(tournament.startsAt)
         ].forEach(function (value) {
           var td = document.createElement('td');
           td.textContent = String(value || '-');
@@ -12808,6 +12810,33 @@
         pieces.push('мест ' + String(maxPlayers));
       }
       return pieces.join(' · ');
+    }
+
+    function formatTournamentDate(value) {
+      if (!value) {
+        return '-';
+      }
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return '-';
+      }
+      var dd = String(d.getDate()).padStart(2, '0');
+      var mo = String(d.getMonth() + 1).padStart(2, '0');
+      var year = String(d.getFullYear());
+      return dd + '.' + mo + '.' + year;
+    }
+
+    function formatTournamentClock(value) {
+      if (!value) {
+        return '-';
+      }
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return '-';
+      }
+      var hh = String(d.getHours()).padStart(2, '0');
+      var mm = String(d.getMinutes()).padStart(2, '0');
+      return hh + ':' + mm;
     }
 
     function serializeTournamentParticipants(items) {
