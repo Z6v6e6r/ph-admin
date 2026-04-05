@@ -180,6 +180,7 @@ SUPPORT_WEB_MONGODB_DB=games
 Для вывода сообществ на Tilda, в iframe или на отдельный экран доступны публичные endpoint'ы:
 
 - `GET /api/communities/public`
+- `GET /api/communities/public/list`
 - `GET /api/communities/public/showcase`
 - `GET /api/client-script/communities-showcase.js`
 
@@ -202,6 +203,11 @@ SUPPORT_WEB_MONGODB_DB=games
 ></div>
 <script src="https://example.com/api/client-script/communities-showcase.js" defer></script>
 ```
+
+Важно:
+
+- для embed достаточно `data-api-base="https://example.com/api"`
+- сам виджет запрашивает каталог по `GET /api/communities/public/list`, потому что точный путь `/api/communities/public` может пересекаться с внутренним маршрутом `/api/communities/:id`
 
 Прямая витрина по ссылке/для iframe:
 

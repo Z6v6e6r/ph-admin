@@ -20,6 +20,19 @@ export class CommunitiesPublicController {
     });
   }
 
+  @Get('list')
+  listPublicCommunitiesStable(
+    @Query('stationId') stationId?: string,
+    @Query('tag') tag?: string,
+    @Query('limit') limit?: string
+  ): Promise<CommunityPublicDirectoryResponse> {
+    return this.communitiesService.getPublicDirectory({
+      stationIds: this.parseCsv(stationId),
+      tags: this.parseCsv(tag),
+      limit: this.parsePositiveInteger(limit)
+    });
+  }
+
   @Get('showcase')
   renderPublicShowcase(
     @Req() request: Request,

@@ -560,14 +560,14 @@
     mount.appendChild(
       createStatusCard(
         'Не удалось загрузить сообщества',
-        'Проверьте data-api-base, доступность `/api/communities/public` и наличие публичных invite/public ссылок у сообществ.'
+        'Проверьте data-api-base, доступность `/api/communities/public/list` и наличие публичных invite/public ссылок у сообществ.'
       )
     );
   }
 
   function buildRequestUrl(config) {
     var url = new URL(
-      normalizeApiBaseUrl(config.apiBaseUrl) + '/communities/public',
+      normalizeApiBaseUrl(config.apiBaseUrl) + '/communities/public/list',
       window.location.href
     );
 
