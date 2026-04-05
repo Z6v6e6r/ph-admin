@@ -175,6 +175,40 @@ SUPPORT_WEB_MONGODB_DB=games
 `LK_PADELHUB_COMMUNITIES_URL` используется только как fallback, если communities-Mongo не
 настроен. Mock-данные остаются только как локальный dev fallback.
 
+## Публичная витрина сообществ
+
+Для вывода сообществ на Tilda, в iframe или на отдельный экран доступны публичные endpoint'ы:
+
+- `GET /api/communities/public`
+- `GET /api/communities/public/showcase`
+- `GET /api/client-script/communities-showcase.js`
+
+Параметры:
+
+- `stationId=nagatino` или `stationId=nagatino,terehova` для фильтра по станциям
+- `tag=beginners` или `tag=beginners,ladies` для фильтра по тегам/focusTags
+- `limit=6` для ограничения числа карточек
+- `refreshMs=120000` для автообновления showcase-страницы
+
+Пример Tilda-embed:
+
+```html
+<div
+  data-ph-communities-showcase
+  data-api-base="https://example.com/api"
+  data-station-ids="nagatino"
+  data-limit="6"
+  data-refresh-ms="120000"
+></div>
+<script src="https://example.com/api/client-script/communities-showcase.js" defer></script>
+```
+
+Прямая витрина по ссылке/для iframe:
+
+```text
+https://example.com/api/communities/public/showcase?stationId=nagatino&limit=6&refreshMs=120000
+```
+
 ## Аутентификация в MVP
 
 Поддерживаются два режима:

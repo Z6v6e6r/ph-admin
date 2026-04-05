@@ -68,4 +68,24 @@ export class ClientScriptController {
     response.setHeader('Service-Worker-Allowed', '/');
     response.sendFile(filePath);
   }
+
+  @Get('communities-showcase.js')
+  streamCommunitiesShowcase(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-communities-showcase.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(filePath);
+  }
+
+  @Get('communities-showcase.download.js')
+  downloadCommunitiesShowcase(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-communities-showcase.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="phab-communities-showcase.js"'
+    );
+    response.sendFile(filePath);
+  }
 }

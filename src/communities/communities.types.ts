@@ -140,3 +140,30 @@ export interface Community {
   feedItems?: CommunityFeedItem[];
   details?: Record<string, unknown>;
 }
+
+export interface CommunityPublicCard {
+  id: string;
+  slug?: string;
+  name: string;
+  description?: string;
+  logo?: string | null;
+  city?: string;
+  stationId?: string;
+  stationName?: string;
+  membersCount?: number;
+  isVerified?: boolean;
+  focusTags?: string[];
+  tags?: string[];
+  joinRule?: string;
+  joinLabel: string;
+  joinUrl: string;
+  publicUrl?: string;
+}
+
+export interface CommunityPublicDirectoryResponse {
+  generatedAt: string;
+  stationIds?: string[];
+  tags?: string[];
+  count: number;
+  items: CommunityPublicCard[];
+}

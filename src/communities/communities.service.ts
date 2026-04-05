@@ -16,6 +16,9 @@ import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub
 import {
   Community,
   CommunityFeedItem,
+  CommunityPublicCard,
+  CommunityPublicDirectoryResponse,
+  CommunityStatus,
   CommunityFeedTemplateOption,
   CommunityFeedTemplateSlotsResponse
 } from './communities.types';
@@ -82,6 +85,9 @@ const COMMUNITY_FEED_TEMPLATE_PRESETS: CommunityFeedTemplatePreset[] = [
   }
 ];
 
+const PUBLIC_COMMUNITIES_LIMIT_DEFAULT = 12;
+const PUBLIC_COMMUNITIES_LIMIT_MAX = 48;
+
 @Injectable()
 export class CommunitiesService {
   constructor(
@@ -97,6 +103,32 @@ export class CommunitiesService {
       }
     }
     return this.lkPadelHubClient.listCommunities();
+  }
+
+  async getPublicDirectory(options?: {
+    stationIds?: string[];
+    tags?: string[];
+    limit?: number;
+  }): Promise<CommunityPublicDirectoryResponse> {
+    const stationIds = this.normalizeFilterValues(options?.stationIds);
+    const tags = this.normalizeFilterValues(options?.tags);
+    const limit = this.normalizePublicLimit(options?.limit);
+    const communities = await this.findAll();
+
+    const items = communities
+      .filter((community) => this.isCommunityPubliclyVisible(community))
+      .filter((community) => this.matchesPublicCommunityFilters(community, stationIds, tags))
+      .sort((left, right) => this.comparePublicCommunities(left, right))
+      .slice(0, limit)
+      .map((community) => this.toPublicCommunityCard(community));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      stationIds: stationIds.length > 0 ? stationIds : undefined,
+      tags: tags.length > 0 ? tags : undefined,
+      count: items.length,
+      items
+    };
   }
 
   async findById(id: string): Promise<Community> {
@@ -318,5 +350,151 @@ export class CommunitiesService {
       hash = (hash * 31 + source.charCodeAt(index)) % 1000003;
     }
     return Math.abs(hash);
+  }
+
+  private normalizePublicLimit(limit?: number): number {
+    const numericLimit = Number(limit);
+    if (!Number.isFinite(numericLimit)) {
+      return PUBLIC_COMMUNITIES_LIMIT_DEFAULT;
+    }
+
+    return Math.min(
+      PUBLIC_COMMUNITIES_LIMIT_MAX,
+      Math.max(1, Math.floor(numericLimit))
+    );
+  }
+
+  private normalizeFilterValues(values?: string[]): string[] {
+    return Array.from(
+      new Set(
+        (values ?? [])
+          .map((value) => String(value ?? '').trim())
+          .filter((value) => value.length > 0)
+      )
+    );
+  }
+
+  private isCommunityPubliclyVisible(community: Community): boolean {
+    const joinUrl = this.resolveCommunityJoinUrl(community);
+    if (!joinUrl) {
+      return false;
+    }
+
+    if (
+      community.status === CommunityStatus.DRAFT ||
+      community.status === CommunityStatus.PAUSED ||
+      community.status === CommunityStatus.HIDDEN ||
+      community.status === CommunityStatus.PRIVATE ||
+      community.status === CommunityStatus.ARCHIVED
+    ) {
+      return false;
+    }
+
+    const joinRule = this.normalizeCommunityTextValue(community.joinRule);
+    const visibility = this.normalizeCommunityTextValue(community.visibility);
+    if (joinRule === 'INVITE_ONLY') {
+      return false;
+    }
+    if (visibility === 'CLOSED' && joinRule !== 'MODERATED') {
+      return false;
+    }
+
+    return true;
+  }
+
+  private matchesPublicCommunityFilters(
+    community: Community,
+    stationIds: string[],
+    tags: string[]
+  ): boolean {
+    if (stationIds.length > 0) {
+      const stationId = this.normalizeCommunityTextValue(community.stationId);
+      if (!stationIds.some((candidate) => this.normalizeCommunityTextValue(candidate) === stationId)) {
+        return false;
+      }
+    }
+
+    if (tags.length > 0) {
+      const communityTags = [
+        ...(community.focusTags ?? []),
+        ...(community.tags ?? [])
+      ]
+        .map((entry) => this.normalizeCommunityTextValue(entry))
+        .filter((entry) => entry.length > 0);
+      if (
+        !tags.some((candidate) =>
+          communityTags.includes(this.normalizeCommunityTextValue(candidate))
+        )
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private comparePublicCommunities(left: Community, right: Community): number {
+    if (Boolean(right.isVerified) !== Boolean(left.isVerified)) {
+      return Number(Boolean(right.isVerified)) - Number(Boolean(left.isVerified));
+    }
+
+    const rightMembers = Number(right.membersCount ?? 0);
+    const leftMembers = Number(left.membersCount ?? 0);
+    if (rightMembers !== leftMembers) {
+      return rightMembers - leftMembers;
+    }
+
+    return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
+  }
+
+  private toPublicCommunityCard(community: Community): CommunityPublicCard {
+    return {
+      id: community.id,
+      slug: community.slug,
+      name: community.name,
+      description: community.description,
+      logo: community.logo ?? undefined,
+      city: community.city,
+      stationId: community.stationId,
+      stationName: community.stationName,
+      membersCount: community.membersCount,
+      isVerified: community.isVerified,
+      focusTags: community.focusTags,
+      tags: community.tags,
+      joinRule:
+        typeof community.joinRule === 'string'
+          ? community.joinRule
+          : undefined,
+      joinLabel: this.resolveCommunityJoinLabel(community),
+      joinUrl: this.resolveCommunityJoinUrl(community) as string,
+      publicUrl: community.publicUrl
+    };
+  }
+
+  private resolveCommunityJoinUrl(community: Community): string | null {
+    const candidates = [community.inviteLink, community.publicUrl, community.webviewUrl];
+    for (const candidate of candidates) {
+      const normalized = String(candidate ?? '').trim();
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+    return null;
+  }
+
+  private resolveCommunityJoinLabel(community: Community): string {
+    const joinRule = this.normalizeCommunityTextValue(community.joinRule);
+    const visibility = this.normalizeCommunityTextValue(community.visibility);
+    if (joinRule === 'MODERATED' || visibility === 'CLOSED') {
+      return 'Подать заявку';
+    }
+    if (joinRule === 'INSTANT' || visibility === 'OPEN') {
+      return 'Вступить';
+    }
+    return 'Перейти в сообщество';
+  }
+
+  private normalizeCommunityTextValue(value: unknown): string {
+    return String(value ?? '').trim().toUpperCase();
   }
 }
