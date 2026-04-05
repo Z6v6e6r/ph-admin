@@ -88,4 +88,24 @@ export class ClientScriptController {
     );
     response.sendFile(filePath);
   }
+
+  @Get('community-feed.js')
+  streamCommunityFeed(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-community-feed.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(filePath);
+  }
+
+  @Get('community-feed.download.js')
+  downloadCommunityFeed(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-community-feed.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="phab-community-feed.js"'
+    );
+    response.sendFile(filePath);
+  }
 }

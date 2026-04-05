@@ -160,10 +160,37 @@ export interface CommunityPublicCard {
   publicUrl?: string;
 }
 
+export interface CommunityPublicFeedItem {
+  id: string;
+  kind: CommunityFeedItemKind;
+  title: string;
+  body?: string;
+  imageUrl?: string | null;
+  previewLabel?: string;
+  ctaLabel?: string;
+  startAt?: string;
+  endAt?: string;
+  stationName?: string;
+  courtName?: string;
+  levelLabel?: string;
+  isAdvertisement?: boolean;
+  tags?: string[];
+  authorName?: string;
+  participants?: CommunityFeedParticipant[];
+  publishedAt?: string;
+}
+
 export interface CommunityPublicDirectoryResponse {
   generatedAt: string;
   stationIds?: string[];
   tags?: string[];
   count: number;
   items: CommunityPublicCard[];
+}
+
+export interface CommunityPublicFeedResponse {
+  generatedAt: string;
+  community: CommunityPublicCard;
+  count: number;
+  items: CommunityPublicFeedItem[];
 }

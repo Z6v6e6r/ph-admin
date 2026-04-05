@@ -18,6 +18,8 @@ import {
   CommunityFeedItem,
   CommunityPublicCard,
   CommunityPublicDirectoryResponse,
+  CommunityPublicFeedItem,
+  CommunityPublicFeedResponse,
   CommunityStatus,
   CommunityFeedTemplateOption,
   CommunityFeedTemplateSlotsResponse
@@ -87,6 +89,8 @@ const COMMUNITY_FEED_TEMPLATE_PRESETS: CommunityFeedTemplatePreset[] = [
 
 const PUBLIC_COMMUNITIES_LIMIT_DEFAULT = 12;
 const PUBLIC_COMMUNITIES_LIMIT_MAX = 48;
+const PUBLIC_COMMUNITY_FEED_LIMIT_DEFAULT = 8;
+const PUBLIC_COMMUNITY_FEED_LIMIT_MAX = 24;
 
 @Injectable()
 export class CommunitiesService {
@@ -126,6 +130,35 @@ export class CommunitiesService {
       generatedAt: new Date().toISOString(),
       stationIds: stationIds.length > 0 ? stationIds : undefined,
       tags: tags.length > 0 ? tags : undefined,
+      count: items.length,
+      items
+    };
+  }
+
+  async getPublicFeed(
+    communityId: string,
+    options?: {
+      limit?: number;
+    }
+  ): Promise<CommunityPublicFeedResponse> {
+    const normalizedCommunityId = String(communityId ?? '').trim();
+    if (!normalizedCommunityId) {
+      throw new BadRequestException('communityId is required');
+    }
+
+    const community = await this.findById(normalizedCommunityId);
+    if (!this.isCommunityPubliclyVisible(community)) {
+      throw new NotFoundException(`Community with id ${normalizedCommunityId} not found`);
+    }
+
+    const limit = this.normalizePublicFeedLimit(options?.limit);
+    const items = (await this.listPublicFeedItems(community))
+      .slice(0, limit)
+      .map((item) => this.toPublicFeedItem(item));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      community: this.toPublicCommunityCard(community),
       count: items.length,
       items
     };
@@ -364,6 +397,18 @@ export class CommunitiesService {
     );
   }
 
+  private normalizePublicFeedLimit(limit?: number): number {
+    const numericLimit = Number(limit);
+    if (!Number.isFinite(numericLimit)) {
+      return PUBLIC_COMMUNITY_FEED_LIMIT_DEFAULT;
+    }
+
+    return Math.min(
+      PUBLIC_COMMUNITY_FEED_LIMIT_MAX,
+      Math.max(1, Math.floor(numericLimit))
+    );
+  }
+
   private normalizeFilterValues(values?: string[]): string[] {
     return Array.from(
       new Set(
@@ -447,6 +492,22 @@ export class CommunitiesService {
     return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
   }
 
+  private async listPublicFeedItems(community: Community): Promise<CommunityFeedItem[]> {
+    const sourceItems = this.communitiesPersistence.isEnabled()
+      ? await this.communitiesPersistence.listFeedItems(community.id)
+      : community.feedItems ?? [];
+
+    return sourceItems.filter((item) => this.isFeedItemPublic(item));
+  }
+
+  private isFeedItemPublic(item: CommunityFeedItem): boolean {
+    if (!item || item.status !== 'PUBLISHED') {
+      return false;
+    }
+
+    return String(item.title ?? '').trim().length > 0;
+  }
+
   private toPublicCommunityCard(community: Community): CommunityPublicCard {
     return {
       id: community.id,
@@ -468,6 +529,28 @@ export class CommunitiesService {
       joinLabel: this.resolveCommunityJoinLabel(community),
       joinUrl: this.resolveCommunityJoinUrl(community) as string,
       publicUrl: community.publicUrl
+    };
+  }
+
+  private toPublicFeedItem(item: CommunityFeedItem): CommunityPublicFeedItem {
+    return {
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      body: item.body,
+      imageUrl: item.imageUrl ?? undefined,
+      previewLabel: item.previewLabel,
+      ctaLabel: item.ctaLabel,
+      startAt: item.startAt,
+      endAt: item.endAt,
+      stationName: item.stationName,
+      courtName: item.courtName,
+      levelLabel: item.levelLabel,
+      isAdvertisement: item.isAdvertisement,
+      tags: item.tags,
+      authorName: item.authorName,
+      participants: item.participants,
+      publishedAt: item.publishedAt ?? item.createdAt
     };
   }
 

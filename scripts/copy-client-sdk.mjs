@@ -17,6 +17,7 @@ mkdirSync(distClientSdkDir, { recursive: true });
 
 const files = [
   'phab-admin-panel.js',
+  'phab-community-feed.js',
   'phab-communities-showcase.js',
   'phab-client-messenger.js',
   'phab-messenger-push-sw.js'
