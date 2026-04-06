@@ -16,6 +16,7 @@ if (!existsSync(sourceDir)) {
 mkdirSync(distClientSdkDir, { recursive: true });
 
 const files = [
+  'admin-panel-message.wav',
   'phab-admin-panel.js',
   'phab-community-feed.js',
   'phab-communities-showcase.js',

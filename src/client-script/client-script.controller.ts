@@ -40,6 +40,14 @@ export class ClientScriptController {
     response.sendFile(filePath);
   }
 
+  @Get('admin-panel-message.wav')
+  streamAdminPanelMessageSound(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('admin-panel-message.wav');
+    response.setHeader('Content-Type', 'audio/wav');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(filePath);
+  }
+
   @Get('messenger-widget.js')
   streamScript(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-client-messenger.js');

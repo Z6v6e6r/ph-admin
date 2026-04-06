@@ -7360,7 +7360,8 @@
       state.includeServiceMessages = false;
     }
     var incomingSoundState = {
-      context: null,
+      audio: null,
+      assetUrl: '',
       unlockBound: false,
       unlocked: false,
       lastPlayAt: 0
@@ -8057,50 +8058,74 @@
       }
     }
 
-    function getAudioContextConstructor() {
-      return window.AudioContext || window.webkitAudioContext || null;
+    function getIncomingSoundAssetUrl() {
+      if (incomingSoundState.assetUrl) {
+        return incomingSoundState.assetUrl;
+      }
+      var apiBaseUrl = String(cfg.apiBaseUrl || '').replace(/\/+$/, '');
+      incomingSoundState.assetUrl = (apiBaseUrl || '/api') + '/client-script/admin-panel-message.wav';
+      return incomingSoundState.assetUrl;
     }
 
-    function getIncomingSoundContext() {
-      if (incomingSoundState.context) {
-        return incomingSoundState.context;
+    function getIncomingSoundAudio() {
+      if (incomingSoundState.audio) {
+        return incomingSoundState.audio;
       }
-      var AudioContextCtor = getAudioContextConstructor();
-      if (!AudioContextCtor) {
+      if (typeof Audio !== 'function') {
         return null;
       }
       try {
-        incomingSoundState.context = new AudioContextCtor();
+        incomingSoundState.audio = new Audio(getIncomingSoundAssetUrl());
+        incomingSoundState.audio.preload = 'auto';
+        incomingSoundState.audio.volume = 1;
+        incomingSoundState.audio.setAttribute('playsinline', '');
+        incomingSoundState.audio.load();
       } catch (_error) {
-        incomingSoundState.context = null;
+        incomingSoundState.audio = null;
       }
-      return incomingSoundState.context;
+      return incomingSoundState.audio;
     }
 
-    function markIncomingSoundUnlocked(context) {
-      incomingSoundState.unlocked = Boolean(context && context.state === 'running');
+    function markIncomingSoundUnlocked(audio) {
+      incomingSoundState.unlocked = Boolean(audio);
       return incomingSoundState.unlocked;
     }
 
+    function resetIncomingSoundAudio(audio) {
+      if (!audio) {
+        return;
+      }
+      audio.pause();
+      try {
+        audio.currentTime = 0;
+      } catch (_error) {
+        // ignore currentTime reset errors
+      }
+    }
+
     function tryUnlockIncomingSound() {
-      var context = getIncomingSoundContext();
-      if (!context) {
+      var audio = getIncomingSoundAudio();
+      var unlockAttempt;
+      if (!audio || incomingSoundState.unlocked) {
         return;
       }
-      if (context.state === 'running') {
-        markIncomingSoundUnlocked(context);
+      audio.muted = true;
+      audio.volume = 1;
+      unlockAttempt = audio.play();
+      if (!unlockAttempt || typeof unlockAttempt.then !== 'function') {
+        resetIncomingSoundAudio(audio);
+        audio.muted = false;
+        markIncomingSoundUnlocked(audio);
         return;
       }
-      if (typeof context.resume !== 'function') {
-        return;
-      }
-      context
-        .resume()
+      unlockAttempt
         .then(function () {
-          markIncomingSoundUnlocked(context);
+          resetIncomingSoundAudio(audio);
+          audio.muted = false;
+          markIncomingSoundUnlocked(audio);
         })
         .catch(function () {
-          // ignore unlock errors
+          audio.muted = false;
         });
     }
 
@@ -8116,82 +8141,32 @@
       });
     }
 
-    function createNoiseBuffer(context, durationSec) {
-      var frameCount = Math.max(1, Math.floor(context.sampleRate * durationSec));
-      var buffer = context.createBuffer(1, frameCount, context.sampleRate);
-      var data = buffer.getChannelData(0);
-      for (var index = 0; index < frameCount; index += 1) {
-        data[index] = Math.random() * 2 - 1;
-      }
-      return buffer;
-    }
-
     function playIncomingMessageSound() {
       var nowTs = Date.now();
       if (nowTs - incomingSoundState.lastPlayAt < 1200) {
         return;
       }
 
-      var context = getIncomingSoundContext();
-      if (!context) {
+      var audio = getIncomingSoundAudio();
+      var playAttempt;
+      if (!audio) {
         return;
       }
-      if (!incomingSoundState.unlocked && context.state !== 'running') {
-        return;
-      }
-      if (context.state === 'suspended') {
+      if (!incomingSoundState.unlocked) {
         tryUnlockIncomingSound();
         return;
       }
 
       incomingSoundState.lastPlayAt = nowTs;
-
-      var startAt = context.currentTime + 0.01;
-      var master = context.createGain();
-      master.gain.setValueAtTime(0.36, startAt);
-      master.connect(context.destination);
-
-      var bodyOsc = context.createOscillator();
-      var bodyGain = context.createGain();
-      bodyOsc.type = 'triangle';
-      bodyOsc.frequency.setValueAtTime(240, startAt);
-      bodyOsc.frequency.exponentialRampToValueAtTime(105, startAt + 0.08);
-      bodyGain.gain.setValueAtTime(0.0001, startAt);
-      bodyGain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.004);
-      bodyGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.09);
-      bodyOsc.connect(bodyGain);
-      bodyGain.connect(master);
-      bodyOsc.start(startAt);
-      bodyOsc.stop(startAt + 0.1);
-
-      var snapOsc = context.createOscillator();
-      var snapGain = context.createGain();
-      snapOsc.type = 'square';
-      snapOsc.frequency.setValueAtTime(1200, startAt);
-      snapOsc.frequency.exponentialRampToValueAtTime(360, startAt + 0.03);
-      snapGain.gain.setValueAtTime(0.0001, startAt);
-      snapGain.gain.exponentialRampToValueAtTime(0.09, startAt + 0.002);
-      snapGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.035);
-      snapOsc.connect(snapGain);
-      snapGain.connect(master);
-      snapOsc.start(startAt);
-      snapOsc.stop(startAt + 0.04);
-
-      var noise = context.createBufferSource();
-      var noiseFilter = context.createBiquadFilter();
-      var noiseGain = context.createGain();
-      noise.buffer = createNoiseBuffer(context, 0.05);
-      noiseFilter.type = 'bandpass';
-      noiseFilter.frequency.setValueAtTime(1400, startAt);
-      noiseFilter.Q.setValueAtTime(0.8, startAt);
-      noiseGain.gain.setValueAtTime(0.0001, startAt);
-      noiseGain.gain.exponentialRampToValueAtTime(0.06, startAt + 0.001);
-      noiseGain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.05);
-      noise.connect(noiseFilter);
-      noiseFilter.connect(noiseGain);
-      noiseGain.connect(master);
-      noise.start(startAt);
-      noise.stop(startAt + 0.05);
+      audio.muted = false;
+      audio.volume = 1;
+      resetIncomingSoundAudio(audio);
+      playAttempt = audio.play();
+      if (playAttempt && typeof playAttempt.catch === 'function') {
+        playAttempt.catch(function () {
+          incomingSoundState.unlocked = false;
+        });
+      }
     }
 
     function shouldPlayIncomingDialogsSound(previousDialogs, nextDialogs) {
