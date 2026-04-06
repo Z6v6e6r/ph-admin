@@ -25,6 +25,10 @@ import { SupportConnectorRegistry } from './connectors/support-connector.registr
 import { IngestSupportEventDto } from './dto/ingest-support-event.dto';
 import { ReplySupportDialogDto } from './dto/reply-support-dialog.dto';
 import {
+  SupportStationMapping,
+  parseSupportStationMappings
+} from './support-station-mappings';
+import {
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
@@ -90,12 +94,6 @@ interface NormalizedIngestSupportEventDto extends IngestSupportEventDto {
   deliverToClient?: boolean;
 }
 
-interface SupportStationMapping {
-  key: string;
-  stationId: string;
-  stationName: string;
-}
-
 interface SupportDialogFilters {
   connector?: SupportConnectorRoute;
   stationId?: string;
@@ -123,7 +121,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly messageObservers: SupportMessageObserver[] = [];
   private readonly noReplyQuickReplySignatures = new Set<string>();
-  private readonly stationMappings = this.parseStationMappings();
+  private readonly stationMappings = parseSupportStationMappings(
+    process.env.TELEGRAM_STATION_MAPPINGS
+  );
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
   private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
@@ -4923,45 +4923,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         (mappingStationName && mappingStationName === normalizedAction)
       );
     });
-  }
-
-  private parseStationMappings(): SupportStationMapping[] {
-    const raw = String(process.env.TELEGRAM_STATION_MAPPINGS ?? '').trim();
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Array<
-          Partial<SupportStationMapping> & { callbackKey?: string }
-        >;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed
-            .map((item) => ({
-              key: String(item.key ?? item.callbackKey ?? '').trim().toLowerCase(),
-              stationId: String(item.stationId ?? '').trim(),
-              stationName: String(item.stationName ?? '').trim()
-            }))
-            .filter(
-              (item) =>
-                item.key.length > 0 &&
-                item.stationId.length > 0 &&
-                item.stationName.length > 0
-            );
-        }
-      } catch (_error) {
-        // ignore invalid env and fallback to defaults
-      }
-    }
-
-    return [
-      { key: 'promo', stationId: 'promo', stationName: 'PROMO' },
-      { key: 'yas', stationId: 'Yasenevo', stationName: 'Ясенево' },
-      { key: 'nagat', stationId: 'Nagatinskaya', stationName: 'Нагатинская' },
-      { key: 'nagat_p', stationId: 'NagatinskayaP', stationName: 'Нагатинская Премиум' },
-      { key: 'tereh', stationId: 'Terehovo', stationName: 'Терехово' },
-      { key: 'kuncev', stationId: 'Skolkovo', stationName: 'Сколково' },
-      { key: 'sochi', stationId: 'Sochi', stationName: 'Сочи' },
-      { key: 'seleger', stationId: 'seleger', stationName: 'Селигерская' },
-      { key: 't-sbora', stationId: 'care_service', stationName: 'Точка сбора' }
-    ];
   }
 
   private extractMetaPathString(

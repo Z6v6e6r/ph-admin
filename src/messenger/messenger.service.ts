@@ -20,6 +20,7 @@ import {
   QuickReplySourceType,
   QuickReplyTriggerType
 } from '../quick-replies/quick-replies.types';
+import { parseSupportStationMappings } from '../support/support-station-mappings';
 import { AiConnectorService } from './ai/ai-connector.service';
 import { MessengerPersistenceService } from './messenger-persistence.service';
 import { CreateAccessRuleDto } from './dto/create-access-rule.dto';
@@ -127,7 +128,13 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       for (const station of state.stations) {
         this.stationConfigs.set(station.stationId, station);
       }
+    } else {
+      for (const station of this.stationConfigs.values()) {
+        this.persistence.persistStation(station);
+      }
     }
+
+    this.ensureDefaultStationConfigs();
 
     if (state.connectors.length > 0) {
       this.connectorConfigs.clear();
@@ -1482,6 +1489,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
 
   private bootstrapSettingsDefaults(): void {
     const now = new Date().toISOString();
+    this.ensureDefaultStationConfigs(now);
+
     for (const route of Object.values(ConnectorRoute)) {
       const id = this.defaultConnectorId(route);
       this.connectorConfigs.set(id, {
@@ -1521,6 +1530,40 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
         createdAt: now,
         updatedAt: now
       });
+    }
+  }
+
+  private ensureDefaultStationConfigs(now = new Date().toISOString()): void {
+    const mappings = parseSupportStationMappings(
+      process.env.TELEGRAM_STATION_MAPPINGS
+    );
+
+    for (const mapping of mappings) {
+      const existing = this.stationConfigs.get(mapping.stationId);
+      if (existing) {
+        if (
+          this.shouldRefreshStationNameFromInbound(existing, mapping.stationName)
+        ) {
+          const updated: MessengerStationConfig = {
+            ...existing,
+            stationName: mapping.stationName,
+            updatedAt: now
+          };
+          this.stationConfigs.set(updated.stationId, updated);
+          this.persistence.persistStation(updated);
+        }
+        continue;
+      }
+
+      const station: MessengerStationConfig = {
+        stationId: mapping.stationId,
+        stationName: mapping.stationName,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.stationConfigs.set(station.stationId, station);
+      this.persistence.persistStation(station);
     }
   }
 

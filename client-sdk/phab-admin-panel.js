@@ -2367,6 +2367,12 @@
         border-radius:12px;
         overflow:hidden;
         text-decoration:none;
+        cursor:zoom-in;
+        transition:transform .16s ease, box-shadow .16s ease;
+      }
+      .phab-admin-message-image-link:hover{
+        transform:translateY(-1px);
+        box-shadow:0 14px 28px rgba(51,0,32,.18);
       }
       .phab-admin-message-image{
         display:block;
@@ -3169,6 +3175,78 @@
         display:grid;
         grid-template-columns:repeat(2,minmax(0,1fr));
         gap:10px;
+      }
+      .phab-admin-image-preview-card{
+        width:min(1100px,96vw);
+        background:linear-gradient(180deg,rgba(22,11,27,.98) 0%,rgba(9,13,23,.98) 100%);
+        color:var(--cup-white);
+        border-color:rgba(255,255,255,.14);
+      }
+      .phab-admin-image-preview-head{
+        background:linear-gradient(90deg,rgba(255,232,145,.18) 0%,rgba(182,253,255,.14) 100%);
+        border-bottom-color:rgba(255,255,255,.08);
+      }
+      .phab-admin-image-preview-title-wrap{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        min-width:0;
+      }
+      .phab-admin-image-preview-subtitle{
+        font-size:12px;
+        color:rgba(255,255,255,.76);
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
+      .phab-admin-image-preview-body{
+        display:flex;
+        flex-direction:column;
+        grid-template-columns:none;
+        gap:12px;
+        padding:14px;
+        background:transparent;
+      }
+      .phab-admin-image-preview-stage{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:320px;
+        max-height:calc(100dvh - 220px);
+        overflow:auto;
+        border-radius:16px;
+        padding:12px;
+        background:
+          linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02)),
+          radial-gradient(circle at top,rgba(221,200,252,.14),transparent 52%);
+        border:1px solid rgba(255,255,255,.08);
+      }
+      .phab-admin-image-preview-image{
+        display:block;
+        max-width:100%;
+        max-height:calc(100dvh - 248px);
+        width:auto;
+        height:auto;
+        object-fit:contain;
+        border-radius:14px;
+        box-shadow:0 28px 60px rgba(0,0,0,.38);
+        background:rgba(255,255,255,.04);
+      }
+      .phab-admin-image-preview-meta{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-image-preview-meta-chip{
+        display:inline-flex;
+        align-items:center;
+        min-height:28px;
+        padding:6px 10px;
+        border-radius:999px;
+        background:rgba(255,255,255,.08);
+        border:1px solid rgba(255,255,255,.1);
+        font-size:12px;
+        color:rgba(255,255,255,.88);
       }
       .phab-admin-detail-card{
         border:1px solid rgba(51,0,32,.14);
@@ -6000,6 +6078,65 @@
     quickReplyModalBody.className = 'phab-admin-modal-body';
     quickReplyModalCard.appendChild(quickReplyModalBody);
 
+    var imagePreviewModal = document.createElement('div');
+    imagePreviewModal.className = 'phab-admin-modal phab-admin-hidden';
+    overlayHost.appendChild(imagePreviewModal);
+
+    var imagePreviewCard = document.createElement('div');
+    imagePreviewCard.className = 'phab-admin-modal-card phab-admin-image-preview-card';
+    imagePreviewModal.appendChild(imagePreviewCard);
+
+    var imagePreviewHead = document.createElement('div');
+    imagePreviewHead.className = 'phab-admin-modal-head phab-admin-image-preview-head';
+    imagePreviewCard.appendChild(imagePreviewHead);
+
+    var imagePreviewTitleWrap = document.createElement('div');
+    imagePreviewTitleWrap.className = 'phab-admin-image-preview-title-wrap';
+    imagePreviewHead.appendChild(imagePreviewTitleWrap);
+
+    var imagePreviewTitle = document.createElement('div');
+    imagePreviewTitle.className = 'phab-admin-modal-title';
+    imagePreviewTitle.textContent = 'Фото';
+    imagePreviewTitleWrap.appendChild(imagePreviewTitle);
+
+    var imagePreviewSubtitle = document.createElement('div');
+    imagePreviewSubtitle.className = 'phab-admin-image-preview-subtitle';
+    imagePreviewSubtitle.textContent = 'Откройте оригинал и сохраните на устройство';
+    imagePreviewTitleWrap.appendChild(imagePreviewSubtitle);
+
+    var imagePreviewActions = document.createElement('div');
+    imagePreviewActions.className = 'phab-admin-modal-actions';
+    imagePreviewHead.appendChild(imagePreviewActions);
+
+    var imagePreviewSaveBtn = document.createElement('button');
+    imagePreviewSaveBtn.className = 'phab-admin-btn';
+    imagePreviewSaveBtn.type = 'button';
+    imagePreviewSaveBtn.textContent = 'Сохранить';
+    imagePreviewActions.appendChild(imagePreviewSaveBtn);
+
+    var imagePreviewCloseBtn = document.createElement('button');
+    imagePreviewCloseBtn.className = 'phab-admin-modal-close';
+    imagePreviewCloseBtn.type = 'button';
+    imagePreviewCloseBtn.textContent = '×';
+    imagePreviewActions.appendChild(imagePreviewCloseBtn);
+
+    var imagePreviewBody = document.createElement('div');
+    imagePreviewBody.className = 'phab-admin-modal-body phab-admin-image-preview-body';
+    imagePreviewCard.appendChild(imagePreviewBody);
+
+    var imagePreviewStage = document.createElement('div');
+    imagePreviewStage.className = 'phab-admin-image-preview-stage';
+    imagePreviewBody.appendChild(imagePreviewStage);
+
+    var imagePreviewImage = document.createElement('img');
+    imagePreviewImage.className = 'phab-admin-image-preview-image';
+    imagePreviewImage.alt = 'Фото';
+    imagePreviewStage.appendChild(imagePreviewImage);
+
+    var imagePreviewMeta = document.createElement('div');
+    imagePreviewMeta.className = 'phab-admin-image-preview-meta';
+    imagePreviewBody.appendChild(imagePreviewMeta);
+
     var quickReplyEditorForm = document.createElement('div');
     quickReplyEditorForm.className =
       'phab-admin-detail-card phab-admin-detail-span-2';
@@ -6651,6 +6788,15 @@
       quickReplyCreateBtn: quickReplyCreateBtn,
       quickReplyTable: quickReplyTable,
       quickReplyModal: quickReplyModal,
+      imagePreviewModal: imagePreviewModal,
+      imagePreviewCard: imagePreviewCard,
+      imagePreviewTitle: imagePreviewTitle,
+      imagePreviewSubtitle: imagePreviewSubtitle,
+      imagePreviewBody: imagePreviewBody,
+      imagePreviewImage: imagePreviewImage,
+      imagePreviewMeta: imagePreviewMeta,
+      imagePreviewSaveBtn: imagePreviewSaveBtn,
+      imagePreviewCloseBtn: imagePreviewCloseBtn,
       quickReplyModalTitle: quickReplyModalTitle,
       quickReplyModalBody: quickReplyModalBody,
       quickReplySaveBtn: quickReplySaveBtn,
@@ -7200,6 +7346,8 @@
       gameChatGameId: null,
       gameChatThreadId: null,
       selectedThreadId: null,
+      imagePreviewAttachment: null,
+      imagePreviewDownloading: false,
       mobileConversationOpen: false,
       mobileFiltersSheetOpen: false,
       includeServiceMessages: loadStoredIncludeServiceMessages(false),
@@ -8621,6 +8769,170 @@
       }
       var precision = unitIndex === 0 || value >= 10 ? 0 : 1;
       return value.toFixed(precision).replace(/\.0$/, '') + ' ' + units[unitIndex];
+    }
+
+    function resolveImageAttachmentExtension(attachment) {
+      var mimeType = String(attachment && attachment.mimeType || '').trim().toLowerCase();
+      if (mimeType === 'image/png') {
+        return 'png';
+      }
+      if (mimeType === 'image/webp') {
+        return 'webp';
+      }
+      if (mimeType === 'image/gif') {
+        return 'gif';
+      }
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        return 'heic';
+      }
+      if (mimeType === 'image/svg+xml') {
+        return 'svg';
+      }
+      if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+        return 'jpg';
+      }
+
+      var url = String(attachment && attachment.url || '').trim();
+      var match = url.match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i);
+      if (match && match[1]) {
+        return String(match[1]).toLowerCase();
+      }
+      return 'jpg';
+    }
+
+    function resolveImageAttachmentDownloadName(attachment) {
+      var rawName = String(attachment && attachment.name || '').trim();
+      var extension = resolveImageAttachmentExtension(attachment);
+      if (rawName) {
+        if (/\.[a-z0-9]{2,5}$/i.test(rawName)) {
+          return rawName;
+        }
+        return rawName + '.' + extension;
+      }
+      return 'dialog-photo-' + String(Date.now()) + '.' + extension;
+    }
+
+    function appendImagePreviewMetaChip(container, value) {
+      var text = String(value || '').trim();
+      if (!text) {
+        return;
+      }
+      var chip = document.createElement('span');
+      chip.className = 'phab-admin-image-preview-meta-chip';
+      chip.textContent = text;
+      container.appendChild(chip);
+    }
+
+    function renderImagePreviewMeta(attachment) {
+      clearNode(dom.imagePreviewMeta);
+      if (!attachment) {
+        return;
+      }
+      appendImagePreviewMetaChip(
+        dom.imagePreviewMeta,
+        attachment.name || resolveImageAttachmentDownloadName(attachment)
+      );
+      if (attachment.size) {
+        appendImagePreviewMetaChip(dom.imagePreviewMeta, formatFileSize(attachment.size));
+      }
+      if (attachment.mimeType) {
+        appendImagePreviewMetaChip(dom.imagePreviewMeta, attachment.mimeType);
+      }
+    }
+
+    function closeImagePreviewModal() {
+      dom.imagePreviewModal.classList.add('phab-admin-hidden');
+      dom.imagePreviewTitle.textContent = 'Фото';
+      dom.imagePreviewSubtitle.textContent = 'Откройте оригинал и сохраните на устройство';
+      dom.imagePreviewImage.removeAttribute('src');
+      dom.imagePreviewImage.alt = 'Фото';
+      clearNode(dom.imagePreviewMeta);
+      dom.imagePreviewSaveBtn.disabled = false;
+      dom.imagePreviewSaveBtn.textContent = 'Сохранить';
+      state.imagePreviewAttachment = null;
+      state.imagePreviewDownloading = false;
+    }
+
+    function openImagePreviewModal(attachment) {
+      var normalized = normalizeMessageAttachments([attachment]);
+      if (normalized.length === 0) {
+        return;
+      }
+      var current = normalized[0];
+      state.imagePreviewAttachment = current;
+      state.imagePreviewDownloading = false;
+      dom.imagePreviewTitle.textContent = current.name || 'Фото в диалоге';
+      dom.imagePreviewSubtitle.textContent = resolveImageAttachmentDownloadName(current);
+      dom.imagePreviewImage.src = current.url;
+      dom.imagePreviewImage.alt = current.name || 'Фото в диалоге';
+      dom.imagePreviewSaveBtn.disabled = false;
+      dom.imagePreviewSaveBtn.textContent = 'Сохранить';
+      renderImagePreviewMeta(current);
+      dom.imagePreviewModal.classList.remove('phab-admin-hidden');
+    }
+
+    function triggerAttachmentDownload(downloadUrl, fileName) {
+      var link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.rel = 'noopener noreferrer';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(function () {
+        if (link.parentNode) {
+          link.parentNode.removeChild(link);
+        }
+      }, 0);
+    }
+
+    async function saveImagePreviewAttachment() {
+      var attachment = state.imagePreviewAttachment;
+      if (!attachment || state.imagePreviewDownloading) {
+        return;
+      }
+
+      var url = String(attachment.url || '').trim();
+      if (!url) {
+        throw new Error('Фото недоступно для сохранения');
+      }
+
+      state.imagePreviewDownloading = true;
+      dom.imagePreviewSaveBtn.disabled = true;
+      dom.imagePreviewSaveBtn.textContent = 'Сохраняем...';
+
+      var fileName = resolveImageAttachmentDownloadName(attachment);
+
+      try {
+        if (/^(data|blob):/i.test(url)) {
+          triggerAttachmentDownload(url, fileName);
+          return;
+        }
+
+        try {
+          var response = await window.fetch(url, { credentials: 'omit' });
+          if (!response || !response.ok) {
+            throw new Error('download_failed');
+          }
+          var blob = await response.blob();
+          var objectUrl = window.URL.createObjectURL(blob);
+          try {
+            triggerAttachmentDownload(objectUrl, fileName);
+          } finally {
+            window.setTimeout(function () {
+              window.URL.revokeObjectURL(objectUrl);
+            }, 1500);
+          }
+        } catch (_error) {
+          triggerAttachmentDownload(url, fileName);
+        }
+      } finally {
+        state.imagePreviewDownloading = false;
+        if (!dom.imagePreviewModal.classList.contains('phab-admin-hidden')) {
+          dom.imagePreviewSaveBtn.disabled = false;
+          dom.imagePreviewSaveBtn.textContent = 'Сохранить';
+        }
+      }
     }
 
     function normalizeMessageAttachments(value) {
@@ -10698,19 +11010,63 @@
       });
     }
 
+    async function ensureCurrentDialogFiltersPageFilled() {
+      var minCount = Math.max(
+        1,
+        Number(state.dialogPageSize || DIALOGS_PAGE_SIZE) || DIALOGS_PAGE_SIZE
+      );
+      var initialSelectedThreadId = state.selectedThreadId;
+      var safetyCounter = 0;
+      var loadedMore = false;
+
+      while (
+        state.activeTab === 'messages' &&
+        !state.dialogsLoadingMore &&
+        state.hasMoreDialogs &&
+        state.dialogs.length < minCount &&
+        safetyCounter < 20
+      ) {
+        var previousAllDialogsCount = Array.isArray(state.allDialogs)
+          ? state.allDialogs.length
+          : 0;
+        await loadDialogs({
+          append: true,
+          silent: true
+        });
+        loadedMore = true;
+        safetyCounter += 1;
+
+        var nextAllDialogsCount = Array.isArray(state.allDialogs)
+          ? state.allDialogs.length
+          : 0;
+        if (nextAllDialogsCount <= previousAllDialogsCount) {
+          break;
+        }
+      }
+
+      return {
+        loadedMore: loadedMore,
+        selectionChanged: state.selectedThreadId !== initialSelectedThreadId
+      };
+    }
+
     async function setDialogStationFilters(nextFilters) {
       state.dialogStationFilters = Array.isArray(nextFilters) ? nextFilters.slice() : [];
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
         silent: true
       });
+      var fillResult = await ensureCurrentDialogFiltersPageFilled();
 
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
 
-      if (dialogsResult && dialogsResult.selectionChanged) {
+      if (
+        (dialogsResult && dialogsResult.selectionChanged) ||
+        (fillResult && fillResult.selectionChanged)
+      ) {
         if (isMobileChatMode() && !state.mobileConversationOpen) {
           await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
         } else {
@@ -10725,7 +11081,7 @@
       state.dialogSearchPhoneDigits = resolvePhoneSearchDigits(state.dialogSearchQuery);
 
       if (state.dialogSearchPhoneDigits || previousPhoneSearch) {
-        await refreshDialogsView();
+        await refreshDialogsView({ ensureMinimumDialogs: true });
         return;
       }
 
@@ -10733,13 +11089,17 @@
         forceRender: true,
         silent: true
       });
+      var fillResult = await ensureCurrentDialogFiltersPageFilled();
 
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
 
-      if (dialogsResult && dialogsResult.selectionChanged) {
+      if (
+        (dialogsResult && dialogsResult.selectionChanged) ||
+        (fillResult && fillResult.selectionChanged)
+      ) {
         if (isMobileChatMode() && !state.mobileConversationOpen) {
           await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
         } else {
@@ -11377,8 +11737,11 @@
           var link = document.createElement('a');
           link.className = 'phab-admin-message-image-link';
           link.href = attachment.url;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
+          link.setAttribute('aria-label', 'Открыть фото');
+          link.addEventListener('click', function (event) {
+            event.preventDefault();
+            openImagePreviewModal(attachment);
+          });
 
           var image = document.createElement('img');
           image.className = 'phab-admin-message-image';
@@ -19080,18 +19443,26 @@
       renderDialogHeader();
     }
 
-    async function refreshDialogsView() {
+    async function refreshDialogsView(options) {
+      var opts = options || {};
       var dialogsResult = await loadDialogs();
+      var fillResult = opts.ensureMinimumDialogs === true
+        ? await ensureCurrentDialogFiltersPageFilled()
+        : null;
+      var selectionChanged = Boolean(
+        (dialogsResult && dialogsResult.selectionChanged) ||
+        (fillResult && fillResult.selectionChanged)
+      );
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
       await loadMessages(
-        dialogsResult && dialogsResult.selectionChanged
+        selectionChanged
           ? { forceRender: true, forceScrollBottom: true, forceRefresh: true }
           : { preserveScroll: true, forceRefresh: true }
       );
-      if (dialogsResult && dialogsResult.selectionChanged) {
+      if (selectionChanged) {
         await ensureSelectedDialogVivaCabinet();
       }
     }
@@ -19928,6 +20299,17 @@
       dom.quickReplyCreateBtn.addEventListener('click', function () {
         openQuickReplyEditor(null);
       });
+      dom.imagePreviewCloseBtn.addEventListener('click', function () {
+        closeImagePreviewModal();
+      });
+      dom.imagePreviewSaveBtn.addEventListener('click', function () {
+        saveImagePreviewAttachment().catch(handleError);
+      });
+      dom.imagePreviewModal.addEventListener('click', function (event) {
+        if (event.target === dom.imagePreviewModal) {
+          closeImagePreviewModal();
+        }
+      });
       dom.quickReplyModalCloseBtn.addEventListener('click', function () {
         closeQuickReplyEditor();
       });
@@ -20031,6 +20413,10 @@
       });
       documentKeydownHandler = function (event) {
         if (event.key !== 'Escape') {
+          return;
+        }
+        if (!dom.imagePreviewModal.classList.contains('phab-admin-hidden')) {
+          closeImagePreviewModal();
           return;
         }
         if (!dom.communityFeedEditorModal.classList.contains('phab-admin-hidden')) {
