@@ -4185,6 +4185,9 @@
         if (query.phone) {
           params.set('phone', String(query.phone));
         }
+        if (query.stationId) {
+          params.set('stationId', String(query.stationId));
+        }
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/messenger/dialogs' + suffix, 'GET');
       },
@@ -10174,9 +10177,15 @@
         canonicalWriteStationId ||
         currentStationId ||
         'station';
+      var stationIdForFilter =
+        canonicalWriteStationId ||
+        currentStationId ||
+        fallbackStationId ||
+        '';
       return {
         key: 'station:' + rawKey,
-        label: stationLabel || currentStationId
+        label: stationLabel || currentStationId,
+        stationId: stationIdForFilter || undefined
       };
     }
 
@@ -10192,8 +10201,12 @@
             stationMap[stationInfo.key] = {
               key: stationInfo.key,
               label: stationInfo.label,
+              stationId: stationInfo.stationId,
               count: 0
             };
+          }
+          if (!stationMap[stationInfo.key].stationId && stationInfo.stationId) {
+            stationMap[stationInfo.key].stationId = stationInfo.stationId;
           }
           stationMap[stationInfo.key].count += 1;
         } else {
@@ -10250,6 +10263,26 @@
         }
         return Boolean(stationInfo && stationInfo.key === filterKey);
       });
+    }
+
+    function resolveServerDialogStationId(filters) {
+      var activeFilters = Array.isArray(filters) ? filters : [];
+      if (activeFilters.length !== 1) {
+        return null;
+      }
+
+      var filterKey = String(activeFilters[0] || '').trim();
+      if (!filterKey || filterKey === DIALOG_FILTER_NO_STATION || filterKey === DIALOG_FILTER_NO_PHONE) {
+        return null;
+      }
+
+      var option = (Array.isArray(state.dialogFilterOptions) ? state.dialogFilterOptions : []).find(
+        function (item) {
+          return item && item.key === filterKey;
+        }
+      );
+      var stationId = String(option && option.stationId || '').trim();
+      return stationId || null;
     }
 
     function renderDialogFilters() {
@@ -10818,7 +10851,15 @@
         return !shouldHideDialog(dialog);
       });
       var previousDialogs = Array.isArray(state.dialogs) ? state.dialogs.slice() : [];
-      var nextFilterOptions = buildDialogFilterOptions(fullList);
+      var computedFilterOptions = buildDialogFilterOptions(fullList);
+      var nextFilterOptions =
+        opts.preserveFilterOptions === true &&
+        Array.isArray(state.dialogFilterOptions) &&
+        state.dialogFilterOptions.length > 0
+          ? state.dialogFilterOptions.map(function (item) {
+              return Object.assign({}, item);
+            })
+          : computedFilterOptions;
       var allowedFilterKeys = nextFilterOptions.map(function (option) {
         return option.key;
       });
@@ -11051,12 +11092,22 @@
     }
 
     async function setDialogStationFilters(nextFilters) {
+      var previousServerStationId = resolveServerDialogStationId(state.dialogStationFilters);
       state.dialogStationFilters = Array.isArray(nextFilters) ? nextFilters.slice() : [];
+      var nextServerStationId = resolveServerDialogStationId(state.dialogStationFilters);
+
+      if (previousServerStationId !== nextServerStationId) {
+        await refreshDialogsView();
+        return;
+      }
+
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
         silent: true
       });
-      var fillResult = await ensureCurrentDialogFiltersPageFilled();
+      var fillResult = nextServerStationId
+        ? null
+        : await ensureCurrentDialogFiltersPageFilled();
 
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
@@ -11089,7 +11140,9 @@
         forceRender: true,
         silent: true
       });
-      var fillResult = await ensureCurrentDialogFiltersPageFilled();
+      var fillResult = resolveServerDialogStationId(state.dialogStationFilters)
+        ? null
+        : await ensureCurrentDialogFiltersPageFilled();
 
       if (!state.selectedThreadId) {
         applyMessages([], { forceRender: true, forceScrollBottom: true });
@@ -19395,9 +19448,12 @@
     async function loadDialogs(options) {
       var opts = options || {};
       var append = opts.append === true;
+      var serverStationId = resolveServerDialogStationId(state.dialogStationFilters);
       var limit = append
         ? state.dialogPageSize
-        : Math.max(state.allDialogs.length || state.dialogPageSize, state.dialogPageSize);
+        : state.dialogSearchPhoneDigits || serverStationId
+          ? state.dialogPageSize
+          : Math.max(state.allDialogs.length || state.dialogPageSize, state.dialogPageSize);
       var offset = append ? state.allDialogs.length : 0;
 
       if (append) {
@@ -19409,16 +19465,23 @@
           (await api.getLegacyDialogs({
             limit: limit,
             offset: offset,
-            phone: state.dialogSearchPhoneDigits || undefined
+            phone: state.dialogSearchPhoneDigits || undefined,
+            stationId: serverStationId || undefined
           })) || [];
         var normalizedDialogs = legacyDialogs.map(normalizeLegacyDialog).filter(Boolean);
         state.hasMoreDialogs = normalizedDialogs.length >= limit;
+        var applyOptions = Object.assign({}, opts, {
+          preserveFilterOptions: Boolean(serverStationId)
+        });
 
         if (append) {
-          return applyDialogs(mergeDialogCollections(state.allDialogs, normalizedDialogs), opts);
+          return applyDialogs(
+            mergeDialogCollections(state.allDialogs, normalizedDialogs),
+            applyOptions
+          );
         }
 
-        return applyDialogs(normalizedDialogs, opts);
+        return applyDialogs(normalizedDialogs, applyOptions);
       } finally {
         if (append) {
           state.dialogsLoadingMore = false;
@@ -19445,8 +19508,12 @@
 
     async function refreshDialogsView(options) {
       var opts = options || {};
+      var shouldEnsureMinimumDialogs =
+        opts.ensureMinimumDialogs === true &&
+        !state.dialogSearchPhoneDigits &&
+        !resolveServerDialogStationId(state.dialogStationFilters);
       var dialogsResult = await loadDialogs();
-      var fillResult = opts.ensureMinimumDialogs === true
+      var fillResult = shouldEnsureMinimumDialogs
         ? await ensureCurrentDialogFiltersPageFilled()
         : null;
       var selectionChanged = Boolean(

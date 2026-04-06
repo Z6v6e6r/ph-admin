@@ -46,6 +46,7 @@ interface MongoGameDoc {
   status?: unknown;
   archived?: unknown;
   createdAt?: unknown;
+  createdTs?: unknown;
   updatedAt?: unknown;
   organizer?: {
     id?: unknown;
@@ -140,6 +141,7 @@ export class GamesService implements OnModuleDestroy {
   private readonly mongoCollectionName = this.readEnv('GAMES_MONGODB_COLLECTION') ?? 'lk_games';
   private readonly mongoEventsCollectionName =
     this.readEnv('GAMES_EVENTS_MONGODB_COLLECTION') ?? 'events';
+  private readonly analyticsTimeZone = this.readEnv('GAMES_ANALYTICS_TIMEZONE') ?? 'Europe/Moscow';
 
   private readonly gameChatMongoUri =
     this.readEnv('GAMES_CHAT_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
@@ -296,6 +298,7 @@ export class GamesService implements OnModuleDestroy {
             status: 1,
             archived: 1,
             createdAt: 1,
+            createdTs: 1,
             updatedAt: 1,
             organizer: 1,
             participants: 1,
@@ -518,7 +521,7 @@ export class GamesService implements OnModuleDestroy {
     const normalizedTo = this.normalizeAnalyticsDateValue(filters?.to);
     const docs = (await collection
       .find(
-        {},
+        { archived: { $ne: true } },
         {
           projection: {
             booking: 1,
@@ -528,7 +531,9 @@ export class GamesService implements OnModuleDestroy {
             participantPhones: 1,
             payment: 1,
             metadata: 1,
-            createdAt: 1
+            createdAt: 1,
+            createdTs: 1,
+            updatedAt: 1
           }
         }
       )
@@ -765,14 +770,7 @@ export class GamesService implements OnModuleDestroy {
     if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
       return text;
     }
-    const parsed = new Date(text);
-    if (Number.isNaN(parsed.getTime())) {
-      return null;
-    }
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, '0');
-    const day = String(parsed.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return this.toAnalyticsDateKey(text);
   }
 
   private resolveAnalyticsStationName(doc: MongoGameDoc): string {
@@ -785,12 +783,20 @@ export class GamesService implements OnModuleDestroy {
   }
 
   private resolveAnalyticsCreatedDate(doc: MongoGameDoc): string | null {
-    const createdAt = this.readIsoDateValue(doc.createdAt);
-    if (createdAt && createdAt.length >= 10) {
-      return createdAt.slice(0, 10);
+    const createdDateKey = this.toAnalyticsDateKey(this.resolveGameCreatedAt(doc));
+    if (createdDateKey) {
+      return createdDateKey;
     }
 
-    return null;
+    const fallbackCandidates = [doc.booking?.timeFromIso, doc.booking?.date, doc.updatedAt];
+    for (const candidate of fallbackCandidates) {
+      const dateKey = this.toAnalyticsDateKey(candidate);
+      if (dateKey) {
+        return dateKey;
+      }
+    }
+
+    return this.toAnalyticsDateKey(this.toIsoFromObjectId(doc._id));
   }
 
   private calculateAnalyticsPlayersAdded(doc: MongoGameDoc): number {
@@ -1318,7 +1324,7 @@ export class GamesService implements OnModuleDestroy {
       status: this.normalizeMongoStatus(rawStatus, doc.archived),
       rawStatus: rawStatus ?? undefined,
       startsAt: startsAt ?? undefined,
-      createdAt: this.readString(doc.createdAt) ?? undefined,
+      createdAt: this.resolveGameCreatedAt(doc) ?? undefined,
       updatedAt: this.readString(doc.updatedAt) ?? undefined,
       organizerName: this.readString(doc.organizer?.name) ?? undefined,
       participantNames,
@@ -1981,6 +1987,95 @@ export class GamesService implements OnModuleDestroy {
       }
     }
     return null;
+  }
+
+  private toIsoFromObjectId(value: unknown): string | null {
+    if (value instanceof ObjectId) {
+      return value.getTimestamp().toISOString();
+    }
+
+    const objectId = this.readObjectId(value);
+    if (!objectId || !ObjectId.isValid(objectId)) {
+      return null;
+    }
+
+    return new ObjectId(objectId).getTimestamp().toISOString();
+  }
+
+  private resolveGameCreatedAt(doc: MongoGameDoc): string | null {
+    const metadata = this.toRecord(doc.metadata);
+    const candidates = [doc.createdAt, doc.createdTs, metadata.createdAt, metadata.createdTs];
+    for (const candidate of candidates) {
+      const iso = this.normalizeIsoDateCandidate(candidate);
+      if (iso) {
+        return iso;
+      }
+    }
+
+    return this.toIsoFromObjectId(doc._id);
+  }
+
+  private normalizeIsoDateCandidate(value: unknown): string | null {
+    const fromEpoch = this.toIsoFromEpoch(value);
+    if (fromEpoch) {
+      return fromEpoch;
+    }
+
+    const text = this.readIsoDateValue(value);
+    if (!text) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return `${text}T00:00:00.000Z`;
+    }
+
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return parsed.toISOString();
+  }
+
+  private toAnalyticsDateKey(value: unknown): string | null {
+    const text = this.readString(value);
+    if (text && /^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return text;
+    }
+
+    const iso = this.normalizeIsoDateCandidate(value);
+    if (!iso) {
+      return null;
+    }
+
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return this.formatDateKeyInAnalyticsTimeZone(parsed);
+  }
+
+  private formatDateKeyInAnalyticsTimeZone(value: Date): string {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: this.analyticsTimeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).formatToParts(value);
+      const year = parts.find((part) => part.type === 'year')?.value;
+      const month = parts.find((part) => part.type === 'month')?.value;
+      const day = parts.find((part) => part.type === 'day')?.value;
+      if (year && month && day) {
+        return `${year}-${month}-${day}`;
+      }
+    } catch {
+      // Fallback to UTC date key if timezone is not supported by the runtime.
+    }
+
+    return value.toISOString().slice(0, 10);
   }
 
   private readString(value: unknown): string | null {
