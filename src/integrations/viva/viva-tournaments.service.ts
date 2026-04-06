@@ -257,6 +257,8 @@ export class VivaTournamentsService {
       this.readString(exercise.state) ??
       this.readString(exercise.bookingStatus) ??
       this.readString(exercise.booking_status);
+    const tournamentType = this.resolveTournamentType(name, exerciseType);
+    const maxPlayers = this.resolveMaxPlayers(exercise);
 
     return {
       id,
@@ -278,6 +280,8 @@ export class VivaTournamentsService {
       trainerId: trainerId ?? undefined,
       trainerName: trainerId ? trainerNames.get(trainerId) : undefined,
       exerciseTypeId: exerciseType.id,
+      tournamentType: tournamentType ?? undefined,
+      maxPlayers: maxPlayers ?? undefined,
       startsAt: startsAt ?? undefined,
       endsAt: endsAt ?? undefined,
       createdAt:
@@ -343,6 +347,94 @@ export class VivaTournamentsService {
     return /турнир|лига|tournament|cup/i.test(
       [exerciseName, exerciseType.name].filter(Boolean).join(' ')
     );
+  }
+
+  private resolveTournamentType(
+    exerciseName: string | undefined,
+    exerciseType: VivaExerciseTypeResolution
+  ): string | undefined {
+    const haystack = [exerciseName, exerciseType.name]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (!haystack) {
+      return undefined;
+    }
+    if (/американо|americano/.test(haystack)) {
+      return 'Американо';
+    }
+    if (/мексикано|mexicano/.test(haystack)) {
+      return 'Мексикано';
+    }
+    if (/лига|league/.test(haystack)) {
+      return 'Лига';
+    }
+    if (/кубок|cup/.test(haystack)) {
+      return 'Кубок';
+    }
+    if (/сетк|grid|playoff|knockout/.test(haystack)) {
+      return 'Сетка';
+    }
+    return undefined;
+  }
+
+  private resolveMaxPlayers(exercise: VivaRawRecord): number | undefined {
+    const keys = [
+      'maxPlayers',
+      'max_players',
+      'playersMax',
+      'players_max',
+      'maxParticipants',
+      'max_participants',
+      'participantsLimit',
+      'participants_limit',
+      'participantLimit',
+      'participant_limit',
+      'visitorsLimit',
+      'visitors_limit',
+      'maxVisitors',
+      'max_visitors',
+      'capacity',
+      'placeCount',
+      'place_count',
+      'placesCount',
+      'places_count',
+      'countPlaces',
+      'count_places',
+      'slotsLimit',
+      'slots_limit',
+      'slotsCount',
+      'slots_count',
+      'clientsLimit',
+      'clients_limit',
+      'peopleLimit',
+      'people_limit'
+    ];
+    const sources = [
+      exercise,
+      this.readRecord(exercise.booking),
+      this.readRecord(exercise.settings),
+      this.readRecord(exercise.metadata),
+      this.readRecord(exercise.exerciseType),
+      this.readRecord(exercise.exercise_type),
+      this.readRecord(exercise.type),
+      this.readRecord(exercise.service)
+    ];
+
+    for (const source of sources) {
+      if (!source) {
+        continue;
+      }
+      for (const key of keys) {
+        const value = this.readPositiveInteger(source[key]);
+        if (value) {
+          return value;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   private normalizeTournamentStatus(
@@ -580,6 +672,30 @@ export class VivaTournamentsService {
 
     const trimmed = value.trim();
     return trimmed || undefined;
+  }
+
+  private readPositiveInteger(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return Math.trunc(value);
+    }
+
+    const normalized = this.readString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.trunc(parsed);
+    }
+
+    const digits = normalized.replace(/\D+/g, '');
+    if (!digits) {
+      return undefined;
+    }
+
+    const numeric = Number(digits);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : undefined;
   }
 
   private readRecord(value: unknown): VivaRawRecord | null {

@@ -351,9 +351,14 @@ export class TournamentsService {
     tournament: Tournament,
     customTournament?: CustomTournament
   ): Tournament {
+    const sourceTournamentSnapshot = this.buildSourceTournamentSnapshot(tournament);
+
     if (!customTournament) {
       return {
         ...tournament,
+        details: {
+          sourceTournamentSnapshot
+        },
         linkedCustomTournamentId: undefined,
         publicUrl: undefined,
         slug: undefined,
@@ -371,6 +376,9 @@ export class TournamentsService {
 
     return {
       ...tournament,
+      details: {
+        sourceTournamentSnapshot
+      },
       linkedCustomTournamentId: customTournament.id,
       sourceTournamentId: customTournament.sourceTournamentId,
       slug: customTournament.slug,
@@ -406,10 +414,11 @@ export class TournamentsService {
       status: mutation.status ?? TournamentStatus.REGISTRATION,
       startsAt: this.pickString(mutation.startsAt) ?? sourceTournament.startsAt,
       endsAt: this.pickString(mutation.endsAt) ?? sourceTournament.endsAt,
-      tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
+      tournamentType:
+        this.pickString(mutation.tournamentType) ?? sourceTournament.tournamentType ?? 'AMERICANO',
       accessLevels: Array.isArray(mutation.accessLevels) ? mutation.accessLevels : [],
       gender: mutation.gender ?? 'MIXED',
-      maxPlayers: Number(mutation.maxPlayers || 0) || 8,
+      maxPlayers: Number(mutation.maxPlayers || 0) || Number(sourceTournament.maxPlayers || 0) || 8,
       participants: Array.isArray(mutation.participants) ? mutation.participants : [],
       waitlist: Array.isArray(mutation.waitlist) ? mutation.waitlist : [],
       allowedManagerPhones: Array.isArray(mutation.allowedManagerPhones)
@@ -470,7 +479,9 @@ export class TournamentsService {
       studioName: sourceTournament.studioName,
       trainerId: sourceTournament.trainerId,
       trainerName: sourceTournament.trainerName,
-      exerciseTypeId: sourceTournament.exerciseTypeId
+      exerciseTypeId: sourceTournament.exerciseTypeId,
+      tournamentType: sourceTournament.tournamentType,
+      maxPlayers: sourceTournament.maxPlayers
     };
   }
 
