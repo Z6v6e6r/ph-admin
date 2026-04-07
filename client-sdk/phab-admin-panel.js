@@ -15349,6 +15349,26 @@
       return digits;
     }
 
+    function formatCommunityFeedPhone(value) {
+      var digits = normalizeCommunityFeedPhone(value);
+      if (!digits) {
+        return '';
+      }
+      if (digits.length === 11 && digits.charAt(0) === '7') {
+        return (
+          '+7 (' +
+          digits.slice(1, 4) +
+          ') ' +
+          digits.slice(4, 7) +
+          '-' +
+          digits.slice(7, 9) +
+          '-' +
+          digits.slice(9, 11)
+        );
+      }
+      return '+' + digits;
+    }
+
     function toCommunityText(value) {
       if (typeof value === 'string') {
         var normalized = value.trim();
@@ -15568,7 +15588,17 @@
       var source = normalizeObject(value);
       var eventSource = normalizeObject(source.event || source.game || source.match || source.tournament);
       var venueSource = normalizeObject(source.venue || source.location || source.place);
+      var memberSource = normalizeObject(
+        source.member ||
+          source.memberPreview ||
+          source.author ||
+          source.user ||
+          source.client ||
+          eventSource.member ||
+          eventSource.author
+      );
       var sources = [source, eventSource, venueSource];
+      var memberSources = [source, memberSource, normalizeObject(source.memberPreview), normalizeObject(source.author)];
       var persistedId =
         pickCommunityRecordText(source, ['id', 'postId', 'uuid', 'feedItemId', 'itemId']) || '';
       var kindSource =
@@ -15592,6 +15622,23 @@
         pickCommunityRecordText(source.memberPreview, ['name', 'displayName']) ||
         (community.createdBy && (community.createdBy.name || community.createdBy.phone || community.createdBy.id)) ||
         'Участник';
+      var memberName =
+        pickCommunityRecordsText(memberSources, ['memberName', 'name', 'displayName', 'fullName']) || '';
+      var memberPhone =
+        normalizeCommunityFeedPhone(
+          pickCommunityRecordsText(memberSources, [
+            'memberPhone',
+            'authorPhone',
+            'phone',
+            'phoneNorm',
+            'phoneNumber',
+            'mobile'
+          ])
+        ) || '';
+      var memberLevel =
+        pickCommunityRecordsText(memberSources, ['levelLabel', 'rating', 'level']) ||
+        pickCommunityRecordsText(sources, ['levelLabel', 'rating', 'level']) ||
+        '';
       var participants = normalizeCommunityPreviewParticipants(source.participants);
       if (participants.length === 0) {
         participants = normalizeCommunityPreviewParticipants(source.players);
@@ -15625,8 +15672,7 @@
           String((community && (community.stationName || community.stationId)) || ''),
         courtName:
           pickCommunityRecordsText(sources, ['courtName', 'court', 'courtLabel', 'venueName']) || '',
-        levelLabel:
-          pickCommunityRecordsText(sources, ['levelLabel', 'rating', 'level']) || '',
+        levelLabel: memberLevel,
         priority:
           normalizeCommunityCount(
             pickCommunityRecordsNumber(sources, ['priority', 'sortOrder', 'weight'])
@@ -15675,6 +15721,8 @@
               : 'Открыть'),
         participants: participants,
         pendingMemberInfo: isPendingMemberInfo,
+        memberName: memberName,
+        memberPhone: memberPhone,
         city: String((community && community.city) || '').trim(),
         raw: source
       };
@@ -16591,6 +16639,7 @@
           body: 'Ожидает решения модератора.',
           authorName: String(model.pendingMembers[0].name || 'Игрок'),
           memberName: String(model.pendingMembers[0].name || 'Игрок'),
+          memberPhone: normalizeCommunityFeedPhone(model.pendingMembers[0].phone),
           levelLabel: String(model.pendingMembers[0].levelLabel || ''),
           city: String(community.city || '').trim(),
           publishedAt: String(model.pendingMembers[0].joinedAt || community.updatedAt || ''),
@@ -16975,19 +17024,35 @@
       );
     }
 
+    function isGenericCommunityPendingMemberInfoValue(value) {
+      var normalized = String(value || '').trim().toLowerCase();
+      return (
+        !normalized ||
+        normalized === 'игрок' ||
+        normalized === 'участник' ||
+        normalized === 'новая заявка' ||
+        normalized === 'новый участник'
+      );
+    }
+
     function getCommunityPendingMemberInfoName(post) {
       var explicitName = String(post && post.memberName || '').trim();
-      if (explicitName) {
+      if (!isGenericCommunityPendingMemberInfoValue(explicitName)) {
         return explicitName;
       }
       var title = String(post && post.title || '').trim();
       if (
         title &&
-        !/^нов(ый|ая)\s+(участник|заявка)$/i.test(title)
+        !/^нов(ый|ая)\s+(участник|заявка)$/i.test(title) &&
+        !isGenericCommunityPendingMemberInfoValue(title)
       ) {
         return title;
       }
-      return String(post && post.authorName || '').trim();
+      var authorName = String(post && post.authorName || '').trim();
+      if (!isGenericCommunityPendingMemberInfoValue(authorName)) {
+        return authorName;
+      }
+      return '';
     }
 
     function getCommunityPendingMemberInfoTitle(post) {
@@ -17001,6 +17066,12 @@
         parts.push(level);
       }
       return parts.join(' · ');
+    }
+
+    function getCommunityPendingMemberInfoMeta(post, community) {
+      var city = String(post && post.city || (community && community.city) || '').trim();
+      var phone = formatCommunityFeedPhone(post && post.memberPhone);
+      return [city, phone].filter(Boolean).join(' · ') || 'Город не указан';
     }
 
     function getCommunityPreviewFeedSegmentKey(post) {
@@ -17285,7 +17356,7 @@
         if (isPendingMemberInfoCard) {
           var city = document.createElement('div');
           city.className = 'phab-admin-community-feed-info-meta';
-          city.textContent = String(post.city || community.city || 'Город не указан');
+          city.textContent = getCommunityPendingMemberInfoMeta(post, community);
           content.appendChild(city);
         } else {
           var schedule = document.createElement('div');
