@@ -16590,6 +16590,8 @@
           title: String(model.pendingMembers[0].name || 'Новая заявка'),
           body: 'Ожидает решения модератора.',
           authorName: String(model.pendingMembers[0].name || 'Игрок'),
+          memberName: String(model.pendingMembers[0].name || 'Игрок'),
+          levelLabel: String(model.pendingMembers[0].levelLabel || ''),
           city: String(community.city || '').trim(),
           publishedAt: String(model.pendingMembers[0].joinedAt || community.updatedAt || ''),
           reportsCount: 0
@@ -16973,6 +16975,34 @@
       );
     }
 
+    function getCommunityPendingMemberInfoName(post) {
+      var explicitName = String(post && post.memberName || '').trim();
+      if (explicitName) {
+        return explicitName;
+      }
+      var title = String(post && post.title || '').trim();
+      if (
+        title &&
+        !/^нов(ый|ая)\s+(участник|заявка)$/i.test(title)
+      ) {
+        return title;
+      }
+      return String(post && post.authorName || '').trim();
+    }
+
+    function getCommunityPendingMemberInfoTitle(post) {
+      var parts = ['Новый участник'];
+      var name = getCommunityPendingMemberInfoName(post);
+      var level = String(post && post.levelLabel || '').trim();
+      if (name) {
+        parts.push(name);
+      }
+      if (level) {
+        parts.push(level);
+      }
+      return parts.join(' · ');
+    }
+
     function getCommunityPreviewFeedSegmentKey(post) {
       var variant = getCommunityPostVariant(post);
       if (variant === 'ad') {
@@ -17177,7 +17207,9 @@
         : variant === 'game' || variant === 'tournament' || variant === 'event'
           ? '20px'
           : '18px';
-      title.textContent = post.title;
+      title.textContent = isPendingMemberInfoCard
+        ? getCommunityPendingMemberInfoTitle(post)
+        : post.title;
       left.appendChild(kicker);
       left.appendChild(title);
       head.appendChild(left);
