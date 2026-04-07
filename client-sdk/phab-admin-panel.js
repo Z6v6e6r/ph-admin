@@ -15582,7 +15582,8 @@
         'Публикация сообщества';
       var body =
         pickCommunityRecordsText(sources, ['body', 'text', 'description', 'content']) || '';
-      if (isCommunityMemberJoinFeedEntry(source, title, body)) {
+      var isPendingMemberInfo = isCommunityMemberJoinFeedEntry(source, title, body);
+      if (isPendingMemberInfo) {
         kind = 'EVENT';
       }
       var author =
@@ -15670,9 +15671,11 @@
             : kind === 'TOURNAMENT' || kind === 'EVENT'
               ? 'Открыть событие'
               : kind === 'AD'
-                ? 'Открыть'
+              ? 'Открыть'
               : 'Открыть'),
         participants: participants,
+        pendingMemberInfo: isPendingMemberInfo,
+        city: String((community && community.city) || '').trim(),
         raw: source
       };
     }
