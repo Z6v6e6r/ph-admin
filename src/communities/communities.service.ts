@@ -101,12 +101,14 @@ export class CommunitiesService {
 
   async findAll(): Promise<Community[]> {
     if (this.communitiesPersistence.isEnabled()) {
-      const communities = await this.communitiesPersistence.listCommunities();
+      const communities = await this.communitiesPersistence.listCommunitySummaries();
       if (communities.length > 0) {
-        return communities;
+        return communities.map((community) => this.toCommunitySummary(community));
       }
     }
-    return this.lkPadelHubClient.listCommunities();
+    return (await this.lkPadelHubClient.listCommunities()).map((community) =>
+      this.toCommunitySummary(community)
+    );
   }
 
   async getPublicDirectory(options?: {
@@ -445,6 +447,16 @@ export class CommunitiesService {
     }
 
     return true;
+  }
+
+  private toCommunitySummary(community: Community): Community {
+    const summary = { ...community };
+    delete summary.members;
+    delete summary.pendingMembers;
+    delete summary.bannedMembers;
+    delete summary.feedItems;
+    delete summary.details;
+    return summary;
   }
 
   private matchesPublicCommunityFilters(

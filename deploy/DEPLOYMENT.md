@@ -45,6 +45,8 @@ Edit `.env.app` and `.env.nodered`:
 - set `ADMIN_AUTH_SECRET`
 - set `ADMIN_AUTH_USERS_JSON` (at least one staff user)
 - set LK source envs (`LK_PADELHUB_MODE`, URLs, token) as needed
+- for communities prefer `COMMUNITIES_MONGODB_URI`/`COMMUNITIES_MONGODB_DB`; if using HTTP fallback, set `LK_PADELHUB_COMMUNITIES_LIST_URL`
+- to split communities list/detail in HTTP fallback, also set `LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE`
 
 ## 3) Start services
 

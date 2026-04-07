@@ -206,6 +206,39 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return [];
   }
 
+  async listCommunitySummaries(): Promise<Community[]> {
+    const fallback = await this.primaryCollection();
+    const candidates = await this.readCollections(fallback);
+
+    for (const candidate of candidates) {
+      const items = await candidate.collection
+        .find(
+          { archived: { $ne: true } },
+          {
+            projection: {
+              members: 0,
+              pendingMembers: 0,
+              bannedMembers: 0,
+              feedItems: 0
+            }
+          }
+        )
+        .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+        .toArray();
+      const communities = items
+        .map((item) => this.toCommunity(item))
+        .filter((community): community is Community => community !== null);
+      if (communities.length > 0) {
+        this.logger.log(
+          `Communities summary source resolved: db=${candidate.dbName}, collection=${candidate.collectionName}, count=${communities.length}`
+        );
+        return communities;
+      }
+    }
+
+    return [];
+  }
+
   async findCommunityById(id: string): Promise<Community | null> {
     const match = await this.findDocumentWithSourceById(id);
     return match ? this.toCommunity(match.document) : null;
@@ -1061,7 +1094,10 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         ?? this.pickCountNumber(document.publicationsCount),
       pendingRequestsCount:
         this.pickCountNumber(document.pendingCount) ?? pendingMembers.length,
-      bannedMembersCount: bannedMembers.length,
+      bannedMembersCount:
+        this.pickCountNumber(
+          document.bannedMembersCount ?? document.bannedCount ?? document.blockedCount
+        ) ?? bannedMembers.length,
       createdAt: this.pickString(document.createdAt) ?? undefined,
       updatedAt: this.pickString(document.updatedAt) ?? undefined,
       lastActivityAt:

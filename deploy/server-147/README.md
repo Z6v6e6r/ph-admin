@@ -37,6 +37,9 @@ Required changes:
 - `ADMIN_AUTH_SECRET`
 - `ADMIN_AUTH_USERS_JSON`
 - `MONGODB_URI`, `MONGODB_DB`
+- для communities предпочтительно `COMMUNITIES_MONGODB_URI`, `COMMUNITIES_MONGODB_DB`, `COMMUNITIES_MONGODB_COLLECTION`
+- если communities идут по HTTP fallback: `LK_PADELHUB_COMMUNITIES_LIST_URL`
+- чтобы разрезать communities list/detail в HTTP fallback: `LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE`
 - `SUPPORT_MONGODB_DB=dialog` (primary backend для support)
 - `SUPPORT_WEB_MONGODB_DB=games` (чтобы `LK_WEB_MESSENGER` читал/писал в `games`)
 - при необходимости явно закрепить `MAX_BOT`: `SUPPORT_MAX_MONGODB_DB=dialog`

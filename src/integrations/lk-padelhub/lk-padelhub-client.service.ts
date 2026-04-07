@@ -11,7 +11,10 @@ export class LkPadelHubClientService {
   private readonly logger = new Logger(LkPadelHubClientService.name);
   private readonly gamesUrl = process.env.LK_PADELHUB_GAMES_URL;
   private readonly tournamentsUrl = process.env.LK_PADELHUB_TOURNAMENTS_URL;
-  private readonly communitiesUrl = process.env.LK_PADELHUB_COMMUNITIES_URL;
+  private readonly communitiesListUrl =
+    process.env.LK_PADELHUB_COMMUNITIES_LIST_URL ?? process.env.LK_PADELHUB_COMMUNITIES_URL;
+  private readonly communityByIdUrlTemplate =
+    process.env.LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE;
   private readonly token = process.env.LK_PADELHUB_API_TOKEN;
   private readonly mode: ClientMode = this.resolveMode();
 
@@ -41,7 +44,7 @@ export class LkPadelHubClientService {
   }
 
   async listCommunities(): Promise<Community[]> {
-    const payload = await this.resolveCommunitiesPayload();
+    const payload = await this.resolveCommunitiesListPayload();
 
     return this.unwrapArray(payload)
       .map((raw) => this.toCommunity(raw))
@@ -49,8 +52,34 @@ export class LkPadelHubClientService {
   }
 
   async getCommunityById(id: string): Promise<Community | null> {
+    const normalizedId = String(id ?? '').trim();
+    if (!normalizedId) {
+      return null;
+    }
+
+    const communityByIdUrl = this.buildCommunityByIdUrl(normalizedId);
+    if (communityByIdUrl) {
+      const payload = await this.fetchJson(communityByIdUrl, { allowNotFound: true });
+      if (payload === null) {
+        return null;
+      }
+
+      const directRecord = this.unwrapRecord(payload, ['community', 'item', 'data', 'result']);
+      if (directRecord) {
+        const community = this.toCommunity(directRecord);
+        if (community) {
+          return community;
+        }
+      }
+
+      const items = this.unwrapArray(payload)
+        .map((raw) => this.toCommunity(raw))
+        .filter((community): community is Community => community !== null);
+      return items.find((community) => community.id === normalizedId) ?? items[0] ?? null;
+    }
+
     const communities = await this.listCommunities();
-    return communities.find((community) => community.id === id) ?? null;
+    return communities.find((community) => community.id === normalizedId) ?? null;
   }
 
   async getTournamentById(id: string): Promise<Tournament | null> {
@@ -90,12 +119,12 @@ export class LkPadelHubClientService {
     return this.fetchJson(this.tournamentsUrl);
   }
 
-  private async resolveCommunitiesPayload(): Promise<unknown> {
+  private async resolveCommunitiesListPayload(): Promise<unknown> {
     const explicit = process.env.LK_PADELHUB_MODE?.trim().toLowerCase();
     const isProduction = process.env.NODE_ENV?.trim().toLowerCase() === 'production';
 
-    if (this.communitiesUrl) {
-      return this.fetchJson(this.communitiesUrl);
+    if (this.communitiesListUrl) {
+      return this.fetchJson(this.communitiesListUrl);
     }
 
     if (explicit === 'mock' && !isProduction) {
@@ -104,7 +133,7 @@ export class LkPadelHubClientService {
 
     if (explicit === 'http') {
       throw new InternalServerErrorException(
-        'LK_PADELHUB_COMMUNITIES_URL is required for communities HTTP mode'
+        'LK_PADELHUB_COMMUNITIES_LIST_URL or LK_PADELHUB_COMMUNITIES_URL is required for communities HTTP mode'
       );
     }
 
@@ -114,13 +143,22 @@ export class LkPadelHubClientService {
     return [];
   }
 
-  private async fetchJson(url: string): Promise<unknown> {
+  private async fetchJson(
+    url: string,
+    options?: {
+      allowNotFound?: boolean;
+    }
+  ): Promise<unknown> {
     const response = await fetch(url, {
       headers: {
         Accept: 'application/json',
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {})
       }
     });
+
+    if (options?.allowNotFound && response.status === 404) {
+      return null;
+    }
 
     if (!response.ok) {
       this.logger.error(`LK request failed: ${response.status} ${response.statusText}`);
@@ -130,6 +168,22 @@ export class LkPadelHubClientService {
     }
 
     return response.json();
+  }
+
+  private buildCommunityByIdUrl(id: string): string | null {
+    const template = this.communityByIdUrlTemplate?.trim();
+    if (!template) {
+      return null;
+    }
+
+    const encodedId = encodeURIComponent(id);
+    if (template.includes('{id}')) {
+      return template.replace(/\{id\}/g, encodedId);
+    }
+    if (template.includes(':id')) {
+      return template.replace(/:id\b/g, encodedId);
+    }
+    return template.replace(/\/?$/, '/') + encodedId;
   }
 
   private unwrapArray(payload: unknown): LkRawRecord[] {
@@ -150,6 +204,26 @@ export class LkPadelHubClientService {
     }
 
     return [];
+  }
+
+  private unwrapRecord(payload: unknown, keys: string[]): LkRawRecord | null {
+    if (Array.isArray(payload)) {
+      const items = payload.filter(this.isRecord);
+      return items[0] ?? null;
+    }
+
+    if (!this.isRecord(payload)) {
+      return null;
+    }
+
+    for (const key of keys) {
+      const value = payload[key];
+      if (this.isRecord(value)) {
+        return value;
+      }
+    }
+
+    return payload;
   }
 
   private toGame(raw: LkRawRecord): Game | null {

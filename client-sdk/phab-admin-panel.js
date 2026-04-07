@@ -4386,6 +4386,9 @@
       getCommunities: function () {
         return request('/communities', 'GET');
       },
+      getCommunity: function (communityId) {
+        return request('/communities/' + encodeURIComponent(communityId), 'GET');
+      },
       getCommunityFeed: function (communityId, query) {
         var params = new URLSearchParams();
         if (query && query.phone) {
@@ -7289,6 +7292,8 @@
       tournamentEditor: null,
       communities: [],
       selectedCommunityId: null,
+      communityDetailLoadingId: null,
+      communityDetailErrorById: Object.create(null),
       communitiesSearchQuery: '',
       communitiesStationFilter: 'ALL',
       communitiesStatusFilter: 'ALL',
@@ -13865,6 +13870,19 @@
       );
     }
 
+    function hasCommunityDetails(community) {
+      if (!community) {
+        return false;
+      }
+      return Boolean(
+        community.details ||
+          Array.isArray(community.members) ||
+          Array.isArray(community.pendingMembers) ||
+          Array.isArray(community.bannedMembers) ||
+          Array.isArray(community.feedItems)
+      );
+    }
+
     function normalizeCommunityMemberList(value) {
       return Array.isArray(value) ? value.filter(Boolean) : [];
     }
@@ -13988,7 +14006,8 @@
       return [communityId, action, getCommunityMemberKey(member)].join(':');
     }
 
-    function replaceCommunityRecord(updatedCommunity) {
+    function replaceCommunityRecord(updatedCommunity, options) {
+      var opts = options || {};
       if (!updatedCommunity || !updatedCommunity.id) {
         return;
       }
@@ -14005,7 +14024,10 @@
       if (!replaced) {
         state.communities = sortCommunities(state.communities.concat([updatedCommunity]));
       }
-      state.selectedCommunityId = updatedCommunity.id;
+      delete state.communityDetailErrorById[String(updatedCommunity.id)];
+      if (opts.select !== false) {
+        state.selectedCommunityId = updatedCommunity.id;
+      }
     }
 
     function clearCommunityCachedState(communityId) {
@@ -14028,12 +14050,47 @@
       delete state.communityRankingById[key];
       delete state.communityRankingLoadedById[key];
       delete state.communityRankingErrorById[key];
+      delete state.communityDetailErrorById[key];
+    }
+
+    async function ensureCommunityDetails(community) {
+      var communityId = String(community && community.id || '');
+      if (
+        !communityId ||
+        hasCommunityDetails(community) ||
+        state.communityDetailLoadingId === communityId ||
+        state.communityDetailErrorById[communityId]
+      ) {
+        return;
+      }
+
+      state.communityDetailLoadingId = communityId;
+      renderCommunityDetails();
+      try {
+        var detailedCommunity = await api.getCommunity(communityId);
+        replaceCommunityRecord(detailedCommunity, {
+          select: state.selectedCommunityId === communityId
+        });
+      } catch (error) {
+        state.communityDetailErrorById[communityId] =
+          error && error.message
+            ? String(error.message)
+            : 'Не удалось загрузить полную информацию по сообществу.';
+      } finally {
+        if (state.communityDetailLoadingId === communityId) {
+          state.communityDetailLoadingId = null;
+        }
+        renderCommunities();
+      }
     }
 
     function removeCommunityRecord(communityId) {
       var key = String(communityId || '');
       if (!key) {
         return;
+      }
+      if (state.communityDetailLoadingId === key) {
+        state.communityDetailLoadingId = null;
       }
       state.communities = sortCommunities(
         state.communities.filter(function (community) {
@@ -18553,6 +18610,13 @@
 
     function renderCommunityDetails() {
       var community = getSelectedCommunity();
+      var isCommunityDetailLoading = Boolean(
+        community &&
+          community.id &&
+          state.communityDetailLoadingId === String(community.id)
+      );
+      var communityDetailError =
+        community && community.id ? state.communityDetailErrorById[String(community.id)] : '';
       clearNode(dom.communityTags);
       clearNode(dom.communityLinks);
       clearNode(dom.communityStats);
@@ -18574,16 +18638,7 @@
         return;
       }
 
-      ensureCommunityLiveData(community).catch(handleError);
-
       var model = buildCommunityModeratorModel(community);
-      model.feedPosts = applyCommunityFeedModeration(community.id, getCommunityFeedPosts(community, model));
-      model.previewPosts = model.feedPosts.slice(0, 3);
-      model.chatMessages = getCommunityChatMessages(community, model);
-      model.previewMessages = getCommunityPreviewMessages(community, model);
-      model.rankingRows = getCommunityRankingRows(community, model);
-      model.previewRankingRows = model.rankingRows.slice(0, 5);
-      model.historyEntries = getCommunityHistoryEntries(community, model);
 
       renderCommunityAvatarNode(dom.communityAvatar, community);
       dom.communityPreviewCreateBtn.disabled = false;
@@ -18599,6 +18654,8 @@
       ]
         .filter(Boolean)
         .join(' · ');
+      dom.communityPreviewTitle.textContent = 'Модерация сообщества';
+      dom.communityPreviewMeta.textContent = String(community.name || 'Сообщество');
 
       dom.communityTags.appendChild(createCommunityStatusBadge(model.status));
       if (isCommunityVerified(community)) {
@@ -18621,6 +18678,18 @@
       if (community.minimumLevel) {
         dom.communityTags.appendChild(
           createCommunityPill('Уровень ' + String(community.minimumLevel), 'phab-admin-community-mini-chip')
+        );
+      }
+      if (isCommunityDetailLoading) {
+        dom.communityTags.appendChild(
+          createCommunityPill('Подгружаем детали', 'phab-admin-community-mini-chip')
+        );
+      } else if (communityDetailError) {
+        dom.communityTags.appendChild(
+          createCommunityPill(
+            'Ошибка загрузки деталей',
+            'phab-admin-community-signal phab-admin-community-signal-strong'
+          )
         );
       }
       getCommunityFocusTags(community).slice(0, 4).forEach(function (tag) {
@@ -18757,6 +18826,45 @@
         });
         dom.communityTabs.appendChild(button);
       });
+
+      if (!hasCommunityDetails(community)) {
+        if (!communityDetailError && !isCommunityDetailLoading) {
+          ensureCommunityDetails(community).catch(handleError);
+        }
+        if (communityDetailError) {
+          var retryWrap = document.createElement('div');
+          retryWrap.className = 'phab-admin-empty';
+          retryWrap.textContent = String(communityDetailError);
+          var retryButton = document.createElement('button');
+          retryButton.type = 'button';
+          retryButton.className = 'phab-admin-btn-secondary';
+          retryButton.style.marginTop = '12px';
+          retryButton.textContent = 'Повторить загрузку';
+          retryButton.addEventListener('click', function () {
+            delete state.communityDetailErrorById[String(community.id)];
+            ensureCommunityDetails(community).catch(handleError);
+          });
+          dom.communityAdminGrid.appendChild(retryWrap);
+          dom.communityAdminGrid.appendChild(retryButton);
+          appendCommunityListEmpty(
+            dom.communityPreviewBody,
+            'Не удалось загрузить полную информацию по сообществу.'
+          );
+          return;
+        }
+        appendCommunityListEmpty(dom.communityAdminGrid, 'Загружаем информацию по сообществу...');
+        appendCommunityListEmpty(dom.communityPreviewBody, 'Подгружаем превью сообщества...');
+        return;
+      }
+
+      ensureCommunityLiveData(community).catch(handleError);
+      model.feedPosts = applyCommunityFeedModeration(community.id, getCommunityFeedPosts(community, model));
+      model.previewPosts = model.feedPosts.slice(0, 3);
+      model.chatMessages = getCommunityChatMessages(community, model);
+      model.previewMessages = getCommunityPreviewMessages(community, model);
+      model.rankingRows = getCommunityRankingRows(community, model);
+      model.previewRankingRows = model.rankingRows.slice(0, 5);
+      model.historyEntries = getCommunityHistoryEntries(community, model);
 
       renderCommunityCenterTab(community, model);
       renderCommunityPreview(community, model);
@@ -19639,7 +19747,22 @@
         }
         return;
       }
-      state.communities = sortCommunities((await api.getCommunities()) || []);
+      var communitiesById = Object.create(null);
+      state.communities.forEach(function (community) {
+        if (community && community.id) {
+          communitiesById[String(community.id)] = community;
+        }
+      });
+      state.communities = sortCommunities(
+        normalizeArray((await api.getCommunities()) || []).map(function (community) {
+          var communityId = String(community && community.id || '');
+          var existing = communitiesById[communityId];
+          if (existing && hasCommunityDetails(existing)) {
+            return Object.assign({}, existing, community);
+          }
+          return community;
+        })
+      );
       if (
         state.selectedCommunityId &&
         !state.communities.some(function (community) {

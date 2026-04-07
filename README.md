@@ -67,7 +67,9 @@ API работает на `http://localhost:3000/api`.
 - `COMMUNITIES_MONGODB_DB=games` (опционально; по умолчанию `GAMES_MONGODB_DB`, затем `MONGODB_DB`, затем `games`)
 - `COMMUNITIES_MONGODB_COLLECTION=lk_communities` (опционально; по умолчанию `lk_communities`)
 - `COMMUNITIES_INVITE_BASE_URL=https://padlhub.ru/community/invite/` (опционально; база для генерации invite-link, если в документе есть только `inviteCode`)
-- `LK_PADELHUB_COMMUNITIES_URL=https://...` (fallback HTTP-источник сообществ, если Mongo для communities не настроен)
+- `LK_PADELHUB_COMMUNITIES_LIST_URL=https://...` (fallback HTTP-источник списка сообществ, если Mongo для communities не настроен)
+- `LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE=https://.../{id}` (опционально; отдельный HTTP endpoint для загрузки одного сообщества по id)
+- `LK_PADELHUB_COMMUNITIES_URL=https://...` (legacy alias для `LK_PADELHUB_COMMUNITIES_LIST_URL`)
 - `LK_PADELHUB_API_TOKEN=<token>` (опционально, передается как Bearer)
 - `MONGODB_DB=dialog` (опционально; база для диалогов/чатов, по умолчанию `dialog`)
 - `GAMES_SOURCE=lk|mongo` (по умолчанию `lk`; для Mongo-источника игр укажите `mongo`)
@@ -172,8 +174,10 @@ SUPPORT_WEB_MONGODB_DB=games
   `VIVA_ADMIN_TOKEN_URL + VIVA_ADMIN_CLIENT_ID + VIVA_ADMIN_USERNAME + VIVA_ADMIN_PASSWORD`
 
 Для `Сообществ` backend сначала читает коллекцию `lk_communities` из MongoDB. HTTP-источник
-`LK_PADELHUB_COMMUNITIES_URL` используется только как fallback, если communities-Mongo не
-настроен. Mock-данные остаются только как локальный dev fallback.
+`LK_PADELHUB_COMMUNITIES_LIST_URL` используется только как fallback, если communities-Mongo не
+настроен. Для реального разделения list/detail в HTTP fallback задайте также
+`LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE`. `LK_PADELHUB_COMMUNITIES_URL` остаётся legacy-алиасом
+для списка. Mock-данные остаются только как локальный dev fallback.
 
 ## Публичная витрина сообществ
 
