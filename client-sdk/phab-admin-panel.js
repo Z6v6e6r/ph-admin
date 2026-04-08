@@ -17058,20 +17058,23 @@
     function getCommunityPendingMemberInfoTitle(post) {
       var parts = ['Новый участник'];
       var name = getCommunityPendingMemberInfoName(post);
-      var level = String(post && post.levelLabel || '').trim();
       if (name) {
         parts.push(name);
-      }
-      if (level) {
-        parts.push(level);
       }
       return parts.join(' · ');
     }
 
+    function getCommunityPendingMemberInfoTime(post) {
+      var value = formatCommunityPreviewTimeRange(post);
+      return value === 'Время уточняется' ? '' : value;
+    }
+
     function getCommunityPendingMemberInfoMeta(post, community) {
+      var time = getCommunityPendingMemberInfoTime(post);
+      var level = String(post && post.levelLabel || '').trim();
       var city = String(post && post.city || (community && community.city) || '').trim();
       var phone = formatCommunityFeedPhone(post && post.memberPhone);
-      return [city, phone].filter(Boolean).join(' · ') || 'Город не указан';
+      return [time, level, city, phone].filter(Boolean).join(' · ') || 'Город не указан';
     }
 
     function getCommunityPreviewFeedSegmentKey(post) {
