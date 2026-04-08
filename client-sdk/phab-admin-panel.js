@@ -4620,11 +4620,23 @@
     return formatDateInputValue(new Date());
   }
 
+  function getDaysAgoDateInputValue(days) {
+    var safeDays = Number.isFinite(Number(days)) ? Math.max(0, Math.floor(Number(days))) : 0;
+    var d = new Date();
+    d.setDate(d.getDate() - safeDays);
+    d.setHours(0, 0, 0, 0);
+    return formatDateInputValue(d);
+  }
+
   function getMonthStartDateInputValue() {
     var d = new Date();
     d.setDate(1);
     d.setHours(0, 0, 0, 0);
     return formatDateInputValue(d);
+  }
+
+  function getGameAnalyticsStartDateInputValue() {
+    return getDaysAgoDateInputValue(30);
   }
 
   function formatMoney(value) {
@@ -5371,7 +5383,7 @@
 
     var analyticsFromLabel = document.createElement('span');
     analyticsFromLabel.className = 'phab-admin-settings-label';
-    analyticsFromLabel.textContent = 'С даты';
+    analyticsFromLabel.textContent = 'С даты игры';
     analyticsFromWrap.appendChild(analyticsFromLabel);
 
     var analyticsFromInput = document.createElement('input');
@@ -5386,7 +5398,7 @@
 
     var analyticsToLabel = document.createElement('span');
     analyticsToLabel.className = 'phab-admin-settings-label';
-    analyticsToLabel.textContent = 'По дату';
+    analyticsToLabel.textContent = 'По дату игры';
     analyticsToWrap.appendChild(analyticsToLabel);
 
     var analyticsToInput = document.createElement('input');
@@ -7307,7 +7319,7 @@
       gameEventsFilterFrom: '',
       gameEventsFilterTo: '',
       analyticsSubtab: 'games',
-      analyticsFilterFrom: getMonthStartDateInputValue(),
+      analyticsFilterFrom: getGameAnalyticsStartDateInputValue(),
       analyticsFilterTo: getTodayDateInputValue(),
       analyticsDialogsFilterFrom: getMonthStartDateInputValue(),
       analyticsDialogsFilterTo: getTodayDateInputValue(),
@@ -20521,7 +20533,7 @@
         loadGameAnalytics().catch(handleError);
       });
       dom.analyticsResetBtn.addEventListener('click', function () {
-        state.analyticsFilterFrom = getMonthStartDateInputValue();
+        state.analyticsFilterFrom = getGameAnalyticsStartDateInputValue();
         state.analyticsFilterTo = getTodayDateInputValue();
         dom.analyticsFromInput.value = state.analyticsFilterFrom;
         dom.analyticsToInput.value = state.analyticsFilterTo;

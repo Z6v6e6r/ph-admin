@@ -550,7 +550,7 @@ export class GamesService implements OnModuleDestroy {
     >();
 
     docs.forEach((doc) => {
-      const gameDate = this.resolveAnalyticsCreatedDate(doc);
+      const gameDate = this.resolveAnalyticsDate(doc);
       if (normalizedFrom && (!gameDate || gameDate < normalizedFrom)) {
         return;
       }
@@ -782,13 +782,20 @@ export class GamesService implements OnModuleDestroy {
     );
   }
 
-  private resolveAnalyticsCreatedDate(doc: MongoGameDoc): string | null {
-    const createdDateKey = this.toAnalyticsDateKey(this.resolveGameCreatedAt(doc));
-    if (createdDateKey) {
-      return createdDateKey;
+  private resolveAnalyticsDate(doc: MongoGameDoc): string | null {
+    const gameDateCandidates = [
+      doc.booking?.timeFromIso,
+      this.getValueByPath(doc, 'booking.startTs'),
+      doc.booking?.date
+    ];
+    for (const candidate of gameDateCandidates) {
+      const dateKey = this.toAnalyticsDateKey(candidate);
+      if (dateKey) {
+        return dateKey;
+      }
     }
 
-    const fallbackCandidates = [doc.booking?.timeFromIso, doc.booking?.date, doc.updatedAt];
+    const fallbackCandidates = [this.resolveGameCreatedAt(doc), doc.updatedAt];
     for (const candidate of fallbackCandidates) {
       const dateKey = this.toAnalyticsDateKey(candidate);
       if (dateKey) {
