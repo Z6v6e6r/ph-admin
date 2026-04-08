@@ -74,6 +74,26 @@ export interface GameEventListResult {
   totalPages: number;
 }
 
+export type GameListSortField = 'createdAt' | 'gameDate' | 'organizer';
+export type GameListSortDirection = 'asc' | 'desc';
+
+export interface GameListFilters {
+  page?: number;
+  pageSize?: number;
+  sortField?: GameListSortField;
+  sortDirection?: GameListSortDirection;
+}
+
+export interface GameListResult {
+  items: Game[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  sortField: GameListSortField;
+  sortDirection: GameListSortDirection;
+}
+
 export interface GameAnalyticsFilters {
   from?: string;
   to?: string;

@@ -4339,7 +4339,22 @@
         return request('/support/analytics/dialogs' + suffix, 'GET');
       },
       getGames: function () {
-        return request('/games', 'GET');
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.page) {
+          params.set('page', String(query.page));
+        }
+        if (query.pageSize) {
+          params.set('pageSize', String(query.pageSize));
+        }
+        if (query.sortField) {
+          params.set('sortField', String(query.sortField));
+        }
+        if (query.sortDirection) {
+          params.set('sortDirection', String(query.sortDirection));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/games' + suffix, 'GET');
       },
       getGameById: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId), 'GET');
@@ -7307,6 +7322,8 @@
       gamesSortDirection: 'desc',
       gamesPageSize: 15,
       gamesPage: 1,
+      gamesTotal: 0,
+      gamesTotalPages: 1,
       gamesColumnWidths: {},
       gameEventsColumnWidths: {},
       analyticsColumnWidths: {},
@@ -12059,42 +12076,6 @@
       return 0;
     }
 
-    function sortGames(items) {
-      var list = Array.isArray(items) ? items.slice() : [];
-      var field = state.gamesSortField || 'createdAt';
-      var direction = state.gamesSortDirection === 'asc' ? 1 : -1;
-
-      list.sort(function (left, right) {
-        var result = 0;
-
-        if (field === 'createdAt') {
-          result = compareNullable(parseDateValue(left.createdAt), parseDateValue(right.createdAt));
-        } else if (field === 'gameDate') {
-          result = compareNullable(parseGameDateValue(left), parseGameDateValue(right));
-        } else {
-          var leftName = String(left.organizerName || '').trim().toLowerCase();
-          var rightName = String(right.organizerName || '').trim().toLowerCase();
-          if (!leftName && !rightName) {
-            result = 0;
-          } else if (!leftName) {
-            result = 1;
-          } else if (!rightName) {
-            result = -1;
-          } else {
-            result = leftName.localeCompare(rightName, 'ru');
-          }
-        }
-
-        if (result === 0) {
-          result = compareNullable(parseDateValue(left.createdAt), parseDateValue(right.createdAt));
-        }
-
-        return result * direction;
-      });
-
-      return list;
-    }
-
     function getGamesSortIndicator(field) {
       if (state.gamesSortField !== field) {
         return '';
@@ -12110,7 +12091,7 @@
         state.gamesSortDirection = field === 'organizer' ? 'asc' : 'desc';
       }
       state.gamesPage = 1;
-      renderGames();
+      loadGames().catch(handleError);
     }
 
     function getGameParticipantLines(game) {
@@ -12232,7 +12213,10 @@
       if (!Number.isFinite(pageSize) || pageSize <= 0) {
         pageSize = 15;
       }
-      var totalPages = Math.max(1, Math.ceil(Number(totalItems || 0) / pageSize));
+      var totalPages = Math.max(
+        1,
+        Number(state.gamesTotalPages || Math.ceil(Number(totalItems || 0) / pageSize) || 1)
+      );
       var page = Number(state.gamesPage || 1);
       if (!Number.isFinite(page) || page <= 0) {
         page = 1;
@@ -12337,11 +12321,9 @@
 
     function renderGames() {
       clearNode(dom.gamesTable);
-      var sortedGames = sortGames(state.games);
-      var pagination = clampGamesPage(sortedGames.length);
-      var startIndex = (pagination.page - 1) * pagination.pageSize;
-      var pageGames = sortedGames.slice(startIndex, startIndex + pagination.pageSize);
-      updateGamesPaginationControls(sortedGames.length, pagination.totalPages);
+      var pageGames = Array.isArray(state.games) ? state.games.slice() : [];
+      var pagination = clampGamesPage(state.gamesTotal);
+      updateGamesPaginationControls(state.gamesTotal, pagination.totalPages);
 
       var columns = [
         { key: 'organizer', label: 'Организатор', sortField: 'organizer', minWidth: 170 },
@@ -12402,7 +12384,7 @@
       var tbody = document.createElement('tbody');
       dom.gamesTable.appendChild(tbody);
 
-      if (state.games.length === 0) {
+      if (pageGames.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
         td.colSpan = columns.length;
@@ -19850,7 +19832,40 @@
     }
 
     async function loadGames() {
-      state.games = (await api.getGames()) || [];
+      var response =
+        (await api.getGames({
+          page: state.gamesPage,
+          pageSize: state.gamesPageSize,
+          sortField: state.gamesSortField,
+          sortDirection: state.gamesSortDirection
+        })) || [];
+
+      if (Array.isArray(response)) {
+        state.games = response;
+        state.gamesTotal = response.length;
+        state.gamesPage = 1;
+        state.gamesTotalPages = 1;
+      } else {
+        state.games = Array.isArray(response.items) ? response.items : [];
+        state.gamesTotal = Number(response.total || 0);
+        state.gamesPage = Math.max(1, Number(response.page || state.gamesPage || 1));
+        state.gamesPageSize = Math.max(1, Number(response.pageSize || state.gamesPageSize || 15));
+        state.gamesSortField =
+          response.sortField === 'gameDate' || response.sortField === 'organizer'
+            ? response.sortField
+            : state.gamesSortField === 'gameDate' || state.gamesSortField === 'organizer'
+              ? state.gamesSortField
+              : 'createdAt';
+        state.gamesSortDirection =
+          String(response.sortDirection || state.gamesSortDirection || 'desc') === 'asc'
+            ? 'asc'
+            : 'desc';
+        state.gamesTotalPages = Math.max(
+          1,
+          Number(response.totalPages || Math.ceil(state.gamesTotal / state.gamesPageSize) || 1)
+        );
+      }
+
       renderGames();
     }
 
@@ -20480,18 +20495,21 @@
         var next = Number(dom.gamesPageSizeSelect.value || 15);
         state.gamesPageSize = next === 50 ? 50 : 15;
         state.gamesPage = 1;
-        renderGames();
+        loadGames().catch(handleError);
       });
       dom.gamesPrevPageBtn.addEventListener('click', function () {
         if (state.gamesPage <= 1) {
           return;
         }
         state.gamesPage -= 1;
-        renderGames();
+        loadGames().catch(handleError);
       });
       dom.gamesNextPageBtn.addEventListener('click', function () {
+        if (state.gamesPage >= state.gamesTotalPages) {
+          return;
+        }
         state.gamesPage += 1;
-        renderGames();
+        loadGames().catch(handleError);
       });
       dom.logsApplyBtn.addEventListener('click', function () {
         state.gameEventsFilterEvent = String(dom.logsEventInput.value || '').trim();

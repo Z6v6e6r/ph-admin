@@ -22,7 +22,9 @@ import {
   GameChatMessage,
   GameEvent,
   GameEventListFilters,
-  GameEventListResult
+  GameEventListResult,
+  GameListFilters,
+  GameListResult
 } from './games.types';
 
 @Controller('games')
@@ -38,8 +40,20 @@ export class GamesController {
   constructor(private readonly gamesService: GamesService) {}
 
   @Get()
-  findAll(@CurrentUser() user?: RequestUser): Promise<Game[]> {
-    return this.gamesService.findAll(user);
+  findAll(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('sortField') sortField?: string,
+    @Query('sortDirection') sortDirection?: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<GameListResult> {
+    const filters: GameListFilters = {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+      sortField: sortField as GameListFilters['sortField'],
+      sortDirection: sortDirection as GameListFilters['sortDirection']
+    };
+    return this.gamesService.findAll(filters, user);
   }
 
   @Get('analytics')

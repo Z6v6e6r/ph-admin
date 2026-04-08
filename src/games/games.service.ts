@@ -19,6 +19,10 @@ import {
   GameEvent,
   GameEventListFilters,
   GameEventListResult,
+  GameListFilters,
+  GameListResult,
+  GameListSortDirection,
+  GameListSortField,
   GameParticipantDetails,
   GameStatus
 } from './games.types';
@@ -121,6 +125,8 @@ interface MongoGameEventDoc {
 
 @Injectable()
 export class GamesService implements OnModuleDestroy {
+  private static readonly GAME_LIST_DEFAULT_PAGE_SIZE = 15;
+  private static readonly GAME_LIST_MAX_PAGE_SIZE = 100;
   private static readonly GAME_EVENTS_DEFAULT_PAGE_SIZE = 30;
   private static readonly GAME_EVENTS_MAX_PAGE_SIZE = 100;
   private static readonly STATION_ALIAS_GROUPS: Record<string, string[]> = {
@@ -158,11 +164,18 @@ export class GamesService implements OnModuleDestroy {
 
   constructor(private readonly lkPadelHubClient: LkPadelHubClientService) {}
 
-  async findAll(user?: RequestUser): Promise<Game[]> {
-    if (this.sourceMode === 'mongo') {
-      return this.filterGamesForUser(await this.findAllFromMongo(), user);
+  async findAll(filters?: GameListFilters, user?: RequestUser): Promise<GameListResult> {
+    const normalizedFilters = this.normalizeGameListPagination(filters);
+    if (this.sourceMode === 'mongo' && !this.isRestrictedStationAdmin(user)) {
+      return this.findGamePageFromMongo(normalizedFilters, user);
     }
-    return this.filterGamesForUser(await this.lkPadelHubClient.listGames(), user);
+
+    const games =
+      this.sourceMode === 'mongo'
+        ? await this.findAllFromMongo()
+        : await this.lkPadelHubClient.listGames();
+
+    return this.paginateGamesInMemory(this.filterGamesForUser(games, user), normalizedFilters);
   }
 
   async findById(id: string, user?: RequestUser): Promise<Game> {
@@ -314,12 +327,250 @@ export class GamesService implements OnModuleDestroy {
         }
       )
       .sort({ 'booking.startTs': 1, createdAt: -1 })
-      .limit(500)
       .toArray()) as MongoGameDoc[];
 
     return docs
       .map((doc) => this.mapMongoGame(doc))
       .filter((game): game is Game => game !== null);
+  }
+
+  private async findGamePageFromMongo(
+    filters: {
+      page: number;
+      pageSize: number;
+      sortField: GameListSortField;
+      sortDirection: GameListSortDirection;
+    },
+    user?: RequestUser
+  ): Promise<GameListResult> {
+    const collection = await this.getMongoCollection();
+    const mongoFilter: Filter<MongoGameDoc> = {
+      archived: { $ne: true }
+    };
+    const total = await collection.countDocuments(mongoFilter);
+    let cursor = collection
+      .find(mongoFilter, {
+        projection: {
+          id: 1,
+          status: 1,
+          archived: 1,
+          createdAt: 1,
+          createdTs: 1,
+          updatedAt: 1,
+          organizer: 1,
+          participants: 1,
+          metadata: 1,
+          result: 1,
+          score: 1,
+          matchResult: 1,
+          gameResult: 1,
+          ratingDelta: 1,
+          ratingChanges: 1,
+          booking: 1
+        }
+      })
+      .sort(this.buildMongoGameSort(filters))
+      .skip((filters.page - 1) * filters.pageSize)
+      .limit(filters.pageSize);
+
+    if (filters.sortField === 'organizer') {
+      cursor = cursor.collation({ locale: 'ru', strength: 1 });
+    }
+
+    const docs = (await cursor.toArray()) as MongoGameDoc[];
+    const items = docs
+      .map((doc) => this.mapMongoGame(doc))
+      .filter((game): game is Game => game !== null)
+      .map((game) => this.sanitizeGameForUser(game, user));
+
+    return {
+      items,
+      total,
+      page: filters.page,
+      pageSize: filters.pageSize,
+      totalPages: Math.max(1, Math.ceil(total / filters.pageSize)),
+      sortField: filters.sortField,
+      sortDirection: filters.sortDirection
+    };
+  }
+
+  private normalizeGameListPagination(filters?: GameListFilters): {
+    page: number;
+    pageSize: number;
+    sortField: GameListSortField;
+    sortDirection: GameListSortDirection;
+  } {
+    const rawPage = Number(filters?.page);
+    const rawPageSize = Number(filters?.pageSize);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize =
+      Number.isFinite(rawPageSize) && rawPageSize > 0
+        ? Math.min(Math.floor(rawPageSize), GamesService.GAME_LIST_MAX_PAGE_SIZE)
+        : GamesService.GAME_LIST_DEFAULT_PAGE_SIZE;
+
+    const sortField: GameListSortField =
+      filters?.sortField === 'gameDate' || filters?.sortField === 'organizer'
+        ? filters.sortField
+        : 'createdAt';
+    const sortDirection: GameListSortDirection =
+      filters?.sortDirection === 'asc' ? 'asc' : 'desc';
+
+    return {
+      page,
+      pageSize,
+      sortField,
+      sortDirection
+    };
+  }
+
+  private buildMongoGameSort(filters: {
+    sortField: GameListSortField;
+    sortDirection: GameListSortDirection;
+  }): Record<string, 1 | -1> {
+    const direction = filters.sortDirection === 'asc' ? 1 : -1;
+    if (filters.sortField === 'gameDate') {
+      return {
+        'booking.startTs': direction,
+        'booking.timeFromIso': direction,
+        'booking.date': direction,
+        createdTs: direction,
+        createdAt: direction,
+        _id: direction
+      };
+    }
+    if (filters.sortField === 'organizer') {
+      return {
+        'organizer.name': direction,
+        createdTs: direction,
+        createdAt: direction,
+        _id: direction
+      };
+    }
+    return {
+      createdTs: direction,
+      createdAt: direction,
+      _id: direction
+    };
+  }
+
+  private paginateGamesInMemory(
+    games: Game[],
+    filters: {
+      page: number;
+      pageSize: number;
+      sortField: GameListSortField;
+      sortDirection: GameListSortDirection;
+    }
+  ): GameListResult {
+    const sorted = this.sortGamesInMemory(games, filters);
+    const total = sorted.length;
+    const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
+    const page = Math.min(filters.page, totalPages);
+    const items = sorted.slice((page - 1) * filters.pageSize, page * filters.pageSize);
+
+    return {
+      items,
+      total,
+      page,
+      pageSize: filters.pageSize,
+      totalPages,
+      sortField: filters.sortField,
+      sortDirection: filters.sortDirection
+    };
+  }
+
+  private sortGamesInMemory(
+    games: Game[],
+    filters: {
+      sortField: GameListSortField;
+      sortDirection: GameListSortDirection;
+    }
+  ): Game[] {
+    const direction = filters.sortDirection === 'asc' ? 1 : -1;
+    return games
+      .slice()
+      .sort((left, right) => {
+        let result = 0;
+        if (filters.sortField === 'gameDate') {
+          result = this.compareNullableSortValues(
+            this.resolveGameDateSortValue(left),
+            this.resolveGameDateSortValue(right)
+          );
+        } else if (filters.sortField === 'organizer') {
+          result = this.compareNullableSortValues(
+            this.normalizeSortableText(left.organizerName),
+            this.normalizeSortableText(right.organizerName)
+          );
+        } else {
+          result = this.compareNullableSortValues(
+            this.resolveGameCreatedSortValue(left),
+            this.resolveGameCreatedSortValue(right)
+          );
+        }
+
+        if (result === 0) {
+          result = this.compareNullableSortValues(
+            this.resolveGameCreatedSortValue(left),
+            this.resolveGameCreatedSortValue(right)
+          );
+        }
+
+        return result * direction;
+      });
+  }
+
+  private resolveGameCreatedSortValue(game: Game): number | null {
+    return this.parseSortableDateValue(game.createdAt);
+  }
+
+  private resolveGameDateSortValue(game: Game): number | null {
+    const startsAt = this.parseSortableDateValue(game.startsAt);
+    if (startsAt !== null) {
+      return startsAt;
+    }
+
+    const gameDate = this.readString(game.gameDate);
+    if (!gameDate) {
+      return null;
+    }
+
+    const gameTime = this.readString(game.gameTime);
+    const timeMatch = gameTime ? gameTime.match(/(\d{2}:\d{2})/) : null;
+    const hhmm = timeMatch?.[1] ?? '00:00';
+    return this.parseSortableDateValue(`${gameDate}T${hhmm}:00`);
+  }
+
+  private parseSortableDateValue(value: unknown): number | null {
+    const text = this.readString(value);
+    if (!text) {
+      return null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private normalizeSortableText(value: unknown): string | null {
+    const text = this.readString(value);
+    return text ? text.toLocaleLowerCase('ru') : null;
+  }
+
+  private compareNullableSortValues<T extends number | string>(left: T | null, right: T | null): number {
+    if (left === null && right === null) {
+      return 0;
+    }
+    if (left === null) {
+      return 1;
+    }
+    if (right === null) {
+      return -1;
+    }
+    if (left < right) {
+      return -1;
+    }
+    if (left > right) {
+      return 1;
+    }
+    return 0;
   }
 
   private ensureNonStationAdminGamePrivilege(user?: RequestUser): void {
