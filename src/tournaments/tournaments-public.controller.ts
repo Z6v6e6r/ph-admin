@@ -1,18 +1,174 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequestUser } from '../common/rbac/request-user.interface';
 import { PublicTournamentAccessCheckDto } from './dto/public-tournament-access-check.dto';
 import { RegisterTournamentParticipantDto } from './dto/register-tournament-participant.dto';
 import { TournamentMechanicsAccessDto } from './dto/tournament-mechanics-access.dto';
+import { TournamentsPublicSessionService } from './tournaments-public-session.service';
 import {
   TournamentAccessCheckResponse,
+  TournamentJoinFlowResponse,
   TournamentMechanicsAccessResponse,
+  TournamentPublicClientProfile,
+  TournamentPublicDirectoryResponse,
   TournamentPublicView,
   TournamentRegistrationResponse
 } from './tournaments.types';
 import { TournamentsService } from './tournaments.service';
 
+const TOURNAMENT_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+
+type JoinSubmission = {
+  name?: string;
+  phone?: string;
+  levelLabel?: string;
+  notes?: string;
+  waitlist: boolean;
+  format?: string;
+};
+
 @Controller('tournaments/public')
 export class TournamentsPublicController {
-  constructor(private readonly tournamentsService: TournamentsService) {}
+  private readonly directoryUrl =
+    String(process.env.TOURNAMENTS_PUBLIC_DIRECTORY_URL ?? '').trim() || '/tournaments';
+  private readonly lkAuthUrl =
+    String(process.env.TOURNAMENTS_PUBLIC_LK_AUTH_URL ?? '').trim() || 'https://padlhub.ru/lk_new';
+  private readonly lkPollMs = this.parsePositiveInteger(
+    String(process.env.TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS ?? '').trim()
+  ) ?? 1500;
+
+  constructor(
+    private readonly tournamentsService: TournamentsService,
+    private readonly tournamentsPublicSessionService: TournamentsPublicSessionService
+  ) {}
+
+  @Get()
+  listPublicTournaments(
+    @Query('stationId') stationId?: string,
+    @Query('limit') limit?: string,
+    @Query('includePast') includePast?: string
+  ): Promise<TournamentPublicDirectoryResponse> {
+    return this.tournamentsService.listPublicDirectory({
+      stationIds: this.parseCsv(stationId),
+      limit: this.parsePositiveInteger(limit),
+      includePast: this.parseBoolean(includePast)
+    });
+  }
+
+  @Get('list')
+  listPublicTournamentsStable(
+    @Query('stationId') stationId?: string,
+    @Query('limit') limit?: string,
+    @Query('includePast') includePast?: string
+  ): Promise<TournamentPublicDirectoryResponse> {
+    return this.tournamentsService.listPublicDirectory({
+      stationIds: this.parseCsv(stationId),
+      limit: this.parsePositiveInteger(limit),
+      includePast: this.parseBoolean(includePast)
+    });
+  }
+
+  @Get(':slug/join')
+  async renderJoinPage(
+    @Param('slug') slug: string,
+    @Req() request: Request,
+    @Res() response: Response,
+    @CurrentUser() user?: RequestUser,
+    @Query('format') format?: string,
+    @Query('autoAuth') autoAuth?: string
+  ): Promise<void> {
+    const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
+      request,
+      response,
+      user
+    );
+    const flow = this.enrichJoinFlow(
+      await this.tournamentsService.getPublicJoinFlow(slug, client, {
+        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+      }),
+      request
+    );
+
+    if (this.wantsJson(request, format)) {
+      response.json(flow);
+      return;
+    }
+
+    if (flow.code === 'AUTH_REQUIRED' && this.parseBoolean(autoAuth) && flow.authUrl) {
+      response.redirect(flow.authUrl);
+      return;
+    }
+
+    this.sendHtml(response, this.renderJoinHtml(flow));
+  }
+
+  @Post(':slug/join')
+  async submitJoinPage(
+    @Param('slug') slug: string,
+    @Req() request: Request,
+    @Res() response: Response,
+    @CurrentUser() user?: RequestUser,
+    @Body() body?: Record<string, unknown>
+  ): Promise<void> {
+    const currentClient = this.tournamentsPublicSessionService.ensureAuthorizedClient(
+      request,
+      response,
+      user
+    );
+    const submission = this.normalizeJoinSubmission(body);
+    const client = this.tournamentsPublicSessionService.rememberClient(
+      request,
+      response,
+      currentClient,
+      submission
+    );
+    const flow = this.enrichJoinFlow(
+      await this.tournamentsService.getPublicJoinFlow(slug, client, {
+        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+      }),
+      request
+    );
+
+    if (submission.waitlist && flow.code === 'LEVEL_NOT_ALLOWED') {
+      const outcome = await this.tournamentsService.addPublicParticipantToWaitlist(slug, {
+        name: client.name ?? '',
+        phone: client.phone ?? '',
+        levelLabel: client.levelLabel,
+        notes: submission.notes
+      });
+      if (this.wantsJson(request, submission.format)) {
+        response.json(outcome);
+        return;
+      }
+
+      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client));
+      return;
+    }
+
+    if (flow.code === 'READY_TO_JOIN') {
+      const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
+        name: client.name ?? '',
+        phone: client.phone ?? '',
+        levelLabel: client.levelLabel,
+        notes: submission.notes
+      });
+      if (this.wantsJson(request, submission.format)) {
+        response.json(outcome);
+        return;
+      }
+
+      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client));
+      return;
+    }
+
+    if (this.wantsJson(request, submission.format)) {
+      response.json(flow);
+      return;
+    }
+
+    this.sendHtml(response, this.renderJoinHtml(flow));
+  }
 
   @Get(':slug')
   findPublicBySlug(@Param('slug') slug: string): Promise<TournamentPublicView> {
@@ -41,5 +197,779 @@ export class TournamentsPublicController {
     @Body() dto: TournamentMechanicsAccessDto
   ): Promise<TournamentMechanicsAccessResponse> {
     return this.tournamentsService.checkMechanicsAccess(slug, dto.phone);
+  }
+
+  private enrichJoinFlow(
+    flow: TournamentJoinFlowResponse,
+    request: Request
+  ): TournamentJoinFlowResponse {
+    const authRequired = flow.code === 'AUTH_REQUIRED';
+    const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request);
+    const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
+
+    return {
+      ...flow,
+      authRequired,
+      authCheckUrl,
+      authPollMs: authRequired ? this.lkPollMs : undefined,
+      cabinetUrl: this.lkAuthUrl,
+      authUrl: authRequired ? this.buildLkAuthUrl(joinUrl) : undefined
+    };
+  }
+
+  private normalizeJoinSubmission(value: unknown): JoinSubmission {
+    const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+    return {
+      name: this.pickString(record.name) ?? undefined,
+      phone: this.pickString(record.phone) ?? undefined,
+      levelLabel: this.pickString(record.levelLabel) ?? undefined,
+      notes: this.pickString(record.notes) ?? undefined,
+      waitlist: this.parseBoolean(record.waitlist),
+      format: this.pickString(record.format) ?? undefined
+    };
+  }
+
+  private wantsJson(request: Request, format?: string): boolean {
+    if (String(format ?? '').trim().toLowerCase() === 'json') {
+      return true;
+    }
+    const accept = String(request.headers.accept ?? '').toLowerCase();
+    return accept.includes('application/json');
+  }
+
+  private sendHtml(response: Response, html: string): void {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.send(html);
+  }
+
+  private buildLkAuthUrl(returnUrl: string): string {
+    const url = /^https?:\/\//i.test(this.lkAuthUrl)
+      ? new URL(this.lkAuthUrl)
+      : new URL(this.lkAuthUrl, new URL(returnUrl).origin);
+    url.searchParams.set('returnUrl', returnUrl);
+    url.searchParams.set('source', 'tournament_join');
+    return url.toString();
+  }
+
+  private toAbsoluteUrl(value: string, request: Request): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return this.getRequestBaseUrl(request);
+    }
+    if (/^https?:\/\//i.test(normalized)) {
+      return normalized;
+    }
+    return new URL(normalized, this.getRequestBaseUrl(request)).toString();
+  }
+
+  private getRequestBaseUrl(request: Request): string {
+    const forwardedProto = this.pickString(request.headers['x-forwarded-proto']);
+    const protocol = forwardedProto ?? (request.secure ? 'https' : 'http');
+    const host = this.pickString(request.headers['x-forwarded-host'])
+      ?? this.pickString(request.headers.host)
+      ?? 'localhost';
+    return `${protocol}://${host}`;
+  }
+
+  private appendQueryParam(url: string, key: string, value: string): string {
+    const nextUrl = new URL(url);
+    nextUrl.searchParams.set(key, value);
+    return nextUrl.toString();
+  }
+
+  private renderJoinHtml(flow: TournamentJoinFlowResponse): string {
+    const tournament = flow.tournament;
+    const client = flow.client;
+    const needsLevel = tournament.accessLevels.length > 0;
+    const phoneValue = this.escapeHtml(this.formatPhone(client.phone));
+    const nameValue = this.escapeHtml(String(client.name ?? ''));
+    const levelValue = String(client.levelLabel ?? '').trim().toUpperCase();
+    const spotsLabel = `${tournament.participantsCount}/${tournament.maxPlayers}`;
+    const actionLabel =
+      flow.code === 'READY_TO_JOIN'
+        ? tournament.skin.ctaLabel || 'Записаться'
+        : flow.code === 'LEVEL_NOT_ALLOWED'
+          ? 'Проверить уровень ещё раз'
+          : 'Продолжить';
+    const statusTone =
+      flow.code === 'LEVEL_NOT_ALLOWED'
+        ? 'warning'
+        : flow.code === 'READY_TO_JOIN'
+          ? 'success'
+          : 'info';
+    const alreadyDone =
+      flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED';
+
+    if (alreadyDone) {
+      const outcomeCode =
+        flow.code === 'ALREADY_REGISTERED' ? 'ALREADY_REGISTERED' : 'ALREADY_WAITLISTED';
+      return this.renderOutcomeHtml(
+        tournament,
+        {
+          ok: true,
+          code: outcomeCode,
+          message: flow.message,
+          tournamentId: tournament.id,
+          tournamentSlug: tournament.slug
+        },
+        client
+      );
+    }
+
+    if (flow.code === 'AUTH_REQUIRED') {
+      return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(tournament.name)} - Вход в LK</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 14% 18%, rgba(194, 243, 214, 0.82), transparent 28%),
+          radial-gradient(circle at 84% 14%, rgba(255, 210, 166, 0.74), transparent 30%),
+          linear-gradient(150deg, #f7f4ea 0%, #fffdf7 38%, #eef7ff 100%);
+        color: #1f2c21;
+        padding: 18px;
+      }
+      .page { max-width: 760px; margin: 0 auto; }
+      .card {
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        border-radius: 28px;
+        padding: 24px;
+        box-shadow: 0 24px 60px rgba(31, 44, 33, 0.1);
+      }
+      .title {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 5vw, 44px);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+      .subtitle {
+        margin: 0 0 18px;
+        color: rgba(31, 44, 33, 0.72);
+        line-height: 1.5;
+      }
+      .status {
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border-radius: 20px;
+        background: rgba(231, 244, 255, 0.92);
+        border: 1px solid rgba(64, 122, 203, 0.18);
+        line-height: 1.5;
+      }
+      .meta {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .row {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(247, 244, 234, 0.9);
+      }
+      .label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(31, 44, 33, 0.52);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .button, .button-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 18px;
+        border: none;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .button {
+        background: linear-gradient(90deg, #f45f34 0%, #f5974c 100%);
+        color: #fff;
+      }
+      .button-secondary {
+        background: rgba(31, 44, 33, 0.08);
+        color: #1f2c21;
+      }
+      .footnote {
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: rgba(31, 44, 33, 0.56);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
+        <p class="subtitle">${this.escapeHtml(
+          tournament.skin.subtitle
+          || [this.formatTournamentDate(tournament.startsAt), tournament.studioName]
+            .filter(Boolean)
+            .join(' · ')
+        )}</p>
+        <div class="status">${this.escapeHtml(flow.message)}</div>
+        <div class="meta">
+          <div class="row">
+            <span class="label">Турнир</span>
+            ${this.escapeHtml(tournament.name)}
+          </div>
+          <div class="row">
+            <span class="label">Площадка</span>
+            ${this.escapeHtml(tournament.studioName || 'PadelHub')}
+          </div>
+          <div class="row">
+            <span class="label">Когда</span>
+            ${this.escapeHtml(this.formatTournamentDate(tournament.startsAt))}
+          </div>
+        </div>
+        <div class="actions">
+          <a class="button" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>
+          <a class="button-secondary" href="${this.escapeHtml(this.directoryUrl)}">К турнирам</a>
+        </div>
+        <p class="footnote">
+          После входа в личный кабинет вернитесь к этой ссылке или повторно нажмите кнопку турнира на Tilda-странице.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>`;
+    }
+
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(tournament.name)} - Турнир PadelHub</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 14% 18%, rgba(194, 243, 214, 0.82), transparent 28%),
+          radial-gradient(circle at 84% 14%, rgba(255, 210, 166, 0.74), transparent 30%),
+          linear-gradient(150deg, #f7f4ea 0%, #fffdf7 38%, #eef7ff 100%);
+        color: #1f2c21;
+        padding: 18px;
+      }
+      .page {
+        max-width: 820px;
+        margin: 0 auto;
+      }
+      .card {
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        border-radius: 28px;
+        padding: 24px;
+        box-shadow: 0 24px 60px rgba(31, 44, 33, 0.1);
+        backdrop-filter: blur(12px);
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(31, 44, 33, 0.58);
+      }
+      .title {
+        margin: 0 0 8px;
+        font-size: clamp(30px, 5vw, 48px);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
+      }
+      .subtitle {
+        margin: 0 0 20px;
+        font-size: 16px;
+        line-height: 1.5;
+        color: rgba(31, 44, 33, 0.72);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .metric {
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(247, 244, 234, 0.9);
+        border: 1px solid rgba(31, 44, 33, 0.06);
+      }
+      .metric-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(31, 44, 33, 0.52);
+      }
+      .metric-value {
+        font-size: 15px;
+        line-height: 1.4;
+        color: #1f2c21;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 18px;
+        padding: 0;
+        list-style: none;
+      }
+      .chip {
+        padding: 7px 11px;
+        border-radius: 999px;
+        background: rgba(31, 44, 33, 0.06);
+        font-size: 12px;
+        line-height: 1;
+      }
+      .status {
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border-radius: 20px;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .status-info {
+        background: rgba(231, 244, 255, 0.92);
+        border: 1px solid rgba(64, 122, 203, 0.18);
+      }
+      .status-success {
+        background: rgba(228, 250, 236, 0.92);
+        border: 1px solid rgba(31, 153, 90, 0.18);
+      }
+      .status-warning {
+        background: rgba(255, 242, 225, 0.96);
+        border: 1px solid rgba(222, 145, 34, 0.2);
+      }
+      form {
+        display: grid;
+        gap: 14px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        color: rgba(31, 44, 33, 0.78);
+      }
+      input, select, textarea {
+        width: 100%;
+        border: 1px solid rgba(31, 44, 33, 0.14);
+        border-radius: 14px;
+        padding: 12px 13px;
+        font-size: 15px;
+        background: #fff;
+        color: #1f2c21;
+      }
+      textarea {
+        min-height: 86px;
+        resize: vertical;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 2px;
+      }
+      .button, .button-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 18px;
+        border: none;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .button {
+        background: linear-gradient(90deg, #f45f34 0%, #f5974c 100%);
+        color: #fff;
+      }
+      .button-secondary {
+        background: rgba(31, 44, 33, 0.08);
+        color: #1f2c21;
+      }
+      .footnote {
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: rgba(31, 44, 33, 0.56);
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: 12px;
+        }
+        .card {
+          padding: 18px;
+          border-radius: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <p class="eyebrow">PadelHub Tournament Join</p>
+        <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
+        <p class="subtitle">${this.escapeHtml(
+          tournament.skin.subtitle
+          || [this.formatTournamentDate(tournament.startsAt), tournament.studioName]
+            .filter(Boolean)
+            .join(' · ')
+        )}</p>
+
+        <div class="grid">
+          <div class="metric">
+            <span class="metric-label">Когда</span>
+            <span class="metric-value">${this.escapeHtml(
+              this.formatTournamentDate(tournament.startsAt)
+            )}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Площадка</span>
+            <span class="metric-value">${this.escapeHtml(
+              tournament.studioName || 'PadelHub'
+            )}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Тренер</span>
+            <span class="metric-value">${this.escapeHtml(
+              tournament.trainerName || 'Организатор турнира'
+            )}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Места</span>
+            <span class="metric-value">${this.escapeHtml(spotsLabel)}</span>
+          </div>
+        </div>
+
+        <ul class="chips">
+          <li class="chip">${this.escapeHtml(tournament.tournamentType)}</li>
+          <li class="chip">${this.escapeHtml(
+            needsLevel ? `Уровни: ${tournament.accessLevels.join(', ')}` : 'Без ограничений по уровню'
+          )}</li>
+          <li class="chip">${tournament.registrationOpen ? 'Регистрация открыта' : 'Регистрация закрыта'}</li>
+        </ul>
+
+        <div class="status status-${statusTone}">${this.escapeHtml(flow.message)}</div>
+
+        <form method="post" action="${this.escapeHtml(tournament.joinUrl)}">
+          <label>
+            Имя и фамилия
+            <input
+              type="text"
+              name="name"
+              maxlength="180"
+              value="${nameValue}"
+              placeholder="Как к вам обращаться"
+            />
+          </label>
+
+          <label>
+            Телефон
+            <input
+              type="tel"
+              name="phone"
+              maxlength="30"
+              value="${phoneValue}"
+              placeholder="+7 999 123-45-67"
+              required
+            />
+          </label>
+
+          ${
+            needsLevel
+              ? `<label>
+            Уровень игрока
+            <select name="levelLabel" required>
+              <option value="">Выберите уровень</option>
+              ${this.renderLevelOptions(levelValue)}
+            </select>
+          </label>`
+              : ''
+          }
+
+          <label>
+            Комментарий для организатора
+            <textarea name="notes" maxlength="500" placeholder="Если нужно, расскажите о себе или оставьте заметку."></textarea>
+          </label>
+
+          <div class="actions">
+            <button class="button" type="submit">${this.escapeHtml(actionLabel)}</button>
+            <a class="button-secondary" href="${this.escapeHtml(this.directoryUrl)}">К турнирам</a>
+          </div>
+        </form>
+
+        ${
+          flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed
+            ? `<form method="post" action="${this.escapeHtml(tournament.joinUrl)}" style="margin-top:12px;">
+          <input type="hidden" name="name" value="${nameValue}" />
+          <input type="hidden" name="phone" value="${phoneValue}" />
+          <input type="hidden" name="levelLabel" value="${this.escapeHtml(levelValue)}" />
+          <input type="hidden" name="waitlist" value="1" />
+          <div class="actions">
+            <button class="button-secondary" type="submit">Добавиться в лист ожидания</button>
+          </div>
+        </form>`
+            : ''
+        }
+
+        <p class="footnote">
+          Backend сохраняет черновик заявки в защищённой cookie-сессии, а авторизация пользователя проверяется
+          через личный кабинет PadelHub.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>`;
+  }
+
+  private renderOutcomeHtml(
+    tournament: TournamentPublicView,
+    outcome: TournamentRegistrationResponse,
+    client: TournamentPublicClientProfile
+  ): string {
+    const success =
+      outcome.code === 'REGISTERED'
+      || outcome.code === 'WAITLISTED'
+      || outcome.code === 'ALREADY_REGISTERED'
+      || outcome.code === 'ALREADY_WAITLISTED';
+
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(tournament.name)} - Статус заявки</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 12% 18%, rgba(194, 243, 214, 0.82), transparent 28%),
+          radial-gradient(circle at 82% 14%, rgba(255, 210, 166, 0.74), transparent 30%),
+          linear-gradient(150deg, #f7f4ea 0%, #fffdf7 38%, #eef7ff 100%);
+        color: #1f2c21;
+        padding: 18px;
+      }
+      .page { max-width: 680px; margin: 0 auto; }
+      .card {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 28px;
+        padding: 24px;
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        box-shadow: 0 24px 60px rgba(31, 44, 33, 0.1);
+      }
+      .title {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 5vw, 42px);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+      .subtitle {
+        margin: 0 0 18px;
+        color: rgba(31, 44, 33, 0.7);
+        line-height: 1.5;
+      }
+      .status {
+        margin-bottom: 18px;
+        padding: 16px 18px;
+        border-radius: 20px;
+        background: ${success ? 'rgba(228, 250, 236, 0.92)' : 'rgba(255, 242, 225, 0.96)'};
+        border: 1px solid ${success ? 'rgba(31, 153, 90, 0.18)' : 'rgba(222, 145, 34, 0.2)'};
+        line-height: 1.5;
+      }
+      .meta {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .row {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(247, 244, 234, 0.9);
+      }
+      .label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(31, 44, 33, 0.52);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .button, .button-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 18px;
+        border: none;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .button {
+        background: linear-gradient(90deg, #f45f34 0%, #f5974c 100%);
+        color: #fff;
+      }
+      .button-secondary {
+        background: rgba(31, 44, 33, 0.08);
+        color: #1f2c21;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
+        <p class="subtitle">${this.escapeHtml(
+          tournament.skin.subtitle
+          || [this.formatTournamentDate(tournament.startsAt), tournament.studioName]
+            .filter(Boolean)
+            .join(' · ')
+        )}</p>
+        <div class="status">${this.escapeHtml(outcome.message)}</div>
+        <div class="meta">
+          <div class="row">
+            <span class="label">Турнир</span>
+            ${this.escapeHtml(tournament.name)}
+          </div>
+          <div class="row">
+            <span class="label">Телефон</span>
+            ${this.escapeHtml(this.formatPhone(client.phone) || 'Не указан')}
+          </div>
+          <div class="row">
+            <span class="label">Уровень</span>
+            ${this.escapeHtml(client.levelLabel || 'Не указан')}
+          </div>
+        </div>
+        <div class="actions">
+          <a class="button" href="${this.escapeHtml(this.directoryUrl)}">К списку турниров</a>
+          <a class="button-secondary" href="${this.escapeHtml(tournament.joinUrl)}">Открыть карточку заявки</a>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>`;
+  }
+
+  private renderLevelOptions(selectedValue?: string): string {
+    return TOURNAMENT_LEVEL_OPTIONS.map((level) => {
+      const selected = level === selectedValue ? ' selected' : '';
+      return `<option value="${this.escapeHtml(level)}"${selected}>${this.escapeHtml(level)}</option>`;
+    }).join('');
+  }
+
+  private formatTournamentDate(value?: string): string {
+    if (!value) {
+      return 'Дата уточняется';
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return parsed.toLocaleString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  private formatPhone(value?: string): string {
+    const digits = String(value ?? '').replace(/\D+/g, '');
+    if (digits.length !== 11 || !digits.startsWith('7')) {
+      return String(value ?? '').trim();
+    }
+    return `+7 ${digits.slice(1, 4)} ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9)}`;
+  }
+
+  private parseCsv(value?: string): string[] {
+    if (!value) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+      )
+    );
+  }
+
+  private parsePositiveInteger(value?: string): number | undefined {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return undefined;
+    }
+    return Math.floor(numericValue);
+  }
+
+  private parseBoolean(value: unknown): boolean {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return (
+      normalized === '1'
+      || normalized === 'true'
+      || normalized === 'yes'
+      || normalized === 'on'
+    );
+  }
+
+  private pickString(value: unknown): string | null {
+    if (Array.isArray(value)) {
+      return this.pickString(value[0]);
+    }
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

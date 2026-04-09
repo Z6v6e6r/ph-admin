@@ -93,6 +93,7 @@ export interface TournamentPublicView {
   id: string;
   slug: string;
   publicUrl: string;
+  joinUrl: string;
   name: string;
   tournamentType: string;
   gender: TournamentGender;
@@ -105,6 +106,7 @@ export interface TournamentPublicView {
   paidParticipantsCount: number;
   waitlistCount: number;
   maxPlayers: number;
+  registrationOpen: boolean;
   allowedManagerPhonesCount: number;
   skin: TournamentSkin;
   sourceTournamentId?: string;
@@ -120,6 +122,12 @@ export interface TournamentPublicView {
     | 'trainerName'
     | 'exerciseTypeId'
   >;
+}
+
+export interface TournamentPublicDirectoryResponse {
+  generatedAt: string;
+  count: number;
+  items: TournamentPublicView[];
 }
 
 export interface TournamentAccessCheckResponse {
@@ -150,4 +158,41 @@ export interface TournamentMechanicsAccessResponse {
   code: 'OK' | 'PHONE_REQUIRED' | 'ACCESS_DENIED';
   message: string;
   tournamentSlug?: string;
+}
+
+export interface TournamentPublicClientProfile {
+  id: string;
+  authorized: boolean;
+  authSource: 'cookie' | 'headers' | 'anonymous';
+  name?: string;
+  phone?: string;
+  levelLabel?: string;
+  onboardingCompleted: boolean;
+}
+
+export type TournamentJoinFlowCode =
+  | 'AUTH_REQUIRED'
+  | 'PROFILE_REQUIRED'
+  | 'ONBOARDING_REQUIRED'
+  | 'READY_TO_JOIN'
+  | 'LEVEL_NOT_ALLOWED'
+  | 'REGISTERED'
+  | 'WAITLISTED'
+  | 'ALREADY_REGISTERED'
+  | 'ALREADY_WAITLISTED';
+
+export interface TournamentJoinFlowResponse {
+  ok: boolean;
+  code: TournamentJoinFlowCode;
+  message: string;
+  tournament: TournamentPublicView;
+  client: TournamentPublicClientProfile;
+  access: TournamentAccessCheckResponse;
+  missingFields: Array<'phone' | 'levelLabel'>;
+  waitlistAllowed: boolean;
+  authRequired?: boolean;
+  authUrl?: string;
+  authCheckUrl?: string;
+  authPollMs?: number;
+  cabinetUrl?: string;
 }

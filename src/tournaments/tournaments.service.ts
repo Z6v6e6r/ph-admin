@@ -17,8 +17,11 @@ import {
   Tournament,
   TournamentAccessCheckResponse,
   TournamentGender,
+  TournamentJoinFlowResponse,
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
+  TournamentPublicClientProfile,
+  TournamentPublicDirectoryResponse,
   TournamentPublicView,
   TournamentRegistrationResponse,
   TournamentStatus
@@ -31,6 +34,9 @@ interface RegistrationInput {
   gender?: TournamentGender;
   notes?: string;
 }
+
+const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
+const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
 
 @Injectable()
 export class TournamentsService {
@@ -142,6 +148,168 @@ export class TournamentsService {
     return this.toPublicView(tournament);
   }
 
+  async listPublicDirectory(options?: {
+    limit?: number;
+    stationIds?: string[];
+    includePast?: boolean;
+  }): Promise<TournamentPublicDirectoryResponse> {
+    this.ensurePersistenceEnabled();
+    const limit = this.normalizePublicLimit(options?.limit);
+    const stationIds = this.normalizeFilterValues(options?.stationIds);
+    const includePast = options?.includePast === true;
+    const tournaments = await this.listHydratedCustomTournamentsSafe();
+
+    const items = tournaments
+      .filter((tournament) =>
+        this.matchesPublicTournamentFilters(tournament, {
+          stationIds,
+          includePast
+        })
+      )
+      .sort((left, right) => this.comparePublicTournaments(left, right))
+      .slice(0, limit)
+      .map((tournament) => this.toPublicView(tournament));
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: items.length,
+      items
+    };
+  }
+
+  async getPublicJoinFlow(
+    slug: string,
+    client: TournamentPublicClientProfile,
+    options?: {
+      requireAuth?: boolean;
+    }
+  ): Promise<TournamentJoinFlowResponse> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomBySlug(slug);
+    const publicTournament = this.toPublicView(tournament);
+    const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
+    const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
+    const access = this.evaluateAccess(tournament, normalizedLevel);
+    const normalizedClient: TournamentPublicClientProfile = {
+      ...client,
+      phone: normalizedPhone,
+      levelLabel: normalizedLevel,
+      onboardingCompleted: Boolean(normalizedLevel)
+    };
+    const requireAuth = options?.requireAuth === true;
+    const missingFields: Array<'phone' | 'levelLabel'> = [];
+
+    if (requireAuth && !normalizedClient.authorized) {
+      return {
+        ok: false,
+        code: 'AUTH_REQUIRED',
+        message:
+          'Чтобы присоединиться к турниру, сначала войдите в личный кабинет PadelHub.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields: [],
+        waitlistAllowed: false,
+        authRequired: true
+      };
+    }
+
+    if (!normalizedPhone) {
+      missingFields.push('phone');
+    }
+    if (tournament.accessLevels.length > 0 && !normalizedLevel) {
+      missingFields.push('levelLabel');
+    }
+
+    if (normalizedPhone) {
+      const existingParticipant = this.findParticipantByPhone(
+        tournament.participants,
+        normalizedPhone
+      );
+      if (existingParticipant) {
+        return {
+          ok: true,
+          code: 'ALREADY_REGISTERED',
+          message: 'Вы уже записаны в этот турнир.',
+          tournament: publicTournament,
+          client: normalizedClient,
+          access,
+          missingFields: [],
+          waitlistAllowed: false
+        };
+      }
+
+      const existingWaitlistParticipant = this.findParticipantByPhone(
+        tournament.waitlist,
+        normalizedPhone
+      );
+      if (existingWaitlistParticipant) {
+        return {
+          ok: true,
+          code: 'ALREADY_WAITLISTED',
+          message: 'Вы уже находитесь в листе ожидания этого турнира.',
+          tournament: publicTournament,
+          client: normalizedClient,
+          access,
+          missingFields: [],
+          waitlistAllowed: false
+        };
+      }
+    }
+
+    if (missingFields.includes('phone')) {
+      return {
+        ok: false,
+        code: 'PROFILE_REQUIRED',
+        message: 'Чтобы присоединиться к турниру, укажите номер телефона.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields,
+        waitlistAllowed: false
+      };
+    }
+
+    if (missingFields.includes('levelLabel')) {
+      return {
+        ok: false,
+        code: 'ONBOARDING_REQUIRED',
+        message:
+          'Для участия в этом турнире нужно определить игровой уровень. Выберите его перед записью.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields,
+        waitlistAllowed: false
+      };
+    }
+
+    if (!access.ok && access.code === 'LEVEL_NOT_ALLOWED') {
+      return {
+        ok: false,
+        code: 'LEVEL_NOT_ALLOWED',
+        message:
+          'Текущий уровень не подходит под условия турнира. Можно оставить заявку в листе ожидания для подтверждения от организатора.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields: [],
+        waitlistAllowed: true
+      };
+    }
+
+    return {
+      ok: true,
+      code: 'READY_TO_JOIN',
+      message: 'Все данные заполнены. Можно подтвердить участие в турнире.',
+      tournament: publicTournament,
+      client: normalizedClient,
+      access,
+      missingFields: [],
+      waitlistAllowed: false
+    };
+  }
+
   async checkPublicAccess(
     slug: string,
     levelLabel?: string
@@ -249,6 +417,77 @@ export class TournamentsService {
     };
   }
 
+  async addPublicParticipantToWaitlist(
+    slug: string,
+    input: RegistrationInput
+  ): Promise<TournamentRegistrationResponse> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomBySlug(slug);
+    const normalizedPhone = this.normalizePhone(input.phone);
+    if (!normalizedPhone) {
+      return {
+        ok: false,
+        code: 'PHONE_REQUIRED',
+        message: 'Для добавления в лист ожидания нужен номер телефона.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const existingParticipant = tournament.participants.find(
+      (item) => this.normalizePhone(item.phone) === normalizedPhone
+    );
+    if (existingParticipant) {
+      return {
+        ok: true,
+        code: 'ALREADY_REGISTERED',
+        message: 'Игрок уже записан в турнир.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        participant: existingParticipant
+      };
+    }
+
+    const existingWaitlistParticipant = tournament.waitlist.find(
+      (item) => this.normalizePhone(item.phone) === normalizedPhone
+    );
+    if (existingWaitlistParticipant) {
+      return {
+        ok: true,
+        code: 'ALREADY_WAITLISTED',
+        message: 'Игрок уже находится в листе ожидания.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        participant: existingWaitlistParticipant
+      };
+    }
+
+    const participant: TournamentParticipant = {
+      name: String(input.name || '').trim() || normalizedPhone,
+      phone: normalizedPhone,
+      levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
+      gender: input.gender ?? 'MIXED',
+      paymentStatus: 'UNPAID',
+      status: 'WAITLIST' as const,
+      registeredAt: new Date().toISOString(),
+      notes: this.pickString(input.notes) ?? undefined
+    };
+
+    const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
+    await this.updateCustom(tournament.id, {
+      waitlist: nextWaitlist
+    });
+
+    return {
+      ok: true,
+      code: 'WAITLISTED',
+      message:
+        'Заявка добавлена в лист ожидания. Организатор сможет подтвердить участие после проверки уровня.',
+      tournamentId: tournament.id,
+      tournamentSlug: tournament.slug,
+      participant
+    };
+  }
+
   async checkMechanicsAccess(
     slug: string,
     phone?: string
@@ -309,6 +548,22 @@ export class TournamentsService {
     }
   }
 
+  private async listHydratedCustomTournamentsSafe(): Promise<CustomTournament[]> {
+    const tournaments = await this.listCustomTournamentsSafe();
+    return Promise.all(
+      tournaments.map(async (tournament) => {
+        try {
+          return await this.hydrateCustomTournament(tournament);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to hydrate public tournament ${tournament.id}: ${String(error)}`
+          );
+          return tournament;
+        }
+      })
+    );
+  }
+
   private async findCustomTournamentByIdSafe(id: string): Promise<CustomTournament | null> {
     if (!this.tournamentsPersistence.isEnabled()) {
       return null;
@@ -348,6 +603,49 @@ export class TournamentsService {
   private async findSourceTournamentById(id: string): Promise<Tournament | null> {
     const sourceTournaments = await this.listSourceTournaments();
     return sourceTournaments.find((item) => item.id === id) ?? null;
+  }
+
+  private matchesPublicTournamentFilters(
+    tournament: CustomTournament,
+    options: {
+      stationIds: string[];
+      includePast: boolean;
+    }
+  ): boolean {
+    if (
+      !options.includePast &&
+      (tournament.status === TournamentStatus.FINISHED
+        || tournament.status === TournamentStatus.CANCELED)
+    ) {
+      return false;
+    }
+
+    if (options.stationIds.length === 0) {
+      return true;
+    }
+
+    const candidates = [
+      this.normalizeFilterValue(tournament.studioId),
+      this.normalizeFilterValue(tournament.studioName)
+    ].filter((value): value is string => Boolean(value));
+    if (candidates.length === 0) {
+      return false;
+    }
+
+    return options.stationIds.some((stationId) => candidates.includes(stationId));
+  }
+
+  private comparePublicTournaments(left: CustomTournament, right: CustomTournament): number {
+    const leftStartsAt = Date.parse(left.startsAt ?? '');
+    const rightStartsAt = Date.parse(right.startsAt ?? '');
+    const leftRank = Number.isFinite(leftStartsAt) ? leftStartsAt : Number.MAX_SAFE_INTEGER;
+    const rightRank = Number.isFinite(rightStartsAt)
+      ? rightStartsAt
+      : Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
   }
 
   private enrichSourceTournament(
@@ -726,6 +1024,7 @@ export class TournamentsService {
       id: tournament.id,
       slug: tournament.slug,
       publicUrl: tournament.publicUrl,
+      joinUrl: this.buildPublicJoinUrl(tournament.publicUrl),
       name: tournament.name,
       tournamentType: tournament.tournamentType,
       gender: tournament.gender,
@@ -740,6 +1039,7 @@ export class TournamentsService {
       ).length,
       waitlistCount: tournament.waitlist.length,
       maxPlayers: tournament.maxPlayers,
+      registrationOpen: this.isTournamentRegistrationOpen(tournament),
       allowedManagerPhonesCount: tournament.allowedManagerPhones.length,
       skin: tournament.skin,
       sourceTournamentId: tournament.sourceTournamentId,
@@ -758,6 +1058,27 @@ export class TournamentsService {
           }
         : undefined
     };
+  }
+
+  private buildPublicJoinUrl(publicUrl: string): string {
+    const normalized = String(publicUrl ?? '')
+      .trim()
+      .replace(/\/+$/, '');
+    return normalized ? `${normalized}/join` : '';
+  }
+
+  private isTournamentRegistrationOpen(tournament: CustomTournament): boolean {
+    return (
+      tournament.status !== TournamentStatus.FINISHED
+      && tournament.status !== TournamentStatus.CANCELED
+    );
+  }
+
+  private findParticipantByPhone(
+    participants: TournamentParticipant[],
+    normalizedPhone: string
+  ): TournamentParticipant | undefined {
+    return participants.find((item) => this.normalizePhone(item.phone) === normalizedPhone);
   }
 
   private normalizePhone(value: unknown): string | null {
@@ -793,6 +1114,39 @@ export class TournamentsService {
     }
     const trimmed = value.trim();
     return trimmed || undefined;
+  }
+
+  private normalizeFilterValues(values?: string[]): string[] {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        values
+          .map((value) => this.normalizeFilterValue(value))
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+  }
+
+  private normalizeFilterValue(value: unknown): string | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    return normalized || null;
+  }
+
+  private normalizePublicLimit(limit?: number): number {
+    const numericLimit = Number(limit);
+    if (!Number.isFinite(numericLimit) || numericLimit <= 0) {
+      return PUBLIC_TOURNAMENTS_LIMIT_DEFAULT;
+    }
+
+    return Math.min(
+      PUBLIC_TOURNAMENTS_LIMIT_MAX,
+      Math.max(1, Math.floor(numericLimit))
+    );
   }
 
   private pickNumber(value: unknown): number | undefined {

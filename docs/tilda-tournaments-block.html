@@ -1,0 +1,429 @@
+<div id="ph-tournaments-root" data-api-base="https://padlhub.ru/api"></div>
+
+<style>
+  #ph-tournaments-root {
+    font-family: "Manrope", Arial, sans-serif;
+    color: #1f2c21;
+  }
+
+  #ph-tournaments-root .ph-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+
+  #ph-tournaments-root .ph-card,
+  #ph-tournaments-root .ph-modal-card {
+    background: #fff;
+    border: 1px solid rgba(31, 44, 33, 0.08);
+    border-radius: 24px;
+    box-shadow: 0 24px 60px rgba(31, 44, 33, 0.08);
+  }
+
+  #ph-tournaments-root .ph-card {
+    padding: 20px;
+  }
+
+  #ph-tournaments-root .ph-title {
+    margin: 0 0 8px;
+    font-size: 22px;
+    line-height: 1;
+  }
+
+  #ph-tournaments-root .ph-subtitle,
+  #ph-tournaments-root .ph-meta,
+  #ph-tournaments-root .ph-status,
+  #ph-tournaments-root .ph-empty {
+    color: rgba(31, 44, 33, 0.72);
+    line-height: 1.5;
+  }
+
+  #ph-tournaments-root .ph-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0;
+  }
+
+  #ph-tournaments-root .ph-chip {
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: rgba(31, 44, 33, 0.06);
+    font-size: 12px;
+  }
+
+  #ph-tournaments-root .ph-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  #ph-tournaments-root .ph-button,
+  #ph-tournaments-root .ph-button-secondary {
+    appearance: none;
+    border: none;
+    border-radius: 999px;
+    min-height: 46px;
+    padding: 0 18px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  #ph-tournaments-root .ph-button {
+    background: linear-gradient(90deg, #f45f34 0%, #f5974c 100%);
+    color: #fff;
+  }
+
+  #ph-tournaments-root .ph-button-secondary {
+    background: rgba(31, 44, 33, 0.08);
+    color: #1f2c21;
+  }
+
+  #ph-tournaments-root .ph-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(31, 44, 33, 0.42);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 9999;
+  }
+
+  #ph-tournaments-root .ph-backdrop.is-open {
+    display: flex;
+  }
+
+  #ph-tournaments-root .ph-modal-card {
+    width: min(100%, 560px);
+    padding: 22px;
+  }
+
+  #ph-tournaments-root .ph-field {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 13px;
+  }
+
+  #ph-tournaments-root input,
+  #ph-tournaments-root select,
+  #ph-tournaments-root textarea {
+    width: 100%;
+    border: 1px solid rgba(31, 44, 33, 0.14);
+    border-radius: 14px;
+    padding: 12px 13px;
+    font-size: 15px;
+    background: #fff;
+  }
+
+  #ph-tournaments-root textarea {
+    min-height: 88px;
+    resize: vertical;
+  }
+</style>
+
+<script>
+  (function () {
+    var root = document.getElementById("ph-tournaments-root");
+    if (!root) return;
+
+    var apiBase = (root.dataset.apiBase || "https://padlhub.ru/api").replace(/\/+$/, "");
+    var levels = ["D", "D+", "C", "C+", "B", "B+", "A"];
+    var state = {
+      items: [],
+      activeItem: null,
+      flow: null,
+      draft: { name: "", phone: "", levelLabel: "", notes: "" }
+    };
+
+    root.innerHTML =
+      '<div class="ph-grid"></div>' +
+      '<div class="ph-backdrop"><div class="ph-modal-card"></div></div>';
+
+    var grid = root.querySelector(".ph-grid");
+    var backdrop = root.querySelector(".ph-backdrop");
+    var modal = root.querySelector(".ph-modal-card");
+
+    function jsonFetch(url, options) {
+      var requestOptions = options || {};
+      requestOptions.credentials = "include";
+      requestOptions.headers = Object.assign(
+        { Accept: "application/json" },
+        requestOptions.headers || {}
+      );
+      return fetch(url, requestOptions).then(function (response) {
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+        return response.json();
+      });
+    }
+
+    function formFetch(url, payload) {
+      return jsonFetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: new URLSearchParams(payload).toString()
+      });
+    }
+
+    function formatDate(value) {
+      if (!value) return "Дата уточняется";
+      var date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString("ru-RU", {
+        day: "numeric",
+        month: "long",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function syncDraft(flow) {
+      state.draft.name = flow.client && flow.client.name ? flow.client.name : state.draft.name;
+      state.draft.phone = flow.client && flow.client.phone ? flow.client.phone : state.draft.phone;
+      state.draft.levelLabel =
+        flow.client && flow.client.levelLabel ? flow.client.levelLabel : state.draft.levelLabel;
+    }
+
+    function closeModal() {
+      backdrop.classList.remove("is-open");
+      modal.innerHTML = "";
+      state.flow = null;
+      state.activeItem = null;
+    }
+
+    function openModal() {
+      backdrop.classList.add("is-open");
+    }
+
+    function renderList() {
+      if (!state.items.length) {
+        grid.innerHTML = '<div class="ph-empty">Пока нет доступных турниров.</div>';
+        return;
+      }
+
+      grid.innerHTML = state.items
+        .map(function (item) {
+          return (
+            '<article class="ph-card">' +
+            '<h3 class="ph-title">' + escapeHtml(item.skin && item.skin.title ? item.skin.title : item.name) + "</h3>" +
+            '<div class="ph-subtitle">' +
+            escapeHtml(item.skin && item.skin.subtitle ? item.skin.subtitle : formatDate(item.startsAt)) +
+            "</div>" +
+            '<div class="ph-meta">' +
+            escapeHtml(item.studioName || "PadelHub") +
+            " · " +
+            escapeHtml(item.trainerName || "Организатор") +
+            "</div>" +
+            '<div class="ph-chips">' +
+            '<span class="ph-chip">' + escapeHtml(item.tournamentType) + "</span>" +
+            '<span class="ph-chip">' +
+            escapeHtml(item.accessLevels && item.accessLevels.length ? "Уровни: " + item.accessLevels.join(", ") : "Без ограничений") +
+            "</span>" +
+            '<span class="ph-chip">' + escapeHtml(item.participantsCount + "/" + item.maxPlayers) + "</span>" +
+            "</div>" +
+            '<div class="ph-actions">' +
+            '<button class="ph-button" type="button" data-join-url="' + escapeHtml(item.joinUrl) + '">Присоединиться</button>' +
+            "</div>" +
+            "</article>"
+          );
+        })
+        .join("");
+
+      Array.prototype.forEach.call(grid.querySelectorAll("[data-join-url]"), function (button) {
+        button.addEventListener("click", function () {
+          openJoin(button.getAttribute("data-join-url"));
+        });
+      });
+    }
+
+    function renderFlow(flow) {
+      syncDraft(flow);
+      state.flow = flow;
+      openModal();
+
+      var primaryLabel =
+        flow.code === "READY_TO_JOIN"
+          ? (flow.tournament.skin && flow.tournament.skin.ctaLabel) || "Подтвердить участие"
+          : flow.code === "LEVEL_NOT_ALLOWED"
+            ? "Проверить ещё раз"
+            : "Продолжить";
+
+      var levelOptions = levels
+        .map(function (level) {
+          var selected = state.draft.levelLabel === level ? ' selected="selected"' : "";
+          return '<option value="' + level + '"' + selected + ">" + level + "</option>";
+        })
+        .join("");
+
+      modal.innerHTML =
+        '<h3 class="ph-title">' + escapeHtml(flow.tournament.name) + "</h3>" +
+        '<div class="ph-subtitle">' + escapeHtml(formatDate(flow.tournament.startsAt)) + "</div>" +
+        '<div class="ph-status">' + escapeHtml(flow.message) + "</div>" +
+        '<label class="ph-field">Имя и фамилия<input type="text" name="name" value="' + escapeHtml(state.draft.name) + '" placeholder="Как к вам обращаться"></label>' +
+        '<label class="ph-field">Телефон<input type="tel" name="phone" value="' + escapeHtml(state.draft.phone) + '" placeholder="+7 999 123-45-67"></label>' +
+        (flow.tournament.accessLevels && flow.tournament.accessLevels.length
+          ? '<label class="ph-field">Уровень<select name="levelLabel"><option value="">Выберите уровень</option>' + levelOptions + "</select></label>"
+          : "") +
+        '<label class="ph-field">Комментарий<textarea name="notes" placeholder="Если нужно, оставьте заметку для организатора">' + escapeHtml(state.draft.notes) + "</textarea></label>" +
+        '<div class="ph-actions">' +
+        '<button class="ph-button" type="button" data-primary-action="1">' + escapeHtml(primaryLabel) + "</button>" +
+        (flow.code === "LEVEL_NOT_ALLOWED" && flow.waitlistAllowed
+          ? '<button class="ph-button-secondary" type="button" data-waitlist-action="1">В лист ожидания</button>'
+          : '<button class="ph-button-secondary" type="button" data-close-action="1">Закрыть</button>') +
+        "</div>";
+
+      modal.querySelector("[data-primary-action]").addEventListener("click", function () {
+        submitJoin(false);
+      });
+
+      var waitlistButton = modal.querySelector("[data-waitlist-action]");
+      if (waitlistButton) {
+        waitlistButton.addEventListener("click", function () {
+          submitJoin(true);
+        });
+      }
+
+      var closeButton = modal.querySelector("[data-close-action]");
+      if (closeButton) {
+        closeButton.addEventListener("click", closeModal);
+      }
+    }
+
+    function renderOutcome(outcome) {
+      openModal();
+      modal.innerHTML =
+        '<h3 class="ph-title">Статус заявки</h3>' +
+        '<div class="ph-status">' + escapeHtml(outcome.message) + "</div>" +
+        '<div class="ph-actions">' +
+        '<button class="ph-button" type="button" data-close-action="1">Готово</button>' +
+        "</div>";
+      modal.querySelector("[data-close-action]").addEventListener("click", closeModal);
+    }
+
+    function collectDraft() {
+      var nameField = modal.querySelector('[name="name"]');
+      var phoneField = modal.querySelector('[name="phone"]');
+      var levelField = modal.querySelector('[name="levelLabel"]');
+      var notesField = modal.querySelector('[name="notes"]');
+
+      state.draft.name = nameField ? nameField.value.trim() : "";
+      state.draft.phone = phoneField ? phoneField.value.trim() : "";
+      state.draft.levelLabel = levelField ? levelField.value.trim() : "";
+      state.draft.notes = notesField ? notesField.value.trim() : "";
+    }
+
+    function submitJoin(waitlist) {
+      if (!state.activeItem) return;
+      collectDraft();
+      formFetch(state.activeItem, {
+        format: "json",
+        name: state.draft.name,
+        phone: state.draft.phone,
+        levelLabel: state.draft.levelLabel,
+        notes: state.draft.notes,
+        waitlist: waitlist ? "1" : "0"
+      })
+        .then(function (payload) {
+          if (payload && payload.code && payload.tournament) {
+            renderFlow(payload);
+            return;
+          }
+          renderOutcome(payload);
+        })
+        .catch(function (error) {
+          alert("Не удалось отправить заявку: " + error.message);
+        });
+    }
+
+    function waitForAuth(flow) {
+      var popup = window.open(flow.authUrl, "padlhub-lk-auth", "width=460,height=860");
+      if (!popup) {
+        window.location.href = flow.authUrl;
+        return;
+      }
+
+      var attempts = 0;
+      var maxAttempts = Math.ceil(120000 / (flow.authPollMs || 1500));
+      var timer = window.setInterval(function () {
+        attempts += 1;
+        jsonFetch(flow.authCheckUrl || state.activeItem + "?format=json")
+          .then(function (nextFlow) {
+            if (nextFlow.code === "AUTH_REQUIRED") {
+              if (attempts >= maxAttempts) {
+                window.clearInterval(timer);
+                alert("LK открылся, но авторизация для турнира не подтвердилась. Повторите попытку.");
+              }
+              return;
+            }
+
+            window.clearInterval(timer);
+            if (!popup.closed) popup.close();
+            handleFlow(nextFlow);
+          })
+          .catch(function () {
+            if (attempts >= maxAttempts) {
+              window.clearInterval(timer);
+            }
+          });
+      }, flow.authPollMs || 1500);
+    }
+
+    function handleFlow(flow) {
+      if (flow.code === "AUTH_REQUIRED" && flow.authUrl) {
+        waitForAuth(flow);
+        return;
+      }
+
+      if (
+        flow.code === "ALREADY_REGISTERED" ||
+        flow.code === "ALREADY_WAITLISTED"
+      ) {
+        renderOutcome({ message: flow.message });
+        return;
+      }
+
+      renderFlow(flow);
+    }
+
+    function openJoin(joinUrl) {
+      state.activeItem = joinUrl;
+      jsonFetch(joinUrl + (joinUrl.indexOf("?") === -1 ? "?" : "&") + "format=json")
+        .then(handleFlow)
+        .catch(function (error) {
+          alert("Не удалось открыть join-flow: " + error.message);
+        });
+    }
+
+    backdrop.addEventListener("click", function (event) {
+      if (event.target === backdrop) {
+        closeModal();
+      }
+    });
+
+    jsonFetch(apiBase + "/tournaments/public/list")
+      .then(function (payload) {
+        state.items = Array.isArray(payload.items) ? payload.items : [];
+        renderList();
+      })
+      .catch(function (error) {
+        grid.innerHTML = '<div class="ph-empty">Не удалось загрузить турниры: ' + escapeHtml(error.message) + "</div>";
+      });
+  })();
+</script>

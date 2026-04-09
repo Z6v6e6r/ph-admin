@@ -130,10 +130,21 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
 - `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.ru/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир)
+- `TOURNAMENTS_PUBLIC_DIRECTORY_URL=https://padlhub.ru/tournaments` (опционально; куда вести пользователя после успешной заявки или из join-flow)
+- `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
+- `TOURNAMENTS_PUBLIC_LK_AUTH_URL=https://padlhub.ru/lk_new` (опционально; куда вести пользователя для реальной авторизации LK; на 9 апреля 2026 актуальная точка входа именно `padlhub.ru/lk_new`)
+- `TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS=1500` (опционально; рекомендованный интервал polling для Tilda-блока после открытия LK в popup)
+- `TOURNAMENTS_PUBLIC_SESSION_COOKIE=ph_tournament_client` (опционально; имя signed-cookie публичной турнирной сессии)
+- `TOURNAMENTS_PUBLIC_SESSION_SECRET=<strong_secret>` (опционально; отдельный secret для публичной турнирной cookie; если не задан — используется `ADMIN_AUTH_SECRET`)
+- `TOURNAMENTS_PUBLIC_SESSION_TTL_DAYS=30` (опционально; сколько дней хранить публичную турнирную сессию)
 
 Публичные endpoint'ы кастомных турниров:
 
+- `GET /api/tournaments/public`
+- `GET /api/tournaments/public/list`
 - `GET /api/tournaments/public/:slug` - публичная карточка турнира со skin, параметрами, участниками и waitlist
+- `GET /api/tournaments/public/:slug/join` - browser-friendly join flow для ссылки с Tilda; при `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` сначала проверяет реальную авторизацию в LK, затем телефон/уровень и ведет до записи или waitlist
+- `POST /api/tournaments/public/:slug/join` - submit join-flow (поддерживает HTML form и JSON; при `Accept: application/json` или `format=json` вернет JSON)
 - `POST /api/tournaments/public/:slug/access-check` - проверка допуска по уровню (`levelLabel`); если уровень не передан, сервис вернет статус онбординга
 - `POST /api/tournaments/public/:slug/registrations` - запись участника в турнир или waitlist
 - `POST /api/tournaments/public/:slug/mechanics-access` - проверка доступа к турнирной механике по номеру телефона
@@ -217,6 +228,40 @@ SUPPORT_WEB_MONGODB_DB=games
 
 ```text
 https://example.com/api/communities/public/showcase?stationId=nagatino&limit=6&refreshMs=120000
+```
+
+## Публичные турниры для Tilda
+
+Для страницы `padlhub.ru/tournaments` доступны JSON endpoint'ы:
+
+- `GET /api/tournaments/public/list`
+- параметры: `stationId=nagatino`, `limit=12`, `includePast=true`
+- каждый элемент каталога теперь содержит:
+  - `publicUrl` - публичная карточка турнира
+  - `joinUrl` - ссылка на join-flow
+  - `registrationOpen` - флаг открытой регистрации
+
+Пример Tilda-кнопки:
+
+```html
+<a href="https://example.com/api/tournaments/public/pervyy-turnir/join">
+  Присоединиться к турниру
+</a>
+```
+
+Join-flow делает следующее:
+
+- при первом заходе создает защищенную cookie-сессию с черновиком турнирных данных
+- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED` и `authUrl`
+- если телефона нет, просит указать его
+- если для турнира задан `accessLevels` и уровень не определен, просит выбрать свой уровень
+- если уровень подходит, записывает в турнир
+- если уровень не подходит, предлагает оставить заявку в `waitlist`
+
+Для headless-интеграции join-flow можно дергать как JSON:
+
+```bash
+curl "http://localhost:3000/api/tournaments/public/pervyy-turnir/join?format=json"
 ```
 
 ## Аутентификация в MVP

@@ -23,8 +23,18 @@ async function bootstrap(): Promise<void> {
       'Content-Type',
       'Authorization',
       'x-user-id',
+      'x-user-login',
+      'x-user-name',
+      'x-user-title',
       'x-user-role',
       'x-user-roles',
+      'x-user-phone',
+      'x-user-primary-phone',
+      'x-user-level',
+      'x-user-level-label',
+      'x-user-max-public-url',
+      'x-connector-route',
+      'x-connector-routes',
       'x-station-id',
       'x-station-ids'
     ]
