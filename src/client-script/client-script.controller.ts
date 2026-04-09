@@ -97,6 +97,26 @@ export class ClientScriptController {
     response.sendFile(filePath);
   }
 
+  @Get('tournaments-showcase.js')
+  streamTournamentsShowcase(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-tournaments-showcase.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(filePath);
+  }
+
+  @Get('tournaments-showcase.download.js')
+  downloadTournamentsShowcase(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-tournaments-showcase.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.setHeader(
+      'Content-Disposition',
+      'attachment; filename="phab-tournaments-showcase.js"'
+    );
+    response.sendFile(filePath);
+  }
+
   @Get('community-feed.js')
   streamCommunityFeed(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-community-feed.js');

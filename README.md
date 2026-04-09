@@ -232,27 +232,54 @@ https://example.com/api/communities/public/showcase?stationId=nagatino&limit=6&r
 
 ## Публичные турниры для Tilda
 
-Для страницы `padlhub.ru/tournaments` доступны JSON endpoint'ы:
+Для страницы `padlhub.ru/tournaments` доступны:
 
 - `GET /api/tournaments/public/list`
-- параметры: `stationId=nagatino`, `limit=12`, `includePast=true`
-- каждый элемент каталога теперь содержит:
-  - `publicUrl` - публичная карточка турнира
-  - `joinUrl` - ссылка на join-flow
-  - `registrationOpen` - флаг открытой регистрации
+- `GET /api/tournaments/public/showcase`
+- `GET /api/client-script/tournaments-showcase.js`
 
-Пример Tilda-кнопки:
+Параметры каталога и витрины:
+
+- `stationId=nagatino` или `stationId=nagatino,terehova`
+- `limit=12`
+- `includePast=true`
+- `refreshMs=120000`
+
+Каждый элемент каталога содержит:
+
+- `publicUrl` - публичная карточка турнира
+- `joinUrl` - ссылка на join-flow
+- `registrationOpen` - флаг открытой регистрации
+
+Короткий Tilda-embed по аналогии с community showcase:
 
 ```html
-<a href="https://example.com/api/tournaments/public/pervyy-turnir/join">
-  Присоединиться к турниру
-</a>
+<div
+  data-ph-tournaments-showcase
+  data-api-base="https://example.com/api"
+  data-limit="12"
+  data-refresh-ms="120000"
+></div>
+<script src="https://example.com/api/client-script/tournaments-showcase.js" defer></script>
 ```
 
-Join-flow делает следующее:
+Опционально можно добавить:
+
+- `data-station-ids="nagatino"`
+- `data-include-past="1"`
+- `data-title="Турниры PadelHub"`
+- `data-subtitle="Выбирайте турнир и записывайтесь через LK."`
+
+Прямая витрина по ссылке/для iframe:
+
+```text
+https://example.com/api/tournaments/public/showcase?stationId=nagatino&limit=6&refreshMs=120000
+```
+
+Join-flow внутри виджета делает следующее:
 
 - при первом заходе создает защищенную cookie-сессию с черновиком турнирных данных
-- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED` и `authUrl`
+- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED`, открывает LK и poll'ит `authCheckUrl`
 - если телефона нет, просит указать его
 - если для турнира задан `accessLevels` и уровень не определен, просит выбрать свой уровень
 - если уровень подходит, записывает в турнир

@@ -21,6 +21,7 @@ const files = [
   'phab-community-feed.js',
   'phab-communities-showcase.js',
   'phab-client-messenger.js',
+  'phab-tournaments-showcase.js',
   'phab-messenger-push-sw.js'
 ];
 for (const file of files) {

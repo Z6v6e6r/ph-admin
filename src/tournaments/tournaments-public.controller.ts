@@ -69,6 +69,122 @@ export class TournamentsPublicController {
     });
   }
 
+  @Get('showcase')
+  renderPublicShowcase(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query('stationId') stationId?: string,
+    @Query('limit') limit?: string,
+    @Query('includePast') includePast?: string,
+    @Query('title') title?: string,
+    @Query('subtitle') subtitle?: string,
+    @Query('refreshMs') refreshMs?: string
+  ): void {
+    const apiBasePath = this.resolveApiBasePath(request);
+    const widgetScriptUrl = `${apiBasePath}/client-script/tournaments-showcase.js`;
+    const normalizedTitle = String(title ?? '').trim() || 'Турниры PadelHub рядом с вами';
+    const normalizedSubtitle =
+      String(subtitle ?? '').trim()
+      || 'Выбирайте турнир, проходите авторизацию через LK и записывайтесь прямо со страницы.';
+    const normalizedLimit = this.parsePositiveInteger(limit);
+    const normalizedLimitAttr = normalizedLimit !== undefined ? String(normalizedLimit) : '';
+    const normalizedRefreshMs = this.normalizeRefreshMs(refreshMs);
+    const normalizedIncludePast = this.parseBoolean(includePast);
+
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.send(`<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(normalizedTitle)}</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 14% 18%, rgba(194, 243, 214, 0.82), transparent 28%),
+          radial-gradient(circle at 84% 14%, rgba(255, 210, 166, 0.74), transparent 30%),
+          linear-gradient(150deg, #f7f4ea 0%, #fffdf7 38%, #eef7ff 100%);
+        color: #1f2c21;
+        padding: 28px;
+      }
+      .page {
+        max-width: 1420px;
+        margin: 0 auto;
+      }
+      .hero {
+        margin-bottom: 22px;
+        padding: 24px 26px;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        box-shadow: 0 24px 60px rgba(31, 44, 33, 0.10);
+        backdrop-filter: blur(10px);
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 12px;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(31, 44, 33, 0.58);
+      }
+      .title {
+        margin: 0 0 10px;
+        font-size: clamp(32px, 4vw, 56px);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
+      }
+      .subtitle {
+        margin: 0;
+        max-width: 920px;
+        font-size: clamp(16px, 1.8vw, 22px);
+        line-height: 1.45;
+        color: rgba(31, 44, 33, 0.76);
+      }
+      .mount {
+        min-height: 360px;
+      }
+      @media (max-width: 720px) {
+        body {
+          padding: 16px;
+        }
+        .hero {
+          padding: 18px;
+          border-radius: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Tournament Showcase</p>
+        <h1 class="title">${this.escapeHtml(normalizedTitle)}</h1>
+        <p class="subtitle">${this.escapeHtml(normalizedSubtitle)}</p>
+      </section>
+      <div
+        class="mount"
+        data-ph-tournaments-showcase
+        data-api-base="${this.escapeHtml(apiBasePath)}"
+        data-station-ids="${this.escapeHtml(String(stationId ?? ''))}"
+        data-limit="${this.escapeHtml(normalizedLimitAttr)}"
+        data-include-past="${normalizedIncludePast ? '1' : '0'}"
+        data-refresh-ms="${this.escapeHtml(String(normalizedRefreshMs))}"
+        data-title="${this.escapeHtml(normalizedTitle)}"
+        data-subtitle="${this.escapeHtml(normalizedSubtitle)}"
+        data-variant="screen"
+      ></div>
+    </main>
+    <script src="${this.escapeHtml(widgetScriptUrl)}" defer></script>
+  </body>
+</html>`);
+  }
+
   @Get(':slug/join')
   async renderJoinPage(
     @Param('slug') slug: string,
@@ -941,6 +1057,14 @@ export class TournamentsPublicController {
     return Math.floor(numericValue);
   }
 
+  private normalizeRefreshMs(value?: string): number {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      return 120000;
+    }
+    return Math.min(900000, Math.max(30000, Math.floor(numericValue)));
+  }
+
   private parseBoolean(value: unknown): boolean {
     const normalized = String(value ?? '')
       .trim()
@@ -962,6 +1086,12 @@ export class TournamentsPublicController {
     }
     const trimmed = value.trim();
     return trimmed || null;
+  }
+
+  private resolveApiBasePath(request: Request): string {
+    const originalPath = String(request.originalUrl ?? '').split('?')[0];
+    const apiBasePath = originalPath.split('/tournaments/public')[0];
+    return apiBasePath || '/api';
   }
 
   private escapeHtml(value: string): string {
