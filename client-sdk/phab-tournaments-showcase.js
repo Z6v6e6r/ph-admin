@@ -453,7 +453,9 @@
 
   function jsonFetch(url, options) {
     var requestOptions = options || {};
-    requestOptions.credentials = 'include';
+    if (!requestOptions.credentials) {
+      requestOptions.credentials = 'include';
+    }
     requestOptions.headers = Object.assign(
       { Accept: 'application/json' },
       requestOptions.headers || {}
@@ -475,6 +477,15 @@
       },
       body: new URLSearchParams(payload).toString()
     });
+  }
+
+  function isCrossOriginApi(config) {
+    try {
+      var apiOrigin = new URL(normalizeApiBaseUrl(config.apiBaseUrl) + '/', window.location.href).origin;
+      return apiOrigin !== window.location.origin;
+    } catch (_error) {
+      return false;
+    }
   }
 
   function syncDraft(state, flow) {
@@ -553,7 +564,9 @@
     var hint = createElement(
       'p',
       'phab-tournaments__hint',
-      'Кнопка откроет LK-авторизацию и проверку уровня перед записью.'
+      state.crossOriginApi
+        ? 'Кнопка откроет отдельную страницу записи на backend PadelHub.'
+        : 'Кнопка откроет LK-авторизацию и проверку уровня перед записью.'
     );
     var primaryButton = createElement(
       'button',
@@ -1058,6 +1071,11 @@
       return;
     }
 
+    if (state.crossOriginApi) {
+      window.location.assign(joinUrl);
+      return;
+    }
+
     state.activeJoinUrl = joinUrl;
     state.activeItem = item;
     state.outcome = null;
@@ -1107,7 +1125,9 @@
   function loadTournaments(mount, state) {
     renderLoading(mount);
 
-    return jsonFetch(buildRequestUrl(state.config))
+    return jsonFetch(buildRequestUrl(state.config), {
+      credentials: state.crossOriginApi ? 'omit' : 'include'
+    })
       .then(function (payload) {
         state.payload = payload;
         renderTournaments(mount, payload, state);
@@ -1147,6 +1167,7 @@
 
     var state = {
       config: config,
+      crossOriginApi: isCrossOriginApi(config),
       payload: { items: [] },
       items: [],
       draft: {
