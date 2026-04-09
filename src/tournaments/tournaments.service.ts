@@ -8,6 +8,11 @@ import {
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
+  AmericanoGenerateScheduleInput,
+  AmericanoScheduleResult
+} from './americano-schedule.types';
+import { AmericanoScheduleService } from './americano-schedule.service';
+import {
   CreateCustomTournamentMutation,
   TournamentsPersistenceService,
   UpdateCustomTournamentMutation
@@ -45,8 +50,15 @@ export class TournamentsService {
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
     private readonly vivaTournamentsService: VivaTournamentsService,
-    private readonly tournamentsPersistence: TournamentsPersistenceService
+    private readonly tournamentsPersistence: TournamentsPersistenceService,
+    private readonly americanoScheduleService: AmericanoScheduleService
   ) {}
+
+  async generateSchedule(
+    input: AmericanoGenerateScheduleInput
+  ): Promise<AmericanoScheduleResult> {
+    return this.americanoScheduleService.generateSchedule(input);
+  }
 
   async findAll(): Promise<Tournament[]> {
     const sourceTournaments = await this.listSourceTournaments();

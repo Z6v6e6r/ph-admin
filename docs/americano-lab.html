@@ -1,0 +1,1201 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Americano Lab</title>
+    <meta name="application-name" content="Дворотека" />
+    <meta name="theme-color" content="#0f3932" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Americano Lab" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="icon" type="image/svg+xml" href="/api/ui/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/api/ui/favicon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/api/ui/apple-touch-icon.png" />
+    <link rel="manifest" href="/api/ui/site.webmanifest" />
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Unbounded:wght@500;700;800&display=swap');
+
+      :root {
+        color-scheme: light;
+        --bg-1: #f4f4cf;
+        --bg-2: #d8f8d5;
+        --bg-3: #c8f0ff;
+        --ink: #12342d;
+        --ink-soft: rgba(18, 52, 45, 0.72);
+        --line: rgba(18, 52, 45, 0.14);
+        --card: rgba(255, 255, 255, 0.84);
+        --card-strong: rgba(255, 255, 255, 0.94);
+        --accent: #0f7a67;
+        --accent-strong: #0a5a4c;
+        --warm: #f67242;
+        --danger: #b4233c;
+        --shadow: 0 20px 50px rgba(10, 48, 41, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        font-family: "Manrope", "Helvetica Neue", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 8% 12%, rgba(246, 114, 66, 0.18), transparent 22%),
+          radial-gradient(circle at 92% 8%, rgba(15, 122, 103, 0.18), transparent 26%),
+          radial-gradient(circle at 82% 92%, rgba(72, 119, 255, 0.14), transparent 24%),
+          linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 48%, var(--bg-3) 100%);
+      }
+
+      .page {
+        width: min(1460px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 24px 0 36px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
+        gap: 18px;
+        align-items: stretch;
+        margin-bottom: 18px;
+      }
+
+      .hero-card,
+      .panel,
+      .surface {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+
+      .hero-card {
+        padding: 26px 28px;
+        background:
+          linear-gradient(140deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.76)),
+          linear-gradient(120deg, rgba(15, 122, 103, 0.12), rgba(246, 114, 66, 0.1));
+      }
+
+      .hero-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(15, 122, 103, 0.11);
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-family: "Unbounded", "Arial Black", sans-serif;
+        font-size: clamp(28px, 4vw, 46px);
+        line-height: 1.08;
+      }
+
+      .hero-text {
+        margin: 0;
+        max-width: 760px;
+        color: var(--ink-soft);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      .hero-side {
+        padding: 22px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .hero-side h2,
+      .panel-title,
+      .section-title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .hero-list {
+        display: grid;
+        gap: 8px;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+
+      .hero-list div {
+        padding: 10px 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(360px, 430px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .panel {
+        padding: 18px;
+        position: sticky;
+        top: 18px;
+      }
+
+      .panel-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .field-full {
+        grid-column: 1 / -1;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .input,
+      .select,
+      .textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(18, 52, 45, 0.14);
+        background: rgba(255, 255, 255, 0.95);
+        color: var(--ink);
+        padding: 12px 13px;
+        font: inherit;
+      }
+
+      .textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      .input:focus,
+      .select:focus,
+      .textarea:focus {
+        outline: none;
+        border-color: rgba(15, 122, 103, 0.5);
+        box-shadow: 0 0 0 4px rgba(15, 122, 103, 0.12);
+      }
+
+      .checks {
+        display: grid;
+        gap: 8px;
+        padding: 4px 0;
+      }
+
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+        font-size: 14px;
+      }
+
+      .actions,
+      .sub-actions {
+        display: grid;
+        gap: 10px;
+      }
+
+      .btn-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      button {
+        border: none;
+        cursor: pointer;
+        font: inherit;
+      }
+
+      .btn {
+        min-height: 46px;
+        border-radius: 14px;
+        padding: 0 16px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+        color: #fff;
+        box-shadow: 0 16px 24px rgba(15, 122, 103, 0.22);
+      }
+
+      .btn-secondary {
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        border: 1px solid rgba(18, 52, 45, 0.12);
+      }
+
+      .btn-warm {
+        background: linear-gradient(135deg, #ff935d 0%, var(--warm) 100%);
+        color: #fff;
+        box-shadow: 0 16px 24px rgba(246, 114, 66, 0.18);
+      }
+
+      .hint {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 18px;
+      }
+
+      .surface {
+        padding: 18px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .section-note {
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      .players-shell {
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(18, 52, 45, 0.08);
+        background: rgba(255, 255, 255, 0.64);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 760px;
+      }
+
+      th,
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(18, 52, 45, 0.08);
+        text-align: left;
+        font-size: 14px;
+      }
+
+      th {
+        position: sticky;
+        top: 0;
+        background: rgba(242, 251, 247, 0.96);
+        z-index: 1;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      td .input {
+        padding: 9px 10px;
+        min-width: 84px;
+      }
+
+      .diag-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .diag-card {
+        padding: 16px;
+        border-radius: 18px;
+        background: var(--card-strong);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .diag-label {
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .diag-value {
+        font-size: 28px;
+        font-weight: 800;
+        line-height: 1.1;
+      }
+
+      .diag-sub {
+        margin-top: 6px;
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      .status {
+        display: none;
+        margin-bottom: 14px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .status-visible {
+        display: block;
+      }
+
+      .status-error {
+        background: rgba(180, 35, 60, 0.1);
+        border: 1px solid rgba(180, 35, 60, 0.18);
+        color: var(--danger);
+      }
+
+      .status-info {
+        background: rgba(15, 122, 103, 0.09);
+        border: 1px solid rgba(15, 122, 103, 0.16);
+        color: var(--accent-strong);
+      }
+
+      .rounds {
+        display: grid;
+        gap: 14px;
+      }
+
+      .round-card {
+        padding: 18px;
+        border-radius: 20px;
+        background: var(--card-strong);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .round-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 14px;
+      }
+
+      .round-title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .bye-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(246, 114, 66, 0.1);
+        color: #b44a22;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .matches {
+        display: grid;
+        gap: 12px;
+      }
+
+      .match-card {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .match-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .match-court {
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .teams {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+      }
+
+      .team {
+        padding: 14px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(15, 122, 103, 0.08), rgba(15, 122, 103, 0.03));
+        border: 1px solid rgba(15, 122, 103, 0.12);
+      }
+
+      .team.team-alt {
+        background: linear-gradient(135deg, rgba(246, 114, 66, 0.09), rgba(246, 114, 66, 0.03));
+        border-color: rgba(246, 114, 66, 0.12);
+      }
+
+      .team-label {
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .team-players {
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.3;
+      }
+
+      .versus {
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .quality-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .quality-item {
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(18, 52, 45, 0.04);
+      }
+
+      .quality-name {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .quality-value {
+        margin-top: 6px;
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      details {
+        border-radius: 18px;
+        border: 1px solid rgba(18, 52, 45, 0.08);
+        background: rgba(255, 255, 255, 0.72);
+        overflow: hidden;
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 14px 16px;
+        font-weight: 800;
+      }
+
+      pre {
+        margin: 0;
+        padding: 0 16px 16px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .empty {
+        padding: 28px;
+        border-radius: 18px;
+        border: 1px dashed rgba(18, 52, 45, 0.18);
+        color: var(--ink-soft);
+        text-align: center;
+        font-size: 14px;
+        background: rgba(255, 255, 255, 0.54);
+      }
+
+      @media (max-width: 1180px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          position: static;
+        }
+
+        .diag-grid,
+        .quality-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 840px) {
+        .page {
+          width: min(100vw - 20px, 100%);
+          padding-top: 16px;
+        }
+
+        .hero {
+          grid-template-columns: 1fr;
+        }
+
+        .field-grid,
+        .btn-row,
+        .diag-grid,
+        .quality-grid,
+        .teams {
+          grid-template-columns: 1fr;
+        }
+
+        .versus {
+          text-align: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="hero-card">
+          <div class="hero-kicker">Mechanics Playground</div>
+          <h1>Americano Lab</h1>
+          <p class="hero-text">
+            Быстрый стенд для ручной проверки генератора сетки Americano. Здесь можно собрать состав,
+            настроить режим турнира, проверить баланс по рейтингу, покрытие партнёрств и сразу увидеть,
+            где появляются повторы соперников или перекос по bye.
+          </p>
+        </div>
+        <aside class="hero-side hero-card">
+          <h2>Что умеет</h2>
+          <div class="hero-list">
+            <div>Режимы: Full, Short, Competitive</div>
+            <div>Гибкая настройка rounds, courts и ограничений</div>
+            <div>Редактируемые игроки и рейтинги без JSON-ручного ввода</div>
+            <div>Диагностика покрытия, fairness по bye и quality по каждому матчу</div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="layout">
+        <aside class="panel">
+          <div class="panel-grid">
+            <h2 class="panel-title">Параметры генерации</h2>
+
+            <div class="field-grid">
+              <label class="field">
+                <span class="label">Число игроков</span>
+                <input id="playerCount" class="input" type="number" min="4" max="48" value="12" />
+              </label>
+
+              <label class="field">
+                <span class="label">Режим</span>
+                <select id="mode" class="select">
+                  <option value="full_americano">Full Americano</option>
+                  <option value="short_americano" selected>Short Americano</option>
+                  <option value="competitive_americano">Competitive Americano</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="label">Раунды</span>
+                <input id="rounds" class="input" type="number" min="1" placeholder="auto" />
+              </label>
+
+              <label class="field">
+                <span class="label">Корты</span>
+                <input id="courts" class="input" type="number" min="1" placeholder="без лимита" />
+              </label>
+
+              <label class="field">
+                <span class="label">Партнёры</span>
+                <select id="partnerStrictness" class="select">
+                  <option value="high" selected>High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="label">Баланс</span>
+                <select id="balanceStrictness" class="select">
+                  <option value="high">High</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+
+              <label class="field field-full">
+                <span class="label">Локальный поиск</span>
+                <input id="localSearchIterations" class="input" type="number" min="1" value="6" />
+              </label>
+            </div>
+
+            <div class="checks">
+              <label class="check">
+                <input id="useRatings" type="checkbox" checked />
+                <span>Учитывать рейтинг при балансировке</span>
+              </label>
+              <label class="check">
+                <input id="avoidRepeatOpponents" type="checkbox" checked />
+                <span>Избегать повторов соперников</span>
+              </label>
+              <label class="check">
+                <input id="avoidRepeatPartners" type="checkbox" checked />
+                <span>Избегать повторов партнёров</span>
+              </label>
+              <label class="check">
+                <input id="distributeByesEvenly" type="checkbox" checked />
+                <span>Распределять bye максимально равномерно</span>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button id="runBtn" class="btn btn-primary" type="button">Сгенерировать сетку</button>
+              <div class="btn-row">
+                <button id="refreshPlayersBtn" class="btn btn-secondary" type="button">Обновить состав</button>
+                <button id="shuffleRatingsBtn" class="btn btn-secondary" type="button">Перемешать рейтинг</button>
+              </div>
+              <div class="btn-row">
+                <button id="equalizeRatingsBtn" class="btn btn-secondary" type="button">Сделать рейтинг равным</button>
+                <button id="copyJsonBtn" class="btn btn-warm" type="button">Скопировать JSON</button>
+              </div>
+            </div>
+
+            <p class="hint">
+              Страница вызывает <code>POST /api/tournaments/generate-schedule</code> тем же доменом,
+              так что можно сразу тестировать реальный сервис без моков.
+            </p>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <div class="surface">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Игроки</h2>
+                <div class="section-note">Редактируйте состав прямо в таблице перед запуском генерации.</div>
+              </div>
+            </div>
+            <div class="players-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Rating</th>
+                    <th>Verified</th>
+                    <th>Regularity</th>
+                    <th>Engagement</th>
+                    <th>Games</th>
+                  </tr>
+                </thead>
+                <tbody id="playersBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="surface">
+            <div id="status" class="status"></div>
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Диагностика</h2>
+                <div class="section-note">Ключевые метрики качества решения по итогам генерации.</div>
+              </div>
+            </div>
+            <div id="diagnostics" class="diag-grid"></div>
+          </div>
+
+          <div class="surface">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Раунды и матчи</h2>
+                <div class="section-note">Матчи, bye и quality по каждому раунду.</div>
+              </div>
+            </div>
+            <div id="rounds" class="rounds">
+              <div class="empty">Сетка появится здесь после первого запуска.</div>
+            </div>
+          </div>
+
+          <details class="surface">
+            <summary>Raw JSON ответа</summary>
+            <pre id="rawJson">{}</pre>
+          </details>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        var dom = {
+          playerCount: document.getElementById('playerCount'),
+          mode: document.getElementById('mode'),
+          rounds: document.getElementById('rounds'),
+          courts: document.getElementById('courts'),
+          partnerStrictness: document.getElementById('partnerStrictness'),
+          balanceStrictness: document.getElementById('balanceStrictness'),
+          localSearchIterations: document.getElementById('localSearchIterations'),
+          useRatings: document.getElementById('useRatings'),
+          avoidRepeatOpponents: document.getElementById('avoidRepeatOpponents'),
+          avoidRepeatPartners: document.getElementById('avoidRepeatPartners'),
+          distributeByesEvenly: document.getElementById('distributeByesEvenly'),
+          refreshPlayersBtn: document.getElementById('refreshPlayersBtn'),
+          shuffleRatingsBtn: document.getElementById('shuffleRatingsBtn'),
+          equalizeRatingsBtn: document.getElementById('equalizeRatingsBtn'),
+          copyJsonBtn: document.getElementById('copyJsonBtn'),
+          runBtn: document.getElementById('runBtn'),
+          playersBody: document.getElementById('playersBody'),
+          diagnostics: document.getElementById('diagnostics'),
+          rounds: document.getElementById('rounds'),
+          rawJson: document.getElementById('rawJson'),
+          status: document.getElementById('status')
+        };
+
+        var state = {
+          players: [],
+          result: null
+        };
+
+        function clamp(value, min, max) {
+          return Math.min(max, Math.max(min, value));
+        }
+
+        function parsePositiveInteger(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric) || numeric <= 0) {
+            return null;
+          }
+          return Math.floor(numeric);
+        }
+
+        function createPlayer(index) {
+          return {
+            id: 'P' + String(index + 1),
+            rating: 1300 + index * 35,
+            verifiedFactor: 1,
+            regularityFactor: 1,
+            engagementFactor: 1,
+            gamesPlayed: 12 + (index % 8)
+          };
+        }
+
+        function rebuildPlayers() {
+          var count = clamp(parsePositiveInteger(dom.playerCount.value) || 12, 4, 48);
+          dom.playerCount.value = String(count);
+          var next = [];
+          for (var index = 0; index < count; index += 1) {
+            if (state.players[index]) {
+              next.push({
+                id: String(state.players[index].id || ('P' + String(index + 1))).trim() || ('P' + String(index + 1)),
+                rating: Number(state.players[index].rating) || createPlayer(index).rating,
+                verifiedFactor: Number(state.players[index].verifiedFactor) || 1,
+                regularityFactor: Number(state.players[index].regularityFactor) || 1,
+                engagementFactor: Number(state.players[index].engagementFactor) || 1,
+                gamesPlayed: Number(state.players[index].gamesPlayed) || 0
+              });
+            } else {
+              next.push(createPlayer(index));
+            }
+          }
+          state.players = next;
+          renderPlayers();
+        }
+
+        function shuffleRatings() {
+          var shuffled = state.players.map(function (player) {
+            return Number(player.rating) || 1500;
+          });
+          for (var index = shuffled.length - 1; index > 0; index -= 1) {
+            var swapIndex = Math.floor(Math.random() * (index + 1));
+            var temp = shuffled[index];
+            shuffled[index] = shuffled[swapIndex];
+            shuffled[swapIndex] = temp;
+          }
+          state.players = state.players.map(function (player, index) {
+            return Object.assign({}, player, {
+              rating: shuffled[index]
+            });
+          });
+          renderPlayers();
+        }
+
+        function equalizeRatings() {
+          state.players = state.players.map(function (player) {
+            return Object.assign({}, player, { rating: 1500 });
+          });
+          renderPlayers();
+        }
+
+        function renderPlayers() {
+          dom.playersBody.innerHTML = '';
+          state.players.forEach(function (player, index) {
+            var row = document.createElement('tr');
+            row.innerHTML = [
+              '<td><input class="input" data-key="id" data-index="' + index + '" value="' + escapeAttr(player.id) + '" /></td>',
+              '<td><input class="input" data-key="rating" data-index="' + index + '" type="number" step="1" value="' + escapeAttr(String(player.rating)) + '" /></td>',
+              '<td><input class="input" data-key="verifiedFactor" data-index="' + index + '" type="number" step="0.05" min="0.1" max="1" value="' + escapeAttr(String(player.verifiedFactor)) + '" /></td>',
+              '<td><input class="input" data-key="regularityFactor" data-index="' + index + '" type="number" step="0.05" min="0.5" max="1" value="' + escapeAttr(String(player.regularityFactor)) + '" /></td>',
+              '<td><input class="input" data-key="engagementFactor" data-index="' + index + '" type="number" step="0.05" min="0.9" max="1" value="' + escapeAttr(String(player.engagementFactor)) + '" /></td>',
+              '<td><input class="input" data-key="gamesPlayed" data-index="' + index + '" type="number" step="1" min="0" value="' + escapeAttr(String(player.gamesPlayed)) + '" /></td>'
+            ].join('');
+            dom.playersBody.appendChild(row);
+          });
+
+          Array.prototype.slice.call(dom.playersBody.querySelectorAll('input')).forEach(function (input) {
+            input.addEventListener('input', function (event) {
+              var target = event.target;
+              var index = Number(target.getAttribute('data-index'));
+              var key = String(target.getAttribute('data-key') || '');
+              if (!state.players[index]) {
+                return;
+              }
+              var value = target.value;
+              if (key === 'id') {
+                state.players[index][key] = value.trim() || ('P' + String(index + 1));
+                return;
+              }
+              var numeric = Number(value);
+              state.players[index][key] = Number.isFinite(numeric) ? numeric : 0;
+            });
+          });
+        }
+
+        function escapeAttr(value) {
+          return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        }
+
+        function setStatus(message, variant) {
+          if (!message) {
+            dom.status.className = 'status';
+            dom.status.textContent = '';
+            return;
+          }
+          dom.status.className =
+            'status status-visible ' + (variant === 'error' ? 'status-error' : 'status-info');
+          dom.status.textContent = message;
+        }
+
+        function readConfig() {
+          var mode = String(dom.mode.value || 'short_americano');
+          return {
+            mode: mode,
+            rounds: parsePositiveInteger(dom.rounds.value),
+            courts: parsePositiveInteger(dom.courts.value),
+            useRatings: Boolean(dom.useRatings.checked),
+            strictPartnerUniqueness: String(dom.partnerStrictness.value || 'high'),
+            strictBalance: String(dom.balanceStrictness.value || 'medium'),
+            avoidRepeatOpponents: Boolean(dom.avoidRepeatOpponents.checked),
+            avoidRepeatPartners: Boolean(dom.avoidRepeatPartners.checked),
+            distributeByesEvenly: Boolean(dom.distributeByesEvenly.checked),
+            localSearchIterations: parsePositiveInteger(dom.localSearchIterations.value) || 6
+          };
+        }
+
+        function buildPayload() {
+          return {
+            players: state.players.map(function (player, index) {
+              return {
+                id: String(player.id || ('P' + String(index + 1))).trim() || ('P' + String(index + 1)),
+                rating: Number(player.rating) || 1500,
+                verifiedFactor: clamp(Number(player.verifiedFactor) || 1, 0.1, 1),
+                regularityFactor: clamp(Number(player.regularityFactor) || 1, 0.5, 1),
+                engagementFactor: clamp(Number(player.engagementFactor) || 1, 0.9, 1),
+                gamesPlayed: Math.max(0, Math.floor(Number(player.gamesPlayed) || 0))
+              };
+            }),
+            config: readConfig()
+          };
+        }
+
+        function renderDiagnostics(result) {
+          var diagnostics = result && result.diagnostics ? result.diagnostics : null;
+          if (!diagnostics) {
+            dom.diagnostics.innerHTML = '<div class="empty">Диагностика появится после генерации.</div>';
+            return;
+          }
+
+          var repeatedPartners = Array.isArray(diagnostics.repeatedPartnerPairs)
+            ? diagnostics.repeatedPartnerPairs.length
+            : 0;
+          var repeatedOpponents = Array.isArray(diagnostics.repeatedOpponentPairs)
+            ? diagnostics.repeatedOpponentPairs.length
+            : 0;
+
+          dom.diagnostics.innerHTML = [
+            renderDiagCard(
+              'Partner Coverage',
+              formatNumber(diagnostics.partnerCoveragePercent) + '%',
+              'Уникальные партнёрства'
+            ),
+            renderDiagCard(
+              'Opponent Coverage',
+              formatNumber(diagnostics.opponentCoveragePercent) + '%',
+              'Уникальные соперники'
+            ),
+            renderDiagCard(
+              'Avg Balance',
+              formatNumber(diagnostics.balance && diagnostics.balance.averagePenalty),
+              'Средний penalty'
+            ),
+            renderDiagCard(
+              'Bye Spread',
+              formatNumber(diagnostics.byeStats && diagnostics.byeStats.min) +
+                '–' +
+                formatNumber(diagnostics.byeStats && diagnostics.byeStats.max),
+              'Минимум и максимум bye'
+            ),
+            renderDiagCard(
+              'Rounds',
+              formatNumber(diagnostics.totalRounds),
+              'Всего раундов'
+            ),
+            renderDiagCard(
+              'Players',
+              formatNumber(diagnostics.totalPlayers),
+              'Всего игроков'
+            ),
+            renderDiagCard(
+              'Repeated Partners',
+              formatNumber(repeatedPartners),
+              'Пар повторилось'
+            ),
+            renderDiagCard(
+              'Repeated Opponents',
+              formatNumber(repeatedOpponents),
+              'Пар соперников повторилось'
+            )
+          ].join('');
+        }
+
+        function renderDiagCard(label, value, sub) {
+          return [
+            '<div class="diag-card">',
+            '<div class="diag-label">' + escapeHtml(label) + '</div>',
+            '<div class="diag-value">' + escapeHtml(value) + '</div>',
+            '<div class="diag-sub">' + escapeHtml(sub) + '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function renderRounds(result) {
+          var rounds = result && Array.isArray(result.rounds) ? result.rounds : [];
+          if (rounds.length === 0) {
+            dom.rounds.innerHTML = '<div class="empty">Сетка появится здесь после первого запуска.</div>';
+            return;
+          }
+
+          dom.rounds.innerHTML = rounds
+            .map(function (round) {
+              var byes = Array.isArray(round.byes) && round.byes.length > 0
+                ? '<div class="bye-badge">Bye: ' + escapeHtml(round.byes.join(', ')) + '</div>'
+                : '<div class="bye-badge" style="background:rgba(15,122,103,0.08);color:#0f6a5a;">Bye: none</div>';
+              var matches = Array.isArray(round.matches)
+                ? round.matches.map(renderMatch).join('')
+                : '<div class="empty">Матчи отсутствуют</div>';
+
+              return [
+                '<article class="round-card">',
+                '<div class="round-head">',
+                '<h3 class="round-title">Раунд ' + escapeHtml(String(round.roundNumber)) + '</h3>',
+                byes,
+                '</div>',
+                '<div class="matches">' + matches + '</div>',
+                '</article>'
+              ].join('');
+            })
+            .join('');
+        }
+
+        function renderMatch(match) {
+          var courtLabel = match.court ? 'Корт ' + match.court : 'Корт не задан';
+          return [
+            '<article class="match-card">',
+            '<div class="match-top">',
+            '<div class="match-court">' + escapeHtml(courtLabel) + '</div>',
+            '</div>',
+            '<div class="teams">',
+            renderTeam('Team 1', match.team1, false),
+            '<div class="versus">vs</div>',
+            renderTeam('Team 2', match.team2, true),
+            '</div>',
+            '<div class="quality-grid">',
+            renderQuality('Balance', formatNumber(match.quality && match.quality.balanceScore)),
+            renderQuality('Partner Penalty', formatNumber(match.quality && match.quality.repeatedPartnersPenalty)),
+            renderQuality('Opponent Penalty', formatNumber(match.quality && match.quality.repeatedOpponentsPenalty)),
+            renderQuality('Total Cost', formatNumber(match.quality && match.quality.totalCost)),
+            '</div>',
+            '</article>'
+          ].join('');
+        }
+
+        function renderTeam(label, team, alt) {
+          var players = Array.isArray(team) ? team.join(' + ') : '-';
+          return [
+            '<div class="team' + (alt ? ' team-alt' : '') + '">',
+            '<div class="team-label">' + escapeHtml(label) + '</div>',
+            '<div class="team-players">' + escapeHtml(players) + '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function renderQuality(name, value) {
+          return [
+            '<div class="quality-item">',
+            '<div class="quality-name">' + escapeHtml(name) + '</div>',
+            '<div class="quality-value">' + escapeHtml(value) + '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function formatNumber(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric)) {
+            return '0';
+          }
+          if (Math.abs(numeric - Math.round(numeric)) < 0.0001) {
+            return String(Math.round(numeric));
+          }
+          return numeric.toFixed(2);
+        }
+
+        function escapeHtml(value) {
+          return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+
+        async function copyPayloadJson() {
+          var payload = buildPayload();
+          var text = JSON.stringify(payload, null, 2);
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus('JSON запроса скопирован в буфер обмена.', 'info');
+          } catch (_error) {
+            setStatus('Не удалось скопировать JSON. Откройте Raw JSON и скопируйте вручную.', 'error');
+          }
+        }
+
+        async function runGeneration() {
+          var payload = buildPayload();
+          state.result = null;
+          dom.rawJson.textContent = JSON.stringify(payload, null, 2);
+          setStatus('Генерируем сетку...', 'info');
+          dom.runBtn.disabled = true;
+
+          try {
+            var response = await fetch('/api/tournaments/generate-schedule', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(payload)
+            });
+
+            var text = await response.text();
+            var data = text ? JSON.parse(text) : null;
+
+            if (!response.ok) {
+              var message = data && data.message
+                ? Array.isArray(data.message)
+                  ? data.message.join('; ')
+                  : String(data.message)
+                : 'HTTP ' + response.status;
+              throw new Error(message);
+            }
+
+            state.result = data;
+            dom.rawJson.textContent = JSON.stringify(data, null, 2);
+            renderDiagnostics(data);
+            renderRounds(data);
+            setStatus('Сетка успешно сгенерирована.', 'info');
+          } catch (error) {
+            var message = error && error.message ? error.message : 'Не удалось сгенерировать сетку.';
+            renderDiagnostics(null);
+            renderRounds(null);
+            setStatus(message, 'error');
+          } finally {
+            dom.runBtn.disabled = false;
+          }
+        }
+
+        dom.refreshPlayersBtn.addEventListener('click', rebuildPlayers);
+        dom.shuffleRatingsBtn.addEventListener('click', shuffleRatings);
+        dom.equalizeRatingsBtn.addEventListener('click', equalizeRatings);
+        dom.copyJsonBtn.addEventListener('click', copyPayloadJson);
+        dom.runBtn.addEventListener('click', runGeneration);
+        dom.playerCount.addEventListener('change', rebuildPlayers);
+
+        rebuildPlayers();
+        renderDiagnostics(null);
+        renderRounds(null);
+        runGeneration();
+      })();
+    </script>
+  </body>
+</html>

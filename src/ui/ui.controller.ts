@@ -436,6 +436,17 @@ export class UiController {
     response.send(html);
   }
 
+  @Get('americano-lab')
+  americanoLab(@Req() request: Request, @Res() response: Response): void {
+    const authContext = this.resolveAdminAuthContext(request);
+    if (authContext.redirectToLogin) {
+      response.redirect(authContext.redirectToLogin);
+      return;
+    }
+
+    response.sendFile(resolve(process.cwd(), 'docs', 'americano-lab.html'));
+  }
+
   private resolveAdminAuthContext(request: Request): {
     user?: RequestUser;
     redirectToLogin?: string;
@@ -471,7 +482,7 @@ export class UiController {
     if (value.startsWith('//')) {
       return '/api/ui/admin';
     }
-    if (!value.startsWith('/api/ui/admin')) {
+    if (!value.startsWith('/api/ui/')) {
       return '/api/ui/admin';
     }
     return value;
