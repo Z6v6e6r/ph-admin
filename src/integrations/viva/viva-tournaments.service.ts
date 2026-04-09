@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Tournament, TournamentStatus } from '../../tournaments/tournaments.types';
+import {
+  Tournament,
+  TournamentParticipant,
+  TournamentPaymentStatus,
+  TournamentStatus
+} from '../../tournaments/tournaments.types';
 
 interface VivaEntitySummary {
   id: string;
@@ -272,6 +277,7 @@ export class VivaTournamentsService {
       this.readString(exercise.booking_status);
     const tournamentType = this.resolveTournamentType(name, exerciseType);
     const maxPlayers = this.resolveMaxPlayers(exercise);
+    const participants = this.resolveParticipants(exercise);
     const participantsCount = this.resolveParticipantsCount(exercise);
     const studioName =
       (studioId ? studioNames.get(studioId) : undefined) ??
@@ -305,7 +311,13 @@ export class VivaTournamentsService {
       exerciseTypeId: exerciseType.id,
       tournamentType: tournamentType ?? undefined,
       maxPlayers: maxPlayers ?? undefined,
-      participantsCount: participantsCount ?? undefined,
+      participants: participants.length > 0 ? participants : undefined,
+      participantsCount:
+        participantsCount !== undefined
+          ? participantsCount
+          : participants.length > 0
+            ? participants.length
+            : undefined,
       startsAt: startsAt ?? undefined,
       endsAt: endsAt ?? undefined,
       createdAt:
@@ -487,6 +499,186 @@ export class VivaTournamentsService {
     }
 
     return undefined;
+  }
+
+  private resolveParticipants(exercise: VivaRawRecord): TournamentParticipant[] {
+    const participants: TournamentParticipant[] = [];
+    const seen = new Set<string>();
+    const sources = [
+      exercise,
+      this.readRecord(exercise.booking),
+      this.readRecord(exercise.settings),
+      this.readRecord(exercise.metadata)
+    ];
+    const keys = [
+      'clients',
+      'clientList',
+      'client_list',
+      'participants',
+      'participantList',
+      'participant_list',
+      'players',
+      'playerList',
+      'player_list',
+      'members',
+      'memberList',
+      'member_list',
+      'visitors',
+      'visitorList',
+      'visitor_list',
+      'guests',
+      'guestList',
+      'guest_list',
+      'registrations',
+      'registrationList',
+      'registration_list'
+    ];
+
+    sources.forEach((source) => {
+      if (!source) {
+        return;
+      }
+      keys.forEach((key) => {
+        this.collectParticipantsFromValue(source[key], participants, seen);
+      });
+    });
+
+    return participants;
+  }
+
+  private collectParticipantsFromValue(
+    value: unknown,
+    participants: TournamentParticipant[],
+    seen: Set<string>
+  ): void {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => this.pushParticipant(entry, participants, seen));
+      return;
+    }
+
+    const record = this.readRecord(value);
+    if (!record) {
+      return;
+    }
+
+    const nestedArrays = ['data', 'items', 'results', 'clients', 'participants', 'players', 'members'];
+    for (const key of nestedArrays) {
+      if (Array.isArray(record[key])) {
+        this.collectParticipantsFromValue(record[key], participants, seen);
+      }
+    }
+
+    this.pushParticipant(record, participants, seen);
+  }
+
+  private pushParticipant(
+    value: unknown,
+    participants: TournamentParticipant[],
+    seen: Set<string>
+  ): void {
+    const participant = this.toParticipant(value);
+    if (!participant) {
+      return;
+    }
+
+    const key = this.buildParticipantKey(participant);
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    participants.push(participant);
+  }
+
+  private toParticipant(value: unknown): TournamentParticipant | null {
+    const record = this.readRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const name =
+      this.readString(record.clientName) ??
+      this.readString(record.client_name) ??
+      this.readDisplayName(record.client) ??
+      this.readDisplayName(record.user) ??
+      this.readDisplayName(record.person) ??
+      this.readDisplayName(record.member) ??
+      this.readDisplayName(record.player) ??
+      this.readDisplayName(record.guest) ??
+      this.readDisplayName(record);
+    if (!name) {
+      return null;
+    }
+
+    const paymentStatus = this.resolveParticipantPaymentStatus(record);
+    return {
+      id:
+        this.readString(record.id) ??
+        this.readString(record.clientId) ??
+        this.readString(record.client_id) ??
+        this.readNestedId(record.client) ??
+        undefined,
+      name,
+      phone:
+        this.readPhone(record.phone) ??
+        this.readPhone(record.phoneNumber) ??
+        this.readPhone(record.phone_number) ??
+        this.readPhone(record.mobilePhone) ??
+        this.readPhone(record.mobile_phone) ??
+        this.readPhone(record.clientPhone) ??
+        this.readPhone(record.client_phone) ??
+        this.readPhone(this.readRecord(record.client)?.phone) ??
+        this.readPhone(this.readRecord(record.client)?.phoneNumber) ??
+        undefined,
+      levelLabel:
+        this.readString(record.levelLabel) ??
+        this.readString(record.level_label) ??
+        this.readString(record.level) ??
+        this.readString(record.grade) ??
+        this.readString(record.rating) ??
+        undefined,
+      paymentStatus: paymentStatus ?? undefined,
+      status: 'REGISTERED'
+    };
+  }
+
+  private resolveParticipantPaymentStatus(
+    record: VivaRawRecord
+  ): TournamentPaymentStatus | undefined {
+    const paidFlags = [
+      record.isPaid,
+      record.paid,
+      record.paymentReceived,
+      record.payment_received
+    ];
+    if (paidFlags.some((flag) => flag === true)) {
+      return 'PAID';
+    }
+
+    const rawStatus =
+      this.readString(record.paymentStatus) ??
+      this.readString(record.payment_status) ??
+      this.readString(record.paymentState) ??
+      this.readString(record.payment_state);
+    const normalized = this.normalizeStatus(rawStatus);
+    if (!normalized) {
+      return undefined;
+    }
+    if (['PAID', 'PAYED', 'SUCCESS', 'SUCCEEDED', 'COMPLETED'].includes(normalized)) {
+      return 'PAID';
+    }
+    if (['UNPAID', 'PENDING', 'NEW', 'CREATED', 'WAITING'].includes(normalized)) {
+      return 'UNPAID';
+    }
+    return undefined;
+  }
+
+  private buildParticipantKey(participant: TournamentParticipant): string {
+    const phone = this.readPhone(participant.phone);
+    if (phone) {
+      return `phone:${phone}`;
+    }
+    return `name:${String(participant.name || '').trim().toLowerCase()}`;
   }
 
   private normalizeTournamentStatus(
@@ -813,6 +1005,26 @@ export class VivaTournamentsService {
 
   private readRecord(value: unknown): VivaRawRecord | null {
     return this.isRecord(value) ? value : null;
+  }
+
+  private readPhone(value: unknown): string | undefined {
+    const normalized = this.readString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const digits = normalized.replace(/\D+/g, '');
+    if (!digits) {
+      return undefined;
+    }
+
+    if (digits.length === 10) {
+      return `7${digits}`;
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `7${digits.slice(1)}`;
+    }
+    return digits;
   }
 
   private isRecord(value: unknown): value is VivaRawRecord {

@@ -13827,10 +13827,15 @@
       allowedPhonesInput.placeholder = '+79991234567';
       appendCommunityFormField(form, 'Телефоны с доступом к механике', allowedPhonesInput, true);
 
+      var sourceParticipants = normalizeArray(sourceSnapshot.participants);
+      var mergedParticipants = normalizeArray(model && model.participants);
+      if (mergedParticipants.length === 0) {
+        mergedParticipants = sourceParticipants;
+      }
       var participantsInput = document.createElement('textarea');
       participantsInput.className = 'phab-admin-input';
       participantsInput.rows = 5;
-      participantsInput.value = serializeTournamentParticipants(customTournament && customTournament.participants);
+      participantsInput.value = serializeTournamentParticipants(mergedParticipants);
       participantsInput.placeholder = 'Имя | +79991234567 | D+ | paid';
       appendCommunityFormField(form, 'Участники', participantsInput, true);
 

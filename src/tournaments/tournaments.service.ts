@@ -98,7 +98,7 @@ export class TournamentsService {
     if (!tournament) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    return tournament;
+    return this.hydrateCustomTournament(tournament);
   }
 
   async createCustomFromSource(
@@ -120,7 +120,8 @@ export class TournamentsService {
       return this.updateExistingFromCreate(existing.id, normalizedMutation);
     }
 
-    return this.tournamentsPersistence.createCustomTournament(normalizedMutation);
+    const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
+    return this.hydrateCustomTournament(created);
   }
 
   async updateCustom(
@@ -132,7 +133,7 @@ export class TournamentsService {
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    return updated;
+    return this.hydrateCustomTournament(updated);
   }
 
   async getPublicBySlug(slug: string): Promise<TournamentPublicView> {
@@ -314,7 +315,8 @@ export class TournamentsService {
     }
 
     try {
-      return await this.tournamentsPersistence.findCustomTournamentById(id);
+      const tournament = await this.tournamentsPersistence.findCustomTournamentById(id);
+      return tournament ? await this.hydrateCustomTournament(tournament) : null;
     } catch (error) {
       this.logger.warn(
         `Failed to lookup custom tournament by id ${id}, fallback to source only: ${String(error)}`
@@ -331,9 +333,10 @@ export class TournamentsService {
     }
 
     try {
-      return await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
+      const tournament = await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
         sourceTournamentId
       );
+      return tournament ? await this.hydrateCustomTournament(tournament) : null;
     } catch (error) {
       this.logger.warn(
         `Failed to lookup custom tournament by source id ${sourceTournamentId}: ${String(error)}`
@@ -366,32 +369,38 @@ export class TournamentsService {
         accessLevels: undefined,
         gender: undefined,
         maxPlayers: tournament.maxPlayers,
+        participants: tournament.participants,
         participantsCount: tournament.participantsCount,
         paidParticipantsCount: tournament.paidParticipantsCount,
+        waitlist: tournament.waitlist,
         waitlistCount: undefined,
         allowedManagerPhones: undefined,
         skin: undefined
       };
     }
 
+    const mergedCustomTournament = this.mergeCustomWithSourceTournament(customTournament, tournament);
+
     return {
       ...tournament,
       details: {
         sourceTournamentSnapshot
       },
-      linkedCustomTournamentId: customTournament.id,
-      sourceTournamentId: customTournament.sourceTournamentId,
-      slug: customTournament.slug,
-      publicUrl: customTournament.publicUrl,
-      tournamentType: customTournament.tournamentType,
-      accessLevels: customTournament.accessLevels,
-      gender: customTournament.gender,
-      maxPlayers: customTournament.maxPlayers,
-      participantsCount: customTournament.participantsCount,
-      paidParticipantsCount: customTournament.paidParticipantsCount,
-      waitlistCount: customTournament.waitlistCount,
-      allowedManagerPhones: customTournament.allowedManagerPhones,
-      skin: customTournament.skin
+      linkedCustomTournamentId: mergedCustomTournament.id,
+      sourceTournamentId: mergedCustomTournament.sourceTournamentId,
+      slug: mergedCustomTournament.slug,
+      publicUrl: mergedCustomTournament.publicUrl,
+      tournamentType: mergedCustomTournament.tournamentType,
+      accessLevels: mergedCustomTournament.accessLevels,
+      gender: mergedCustomTournament.gender,
+      maxPlayers: mergedCustomTournament.maxPlayers,
+      participants: mergedCustomTournament.participants,
+      participantsCount: mergedCustomTournament.participantsCount,
+      paidParticipantsCount: mergedCustomTournament.paidParticipantsCount,
+      waitlist: mergedCustomTournament.waitlist,
+      waitlistCount: mergedCustomTournament.waitlistCount,
+      allowedManagerPhones: mergedCustomTournament.allowedManagerPhones,
+      skin: mergedCustomTournament.skin
     };
   }
 
@@ -419,7 +428,11 @@ export class TournamentsService {
       accessLevels: Array.isArray(mutation.accessLevels) ? mutation.accessLevels : [],
       gender: mutation.gender ?? 'MIXED',
       maxPlayers: Number(mutation.maxPlayers || 0) || Number(sourceTournament.maxPlayers || 0) || 8,
-      participants: Array.isArray(mutation.participants) ? mutation.participants : [],
+      participants: Array.isArray(mutation.participants)
+        ? mutation.participants
+        : Array.isArray(sourceTournament.participants)
+          ? sourceTournament.participants
+          : [],
       waitlist: Array.isArray(mutation.waitlist) ? mutation.waitlist : [],
       allowedManagerPhones: Array.isArray(mutation.allowedManagerPhones)
         ? mutation.allowedManagerPhones
@@ -482,6 +495,7 @@ export class TournamentsService {
       exerciseTypeId: sourceTournament.exerciseTypeId,
       tournamentType: sourceTournament.tournamentType,
       maxPlayers: sourceTournament.maxPlayers,
+      participants: sourceTournament.participants,
       participantsCount: sourceTournament.participantsCount
     };
   }
@@ -499,7 +513,160 @@ export class TournamentsService {
     if (!tournament) {
       throw new NotFoundException(`Public tournament with slug ${slug} not found`);
     }
-    return tournament;
+    return this.hydrateCustomTournament(tournament);
+  }
+
+  private async hydrateCustomTournament(tournament: CustomTournament): Promise<CustomTournament> {
+    if (!tournament.sourceTournamentId) {
+      return tournament;
+    }
+
+    try {
+      const sourceTournament = await this.findSourceTournamentById(tournament.sourceTournamentId);
+      return this.mergeCustomWithSourceTournament(tournament, sourceTournament ?? undefined);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to hydrate source data for custom tournament ${tournament.id}: ${String(error)}`
+      );
+      return this.mergeCustomWithSourceTournament(tournament);
+    }
+  }
+
+  private mergeCustomWithSourceTournament(
+    tournament: CustomTournament,
+    sourceTournament?: Tournament
+  ): CustomTournament {
+    const sourceTournamentSnapshot = sourceTournament
+      ? this.buildSourceTournamentSnapshot(sourceTournament)
+      : this.getSourceTournamentSnapshot(tournament);
+    const sourceParticipants = this.readSnapshotParticipants(sourceTournamentSnapshot);
+    const mergedParticipants = this.mergeTournamentParticipants(
+      sourceParticipants,
+      tournament.participants
+    );
+    const paidParticipantsCount = mergedParticipants.filter(
+      (item) => item.paymentStatus === 'PAID'
+    ).length;
+    const sourceParticipantsCount =
+      this.pickNumber(sourceTournamentSnapshot.participantsCount) ?? sourceParticipants.length;
+    const mergedParticipantsCount = Math.max(
+      mergedParticipants.length,
+      sourceParticipantsCount,
+      Number(tournament.participantsCount || 0)
+    );
+
+    return {
+      ...tournament,
+      maxPlayers:
+        Number(tournament.maxPlayers || 0) ||
+        this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
+        8,
+      participants: mergedParticipants,
+      participantsCount: mergedParticipantsCount,
+      paidParticipantsCount:
+        paidParticipantsCount > 0 ? paidParticipantsCount : tournament.paidParticipantsCount,
+      details: {
+        ...(tournament.details && typeof tournament.details === 'object' ? tournament.details : {}),
+        sourceTournamentSnapshot
+      }
+    };
+  }
+
+  private getSourceTournamentSnapshot(tournament: CustomTournament): Record<string, unknown> {
+    if (!tournament.details || typeof tournament.details !== 'object') {
+      return {};
+    }
+
+    const snapshot = tournament.details.sourceTournamentSnapshot;
+    return snapshot && typeof snapshot === 'object'
+      ? (snapshot as Record<string, unknown>)
+      : {};
+  }
+
+  private readSnapshotParticipants(snapshot: Record<string, unknown>): TournamentParticipant[] {
+    if (!Array.isArray(snapshot.participants)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    return snapshot.participants
+      .map((entry) => this.toTournamentParticipant(entry))
+      .filter((item): item is TournamentParticipant => Boolean(item))
+      .filter((participant) => {
+        const key = this.buildParticipantKey(participant);
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+  }
+
+  private mergeTournamentParticipants(
+    sourceParticipants: TournamentParticipant[],
+    customParticipants: TournamentParticipant[]
+  ): TournamentParticipant[] {
+    const merged: TournamentParticipant[] = [];
+    const indexes = new Map<string, number>();
+
+    sourceParticipants.forEach((participant) => {
+      const key = this.buildParticipantKey(participant);
+      indexes.set(key, merged.length);
+      merged.push({ ...participant });
+    });
+
+    customParticipants.forEach((participant) => {
+      const key = this.buildParticipantKey(participant);
+      const existingIndex = indexes.get(key);
+      if (existingIndex === undefined) {
+        indexes.set(key, merged.length);
+        merged.push({ ...participant });
+        return;
+      }
+
+      merged[existingIndex] = {
+        ...merged[existingIndex],
+        ...participant
+      };
+    });
+
+    return merged;
+  }
+
+  private buildParticipantKey(participant: TournamentParticipant): string {
+    const phone = this.normalizePhone(participant.phone);
+    if (phone) {
+      return `phone:${phone}`;
+    }
+    return `name:${String(participant.name || '').trim().toLowerCase()}`;
+  }
+
+  private toTournamentParticipant(value: unknown): TournamentParticipant | null {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+
+    const record = value as Record<string, unknown>;
+    const name = this.pickString(record.name);
+    if (!name) {
+      return null;
+    }
+
+    const paymentStatus = this.pickString(record.paymentStatus);
+    const status = this.pickString(record.status);
+    return {
+      id: this.pickString(record.id) ?? undefined,
+      name,
+      phone: this.normalizePhone(record.phone) ?? undefined,
+      levelLabel: this.pickString(record.levelLabel) ?? undefined,
+      gender: this.normalizeGender(record.gender),
+      paymentStatus:
+        paymentStatus === 'PAID' ? 'PAID' : paymentStatus === 'UNPAID' ? 'UNPAID' : undefined,
+      status: status === 'WAITLIST' ? 'WAITLIST' : 'REGISTERED',
+      registeredAt: this.pickString(record.registeredAt) ?? undefined,
+      paidAt: this.pickString(record.paidAt) ?? undefined,
+      notes: this.pickString(record.notes) ?? undefined
+    };
   }
 
   private evaluateAccess(
@@ -626,5 +793,29 @@ export class TournamentsService {
     }
     const trimmed = value.trim();
     return trimmed || undefined;
+  }
+
+  private pickNumber(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+  }
+
+  private normalizeGender(value: unknown): TournamentGender | undefined {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase();
+    if (normalized === 'MALE' || normalized === 'FEMALE' || normalized === 'MIXED') {
+      return normalized as TournamentGender;
+    }
+    return undefined;
   }
 }

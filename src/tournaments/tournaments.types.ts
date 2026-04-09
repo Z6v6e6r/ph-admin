@@ -66,8 +66,10 @@ export interface Tournament {
   accessLevels?: string[];
   gender?: TournamentGender;
   maxPlayers?: number;
+  participants?: TournamentParticipant[];
   participantsCount?: number;
   paidParticipantsCount?: number;
+  waitlist?: TournamentParticipant[];
   waitlistCount?: number;
   allowedManagerPhones?: string[];
   skin?: TournamentSkin;
