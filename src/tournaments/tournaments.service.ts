@@ -362,12 +362,12 @@ export class TournamentsService {
         linkedCustomTournamentId: undefined,
         publicUrl: undefined,
         slug: undefined,
-        tournamentType: undefined,
+        tournamentType: tournament.tournamentType,
         accessLevels: undefined,
         gender: undefined,
-        maxPlayers: undefined,
-        participantsCount: undefined,
-        paidParticipantsCount: undefined,
+        maxPlayers: tournament.maxPlayers,
+        participantsCount: tournament.participantsCount,
+        paidParticipantsCount: tournament.paidParticipantsCount,
         waitlistCount: undefined,
         allowedManagerPhones: undefined,
         skin: undefined
@@ -481,7 +481,8 @@ export class TournamentsService {
       trainerName: sourceTournament.trainerName,
       exerciseTypeId: sourceTournament.exerciseTypeId,
       tournamentType: sourceTournament.tournamentType,
-      maxPlayers: sourceTournament.maxPlayers
+      maxPlayers: sourceTournament.maxPlayers,
+      participantsCount: sourceTournament.participantsCount
     };
   }
 

@@ -13596,19 +13596,23 @@
           ? liveSourceSnapshot
           : storedSourceSnapshot;
       var isSourceBound = Boolean(sourceTournamentId || sourceSnapshot.id);
-      var startsAtValue =
-        String(liveSourceSnapshot.startsAt || storedSourceSnapshot.startsAt || model && model.startsAt || '');
-      var endsAtValue =
-        String(liveSourceSnapshot.endsAt || storedSourceSnapshot.endsAt || model && model.endsAt || '');
+      var sourceStartsAtValue = String(liveSourceSnapshot.startsAt || storedSourceSnapshot.startsAt || '');
+      var sourceEndsAtValue = String(liveSourceSnapshot.endsAt || storedSourceSnapshot.endsAt || '');
+      var startsAtValue = String(sourceStartsAtValue || model && model.startsAt || '');
+      var endsAtValue = String(sourceEndsAtValue || model && model.endsAt || '');
+      var sourceMaxPlayersValue = Number(
+        liveSourceSnapshot.maxPlayers || storedSourceSnapshot.maxPlayers || 0
+      );
       var maxPlayersValue = Math.max(
         2,
         Number(
-          liveSourceSnapshot.maxPlayers ||
-            storedSourceSnapshot.maxPlayers ||
+          sourceMaxPlayersValue ||
             model && model.maxPlayers ||
             8
         ) || 8
       );
+      var hasSourceSchedule = Boolean(sourceStartsAtValue || sourceEndsAtValue);
+      var hasSourceMaxPlayers = sourceMaxPlayersValue > 0;
       var tournamentTypeValue = normalizeTournamentTypeLabel(
         model && model.tournamentType ||
           liveSourceSnapshot.tournamentType ||
@@ -13666,8 +13670,8 @@
       startsAtInput.type = 'datetime-local';
       startsAtInput.className = 'phab-admin-input';
       startsAtInput.value = formatDateTimeLocalInputValue(startsAtValue);
-      startsAtInput.disabled = isSourceBound;
-      if (isSourceBound) {
+      startsAtInput.disabled = isSourceBound && hasSourceSchedule;
+      if (startsAtInput.disabled) {
         startsAtInput.title = 'Дата и время берутся из события турнира.';
       }
       appendCommunityFormField(form, 'Дата и время старта', startsAtInput);
@@ -13676,8 +13680,8 @@
       endsAtInput.type = 'datetime-local';
       endsAtInput.className = 'phab-admin-input';
       endsAtInput.value = formatDateTimeLocalInputValue(endsAtValue);
-      endsAtInput.disabled = isSourceBound;
-      if (isSourceBound) {
+      endsAtInput.disabled = isSourceBound && hasSourceSchedule;
+      if (endsAtInput.disabled) {
         endsAtInput.title = 'Дата и время берутся из события турнира.';
       }
       appendCommunityFormField(form, 'Дата и время конца', endsAtInput);
@@ -13709,8 +13713,8 @@
       maxPlayersInput.min = '2';
       maxPlayersInput.className = 'phab-admin-input';
       maxPlayersInput.value = String(maxPlayersValue);
-      maxPlayersInput.disabled = isSourceBound;
-      if (isSourceBound) {
+      maxPlayersInput.disabled = isSourceBound && hasSourceMaxPlayers;
+      if (maxPlayersInput.disabled) {
         maxPlayersInput.title = 'Количество участников берётся из упражнения.';
       }
       appendCommunityFormField(form, 'Макс. участников', maxPlayersInput);

@@ -141,43 +141,24 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
         if (existingTournament) {
           return existingTournament;
         }
+        return this.restoreExistingTournamentDocument(collection, existing, mutation);
       }
     }
 
-    const now = new Date().toISOString();
-    const id = new ObjectId().toHexString();
-    const slug = await this.ensureUniqueSlug(mutation.slug ?? mutation.name ?? id);
-    const payload: MongoCustomTournamentDocument = {
-      id,
-      source: 'CUSTOM',
-      slug,
-      sourceTournamentId: sourceTournamentId ?? null,
-      sourceTournamentSnapshot: this.isRecord(mutation.sourceTournamentSnapshot)
-        ? mutation.sourceTournamentSnapshot
-        : null,
-      name: this.pickString(mutation.name) ?? `Турнир ${id}`,
-      status: mutation.status ?? TournamentStatus.REGISTRATION,
-      startsAt: this.pickString(mutation.startsAt) ?? null,
-      endsAt: this.pickString(mutation.endsAt) ?? null,
-      tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
-      accessLevels: this.normalizeLevels(mutation.accessLevels),
-      gender: this.normalizeGender(mutation.gender),
-      maxPlayers: this.pickPositiveInteger(mutation.maxPlayers) ?? 8,
-      participants: this.normalizeParticipants(mutation.participants, 'REGISTERED'),
-      waitlist: this.normalizeParticipants(mutation.waitlist, 'WAITLIST'),
-      allowedManagerPhones: this.normalizePhoneList(mutation.allowedManagerPhones),
-      studioId: this.pickString(mutation.studioId) ?? null,
-      studioName: this.pickString(mutation.studioName) ?? null,
-      trainerId: this.pickString(mutation.trainerId) ?? null,
-      trainerName: this.pickString(mutation.trainerName) ?? null,
-      exerciseTypeId: this.pickString(mutation.exerciseTypeId) ?? null,
-      skin: this.normalizeSkin(mutation.skin),
-      createdAt: now,
-      updatedAt: now,
-      archived: false
-    };
-
-    await collection.insertOne(payload as OptionalId<MongoCustomTournamentDocument>);
+    const payload = await this.buildCreateDocument(mutation);
+    try {
+      await collection.insertOne(payload as OptionalId<MongoCustomTournamentDocument>);
+    } catch (error) {
+      const recovered = await this.recoverCustomTournamentCreateConflict(
+        collection,
+        mutation,
+        error
+      );
+      if (recovered) {
+        return recovered;
+      }
+      throw error;
+    }
     const created = this.toCustomTournament(payload);
     if (!created) {
       throw new InternalServerErrorException('Failed to create custom tournament');
@@ -279,12 +260,20 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
     const collection = this.requireDb().collection<MongoCustomTournamentDocument>(this.collectionName);
     if (!this.indexesEnsured) {
-      await collection.createIndex({ id: 1 }, { unique: true });
-      await collection.createIndex({ slug: 1 }, { unique: true });
-      await collection.createIndex(
-        { sourceTournamentId: 1 },
-        { unique: true, sparse: true, partialFilterExpression: { sourceTournamentId: { $type: 'string' } } }
-      );
+      try {
+        await collection.createIndex({ id: 1 }, { unique: true });
+        await collection.createIndex({ slug: 1 }, { unique: true });
+        await collection.createIndex(
+          { sourceTournamentId: 1 },
+          {
+            unique: true,
+            sparse: true,
+            partialFilterExpression: { sourceTournamentId: { $type: 'string' } }
+          }
+        );
+      } catch (error) {
+        this.logger.warn(`Failed to ensure custom tournaments indexes: ${String(error)}`);
+      }
       this.indexesEnsured = true;
     }
     return collection;
@@ -349,6 +338,104 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
         ? { sourceTournamentSnapshot: document.sourceTournamentSnapshot }
         : undefined
     };
+  }
+
+  private async buildCreateDocument(
+    mutation: CreateCustomTournamentMutation,
+    options?: {
+      id?: string;
+      slug?: string;
+      createdAt?: string;
+    }
+  ): Promise<MongoCustomTournamentDocument> {
+    const now = new Date().toISOString();
+    const id = this.pickString(options?.id) ?? new ObjectId().toHexString();
+    const slug = await this.ensureUniqueSlug(
+      options?.slug ?? mutation.slug ?? mutation.name ?? id,
+      id
+    );
+
+    return {
+      id,
+      source: 'CUSTOM',
+      slug,
+      sourceTournamentId: this.pickString(mutation.sourceTournamentId) ?? null,
+      sourceTournamentSnapshot: this.isRecord(mutation.sourceTournamentSnapshot)
+        ? mutation.sourceTournamentSnapshot
+        : null,
+      name: this.pickString(mutation.name) ?? `Турнир ${id}`,
+      status: mutation.status ?? TournamentStatus.REGISTRATION,
+      startsAt: this.pickString(mutation.startsAt) ?? null,
+      endsAt: this.pickString(mutation.endsAt) ?? null,
+      tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
+      accessLevels: this.normalizeLevels(mutation.accessLevels),
+      gender: this.normalizeGender(mutation.gender),
+      maxPlayers: this.pickPositiveInteger(mutation.maxPlayers) ?? 8,
+      participants: this.normalizeParticipants(mutation.participants, 'REGISTERED'),
+      waitlist: this.normalizeParticipants(mutation.waitlist, 'WAITLIST'),
+      allowedManagerPhones: this.normalizePhoneList(mutation.allowedManagerPhones),
+      studioId: this.pickString(mutation.studioId) ?? null,
+      studioName: this.pickString(mutation.studioName) ?? null,
+      trainerId: this.pickString(mutation.trainerId) ?? null,
+      trainerName: this.pickString(mutation.trainerName) ?? null,
+      exerciseTypeId: this.pickString(mutation.exerciseTypeId) ?? null,
+      skin: this.normalizeSkin(mutation.skin),
+      createdAt: this.pickString(options?.createdAt) ?? now,
+      updatedAt: now,
+      archived: false
+    };
+  }
+
+  private async restoreExistingTournamentDocument(
+    collection: Collection<MongoCustomTournamentDocument>,
+    existing: MongoCustomTournamentDocument,
+    mutation: CreateCustomTournamentMutation
+  ): Promise<CustomTournament> {
+    const existingId =
+      this.pickString(existing.id) ?? this.readObjectId(existing._id) ?? new ObjectId().toHexString();
+    const payload = await this.buildCreateDocument(mutation, {
+      id: existingId,
+      slug: this.pickString(existing.slug) ?? mutation.slug ?? mutation.name ?? existingId,
+      createdAt: this.pickString(existing.createdAt)
+    });
+
+    await collection.updateOne(this.buildDocumentFilter(existing), {
+      $set: payload
+    });
+
+    const restored = this.toCustomTournament({
+      ...existing,
+      ...payload
+    });
+    if (!restored) {
+      throw new InternalServerErrorException('Failed to restore custom tournament');
+    }
+    return restored;
+  }
+
+  private async recoverCustomTournamentCreateConflict(
+    collection: Collection<MongoCustomTournamentDocument>,
+    mutation: CreateCustomTournamentMutation,
+    error: unknown
+  ): Promise<CustomTournament | null> {
+    if (!this.isDuplicateKeyError(error)) {
+      return null;
+    }
+
+    const sourceTournamentId = this.pickString(mutation.sourceTournamentId);
+    if (sourceTournamentId) {
+      const existing = (await collection.findOne({
+        sourceTournamentId
+      } as Filter<MongoCustomTournamentDocument>)) as MongoCustomTournamentDocument | null;
+      if (existing) {
+        const existingTournament = this.toCustomTournament(existing);
+        return existingTournament
+          ? existingTournament
+          : this.restoreExistingTournamentDocument(collection, existing, mutation);
+      }
+    }
+
+    return null;
   }
 
   private normalizeParticipants(
@@ -545,6 +632,21 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return { id: cleaned } as Filter<MongoCustomTournamentDocument>;
   }
 
+  private buildDocumentFilter(
+    document: MongoCustomTournamentDocument
+  ): Filter<MongoCustomTournamentDocument> {
+    if (document._id instanceof ObjectId) {
+      return { _id: document._id } as Filter<MongoCustomTournamentDocument>;
+    }
+
+    const id = this.pickString(document.id);
+    if (id) {
+      return this.buildIdFilter(id);
+    }
+
+    throw new InternalServerErrorException('Custom tournament document identity is missing');
+  }
+
   private async ensureUniqueSlug(rawValue: string, excludeId?: string): Promise<string> {
     const collection = await this.collection();
     const baseSlug = this.slugify(rawValue) || 'tournament';
@@ -621,6 +723,15 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      Number((error as { code?: unknown }).code) === 11000
+    );
   }
 
   private readObjectId(value: unknown): string | undefined {

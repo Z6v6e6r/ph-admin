@@ -186,13 +186,18 @@ export class VivaTournamentsService {
     studioNames: Map<string, string | undefined>,
     trainerNames: Map<string, string | undefined>
   ): Tournament | null {
+    const direction = this.readRecord(exercise.direction);
+    const type = this.readRecord(exercise.type);
+    const studio = this.readRecord(exercise.studio);
     const name =
       this.readString(exercise.name) ??
       this.readString(exercise.title) ??
       this.readString(exercise.exerciseName) ??
       this.readString(exercise.exercise_name) ??
       this.readString(exercise.serviceName) ??
-      this.readString(exercise.service_name);
+      this.readString(exercise.service_name) ??
+      this.readDisplayName(direction) ??
+      this.readDisplayName(type);
     const exerciseType = this.resolveExerciseType(exercise);
     if (!this.isTournamentExercise(name, exerciseType)) {
       return null;
@@ -205,6 +210,10 @@ export class VivaTournamentsService {
       this.readDateTimeString(exercise.start_at) ??
       this.readDateTimeString(exercise.startDateTime) ??
       this.readDateTimeString(exercise.start_date_time) ??
+      this.readDateTimeString(exercise.timeFrom) ??
+      this.readDateTimeString(exercise.time_from) ??
+      this.readDateTimeString(exercise.timeStart) ??
+      this.readDateTimeString(exercise.time_start) ??
       this.composeDateTime(
         this.readDateString(exercise.date) ??
           this.readDateString(exercise.startDate) ??
@@ -221,6 +230,10 @@ export class VivaTournamentsService {
       this.readDateTimeString(exercise.end_at) ??
       this.readDateTimeString(exercise.endDateTime) ??
       this.readDateTimeString(exercise.end_date_time) ??
+      this.readDateTimeString(exercise.timeTo) ??
+      this.readDateTimeString(exercise.time_to) ??
+      this.readDateTimeString(exercise.timeEnd) ??
+      this.readDateTimeString(exercise.time_end) ??
       this.composeDateTime(
         this.readDateString(exercise.date) ??
           this.readDateString(exercise.endDate) ??
@@ -259,6 +272,15 @@ export class VivaTournamentsService {
       this.readString(exercise.booking_status);
     const tournamentType = this.resolveTournamentType(name, exerciseType);
     const maxPlayers = this.resolveMaxPlayers(exercise);
+    const participantsCount = this.resolveParticipantsCount(exercise);
+    const studioName =
+      (studioId ? studioNames.get(studioId) : undefined) ??
+      this.readDisplayName(studio);
+    const trainerName =
+      (trainerId ? trainerNames.get(trainerId) : undefined) ??
+      this.readDisplayName(this.readFirstRecord(exercise.trainers)) ??
+      this.readDisplayName(exercise.trainer) ??
+      this.readDisplayName(exercise.coach);
 
     return {
       id,
@@ -274,14 +296,16 @@ export class VivaTournamentsService {
       gameId:
         this.readString(exercise.gameId) ??
         this.readString(exercise.game_id) ??
+        this.readString(direction?.id) ??
         exerciseType.id,
       studioId: studioId ?? undefined,
-      studioName: studioId ? studioNames.get(studioId) : undefined,
+      studioName: studioName ?? undefined,
       trainerId: trainerId ?? undefined,
-      trainerName: trainerId ? trainerNames.get(trainerId) : undefined,
+      trainerName: trainerName ?? undefined,
       exerciseTypeId: exerciseType.id,
       tournamentType: tournamentType ?? undefined,
       maxPlayers: maxPlayers ?? undefined,
+      participantsCount: participantsCount ?? undefined,
       startsAt: startsAt ?? undefined,
       endsAt: endsAt ?? undefined,
       createdAt:
@@ -383,6 +407,10 @@ export class VivaTournamentsService {
     const keys = [
       'maxPlayers',
       'max_players',
+      'maxClientsCount',
+      'max_clients_count',
+      'maxClients',
+      'max_clients',
       'playersMax',
       'players_max',
       'maxParticipants',
@@ -429,6 +457,30 @@ export class VivaTournamentsService {
       for (const key of keys) {
         const value = this.readPositiveInteger(source[key]);
         if (value) {
+          return value;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private resolveParticipantsCount(exercise: VivaRawRecord): number | undefined {
+    const keys = ['clientsCount', 'clients_count', 'participantsCount', 'participants_count'];
+    const sources = [
+      exercise,
+      this.readRecord(exercise.booking),
+      this.readRecord(exercise.settings),
+      this.readRecord(exercise.metadata)
+    ];
+
+    for (const source of sources) {
+      if (!source) {
+        continue;
+      }
+      for (const key of keys) {
+        const value = this.readNonNegativeInteger(source[key]);
+        if (value !== undefined) {
           return value;
         }
       }
@@ -599,6 +651,43 @@ export class VivaTournamentsService {
     return undefined;
   }
 
+  private readFirstRecord(value: unknown): VivaRawRecord | null {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+
+    for (const item of value) {
+      const record = this.readRecord(item);
+      if (record) {
+        return record;
+      }
+    }
+
+    return null;
+  }
+
+  private readDisplayName(value: unknown): string | undefined {
+    const record = this.readRecord(value);
+    if (!record) {
+      return undefined;
+    }
+
+    const directName =
+      this.readString(record.name) ??
+      this.readString(record.title) ??
+      this.readString(record.fullName) ??
+      this.readString(record.full_name) ??
+      this.readString(record.displayName) ??
+      this.readString(record.display_name);
+    if (directName) {
+      return directName;
+    }
+
+    const firstName = this.readString(record.firstName) ?? this.readString(record.first_name);
+    const lastName = this.readString(record.lastName) ?? this.readString(record.last_name);
+    return [firstName, lastName].filter(Boolean).join(' ') || undefined;
+  }
+
   private readDateTimeString(value: unknown): string | undefined {
     const normalized = this.readString(value);
     if (!normalized) {
@@ -696,6 +785,30 @@ export class VivaTournamentsService {
 
     const numeric = Number(digits);
     return Number.isFinite(numeric) && numeric > 0 ? Math.trunc(numeric) : undefined;
+  }
+
+  private readNonNegativeInteger(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.trunc(value);
+    }
+
+    const normalized = this.readString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.trunc(parsed);
+    }
+
+    const digits = normalized.replace(/\D+/g, '');
+    if (!digits) {
+      return undefined;
+    }
+
+    const numeric = Number(digits);
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : undefined;
   }
 
   private readRecord(value: unknown): VivaRawRecord | null {
