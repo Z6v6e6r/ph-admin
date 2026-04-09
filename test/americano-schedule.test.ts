@@ -183,7 +183,9 @@ function runOpeningRoundSeedingCheck(): void {
       ...createConfig('full_americano'),
       rounds: 1,
       courts: 3,
-      firstRoundSeeding: 'off'
+      firstRoundSeeding: 'off',
+      roundExactThreshold: 0,
+      balanceOutlierWeight: 0
     }
   });
 
@@ -204,6 +206,51 @@ function runOpeningRoundSeedingCheck(): void {
   );
 }
 
+function runSecondRoundOptimizationCheck(): void {
+  const players = createPlayers(12, (index) => 1300 + index * 35);
+  const optimizedResult = service.generateSchedule({
+    players,
+    config: {
+      ...createConfig('full_americano'),
+      rounds: 2,
+      courts: 3
+    }
+  });
+  const plainResult = service.generateSchedule({
+    players,
+    config: {
+      ...createConfig('full_americano'),
+      rounds: 2,
+      courts: 3,
+      roundExactThreshold: 0,
+      balanceOutlierWeight: 0
+    }
+  });
+
+  const optimizedRoundTwo = optimizedResult.rounds[1];
+  const plainRoundTwo = plainResult.rounds[1];
+  const optimizedWorstBalance = Math.max(
+    ...optimizedRoundTwo.matches.map((match) => match.quality.balanceScore)
+  );
+  const plainWorstBalance = Math.max(
+    ...plainRoundTwo.matches.map((match) => match.quality.balanceScore)
+  );
+  const optimizedTotal = optimizedRoundTwo.matches.reduce(
+    (sum, match) => sum + match.quality.totalCost,
+    0
+  );
+  const plainTotal = plainRoundTwo.matches.reduce((sum, match) => sum + match.quality.totalCost, 0);
+
+  assert(
+    optimizedWorstBalance < plainWorstBalance,
+    'exact round optimization should reduce the worst balance in round two'
+  );
+  assert(
+    optimizedTotal < plainTotal,
+    'exact round optimization should improve total round-two match cost'
+  );
+}
+
 function main(): void {
   runSizeSmokeTests();
   runFullModeCoverageChecks();
@@ -211,6 +258,7 @@ function main(): void {
   runExtremeRatingsCheck();
   runEqualRatingsCheck();
   runOpeningRoundSeedingCheck();
+  runSecondRoundOptimizationCheck();
   console.log('Americano schedule tests passed');
 }
 

@@ -88,6 +88,21 @@ class AmericanoGeneratorConfigDto {
   @IsIn(['auto', 'rating_quartets', 'off'])
   firstRoundSeeding?: FirstRoundSeedingMode;
 
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  roundExactThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  balanceOutlierThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  balanceOutlierWeight?: number;
+
   @IsIn(['high', 'medium', 'low'])
   strictPartnerUniqueness!: StrictnessLevel;
 

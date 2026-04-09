@@ -16,6 +16,9 @@ import {
 interface ResolvedGeneratorConfig extends AmericanoGeneratorConfig {
   rounds: number;
   courts: number | null;
+  roundExactThreshold: number;
+  balanceOutlierThreshold: number;
+  balanceOutlierWeight: number;
   historyDepth: number;
   localSearchIterations: number;
   pairingExactThreshold: number;
@@ -36,6 +39,7 @@ interface MatchBreakdown {
   recentOpponentsPenalty: number;
   balancePenalty: number;
   balanceWeighted: number;
+  balanceOutlierPenalty: number;
 }
 
 interface ByeBreakdown {
@@ -274,6 +278,20 @@ export class AmericanoScheduleService {
       typeof config.historyDepth === 'number' && Number.isFinite(config.historyDepth)
         ? Math.max(0, Math.floor(config.historyDepth))
         : 0;
+    const roundExactThreshold =
+      typeof config.roundExactThreshold === 'number' && Number.isFinite(config.roundExactThreshold)
+        ? Math.max(0, Math.floor(config.roundExactThreshold))
+        : 12;
+    const balanceOutlierThreshold =
+      typeof config.balanceOutlierThreshold === 'number' &&
+      Number.isFinite(config.balanceOutlierThreshold)
+        ? Math.max(0, config.balanceOutlierThreshold)
+        : 1.1;
+    const balanceOutlierWeight =
+      typeof config.balanceOutlierWeight === 'number' &&
+      Number.isFinite(config.balanceOutlierWeight)
+        ? Math.max(0, config.balanceOutlierWeight)
+        : 120;
     const localSearchIterations =
       typeof config.localSearchIterations === 'number' &&
       Number.isFinite(config.localSearchIterations)
@@ -295,6 +313,9 @@ export class AmericanoScheduleService {
       rounds,
       courts,
       firstRoundSeeding: config.firstRoundSeeding ?? 'auto',
+      roundExactThreshold,
+      balanceOutlierThreshold,
+      balanceOutlierWeight,
       historyDepth,
       localSearchIterations,
       pairingExactThreshold,
@@ -459,6 +480,10 @@ export class AmericanoScheduleService {
       return this.buildSeededOpeningRound(availablePlayerIds, byes, state, config, roundIndex);
     }
 
+    if (this.shouldUseExactRoundOptimization(availablePlayerIds, config)) {
+      return this.buildExactRound(availablePlayerIds, byes, state, config, roundIndex);
+    }
+
     const pairs = this.buildPairs(availablePlayerIds, state, config, roundIndex);
     const matches = this.buildMatchesFromPairs(pairs, state, config, roundIndex);
     let bestRound = this.evaluateRound(pairs, matches, byes, state, config, roundIndex);
@@ -485,6 +510,17 @@ export class AmericanoScheduleService {
     }
 
     return this.optimizeByes(bestRound, players, state, config, roundIndex);
+  }
+
+  private shouldUseExactRoundOptimization(
+    availablePlayerIds: string[],
+    config: ResolvedGeneratorConfig
+  ): boolean {
+    return (
+      config.roundExactThreshold > 0 &&
+      availablePlayerIds.length > 0 &&
+      availablePlayerIds.length <= config.roundExactThreshold
+    );
   }
 
   private shouldUseSeededFirstRound(
@@ -544,6 +580,131 @@ export class AmericanoScheduleService {
       this.normalizePair([sortedQuartet[0], sortedQuartet[2]]),
       this.normalizePair([sortedQuartet[1], sortedQuartet[3]])
     ];
+  }
+
+  private buildExactRound(
+    availablePlayerIds: string[],
+    byes: string[],
+    state: GeneratorState,
+    config: ResolvedGeneratorConfig,
+    roundIndex: number
+  ): RoundEvaluation {
+    const ids = [...availablePlayerIds].sort();
+    const memo = new Map<string, { totalCost: number; matches: AmericanoMatch[] }>();
+
+    const solve = (remainingIds: string[]): { totalCost: number; matches: AmericanoMatch[] } => {
+      if (remainingIds.length === 0) {
+        return { totalCost: 0, matches: [] };
+      }
+
+      const key = remainingIds.join('|');
+      const cached = memo.get(key);
+      if (cached) {
+        return cached;
+      }
+
+      const anchor = remainingIds[0];
+      const rest = remainingIds.slice(1);
+      let best = {
+        totalCost: Number.POSITIVE_INFINITY,
+        matches: [] as AmericanoMatch[]
+      };
+      let bestSignature = '';
+
+      const quartets = this.pickCombinations(rest, 3).map((group) => [anchor, ...group].sort());
+
+      quartets.forEach((quartet) => {
+        const remainingAfterQuartet = remainingIds.filter((playerId) => !quartet.includes(playerId));
+        const quartetMatch = this.selectBestMatchForQuartet(quartet, state, config, roundIndex);
+        const quartetPairs: AmericanoPair[] = [quartetMatch.team1, quartetMatch.team2];
+        const quartetCost = this.evaluateRound(
+          quartetPairs,
+          [quartetMatch],
+          [],
+          state,
+          config,
+          roundIndex
+        ).totalCost;
+        const suffix = solve(remainingAfterQuartet);
+        const totalCost = this.roundNumber(quartetCost + suffix.totalCost);
+        const signature = [
+          this.matchSignature(quartetMatch),
+          ...suffix.matches.map((match) => this.matchSignature(match))
+        ]
+          .sort()
+          .join(',');
+
+        if (
+          totalCost < best.totalCost ||
+          (totalCost === best.totalCost &&
+            (bestSignature === '' || signature.localeCompare(bestSignature) < 0))
+        ) {
+          best = {
+            totalCost,
+            matches: [quartetMatch, ...suffix.matches]
+          };
+          bestSignature = signature;
+        }
+      });
+
+      memo.set(key, best);
+      return best;
+    };
+
+    const solved = solve(ids);
+    const matches = solved.matches.map((match, index) => ({
+      ...match,
+      court: this.resolveCourt(index, config)
+    }));
+
+    return this.evaluateRound(
+      matches.flatMap((match) => [match.team1, match.team2]),
+      matches,
+      byes,
+      state,
+      config,
+      roundIndex
+    );
+  }
+
+  private selectBestMatchForQuartet(
+    quartet: string[],
+    state: GeneratorState,
+    config: ResolvedGeneratorConfig,
+    roundIndex: number
+  ): AmericanoMatch {
+    const options = this.listSingleMatchPairings(quartet);
+    let bestMatch: AmericanoMatch | null = null;
+    let bestCost = Number.POSITIVE_INFINITY;
+    let bestSignature = '';
+
+    options.forEach((option) => {
+      const match = this.createMatch(option[0], option[1], state, config, roundIndex, 0);
+      const quartetCost = this.evaluateRound(
+        [match.team1, match.team2],
+        [match],
+        [],
+        state,
+        config,
+        roundIndex
+      ).totalCost;
+      const signature = this.matchSignature(match);
+      if (
+        quartetCost < bestCost ||
+        (quartetCost === bestCost &&
+          (bestSignature === '' || signature.localeCompare(bestSignature) < 0))
+      ) {
+        bestMatch = match;
+        bestCost = quartetCost;
+        bestSignature = signature;
+      }
+    });
+
+    if (!bestMatch) {
+      throw new BadRequestException('Failed to resolve best quartet match');
+    }
+
+    return bestMatch;
   }
 
   private selectByes(
@@ -1343,13 +1504,24 @@ export class AmericanoScheduleService {
       ? this.calculateBalancePenalty(pair1, pair2, state)
       : 0;
     const balanceWeighted = balancePenalty * config.weights.balance;
+    const balanceOutlierPenalty =
+      config.useRatings && config.balanceOutlierWeight > 0
+        ? Math.max(0, balancePenalty - config.balanceOutlierThreshold) *
+          config.balanceOutlierWeight
+        : 0;
 
     return {
       repeatedOpponentsPenalty: this.roundNumber(repeatedOpponentsPenalty),
       recentOpponentsPenalty: this.roundNumber(recentOpponentsPenalty),
       balancePenalty: this.roundNumber(balancePenalty),
       balanceWeighted: this.roundNumber(balanceWeighted),
-      total: this.roundNumber(repeatedOpponentsPenalty + recentOpponentsPenalty + balanceWeighted)
+      balanceOutlierPenalty: this.roundNumber(balanceOutlierPenalty),
+      total: this.roundNumber(
+        repeatedOpponentsPenalty +
+          recentOpponentsPenalty +
+          balanceWeighted +
+          balanceOutlierPenalty
+      )
     };
   }
 
@@ -1610,6 +1782,12 @@ export class AmericanoScheduleService {
 
   private pairKey(playerAId: string, playerBId: string): string {
     return [playerAId, playerBId].sort().join('|');
+  }
+
+  private matchSignature(match: AmericanoMatch): string {
+    return [this.pairKey(match.team1[0], match.team1[1]), this.pairKey(match.team2[0], match.team2[1])]
+      .sort()
+      .join(':');
   }
 
   private isStateEmpty(state: GeneratorState): boolean {

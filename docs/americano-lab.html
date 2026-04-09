@@ -697,6 +697,21 @@
                 <span class="label">Локальный поиск</span>
                 <input id="localSearchIterations" class="input" type="number" min="1" value="6" />
               </label>
+
+              <label class="field">
+                <span class="label">Exact round threshold</span>
+                <input id="roundExactThreshold" class="input" type="number" min="0" value="12" />
+              </label>
+
+              <label class="field">
+                <span class="label">Bad match threshold</span>
+                <input id="balanceOutlierThreshold" class="input" type="number" step="0.1" min="0" value="1.1" />
+              </label>
+
+              <label class="field field-full">
+                <span class="label">Bad match weight</span>
+                <input id="balanceOutlierWeight" class="input" type="number" step="10" min="0" value="120" />
+              </label>
             </div>
 
             <div class="checks">
@@ -804,6 +819,9 @@
           balanceStrictness: document.getElementById('balanceStrictness'),
           firstRoundSeeding: document.getElementById('firstRoundSeeding'),
           localSearchIterations: document.getElementById('localSearchIterations'),
+          roundExactThreshold: document.getElementById('roundExactThreshold'),
+          balanceOutlierThreshold: document.getElementById('balanceOutlierThreshold'),
+          balanceOutlierWeight: document.getElementById('balanceOutlierWeight'),
           useRatings: document.getElementById('useRatings'),
           avoidRepeatOpponents: document.getElementById('avoidRepeatOpponents'),
           avoidRepeatPartners: document.getElementById('avoidRepeatPartners'),
@@ -832,6 +850,14 @@
         function parsePositiveInteger(value) {
           var numeric = Number(value);
           if (!Number.isFinite(numeric) || numeric <= 0) {
+            return null;
+          }
+          return Math.floor(numeric);
+        }
+
+        function parseNonNegativeInteger(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric) || numeric < 0) {
             return null;
           }
           return Math.floor(numeric);
@@ -956,6 +982,9 @@
             courts: parsePositiveInteger(dom.courts.value),
             useRatings: Boolean(dom.useRatings.checked),
             firstRoundSeeding: String(dom.firstRoundSeeding.value || 'auto'),
+            roundExactThreshold: parseNonNegativeInteger(dom.roundExactThreshold.value),
+            balanceOutlierThreshold: Number(dom.balanceOutlierThreshold.value || 0) || 0,
+            balanceOutlierWeight: Number(dom.balanceOutlierWeight.value || 0) || 0,
             strictPartnerUniqueness: String(dom.partnerStrictness.value || 'high'),
             strictBalance: String(dom.balanceStrictness.value || 'medium'),
             avoidRepeatOpponents: Boolean(dom.avoidRepeatOpponents.checked),

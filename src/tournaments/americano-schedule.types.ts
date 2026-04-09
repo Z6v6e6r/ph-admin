@@ -34,6 +34,9 @@ export interface AmericanoGeneratorConfig {
   courts?: number | null;
   useRatings: boolean;
   firstRoundSeeding?: FirstRoundSeedingMode;
+  roundExactThreshold?: number;
+  balanceOutlierThreshold?: number;
+  balanceOutlierWeight?: number;
   strictPartnerUniqueness: StrictnessLevel;
   strictBalance: StrictnessLevel;
   avoidRepeatOpponents: boolean;
