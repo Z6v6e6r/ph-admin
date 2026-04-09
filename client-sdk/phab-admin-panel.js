@@ -16899,9 +16899,6 @@
       if (bannedCount >= 2) {
         riskFlags.push({ label: 'Конфликт', tone: 'warn' });
       }
-      if (rating <= 58) {
-        riskFlags.push({ label: 'Низкий рейтинг', tone: 'danger' });
-      }
       if (pendingCount >= 5) {
         riskFlags.push({ label: 'Спам / наплыв', tone: 'warn' });
       }
