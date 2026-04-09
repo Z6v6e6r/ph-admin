@@ -658,7 +658,7 @@
 
               <label class="field">
                 <span class="label">Раунды</span>
-                <input id="rounds" class="input" type="number" min="1" placeholder="auto" />
+                <input id="roundsInput" class="input" type="number" min="1" placeholder="auto" />
               </label>
 
               <label class="field">
@@ -771,7 +771,7 @@
                 <div class="section-note">Матчи, bye и quality по каждому раунду.</div>
               </div>
             </div>
-            <div id="rounds" class="rounds">
+            <div id="roundsOutput" class="rounds">
               <div class="empty">Сетка появится здесь после первого запуска.</div>
             </div>
           </div>
@@ -789,7 +789,7 @@
         var dom = {
           playerCount: document.getElementById('playerCount'),
           mode: document.getElementById('mode'),
-          rounds: document.getElementById('rounds'),
+          roundsInput: document.getElementById('roundsInput'),
           courts: document.getElementById('courts'),
           partnerStrictness: document.getElementById('partnerStrictness'),
           balanceStrictness: document.getElementById('balanceStrictness'),
@@ -805,7 +805,7 @@
           runBtn: document.getElementById('runBtn'),
           playersBody: document.getElementById('playersBody'),
           diagnostics: document.getElementById('diagnostics'),
-          rounds: document.getElementById('rounds'),
+          roundsOutput: document.getElementById('roundsOutput'),
           rawJson: document.getElementById('rawJson'),
           status: document.getElementById('status')
         };
@@ -942,7 +942,7 @@
           var mode = String(dom.mode.value || 'short_americano');
           return {
             mode: mode,
-            rounds: parsePositiveInteger(dom.rounds.value),
+            rounds: parsePositiveInteger(dom.roundsInput.value),
             courts: parsePositiveInteger(dom.courts.value),
             useRatings: Boolean(dom.useRatings.checked),
             strictPartnerUniqueness: String(dom.partnerStrictness.value || 'high'),
@@ -1043,11 +1043,11 @@
         function renderRounds(result) {
           var rounds = result && Array.isArray(result.rounds) ? result.rounds : [];
           if (rounds.length === 0) {
-            dom.rounds.innerHTML = '<div class="empty">Сетка появится здесь после первого запуска.</div>';
+            dom.roundsOutput.innerHTML = '<div class="empty">Сетка появится здесь после первого запуска.</div>';
             return;
           }
 
-          dom.rounds.innerHTML = rounds
+          dom.roundsOutput.innerHTML = rounds
             .map(function (round) {
               var byes = Array.isArray(round.byes) && round.byes.length > 0
                 ? '<div class="bye-badge">Bye: ' + escapeHtml(round.byes.join(', ')) + '</div>'
