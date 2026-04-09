@@ -68,7 +68,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   private readonly logger = new Logger(TournamentsPersistenceService.name);
   private readonly mongoUri =
     this.readEnv('TOURNAMENTS_MONGODB_URI') ?? this.readEnv('MONGODB_URI');
-  private readonly mongoDbName = this.readEnv('TOURNAMENTS_MONGODB_DB') ?? 'tournaments';
+  private readonly mongoDbName =
+    this.readEnv('TOURNAMENTS_MONGODB_DB') ?? this.readEnv('MONGODB_DB') ?? 'tournaments';
   private readonly collectionName =
     this.readEnv('TOURNAMENTS_MONGODB_COLLECTION') ?? 'custom_tournaments';
   private readonly publicBaseUrl =
