@@ -47,6 +47,9 @@
       '  --ph-feed-blue: #e5f1ff;',
       '  --ph-feed-green: #d7f7e2;',
       '  --ph-feed-yellow: #fff4cf;',
+      '  --ph-feed-hub-cream: #fff6e8;',
+      '  --ph-feed-hub-orange-deep: #ff5a3c;',
+      '  --ph-feed-hub-green: #c9f2d8;',
       '  --ph-feed-shadow: 0 18px 40px rgba(31, 44, 33, 0.12);',
       '}',
       '.phab-community-feed { color: var(--ph-feed-ink); }',
@@ -144,6 +147,166 @@
       '  box-shadow: var(--ph-feed-shadow);',
       '  overflow: hidden;',
       '}',
+      '.phab-community-feed__card--tournament-skin {',
+      '  position: relative;',
+      '  gap: 16px;',
+      '  background:',
+      '    radial-gradient(circle at 100% 0%, rgba(255, 111, 61, 0.22), transparent 34%),',
+      '    radial-gradient(circle at 0% 100%, rgba(201, 242, 216, 0.48), transparent 32%),',
+      '    linear-gradient(145deg, rgba(255, 247, 233, 0.98) 0%, rgba(255,255,255,0.98) 48%, rgba(243,252,247,0.98) 100%);',
+      '  border-color: rgba(255, 111, 61, 0.22);',
+      '  box-shadow: 0 24px 48px rgba(255, 111, 61, 0.16);',
+      '}',
+      '.phab-community-feed__card--tournament-skin::before {',
+      '  content: "";',
+      '  position: absolute;',
+      '  inset: 0 0 auto;',
+      '  height: 6px;',
+      '  background: linear-gradient(90deg, var(--ph-feed-hub-orange-deep) 0%, var(--ph-feed-accent) 56%, var(--ph-feed-hub-green) 100%);',
+      '}',
+      '.phab-community-feed__tournament-hero {',
+      '  position: relative;',
+      '  min-height: 220px;',
+      '  border-radius: 22px;',
+      '  overflow: hidden;',
+      '  background:',
+      '    radial-gradient(circle at 18% 16%, rgba(255,255,255,0.55), transparent 24%),',
+      '    linear-gradient(135deg, #ff7a43 0%, #ff9f4a 38%, #ffe5bc 100%);',
+      '}',
+      '.phab-community-feed__tournament-hero--plain::after {',
+      '  content: "";',
+      '  position: absolute;',
+      '  inset: auto -34px -44px auto;',
+      '  width: 150px;',
+      '  height: 150px;',
+      '  border-radius: 999px;',
+      '  background: radial-gradient(circle, rgba(201, 242, 216, 0.82) 0%, rgba(201, 242, 216, 0) 70%);',
+      '}',
+      '.phab-community-feed__tournament-image {',
+      '  width: 100%;',
+      '  height: 220px;',
+      '  display: block;',
+      '  object-fit: cover;',
+      '}',
+      '.phab-community-feed__tournament-overlay {',
+      '  position: absolute;',
+      '  inset: 0;',
+      '  display: flex;',
+      '  align-items: flex-end;',
+      '  padding: 18px;',
+      '  background: linear-gradient(180deg, rgba(28, 19, 12, 0.06) 0%, rgba(28, 19, 12, 0.78) 100%);',
+      '}',
+      '.phab-community-feed__tournament-overlay--plain {',
+      '  background: linear-gradient(180deg, rgba(28, 19, 12, 0.04) 0%, rgba(28, 19, 12, 0.48) 100%);',
+      '}',
+      '.phab-community-feed__tournament-overlay-text { display: grid; gap: 8px; max-width: 92%; }',
+      '.phab-community-feed__tournament-badge {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  width: fit-content;',
+      '  min-height: 30px;',
+      '  padding: 7px 12px;',
+      '  border-radius: 999px;',
+      '  background: rgba(255, 247, 233, 0.92);',
+      '  color: #7d2e11;',
+      '  font-size: 12px;',
+      '  font-weight: 800;',
+      '  line-height: 1;',
+      '  letter-spacing: 0.08em;',
+      '  text-transform: uppercase;',
+      '}',
+      '.phab-community-feed__tournament-subtitle {',
+      '  margin: 0;',
+      '  font-size: 14px;',
+      '  line-height: 1.45;',
+      '  font-weight: 600;',
+      '  color: rgba(255, 250, 244, 0.96);',
+      '  text-shadow: 0 1px 8px rgba(28, 19, 12, 0.24);',
+      '}',
+      '.phab-community-feed__tournament-meta { display: flex; flex-wrap: wrap; gap: 8px; }',
+      '.phab-community-feed__tournament-pill {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  min-height: 30px;',
+      '  padding: 7px 11px;',
+      '  border-radius: 999px;',
+      '  background: rgba(31, 44, 33, 0.07);',
+      '  color: rgba(31, 44, 33, 0.82);',
+      '  font-size: 12px;',
+      '  font-weight: 600;',
+      '  line-height: 1;',
+      '}',
+      '.phab-community-feed__tournament-pill--accent { background: rgba(255, 111, 61, 0.14); color: #a43d18; }',
+      '.phab-community-feed__tournament-summary {',
+      '  margin: 0;',
+      '  font-size: 15px;',
+      '  line-height: 1.6;',
+      '  color: rgba(31, 44, 33, 0.80);',
+      '}',
+      '.phab-community-feed__tournament-footer {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  justify-content: space-between;',
+      '  gap: 14px;',
+      '  flex-wrap: wrap;',
+      '  margin-top: auto;',
+      '}',
+      '.phab-community-feed__tournament-attendees { display: flex; align-items: center; gap: 12px; min-width: 0; }',
+      '.phab-community-feed__tournament-avatar-stack { display: flex; align-items: center; padding-left: 10px; }',
+      '.phab-community-feed__tournament-avatar {',
+      '  width: 40px;',
+      '  height: 40px;',
+      '  margin-left: -10px;',
+      '  border-radius: 50%;',
+      '  border: 2px solid rgba(255, 251, 245, 0.98);',
+      '  overflow: hidden;',
+      '  display: grid;',
+      '  place-items: center;',
+      '  background: linear-gradient(135deg, #ffe4cb 0%, #ffd094 100%);',
+      '  color: #783111;',
+      '  font-size: 12px;',
+      '  font-weight: 800;',
+      '  line-height: 1;',
+      '  box-shadow: 0 8px 18px rgba(31, 44, 33, 0.16);',
+      '}',
+      '.phab-community-feed__tournament-avatar:first-child { margin-left: 0; }',
+      '.phab-community-feed__tournament-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }',
+      '.phab-community-feed__tournament-avatar--more { background: linear-gradient(135deg, #1f2c21 0%, #35553f 100%); color: #fff; }',
+      '.phab-community-feed__tournament-attendees-copy { display: grid; gap: 2px; min-width: 0; }',
+      '.phab-community-feed__tournament-attendees-label {',
+      '  margin: 0;',
+      '  font-size: 11px;',
+      '  line-height: 1.2;',
+      '  letter-spacing: 0.12em;',
+      '  text-transform: uppercase;',
+      '  color: rgba(31, 44, 33, 0.56);',
+      '}',
+      '.phab-community-feed__tournament-attendees-value { margin: 0; font-size: 15px; line-height: 1.3; font-weight: 800; color: #1f2c21; }',
+      '.phab-community-feed__tournament-attendees-names {',
+      '  margin: 0;',
+      '  font-size: 13px;',
+      '  line-height: 1.4;',
+      '  color: rgba(31, 44, 33, 0.66);',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '  max-width: 360px;',
+      '}',
+      '.phab-community-feed__tournament-cta {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  min-height: 48px;',
+      '  padding: 12px 18px;',
+      '  border-radius: 999px;',
+      '  background: linear-gradient(90deg, var(--ph-feed-hub-orange-deep) 0%, var(--ph-feed-accent) 100%);',
+      '  color: #fff;',
+      '  text-decoration: none;',
+      '  font-size: 14px;',
+      '  font-weight: 800;',
+      '  line-height: 1;',
+      '  box-shadow: 0 14px 30px rgba(255, 90, 60, 0.26);',
+      '}',
       '.phab-community-feed__image {',
       '  width: 100%;',
       '  aspect-ratio: 16 / 9;',
@@ -228,6 +391,13 @@
       '  .phab-community-feed__grid { grid-template-columns: minmax(0, 1fr); }',
       '  .phab-community-feed__card { padding: 16px; border-radius: 22px; }',
       '  .phab-community-feed__card-title { font-size: 20px; }',
+      '  .phab-community-feed__tournament-hero { min-height: 188px; }',
+      '  .phab-community-feed__tournament-image { height: 188px; }',
+      '  .phab-community-feed__tournament-overlay { padding: 14px; }',
+      '  .phab-community-feed__tournament-footer { align-items: flex-start; }',
+      '  .phab-community-feed__tournament-attendees { width: 100%; }',
+      '  .phab-community-feed__tournament-attendees-names { max-width: 100%; white-space: normal; }',
+      '  .phab-community-feed__tournament-cta { width: 100%; }',
       '  .phab-community-feed__actions { justify-content: flex-start; }',
       '  .phab-community-feed__button { width: 100%; }',
       '}'
@@ -322,6 +492,277 @@
     return logo;
   }
 
+  function hasObjectValues(value) {
+    return Object.keys(normalizeObject(value)).length > 0;
+  }
+
+  function pickFirstObject(values) {
+    var index;
+    for (index = 0; index < values.length; index += 1) {
+      if (hasObjectValues(values[index])) {
+        return normalizeObject(values[index]);
+      }
+    }
+    return {};
+  }
+
+  function resolveParticipantInitials(participant) {
+    var normalizedParticipant = normalizeObject(participant);
+    return (
+      normalizeString(normalizedParticipant.shortName)
+      || buildInitials(normalizedParticipant.name || 'Игрок')
+    );
+  }
+
+  function resolveTournamentSkin(item, participants) {
+    var details = normalizeObject(item.details);
+    var tournamentDetails = pickFirstObject([
+      details.publicTournament,
+      details.tournament,
+      details.customTournament
+    ]);
+    var skin = pickFirstObject([
+      details.skin,
+      details.tournamentSkin,
+      tournamentDetails.skin
+    ]);
+    var publicUrl = normalizeString(
+      details.publicUrl
+      || details.tournamentUrl
+      || tournamentDetails.publicUrl
+      || details.url
+    );
+    var title = normalizeString(skin.title || item.title || 'Турнир PadelHub');
+    var subtitle = normalizeString(
+      skin.subtitle
+      || details.subtitle
+      || item.stationName
+      || item.courtName
+    );
+    var description = normalizeString(skin.description || item.body);
+    var imageUrl = normalizeString(skin.imageUrl || item.imageUrl);
+    var badgeLabel = normalizeString(skin.badgeLabel || details.badgeLabel || item.previewLabel);
+    var ctaLabel = normalizeString(skin.ctaLabel || item.ctaLabel) || 'Записаться';
+    var maxPlayers = normalizePositiveInteger(
+      details.maxPlayers || tournamentDetails.maxPlayers,
+      0
+    );
+    var participantsCount =
+      normalizePositiveInteger(
+        details.participantsCount || tournamentDetails.participantsCount,
+        0
+      ) || participants.length;
+    var hasSkin =
+      normalizeString(item.kind).toUpperCase() === 'TOURNAMENT' &&
+      (
+        hasObjectValues(skin)
+        || Boolean(publicUrl)
+        || Boolean(imageUrl)
+        || Boolean(badgeLabel)
+      );
+
+    return {
+      enabled: hasSkin,
+      title: title,
+      subtitle: subtitle,
+      description: description,
+      imageUrl: imageUrl,
+      badgeLabel: badgeLabel,
+      ctaLabel: ctaLabel,
+      publicUrl: publicUrl,
+      maxPlayers: maxPlayers,
+      participantsCount: participantsCount
+    };
+  }
+
+  function createTournamentParticipantAvatar(participant, extraCount) {
+    var avatarClassName = 'phab-community-feed__tournament-avatar';
+    var avatar = createElement(
+      'span',
+      extraCount > 0
+        ? avatarClassName + ' phab-community-feed__tournament-avatar--more'
+        : avatarClassName
+    );
+
+    if (extraCount > 0) {
+      avatar.textContent = '+' + String(extraCount);
+      avatar.setAttribute('aria-label', 'Дополнительные участники');
+      return avatar;
+    }
+
+    var normalizedParticipant = normalizeObject(participant);
+    var avatarUrl = normalizeString(normalizedParticipant.avatar);
+    avatar.title = normalizeString(normalizedParticipant.name) || 'Участник';
+    if (avatarUrl) {
+      var image = document.createElement('img');
+      image.alt = normalizeString(normalizedParticipant.name) || 'Участник';
+      image.src = avatarUrl;
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      image.onerror = function () {
+        image.remove();
+        avatar.textContent = resolveParticipantInitials(normalizedParticipant);
+      };
+      avatar.appendChild(image);
+      return avatar;
+    }
+
+    avatar.textContent = resolveParticipantInitials(normalizedParticipant);
+    return avatar;
+  }
+
+  function createTournamentFeedCard(item, participants, tournamentSkin) {
+    var article = createElement(
+      'article',
+      'phab-community-feed__card phab-community-feed__card--tournament-skin'
+    );
+    var hero = createElement(
+      'div',
+      'phab-community-feed__tournament-hero' + (tournamentSkin.imageUrl ? '' : ' phab-community-feed__tournament-hero--plain')
+    );
+    var overlayClassName =
+      'phab-community-feed__tournament-overlay' +
+      (tournamentSkin.imageUrl ? '' : ' phab-community-feed__tournament-overlay--plain');
+
+    if (tournamentSkin.imageUrl) {
+      var heroImage = document.createElement('img');
+      heroImage.className = 'phab-community-feed__tournament-image';
+      heroImage.src = tournamentSkin.imageUrl;
+      heroImage.alt = tournamentSkin.title || 'Турнир PadelHub';
+      heroImage.loading = 'lazy';
+      heroImage.referrerPolicy = 'no-referrer';
+      heroImage.onerror = function () {
+        heroImage.remove();
+        hero.className = 'phab-community-feed__tournament-hero phab-community-feed__tournament-hero--plain';
+        overlay.className = 'phab-community-feed__tournament-overlay phab-community-feed__tournament-overlay--plain';
+      };
+      hero.appendChild(heroImage);
+    }
+
+    var overlay = createElement('div', overlayClassName);
+    var overlayText = createElement('div', 'phab-community-feed__tournament-overlay-text');
+    overlay.appendChild(overlayText);
+    if (tournamentSkin.badgeLabel) {
+      overlayText.appendChild(
+        createElement('span', 'phab-community-feed__tournament-badge', tournamentSkin.badgeLabel)
+      );
+    }
+    if (tournamentSkin.subtitle) {
+      overlayText.appendChild(
+        createElement('p', 'phab-community-feed__tournament-subtitle', tournamentSkin.subtitle)
+      );
+    }
+    hero.appendChild(overlay);
+    article.appendChild(hero);
+
+    var badges = createElement('div', 'phab-community-feed__tournament-meta');
+    var scheduleLabel = formatSchedule(item.startAt, item.endAt);
+    var stationLabel = normalizeString(item.stationName || item.courtName);
+    appendBadge(badges, resolveKindLabel(item.kind), 'kind');
+    if (scheduleLabel) {
+      badges.appendChild(
+        createElement('span', 'phab-community-feed__tournament-pill phab-community-feed__tournament-pill--accent', scheduleLabel)
+      );
+    }
+    if (stationLabel) {
+      badges.appendChild(
+        createElement('span', 'phab-community-feed__tournament-pill', stationLabel)
+      );
+    }
+    if (item.levelLabel) {
+      badges.appendChild(
+        createElement('span', 'phab-community-feed__tournament-pill', item.levelLabel)
+      );
+    }
+    if (badges.childNodes.length > 0) {
+      article.appendChild(badges);
+    }
+
+    article.appendChild(
+      createElement('h3', 'phab-community-feed__card-title', tournamentSkin.title || 'Турнир PadelHub')
+    );
+
+    if (tournamentSkin.description) {
+      article.appendChild(
+        createElement('p', 'phab-community-feed__tournament-summary', tournamentSkin.description)
+      );
+    }
+
+    var footer = createElement('div', 'phab-community-feed__tournament-footer');
+    var attendees = createElement('div', 'phab-community-feed__tournament-attendees');
+    var avatarStack = createElement('div', 'phab-community-feed__tournament-avatar-stack');
+    var attendeeCopy = createElement('div', 'phab-community-feed__tournament-attendees-copy');
+    var visibleParticipants = participants.slice(0, 5);
+    var hiddenParticipantsCount = Math.max(0, participants.length - visibleParticipants.length);
+    var attendeeValue = tournamentSkin.maxPlayers > 0
+      ? String(tournamentSkin.participantsCount) + ' из ' + String(tournamentSkin.maxPlayers) + ' мест'
+      : String(tournamentSkin.participantsCount) + ' записались';
+    var attendeeNames = visibleParticipants
+      .map(function (participant) {
+        return normalizeObject(participant).name;
+      })
+      .filter(Boolean);
+
+    visibleParticipants.forEach(function (participant) {
+      avatarStack.appendChild(createTournamentParticipantAvatar(participant, 0));
+    });
+    if (hiddenParticipantsCount > 0) {
+      avatarStack.appendChild(createTournamentParticipantAvatar(null, hiddenParticipantsCount));
+    }
+    if (avatarStack.childNodes.length === 0) {
+      avatarStack.appendChild(createTournamentParticipantAvatar({ name: 'Свободно' }, 0));
+    }
+
+    attendeeCopy.appendChild(
+      createElement('p', 'phab-community-feed__tournament-attendees-label', 'Запись в турнир')
+    );
+    attendeeCopy.appendChild(
+      createElement('p', 'phab-community-feed__tournament-attendees-value', attendeeValue)
+    );
+    attendeeCopy.appendChild(
+      createElement(
+        'p',
+        'phab-community-feed__tournament-attendees-names',
+        attendeeNames.length > 0
+          ? attendeeNames.join(', ') + (hiddenParticipantsCount > 0 ? ' +' + String(hiddenParticipantsCount) : '')
+          : 'Список участников пополняется'
+      )
+    );
+
+    attendees.appendChild(avatarStack);
+    attendees.appendChild(attendeeCopy);
+    footer.appendChild(attendees);
+
+    if (tournamentSkin.publicUrl) {
+      var cta = createElement(
+        'a',
+        'phab-community-feed__tournament-cta',
+        tournamentSkin.ctaLabel || 'Записаться'
+      );
+      cta.href = tournamentSkin.publicUrl;
+      cta.target = '_blank';
+      cta.rel = 'noopener noreferrer';
+      footer.appendChild(cta);
+    }
+
+    article.appendChild(footer);
+
+    var authorParts = [];
+    if (item.authorName) {
+      authorParts.push(item.authorName);
+    }
+    if (item.publishedAt) {
+      authorParts.push(formatDateTime(item.publishedAt));
+    }
+    if (authorParts.length > 0) {
+      article.appendChild(
+        createElement('p', 'phab-community-feed__author', authorParts.filter(Boolean).join(' · '))
+      );
+    }
+
+    return article;
+  }
+
   function formatGeneratedAt(value) {
     if (!value) {
       return 'Обновляется автоматически';
@@ -410,6 +851,14 @@
   }
 
   function createFeedCard(item) {
+    var participants = normalizeArray(item.participants).filter(function (entry) {
+      return normalizeObject(entry).name;
+    });
+    var tournamentSkin = resolveTournamentSkin(item, participants);
+    if (tournamentSkin.enabled) {
+      return createTournamentFeedCard(item, participants, tournamentSkin);
+    }
+
     var article = createElement('article', 'phab-community-feed__card');
     if (item.imageUrl) {
       var image = document.createElement('img');
@@ -443,9 +892,6 @@
       );
     }
 
-    var participants = normalizeArray(item.participants).filter(function (entry) {
-      return normalizeObject(entry).name;
-    });
     if (participants.length > 0) {
       var participantsWrap = createElement('div', 'phab-community-feed__participants');
       participants.slice(0, 6).forEach(function (participant) {

@@ -562,7 +562,8 @@ export class CommunitiesService {
       tags: item.tags,
       authorName: item.authorName,
       participants: item.participants,
-      publishedAt: item.publishedAt ?? item.createdAt
+      publishedAt: item.publishedAt ?? item.createdAt,
+      details: item.details
     };
   }
 

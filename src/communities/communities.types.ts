@@ -178,6 +178,7 @@ export interface CommunityPublicFeedItem {
   authorName?: string;
   participants?: CommunityFeedParticipant[];
   publishedAt?: string;
+  details?: Record<string, unknown>;
 }
 
 export interface CommunityPublicDirectoryResponse {
