@@ -294,6 +294,7 @@ export class AmericanoScheduleService {
       ...config,
       rounds,
       courts,
+      firstRoundSeeding: config.firstRoundSeeding ?? 'auto',
       historyDepth,
       localSearchIterations,
       pairingExactThreshold,
@@ -454,6 +455,10 @@ export class AmericanoScheduleService {
       .map((player) => player.id)
       .filter((playerId) => !byesSet.has(playerId));
 
+    if (this.shouldUseSeededFirstRound(state, config, roundIndex)) {
+      return this.buildSeededOpeningRound(availablePlayerIds, byes, state, config, roundIndex);
+    }
+
     const pairs = this.buildPairs(availablePlayerIds, state, config, roundIndex);
     const matches = this.buildMatchesFromPairs(pairs, state, config, roundIndex);
     let bestRound = this.evaluateRound(pairs, matches, byes, state, config, roundIndex);
@@ -480,6 +485,65 @@ export class AmericanoScheduleService {
     }
 
     return this.optimizeByes(bestRound, players, state, config, roundIndex);
+  }
+
+  private shouldUseSeededFirstRound(
+    state: GeneratorState,
+    config: ResolvedGeneratorConfig,
+    roundIndex: number
+  ): boolean {
+    if (!config.useRatings || roundIndex !== 0) {
+      return false;
+    }
+    if (config.firstRoundSeeding === 'off') {
+      return false;
+    }
+    if (config.firstRoundSeeding === 'rating_quartets') {
+      return true;
+    }
+    return this.isStateEmpty(state);
+  }
+
+  private buildSeededOpeningRound(
+    availablePlayerIds: string[],
+    byes: string[],
+    state: GeneratorState,
+    config: ResolvedGeneratorConfig,
+    roundIndex: number
+  ): RoundEvaluation {
+    const sortedIds = [...availablePlayerIds].sort((leftId, rightId) => {
+      const strengthDiff =
+        this.getPlayerStrengthById(leftId, state) - this.getPlayerStrengthById(rightId, state);
+      if (strengthDiff !== 0) {
+        return strengthDiff;
+      }
+      return leftId.localeCompare(rightId);
+    });
+
+    const pairs: AmericanoPair[] = [];
+    const matches: AmericanoMatch[] = [];
+
+    for (let index = 0; index < sortedIds.length; index += 4) {
+      const quartet = sortedIds.slice(index, index + 4);
+      if (quartet.length !== 4) {
+        throw new BadRequestException('Seeded opening round expects complete quartets');
+      }
+      const [team1, team2] = this.buildQuartetSeededMatch(quartet);
+      pairs.push(team1, team2);
+      matches.push(
+        this.createMatch(team1, team2, state, config, roundIndex, matches.length)
+      );
+    }
+
+    return this.evaluateRound(pairs, matches, byes, state, config, roundIndex);
+  }
+
+  private buildQuartetSeededMatch(quartet: string[]): [AmericanoPair, AmericanoPair] {
+    const sortedQuartet = [...quartet].sort((left, right) => left.localeCompare(right));
+    return [
+      this.normalizePair([sortedQuartet[0], sortedQuartet[2]]),
+      this.normalizePair([sortedQuartet[1], sortedQuartet[3]])
+    ];
   }
 
   private selectByes(
@@ -1546,6 +1610,25 @@ export class AmericanoScheduleService {
 
   private pairKey(playerAId: string, playerBId: string): string {
     return [playerAId, playerBId].sort().join('|');
+  }
+
+  private isStateEmpty(state: GeneratorState): boolean {
+    const matrices = [state.partnerCount, state.opponentCount];
+    for (const matrix of matrices) {
+      for (const row of matrix.values()) {
+        for (const value of row.values()) {
+          if (value > 0) {
+            return false;
+          }
+        }
+      }
+    }
+    for (const value of state.byeCount.values()) {
+      if (value > 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private pairKeyToTuple(pairKey: string): [string, string] {

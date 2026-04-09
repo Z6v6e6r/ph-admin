@@ -685,6 +685,15 @@
               </label>
 
               <label class="field field-full">
+                <span class="label">Стартовый посев</span>
+                <select id="firstRoundSeeding" class="select">
+                  <option value="auto" selected>Auto</option>
+                  <option value="rating_quartets">Rating Quartets</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+
+              <label class="field field-full">
                 <span class="label">Локальный поиск</span>
                 <input id="localSearchIterations" class="input" type="number" min="1" value="6" />
               </label>
@@ -793,6 +802,7 @@
           courts: document.getElementById('courts'),
           partnerStrictness: document.getElementById('partnerStrictness'),
           balanceStrictness: document.getElementById('balanceStrictness'),
+          firstRoundSeeding: document.getElementById('firstRoundSeeding'),
           localSearchIterations: document.getElementById('localSearchIterations'),
           useRatings: document.getElementById('useRatings'),
           avoidRepeatOpponents: document.getElementById('avoidRepeatOpponents'),
@@ -945,6 +955,7 @@
             rounds: parsePositiveInteger(dom.roundsInput.value),
             courts: parsePositiveInteger(dom.courts.value),
             useRatings: Boolean(dom.useRatings.checked),
+            firstRoundSeeding: String(dom.firstRoundSeeding.value || 'auto'),
             strictPartnerUniqueness: String(dom.partnerStrictness.value || 'high'),
             strictBalance: String(dom.balanceStrictness.value || 'medium'),
             avoidRepeatOpponents: Boolean(dom.avoidRepeatOpponents.checked),

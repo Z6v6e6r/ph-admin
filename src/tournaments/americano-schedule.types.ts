@@ -5,6 +5,7 @@ export type TournamentMode =
   | 'dynamic_americano';
 
 export type StrictnessLevel = 'high' | 'medium' | 'low';
+export type FirstRoundSeedingMode = 'auto' | 'rating_quartets' | 'off';
 
 export interface AmericanoPlayer {
   id: string;
@@ -32,6 +33,7 @@ export interface AmericanoGeneratorConfig {
   rounds?: number | null;
   courts?: number | null;
   useRatings: boolean;
+  firstRoundSeeding?: FirstRoundSeedingMode;
   strictPartnerUniqueness: StrictnessLevel;
   strictBalance: StrictnessLevel;
   avoidRepeatOpponents: boolean;

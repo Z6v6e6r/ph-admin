@@ -14,6 +14,7 @@ import {
   ValidateNested
 } from 'class-validator';
 import {
+  FirstRoundSeedingMode,
   StrictnessLevel,
   TournamentMode
 } from '../americano-schedule.types';
@@ -82,6 +83,10 @@ class AmericanoGeneratorConfigDto {
 
   @IsBoolean()
   useRatings!: boolean;
+
+  @IsOptional()
+  @IsIn(['auto', 'rating_quartets', 'off'])
+  firstRoundSeeding?: FirstRoundSeedingMode;
 
   @IsIn(['high', 'medium', 'low'])
   strictPartnerUniqueness!: StrictnessLevel;

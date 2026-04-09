@@ -166,12 +166,51 @@ function runEqualRatingsCheck(): void {
   assert(Number.isFinite(result.diagnostics.balance.averagePenalty));
 }
 
+function runOpeningRoundSeedingCheck(): void {
+  const players = createPlayers(12, (index) => 1300 + index * 35);
+  const seededResult = service.generateSchedule({
+    players,
+    config: {
+      ...createConfig('full_americano'),
+      rounds: 1,
+      courts: 3,
+      firstRoundSeeding: 'rating_quartets'
+    }
+  });
+  const plainResult = service.generateSchedule({
+    players,
+    config: {
+      ...createConfig('full_americano'),
+      rounds: 1,
+      courts: 3,
+      firstRoundSeeding: 'off'
+    }
+  });
+
+  assert.deepEqual(
+    seededResult.rounds[0].matches[0].team1,
+    ['P1', 'P3'],
+    'seeded opening round should pair P1 with P3 in the first quartet'
+  );
+  assert.deepEqual(
+    seededResult.rounds[0].matches[0].team2,
+    ['P2', 'P4'],
+    'seeded opening round should pair P2 with P4 in the first quartet'
+  );
+  assert(
+    seededResult.rounds[0].matches[0].quality.totalCost <
+      plainResult.rounds[0].matches[0].quality.totalCost,
+    'seeded opening round should improve first-match total cost versus plain pairing'
+  );
+}
+
 function main(): void {
   runSizeSmokeTests();
   runFullModeCoverageChecks();
   runCompetitiveBalanceCheck();
   runExtremeRatingsCheck();
   runEqualRatingsCheck();
+  runOpeningRoundSeedingCheck();
   console.log('Americano schedule tests passed');
 }
 
