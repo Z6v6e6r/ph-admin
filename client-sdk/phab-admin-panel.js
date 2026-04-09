@@ -203,6 +203,16 @@
     { value: 'SUGGESTION', label: 'Подсказка' },
     { value: 'AUTO_REPLY', label: 'Автомат' }
   ];
+  var LAB_LINKS = [
+    {
+      key: 'americano-lab',
+      title: 'Лаба Американо',
+      description:
+        'Тестовый playground для генерации сетки Americano, настройки весов и просмотра diagnostics.',
+      href: 'https://padlhub.su/api/ui/americano-lab',
+      actionLabel: 'Открыть лабораторию'
+    }
+  ];
 
   function normalizeRoleValue(rawRole) {
     var normalized = String(rawRole || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
@@ -2928,6 +2938,58 @@
         grid-template-columns:repeat(3,minmax(250px,1fr));
         gap:12px;
       }
+      .phab-admin-lab-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+        gap:12px;
+      }
+      .phab-admin-lab-card{
+        display:grid;
+        gap:14px;
+        padding:18px;
+        background:rgba(255,255,255,.92);
+        border:1px solid rgba(51,0,32,.16);
+        border-radius:18px;
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-admin-lab-kicker{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.56);
+      }
+      .phab-admin-lab-title{
+        font-family:var(--cup-font-heading);
+        font-size:16px;
+        font-weight:800;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-lab-description{
+        font-size:13px;
+        line-height:1.55;
+        color:rgba(51,0,32,.78);
+      }
+      .phab-admin-lab-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        align-items:center;
+      }
+      .phab-admin-lab-link{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-height:40px;
+        text-decoration:none;
+      }
+      .phab-admin-lab-link-meta{
+        font-size:11px;
+        color:rgba(51,0,32,.6);
+        word-break:break-all;
+      }
       .phab-admin-settings-tabs{
         margin-bottom:10px;
       }
@@ -4978,6 +5040,12 @@
     tabCommunities.textContent = 'Сообщества';
     tabs.appendChild(tabCommunities);
 
+    var tabLaboratory = document.createElement('button');
+    tabLaboratory.className = 'phab-admin-tab';
+    tabLaboratory.type = 'button';
+    tabLaboratory.textContent = 'Лаборатория';
+    tabs.appendChild(tabLaboratory);
+
     var tabAnalytics = document.createElement('button');
     tabAnalytics.className = 'phab-admin-tab';
     tabAnalytics.type = 'button';
@@ -5024,6 +5092,10 @@
     communitiesSection.style.display = 'flex';
     communitiesSection.style.flexDirection = 'column';
     content.appendChild(communitiesSection);
+
+    var laboratorySection = document.createElement('div');
+    laboratorySection.className = 'phab-admin-hidden';
+    content.appendChild(laboratorySection);
 
     var settingsSection = document.createElement('div');
     settingsSection.className = 'phab-admin-hidden';
@@ -5753,6 +5825,48 @@
     var communitiesPreviewPane = document.createElement('div');
     communitiesPreviewPane.className = 'phab-admin-community-pane phab-admin-community-preview-shell';
     communitiesGrid.appendChild(communitiesPreviewPane);
+
+    var laboratoryGrid = document.createElement('div');
+    laboratoryGrid.className = 'phab-admin-lab-grid';
+    laboratorySection.appendChild(laboratoryGrid);
+
+    LAB_LINKS.forEach(function (entry, index) {
+      var card = document.createElement('div');
+      card.className = 'phab-admin-lab-card';
+      laboratoryGrid.appendChild(card);
+
+      var kicker = document.createElement('div');
+      kicker.className = 'phab-admin-lab-kicker';
+      kicker.textContent = index === 0 ? 'Первая ссылка' : 'Инструмент';
+      card.appendChild(kicker);
+
+      var cardTitle = document.createElement('div');
+      cardTitle.className = 'phab-admin-lab-title';
+      cardTitle.textContent = entry.title;
+      card.appendChild(cardTitle);
+
+      var description = document.createElement('div');
+      description.className = 'phab-admin-lab-description';
+      description.textContent = entry.description;
+      card.appendChild(description);
+
+      var actions = document.createElement('div');
+      actions.className = 'phab-admin-lab-actions';
+      card.appendChild(actions);
+
+      var link = document.createElement('a');
+      link.className = 'phab-admin-btn phab-admin-lab-link';
+      link.href = entry.href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = entry.actionLabel;
+      actions.appendChild(link);
+
+      var meta = document.createElement('div');
+      meta.className = 'phab-admin-lab-link-meta';
+      meta.textContent = entry.href;
+      card.appendChild(meta);
+    });
 
     var communityPreviewHead = document.createElement('div');
     communityPreviewHead.className = 'phab-admin-community-pane-head-light';
@@ -6773,6 +6887,7 @@
       tabLogs: tabLogs,
       tabTournaments: tabTournaments,
       tabCommunities: tabCommunities,
+      tabLaboratory: tabLaboratory,
       tabAnalytics: tabAnalytics,
       tabSettings: tabSettings,
       messagesSection: messagesSection,
@@ -6780,6 +6895,7 @@
       logsSection: logsSection,
       tournamentsSection: tournamentsSection,
       communitiesSection: communitiesSection,
+      laboratorySection: laboratorySection,
       analyticsSection: analyticsSection,
       settingsSection: settingsSection,
       messagesGrid: messagesGrid,
@@ -7128,6 +7244,10 @@
       'GAME_MANAGER',
       'TOURNAMENT_MANAGER'
     ]);
+  }
+
+  function canAccessLaboratory(cfg) {
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
   }
 
   function canManageQuickReplySettings(cfg) {
@@ -8162,12 +8282,14 @@
     function populateMobileTabSelect() {
       clearNode(dom.mobileTabSelect);
       var hideCommunitiesTab = !canAccessCommunities(cfg);
+      var hideLaboratoryTab = !canAccessLaboratory(cfg);
       [
         { value: 'messages', label: 'Диалоги' },
         { value: 'games', label: 'Игры' },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
         { value: 'tournaments', label: 'Турниры' },
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
+        { value: 'laboratory', label: 'Лаборатория', hidden: hideLaboratoryTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
         { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin }
       ]
@@ -20291,16 +20413,21 @@
       if (!canAccessCommunities(cfg) && nextTab === 'communities') {
         nextTab = 'messages';
       }
+      if (!canAccessLaboratory(cfg) && nextTab === 'laboratory') {
+        nextTab = 'messages';
+      }
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
       var isLogs = nextTab === 'logs';
       var isTournaments = nextTab === 'tournaments';
       var isCommunities = nextTab === 'communities';
+      var isLaboratory = nextTab === 'laboratory';
       var isAnalytics = nextTab === 'analytics';
       var isSettings = nextTab === 'settings';
       var hideLogsTab = isRestrictedStationAdmin;
       var hideCommunitiesTab = !canAccessCommunities(cfg);
+      var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
 
@@ -20316,6 +20443,10 @@
         'phab-admin-tab' +
         (isCommunities ? ' phab-admin-tab-active' : '') +
         (hideCommunitiesTab ? ' phab-admin-hidden' : '');
+      dom.tabLaboratory.className =
+        'phab-admin-tab' +
+        (isLaboratory ? ' phab-admin-tab-active' : '') +
+        (hideLaboratoryTab ? ' phab-admin-hidden' : '');
       dom.tabAnalytics.className =
         'phab-admin-tab' +
         (isAnalytics ? ' phab-admin-tab-active' : '') +
@@ -20330,6 +20461,7 @@
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.communitiesSection.className = isCommunities ? '' : 'phab-admin-hidden';
+      dom.laboratorySection.className = isLaboratory ? '' : 'phab-admin-hidden';
       dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
       if (isAnalytics) {
@@ -20385,6 +20517,9 @@
           }
         } else if (state.activeTab === 'communities') {
           await loadCommunities();
+        } else if (state.activeTab === 'laboratory') {
+          setStatus('Готово', false);
+          return;
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
         } else {
@@ -20424,6 +20559,10 @@
         }
         if (nextTab === 'communities') {
           loadCommunities().catch(handleError);
+          return;
+        }
+        if (nextTab === 'laboratory') {
+          setStatus('Готово', false);
           return;
         }
         if (nextTab === 'analytics') {
@@ -20472,6 +20611,10 @@
       dom.tabCommunities.addEventListener('click', function () {
         switchTab('communities');
         loadCommunities().catch(handleError);
+      });
+      dom.tabLaboratory.addEventListener('click', function () {
+        switchTab('laboratory');
+        setStatus('Готово', false);
       });
       dom.tabSettings.addEventListener('click', function () {
         switchTab('settings');
@@ -20920,6 +21063,7 @@
       populateMobileTabSelect();
       setStatus('Готово', false);
       bindEvents();
+      switchTab(state.activeTab);
       setAnalyticsSubtab(state.analyticsSubtab);
       await loadSettings();
       await refreshDialogsView();
