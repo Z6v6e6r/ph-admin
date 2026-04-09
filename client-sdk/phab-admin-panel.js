@@ -13328,25 +13328,9 @@
     }
 
     function isTournamentCustomSkinned(tournament) {
-      var skin = normalizeObject(tournament && tournament.skin);
-      var hasSkin =
-        Boolean(
-          normalizeString(
-            skin.title ||
-            skin.subtitle ||
-            skin.description ||
-            skin.imageUrl ||
-            skin.ctaLabel ||
-            skin.badgeLabel
-          )
-        ) || normalizeArray(skin.tags).length > 0;
-
       return Boolean(
-        hasSkin &&
-        (
-          String((tournament && tournament.source) || '') === 'CUSTOM' ||
-          String((tournament && tournament.linkedCustomTournamentId) || '').trim()
-        )
+        String((tournament && tournament.source) || '') === 'CUSTOM' ||
+        String((tournament && tournament.linkedCustomTournamentId) || '').trim()
       );
     }
 
