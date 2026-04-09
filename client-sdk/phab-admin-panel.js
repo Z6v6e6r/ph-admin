@@ -2780,6 +2780,73 @@
       .phab-admin-games-table tbody tr:nth-child(even){
         background:rgba(221,200,252,.2);
       }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin,
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin:nth-child(even){
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,246,232,.98) 0%,
+            rgba(255,232,145,.42) 22%,
+            rgba(201,242,216,.58) 100%
+          );
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin:hover{
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,240,219,1) 0%,
+            rgba(255,223,154,.6) 24%,
+            rgba(201,242,216,.72) 100%
+          ) !important;
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin td{
+        border-bottom-color:rgba(255,90,60,.16);
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin td:first-child{
+        box-shadow:inset 4px 0 0 var(--cup-red);
+      }
+      .phab-admin-tournament-source-chip{
+        display:inline-flex;
+        align-items:center;
+        min-height:28px;
+        padding:6px 10px;
+        border-radius:999px;
+        border:1px solid rgba(51,0,32,.12);
+        background:rgba(255,255,255,.92);
+        color:var(--cup-wine);
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.02em;
+        white-space:nowrap;
+      }
+      .phab-admin-tournament-source-chip--custom-skin{
+        border-color:rgba(255,90,60,.18);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,246,232,.96) 0%,
+            rgba(255,232,145,.5) 56%,
+            rgba(201,242,216,.62) 100%
+          );
+        color:#8f2d13;
+        box-shadow:0 10px 20px rgba(255,90,60,.12);
+      }
+      .phab-admin-btn-secondary.phab-admin-btn-secondary--tournament-custom{
+        border-color:rgba(255,90,60,.2);
+        background:
+          linear-gradient(
+            90deg,
+            rgba(255,246,232,.96) 0%,
+            rgba(255,232,145,.5) 48%,
+            rgba(255,255,255,.96) 100%
+          );
+        color:#8f2d13;
+        box-shadow:0 10px 18px rgba(255,90,60,.1);
+      }
+      .phab-admin-btn-secondary.phab-admin-btn-secondary--tournament-custom:hover{
+        transform:translateY(-1px);
+        box-shadow:0 12px 22px rgba(255,90,60,.16);
+      }
       .phab-admin-games-row{
         cursor:pointer;
         transition:background .18s ease;
@@ -13191,6 +13258,10 @@
 
       tournaments.forEach(function (tournament) {
         var tr = document.createElement('tr');
+        var hasCustomSkin = isTournamentCustomSkinned(tournament);
+        if (hasCustomSkin) {
+          tr.className = 'phab-admin-tournament-row--custom-skin';
+        }
 
         [
           tournament.id,
@@ -13228,13 +13299,20 @@
         if (tournament.linkedCustomTournamentId) {
           sourceLabel.push('custom');
         }
-        sourceCell.textContent = sourceLabel.join(' · ');
+        var sourceChip = document.createElement('span');
+        sourceChip.className =
+          'phab-admin-tournament-source-chip' +
+          (hasCustomSkin ? ' phab-admin-tournament-source-chip--custom-skin' : '');
+        sourceChip.textContent = sourceLabel.join(' · ');
+        sourceCell.appendChild(sourceChip);
         tr.appendChild(sourceCell);
 
         var actionsCell = document.createElement('td');
         var manageBtn = document.createElement('button');
         manageBtn.type = 'button';
-        manageBtn.className = 'phab-admin-btn-secondary';
+        manageBtn.className =
+          'phab-admin-btn-secondary' +
+          (hasCustomSkin ? ' phab-admin-btn-secondary--tournament-custom' : '');
         manageBtn.textContent =
           tournament.source === 'CUSTOM' || tournament.linkedCustomTournamentId
             ? 'Редактировать'
@@ -13247,6 +13325,29 @@
 
         tbody.appendChild(tr);
       });
+    }
+
+    function isTournamentCustomSkinned(tournament) {
+      var skin = normalizeObject(tournament && tournament.skin);
+      var hasSkin =
+        Boolean(
+          normalizeString(
+            skin.title ||
+            skin.subtitle ||
+            skin.description ||
+            skin.imageUrl ||
+            skin.ctaLabel ||
+            skin.badgeLabel
+          )
+        ) || normalizeArray(skin.tags).length > 0;
+
+      return Boolean(
+        hasSkin &&
+        (
+          String((tournament && tournament.source) || '') === 'CUSTOM' ||
+          String((tournament && tournament.linkedCustomTournamentId) || '').trim()
+        )
+      );
     }
 
     function formatTournamentAccessLevels(tournament) {
