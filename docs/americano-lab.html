@@ -576,6 +576,203 @@
         gap: 10px;
       }
 
+      .surface-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .score-editor {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(18, 52, 45, 0.035);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .score-title,
+      .impact-title,
+      .rating-summary-title {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .score-note,
+      .impact-note,
+      .rating-note {
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .score-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .score-set {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.8);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .score-set-title {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .score-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+      }
+
+      .score-input {
+        width: 100%;
+        min-width: 0;
+        border-radius: 12px;
+        border: 1px solid rgba(18, 52, 45, 0.14);
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--ink);
+        padding: 10px 12px;
+        font: inherit;
+        text-align: center;
+      }
+
+      .score-divider {
+        font-size: 15px;
+        font-weight: 800;
+        color: var(--ink-soft);
+      }
+
+      .impact-box {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .impact-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .impact-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(18, 52, 45, 0.04);
+      }
+
+      .impact-player {
+        font-weight: 800;
+        line-height: 1.3;
+      }
+
+      .impact-values {
+        font-size: 13px;
+        color: var(--ink-soft);
+      }
+
+      .impact-delta {
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .impact-delta.positive {
+        color: #0e8463;
+      }
+
+      .impact-delta.negative {
+        color: var(--danger);
+      }
+
+      .impact-delta.neutral {
+        color: var(--ink-soft);
+      }
+
+      .rating-summary {
+        display: grid;
+        gap: 16px;
+      }
+
+      .rating-cards {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .rating-card {
+        padding: 16px;
+        border-radius: 18px;
+        background: var(--card-strong);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .rating-card-value {
+        margin-top: 8px;
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      .rating-card-sub {
+        margin-top: 6px;
+        color: var(--ink-soft);
+        font-size: 13px;
+      }
+
+      .rating-table-wrap {
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(18, 52, 45, 0.08);
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .rating-chip-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .rating-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(18, 52, 45, 0.06);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .rating-chip.positive {
+        background: rgba(14, 132, 99, 0.12);
+        color: #0e8463;
+      }
+
+      .rating-chip.negative {
+        background: rgba(180, 35, 60, 0.1);
+        color: var(--danger);
+      }
+
       .quality-item {
         padding: 10px 12px;
         border-radius: 14px;
@@ -956,7 +1153,7 @@
             <div class="section-head">
               <div>
                 <h2 class="section-title">Игроки</h2>
-                <div class="section-note">Подставьте реальных игроков, скорректируйте рейтинг и посмотрите, как меняется сетка.</div>
+                <div class="section-note">`Rating` влияет на генерацию сетки. `Game Rating` использует шкалу игрового модуля `1–7` и нужен для симуляции изменения рейтинга после матчей.</div>
               </div>
             </div>
             <div class="players-shell">
@@ -965,6 +1162,12 @@
                   <tr>
                     <th>ID</th>
                     <th>Rating</th>
+                    <th>
+                      <span style="display:inline-flex;align-items:center;gap:8px;">
+                        <span>Game Rating</span>
+                        <button class="help-trigger" type="button" data-help-key="gameRating" aria-label="Что означает параметр Game Rating">?</button>
+                      </span>
+                    </th>
                     <th>Verified</th>
                     <th>Regularity</th>
                     <th>Engagement</th>
@@ -990,6 +1193,30 @@
           <div class="surface">
             <div class="section-head">
               <div>
+                <h2 class="section-title" style="display:flex;align-items:center;gap:8px;">
+                  <span>Симуляция рейтинга</span>
+                  <button class="help-trigger" type="button" data-help-key="ratingSimulation" aria-label="Что означает блок Симуляция рейтинга">?</button>
+                </h2>
+                <div class="section-note">Введите счёт по сетам у каждого матча и нажмите «Рассчитать рейтинг», чтобы увидеть `before / delta / after` по точной формуле игрового модуля.</div>
+              </div>
+              <div class="surface-actions">
+                <button id="simulateRatingBtn" class="btn btn-primary" type="button">Рассчитать рейтинг</button>
+                <button id="resetScoresBtn" class="btn btn-secondary" type="button">Очистить результаты</button>
+              </div>
+            </div>
+            <p class="hint">
+              Для генерации сетки используется обычный турнирный `rating`, а для перерасчёта после сыгранных
+              матчей используется `game rating` по шкале игрового модуля. Это помогает отдельно тестировать
+              качество сетки и отдельно проверять механику изменения рейтинга.
+            </p>
+            <div id="ratingSummary" class="rating-summary">
+              <div class="empty">Сначала сгенерируйте сетку, затем заполните счёт по матчам и запустите симуляцию рейтинга.</div>
+            </div>
+          </div>
+
+          <div class="surface">
+            <div class="section-head">
+              <div>
                 <h2 class="section-title">Раунды и матчи</h2>
                 <div class="section-note">Готовая сетка по раундам: пары, матчи, bye и качество каждого корта.</div>
               </div>
@@ -1000,7 +1227,7 @@
           </div>
 
           <details class="surface">
-            <summary>Технический JSON ответа</summary>
+            <summary>Технический JSON последнего ответа</summary>
             <pre id="rawJson">{}</pre>
           </details>
         </section>
@@ -1054,8 +1281,11 @@
           equalizeRatingsBtn: document.getElementById('equalizeRatingsBtn'),
           copyJsonBtn: document.getElementById('copyJsonBtn'),
           runBtn: document.getElementById('runBtn'),
+          simulateRatingBtn: document.getElementById('simulateRatingBtn'),
+          resetScoresBtn: document.getElementById('resetScoresBtn'),
           playersBody: document.getElementById('playersBody'),
           diagnostics: document.getElementById('diagnostics'),
+          ratingSummary: document.getElementById('ratingSummary'),
           roundsOutput: document.getElementById('roundsOutput'),
           rawJson: document.getElementById('rawJson'),
           status: document.getElementById('status'),
@@ -1071,6 +1301,9 @@
         var state = {
           players: [],
           result: null,
+          ratingResult: null,
+          ratingDirty: false,
+          matchScores: {},
           activeHelpKey: null
         };
 
@@ -1179,6 +1412,20 @@
             meaning: 'Если игроков не хватает на полную раскладку, система выбирает bye так, чтобы по турниру они были максимально справедливо распределены.',
             impact: 'С включённым флагом турнир воспринимается честнее. С выключенным алгоритм получает чуть больше свободы, но может создавать неприятный перекос по пропускам.',
             tip: 'Для реального турнира лучше всегда держать включённым.'
+          },
+          gameRating: {
+            title: 'Game Rating',
+            summary: 'Это игровой рейтинг по шкале игрового модуля, который участвует в перерасчёте после сыгранных матчей.',
+            meaning: 'В отличие от турнирного `rating`, этот параметр используется только в симуляции рейтинга. Формула игрового модуля ожидает шкалу примерно `1–7` и считает дельту по фактическому счёту матча.',
+            impact: 'Чем выше `game rating` игрока относительно соперников, тем выше его ожидаемый результат и тем меньше награда за победу над более слабыми. Победа над сильными, наоборот, даёт больший прирост.',
+            tip: 'Если тестируете реальных игроков, укажите их игровой рейтинг вручную. Если вам важно только качество сетки, можете оставить автозначения и смотреть в первую очередь на относительную динамику.'
+          },
+          ratingSimulation: {
+            title: 'Симуляция рейтинга',
+            summary: 'Позволяет проиграть уже сгенерированный турнир через точную формулу игрового модуля.',
+            meaning: 'Вы вводите счёт по сетам для каждого матча, а лаборатория считает ожидаемый результат, фактический результат и изменение рейтинга для всех участников после каждого сыгранного матча.',
+            impact: 'Блок помогает понять не только финальную сетку, но и то, как конкретные результаты матчей складываются в итоговый прирост или падение рейтинга по турниру.',
+            tip: 'Используйте этот блок, когда хотите проверить чувствительность формулы: что будет при апсете, при уверенной победе фаворита или при серии близких матчей.'
           }
         };
 
@@ -1202,10 +1449,99 @@
           return Math.floor(numeric);
         }
 
+        function roundTo(value, precision) {
+          var safePrecision = Number.isFinite(precision) ? Math.max(0, Math.floor(precision)) : 2;
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric)) {
+            return 0;
+          }
+          return Number(numeric.toFixed(safePrecision));
+        }
+
+        function normalizeGameRating(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric)) {
+            return null;
+          }
+          return clamp(roundTo(numeric, 2), 1, 7);
+        }
+
+        function deriveGameRatingFromSchedule(rating) {
+          var numeric = Number(rating);
+          if (!Number.isFinite(numeric)) {
+            return 4;
+          }
+          if (numeric >= 1 && numeric <= 7) {
+            return roundTo(numeric, 2);
+          }
+          var normalized = clamp((numeric - 1200) / 600, 0, 1);
+          return roundTo(2.5 + normalized * 3.5, 2);
+        }
+
+        function createEmptyScoreSets() {
+          return [
+            { team1: '', team2: '' },
+            { team1: '', team2: '' },
+            { team1: '', team2: '' }
+          ];
+        }
+
+        function cloneScoreSets(sets) {
+          return (Array.isArray(sets) ? sets : []).map(function (set) {
+            return {
+              team1: set && set.team1 != null ? String(set.team1) : '',
+              team2: set && set.team2 != null ? String(set.team2) : ''
+            };
+          });
+        }
+
+        function buildMatchKey(roundNumber, matchIndex) {
+          return String(roundNumber) + ':' + String(matchIndex);
+        }
+
+        function ensureMatchScores(result) {
+          var rounds = result && Array.isArray(result.rounds) ? result.rounds : [];
+          var next = {};
+          rounds.forEach(function (round) {
+            var matches = Array.isArray(round.matches) ? round.matches : [];
+            matches.forEach(function (_match, matchIndex) {
+              var key = buildMatchKey(round.roundNumber, matchIndex);
+              var existing = state.matchScores[key];
+              var scoreSets = cloneScoreSets(existing);
+              while (scoreSets.length < 3) {
+                scoreSets.push({ team1: '', team2: '' });
+              }
+              next[key] = scoreSets.slice(0, 3);
+            });
+          });
+          state.matchScores = next;
+        }
+
+        function serializeScoreSets(sets) {
+          return (Array.isArray(sets) ? sets : [])
+            .map(function (set) {
+              return {
+                team1: parseNonNegativeInteger(set && set.team1),
+                team2: parseNonNegativeInteger(set && set.team2)
+              };
+            })
+            .filter(function (set) {
+              return set.team1 !== null && set.team2 !== null;
+            });
+        }
+
+        function clearRatingSimulation() {
+          state.ratingResult = null;
+          state.ratingDirty = false;
+          renderRatingSummary(null);
+        }
+
         function createPlayer(index) {
+          var scheduleRating = 1300 + index * 35;
           return {
             id: 'P' + String(index + 1),
-            rating: 1300 + index * 35,
+            rating: scheduleRating,
+            gameRating: deriveGameRatingFromSchedule(scheduleRating),
             verifiedFactor: 1,
             regularityFactor: 1,
             engagementFactor: 1,
@@ -1222,6 +1558,7 @@
               next.push({
                 id: String(state.players[index].id || ('P' + String(index + 1))).trim() || ('P' + String(index + 1)),
                 rating: Number(state.players[index].rating) || createPlayer(index).rating,
+                gameRating: normalizeGameRating(state.players[index].gameRating) ?? deriveGameRatingFromSchedule(state.players[index].rating),
                 verifiedFactor: Number(state.players[index].verifiedFactor) || 1,
                 regularityFactor: Number(state.players[index].regularityFactor) || 1,
                 engagementFactor: Number(state.players[index].engagementFactor) || 1,
@@ -1233,11 +1570,15 @@
           }
           state.players = next;
           renderPlayers();
+          clearRatingSimulation();
         }
 
         function shuffleRatings() {
           var shuffled = state.players.map(function (player) {
-            return Number(player.rating) || 1500;
+            return {
+              rating: Number(player.rating) || 1500,
+              gameRating: normalizeGameRating(player.gameRating) ?? deriveGameRatingFromSchedule(player.rating)
+            };
           });
           for (var index = shuffled.length - 1; index > 0; index -= 1) {
             var swapIndex = Math.floor(Math.random() * (index + 1));
@@ -1247,17 +1588,21 @@
           }
           state.players = state.players.map(function (player, index) {
             return Object.assign({}, player, {
-              rating: shuffled[index]
+              rating: shuffled[index].rating,
+              gameRating: shuffled[index].gameRating
             });
           });
           renderPlayers();
+          clearRatingSimulation();
         }
 
         function equalizeRatings() {
+          var equalizedGameRating = deriveGameRatingFromSchedule(1500);
           state.players = state.players.map(function (player) {
-            return Object.assign({}, player, { rating: 1500 });
+            return Object.assign({}, player, { rating: 1500, gameRating: equalizedGameRating });
           });
           renderPlayers();
+          clearRatingSimulation();
         }
 
         function renderPlayers() {
@@ -1267,6 +1612,7 @@
             row.innerHTML = [
               '<td><input class="input" data-key="id" data-index="' + index + '" value="' + escapeAttr(player.id) + '" /></td>',
               '<td><input class="input" data-key="rating" data-index="' + index + '" type="number" step="1" value="' + escapeAttr(String(player.rating)) + '" /></td>',
+              '<td><input class="input" data-key="gameRating" data-index="' + index + '" type="number" step="0.1" min="1" max="7" value="' + escapeAttr(String(player.gameRating)) + '" /></td>',
               '<td><input class="input" data-key="verifiedFactor" data-index="' + index + '" type="number" step="0.05" min="0.1" max="1" value="' + escapeAttr(String(player.verifiedFactor)) + '" /></td>',
               '<td><input class="input" data-key="regularityFactor" data-index="' + index + '" type="number" step="0.05" min="0.5" max="1" value="' + escapeAttr(String(player.regularityFactor)) + '" /></td>',
               '<td><input class="input" data-key="engagementFactor" data-index="' + index + '" type="number" step="0.05" min="0.9" max="1" value="' + escapeAttr(String(player.engagementFactor)) + '" /></td>',
@@ -1286,10 +1632,17 @@
               var value = target.value;
               if (key === 'id') {
                 state.players[index][key] = value.trim() || ('P' + String(index + 1));
+                clearRatingSimulation();
                 return;
               }
               var numeric = Number(value);
-              state.players[index][key] = Number.isFinite(numeric) ? numeric : 0;
+              if (key === 'gameRating') {
+                state.players[index][key] = normalizeGameRating(numeric) ?? deriveGameRatingFromSchedule(state.players[index].rating);
+                target.value = String(state.players[index][key]);
+              } else {
+                state.players[index][key] = Number.isFinite(numeric) ? numeric : 0;
+              }
+              clearRatingSimulation();
             });
           });
         }
@@ -1361,6 +1714,7 @@
               return {
                 id: String(player.id || ('P' + String(index + 1))).trim() || ('P' + String(index + 1)),
                 rating: Number(player.rating) || 1500,
+                gameRating: normalizeGameRating(player.gameRating) ?? deriveGameRatingFromSchedule(player.rating),
                 verifiedFactor: clamp(Number(player.verifiedFactor) || 1, 0.1, 1),
                 regularityFactor: clamp(Number(player.regularityFactor) || 1, 0.5, 1),
                 engagementFactor: clamp(Number(player.engagementFactor) || 1, 0.9, 1),
@@ -1368,6 +1722,40 @@
               };
             }),
             config: readConfig()
+          };
+        }
+
+        function buildRatingPayload() {
+          if (!state.result || !Array.isArray(state.result.rounds)) {
+            return null;
+          }
+
+          var schedulePayload = buildPayload();
+          return {
+            players: schedulePayload.players.map(function (player) {
+              return {
+                id: player.id,
+                rating: player.rating,
+                gameRating: player.gameRating,
+                verifiedFactor: player.verifiedFactor,
+                regularityFactor: player.regularityFactor,
+                engagementFactor: player.engagementFactor,
+                gamesPlayed: player.gamesPlayed
+              };
+            }),
+            rounds: state.result.rounds.map(function (round) {
+              return {
+                roundNumber: round.roundNumber,
+                matches: (Array.isArray(round.matches) ? round.matches : []).map(function (match, matchIndex) {
+                  return {
+                    court: match.court == null ? null : match.court,
+                    team1: match.team1,
+                    team2: match.team2,
+                    sets: serializeScoreSets(state.matchScores[buildMatchKey(round.roundNumber, matchIndex)])
+                  };
+                })
+              };
+            })
           };
         }
 
@@ -1454,7 +1842,9 @@
                 ? '<div class="bye-badge">Bye: ' + escapeHtml(round.byes.join(', ')) + '</div>'
                 : '<div class="bye-badge" style="background:rgba(15,122,103,0.08);color:#0f6a5a;">Bye: none</div>';
               var matches = Array.isArray(round.matches)
-                ? round.matches.map(renderMatch).join('')
+                ? round.matches.map(function (match, matchIndex) {
+                    return renderMatch(match, round.roundNumber, matchIndex);
+                  }).join('')
                 : '<div class="empty">Матчи отсутствуют</div>';
 
               return [
@@ -1468,10 +1858,13 @@
               ].join('');
             })
             .join('');
+
+          attachScoreListeners();
         }
 
-        function renderMatch(match) {
+        function renderMatch(match, roundNumber, matchIndex) {
           var courtLabel = match.court ? 'Корт ' + match.court : 'Корт не задан';
+          var simulationMatch = findSimulationMatch(roundNumber, matchIndex);
           return [
             '<article class="match-card">',
             '<div class="match-top">',
@@ -1488,6 +1881,8 @@
             renderQuality('Штраф соперников', formatNumber(match.quality && match.quality.repeatedOpponentsPenalty)),
             renderQuality('Общая стоимость', formatNumber(match.quality && match.quality.totalCost)),
             '</div>',
+            renderScoreEditor(roundNumber, matchIndex, match),
+            renderMatchImpact(simulationMatch),
             '</article>'
           ].join('');
         }
@@ -1511,6 +1906,186 @@
           ].join('');
         }
 
+        function renderScoreEditor(roundNumber, matchIndex, match) {
+          var key = buildMatchKey(roundNumber, matchIndex);
+          var sets = cloneScoreSets(state.matchScores[key]);
+          while (sets.length < 3) {
+            sets.push({ team1: '', team2: '' });
+          }
+
+          var totals = serializeScoreSets(sets).reduce(
+            function (summary, set) {
+              return {
+                team1: summary.team1 + set.team1,
+                team2: summary.team2 + set.team2
+              };
+            },
+            { team1: 0, team2: 0 }
+          );
+
+          return [
+            '<div class="score-editor">',
+            '<div class="score-title">Результат матча</div>',
+            '<div class="score-note">Заполните счёт по сетам. Эти данные уйдут в симуляцию рейтинга по точной формуле игрового модуля.</div>',
+            '<div class="score-grid">',
+            sets.map(function (set, setIndex) {
+              return [
+                '<div class="score-set">',
+                '<div class="score-set-title">Сет ' + escapeHtml(String(setIndex + 1)) + '</div>',
+                '<div class="score-row">',
+                '<input class="score-input" type="number" min="0" step="1" value="' + escapeAttr(set.team1) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="' + escapeAttr(String(setIndex)) + '" data-side="team1" aria-label="Счёт первой пары в сете ' + escapeAttr(String(setIndex + 1)) + '" />',
+                '<div class="score-divider">:</div>',
+                '<input class="score-input" type="number" min="0" step="1" value="' + escapeAttr(set.team2) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="' + escapeAttr(String(setIndex)) + '" data-side="team2" aria-label="Счёт второй пары в сете ' + escapeAttr(String(setIndex + 1)) + '" />',
+                '</div>',
+                '</div>'
+              ].join('');
+            }).join(''),
+            '</div>',
+            '<div class="rating-note">Сумма по матчy: ' + escapeHtml((Array.isArray(match.team1) ? match.team1.join(' + ') : 'Пара 1')) + ' ' + escapeHtml(String(totals.team1)) + ' : ' + escapeHtml(String(totals.team2)) + ' ' + escapeHtml((Array.isArray(match.team2) ? match.team2.join(' + ') : 'Пара 2')) + '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function renderMatchImpact(simulationMatch) {
+          if (!simulationMatch || !simulationMatch.played || !Array.isArray(simulationMatch.ratingImpact) || state.ratingDirty) {
+            return '';
+          }
+
+          return [
+            '<div class="impact-box">',
+            '<div class="impact-title">Изменение рейтинга</div>',
+            '<div class="impact-note">Показаны ожидание, фактический результат и дельта после матча по формуле игрового модуля.</div>',
+            '<div class="impact-list">',
+            simulationMatch.ratingImpact.map(function (entry) {
+              return [
+                '<div class="impact-row">',
+                '<div class="impact-player">' + escapeHtml(entry.name) + '</div>',
+                '<div class="impact-values">До ' + escapeHtml(formatPreciseNumber(entry.before)) + ' · ожидание ' + escapeHtml(formatPreciseNumber(entry.expected)) + ' · факт ' + escapeHtml(formatPreciseNumber(entry.actual)) + ' · после ' + escapeHtml(formatPreciseNumber(entry.after)) + '</div>',
+                '<div class="impact-delta ' + escapeHtml(getDeltaClass(entry.delta)) + '">' + escapeHtml(formatSignedNumber(entry.delta)) + '</div>',
+                '</div>'
+              ].join('');
+            }).join(''),
+            '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function renderRatingSummary(result) {
+          if (!state.result || !Array.isArray(state.result.rounds) || state.result.rounds.length === 0) {
+            dom.ratingSummary.innerHTML = '<div class="empty">Сначала сгенерируйте сетку турнира.</div>';
+            return;
+          }
+
+          if (!result) {
+            dom.ratingSummary.innerHTML = '<div class="empty">Введите счёт по матчам и нажмите «Рассчитать рейтинг», чтобы увидеть динамику по каждому раунду и финальный итог по игрокам.</div>';
+            return;
+          }
+
+          var diagnostics = result.diagnostics || {};
+          var biggestGain = diagnostics.biggestGain
+            ? findPlayerResult(result, diagnostics.biggestGain.playerId)
+            : null;
+          var biggestLoss = diagnostics.biggestLoss
+            ? findPlayerResult(result, diagnostics.biggestLoss.playerId)
+            : null;
+
+          dom.ratingSummary.innerHTML = [
+            '<div class="rating-cards">',
+            renderRatingCard('Сыграно матчей', formatNumber(diagnostics.playedMatches) + ' / ' + formatNumber(diagnostics.totalMatches), 'Только матчи с заполненным счётом участвуют в расчёте'),
+            renderRatingCard('Средний рейтинг до', formatPreciseNumber(diagnostics.initialAverageRating), 'Среднее значение game rating до старта симуляции'),
+            renderRatingCard('Средний рейтинг после', formatPreciseNumber(diagnostics.finalAverageRating), 'Среднее значение после всех сыгранных матчей'),
+            renderRatingCard('Лучший и худший сдвиг', (biggestGain ? biggestGain.name + ' ' + formatSignedNumber(biggestGain.totalDelta) : '—') + ' / ' + (biggestLoss ? biggestLoss.name + ' ' + formatSignedNumber(biggestLoss.totalDelta) : '—'), 'Помогает быстро увидеть самый заметный апсайд и просадку'),
+            '</div>',
+            '<div class="impact-box">',
+            '<div class="rating-summary-title">Финальная сводка по игрокам</div>',
+            '<div class="rating-note">Каждая строка показывает стартовый game rating, итог после турнира и вклад каждого раунда в общую дельту.</div>',
+            '<div class="rating-table-wrap">',
+            '<table>',
+            '<thead><tr><th>Игрок</th><th>Старт</th><th>Финал</th><th>Δ</th><th>Уровень</th><th>Динамика по раундам</th></tr></thead>',
+            '<tbody>',
+            (Array.isArray(result.players) ? result.players : []).map(function (player) {
+              var chips = Array.isArray(player.roundDeltas) && player.roundDeltas.length > 0
+                ? player.roundDeltas.map(function (item) {
+                    return '<span class="rating-chip ' + escapeHtml(getDeltaClass(item.delta)) + '">R' + escapeHtml(String(item.roundNumber)) + ' ' + escapeHtml(formatSignedNumber(item.delta)) + ' → ' + escapeHtml(formatPreciseNumber(item.ratingAfter)) + '</span>';
+                  }).join('')
+                : '<span class="rating-chip">Нет сыгранных матчей</span>';
+              return [
+                '<tr>',
+                '<td><strong>' + escapeHtml(player.name) + '</strong></td>',
+                '<td>' + escapeHtml(formatPreciseNumber(player.initialRating)) + '</td>',
+                '<td>' + escapeHtml(formatPreciseNumber(player.finalRating)) + '</td>',
+                '<td><span class="impact-delta ' + escapeHtml(getDeltaClass(player.totalDelta)) + '">' + escapeHtml(formatSignedNumber(player.totalDelta)) + '</span></td>',
+                '<td>' + escapeHtml(String(player.gradeBefore || '—')) + ' → ' + escapeHtml(String(player.gradeAfter || '—')) + '</td>',
+                '<td><div class="rating-chip-list">' + chips + '</div></td>',
+                '</tr>'
+              ].join('');
+            }).join(''),
+            '</tbody>',
+            '</table>',
+            '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function renderRatingCard(label, value, sub) {
+          return [
+            '<div class="rating-card">',
+            '<div class="diag-label">' + escapeHtml(label) + '</div>',
+            '<div class="rating-card-value">' + escapeHtml(value) + '</div>',
+            '<div class="rating-card-sub">' + escapeHtml(sub) + '</div>',
+            '</div>'
+          ].join('');
+        }
+
+        function findPlayerResult(result, playerId) {
+          var players = result && Array.isArray(result.players) ? result.players : [];
+          for (var index = 0; index < players.length; index += 1) {
+            if (players[index].id === playerId) {
+              return players[index];
+            }
+          }
+          return null;
+        }
+
+        function findSimulationMatch(roundNumber, matchIndex) {
+          if (!state.ratingResult || state.ratingDirty) {
+            return null;
+          }
+          var rounds = Array.isArray(state.ratingResult.rounds) ? state.ratingResult.rounds : [];
+          for (var roundIndex = 0; roundIndex < rounds.length; roundIndex += 1) {
+            if (rounds[roundIndex].roundNumber === roundNumber) {
+              var matches = Array.isArray(rounds[roundIndex].matches) ? rounds[roundIndex].matches : [];
+              return matches[matchIndex] || null;
+            }
+          }
+          return null;
+        }
+
+        function attachScoreListeners() {
+          Array.prototype.slice.call(dom.roundsOutput.querySelectorAll('.score-input')).forEach(function (input) {
+            input.addEventListener('change', function (event) {
+              var target = event.target;
+              var roundNumber = Number(target.getAttribute('data-round-number'));
+              var matchIndex = Number(target.getAttribute('data-match-index'));
+              var setIndex = Number(target.getAttribute('data-set-index'));
+              var side = String(target.getAttribute('data-side') || 'team1');
+              var key = buildMatchKey(roundNumber, matchIndex);
+              var sets = cloneScoreSets(state.matchScores[key]);
+              while (sets.length < 3) {
+                sets.push({ team1: '', team2: '' });
+              }
+              sets[setIndex][side] = String(target.value || '').trim();
+              state.matchScores[key] = sets;
+              if (state.ratingResult) {
+                state.ratingDirty = true;
+                renderRatingSummary(null);
+                renderRounds(state.result);
+                setStatus('Счёт изменён. Пересчитайте рейтинг, чтобы обновить дельты.', 'info');
+              }
+            });
+          });
+        }
+
         function formatNumber(value) {
           var numeric = Number(value);
           if (!Number.isFinite(numeric)) {
@@ -1520,6 +2095,34 @@
             return String(Math.round(numeric));
           }
           return numeric.toFixed(2);
+        }
+
+        function formatPreciseNumber(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric)) {
+            return '0.00000';
+          }
+          return numeric.toFixed(5);
+        }
+
+        function formatSignedNumber(value) {
+          var numeric = Number(value);
+          if (!Number.isFinite(numeric)) {
+            return '0.00000';
+          }
+          var prefix = numeric > 0 ? '+' : '';
+          return prefix + formatPreciseNumber(numeric);
+        }
+
+        function getDeltaClass(value) {
+          var numeric = Number(value);
+          if (numeric > 0.000001) {
+            return 'positive';
+          }
+          if (numeric < -0.000001) {
+            return 'negative';
+          }
+          return 'neutral';
         }
 
         function escapeHtml(value) {
@@ -1545,6 +2148,7 @@
         async function runGeneration() {
           var payload = buildPayload();
           state.result = null;
+          clearRatingSimulation();
           dom.rawJson.textContent = JSON.stringify(payload, null, 2);
           setStatus('Генерируем сетку...', 'info');
           dom.runBtn.disabled = true;
@@ -1571,13 +2175,16 @@
             }
 
             state.result = data;
+            ensureMatchScores(data);
             dom.rawJson.textContent = JSON.stringify(data, null, 2);
             renderDiagnostics(data);
+            renderRatingSummary(null);
             renderRounds(data);
             setStatus('Сетка успешно сгенерирована.', 'info');
           } catch (error) {
             var message = error && error.message ? error.message : 'Не удалось сгенерировать сетку.';
             renderDiagnostics(null);
+            renderRatingSummary(null);
             renderRounds(null);
             setStatus(message, 'error');
           } finally {
@@ -1585,11 +2192,72 @@
           }
         }
 
+        async function runRatingSimulation() {
+          var payload = buildRatingPayload();
+          if (!payload) {
+            setStatus('Сначала сгенерируйте сетку, а затем запускайте симуляцию рейтинга.', 'error');
+            return;
+          }
+
+          dom.simulateRatingBtn.disabled = true;
+          dom.rawJson.textContent = JSON.stringify(payload, null, 2);
+          setStatus('Считаем изменение рейтинга по результатам матчей...', 'info');
+
+          try {
+            var response = await fetch('/api/tournaments/simulate-rating', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(payload)
+            });
+
+            var text = await response.text();
+            var data = text ? JSON.parse(text) : null;
+
+            if (!response.ok) {
+              var message = data && data.message
+                ? Array.isArray(data.message)
+                  ? data.message.join('; ')
+                  : String(data.message)
+                : 'HTTP ' + response.status;
+              throw new Error(message);
+            }
+
+            state.ratingResult = data;
+            state.ratingDirty = false;
+            dom.rawJson.textContent = JSON.stringify(data, null, 2);
+            renderRatingSummary(data);
+            renderRounds(state.result);
+            setStatus('Рейтинг по турниру пересчитан.', 'info');
+          } catch (error) {
+            clearRatingSimulation();
+            renderRounds(state.result);
+            setStatus(error && error.message ? error.message : 'Не удалось посчитать рейтинг.', 'error');
+          } finally {
+            dom.simulateRatingBtn.disabled = false;
+          }
+        }
+
+        function resetScores() {
+          if (!state.result || !Array.isArray(state.result.rounds) || state.result.rounds.length === 0) {
+            setStatus('Сначала сгенерируйте сетку, чтобы появились матчи для симуляции.', 'error');
+            return;
+          }
+          ensureMatchScores(state.result);
+          clearRatingSimulation();
+          dom.rawJson.textContent = JSON.stringify(buildPayload(), null, 2);
+          renderRounds(state.result);
+          setStatus('Счёт по матчам очищен.', 'info');
+        }
+
         dom.refreshPlayersBtn.addEventListener('click', rebuildPlayers);
         dom.shuffleRatingsBtn.addEventListener('click', shuffleRatings);
         dom.equalizeRatingsBtn.addEventListener('click', equalizeRatings);
         dom.copyJsonBtn.addEventListener('click', copyPayloadJson);
         dom.runBtn.addEventListener('click', runGeneration);
+        dom.simulateRatingBtn.addEventListener('click', runRatingSimulation);
+        dom.resetScoresBtn.addEventListener('click', resetScores);
         dom.playerCount.addEventListener('change', rebuildPlayers);
         Array.prototype.slice.call(document.querySelectorAll('.help-trigger')).forEach(function (button) {
           button.addEventListener('click', function () {
@@ -1608,6 +2276,7 @@
 
         rebuildPlayers();
         renderDiagnostics(null);
+        renderRatingSummary(null);
         renderRounds(null);
         runGeneration();
       })();

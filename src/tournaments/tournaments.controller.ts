@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { AmericanoRatingSimulationResult } from './americano-rating.types';
 import { AmericanoScheduleResult } from './americano-schedule.types';
 import { CreateCustomTournamentFromSourceDto } from './dto/create-custom-tournament-from-source.dto';
 import { GenerateTournamentScheduleDto } from './dto/generate-tournament-schedule.dto';
+import { SimulateTournamentRatingDto } from './dto/simulate-tournament-rating.dto';
 import { UpdateCustomTournamentDto } from './dto/update-custom-tournament.dto';
 import { CustomTournament, Tournament } from './tournaments.types';
 import { TournamentsService } from './tournaments.service';
@@ -50,6 +52,13 @@ export class TournamentsController {
     @Body() dto: GenerateTournamentScheduleDto
   ): Promise<AmericanoScheduleResult> {
     return this.tournamentsService.generateSchedule(dto);
+  }
+
+  @Post('simulate-rating')
+  simulateRating(
+    @Body() dto: SimulateTournamentRatingDto
+  ): Promise<AmericanoRatingSimulationResult> {
+    return this.tournamentsService.simulateRating(dto);
   }
 
   @Get(':id')

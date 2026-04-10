@@ -8,6 +8,11 @@ import {
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
+  AmericanoRatingSimulationResult,
+  AmericanoSimulateRatingInput
+} from './americano-rating.types';
+import { AmericanoRatingSimulationService } from './americano-rating-simulation.service';
+import {
   AmericanoGenerateScheduleInput,
   AmericanoScheduleResult
 } from './americano-schedule.types';
@@ -51,13 +56,20 @@ export class TournamentsService {
     private readonly lkPadelHubClient: LkPadelHubClientService,
     private readonly vivaTournamentsService: VivaTournamentsService,
     private readonly tournamentsPersistence: TournamentsPersistenceService,
-    private readonly americanoScheduleService: AmericanoScheduleService
+    private readonly americanoScheduleService: AmericanoScheduleService,
+    private readonly americanoRatingSimulationService: AmericanoRatingSimulationService
   ) {}
 
   async generateSchedule(
     input: AmericanoGenerateScheduleInput
   ): Promise<AmericanoScheduleResult> {
     return this.americanoScheduleService.generateSchedule(input);
+  }
+
+  async simulateRating(
+    input: AmericanoSimulateRatingInput
+  ): Promise<AmericanoRatingSimulationResult> {
+    return this.americanoRatingSimulationService.simulateRating(input);
   }
 
   async findAll(): Promise<Tournament[]> {

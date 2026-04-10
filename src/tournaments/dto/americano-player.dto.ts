@@ -10,6 +10,11 @@ export class AmericanoPlayerDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(1)
+  gameRating?: number | null;
+
+  @IsOptional()
+  @IsNumber()
   @Min(0.1)
   verifiedFactor?: number;
 

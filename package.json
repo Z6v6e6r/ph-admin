@@ -8,6 +8,7 @@
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
     "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
     "test:americano-schedule": "ts-node test/americano-schedule.test.ts",
+    "test:americano-rating-simulation": "ts-node test/americano-rating-simulation.test.ts",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts"
   },

@@ -1,6 +1,6 @@
 import { Controller, Get, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AuthService } from '../auth/auth.service';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -445,6 +445,18 @@ export class UiController {
     }
 
     response.sendFile(resolve(process.cwd(), 'docs', 'americano-lab.html'));
+  }
+
+  @Get('tournaments-dev')
+  tournamentsDev(@Res() response: Response): void {
+    response.sendFile(resolve(process.cwd(), 'docs', 'tournaments-dev.html'));
+  }
+
+  @Get('tournaments-tilda-code')
+  tournamentsTildaCode(@Res() response: Response): void {
+    const filePath = resolve(process.cwd(), 'docs', 'tilda-tournaments-block.html');
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.send(readFileSync(filePath, 'utf8'));
   }
 
   private resolveAdminAuthContext(request: Request): {

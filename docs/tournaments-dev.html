@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tournaments Dev</title>
+    <meta name="application-name" content="Дворотека" />
+    <meta name="theme-color" content="#1f2c21" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Tournaments Dev" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="icon" type="image/svg+xml" href="/api/ui/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/api/ui/favicon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/api/ui/apple-touch-icon.png" />
+    <link rel="manifest" href="/api/ui/site.webmanifest" />
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Unbounded:wght@500;700;800&display=swap');
+
+      :root {
+        color-scheme: light;
+        --bg-1: #f7f2e4;
+        --bg-2: #dff5ea;
+        --bg-3: #dceefe;
+        --ink: #1f2c21;
+        --ink-soft: rgba(31, 44, 33, 0.72);
+        --line: rgba(31, 44, 33, 0.12);
+        --card: rgba(255, 255, 255, 0.86);
+        --card-strong: rgba(255, 255, 255, 0.95);
+        --accent: #f45f34;
+        --accent-2: #ef954d;
+        --accent-soft: rgba(244, 95, 52, 0.12);
+        --success: #1d8d58;
+        --warning: #bc6f14;
+        --info: #2b6ecf;
+        --shadow: 0 24px 60px rgba(31, 44, 33, 0.1);
+        --mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        font-family: "Manrope", "Helvetica Neue", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 10% 12%, rgba(244, 95, 52, 0.14), transparent 20%),
+          radial-gradient(circle at 88% 10%, rgba(29, 141, 88, 0.14), transparent 26%),
+          radial-gradient(circle at 80% 92%, rgba(43, 110, 207, 0.12), transparent 24%),
+          linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 48%, var(--bg-3) 100%);
+      }
+
+      .page {
+        width: min(1460px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 24px 0 40px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      .hero-card,
+      .panel,
+      .surface,
+      .card,
+      .modal-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(10px);
+      }
+
+      .hero-card {
+        padding: 26px 28px;
+        background:
+          linear-gradient(140deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.8)),
+          linear-gradient(120deg, rgba(244, 95, 52, 0.08), rgba(29, 141, 88, 0.08));
+      }
+
+      .hero-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: #ab4622;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-family: "Unbounded", "Arial Black", sans-serif;
+        font-size: clamp(28px, 4vw, 46px);
+        line-height: 1.08;
+      }
+
+      .hero-text {
+        margin: 0;
+        max-width: 800px;
+        color: var(--ink-soft);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      .hero-side {
+        padding: 22px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .hero-side h2,
+      .panel-title,
+      .section-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .hero-list {
+        display: grid;
+        gap: 8px;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+
+      .hero-list div {
+        padding: 11px 12px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(360px, 430px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .panel {
+        padding: 18px;
+        position: sticky;
+        top: 18px;
+      }
+
+      .panel-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .field-full {
+        grid-column: 1 / -1;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .input,
+      .select,
+      .textarea {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(31, 44, 33, 0.14);
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--ink);
+        padding: 12px 13px;
+        font: inherit;
+      }
+
+      .textarea {
+        min-height: 92px;
+        resize: vertical;
+      }
+
+      .input:focus,
+      .select:focus,
+      .textarea:focus {
+        outline: none;
+        border-color: rgba(244, 95, 52, 0.46);
+        box-shadow: 0 0 0 4px rgba(244, 95, 52, 0.12);
+      }
+
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 12px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        font-size: 14px;
+      }
+
+      .actions,
+      .card-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .btn {
+        border: none;
+        cursor: pointer;
+        min-height: 48px;
+        border-radius: 999px;
+        padding: 0 18px;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      }
+
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .btn-primary {
+        background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+        color: #fff;
+        box-shadow: 0 16px 26px rgba(244, 95, 52, 0.22);
+      }
+
+      .btn-secondary {
+        background: rgba(31, 44, 33, 0.08);
+        color: var(--ink);
+      }
+
+      .btn-ghost {
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--ink);
+        border: 1px solid rgba(31, 44, 33, 0.12);
+      }
+
+      .status {
+        padding: 13px 14px;
+        border-radius: 18px;
+        font-size: 14px;
+        line-height: 1.55;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+      }
+
+      .status.info {
+        background: rgba(43, 110, 207, 0.08);
+        border-color: rgba(43, 110, 207, 0.18);
+      }
+
+      .status.success {
+        background: rgba(29, 141, 88, 0.08);
+        border-color: rgba(29, 141, 88, 0.18);
+      }
+
+      .status.warning {
+        background: rgba(188, 111, 20, 0.1);
+        border-color: rgba(188, 111, 20, 0.18);
+      }
+
+      .content {
+        display: grid;
+        gap: 18px;
+      }
+
+      .toolbar {
+        padding: 18px;
+      }
+
+      .toolbar-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        margin-bottom: 14px;
+      }
+
+      .toolbar-meta {
+        color: var(--ink-soft);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .surface {
+        padding: 18px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        padding: 20px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .card-title {
+        margin: 0;
+        font-size: 23px;
+        line-height: 1.05;
+      }
+
+      .card-subtitle,
+      .card-meta {
+        color: var(--ink-soft);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        padding: 7px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: rgba(31, 44, 33, 0.06);
+      }
+
+      .grid-two {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+        gap: 18px;
+      }
+
+      .json-box {
+        width: 100%;
+        min-height: 420px;
+        border-radius: 18px;
+        border: 1px solid rgba(31, 44, 33, 0.1);
+        background: rgba(17, 24, 21, 0.94);
+        color: #eaf5ee;
+        padding: 14px;
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 1.55;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(31, 44, 33, 0.42);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        z-index: 9999;
+      }
+
+      .backdrop.open {
+        display: flex;
+      }
+
+      .modal-card {
+        width: min(100%, 620px);
+        padding: 24px;
+        background: var(--card-strong);
+      }
+
+      .modal-title {
+        margin: 0 0 8px;
+        font-size: 26px;
+        line-height: 1;
+      }
+
+      .modal-subtitle {
+        margin: 0 0 14px;
+        color: var(--ink-soft);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .empty {
+        padding: 28px;
+        border-radius: 22px;
+        text-align: center;
+        color: var(--ink-soft);
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px dashed rgba(31, 44, 33, 0.16);
+      }
+
+      @media (max-width: 1120px) {
+        .hero,
+        .layout,
+        .grid-two,
+        .field-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          position: static;
+        }
+
+        .page {
+          width: min(100vw - 20px, 1460px);
+          padding-top: 12px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          width: calc(100vw - 12px);
+          padding-bottom: 18px;
+        }
+
+        .hero-card,
+        .hero-side,
+        .panel,
+        .surface,
+        .card,
+        .modal-card {
+          border-radius: 22px;
+          padding: 16px;
+        }
+
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="hero-card">
+          <div class="hero-kicker">PadelHub Dev Route</div>
+          <h1>Public tournaments dev page</h1>
+          <p class="hero-text">
+            Эта страница нужна, чтобы локально и на стенде гонять тот же flow, что пойдёт в Tilda:
+            каталог турниров, real LK auth через <code>/lk_new</code>, join-flow, выбор уровня,
+            обычную запись и waitlist. Справа остаётся живой JSON, чтобы было проще отлаживать
+            контракт backend-а.
+          </p>
+        </div>
+        <aside class="hero-side">
+          <h2>Что проверяем</h2>
+          <div class="hero-list">
+            <div>Каталог из <code>/api/tournaments/public/list</code></div>
+            <div>Join-flow из <code>/api/tournaments/public/:slug/join?format=json</code></div>
+            <div>Шаг <code>AUTH_REQUIRED</code> и popup для <code>padlhub.ru/lk_new</code></div>
+            <div>Подбор уровня, обычную запись и добавление в лист ожидания</div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="layout">
+        <aside class="panel">
+          <div class="panel-grid">
+            <h2 class="panel-title">Настройки запроса</h2>
+
+            <div class="field-grid">
+              <label class="field field-full">
+                <span class="label">API Base</span>
+                <input id="apiBase" class="input" type="text" />
+              </label>
+
+              <label class="field">
+                <span class="label">Station ID</span>
+                <input id="stationId" class="input" type="text" placeholder="nagatino" />
+              </label>
+
+              <label class="field">
+                <span class="label">Limit</span>
+                <input id="limit" class="input" type="number" min="1" step="1" value="12" />
+              </label>
+
+              <label class="field field-full">
+                <span class="label">Directory URL</span>
+                <input id="directoryUrl" class="input" type="text" />
+              </label>
+            </div>
+
+            <label class="check">
+              <input id="includePast" type="checkbox" />
+              <span>Показывать прошедшие турниры</span>
+            </label>
+
+            <div class="actions">
+              <button id="reloadBtn" class="btn btn-primary" type="button">Обновить каталог</button>
+              <button id="copyUrlBtn" class="btn btn-secondary" type="button">Скопировать dev URL</button>
+            </div>
+
+            <div id="statusBox" class="status info">Готово к загрузке каталога.</div>
+
+            <div class="surface">
+              <h3 class="section-title">Подсказка</h3>
+              <p class="hero-text" style="margin-top:10px;">
+                Если backend требует LK auth, сначала откроется popup с <code>authUrl</code>. После
+                логина страница будет poll'ить <code>authCheckUrl</code> и сама вернётся к join-flow.
+              </p>
+            </div>
+          </div>
+        </aside>
+
+        <section class="content">
+          <div class="surface toolbar">
+            <div class="toolbar-head">
+              <div>
+                <h2 class="section-title">Каталог турниров</h2>
+                <div id="toolbarMeta" class="toolbar-meta">
+                  После загрузки здесь появится количество карточек и фактический endpoint.
+                </div>
+              </div>
+              <div class="actions">
+                <button id="openTildaCodeBtn" class="btn btn-ghost" type="button">Открыть Tilda code</button>
+              </div>
+            </div>
+            <div id="cards" class="cards"></div>
+          </div>
+
+          <div class="surface grid-two">
+            <div>
+              <h2 class="section-title">Последний ответ API</h2>
+              <p class="hero-text" style="margin:10px 0 0;">
+                Здесь удобно смотреть, какой контракт реально вернул backend на последнем шаге.
+              </p>
+            </div>
+            <pre id="jsonBox" class="json-box">{}</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="backdrop" class="backdrop">
+      <div class="modal-card">
+        <div id="modalContent"></div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var levels = ["D", "D+", "C", "C+", "B", "B+", "A"];
+        var url = new URL(window.location.href);
+        var params = url.searchParams;
+        var state = {
+          items: [],
+          activeJoinUrl: null,
+          activeFlow: null,
+          draft: {
+            name: "",
+            phone: "",
+            levelLabel: "",
+            notes: ""
+          }
+        };
+
+        var apiBaseEl = document.getElementById("apiBase");
+        var stationIdEl = document.getElementById("stationId");
+        var limitEl = document.getElementById("limit");
+        var directoryUrlEl = document.getElementById("directoryUrl");
+        var includePastEl = document.getElementById("includePast");
+        var reloadBtn = document.getElementById("reloadBtn");
+        var copyUrlBtn = document.getElementById("copyUrlBtn");
+        var openTildaCodeBtn = document.getElementById("openTildaCodeBtn");
+        var statusBox = document.getElementById("statusBox");
+        var toolbarMeta = document.getElementById("toolbarMeta");
+        var cards = document.getElementById("cards");
+        var jsonBox = document.getElementById("jsonBox");
+        var backdrop = document.getElementById("backdrop");
+        var modalContent = document.getElementById("modalContent");
+
+        apiBaseEl.value = params.get("apiBase") || (window.location.origin + "/api");
+        stationIdEl.value = params.get("stationId") || "";
+        limitEl.value = params.get("limit") || "12";
+        directoryUrlEl.value = params.get("directoryUrl") || (window.location.origin + "/tournaments");
+        includePastEl.checked = params.get("includePast") === "true";
+
+        function setStatus(text, tone) {
+          statusBox.textContent = text;
+          statusBox.className = "status " + (tone || "info");
+        }
+
+        function setJson(value) {
+          try {
+            jsonBox.textContent = JSON.stringify(value, null, 2);
+          } catch (_error) {
+            jsonBox.textContent = String(value);
+          }
+        }
+
+        function escapeHtml(value) {
+          return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+        }
+
+        function formatDate(value) {
+          if (!value) return "Дата уточняется";
+          var parsed = new Date(value);
+          if (Number.isNaN(parsed.getTime())) return value;
+          return parsed.toLocaleString("ru-RU", {
+            day: "numeric",
+            month: "long",
+            hour: "2-digit",
+            minute: "2-digit"
+          });
+        }
+
+        function normalizeBase(value) {
+          return String(value || "").trim().replace(/\/+$/, "");
+        }
+
+        function getApiBase() {
+          return normalizeBase(apiBaseEl.value) || (window.location.origin + "/api");
+        }
+
+        function buildDirectoryUrl() {
+          var directory = new URL(getApiBase() + "/tournaments/public/list");
+          var stationId = stationIdEl.value.trim();
+          var limit = limitEl.value.trim();
+
+          if (stationId) directory.searchParams.set("stationId", stationId);
+          if (limit) directory.searchParams.set("limit", limit);
+          if (includePastEl.checked) directory.searchParams.set("includePast", "true");
+          return directory.toString();
+        }
+
+        function buildSelfUrl() {
+          var nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set("apiBase", getApiBase());
+          if (stationIdEl.value.trim()) {
+            nextUrl.searchParams.set("stationId", stationIdEl.value.trim());
+          } else {
+            nextUrl.searchParams.delete("stationId");
+          }
+          if (limitEl.value.trim()) {
+            nextUrl.searchParams.set("limit", limitEl.value.trim());
+          } else {
+            nextUrl.searchParams.delete("limit");
+          }
+          if (directoryUrlEl.value.trim()) {
+            nextUrl.searchParams.set("directoryUrl", directoryUrlEl.value.trim());
+          } else {
+            nextUrl.searchParams.delete("directoryUrl");
+          }
+          if (includePastEl.checked) {
+            nextUrl.searchParams.set("includePast", "true");
+          } else {
+            nextUrl.searchParams.delete("includePast");
+          }
+          return nextUrl.toString();
+        }
+
+        function jsonFetch(requestUrl, options) {
+          var requestOptions = options || {};
+          requestOptions.credentials = "include";
+          requestOptions.headers = Object.assign(
+            { Accept: "application/json" },
+            requestOptions.headers || {}
+          );
+
+          return fetch(requestUrl, requestOptions).then(function (response) {
+            return response
+              .json()
+              .catch(function () { return null; })
+              .then(function (payload) {
+                if (!response.ok) {
+                  var message =
+                    payload && payload.message
+                      ? payload.message
+                      : "HTTP " + response.status;
+                  throw new Error(message);
+                }
+                return payload;
+              });
+          });
+        }
+
+        function postJoin(urlValue, payload) {
+          return jsonFetch(urlValue, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+            },
+            body: new URLSearchParams(payload).toString()
+          });
+        }
+
+        function openModal() {
+          backdrop.classList.add("open");
+        }
+
+        function closeModal() {
+          backdrop.classList.remove("open");
+          modalContent.innerHTML = "";
+          state.activeFlow = null;
+          state.activeJoinUrl = null;
+        }
+
+        function syncDraft(flow) {
+          if (!flow || !flow.client) return;
+          state.draft.name = flow.client.name || state.draft.name;
+          state.draft.phone = flow.client.phone || state.draft.phone;
+          state.draft.levelLabel = flow.client.levelLabel || state.draft.levelLabel;
+        }
+
+        function renderCards() {
+          if (!state.items.length) {
+            cards.innerHTML =
+              '<div class="empty">Турниры не найдены. Проверьте фильтры, Mongo и публичные custom tournaments.</div>';
+            return;
+          }
+
+          cards.innerHTML = state.items
+            .map(function (item) {
+              var subtitle = item.skin && item.skin.subtitle
+                ? item.skin.subtitle
+                : [formatDate(item.startsAt), item.studioName].filter(Boolean).join(" · ");
+
+              var tags = [
+                item.tournamentType,
+                item.accessLevels && item.accessLevels.length
+                  ? "Уровни: " + item.accessLevels.join(", ")
+                  : "Без ограничений",
+                item.registrationOpen ? "Регистрация открыта" : "Регистрация закрыта",
+                item.participantsCount + "/" + item.maxPlayers
+              ];
+
+              return (
+                '<article class="card">' +
+                  '<div>' +
+                    '<h3 class="card-title">' + escapeHtml(item.skin && item.skin.title ? item.skin.title : item.name) + '</h3>' +
+                    '<div class="card-subtitle">' + escapeHtml(subtitle) + '</div>' +
+                  '</div>' +
+                  '<div class="card-meta">' +
+                    escapeHtml(item.trainerName || "Организатор") +
+                  '</div>' +
+                  '<div class="chips">' +
+                    tags.map(function (tag) {
+                      return '<span class="chip">' + escapeHtml(tag) + '</span>';
+                    }).join("") +
+                  '</div>' +
+                  '<div class="card-actions">' +
+                    '<button class="btn btn-primary" type="button" data-join-url="' + escapeHtml(item.joinUrl) + '">Join flow</button>' +
+                    '<a class="btn btn-secondary" href="' + escapeHtml(item.publicUrl) + '" target="_blank" rel="noreferrer">Public card</a>' +
+                  '</div>' +
+                '</article>'
+              );
+            })
+            .join("");
+
+          Array.prototype.forEach.call(
+            cards.querySelectorAll("[data-join-url]"),
+            function (button) {
+              button.addEventListener("click", function () {
+                openJoinFlow(button.getAttribute("data-join-url"));
+              });
+            }
+          );
+        }
+
+        function renderOutcome(message, tone) {
+          openModal();
+          modalContent.innerHTML =
+            '<h3 class="modal-title">Статус заявки</h3>' +
+            '<p class="modal-subtitle">Последний шаг join-flow завершён.</p>' +
+            '<div class="status ' + (tone || "success") + '">' + escapeHtml(message) + '</div>' +
+            '<div class="actions" style="margin-top:16px;">' +
+              '<button class="btn btn-primary" type="button" data-close-modal="1">Готово</button>' +
+            '</div>';
+
+          modalContent.querySelector("[data-close-modal]").addEventListener("click", closeModal);
+        }
+
+        function renderAuthRequired(flow) {
+          openModal();
+          modalContent.innerHTML =
+            '<h3 class="modal-title">' + escapeHtml(flow.tournament.name) + '</h3>' +
+            '<p class="modal-subtitle">' + escapeHtml(formatDate(flow.tournament.startsAt)) + '</p>' +
+            '<div class="status info">' + escapeHtml(flow.message) + '</div>' +
+            '<div class="actions" style="margin-top:16px;">' +
+              '<button class="btn btn-primary" type="button" data-start-auth="1">Открыть LK</button>' +
+              '<button class="btn btn-secondary" type="button" data-close-modal="1">Закрыть</button>' +
+            '</div>';
+
+          modalContent.querySelector("[data-start-auth]").addEventListener("click", function () {
+            waitForAuth(flow);
+          });
+          modalContent.querySelector("[data-close-modal]").addEventListener("click", closeModal);
+        }
+
+        function renderEditableFlow(flow) {
+          syncDraft(flow);
+          state.activeFlow = flow;
+          openModal();
+
+          var levelOptions = levels
+            .map(function (level) {
+              var selected = state.draft.levelLabel === level ? ' selected="selected"' : "";
+              return '<option value="' + level + '"' + selected + ">" + level + "</option>";
+            })
+            .join("");
+
+          var primaryLabel =
+            flow.code === "READY_TO_JOIN"
+              ? ((flow.tournament.skin && flow.tournament.skin.ctaLabel) || "Подтвердить участие")
+              : flow.code === "LEVEL_NOT_ALLOWED"
+                ? "Проверить ещё раз"
+                : "Продолжить";
+
+          modalContent.innerHTML =
+            '<h3 class="modal-title">' + escapeHtml(flow.tournament.name) + '</h3>' +
+            '<p class="modal-subtitle">' + escapeHtml(formatDate(flow.tournament.startsAt)) + '</p>' +
+            '<div class="status ' + (
+              flow.code === "LEVEL_NOT_ALLOWED"
+                ? "warning"
+                : flow.code === "READY_TO_JOIN"
+                  ? "success"
+                  : "info"
+            ) + '">' + escapeHtml(flow.message) + '</div>' +
+            '<label class="field" style="margin-top:14px;">' +
+              '<span class="label">Имя и фамилия</span>' +
+              '<input class="input" name="name" type="text" value="' + escapeHtml(state.draft.name) + '" />' +
+            '</label>' +
+            '<label class="field">' +
+              '<span class="label">Телефон</span>' +
+              '<input class="input" name="phone" type="tel" value="' + escapeHtml(state.draft.phone) + '" placeholder="+7 999 123-45-67" />' +
+            '</label>' +
+            (
+              flow.tournament.accessLevels && flow.tournament.accessLevels.length
+                ? '<label class="field">' +
+                    '<span class="label">Уровень</span>' +
+                    '<select class="select" name="levelLabel">' +
+                      '<option value="">Выберите уровень</option>' +
+                      levelOptions +
+                    '</select>' +
+                  '</label>'
+                : ''
+            ) +
+            '<label class="field">' +
+              '<span class="label">Комментарий</span>' +
+              '<textarea class="textarea" name="notes">' + escapeHtml(state.draft.notes) + '</textarea>' +
+            '</label>' +
+            '<div class="actions" style="margin-top:16px;">' +
+              '<button class="btn btn-primary" type="button" data-submit-join="1">' + escapeHtml(primaryLabel) + '</button>' +
+              (
+                flow.code === "LEVEL_NOT_ALLOWED" && flow.waitlistAllowed
+                  ? '<button class="btn btn-secondary" type="button" data-submit-waitlist="1">В лист ожидания</button>'
+                  : '<button class="btn btn-secondary" type="button" data-close-modal="1">Закрыть</button>'
+              ) +
+            '</div>';
+
+          modalContent.querySelector("[data-submit-join]").addEventListener("click", function () {
+            submitJoin(false);
+          });
+
+          var waitlistButton = modalContent.querySelector("[data-submit-waitlist]");
+          if (waitlistButton) {
+            waitlistButton.addEventListener("click", function () {
+              submitJoin(true);
+            });
+          }
+
+          var closeButton = modalContent.querySelector("[data-close-modal]");
+          if (closeButton) {
+            closeButton.addEventListener("click", closeModal);
+          }
+        }
+
+        function collectDraft() {
+          var nameField = modalContent.querySelector('[name="name"]');
+          var phoneField = modalContent.querySelector('[name="phone"]');
+          var levelField = modalContent.querySelector('[name="levelLabel"]');
+          var notesField = modalContent.querySelector('[name="notes"]');
+
+          state.draft.name = nameField ? nameField.value.trim() : "";
+          state.draft.phone = phoneField ? phoneField.value.trim() : "";
+          state.draft.levelLabel = levelField ? levelField.value.trim() : "";
+          state.draft.notes = notesField ? notesField.value.trim() : "";
+        }
+
+        function handleFlow(flow) {
+          setJson(flow);
+
+          if (!flow || !flow.code) {
+            renderOutcome("Backend вернул неожиданный payload.", "warning");
+            return;
+          }
+
+          if (flow.code === "AUTH_REQUIRED") {
+            renderAuthRequired(flow);
+            return;
+          }
+
+          if (flow.code === "ALREADY_REGISTERED" || flow.code === "ALREADY_WAITLISTED") {
+            renderOutcome(flow.message, "success");
+            return;
+          }
+
+          renderEditableFlow(flow);
+        }
+
+        function waitForAuth(flow) {
+          setStatus("Открываем LK и начинаем polling authCheckUrl...", "info");
+          var popup = window.open(flow.authUrl, "padlhub-lk-auth", "width=460,height=860");
+          if (!popup) {
+            window.location.href = flow.authUrl;
+            return;
+          }
+
+          var attempts = 0;
+          var pollMs = flow.authPollMs || 1500;
+          var maxAttempts = Math.ceil(120000 / pollMs);
+          var timer = window.setInterval(function () {
+            attempts += 1;
+            jsonFetch(flow.authCheckUrl || (state.activeJoinUrl + "?format=json"))
+              .then(function (nextFlow) {
+                setJson(nextFlow);
+                if (nextFlow.code === "AUTH_REQUIRED") {
+                  if (attempts >= maxAttempts) {
+                    window.clearInterval(timer);
+                    setStatus("LK открылся, но авторизация для турнира не подтвердилась.", "warning");
+                  }
+                  return;
+                }
+
+                window.clearInterval(timer);
+                if (!popup.closed) popup.close();
+                setStatus("Авторизация подтверждена, продолжаем join-flow.", "success");
+                handleFlow(nextFlow);
+              })
+              .catch(function (error) {
+                if (attempts >= maxAttempts) {
+                  window.clearInterval(timer);
+                  setStatus("Polling authCheckUrl завершился ошибкой: " + error.message, "warning");
+                }
+              });
+          }, pollMs);
+        }
+
+        function submitJoin(waitlist) {
+          if (!state.activeJoinUrl) return;
+          collectDraft();
+          setStatus(waitlist ? "Отправляем заявку в waitlist..." : "Отправляем join-flow...", "info");
+
+          postJoin(state.activeJoinUrl, {
+            format: "json",
+            name: state.draft.name,
+            phone: state.draft.phone,
+            levelLabel: state.draft.levelLabel,
+            notes: state.draft.notes,
+            waitlist: waitlist ? "1" : "0"
+          })
+            .then(function (payload) {
+              setJson(payload);
+              if (payload && payload.tournament && payload.code) {
+                handleFlow(payload);
+                return;
+              }
+              setStatus(payload && payload.message ? payload.message : "Операция завершена.", "success");
+              renderOutcome(payload && payload.message ? payload.message : "Операция завершена.", "success");
+            })
+            .catch(function (error) {
+              setStatus("Не удалось отправить заявку: " + error.message, "warning");
+            });
+        }
+
+        function openJoinFlow(joinUrl) {
+          state.activeJoinUrl = joinUrl;
+          setStatus("Загружаем join-flow...", "info");
+          jsonFetch(joinUrl + (joinUrl.indexOf("?") === -1 ? "?" : "&") + "format=json")
+            .then(function (flow) {
+              setStatus("Join-flow загружен.", "success");
+              handleFlow(flow);
+            })
+            .catch(function (error) {
+              setStatus("Не удалось открыть join-flow: " + error.message, "warning");
+            });
+        }
+
+        function loadDirectory() {
+          var directoryUrl = buildDirectoryUrl();
+          toolbarMeta.textContent = "Загружаем каталог...";
+          cards.innerHTML = '<div class="empty">Загружаем турниры...</div>';
+          setStatus("Запрашиваем каталог турниров...", "info");
+
+          history.replaceState(null, "", buildSelfUrl());
+
+          jsonFetch(directoryUrl)
+            .then(function (payload) {
+              state.items = Array.isArray(payload.items) ? payload.items : [];
+              setJson(payload);
+              toolbarMeta.textContent =
+                "Endpoint: " + directoryUrl + " · карточек: " + state.items.length;
+              setStatus("Каталог турниров обновлён.", "success");
+              renderCards();
+            })
+            .catch(function (error) {
+              toolbarMeta.textContent = "Ошибка загрузки каталога.";
+              cards.innerHTML =
+                '<div class="empty">Не удалось загрузить каталог: ' +
+                escapeHtml(error.message) +
+                "</div>";
+              setStatus("Не удалось загрузить каталог: " + error.message, "warning");
+            });
+        }
+
+        reloadBtn.addEventListener("click", loadDirectory);
+
+        copyUrlBtn.addEventListener("click", function () {
+          var nextUrl = buildSelfUrl();
+          navigator.clipboard.writeText(nextUrl)
+            .then(function () {
+              setStatus("Dev URL скопирован в буфер обмена.", "success");
+            })
+            .catch(function () {
+              setStatus("Не удалось скопировать URL. Вот он: " + nextUrl, "warning");
+            });
+        });
+
+        openTildaCodeBtn.addEventListener("click", function () {
+          window.open("/api/ui/tournaments-tilda-code", "_blank");
+        });
+
+        backdrop.addEventListener("click", function (event) {
+          if (event.target === backdrop) {
+            closeModal();
+          }
+        });
+
+        loadDirectory();
+      })();
+    </script>
+  </body>
+</html>

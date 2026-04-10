@@ -10,6 +10,7 @@ export type FirstRoundSeedingMode = 'auto' | 'rating_quartets' | 'off';
 export interface AmericanoPlayer {
   id: string;
   rating: number;
+  gameRating?: number | null;
   verifiedFactor?: number;
   regularityFactor?: number;
   engagementFactor?: number;
