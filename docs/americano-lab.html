@@ -1031,6 +1031,14 @@
 
               <label class="field">
                 <span class="label">
+                  <span class="label-text">Очки в матче</span>
+                  <button class="help-trigger" type="button" data-help-key="matchPointTarget" aria-label="Что означает параметр Очки в матче">?</button>
+                </span>
+                <input id="matchPointTarget" class="input" type="number" min="1" value="21" />
+              </label>
+
+              <label class="field">
+                <span class="label">
                   <span class="label-text">Строгость по партнёрам</span>
                   <button class="help-trigger" type="button" data-help-key="partnerStrictness" aria-label="Что означает параметр Строгость по партнёрам">?</button>
                 </span>
@@ -1197,7 +1205,7 @@
                   <span>Симуляция рейтинга</span>
                   <button class="help-trigger" type="button" data-help-key="ratingSimulation" aria-label="Что означает блок Симуляция рейтинга">?</button>
                 </h2>
-                <div class="section-note">Введите счёт по сетам у каждого матча и нажмите «Рассчитать рейтинг», чтобы увидеть `before / delta / after` по точной формуле игрового модуля.</div>
+                <div class="section-note">Введите итог одного матча по очкам и нажмите «Рассчитать рейтинг», чтобы увидеть `before / delta / after` по точной формуле игрового модуля.</div>
               </div>
               <div class="surface-actions">
                 <button id="simulateRatingBtn" class="btn btn-primary" type="button">Рассчитать рейтинг</button>
@@ -1207,10 +1215,11 @@
             <p class="hint">
               Для генерации сетки используется обычный турнирный `rating`, а для перерасчёта после сыгранных
               матчей используется `game rating` по шкале игрового модуля. Это помогает отдельно тестировать
-              качество сетки и отдельно проверять механику изменения рейтинга.
+              качество сетки и отдельно проверять механику изменения рейтинга. В Americano здесь моделируется
+              один матч до заданной суммы очков, например до `21` или `24`.
             </p>
             <div id="ratingSummary" class="rating-summary">
-              <div class="empty">Сначала сгенерируйте сетку, затем заполните счёт по матчам и запустите симуляцию рейтинга.</div>
+              <div class="empty">Сначала сгенерируйте сетку, затем заполните итоговый счёт по каждому матчу и запустите симуляцию рейтинга.</div>
             </div>
           </div>
 
@@ -1265,6 +1274,7 @@
           mode: document.getElementById('mode'),
           roundsInput: document.getElementById('roundsInput'),
           courts: document.getElementById('courts'),
+          matchPointTarget: document.getElementById('matchPointTarget'),
           partnerStrictness: document.getElementById('partnerStrictness'),
           balanceStrictness: document.getElementById('balanceStrictness'),
           firstRoundSeeding: document.getElementById('firstRoundSeeding'),
@@ -1335,6 +1345,13 @@
             meaning: 'Если кортов хватает, алгоритм использует весь доступный состав. Если кортов меньше, чем нужно для полной раскладки, система начинает жёстче экономить слоты и чаще использовать bye.',
             impact: 'Чем меньше кортов, тем сильнее ограничения на каждый раунд и тем сложнее одновременно удержать хорошее покрытие и ровный баланс.',
             tip: 'Заполняйте реальное число кортов площадки. Если хотите смотреть «идеальную» механику без инфраструктурного ограничения, оставьте поле пустым.'
+          },
+          matchPointTarget: {
+            title: 'Очки в матче',
+            summary: 'Показывает, до какой суммы очков играется один матч Americano в симуляции рейтинга.',
+            meaning: 'В Americano здесь моделируется один матч по очкам, а не best-of-3 по сетам. Обычно это игра до 21 или 24 очков, и именно этот ориентир подсказывается в карточке матча.',
+            impact: 'Параметр не меняет саму генерацию сетки, но делает lab ближе к реальной механике турнира и помогает организатору вводить результат в привычном формате.',
+            tip: 'Поставьте то значение, которое используется у вас на турнире. Чаще всего это 21 или 24.'
           },
           partnerStrictness: {
             title: 'Строгость по партнёрам',
@@ -1423,7 +1440,7 @@
           ratingSimulation: {
             title: 'Симуляция рейтинга',
             summary: 'Позволяет проиграть уже сгенерированный турнир через точную формулу игрового модуля.',
-            meaning: 'Вы вводите счёт по сетам для каждого матча, а лаборатория считает ожидаемый результат, фактический результат и изменение рейтинга для всех участников после каждого сыгранного матча.',
+            meaning: 'Вы вводите итоговый счёт матча по очкам для каждого корта, а лаборатория считает ожидаемый результат, фактический результат и изменение рейтинга для всех участников после каждого сыгранного матча.',
             impact: 'Блок помогает понять не только финальную сетку, но и то, как конкретные результаты матчей складываются в итоговый прирост или падение рейтинга по турниру.',
             tip: 'Используйте этот блок, когда хотите проверить чувствительность формулы: что будет при апсете, при уверенной победе фаворита или при серии близких матчей.'
           }
@@ -1479,11 +1496,7 @@
         }
 
         function createEmptyScoreSets() {
-          return [
-            { team1: '', team2: '' },
-            { team1: '', team2: '' },
-            { team1: '', team2: '' }
-          ];
+          return [{ team1: '', team2: '' }];
         }
 
         function cloneScoreSets(sets) {
@@ -1508,10 +1521,10 @@
               var key = buildMatchKey(round.roundNumber, matchIndex);
               var existing = state.matchScores[key];
               var scoreSets = cloneScoreSets(existing);
-              while (scoreSets.length < 3) {
-                scoreSets.push({ team1: '', team2: '' });
+              if (scoreSets.length === 0) {
+                scoreSets = createEmptyScoreSets();
               }
-              next[key] = scoreSets.slice(0, 3);
+              next[key] = scoreSets.slice(0, 1);
             });
           });
           state.matchScores = next;
@@ -1909,9 +1922,11 @@
         function renderScoreEditor(roundNumber, matchIndex, match) {
           var key = buildMatchKey(roundNumber, matchIndex);
           var sets = cloneScoreSets(state.matchScores[key]);
-          while (sets.length < 3) {
-            sets.push({ team1: '', team2: '' });
+          if (sets.length === 0) {
+            sets = createEmptyScoreSets();
           }
+          var score = sets[0] || { team1: '', team2: '' };
+          var targetPoints = parsePositiveInteger(dom.matchPointTarget.value) || 21;
 
           var totals = serializeScoreSets(sets).reduce(
             function (summary, set) {
@@ -1926,22 +1941,18 @@
           return [
             '<div class="score-editor">',
             '<div class="score-title">Результат матча</div>',
-            '<div class="score-note">Заполните счёт по сетам. Эти данные уйдут в симуляцию рейтинга по точной формуле игрового модуля.</div>',
+            '<div class="score-note">Заполните итог одного матча до ' + escapeHtml(String(targetPoints)) + ' очков. Эти данные уйдут в симуляцию рейтинга по точной формуле игрового модуля.</div>',
             '<div class="score-grid">',
-            sets.map(function (set, setIndex) {
-              return [
-                '<div class="score-set">',
-                '<div class="score-set-title">Сет ' + escapeHtml(String(setIndex + 1)) + '</div>',
-                '<div class="score-row">',
-                '<input class="score-input" type="number" min="0" step="1" value="' + escapeAttr(set.team1) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="' + escapeAttr(String(setIndex)) + '" data-side="team1" aria-label="Счёт первой пары в сете ' + escapeAttr(String(setIndex + 1)) + '" />',
-                '<div class="score-divider">:</div>',
-                '<input class="score-input" type="number" min="0" step="1" value="' + escapeAttr(set.team2) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="' + escapeAttr(String(setIndex)) + '" data-side="team2" aria-label="Счёт второй пары в сете ' + escapeAttr(String(setIndex + 1)) + '" />',
-                '</div>',
-                '</div>'
-              ].join('');
-            }).join(''),
+            '<div class="score-set">',
+            '<div class="score-set-title">Итог по очкам</div>',
+            '<div class="score-row">',
+            '<input class="score-input" type="number" min="0" step="1" placeholder="' + escapeAttr(String(targetPoints)) + '" value="' + escapeAttr(score.team1) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team1" aria-label="Счёт первой пары по очкам" />',
+            '<div class="score-divider">:</div>',
+            '<input class="score-input" type="number" min="0" step="1" placeholder="' + escapeAttr(String(targetPoints - 2 > 0 ? targetPoints - 2 : targetPoints)) + '" value="' + escapeAttr(score.team2) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team2" aria-label="Счёт второй пары по очкам" />',
             '</div>',
-            '<div class="rating-note">Сумма по матчy: ' + escapeHtml((Array.isArray(match.team1) ? match.team1.join(' + ') : 'Пара 1')) + ' ' + escapeHtml(String(totals.team1)) + ' : ' + escapeHtml(String(totals.team2)) + ' ' + escapeHtml((Array.isArray(match.team2) ? match.team2.join(' + ') : 'Пара 2')) + '</div>',
+            '</div>',
+            '</div>',
+            '<div class="rating-note">Итог матча: ' + escapeHtml((Array.isArray(match.team1) ? match.team1.join(' + ') : 'Пара 1')) + ' ' + escapeHtml(String(totals.team1)) + ' : ' + escapeHtml(String(totals.team2)) + ' ' + escapeHtml((Array.isArray(match.team2) ? match.team2.join(' + ') : 'Пара 2')) + '. Обычно одна из сторон доходит до ' + escapeHtml(String(targetPoints)) + ' очков.</div>',
             '</div>'
           ].join('');
         }
@@ -1977,7 +1988,7 @@
           }
 
           if (!result) {
-            dom.ratingSummary.innerHTML = '<div class="empty">Введите счёт по матчам и нажмите «Рассчитать рейтинг», чтобы увидеть динамику по каждому раунду и финальный итог по игрокам.</div>';
+            dom.ratingSummary.innerHTML = '<div class="empty">Введите итоговый счёт по каждому матчу и нажмите «Рассчитать рейтинг», чтобы увидеть динамику по каждому раунду и финальный итог по игрокам.</div>';
             return;
           }
 
@@ -2071,11 +2082,11 @@
               var side = String(target.getAttribute('data-side') || 'team1');
               var key = buildMatchKey(roundNumber, matchIndex);
               var sets = cloneScoreSets(state.matchScores[key]);
-              while (sets.length < 3) {
-                sets.push({ team1: '', team2: '' });
+              if (sets.length === 0) {
+                sets = createEmptyScoreSets();
               }
               sets[setIndex][side] = String(target.value || '').trim();
-              state.matchScores[key] = sets;
+              state.matchScores[key] = sets.slice(0, 1);
               if (state.ratingResult) {
                 state.ratingDirty = true;
                 renderRatingSummary(null);
@@ -2259,6 +2270,13 @@
         dom.simulateRatingBtn.addEventListener('click', runRatingSimulation);
         dom.resetScoresBtn.addEventListener('click', resetScores);
         dom.playerCount.addEventListener('change', rebuildPlayers);
+        dom.matchPointTarget.addEventListener('change', function () {
+          var target = parsePositiveInteger(dom.matchPointTarget.value) || 21;
+          dom.matchPointTarget.value = String(target);
+          renderRounds(state.result);
+          clearRatingSimulation();
+          setStatus('Целевое число очков обновлено. Введите или перепроверьте итоговый счёт матчей.', 'info');
+        });
         Array.prototype.slice.call(document.querySelectorAll('.help-trigger')).forEach(function (button) {
           button.addEventListener('click', function () {
             openHelp(String(button.getAttribute('data-help-key') || ''));
