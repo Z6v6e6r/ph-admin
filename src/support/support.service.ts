@@ -942,6 +942,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       dialog.isResolved = true;
       dialog.resolvedAt = now;
       dialog.resolvedByUserId = user.id;
+      dialog.unreadCount = 0;
       dialog.pendingClientMessageIds = [];
       dialog.waitingForStaffSince = undefined;
     } else {
