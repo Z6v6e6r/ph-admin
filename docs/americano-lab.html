@@ -1031,8 +1031,8 @@
 
               <label class="field">
                 <span class="label">
-                  <span class="label-text">Очки в матче</span>
-                  <button class="help-trigger" type="button" data-help-key="matchPointTarget" aria-label="Что означает параметр Очки в матче">?</button>
+                  <span class="label-text">Сумма очков</span>
+                  <button class="help-trigger" type="button" data-help-key="matchPointTarget" aria-label="Что означает параметр Сумма очков">?</button>
                 </span>
                 <input id="matchPointTarget" class="input" type="number" min="1" value="21" />
               </label>
@@ -1347,10 +1347,10 @@
             tip: 'Заполняйте реальное число кортов площадки. Если хотите смотреть «идеальную» механику без инфраструктурного ограничения, оставьте поле пустым.'
           },
           matchPointTarget: {
-            title: 'Очки в матче',
-            summary: 'Показывает, до какой суммы очков играется один матч Americano в симуляции рейтинга.',
-            meaning: 'В Americano здесь моделируется один матч по очкам, а не best-of-3 по сетам. Обычно это игра до 21 или 24 очков, и именно этот ориентир подсказывается в карточке матча.',
-            impact: 'Параметр не меняет саму генерацию сетки, но делает lab ближе к реальной механике турнира и помогает организатору вводить результат в привычном формате.',
+            title: 'Сумма очков',
+            summary: 'Задаёт общую сумму очков в матче Americano для ввода результата.',
+            meaning: 'В лаборатории итог матча вводится как две части одной фиксированной суммы. Если сумма равна 24 и вы вводите 8, вторая сторона автоматически получает 16.',
+            impact: 'Параметр не меняет саму генерацию сетки, но делает ввод результата быстрым и ближе к реальной механике турнира.',
             tip: 'Поставьте то значение, которое используется у вас на турнире. Чаще всего это 21 или 24.'
           },
           partnerStrictness: {
@@ -1496,15 +1496,66 @@
         }
 
         function createEmptyScoreSets() {
-          return [{ team1: '', team2: '' }];
+          return [{ team1: '', team2: '', editedSide: '' }];
         }
 
         function cloneScoreSets(sets) {
           return (Array.isArray(sets) ? sets : []).map(function (set) {
             return {
               team1: set && set.team1 != null ? String(set.team1) : '',
-              team2: set && set.team2 != null ? String(set.team2) : ''
+              team2: set && set.team2 != null ? String(set.team2) : '',
+              editedSide: set && set.editedSide ? String(set.editedSide) : ''
             };
+          });
+        }
+
+        function getTargetPoints() {
+          return parsePositiveInteger(dom.matchPointTarget.value) || 21;
+        }
+
+        function normalizeScoreValue(value, targetPoints) {
+          var numeric = parseNonNegativeInteger(value);
+          if (numeric === null) {
+            return null;
+          }
+          return clamp(numeric, 0, targetPoints);
+        }
+
+        function normalizeAutoScore(score, preferredSide, targetPoints) {
+          var normalized = {
+            team1: '',
+            team2: '',
+            editedSide: preferredSide || ''
+          };
+          var anchoredValue = normalizeScoreValue(score && score[preferredSide], targetPoints);
+          if (anchoredValue === null) {
+            return normalized;
+          }
+
+          if (preferredSide === 'team2') {
+            normalized.team2 = String(anchoredValue);
+            normalized.team1 = String(targetPoints - anchoredValue);
+            return normalized;
+          }
+
+          normalized.team1 = String(anchoredValue);
+          normalized.team2 = String(targetPoints - anchoredValue);
+          return normalized;
+        }
+
+        function normalizeStoredScoresForTarget(targetPoints) {
+          Object.keys(state.matchScores).forEach(function (key) {
+            var sets = cloneScoreSets(state.matchScores[key]);
+            if (sets.length === 0) {
+              state.matchScores[key] = createEmptyScoreSets();
+              return;
+            }
+            var score = sets[0];
+            var preferredSide = score.editedSide === 'team2' ? 'team2' : 'team1';
+            if (normalizeScoreValue(score[preferredSide], targetPoints) === null) {
+              preferredSide = preferredSide === 'team1' ? 'team2' : 'team1';
+            }
+            state.matchScores[key] = [normalizeAutoScore(score, preferredSide, targetPoints)];
           });
         }
 
@@ -1925,34 +1976,30 @@
           if (sets.length === 0) {
             sets = createEmptyScoreSets();
           }
-          var score = sets[0] || { team1: '', team2: '' };
-          var targetPoints = parsePositiveInteger(dom.matchPointTarget.value) || 21;
+          var targetPoints = getTargetPoints();
+          var score = normalizeAutoScore(sets[0] || createEmptyScoreSets()[0], (sets[0] && sets[0].editedSide) || 'team1', targetPoints);
+          var noteId = 'score-summary-' + String(roundNumber) + '-' + String(matchIndex);
 
-          var totals = serializeScoreSets(sets).reduce(
-            function (summary, set) {
-              return {
-                team1: summary.team1 + set.team1,
-                team2: summary.team2 + set.team2
-              };
-            },
-            { team1: 0, team2: 0 }
-          );
+          var totals = {
+            team1: parseNonNegativeInteger(score.team1) || 0,
+            team2: parseNonNegativeInteger(score.team2) || 0
+          };
 
           return [
             '<div class="score-editor">',
             '<div class="score-title">Результат матча</div>',
-            '<div class="score-note">Заполните итог одного матча до ' + escapeHtml(String(targetPoints)) + ' очков. Эти данные уйдут в симуляцию рейтинга по точной формуле игрового модуля.</div>',
+            '<div class="score-note">Введите счёт одной пары, а вторая посчитается автоматически так, чтобы сумма оставалась ' + escapeHtml(String(targetPoints)) + '. Эти данные уйдут в симуляцию рейтинга по точной формуле игрового модуля.</div>',
             '<div class="score-grid">',
             '<div class="score-set">',
             '<div class="score-set-title">Итог по очкам</div>',
             '<div class="score-row">',
-            '<input class="score-input" type="number" min="0" step="1" placeholder="' + escapeAttr(String(targetPoints)) + '" value="' + escapeAttr(score.team1) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team1" aria-label="Счёт первой пары по очкам" />',
+            '<input class="score-input" type="number" min="0" max="' + escapeAttr(String(targetPoints)) + '" step="1" placeholder="' + escapeAttr(String(targetPoints)) + '" value="' + escapeAttr(score.team1) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team1" aria-label="Счёт первой пары по очкам" />',
             '<div class="score-divider">:</div>',
-            '<input class="score-input" type="number" min="0" step="1" placeholder="' + escapeAttr(String(targetPoints - 2 > 0 ? targetPoints - 2 : targetPoints)) + '" value="' + escapeAttr(score.team2) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team2" aria-label="Счёт второй пары по очкам" />',
+            '<input class="score-input" type="number" min="0" max="' + escapeAttr(String(targetPoints)) + '" step="1" placeholder="' + escapeAttr(String(targetPoints)) + '" value="' + escapeAttr(score.team2) + '" data-round-number="' + escapeAttr(String(roundNumber)) + '" data-match-index="' + escapeAttr(String(matchIndex)) + '" data-set-index="0" data-side="team2" aria-label="Счёт второй пары по очкам" />',
             '</div>',
             '</div>',
             '</div>',
-            '<div class="rating-note">Итог матча: ' + escapeHtml((Array.isArray(match.team1) ? match.team1.join(' + ') : 'Пара 1')) + ' ' + escapeHtml(String(totals.team1)) + ' : ' + escapeHtml(String(totals.team2)) + ' ' + escapeHtml((Array.isArray(match.team2) ? match.team2.join(' + ') : 'Пара 2')) + '. Обычно одна из сторон доходит до ' + escapeHtml(String(targetPoints)) + ' очков.</div>',
+            '<div id="' + escapeAttr(noteId) + '" class="rating-note">Итог матча: ' + escapeHtml((Array.isArray(match.team1) ? match.team1.join(' + ') : 'Пара 1')) + ' ' + escapeHtml(String(totals.team1)) + ' : ' + escapeHtml(String(totals.team2)) + ' ' + escapeHtml((Array.isArray(match.team2) ? match.team2.join(' + ') : 'Пара 2')) + '. Сумма очков фиксирована: ' + escapeHtml(String(targetPoints)) + '.</div>',
             '</div>'
           ].join('');
         }
@@ -2074,7 +2121,7 @@
 
         function attachScoreListeners() {
           Array.prototype.slice.call(dom.roundsOutput.querySelectorAll('.score-input')).forEach(function (input) {
-            input.addEventListener('change', function (event) {
+            var handleScoreInput = function (event) {
               var target = event.target;
               var roundNumber = Number(target.getAttribute('data-round-number'));
               var matchIndex = Number(target.getAttribute('data-match-index'));
@@ -2085,15 +2132,69 @@
               if (sets.length === 0) {
                 sets = createEmptyScoreSets();
               }
-              sets[setIndex][side] = String(target.value || '').trim();
-              state.matchScores[key] = sets.slice(0, 1);
+              var targetPoints = getTargetPoints();
+              var rawValue = String(target.value || '').trim();
+              var normalized = normalizeAutoScore(
+                {
+                  team1: side === 'team1' ? rawValue : sets[setIndex].team1,
+                  team2: side === 'team2' ? rawValue : sets[setIndex].team2,
+                  editedSide: side
+                },
+                side,
+                targetPoints
+              );
+
+              if (rawValue === '') {
+                normalized = createEmptyScoreSets()[0];
+              }
+
+              state.matchScores[key] = [normalized];
+              target.value = normalized[side] || '';
+
+              var siblingSide = side === 'team1' ? 'team2' : 'team1';
+              var siblingInput = dom.roundsOutput.querySelector(
+                '.score-input[data-round-number="' + roundNumber + '"][data-match-index="' + matchIndex + '"][data-set-index="' + setIndex + '"][data-side="' + siblingSide + '"]'
+              );
+              if (siblingInput) {
+                siblingInput.value = normalized[siblingSide] || '';
+              }
+
+              var summary = dom.roundsOutput.querySelector('#score-summary-' + roundNumber + '-' + matchIndex);
+              if (summary) {
+                var team1LabelNode = target.closest('.match-card').querySelector('.team .team-players');
+                var team2LabelNode = target.closest('.match-card').querySelector('.team.team-alt .team-players');
+                var team1Label = team1LabelNode ? team1LabelNode.textContent : 'Пара 1';
+                var team2Label = team2LabelNode ? team2LabelNode.textContent : 'Пара 2';
+                summary.textContent =
+                  'Итог матча: ' +
+                  team1Label +
+                  ' ' +
+                  (normalized.team1 || '0') +
+                  ' : ' +
+                  (normalized.team2 || '0') +
+                  ' ' +
+                  team2Label +
+                  '. Сумма очков фиксирована: ' +
+                  String(targetPoints) +
+                  '.';
+              }
+
               if (state.ratingResult) {
                 state.ratingDirty = true;
+                var matchCard = target.closest('.match-card');
+                if (matchCard) {
+                  var impactBox = matchCard.querySelector('.impact-box');
+                  if (impactBox) {
+                    impactBox.remove();
+                  }
+                }
                 renderRatingSummary(null);
-                renderRounds(state.result);
                 setStatus('Счёт изменён. Пересчитайте рейтинг, чтобы обновить дельты.', 'info');
               }
-            });
+            };
+
+            input.addEventListener('input', handleScoreInput);
+            input.addEventListener('change', handleScoreInput);
           });
         }
 
@@ -2271,11 +2372,12 @@
         dom.resetScoresBtn.addEventListener('click', resetScores);
         dom.playerCount.addEventListener('change', rebuildPlayers);
         dom.matchPointTarget.addEventListener('change', function () {
-          var target = parsePositiveInteger(dom.matchPointTarget.value) || 21;
+          var target = getTargetPoints();
           dom.matchPointTarget.value = String(target);
+          normalizeStoredScoresForTarget(target);
           renderRounds(state.result);
           clearRatingSimulation();
-          setStatus('Целевое число очков обновлено. Введите или перепроверьте итоговый счёт матчей.', 'info');
+          setStatus('Сумма очков обновлена. Значения в матчах пересчитаны под новый лимит.', 'info');
         });
         Array.prototype.slice.call(document.querySelectorAll('.help-trigger')).forEach(function (button) {
           button.addEventListener('click', function () {
