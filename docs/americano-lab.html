@@ -163,6 +163,13 @@
         gap: 14px;
       }
 
+      .panel-copy {
+        margin: -2px 0 2px;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
       .field-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -179,11 +186,19 @@
       }
 
       .label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: space-between;
         font-size: 11px;
         font-weight: 800;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--ink-soft);
+      }
+
+      .label-text {
+        min-width: 0;
       }
 
       .input,
@@ -226,6 +241,44 @@
         background: rgba(255, 255, 255, 0.7);
         border: 1px solid rgba(18, 52, 45, 0.08);
         font-size: 14px;
+      }
+
+      .check input[type="checkbox"] {
+        flex: 0 0 auto;
+      }
+
+      .check-copy {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .help-trigger {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        border: 1px solid rgba(15, 122, 103, 0.22);
+        background: rgba(15, 122, 103, 0.08);
+        color: var(--accent-strong);
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        box-shadow: none;
+      }
+
+      .help-trigger:hover {
+        background: rgba(15, 122, 103, 0.14);
+      }
+
+      .help-trigger:focus {
+        outline: none;
+        box-shadow: 0 0 0 4px rgba(15, 122, 103, 0.12);
       }
 
       .actions,
@@ -574,6 +627,103 @@
         background: rgba(255, 255, 255, 0.54);
       }
 
+      .help-modal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        z-index: 40;
+      }
+
+      .help-modal-visible {
+        display: flex;
+      }
+
+      .help-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(9, 36, 31, 0.42);
+        backdrop-filter: blur(6px);
+      }
+
+      .help-dialog {
+        position: relative;
+        width: min(580px, calc(100vw - 24px));
+        padding: 22px 22px 18px;
+        border-radius: 24px;
+        background:
+          linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(250, 255, 252, 0.94)),
+          rgba(255, 255, 255, 0.98);
+        border: 1px solid rgba(18, 52, 45, 0.12);
+        box-shadow: 0 30px 70px rgba(10, 48, 41, 0.24);
+      }
+
+      .help-kicker {
+        margin-bottom: 10px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent-strong);
+      }
+
+      .help-title {
+        margin: 0 32px 10px 0;
+        font-family: "Unbounded", "Arial Black", sans-serif;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+
+      .help-summary {
+        margin: 0 0 16px;
+        color: var(--ink-soft);
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .help-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .help-card {
+        padding: 14px 15px;
+        border-radius: 16px;
+        background: rgba(18, 52, 45, 0.04);
+        border: 1px solid rgba(18, 52, 45, 0.08);
+      }
+
+      .help-card-title {
+        margin-bottom: 6px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+
+      .help-card-text {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--ink);
+      }
+
+      .help-close {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        background: rgba(18, 52, 45, 0.06);
+        color: var(--ink);
+        font-size: 20px;
+        line-height: 1;
+      }
+
       @media (max-width: 1180px) {
         .layout {
           grid-template-columns: 1fr;
@@ -617,21 +767,21 @@
     <main class="page">
       <section class="hero">
         <div class="hero-card">
-          <div class="hero-kicker">Mechanics Playground</div>
-          <h1>Americano Lab</h1>
+          <div class="hero-kicker">Лаборатория механики</div>
+          <h1>Лаба Американо</h1>
           <p class="hero-text">
-            Быстрый стенд для ручной проверки генератора сетки Americano. Здесь можно собрать состав,
-            настроить режим турнира, проверить баланс по рейтингу, покрытие партнёрств и сразу увидеть,
-            где появляются повторы соперников или перекос по bye.
+            Быстрый стенд для организатора: соберите состав, выберите режим турнира и сразу посмотрите,
+            как алгоритм раскладывает пары, где появляются повторы соперников, насколько ровные матчи
+            получаются по рейтингу и что именно влияет на итоговую сетку.
           </p>
         </div>
         <aside class="hero-side hero-card">
-          <h2>Что умеет</h2>
+          <h2>Когда полезно</h2>
           <div class="hero-list">
-            <div>Режимы: Full, Short, Competitive</div>
-            <div>Гибкая настройка rounds, courts и ограничений</div>
-            <div>Редактируемые игроки и рейтинги без JSON-ручного ввода</div>
-            <div>Диагностика покрытия, fairness по bye и quality по каждому матчу</div>
+            <div>Проверить турнирный сценарий до запуска живого события</div>
+            <div>Сравнить Full, Short и Competitive на одном и том же составе</div>
+            <div>Понять, почему система выбрала именно такие пары и матчи</div>
+            <div>Показать игрокам и менеджеру прозрачную логику генерации</div>
           </div>
         </aside>
       </section>
@@ -640,15 +790,25 @@
         <aside class="panel">
           <div class="panel-grid">
             <h2 class="panel-title">Параметры генерации</h2>
+            <p class="panel-copy">
+              Сначала задайте сценарий турнира, затем нажмите «Сгенерировать сетку». Вопросики рядом с
+              параметрами объясняют, за что каждая настройка отвечает и в какую сторону двигает алгоритм.
+            </p>
 
             <div class="field-grid">
               <label class="field">
-                <span class="label">Число игроков</span>
+                <span class="label">
+                  <span class="label-text">Число игроков</span>
+                  <button class="help-trigger" type="button" data-help-key="playerCount" aria-label="Что означает параметр Число игроков">?</button>
+                </span>
                 <input id="playerCount" class="input" type="number" min="4" max="48" value="12" />
               </label>
 
               <label class="field">
-                <span class="label">Режим</span>
+                <span class="label">
+                  <span class="label-text">Режим</span>
+                  <button class="help-trigger" type="button" data-help-key="mode" aria-label="Что означает параметр Режим">?</button>
+                </span>
                 <select id="mode" class="select">
                   <option value="full_americano">Full Americano</option>
                   <option value="short_americano" selected>Short Americano</option>
@@ -657,17 +817,26 @@
               </label>
 
               <label class="field">
-                <span class="label">Раунды</span>
+                <span class="label">
+                  <span class="label-text">Раунды</span>
+                  <button class="help-trigger" type="button" data-help-key="rounds" aria-label="Что означает параметр Раунды">?</button>
+                </span>
                 <input id="roundsInput" class="input" type="number" min="1" placeholder="auto" />
               </label>
 
               <label class="field">
-                <span class="label">Корты</span>
+                <span class="label">
+                  <span class="label-text">Корты</span>
+                  <button class="help-trigger" type="button" data-help-key="courts" aria-label="Что означает параметр Корты">?</button>
+                </span>
                 <input id="courts" class="input" type="number" min="1" placeholder="без лимита" />
               </label>
 
               <label class="field">
-                <span class="label">Партнёры</span>
+                <span class="label">
+                  <span class="label-text">Строгость по партнёрам</span>
+                  <button class="help-trigger" type="button" data-help-key="partnerStrictness" aria-label="Что означает параметр Строгость по партнёрам">?</button>
+                </span>
                 <select id="partnerStrictness" class="select">
                   <option value="high" selected>High</option>
                   <option value="medium">Medium</option>
@@ -676,7 +845,10 @@
               </label>
 
               <label class="field">
-                <span class="label">Баланс</span>
+                <span class="label">
+                  <span class="label-text">Строгость по балансу</span>
+                  <button class="help-trigger" type="button" data-help-key="balanceStrictness" aria-label="Что означает параметр Строгость по балансу">?</button>
+                </span>
                 <select id="balanceStrictness" class="select">
                   <option value="high">High</option>
                   <option value="medium" selected>Medium</option>
@@ -685,7 +857,10 @@
               </label>
 
               <label class="field field-full">
-                <span class="label">Стартовый посев</span>
+                <span class="label">
+                  <span class="label-text">Стартовый посев</span>
+                  <button class="help-trigger" type="button" data-help-key="firstRoundSeeding" aria-label="Что означает параметр Стартовый посев">?</button>
+                </span>
                 <select id="firstRoundSeeding" class="select">
                   <option value="auto" selected>Auto</option>
                   <option value="rating_quartets">Rating Quartets</option>
@@ -694,22 +869,34 @@
               </label>
 
               <label class="field field-full">
-                <span class="label">Локальный поиск</span>
+                <span class="label">
+                  <span class="label-text">Итерации локального поиска</span>
+                  <button class="help-trigger" type="button" data-help-key="localSearchIterations" aria-label="Что означает параметр Итерации локального поиска">?</button>
+                </span>
                 <input id="localSearchIterations" class="input" type="number" min="1" value="6" />
               </label>
 
               <label class="field">
-                <span class="label">Exact round threshold</span>
+                <span class="label">
+                  <span class="label-text">Точный перебор раунда</span>
+                  <button class="help-trigger" type="button" data-help-key="roundExactThreshold" aria-label="Что означает параметр Точный перебор раунда">?</button>
+                </span>
                 <input id="roundExactThreshold" class="input" type="number" min="0" value="12" />
               </label>
 
               <label class="field">
-                <span class="label">Bad match threshold</span>
+                <span class="label">
+                  <span class="label-text">Порог плохого матча</span>
+                  <button class="help-trigger" type="button" data-help-key="balanceOutlierThreshold" aria-label="Что означает параметр Порог плохого матча">?</button>
+                </span>
                 <input id="balanceOutlierThreshold" class="input" type="number" step="0.1" min="0" value="1.1" />
               </label>
 
               <label class="field field-full">
-                <span class="label">Bad match weight</span>
+                <span class="label">
+                  <span class="label-text">Штраф за плохой матч</span>
+                  <button class="help-trigger" type="button" data-help-key="balanceOutlierWeight" aria-label="Что означает параметр Штраф за плохой матч">?</button>
+                </span>
                 <input id="balanceOutlierWeight" class="input" type="number" step="10" min="0" value="120" />
               </label>
             </div>
@@ -717,37 +904,49 @@
             <div class="checks">
               <label class="check">
                 <input id="useRatings" type="checkbox" checked />
-                <span>Учитывать рейтинг при балансировке</span>
+                <span class="check-copy">
+                  <span>Учитывать рейтинг при балансировке</span>
+                  <button class="help-trigger" type="button" data-help-key="useRatings" aria-label="Что означает параметр Учитывать рейтинг при балансировке">?</button>
+                </span>
               </label>
               <label class="check">
                 <input id="avoidRepeatOpponents" type="checkbox" checked />
-                <span>Избегать повторов соперников</span>
+                <span class="check-copy">
+                  <span>Избегать повторов соперников</span>
+                  <button class="help-trigger" type="button" data-help-key="avoidRepeatOpponents" aria-label="Что означает параметр Избегать повторов соперников">?</button>
+                </span>
               </label>
               <label class="check">
                 <input id="avoidRepeatPartners" type="checkbox" checked />
-                <span>Избегать повторов партнёров</span>
+                <span class="check-copy">
+                  <span>Избегать повторов партнёров</span>
+                  <button class="help-trigger" type="button" data-help-key="avoidRepeatPartners" aria-label="Что означает параметр Избегать повторов партнёров">?</button>
+                </span>
               </label>
               <label class="check">
                 <input id="distributeByesEvenly" type="checkbox" checked />
-                <span>Распределять bye максимально равномерно</span>
+                <span class="check-copy">
+                  <span>Распределять bye максимально равномерно</span>
+                  <button class="help-trigger" type="button" data-help-key="distributeByesEvenly" aria-label="Что означает параметр Распределять bye максимально равномерно">?</button>
+                </span>
               </label>
             </div>
 
             <div class="actions">
               <button id="runBtn" class="btn btn-primary" type="button">Сгенерировать сетку</button>
               <div class="btn-row">
-                <button id="refreshPlayersBtn" class="btn btn-secondary" type="button">Обновить состав</button>
-                <button id="shuffleRatingsBtn" class="btn btn-secondary" type="button">Перемешать рейтинг</button>
+                <button id="refreshPlayersBtn" class="btn btn-secondary" type="button">Обновить игроков</button>
+                <button id="shuffleRatingsBtn" class="btn btn-secondary" type="button">Перемешать рейтинги</button>
               </div>
               <div class="btn-row">
-                <button id="equalizeRatingsBtn" class="btn btn-secondary" type="button">Сделать рейтинг равным</button>
-                <button id="copyJsonBtn" class="btn btn-warm" type="button">Скопировать JSON</button>
+                <button id="equalizeRatingsBtn" class="btn btn-secondary" type="button">Выровнять рейтинги</button>
+                <button id="copyJsonBtn" class="btn btn-warm" type="button">Скопировать запрос</button>
               </div>
             </div>
 
             <p class="hint">
-              Страница вызывает <code>POST /api/tournaments/generate-schedule</code> тем же доменом,
-              так что можно сразу тестировать реальный сервис без моков.
+              Эта страница вызывает <code>POST /api/tournaments/generate-schedule</code> на том же домене.
+              То есть вы тестируете реальный сервис, а не демонстрационный мок.
             </p>
           </div>
         </aside>
@@ -757,7 +956,7 @@
             <div class="section-head">
               <div>
                 <h2 class="section-title">Игроки</h2>
-                <div class="section-note">Редактируйте состав прямо в таблице перед запуском генерации.</div>
+                <div class="section-note">Подставьте реальных игроков, скорректируйте рейтинг и посмотрите, как меняется сетка.</div>
               </div>
             </div>
             <div class="players-shell">
@@ -782,7 +981,7 @@
             <div class="section-head">
               <div>
                 <h2 class="section-title">Диагностика</h2>
-                <div class="section-note">Ключевые метрики качества решения по итогам генерации.</div>
+                <div class="section-note">Короткая сводка, которая помогает быстро понять качество турнирного решения.</div>
               </div>
             </div>
             <div id="diagnostics" class="diag-grid"></div>
@@ -792,7 +991,7 @@
             <div class="section-head">
               <div>
                 <h2 class="section-title">Раунды и матчи</h2>
-                <div class="section-note">Матчи, bye и quality по каждому раунду.</div>
+                <div class="section-note">Готовая сетка по раундам: пары, матчи, bye и качество каждого корта.</div>
               </div>
             </div>
             <div id="roundsOutput" class="rounds">
@@ -801,12 +1000,36 @@
           </div>
 
           <details class="surface">
-            <summary>Raw JSON ответа</summary>
+            <summary>Технический JSON ответа</summary>
             <pre id="rawJson">{}</pre>
           </details>
         </section>
       </section>
     </main>
+
+    <div id="helpModal" class="help-modal" aria-hidden="true">
+      <div class="help-backdrop" data-help-close="true"></div>
+      <div class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+        <button id="helpCloseBtn" class="help-close" type="button" aria-label="Закрыть пояснение">×</button>
+        <div class="help-kicker">Пояснение параметра</div>
+        <h3 id="helpTitle" class="help-title"></h3>
+        <p id="helpSummary" class="help-summary"></p>
+        <div class="help-grid">
+          <div class="help-card">
+            <div class="help-card-title">За что отвечает</div>
+            <p id="helpMeaning" class="help-card-text"></p>
+          </div>
+          <div class="help-card">
+            <div class="help-card-title">Как влияет</div>
+            <p id="helpImpact" class="help-card-text"></p>
+          </div>
+          <div class="help-card">
+            <div class="help-card-title">Когда крутить</div>
+            <p id="helpTip" class="help-card-text"></p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script>
       (function () {
@@ -835,12 +1058,128 @@
           diagnostics: document.getElementById('diagnostics'),
           roundsOutput: document.getElementById('roundsOutput'),
           rawJson: document.getElementById('rawJson'),
-          status: document.getElementById('status')
+          status: document.getElementById('status'),
+          helpModal: document.getElementById('helpModal'),
+          helpCloseBtn: document.getElementById('helpCloseBtn'),
+          helpTitle: document.getElementById('helpTitle'),
+          helpSummary: document.getElementById('helpSummary'),
+          helpMeaning: document.getElementById('helpMeaning'),
+          helpImpact: document.getElementById('helpImpact'),
+          helpTip: document.getElementById('helpTip')
         };
 
         var state = {
           players: [],
-          result: null
+          result: null,
+          activeHelpKey: null
+        };
+
+        var HELP_CONTENT = {
+          playerCount: {
+            title: 'Число игроков',
+            summary: 'Определяет размер турнира и все базовые ограничения генерации.',
+            meaning: 'От количества игроков зависят число матчей в каждом раунде, возможные комбинации партнёров и необходимость bye.',
+            impact: 'Чем больше состав, тем дольше турнир и тем сложнее полностью покрыть соперников без повторов. При числе игроков, которое не делится на 4, появятся bye.',
+            tip: 'Используйте фактический состав турнира. Если тестируете сценарии, сравнивайте соседние значения: например 12, 13 и 16 игроков.'
+          },
+          mode: {
+            title: 'Режим турнира',
+            summary: 'Меняет приоритеты алгоритма при сборке пар и матчей.',
+            meaning: 'Full Americano сильнее давит на новых партнёров, Short ограничивает длительность турнира, Competitive больше защищает ровный баланс матчей.',
+            impact: 'На одном и том же составе режим может заметно менять сетку: кто с кем встаёт в пару, сколько будет повторов соперников и насколько ровными окажутся корты.',
+            tip: 'Для клубного вечера чаще подходит Full или Short. Для более спортивного сценария сравнивайте с Competitive.'
+          },
+          rounds: {
+            title: 'Раунды',
+            summary: 'Показывает, сколько туров алгоритм должен собрать.',
+            meaning: 'Если оставить поле пустым, система подберёт число раундов автоматически по режиму и размеру состава. Если число задать вручную, оно станет жёстким ограничением.',
+            impact: 'Больше раундов повышает покрытие партнёров и соперников, но в концовке чаще появляются неизбежные повторы. Меньше раундов делает турнир короче, но уменьшает разнообразие.',
+            tip: 'Оставляйте auto, если хотите увидеть естественное поведение алгоритма. Фиксируйте число раундов, если турнир ограничен по времени.'
+          },
+          courts: {
+            title: 'Корты',
+            summary: 'Ограничивает, сколько матчей может идти параллельно в одном раунде.',
+            meaning: 'Если кортов хватает, алгоритм использует весь доступный состав. Если кортов меньше, чем нужно для полной раскладки, система начинает жёстче экономить слоты и чаще использовать bye.',
+            impact: 'Чем меньше кортов, тем сильнее ограничения на каждый раунд и тем сложнее одновременно удержать хорошее покрытие и ровный баланс.',
+            tip: 'Заполняйте реальное число кортов площадки. Если хотите смотреть «идеальную» механику без инфраструктурного ограничения, оставьте поле пустым.'
+          },
+          partnerStrictness: {
+            title: 'Строгость по партнёрам',
+            summary: 'Задаёт, насколько болезненно алгоритм относится к повтору одной и той же пары.',
+            meaning: 'High почти не допускает повторных партнёров, Medium разрешает больше свободы ради баланса, Low сильнее уступает в пользу других целей.',
+            impact: 'При высоком значении вы получите более социальную ротацию. При низком алгоритм может собрать чуть более удобные по силе матчи, но с меньшим разнообразием партнёров.',
+            tip: 'Для классического Americano чаще нужен High. Если турнир короткий и хочется сильнее выровнять матчи, попробуйте Medium.'
+          },
+          balanceStrictness: {
+            title: 'Строгость по балансу',
+            summary: 'Определяет, насколько важно собирать ровные по рейтингу матчи.',
+            meaning: 'High сильнее штрафует перекошенные матчи, Medium держит баланс как важную, но не единственную цель, Low позволяет чаще жертвовать ровностью ради ротации.',
+            impact: 'При высоком значении матчи становятся спортивнее, но иногда это уменьшает свободу по новым соперникам и партнёрам.',
+            tip: 'Если игроки чувствительны к «слишком лёгким» или «слишком тяжёлым» матчам, начните с High или Medium.'
+          },
+          firstRoundSeeding: {
+            title: 'Стартовый посев',
+            summary: 'Отвечает за то, как собрать первый раунд, когда история турнира ещё пустая.',
+            meaning: 'Auto использует рекомендуемую стартовую раскладку. Rating Quartets группирует игроков по рейтинговым четверкам. Off отключает специальный стартовый посев.',
+            impact: 'Правильный первый раунд помогает избежать странных стартовых перекосов и задаёт более логичную траекторию всему турниру.',
+            tip: 'Оставляйте Auto почти всегда. Отключать посев стоит только если вы специально тестируете «сырой» алгоритм без стартовой эвристики.'
+          },
+          localSearchIterations: {
+            title: 'Итерации локального поиска',
+            summary: 'Сколько дополнительных попыток алгоритм делает, чтобы улучшить уже собранный раунд.',
+            meaning: 'После первичной раскладки система пробует локальные перестановки игроков, пар и матчей и оставляет только те изменения, которые реально улучшают результат.',
+            impact: 'Большее число итераций повышает шанс найти более красивую сетку, но увеличивает время генерации.',
+            tip: 'Для ручной работы обычно достаточно 4–8. Увеличивайте параметр, если хотите выжать максимум качества на небольших составах.'
+          },
+          roundExactThreshold: {
+            title: 'Точный перебор раунда',
+            summary: 'Порог, до которого алгоритм может оптимизировать раунд целиком, а не только локальными шагами.',
+            meaning: 'Если активных игроков в раунде не больше этого значения, система может позволить себе более точный и дорогой расчёт.',
+            impact: 'Повышение порога часто улучшает качество для составов 8–12 игроков, но делает расчёт тяжелее.',
+            tip: 'Для MVP-сценариев держите 12. Если важна скорость, уменьшайте; если хотите качество на малых составах, можно оставить или поднять немного выше.'
+          },
+          balanceOutlierThreshold: {
+            title: 'Порог плохого матча',
+            summary: 'Граница, после которой матч начинает считаться заметно перекошенным.',
+            meaning: 'Если balance penalty выше этого числа, алгоритм добавляет дополнительный штраф именно за этот выбивающийся корт.',
+            impact: 'Меньший порог заставляет систему активнее избегать даже умеренно плохих матчей. Больший порог делает её терпимее к отдельным выбросам.',
+            tip: 'Уменьшайте параметр, если хотите защититься от одного очень плохого матча внутри в целом нормального раунда.'
+          },
+          balanceOutlierWeight: {
+            title: 'Штраф за плохой матч',
+            summary: 'Показывает, насколько сильно система должна бояться выбивающихся по балансу кортов.',
+            meaning: 'Это вес дополнительного штрафа, который применяется к матчам, превысившим порог плохого матча.',
+            impact: 'Чем выше значение, тем охотнее алгоритм жертвует другими целями ради того, чтобы убрать один явно плохой матч.',
+            tip: 'Подкручивайте этот вес, если средний баланс хороший, но время от времени всё равно проскакивает один неприятно перекошенный корт.'
+          },
+          useRatings: {
+            title: 'Учитывать рейтинг при балансировке',
+            summary: 'Включает рейтинговую модель при оценке силы пар и матчей.',
+            meaning: 'Когда флаг активен, алгоритм учитывает рейтинг и факторы игрока. Когда выключен, сетка становится ближе к социальной ротации без серьёзной поправки на силу.',
+            impact: 'С включённым флагом матчи обычно ровнее. С выключённым можно получить больше свободы по ротации, но и более случайные перекосы по силе.',
+            tip: 'Для боевой механики чаще лучше держать включённым. Выключайте только для теста чистой ротации без рейтингового влияния.'
+          },
+          avoidRepeatOpponents: {
+            title: 'Избегать повторов соперников',
+            summary: 'Просит алгоритм не сталкивать одних и тех же игроков слишком часто.',
+            meaning: 'Система будет штрафовать решения, где игроки снова выходят друг против друга, если есть доступная альтернатива.',
+            impact: 'Включённый флаг повышает социальное разнообразие турнира. Выключенный даёт больше свободы балансу, но быстрее приводит к повторным встречам.',
+            tip: 'Оставляйте включённым почти всегда. Отключать стоит только в редких тестах, когда вы хотите изучить чистое влияние других ограничений.'
+          },
+          avoidRepeatPartners: {
+            title: 'Избегать повторов партнёров',
+            summary: 'Фиксирует главный социальный принцип Americano: не собирать одну и ту же пару раньше необходимости.',
+            meaning: 'Пока доступны новые партнёры, система будет считать повтор старой пары крайне нежелательным.',
+            impact: 'Это один из самых сильных переключателей механики. Если его выключить, турнир может стать более ровным по силе, но потеряет идею широкой ротации.',
+            tip: 'Для Americano практически всегда должен быть включён. Выключайте только для стресс-тестов алгоритма.'
+          },
+          distributeByesEvenly: {
+            title: 'Распределять bye максимально равномерно',
+            summary: 'Следит, чтобы пропуски раунда не концентрировались на одних и тех же игроках.',
+            meaning: 'Если игроков не хватает на полную раскладку, система выбирает bye так, чтобы по турниру они были максимально справедливо распределены.',
+            impact: 'С включённым флагом турнир воспринимается честнее. С выключенным алгоритм получает чуть больше свободы, но может создавать неприятный перекос по пропускам.',
+            tip: 'Для реального турнира лучше всегда держать включённым.'
+          }
         };
 
         function clamp(value, min, max) {
@@ -974,6 +1313,28 @@
           dom.status.textContent = message;
         }
 
+        function openHelp(key) {
+          var content = HELP_CONTENT[key];
+          if (!content) {
+            return;
+          }
+          state.activeHelpKey = key;
+          dom.helpTitle.textContent = content.title;
+          dom.helpSummary.textContent = content.summary;
+          dom.helpMeaning.textContent = content.meaning;
+          dom.helpImpact.textContent = content.impact;
+          dom.helpTip.textContent = content.tip;
+          dom.helpModal.className = 'help-modal help-modal-visible';
+          dom.helpModal.setAttribute('aria-hidden', 'false');
+          dom.helpCloseBtn.focus();
+        }
+
+        function closeHelp() {
+          state.activeHelpKey = null;
+          dom.helpModal.className = 'help-modal';
+          dom.helpModal.setAttribute('aria-hidden', 'true');
+        }
+
         function readConfig() {
           var mode = String(dom.mode.value || 'short_americano');
           return {
@@ -1026,44 +1387,44 @@
 
           dom.diagnostics.innerHTML = [
             renderDiagCard(
-              'Partner Coverage',
+              'Покрытие партнёров',
               formatNumber(diagnostics.partnerCoveragePercent) + '%',
               'Уникальные партнёрства'
             ),
             renderDiagCard(
-              'Opponent Coverage',
+              'Покрытие соперников',
               formatNumber(diagnostics.opponentCoveragePercent) + '%',
               'Уникальные соперники'
             ),
             renderDiagCard(
-              'Avg Balance',
+              'Средний баланс',
               formatNumber(diagnostics.balance && diagnostics.balance.averagePenalty),
               'Средний penalty'
             ),
             renderDiagCard(
-              'Bye Spread',
+              'Разброс bye',
               formatNumber(diagnostics.byeStats && diagnostics.byeStats.min) +
                 '–' +
                 formatNumber(diagnostics.byeStats && diagnostics.byeStats.max),
               'Минимум и максимум bye'
             ),
             renderDiagCard(
-              'Rounds',
+              'Раунды',
               formatNumber(diagnostics.totalRounds),
               'Всего раундов'
             ),
             renderDiagCard(
-              'Players',
+              'Игроки',
               formatNumber(diagnostics.totalPlayers),
               'Всего игроков'
             ),
             renderDiagCard(
-              'Repeated Partners',
+              'Повторы партнёров',
               formatNumber(repeatedPartners),
               'Пар повторилось'
             ),
             renderDiagCard(
-              'Repeated Opponents',
+              'Повторы соперников',
               formatNumber(repeatedOpponents),
               'Пар соперников повторилось'
             )
@@ -1117,15 +1478,15 @@
             '<div class="match-court">' + escapeHtml(courtLabel) + '</div>',
             '</div>',
             '<div class="teams">',
-            renderTeam('Team 1', match.team1, false),
+            renderTeam('Пара 1', match.team1, false),
             '<div class="versus">vs</div>',
-            renderTeam('Team 2', match.team2, true),
+            renderTeam('Пара 2', match.team2, true),
             '</div>',
             '<div class="quality-grid">',
-            renderQuality('Balance', formatNumber(match.quality && match.quality.balanceScore)),
-            renderQuality('Partner Penalty', formatNumber(match.quality && match.quality.repeatedPartnersPenalty)),
-            renderQuality('Opponent Penalty', formatNumber(match.quality && match.quality.repeatedOpponentsPenalty)),
-            renderQuality('Total Cost', formatNumber(match.quality && match.quality.totalCost)),
+            renderQuality('Баланс', formatNumber(match.quality && match.quality.balanceScore)),
+            renderQuality('Штраф партнёров', formatNumber(match.quality && match.quality.repeatedPartnersPenalty)),
+            renderQuality('Штраф соперников', formatNumber(match.quality && match.quality.repeatedOpponentsPenalty)),
+            renderQuality('Общая стоимость', formatNumber(match.quality && match.quality.totalCost)),
             '</div>',
             '</article>'
           ].join('');
@@ -1230,6 +1591,20 @@
         dom.copyJsonBtn.addEventListener('click', copyPayloadJson);
         dom.runBtn.addEventListener('click', runGeneration);
         dom.playerCount.addEventListener('change', rebuildPlayers);
+        Array.prototype.slice.call(document.querySelectorAll('.help-trigger')).forEach(function (button) {
+          button.addEventListener('click', function () {
+            openHelp(String(button.getAttribute('data-help-key') || ''));
+          });
+        });
+        dom.helpCloseBtn.addEventListener('click', closeHelp);
+        Array.prototype.slice.call(dom.helpModal.querySelectorAll('[data-help-close="true"]')).forEach(function (node) {
+          node.addEventListener('click', closeHelp);
+        });
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && state.activeHelpKey) {
+            closeHelp();
+          }
+        });
 
         rebuildPlayers();
         renderDiagnostics(null);
