@@ -1044,13 +1044,14 @@ export class TournamentsService {
       tournament.details && typeof tournament.details === 'object'
         ? (tournament.details.sourceTournamentSnapshot as Record<string, unknown> | undefined)
         : undefined;
+    const publicName = this.pickString(tournament.skin?.title) ?? tournament.name;
 
     return {
       id: tournament.id,
       slug: tournament.slug,
       publicUrl: tournament.publicUrl,
       joinUrl: this.buildPublicJoinUrl(tournament.publicUrl),
-      name: tournament.name,
+      name: publicName,
       tournamentType: tournament.tournamentType,
       gender: tournament.gender,
       accessLevels: tournament.accessLevels,
