@@ -705,6 +705,7 @@ export class TournamentsService {
 
     return {
       ...tournament,
+      name: mergedCustomTournament.name,
       details: {
         sourceTournamentSnapshot
       },
