@@ -6,9 +6,19 @@ import {
 } from '@nestjs/common';
 import { Collection, Db, Document, Filter, MongoClient, ObjectId, OptionalId } from 'mongodb';
 import {
+  AmericanoGeneratorConfig,
+  AmericanoHistoricalMatch,
+  AmericanoHistoricalRound,
+  AmericanoPenaltyWeights
+} from './americano-schedule.types';
+import {
   CustomTournament,
   Tournament,
+  TournamentActor,
+  TournamentChangeLogEntry,
+  TournamentChangeLogField,
   TournamentGender,
+  TournamentMechanics,
   TournamentParticipant,
   TournamentPaymentStatus,
   TournamentSkin,
@@ -18,6 +28,19 @@ import {
 type MongoCustomTournamentDocument = Document & {
   _id?: unknown;
 };
+
+const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
+  partnerRepeat: 1000,
+  partnerImmediateRepeat: 1200,
+  opponentRepeat: 150,
+  opponentRecentRepeat: 250,
+  balance: 100,
+  unevenBye: 300,
+  consecutiveBye: 700,
+  pairInternalImbalance: 30
+};
+
+const MAX_TOURNAMENT_CHANGE_LOG_ENTRIES = 40;
 
 export interface CreateCustomTournamentMutation {
   sourceTournamentId?: string;
@@ -40,6 +63,8 @@ export interface CreateCustomTournamentMutation {
   trainerName?: string;
   exerciseTypeId?: string;
   skin?: TournamentSkin;
+  mechanics?: unknown;
+  actor?: TournamentActor;
 }
 
 export interface UpdateCustomTournamentMutation {
@@ -61,6 +86,8 @@ export interface UpdateCustomTournamentMutation {
   trainerName?: string;
   exerciseTypeId?: string;
   skin?: TournamentSkin;
+  mechanics?: unknown;
+  actor?: TournamentActor;
 }
 
 @Injectable()
@@ -177,8 +204,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    const now = new Date().toISOString();
     const setPayload: Record<string, unknown> = {
-      updatedAt: new Date().toISOString()
+      updatedAt: now
     };
 
     if (mutation.name !== undefined) {
@@ -235,12 +263,37 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.skin !== undefined) {
       setPayload.skin = this.normalizeSkin(mutation.skin);
     }
+    if (mutation.mechanics !== undefined) {
+      setPayload.mechanics = this.normalizeMechanics(mutation.mechanics);
+    }
 
-    await collection.updateOne(this.buildIdFilter(id), { $set: setPayload });
-    return this.toCustomTournament({
+    const actor = this.toActorRecord(mutation.actor, now);
+    const nextDocument: MongoCustomTournamentDocument = {
       ...existing,
       ...setPayload
-    });
+    };
+    if (actor) {
+      setPayload.updatedBy = actor;
+      nextDocument.updatedBy = actor;
+      const changeLogEntry = this.buildUpdateChangeLogEntry(
+        id,
+        now,
+        actor,
+        existing,
+        nextDocument
+      );
+      if (changeLogEntry) {
+        const currentChangeLog = this.normalizeChangeLog(existing.changeLog);
+        setPayload.changeLog = [changeLogEntry, ...currentChangeLog].slice(
+          0,
+          MAX_TOURNAMENT_CHANGE_LOG_ENTRIES
+        );
+        nextDocument.changeLog = setPayload.changeLog;
+      }
+    }
+
+    await collection.updateOne(this.buildIdFilter(id), { $set: setPayload });
+    return this.toCustomTournament(nextDocument);
   }
 
   private async collection(): Promise<Collection<MongoCustomTournamentDocument>> {
@@ -298,6 +351,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const participants = this.normalizeParticipants(document.participants, 'REGISTERED');
     const waitlist = this.normalizeParticipants(document.waitlist, 'WAITLIST');
     const skin = this.normalizeSkin(document.skin);
+    const mechanics = this.normalizeMechanics(document.mechanics);
     const startsAt = this.pickString(document.startsAt) ?? undefined;
     const endsAt = this.pickString(document.endsAt) ?? undefined;
     const status = this.normalizeStatus(
@@ -335,6 +389,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       createdAt: this.pickString(document.createdAt) ?? undefined,
       updatedAt: this.pickString(document.updatedAt) ?? undefined,
       skin,
+      mechanics,
+      changeLog: this.normalizeChangeLog(document.changeLog),
+      createdBy: this.normalizeActor(document.createdBy),
+      updatedBy: this.normalizeActor(document.updatedBy),
       details: this.isRecord(document.sourceTournamentSnapshot)
         ? { sourceTournamentSnapshot: document.sourceTournamentSnapshot }
         : undefined
@@ -355,6 +413,15 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       options?.slug ?? mutation.slug ?? mutation.name ?? id,
       id
     );
+    const actor = this.toActorRecord(mutation.actor, now);
+    const createdLog = actor
+      ? this.buildCreateChangeLogEntry(
+          id,
+          now,
+          actor,
+          mutation.mechanics
+        )
+      : undefined;
 
     return {
       id,
@@ -381,6 +448,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       trainerName: this.pickString(mutation.trainerName) ?? null,
       exerciseTypeId: this.pickString(mutation.exerciseTypeId) ?? null,
       skin: this.normalizeSkin(mutation.skin),
+      mechanics: this.normalizeMechanics(mutation.mechanics),
+      changeLog: createdLog ? [createdLog] : [],
+      createdBy: actor ?? null,
+      updatedBy: actor ?? null,
       createdAt: this.pickString(options?.createdAt) ?? now,
       updatedAt: now,
       archived: false
@@ -492,6 +563,577 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       badgeLabel: this.pickString(record.badgeLabel) ?? undefined,
       tags: this.normalizeStringArray(record.tags)
     };
+  }
+
+  private normalizeMechanics(value: unknown): TournamentMechanics {
+    const record = this.toRecord(value);
+    const config = this.normalizeMechanicsConfig(record?.config);
+
+    return {
+      enabled: record?.enabled === false ? false : true,
+      config,
+      history: this.normalizeMechanicsHistory(record?.history),
+      notes: this.pickString(record?.notes) ?? undefined
+    };
+  }
+
+  private normalizeMechanicsConfig(value: unknown): AmericanoGeneratorConfig {
+    const record = this.toRecord(value);
+
+    return {
+      mode: this.normalizeMechanicsMode(record?.mode),
+      rounds: this.pickOptionalInteger(record?.rounds, 1),
+      courts: this.pickOptionalInteger(record?.courts, 1),
+      useRatings: record?.useRatings === false ? false : true,
+      firstRoundSeeding: this.normalizeFirstRoundSeeding(record?.firstRoundSeeding),
+      roundExactThreshold: this.pickOptionalInteger(record?.roundExactThreshold, 0) ?? 12,
+      balanceOutlierThreshold: this.pickOptionalNumber(record?.balanceOutlierThreshold, 0) ?? 1.1,
+      balanceOutlierWeight: this.pickOptionalNumber(record?.balanceOutlierWeight, 0) ?? 120,
+      strictPartnerUniqueness: this.normalizeStrictness(record?.strictPartnerUniqueness, 'high'),
+      strictBalance: this.normalizeStrictness(record?.strictBalance, 'medium'),
+      avoidRepeatOpponents: record?.avoidRepeatOpponents === false ? false : true,
+      avoidRepeatPartners: record?.avoidRepeatPartners === false ? false : true,
+      distributeByesEvenly: record?.distributeByesEvenly === false ? false : true,
+      historyDepth: this.pickOptionalInteger(record?.historyDepth, 0) ?? 0,
+      localSearchIterations: this.pickOptionalInteger(record?.localSearchIterations, 1) ?? 6,
+      pairingExactThreshold: this.pickOptionalInteger(record?.pairingExactThreshold, 8) ?? 16,
+      matchExactThreshold: this.pickOptionalInteger(record?.matchExactThreshold, 4) ?? 12,
+      weights: this.normalizeMechanicsWeights(record?.weights)
+    };
+  }
+
+  private normalizeMechanicsWeights(
+    value: unknown
+  ): Partial<AmericanoPenaltyWeights> {
+    const record = this.toRecord(value);
+
+    return {
+      partnerRepeat:
+        this.pickOptionalNumber(record?.partnerRepeat, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.partnerRepeat,
+      partnerImmediateRepeat:
+        this.pickOptionalNumber(record?.partnerImmediateRepeat, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.partnerImmediateRepeat,
+      opponentRepeat:
+        this.pickOptionalNumber(record?.opponentRepeat, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.opponentRepeat,
+      opponentRecentRepeat:
+        this.pickOptionalNumber(record?.opponentRecentRepeat, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.opponentRecentRepeat,
+      balance:
+        this.pickOptionalNumber(record?.balance, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.balance,
+      unevenBye:
+        this.pickOptionalNumber(record?.unevenBye, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.unevenBye,
+      consecutiveBye:
+        this.pickOptionalNumber(record?.consecutiveBye, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.consecutiveBye,
+      pairInternalImbalance:
+        this.pickOptionalNumber(record?.pairInternalImbalance, 0)
+        ?? DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS.pairInternalImbalance
+    };
+  }
+
+  private normalizeMechanicsHistory(value: unknown): AmericanoHistoricalRound[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    const rounds = value
+      .map((entry) => this.normalizeMechanicsHistoryRound(entry))
+      .filter((entry): entry is AmericanoHistoricalRound => entry !== null);
+
+    return rounds.length > 0 ? rounds : undefined;
+  }
+
+  private normalizeMechanicsHistoryRound(value: unknown): AmericanoHistoricalRound | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const matches = Array.isArray(record.matches)
+      ? record.matches
+          .map((entry) => this.normalizeMechanicsHistoryMatch(entry))
+          .filter((entry): entry is AmericanoHistoricalMatch => entry !== null)
+      : [];
+
+    if (matches.length === 0) {
+      return null;
+    }
+
+    return {
+      roundNumber: this.pickOptionalInteger(record.roundNumber, 1) ?? undefined,
+      matches,
+      byes: this.normalizeStringArray(record.byes)
+    };
+  }
+
+  private normalizeMechanicsHistoryMatch(value: unknown): AmericanoHistoricalMatch | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const team1 = this.normalizeMechanicsPair(record.team1);
+    const team2 = this.normalizeMechanicsPair(record.team2);
+    if (!team1 || !team2) {
+      return null;
+    }
+
+    return {
+      team1,
+      team2
+    };
+  }
+
+  private normalizeMechanicsPair(value: unknown): [string, string] | null {
+    if (!Array.isArray(value) || value.length !== 2) {
+      return null;
+    }
+
+    const left = this.pickString(value[0]);
+    const right = this.pickString(value[1]);
+    if (!left || !right) {
+      return null;
+    }
+
+    return [left, right];
+  }
+
+  private normalizeActor(value: unknown): TournamentActor | undefined {
+    const record = this.toRecord(value);
+    if (!record) {
+      return undefined;
+    }
+
+    const id = this.pickString(record.id);
+    const login = this.pickString(record.login);
+    const name = this.pickString(record.name);
+    if (!id && !login && !name) {
+      return undefined;
+    }
+
+    return {
+      id: id ?? undefined,
+      login: login ?? undefined,
+      name: name ?? undefined
+    };
+  }
+
+  private toActorRecord(actor: TournamentActor | undefined, fallbackTime: string) {
+    const normalized = this.normalizeActor(actor);
+    if (!normalized) {
+      return undefined;
+    }
+
+    return {
+      ...(normalized.id ? { id: normalized.id } : {}),
+      ...(normalized.login ? { login: normalized.login } : {}),
+      ...(normalized.name ? { name: normalized.name } : {}),
+      at: fallbackTime
+    };
+  }
+
+  private normalizeChangeLog(value: unknown): TournamentChangeLogEntry[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry, index) => this.normalizeChangeLogEntry(entry, index))
+      .filter((entry): entry is TournamentChangeLogEntry => entry !== null)
+      .slice(0, MAX_TOURNAMENT_CHANGE_LOG_ENTRIES);
+  }
+
+  private normalizeChangeLogEntry(
+    value: unknown,
+    index: number
+  ): TournamentChangeLogEntry | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const summary = this.pickString(record.summary);
+    if (!summary) {
+      return null;
+    }
+
+    const changes = Array.isArray(record.changes)
+      ? record.changes
+          .map((entry) => this.normalizeChangeLogField(entry))
+          .filter((entry): entry is TournamentChangeLogField => entry !== null)
+      : [];
+
+    return {
+      id: this.pickString(record.id) ?? `change-${index + 1}`,
+      action: this.normalizeChangeAction(record.action),
+      scope: this.normalizeChangeScope(record.scope),
+      summary,
+      actor: this.normalizeActor(record.actor),
+      at: this.pickString(record.at) ?? new Date(0).toISOString(),
+      changes
+    };
+  }
+
+  private normalizeChangeLogField(value: unknown): TournamentChangeLogField | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const field = this.pickString(record.field);
+    const label = this.pickString(record.label);
+    if (!field || !label) {
+      return null;
+    }
+
+    return {
+      field,
+      label,
+      before: this.pickString(record.before) ?? undefined,
+      after: this.pickString(record.after) ?? undefined
+    };
+  }
+
+  private buildCreateChangeLogEntry(
+    tournamentId: string,
+    at: string,
+    actor: Record<string, unknown>,
+    mechanics?: unknown
+  ): TournamentChangeLogEntry {
+    const createdMechanics = this.normalizeMechanics(mechanics);
+
+    return {
+      id: `${tournamentId}:create:${at}`,
+      action: 'CREATE',
+      scope: 'TOURNAMENT',
+      summary: 'Создана карточка турнира',
+      actor: this.normalizeActor(actor),
+      at,
+      changes: [
+        {
+          field: 'mechanics.enabled',
+          label: 'Механика включена',
+          after: createdMechanics.enabled ? 'Да' : 'Нет'
+        },
+        {
+          field: 'mechanics.config.mode',
+          label: 'Механика: режим',
+          after: createdMechanics.config.mode
+        }
+      ]
+    };
+  }
+
+  private buildUpdateChangeLogEntry(
+    tournamentId: string,
+    at: string,
+    actor: Record<string, unknown>,
+    beforeDocument: MongoCustomTournamentDocument,
+    afterDocument: MongoCustomTournamentDocument
+  ): TournamentChangeLogEntry | null {
+    const beforeTournament = this.toCustomTournament(beforeDocument);
+    const afterTournament = this.toCustomTournament(afterDocument);
+    if (!beforeTournament || !afterTournament) {
+      return null;
+    }
+
+    const changes = this.collectTournamentChanges(beforeTournament, afterTournament);
+    if (changes.length === 0) {
+      return null;
+    }
+
+    const mechanicsChanges = changes.filter((change) => change.field.indexOf('mechanics.') === 0);
+    const scope = mechanicsChanges.length === changes.length ? 'MECHANICS' : 'TOURNAMENT';
+
+    return {
+      id: `${tournamentId}:update:${at}`,
+      action: 'UPDATE',
+      scope,
+      summary:
+        scope === 'MECHANICS'
+          ? 'Обновлена турнирная механика'
+          : 'Обновлены параметры турнира',
+      actor: this.normalizeActor(actor),
+      at,
+      changes
+    };
+  }
+
+  private collectTournamentChanges(
+    beforeTournament: CustomTournament,
+    afterTournament: CustomTournament
+  ): TournamentChangeLogField[] {
+    const changes: TournamentChangeLogField[] = [];
+    const pushChange = (
+      field: string,
+      label: string,
+      beforeValue: string | undefined,
+      afterValue: string | undefined
+    ) => {
+      const normalizedBefore = beforeValue ?? '';
+      const normalizedAfter = afterValue ?? '';
+      if (normalizedBefore === normalizedAfter) {
+        return;
+      }
+      changes.push({
+        field,
+        label,
+        ...(beforeValue !== undefined ? { before: beforeValue } : {}),
+        ...(afterValue !== undefined ? { after: afterValue } : {})
+      });
+    };
+
+    pushChange('name', 'Название', beforeTournament.name, afterTournament.name);
+    pushChange('status', 'Статус', beforeTournament.status, afterTournament.status);
+    pushChange(
+      'startsAt',
+      'Дата и время старта',
+      this.formatAuditDate(beforeTournament.startsAt),
+      this.formatAuditDate(afterTournament.startsAt)
+    );
+    pushChange(
+      'endsAt',
+      'Дата и время конца',
+      this.formatAuditDate(beforeTournament.endsAt),
+      this.formatAuditDate(afterTournament.endsAt)
+    );
+    pushChange(
+      'tournamentType',
+      'Формат турнира',
+      beforeTournament.tournamentType,
+      afterTournament.tournamentType
+    );
+    pushChange(
+      'accessLevels',
+      'Уровни участников',
+      this.formatAuditList(beforeTournament.accessLevels),
+      this.formatAuditList(afterTournament.accessLevels)
+    );
+    pushChange('gender', 'Пол', beforeTournament.gender, afterTournament.gender);
+    pushChange(
+      'maxPlayers',
+      'Макс. участников',
+      this.formatAuditNumber(beforeTournament.maxPlayers),
+      this.formatAuditNumber(afterTournament.maxPlayers)
+    );
+    pushChange(
+      'allowedManagerPhones',
+      'Телефоны доступа к механике',
+      this.formatAuditList(beforeTournament.allowedManagerPhones),
+      this.formatAuditList(afterTournament.allowedManagerPhones)
+    );
+    pushChange('slug', 'Slug', beforeTournament.slug, afterTournament.slug);
+    pushChange('studioName', 'Клуб', beforeTournament.studioName, afterTournament.studioName);
+    pushChange('trainerName', 'Тренер', beforeTournament.trainerName, afterTournament.trainerName);
+    pushChange(
+      'participantsCount',
+      'Участники',
+      this.formatAuditNumber(beforeTournament.participants?.length),
+      this.formatAuditNumber(afterTournament.participants?.length)
+    );
+    pushChange(
+      'waitlistCount',
+      'Лист ожидания',
+      this.formatAuditNumber(beforeTournament.waitlist?.length),
+      this.formatAuditNumber(afterTournament.waitlist?.length)
+    );
+    pushChange(
+      'skin.title',
+      'Skin: заголовок',
+      beforeTournament.skin.title,
+      afterTournament.skin.title
+    );
+    pushChange(
+      'skin.subtitle',
+      'Skin: подзаголовок',
+      beforeTournament.skin.subtitle,
+      afterTournament.skin.subtitle
+    );
+    pushChange(
+      'skin.description',
+      'Skin: описание',
+      beforeTournament.skin.description,
+      afterTournament.skin.description
+    );
+    pushChange(
+      'skin.imageUrl',
+      'Skin: image URL',
+      beforeTournament.skin.imageUrl ?? undefined,
+      afterTournament.skin.imageUrl ?? undefined
+    );
+    pushChange(
+      'skin.ctaLabel',
+      'Skin: CTA',
+      beforeTournament.skin.ctaLabel,
+      afterTournament.skin.ctaLabel
+    );
+    pushChange(
+      'skin.badgeLabel',
+      'Skin: badge',
+      beforeTournament.skin.badgeLabel,
+      afterTournament.skin.badgeLabel
+    );
+    pushChange(
+      'skin.tags',
+      'Skin: теги',
+      this.formatAuditList(beforeTournament.skin.tags),
+      this.formatAuditList(afterTournament.skin.tags)
+    );
+
+    const beforeMechanics = this.normalizeMechanics(beforeTournament.mechanics);
+    const afterMechanics = this.normalizeMechanics(afterTournament.mechanics);
+    pushChange(
+      'mechanics.enabled',
+      'Механика включена',
+      beforeMechanics.enabled ? 'Да' : 'Нет',
+      afterMechanics.enabled ? 'Да' : 'Нет'
+    );
+    pushChange(
+      'mechanics.notes',
+      'Механика: заметки',
+      beforeMechanics.notes,
+      afterMechanics.notes
+    );
+    pushChange(
+      'mechanics.history',
+      'Механика: история раундов',
+      this.formatAuditNumber(beforeMechanics.history?.length),
+      this.formatAuditNumber(afterMechanics.history?.length)
+    );
+
+    const mechanicsFieldMap: Array<{ key: keyof AmericanoGeneratorConfig; label: string }> = [
+      { key: 'mode', label: 'Механика: режим' },
+      { key: 'rounds', label: 'Механика: раунды' },
+      { key: 'courts', label: 'Механика: корты' },
+      { key: 'useRatings', label: 'Механика: учитывать рейтинг' },
+      { key: 'firstRoundSeeding', label: 'Механика: стартовый посев' },
+      { key: 'roundExactThreshold', label: 'Механика: точный перебор раунда' },
+      { key: 'balanceOutlierThreshold', label: 'Механика: порог плохого матча' },
+      { key: 'balanceOutlierWeight', label: 'Механика: штраф за плохой матч' },
+      { key: 'strictPartnerUniqueness', label: 'Механика: строгость по партнёрам' },
+      { key: 'strictBalance', label: 'Механика: строгость по балансу' },
+      { key: 'avoidRepeatOpponents', label: 'Механика: избегать повторов соперников' },
+      { key: 'avoidRepeatPartners', label: 'Механика: избегать повторов партнёров' },
+      { key: 'distributeByesEvenly', label: 'Механика: распределять bye равномерно' },
+      { key: 'historyDepth', label: 'Механика: глубина истории' },
+      { key: 'localSearchIterations', label: 'Механика: итерации локального поиска' },
+      { key: 'pairingExactThreshold', label: 'Механика: exact threshold по парам' },
+      { key: 'matchExactThreshold', label: 'Механика: exact threshold по матчам' }
+    ];
+
+    mechanicsFieldMap.forEach((descriptor) => {
+      pushChange(
+        'mechanics.config.' + String(descriptor.key),
+        descriptor.label,
+        this.formatAuditValue(beforeMechanics.config[descriptor.key]),
+        this.formatAuditValue(afterMechanics.config[descriptor.key])
+      );
+    });
+
+    const weightLabels: Record<keyof AmericanoPenaltyWeights, string> = {
+      partnerRepeat: 'Вес: повтор партнёров',
+      partnerImmediateRepeat: 'Вес: подряд тот же партнёр',
+      opponentRepeat: 'Вес: повтор соперников',
+      opponentRecentRepeat: 'Вес: недавний повтор соперников',
+      balance: 'Вес: баланс матча',
+      unevenBye: 'Вес: неравномерный bye',
+      consecutiveBye: 'Вес: подряд bye',
+      pairInternalImbalance: 'Вес: дисбаланс внутри пары'
+    };
+    (
+      Object.keys(weightLabels) as Array<keyof AmericanoPenaltyWeights>
+    ).forEach((key) => {
+      pushChange(
+        'mechanics.config.weights.' + String(key),
+        weightLabels[key],
+        this.formatAuditValue(beforeMechanics.config.weights?.[key]),
+        this.formatAuditValue(afterMechanics.config.weights?.[key])
+      );
+    });
+
+    return changes.slice(0, 24);
+  }
+
+  private formatAuditDate(value?: string): string | undefined {
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? normalized : parsed.toISOString();
+  }
+
+  private formatAuditList(values?: string[]): string | undefined {
+    return Array.isArray(values) && values.length > 0 ? values.join(', ') : undefined;
+  }
+
+  private formatAuditNumber(value?: number): string | undefined {
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : undefined;
+  }
+
+  private formatAuditValue(value: unknown): string | undefined {
+    if (typeof value === 'boolean') {
+      return value ? 'Да' : 'Нет';
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((entry) => this.pickString(entry))
+        .filter((entry): entry is string => Boolean(entry));
+      return normalized.length > 0 ? normalized.join(', ') : undefined;
+    }
+    return this.pickString(value);
+  }
+
+  private normalizeChangeAction(value: unknown): 'CREATE' | 'UPDATE' {
+    return String(value ?? '').trim().toUpperCase() === 'CREATE' ? 'CREATE' : 'UPDATE';
+  }
+
+  private normalizeChangeScope(value: unknown): 'TOURNAMENT' | 'MECHANICS' {
+    return String(value ?? '').trim().toUpperCase() === 'MECHANICS'
+      ? 'MECHANICS'
+      : 'TOURNAMENT';
+  }
+
+  private normalizeMechanicsMode(value: unknown): AmericanoGeneratorConfig['mode'] {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (
+      normalized === 'full_americano' ||
+      normalized === 'short_americano' ||
+      normalized === 'competitive_americano' ||
+      normalized === 'dynamic_americano'
+    ) {
+      return normalized;
+    }
+    return 'short_americano';
+  }
+
+  private normalizeFirstRoundSeeding(
+    value: unknown
+  ): AmericanoGeneratorConfig['firstRoundSeeding'] {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'rating_quartets' || normalized === 'auto') {
+      return normalized;
+    }
+    return 'auto';
+  }
+
+  private normalizeStrictness(
+    value: unknown,
+    fallback: AmericanoGeneratorConfig['strictBalance']
+  ): AmericanoGeneratorConfig['strictBalance'] {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'high' || normalized === 'medium' || normalized === 'low') {
+      return normalized;
+    }
+    return fallback;
   }
 
   private normalizeStringArray(value: unknown): string[] {
@@ -716,6 +1358,39 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       return undefined;
     }
     return Math.trunc(parsed);
+  }
+
+  private pickOptionalInteger(value: unknown, minValue: number): number | null | undefined {
+    if (value === null) {
+      return null;
+    }
+
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : NaN;
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+    if (parsed < minValue) {
+      return minValue;
+    }
+    return Math.trunc(parsed);
+  }
+
+  private pickOptionalNumber(value: unknown, minValue: number): number | undefined {
+    const parsed =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : NaN;
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+    return Math.max(minValue, parsed);
   }
 
   private toRecord(value: unknown): Record<string, unknown> | null {

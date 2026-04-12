@@ -1,3 +1,8 @@
+import {
+  AmericanoGeneratorConfig,
+  AmericanoHistoricalRound
+} from './americano-schedule.types';
+
 export enum TournamentStatus {
   PLANNED = 'PLANNED',
   REGISTRATION = 'REGISTRATION',
@@ -41,6 +46,36 @@ export interface TournamentSkin {
   tags?: string[];
 }
 
+export interface TournamentActor {
+  id?: string;
+  login?: string;
+  name?: string;
+}
+
+export interface TournamentMechanics {
+  enabled: boolean;
+  config: AmericanoGeneratorConfig;
+  history?: AmericanoHistoricalRound[];
+  notes?: string;
+}
+
+export interface TournamentChangeLogField {
+  field: string;
+  label: string;
+  before?: string;
+  after?: string;
+}
+
+export interface TournamentChangeLogEntry {
+  id: string;
+  action: 'CREATE' | 'UPDATE';
+  scope: 'TOURNAMENT' | 'MECHANICS';
+  summary: string;
+  actor?: TournamentActor;
+  at: string;
+  changes: TournamentChangeLogField[];
+}
+
 export interface Tournament {
   id: string;
   source: TournamentSource;
@@ -73,6 +108,10 @@ export interface Tournament {
   waitlistCount?: number;
   allowedManagerPhones?: string[];
   skin?: TournamentSkin;
+  mechanics?: TournamentMechanics;
+  changeLog?: TournamentChangeLogEntry[];
+  createdBy?: TournamentActor;
+  updatedBy?: TournamentActor;
 }
 
 export interface CustomTournament extends Tournament {
@@ -87,6 +126,8 @@ export interface CustomTournament extends Tournament {
   waitlist: TournamentParticipant[];
   allowedManagerPhones: string[];
   skin: TournamentSkin;
+  mechanics: TournamentMechanics;
+  changeLog: TournamentChangeLogEntry[];
 }
 
 export interface TournamentPublicView {

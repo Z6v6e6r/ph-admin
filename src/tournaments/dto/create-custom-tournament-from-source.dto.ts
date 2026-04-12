@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TournamentGender, TournamentStatus } from '../tournaments.types';
+import { TournamentMechanicsDto } from './tournament-mechanics.dto';
 import { TournamentParticipantInputDto } from './tournament-participant-input.dto';
 import { TournamentSkinDto } from './tournament-skin.dto';
 
@@ -101,4 +102,9 @@ export class CreateCustomTournamentFromSourceDto {
   @ValidateNested()
   @Type(() => TournamentSkinDto)
   skin?: TournamentSkinDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TournamentMechanicsDto)
+  mechanics?: TournamentMechanicsDto;
 }

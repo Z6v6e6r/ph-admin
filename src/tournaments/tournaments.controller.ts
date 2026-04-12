@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post
+} from '@nestjs/common';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { AmericanoRatingSimulationResult } from './americano-rating.types';
@@ -29,9 +38,13 @@ export class TournamentsController {
   @Post('custom/from-source/:sourceTournamentId')
   createCustomFromSource(
     @Param('sourceTournamentId') sourceTournamentId: string,
-    @Body() dto: CreateCustomTournamentFromSourceDto
+    @Body() dto: CreateCustomTournamentFromSourceDto,
+    @CurrentUser() user?: RequestUser
   ): Promise<CustomTournament> {
-    return this.tournamentsService.createCustomFromSource(sourceTournamentId, dto);
+    return this.tournamentsService.createCustomFromSource(sourceTournamentId, {
+      ...dto,
+      ...(user ? { actor: this.toActor(user) } : {})
+    });
   }
 
   @Get('custom/:id')
@@ -42,9 +55,13 @@ export class TournamentsController {
   @Patch('custom/:id')
   updateCustom(
     @Param('id') id: string,
-    @Body() dto: UpdateCustomTournamentDto
+    @Body() dto: UpdateCustomTournamentDto,
+    @CurrentUser() user?: RequestUser
   ): Promise<CustomTournament> {
-    return this.tournamentsService.updateCustom(id, dto);
+    return this.tournamentsService.updateCustom(id, {
+      ...dto,
+      ...(user ? { actor: this.toActor(user) } : {})
+    });
   }
 
   @Post('generate-schedule')
@@ -64,5 +81,13 @@ export class TournamentsController {
   @Get(':id')
   findById(@Param('id') id: string): Promise<Tournament> {
     return this.tournamentsService.findById(id);
+  }
+
+  private toActor(user: RequestUser): { id: string; login?: string; name: string } {
+    return {
+      id: user.id,
+      ...(user.login ? { login: user.login } : {}),
+      name: user.title || user.login || user.id
+    };
   }
 }

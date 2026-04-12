@@ -23,6 +23,39 @@ function createCustomTournament(): CustomTournament {
     studioName: 'TestMiniApp',
     trainerName: 'Тренер Сергеев',
     startsAt: '2026-04-18T12:00:00.000Z',
+    mechanics: {
+      enabled: true,
+      config: {
+        mode: 'short_americano',
+        rounds: null,
+        courts: null,
+        useRatings: true,
+        firstRoundSeeding: 'auto',
+        roundExactThreshold: 12,
+        balanceOutlierThreshold: 1.1,
+        balanceOutlierWeight: 120,
+        strictPartnerUniqueness: 'high',
+        strictBalance: 'medium',
+        avoidRepeatOpponents: true,
+        avoidRepeatPartners: true,
+        distributeByesEvenly: true,
+        historyDepth: 0,
+        localSearchIterations: 6,
+        pairingExactThreshold: 16,
+        matchExactThreshold: 12,
+        weights: {
+          partnerRepeat: 1000,
+          partnerImmediateRepeat: 1200,
+          opponentRepeat: 150,
+          opponentRecentRepeat: 250,
+          balance: 100,
+          unevenBye: 300,
+          consecutiveBye: 700,
+          pairInternalImbalance: 30
+        }
+      }
+    },
+    changeLog: [],
     skin: {
       title: 'Публичное имя из скина',
       subtitle: 'Битва ракеток'

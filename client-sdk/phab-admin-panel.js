@@ -13569,6 +13569,197 @@
 
     var TOURNAMENT_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
     var TOURNAMENT_TYPE_OPTIONS = ['Американо', 'Мексикано', 'Кубок', 'Лига', 'Сетка'];
+    var TOURNAMENT_MECHANICS_MODE_OPTIONS = [
+      { value: 'short_americano', label: 'Short Americano' },
+      { value: 'full_americano', label: 'Full Americano' },
+      { value: 'competitive_americano', label: 'Competitive Americano' },
+      { value: 'dynamic_americano', label: 'Dynamic Americano' }
+    ];
+    var TOURNAMENT_MECHANICS_SEEDING_OPTIONS = [
+      { value: 'auto', label: 'Auto' },
+      { value: 'rating_quartets', label: 'Rating Quartets' },
+      { value: 'off', label: 'Off' }
+    ];
+    var TOURNAMENT_MECHANICS_STRICTNESS_OPTIONS = [
+      { value: 'high', label: 'High' },
+      { value: 'medium', label: 'Medium' },
+      { value: 'low', label: 'Low' }
+    ];
+    var TOURNAMENT_MECHANICS_WEIGHT_FIELDS = [
+      { key: 'partnerRepeat', label: 'Вес: повтор партнёров', min: '0', step: '1' },
+      { key: 'partnerImmediateRepeat', label: 'Вес: партнёр подряд', min: '0', step: '1' },
+      { key: 'opponentRepeat', label: 'Вес: повтор соперников', min: '0', step: '1' },
+      { key: 'opponentRecentRepeat', label: 'Вес: недавний повтор соперников', min: '0', step: '1' },
+      { key: 'balance', label: 'Вес: баланс матча', min: '0', step: '1' },
+      { key: 'unevenBye', label: 'Вес: неравномерный bye', min: '0', step: '1' },
+      { key: 'consecutiveBye', label: 'Вес: подряд bye', min: '0', step: '1' },
+      { key: 'pairInternalImbalance', label: 'Вес: дисбаланс внутри пары', min: '0', step: '1' }
+    ];
+
+    function createTournamentCheckbox(initialValue) {
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = initialValue !== false;
+      return input;
+    }
+
+    function createTournamentSelect(options, value) {
+      var select = document.createElement('select');
+      select.className = 'phab-admin-input';
+      normalizeArray(options).forEach(function (item) {
+        var option = document.createElement('option');
+        option.value = String(item.value || '');
+        option.textContent = String(item.label || item.value || '');
+        select.appendChild(option);
+      });
+      select.value = String(value || '');
+      if (select.value !== String(value || '') && select.options.length > 0) {
+        select.value = String(select.options[0].value || '');
+      }
+      return select;
+    }
+
+    function readTournamentOptionalInteger(rawValue, minValue, fallbackNull) {
+      var normalized = String(rawValue || '').trim();
+      if (!normalized) {
+        return fallbackNull === true ? null : undefined;
+      }
+      var numeric = Number(normalized);
+      if (!Number.isFinite(numeric)) {
+        return fallbackNull === true ? null : undefined;
+      }
+      return Math.max(minValue, Math.floor(numeric));
+    }
+
+    function readTournamentOptionalNumber(rawValue, minValue) {
+      var normalized = String(rawValue || '').trim();
+      if (!normalized) {
+        return undefined;
+      }
+      var numeric = Number(normalized);
+      if (!Number.isFinite(numeric)) {
+        return undefined;
+      }
+      return Math.max(minValue, numeric);
+    }
+
+    function normalizeTournamentMechanics(value, tournamentTypeValue) {
+      var source = normalizeObject(value);
+      var config = normalizeObject(source.config);
+      var weights = normalizeObject(config.weights);
+      var normalizedType = String(tournamentTypeValue || '').trim().toLowerCase();
+      var defaultMode = normalizedType.indexOf('compet') >= 0
+        ? 'competitive_americano'
+        : 'short_americano';
+
+      return {
+        enabled: source.enabled !== false,
+        notes: String(source.notes || ''),
+        history: normalizeArray(source.history),
+        config: {
+          mode: String(config.mode || defaultMode),
+          rounds: config.rounds === null || config.rounds === undefined || config.rounds === ''
+            ? null
+            : Math.max(1, Math.floor(Number(config.rounds) || 0)) || null,
+          courts: config.courts === null || config.courts === undefined || config.courts === ''
+            ? null
+            : Math.max(1, Math.floor(Number(config.courts) || 0)) || null,
+          useRatings: config.useRatings !== false,
+          firstRoundSeeding: String(config.firstRoundSeeding || 'auto'),
+          roundExactThreshold: Math.max(0, Math.floor(Number(config.roundExactThreshold || 12) || 12)),
+          balanceOutlierThreshold: Number(config.balanceOutlierThreshold || 1.1) || 1.1,
+          balanceOutlierWeight: Number(config.balanceOutlierWeight || 120) || 120,
+          strictPartnerUniqueness: String(config.strictPartnerUniqueness || 'high'),
+          strictBalance: String(config.strictBalance || 'medium'),
+          avoidRepeatOpponents: config.avoidRepeatOpponents !== false,
+          avoidRepeatPartners: config.avoidRepeatPartners !== false,
+          distributeByesEvenly: config.distributeByesEvenly !== false,
+          historyDepth: Math.max(0, Math.floor(Number(config.historyDepth || 0) || 0)),
+          localSearchIterations: Math.max(1, Math.floor(Number(config.localSearchIterations || 6) || 6)),
+          pairingExactThreshold: Math.max(8, Math.floor(Number(config.pairingExactThreshold || 16) || 16)),
+          matchExactThreshold: Math.max(4, Math.floor(Number(config.matchExactThreshold || 12) || 12)),
+          weights: {
+            partnerRepeat: Number(weights.partnerRepeat || 1000) || 1000,
+            partnerImmediateRepeat: Number(weights.partnerImmediateRepeat || 1200) || 1200,
+            opponentRepeat: Number(weights.opponentRepeat || 150) || 150,
+            opponentRecentRepeat: Number(weights.opponentRecentRepeat || 250) || 250,
+            balance: Number(weights.balance || 100) || 100,
+            unevenBye: Number(weights.unevenBye || 300) || 300,
+            consecutiveBye: Number(weights.consecutiveBye || 700) || 700,
+            pairInternalImbalance: Number(weights.pairInternalImbalance || 30) || 30
+          }
+        }
+      };
+    }
+
+    function getTournamentChangeLogEntries(tournament) {
+      var entries = normalizeArray(tournament && tournament.changeLog)
+        .map(function (item, index) {
+          var source = normalizeObject(item);
+          var changes = normalizeArray(source.changes)
+            .map(function (change) {
+              var record = normalizeObject(change);
+              var label = String(record.label || record.field || '').trim();
+              if (!label) {
+                return '';
+              }
+              var before = String(record.before || '').trim();
+              var after = String(record.after || '').trim();
+              if (before && after) {
+                return label + ': ' + before + ' → ' + after;
+              }
+              if (after) {
+                return label + ': ' + after;
+              }
+              if (before) {
+                return label + ': ' + before;
+              }
+              return label;
+            })
+            .filter(Boolean);
+          var actor = normalizeObject(source.actor);
+          return {
+            id: String(source.id || 'tournament-history-' + index),
+            summary: String(source.summary || source.title || 'Изменение'),
+            meta: [
+              String(actor.name || actor.login || actor.id || '').trim(),
+              formatDateTimeFull(source.at),
+              String(source.scope || '').trim().toUpperCase() === 'MECHANICS'
+                ? 'турнирная механика'
+                : 'карточка турнира'
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            changes: changes
+          };
+        })
+        .filter(function (item) {
+          return item.summary;
+        });
+
+      if (entries.length > 0) {
+        return entries;
+      }
+
+      var fallback = [];
+      if (tournament && tournament.createdAt) {
+        fallback.push({
+          id: String((tournament && tournament.id) || 'tournament') + ':created',
+          summary: 'Карточка турнира создана',
+          meta: formatDateTimeFull(tournament.createdAt),
+          changes: []
+        });
+      }
+      if (tournament && tournament.updatedAt) {
+        fallback.push({
+          id: String((tournament && tournament.id) || 'tournament') + ':updated',
+          summary: 'Последнее обновление карточки',
+          meta: formatDateTimeFull(tournament.updatedAt),
+          changes: []
+        });
+      }
+      return fallback;
+    }
 
     function getTournamentSourceSnapshot(tournament) {
       var details = normalizeObject(tournament && tournament.details);
@@ -13765,6 +13956,52 @@
               return String(item || '').trim();
             })
             .filter(Boolean)
+        },
+        mechanics: {
+          enabled: Boolean(form.mechanicsEnabled.checked),
+          notes: String(form.mechanicsNotes.value || '').trim() || undefined,
+          config: {
+            mode: String(form.mechanicsMode.value || 'short_americano').trim(),
+            rounds: readTournamentOptionalInteger(form.mechanicsRounds.value, 1, true),
+            courts: readTournamentOptionalInteger(form.mechanicsCourts.value, 1, true),
+            useRatings: Boolean(form.mechanicsUseRatings.checked),
+            firstRoundSeeding: String(form.mechanicsFirstRoundSeeding.value || 'auto').trim(),
+            roundExactThreshold:
+              readTournamentOptionalInteger(form.mechanicsRoundExactThreshold.value, 0, false),
+            balanceOutlierThreshold:
+              readTournamentOptionalNumber(form.mechanicsBalanceOutlierThreshold.value, 0),
+            balanceOutlierWeight:
+              readTournamentOptionalNumber(form.mechanicsBalanceOutlierWeight.value, 0),
+            strictPartnerUniqueness:
+              String(form.mechanicsStrictPartnerUniqueness.value || 'high').trim(),
+            strictBalance: String(form.mechanicsStrictBalance.value || 'medium').trim(),
+            avoidRepeatOpponents: Boolean(form.mechanicsAvoidRepeatOpponents.checked),
+            avoidRepeatPartners: Boolean(form.mechanicsAvoidRepeatPartners.checked),
+            distributeByesEvenly: Boolean(form.mechanicsDistributeByesEvenly.checked),
+            historyDepth: readTournamentOptionalInteger(form.mechanicsHistoryDepth.value, 0, false),
+            localSearchIterations:
+              readTournamentOptionalInteger(form.mechanicsLocalSearchIterations.value, 1, false),
+            pairingExactThreshold:
+              readTournamentOptionalInteger(form.mechanicsPairingExactThreshold.value, 8, false),
+            matchExactThreshold:
+              readTournamentOptionalInteger(form.mechanicsMatchExactThreshold.value, 4, false),
+            weights: {
+              partnerRepeat:
+                readTournamentOptionalNumber(form.mechanicsWeightPartnerRepeat.value, 0),
+              partnerImmediateRepeat:
+                readTournamentOptionalNumber(form.mechanicsWeightPartnerImmediateRepeat.value, 0),
+              opponentRepeat:
+                readTournamentOptionalNumber(form.mechanicsWeightOpponentRepeat.value, 0),
+              opponentRecentRepeat:
+                readTournamentOptionalNumber(form.mechanicsWeightOpponentRecentRepeat.value, 0),
+              balance: readTournamentOptionalNumber(form.mechanicsWeightBalance.value, 0),
+              unevenBye: readTournamentOptionalNumber(form.mechanicsWeightUnevenBye.value, 0),
+              consecutiveBye:
+                readTournamentOptionalNumber(form.mechanicsWeightConsecutiveBye.value, 0),
+              pairInternalImbalance:
+                readTournamentOptionalNumber(form.mechanicsWeightPairInternalImbalance.value, 0)
+            }
+          }
         }
       };
     }
@@ -13796,6 +14033,11 @@
           : String(tournament.id || '');
       var model = customTournament || tournament;
       var skin = normalizeObject(model && model.skin);
+      var mechanics = normalizeTournamentMechanics(
+        model && model.mechanics,
+        model && model.tournamentType
+      );
+      var changeLogEntries = getTournamentChangeLogEntries(customTournament || model);
       var liveSourceSnapshot = getTournamentSourceSnapshot(tournament);
       var storedSourceSnapshot = getTournamentSourceSnapshot(model);
       var sourceSnapshot =
@@ -14010,6 +14252,254 @@
         'Формат строк участников: Имя | Телефон | Уровень | paid. Для waitlist последняя колонка не обязательна.';
       dom.tournamentEditorBody.appendChild(help);
 
+      var mechanicsCard = createCommunitySectionCard(
+        'Турнирная механика',
+        'Параметры генерации и поведения турнирной сетки, продублированные из LK.'
+      );
+      dom.tournamentEditorBody.appendChild(mechanicsCard.card);
+
+      var mechanicsForm = document.createElement('div');
+      mechanicsForm.className = 'phab-admin-community-form-grid';
+      mechanicsCard.body.appendChild(mechanicsForm);
+
+      var mechanicsEnabledInput = createTournamentCheckbox(mechanics.enabled);
+      appendCommunityFormField(mechanicsForm, 'Механика включена', mechanicsEnabledInput);
+
+      var mechanicsModeInput = createTournamentSelect(
+        TOURNAMENT_MECHANICS_MODE_OPTIONS,
+        mechanics.config.mode
+      );
+      appendCommunityFormField(mechanicsForm, 'Режим', mechanicsModeInput);
+
+      var mechanicsRoundsInput = document.createElement('input');
+      mechanicsRoundsInput.type = 'number';
+      mechanicsRoundsInput.min = '1';
+      mechanicsRoundsInput.className = 'phab-admin-input';
+      mechanicsRoundsInput.placeholder = 'auto';
+      mechanicsRoundsInput.value =
+        mechanics.config.rounds === null || mechanics.config.rounds === undefined
+          ? ''
+          : String(mechanics.config.rounds);
+      appendCommunityFormField(mechanicsForm, 'Раунды', mechanicsRoundsInput);
+
+      var mechanicsCourtsInput = document.createElement('input');
+      mechanicsCourtsInput.type = 'number';
+      mechanicsCourtsInput.min = '1';
+      mechanicsCourtsInput.className = 'phab-admin-input';
+      mechanicsCourtsInput.placeholder = 'auto';
+      mechanicsCourtsInput.value =
+        mechanics.config.courts === null || mechanics.config.courts === undefined
+          ? ''
+          : String(mechanics.config.courts);
+      appendCommunityFormField(mechanicsForm, 'Корты', mechanicsCourtsInput);
+
+      var mechanicsUseRatingsInput = createTournamentCheckbox(mechanics.config.useRatings);
+      appendCommunityFormField(mechanicsForm, 'Учитывать рейтинг', mechanicsUseRatingsInput);
+
+      var mechanicsFirstRoundSeedingInput = createTournamentSelect(
+        TOURNAMENT_MECHANICS_SEEDING_OPTIONS,
+        mechanics.config.firstRoundSeeding
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Стартовый посев',
+        mechanicsFirstRoundSeedingInput
+      );
+
+      var mechanicsRoundExactThresholdInput = document.createElement('input');
+      mechanicsRoundExactThresholdInput.type = 'number';
+      mechanicsRoundExactThresholdInput.min = '0';
+      mechanicsRoundExactThresholdInput.className = 'phab-admin-input';
+      mechanicsRoundExactThresholdInput.value = String(mechanics.config.roundExactThreshold);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Точный перебор раунда',
+        mechanicsRoundExactThresholdInput
+      );
+
+      var mechanicsBalanceOutlierThresholdInput = document.createElement('input');
+      mechanicsBalanceOutlierThresholdInput.type = 'number';
+      mechanicsBalanceOutlierThresholdInput.min = '0';
+      mechanicsBalanceOutlierThresholdInput.step = '0.1';
+      mechanicsBalanceOutlierThresholdInput.className = 'phab-admin-input';
+      mechanicsBalanceOutlierThresholdInput.value = String(mechanics.config.balanceOutlierThreshold);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Порог плохого матча',
+        mechanicsBalanceOutlierThresholdInput
+      );
+
+      var mechanicsBalanceOutlierWeightInput = document.createElement('input');
+      mechanicsBalanceOutlierWeightInput.type = 'number';
+      mechanicsBalanceOutlierWeightInput.min = '0';
+      mechanicsBalanceOutlierWeightInput.step = '0.1';
+      mechanicsBalanceOutlierWeightInput.className = 'phab-admin-input';
+      mechanicsBalanceOutlierWeightInput.value = String(mechanics.config.balanceOutlierWeight);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Штраф за плохой матч',
+        mechanicsBalanceOutlierWeightInput
+      );
+
+      var mechanicsStrictPartnerUniquenessInput = createTournamentSelect(
+        TOURNAMENT_MECHANICS_STRICTNESS_OPTIONS,
+        mechanics.config.strictPartnerUniqueness
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Строгость по партнёрам',
+        mechanicsStrictPartnerUniquenessInput
+      );
+
+      var mechanicsStrictBalanceInput = createTournamentSelect(
+        TOURNAMENT_MECHANICS_STRICTNESS_OPTIONS,
+        mechanics.config.strictBalance
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Строгость по балансу',
+        mechanicsStrictBalanceInput
+      );
+
+      var mechanicsAvoidRepeatOpponentsInput = createTournamentCheckbox(
+        mechanics.config.avoidRepeatOpponents
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Избегать повторов соперников',
+        mechanicsAvoidRepeatOpponentsInput
+      );
+
+      var mechanicsAvoidRepeatPartnersInput = createTournamentCheckbox(
+        mechanics.config.avoidRepeatPartners
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Избегать повторов партнёров',
+        mechanicsAvoidRepeatPartnersInput
+      );
+
+      var mechanicsDistributeByesEvenlyInput = createTournamentCheckbox(
+        mechanics.config.distributeByesEvenly
+      );
+      appendCommunityFormField(
+        mechanicsForm,
+        'Распределять bye равномерно',
+        mechanicsDistributeByesEvenlyInput
+      );
+
+      var mechanicsHistoryDepthInput = document.createElement('input');
+      mechanicsHistoryDepthInput.type = 'number';
+      mechanicsHistoryDepthInput.min = '0';
+      mechanicsHistoryDepthInput.className = 'phab-admin-input';
+      mechanicsHistoryDepthInput.value = String(mechanics.config.historyDepth);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Глубина истории',
+        mechanicsHistoryDepthInput
+      );
+
+      var mechanicsLocalSearchIterationsInput = document.createElement('input');
+      mechanicsLocalSearchIterationsInput.type = 'number';
+      mechanicsLocalSearchIterationsInput.min = '1';
+      mechanicsLocalSearchIterationsInput.className = 'phab-admin-input';
+      mechanicsLocalSearchIterationsInput.value = String(mechanics.config.localSearchIterations);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Итерации локального поиска',
+        mechanicsLocalSearchIterationsInput
+      );
+
+      var mechanicsPairingExactThresholdInput = document.createElement('input');
+      mechanicsPairingExactThresholdInput.type = 'number';
+      mechanicsPairingExactThresholdInput.min = '8';
+      mechanicsPairingExactThresholdInput.className = 'phab-admin-input';
+      mechanicsPairingExactThresholdInput.value = String(mechanics.config.pairingExactThreshold);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Exact threshold по парам',
+        mechanicsPairingExactThresholdInput
+      );
+
+      var mechanicsMatchExactThresholdInput = document.createElement('input');
+      mechanicsMatchExactThresholdInput.type = 'number';
+      mechanicsMatchExactThresholdInput.min = '4';
+      mechanicsMatchExactThresholdInput.className = 'phab-admin-input';
+      mechanicsMatchExactThresholdInput.value = String(mechanics.config.matchExactThreshold);
+      appendCommunityFormField(
+        mechanicsForm,
+        'Exact threshold по матчам',
+        mechanicsMatchExactThresholdInput
+      );
+
+      var mechanicsNotesInput = document.createElement('textarea');
+      mechanicsNotesInput.className = 'phab-admin-input';
+      mechanicsNotesInput.rows = 4;
+      mechanicsNotesInput.value = String(mechanics.notes || '');
+      mechanicsNotesInput.placeholder = 'Комментарий по логике сетки, исключения, ручные правки.';
+      appendCommunityFormField(mechanicsForm, 'Заметки по механике', mechanicsNotesInput, true);
+
+      var mechanicsWeightsCard = createCommunitySectionCard(
+        'Весовые коэффициенты',
+        'Тонкая настройка штрафов, баланса и распределения bye.'
+      );
+      dom.tournamentEditorBody.appendChild(mechanicsWeightsCard.card);
+
+      var mechanicsWeightsForm = document.createElement('div');
+      mechanicsWeightsForm.className = 'phab-admin-community-form-grid';
+      mechanicsWeightsCard.body.appendChild(mechanicsWeightsForm);
+
+      var mechanicsWeightInputs = {};
+      TOURNAMENT_MECHANICS_WEIGHT_FIELDS.forEach(function (descriptor) {
+        var input = document.createElement('input');
+        input.type = 'number';
+        input.min = descriptor.min;
+        input.step = descriptor.step;
+        input.className = 'phab-admin-input';
+        input.value = String(mechanics.config.weights[descriptor.key]);
+        mechanicsWeightInputs[descriptor.key] = input;
+        appendCommunityFormField(mechanicsWeightsForm, descriptor.label, input);
+      });
+
+      var historyCard = createCommunitySectionCard(
+        'История изменений',
+        'Кто, когда и что поменял в карточке и турнирной механике.'
+      );
+      dom.tournamentEditorBody.appendChild(historyCard.card);
+
+      var historyList = document.createElement('div');
+      historyList.className = 'phab-admin-community-history-list';
+      historyCard.body.appendChild(historyList);
+      if (changeLogEntries.length === 0) {
+        var historyEmpty = document.createElement('div');
+        historyEmpty.className = 'phab-admin-empty';
+        historyEmpty.textContent =
+          'История появится после первого сохранения из админки. Уже после этого будет видно, кто, когда и что менял.';
+        historyCard.body.appendChild(historyEmpty);
+      } else {
+        changeLogEntries.forEach(function (entry) {
+          var row = document.createElement('div');
+          row.className = 'phab-admin-community-history-row';
+          var left = document.createElement('div');
+          var title = document.createElement('strong');
+          title.textContent = entry.summary;
+          left.appendChild(title);
+
+          var meta = document.createElement('span');
+          meta.textContent = entry.meta || 'Без деталей';
+          left.appendChild(meta);
+
+          if (normalizeArray(entry.changes).length > 0) {
+            var details = document.createElement('span');
+            details.textContent = entry.changes.join(' • ');
+            left.appendChild(details);
+          }
+
+          row.appendChild(left);
+          historyList.appendChild(row);
+        });
+      }
+
       state.tournamentEditor = {
         sourceTournamentId: sourceTournamentId,
         customTournamentId: customTournament ? String(customTournament.id || '') : '',
@@ -14034,7 +14524,34 @@
           skinBadgeLabel: skinBadgeInput,
           skinImageUrl: skinImageInput,
           skinTags: skinTagsInput,
-          skinDescription: skinDescriptionInput
+          skinDescription: skinDescriptionInput,
+          mechanicsEnabled: mechanicsEnabledInput,
+          mechanicsMode: mechanicsModeInput,
+          mechanicsRounds: mechanicsRoundsInput,
+          mechanicsCourts: mechanicsCourtsInput,
+          mechanicsUseRatings: mechanicsUseRatingsInput,
+          mechanicsFirstRoundSeeding: mechanicsFirstRoundSeedingInput,
+          mechanicsRoundExactThreshold: mechanicsRoundExactThresholdInput,
+          mechanicsBalanceOutlierThreshold: mechanicsBalanceOutlierThresholdInput,
+          mechanicsBalanceOutlierWeight: mechanicsBalanceOutlierWeightInput,
+          mechanicsStrictPartnerUniqueness: mechanicsStrictPartnerUniquenessInput,
+          mechanicsStrictBalance: mechanicsStrictBalanceInput,
+          mechanicsAvoidRepeatOpponents: mechanicsAvoidRepeatOpponentsInput,
+          mechanicsAvoidRepeatPartners: mechanicsAvoidRepeatPartnersInput,
+          mechanicsDistributeByesEvenly: mechanicsDistributeByesEvenlyInput,
+          mechanicsHistoryDepth: mechanicsHistoryDepthInput,
+          mechanicsLocalSearchIterations: mechanicsLocalSearchIterationsInput,
+          mechanicsPairingExactThreshold: mechanicsPairingExactThresholdInput,
+          mechanicsMatchExactThreshold: mechanicsMatchExactThresholdInput,
+          mechanicsNotes: mechanicsNotesInput,
+          mechanicsWeightPartnerRepeat: mechanicsWeightInputs.partnerRepeat,
+          mechanicsWeightPartnerImmediateRepeat: mechanicsWeightInputs.partnerImmediateRepeat,
+          mechanicsWeightOpponentRepeat: mechanicsWeightInputs.opponentRepeat,
+          mechanicsWeightOpponentRecentRepeat: mechanicsWeightInputs.opponentRecentRepeat,
+          mechanicsWeightBalance: mechanicsWeightInputs.balance,
+          mechanicsWeightUnevenBye: mechanicsWeightInputs.unevenBye,
+          mechanicsWeightConsecutiveBye: mechanicsWeightInputs.consecutiveBye,
+          mechanicsWeightPairInternalImbalance: mechanicsWeightInputs.pairInternalImbalance
         }
       };
 

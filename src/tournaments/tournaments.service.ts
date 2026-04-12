@@ -13,7 +13,9 @@ import {
 } from './americano-rating.types';
 import { AmericanoRatingSimulationService } from './americano-rating-simulation.service';
 import {
+  AmericanoGeneratorConfig,
   AmericanoGenerateScheduleInput,
+  AmericanoPenaltyWeights,
   AmericanoScheduleResult
 } from './americano-schedule.types';
 import { AmericanoScheduleService } from './americano-schedule.service';
@@ -28,6 +30,7 @@ import {
   TournamentAccessCheckResponse,
   TournamentGender,
   TournamentJoinFlowResponse,
+  TournamentMechanics,
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
   TournamentPublicClientProfile,
@@ -47,6 +50,16 @@ interface RegistrationInput {
 
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
+const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
+  partnerRepeat: 1000,
+  partnerImmediateRepeat: 1200,
+  opponentRepeat: 150,
+  opponentRecentRepeat: 250,
+  balance: 100,
+  unevenBye: 300,
+  consecutiveBye: 700,
+  pairInternalImbalance: 30
+};
 
 @Injectable()
 export class TournamentsService {
@@ -697,7 +710,12 @@ export class TournamentsService {
         waitlist: tournament.waitlist,
         waitlistCount: undefined,
         allowedManagerPhones: undefined,
-        skin: undefined
+        skin: undefined,
+        mechanics: this.buildDefaultTournamentMechanics({
+          tournamentType: tournament.tournamentType,
+          maxPlayers: tournament.maxPlayers
+        }),
+        changeLog: []
       };
     }
 
@@ -729,7 +747,7 @@ export class TournamentsService {
 
   private toTournamentListItem(tournament: CustomTournament): Tournament {
     return {
-      ...tournament,
+      ...this.ensureTournamentDefaults(tournament),
       linkedCustomTournamentId: tournament.id,
       sourceTournamentId: tournament.sourceTournamentId
     };
@@ -766,6 +784,14 @@ export class TournamentsService {
       trainerId: this.pickString(mutation.trainerId) ?? sourceTournament.trainerId,
       trainerName: this.pickString(mutation.trainerName) ?? sourceTournament.trainerName,
       exerciseTypeId: sourceTournament.exerciseTypeId,
+      mechanics:
+        mutation.mechanics
+        ?? this.buildDefaultTournamentMechanics({
+          tournamentType:
+            this.pickString(mutation.tournamentType) ?? sourceTournament.tournamentType,
+          maxPlayers: Number(mutation.maxPlayers || 0) || Number(sourceTournament.maxPlayers || 0) || 8
+        }),
+      actor: mutation.actor,
       skin: mutation.skin ?? {
         title: sourceTournament.name,
         subtitle: sourceTournament.studioName,
@@ -797,7 +823,9 @@ export class TournamentsService {
       trainerId: mutation.trainerId,
       trainerName: mutation.trainerName,
       exerciseTypeId: mutation.exerciseTypeId,
-      skin: mutation.skin
+      skin: mutation.skin,
+      mechanics: mutation.mechanics,
+      actor: mutation.actor
     });
   }
 
@@ -841,7 +869,7 @@ export class TournamentsService {
 
   private async hydrateCustomTournament(tournament: CustomTournament): Promise<CustomTournament> {
     if (!tournament.sourceTournamentId) {
-      return tournament;
+      return this.ensureTournamentDefaults(tournament);
     }
 
     try {
@@ -884,6 +912,15 @@ export class TournamentsService {
         Number(tournament.maxPlayers || 0) ||
         this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
         8,
+      mechanics: this.buildDefaultTournamentMechanics({
+        existing: tournament.mechanics,
+        tournamentType:
+          tournament.tournamentType ?? this.pickString(sourceTournamentSnapshot.tournamentType),
+        maxPlayers:
+          Number(tournament.maxPlayers || 0) ||
+          this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
+          8
+      }),
       participants: mergedParticipants,
       participantsCount: mergedParticipantsCount,
       paidParticipantsCount:
@@ -893,6 +930,96 @@ export class TournamentsService {
         sourceTournamentSnapshot
       }
     };
+  }
+
+  private ensureTournamentDefaults(tournament: CustomTournament): CustomTournament {
+    return {
+      ...tournament,
+      mechanics: this.buildDefaultTournamentMechanics({
+        existing: tournament.mechanics,
+        tournamentType: tournament.tournamentType,
+        maxPlayers: tournament.maxPlayers
+      }),
+      changeLog: Array.isArray(tournament.changeLog) ? tournament.changeLog : []
+    };
+  }
+
+  private buildDefaultTournamentMechanics(input: {
+    existing?: TournamentMechanics;
+    tournamentType?: string;
+    maxPlayers?: number;
+  }): TournamentMechanics {
+    const existing = input.existing;
+    const existingConfig = existing?.config;
+    const resolvedConfig: AmericanoGeneratorConfig = {
+      mode: this.resolveMechanicsMode(input.tournamentType, existingConfig?.mode),
+      rounds: typeof existingConfig?.rounds === 'number' ? existingConfig.rounds : null,
+      courts: typeof existingConfig?.courts === 'number' ? existingConfig.courts : null,
+      useRatings: existingConfig?.useRatings !== false,
+      firstRoundSeeding: existingConfig?.firstRoundSeeding ?? 'auto',
+      roundExactThreshold:
+        typeof existingConfig?.roundExactThreshold === 'number'
+          ? existingConfig.roundExactThreshold
+          : 12,
+      balanceOutlierThreshold:
+        typeof existingConfig?.balanceOutlierThreshold === 'number'
+          ? existingConfig.balanceOutlierThreshold
+          : 1.1,
+      balanceOutlierWeight:
+        typeof existingConfig?.balanceOutlierWeight === 'number'
+          ? existingConfig.balanceOutlierWeight
+          : 120,
+      strictPartnerUniqueness: existingConfig?.strictPartnerUniqueness ?? 'high',
+      strictBalance: existingConfig?.strictBalance ?? 'medium',
+      avoidRepeatOpponents: existingConfig?.avoidRepeatOpponents !== false,
+      avoidRepeatPartners: existingConfig?.avoidRepeatPartners !== false,
+      distributeByesEvenly: existingConfig?.distributeByesEvenly !== false,
+      historyDepth:
+        typeof existingConfig?.historyDepth === 'number' ? existingConfig.historyDepth : 0,
+      localSearchIterations:
+        typeof existingConfig?.localSearchIterations === 'number'
+          ? existingConfig.localSearchIterations
+          : 6,
+      pairingExactThreshold:
+        typeof existingConfig?.pairingExactThreshold === 'number'
+          ? existingConfig.pairingExactThreshold
+          : 16,
+      matchExactThreshold:
+        typeof existingConfig?.matchExactThreshold === 'number'
+          ? existingConfig.matchExactThreshold
+          : 12,
+      weights: {
+        ...DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS,
+        ...(existingConfig?.weights || {})
+      }
+    };
+
+    return {
+      enabled: existing?.enabled !== false,
+      config: resolvedConfig,
+      history: Array.isArray(existing?.history) ? existing?.history : undefined,
+      notes: this.pickString(existing?.notes) ?? undefined
+    };
+  }
+
+  private resolveMechanicsMode(
+    tournamentType?: string,
+    existingMode?: AmericanoGeneratorConfig['mode']
+  ): AmericanoGeneratorConfig['mode'] {
+    if (
+      existingMode === 'full_americano' ||
+      existingMode === 'short_americano' ||
+      existingMode === 'competitive_americano' ||
+      existingMode === 'dynamic_americano'
+    ) {
+      return existingMode;
+    }
+
+    const normalizedType = String(tournamentType ?? '').trim().toLowerCase();
+    if (normalizedType.includes('compet')) {
+      return 'competitive_americano';
+    }
+    return 'short_americano';
   }
 
   private getSourceTournamentSnapshot(tournament: CustomTournament): Record<string, unknown> {
