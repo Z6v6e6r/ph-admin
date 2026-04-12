@@ -11,6 +11,13 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import {
+  TournamentResultGameEntry,
+  TournamentResultMatchEntry,
+  TournamentResultMatchTeam,
+  TournamentResultsView,
+  TournamentResultStandingEntry
+} from '../tournaments/tournaments.types';
+import {
   Game,
   GameAnalyticsFilters,
   GameAnalyticsResult,
@@ -47,6 +54,7 @@ interface MongoGameDoc {
   [key: string]: unknown;
   _id?: unknown;
   id?: unknown;
+  tournamentId?: unknown;
   status?: unknown;
   archived?: unknown;
   createdAt?: unknown;
@@ -283,6 +291,122 @@ export class GamesService implements OnModuleDestroy {
     return mapped;
   }
 
+  async getTournamentResults(
+    tournamentId: string,
+    user?: RequestUser
+  ): Promise<TournamentResultsView> {
+    const resolvedTournamentId = this.readString(tournamentId);
+    if (!resolvedTournamentId) {
+      throw new BadRequestException('Tournament id is required');
+    }
+
+    const games = await this.findGamesByTournamentId(resolvedTournamentId, user);
+    const standings = new Map<
+      string,
+      {
+        player: string;
+        playedGames: number;
+        wins: number;
+        losses: number;
+        totalDelta: number;
+      }
+    >();
+    const uniquePlayers = new Set<string>();
+    let lastGameAt: string | undefined;
+
+    const gameEntries: TournamentResultGameEntry[] = games.map((game) => {
+      const participants = this.collectTournamentGameParticipants(game);
+      participants.forEach((player) => {
+        uniquePlayers.add(player);
+        const row = this.ensureTournamentStandingRow(standings, player);
+        row.playedGames += 1;
+      });
+
+      this.extractTournamentRatingDeltaEntries(game.ratingDeltaLines).forEach((entry) => {
+        uniquePlayers.add(entry.player);
+        const row = this.ensureTournamentStandingRow(standings, entry.player);
+        row.totalDelta += entry.delta;
+      });
+
+      this.applyTournamentWinLoss(standings, game);
+
+      const timestampValue =
+        this.readString(game.startsAt) ??
+        this.readString(game.updatedAt) ??
+        this.readString(game.createdAt);
+      if (timestampValue) {
+        const currentTs = Date.parse(timestampValue);
+        const previousTs = Date.parse(lastGameAt || '');
+        if (!lastGameAt || (Number.isFinite(currentTs) && (!Number.isFinite(previousTs) || currentTs > previousTs))) {
+          lastGameAt = timestampValue;
+        }
+      }
+
+      return {
+        gameId: game.id,
+        title: game.name,
+        startsAt: game.startsAt,
+        stationName: game.stationName,
+        courtName: game.courtName,
+        locationName: game.locationName,
+        participants,
+        result: game.result,
+        resultLines: Array.isArray(game.resultLines) ? game.resultLines : [],
+        ratingDelta: game.ratingDelta,
+        ratingDeltaLines: Array.isArray(game.ratingDeltaLines) ? game.ratingDeltaLines : []
+      };
+    });
+
+    const matchEntries: TournamentResultMatchEntry[] = games.map((game) => ({
+      gameId: game.id,
+      title: game.name,
+      startsAt: game.startsAt,
+      stationName: game.stationName,
+      courtName: game.courtName,
+      locationName: game.locationName,
+      teams: this.extractTournamentMatchTeams(game),
+      resultLines: Array.isArray(game.resultLines) ? game.resultLines : [],
+      ratingDeltaLines: Array.isArray(game.ratingDeltaLines) ? game.ratingDeltaLines : []
+    }));
+
+    const standingEntries: TournamentResultStandingEntry[] = Array.from(standings.values())
+      .map((entry) => ({
+        player: entry.player,
+        playedGames: entry.playedGames,
+        wins: entry.wins,
+        losses: entry.losses,
+        totalDelta: this.roundTournamentDelta(entry.totalDelta)
+      }))
+      .sort((left, right) => {
+        if (right.wins !== left.wins) {
+          return right.wins - left.wins;
+        }
+        if (right.totalDelta !== left.totalDelta) {
+          return right.totalDelta - left.totalDelta;
+        }
+        if (right.playedGames !== left.playedGames) {
+          return right.playedGames - left.playedGames;
+        }
+        return left.player.localeCompare(right.player, 'ru');
+      });
+
+    return {
+      tournamentId: resolvedTournamentId,
+      resolvedTournamentId,
+      summary: {
+        totalGames: gameEntries.length,
+        gamesWithResult: gameEntries.filter((game) => {
+          return Boolean(game.result) || game.resultLines.length > 0;
+        }).length,
+        uniquePlayers: uniquePlayers.size,
+        ...(lastGameAt ? { lastGameAt } : {})
+      },
+      games: gameEntries,
+      matches: matchEntries,
+      standings: standingEntries
+    };
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.mongoClient) {
       await this.mongoClient.close().catch(() => undefined);
@@ -308,6 +432,7 @@ export class GamesService implements OnModuleDestroy {
         {
           projection: {
             id: 1,
+            tournamentId: 1,
             status: 1,
             archived: 1,
             createdAt: 1,
@@ -352,6 +477,7 @@ export class GamesService implements OnModuleDestroy {
       .find(mongoFilter, {
         projection: {
           id: 1,
+          tournamentId: 1,
           status: 1,
           archived: 1,
           createdAt: 1,
@@ -629,6 +755,310 @@ export class GamesService implements OnModuleDestroy {
       participantDetails: participantNames.map((name) => ({ name })),
       details: undefined
     };
+  }
+
+  private async findGamesByTournamentId(
+    tournamentId: string,
+    user?: RequestUser
+  ): Promise<Game[]> {
+    const normalizedTournamentId = this.readString(tournamentId);
+    if (!normalizedTournamentId) {
+      return [];
+    }
+
+    const variants = Array.from(this.buildTournamentIdVariants(normalizedTournamentId));
+    let games: Game[] = [];
+
+    if (this.sourceMode === 'mongo') {
+      const collection = await this.getMongoCollection();
+      const docs = (await collection
+        .find(
+          {
+            archived: { $ne: true },
+            $or: [
+              { tournamentId: { $in: variants } },
+              { 'metadata.tournamentId': { $in: variants } },
+              { 'metadata.tournament_id': { $in: variants } }
+            ]
+          },
+          {
+            projection: {
+              id: 1,
+              tournamentId: 1,
+              status: 1,
+              archived: 1,
+              createdAt: 1,
+              createdTs: 1,
+              updatedAt: 1,
+              organizer: 1,
+              participants: 1,
+              metadata: 1,
+              result: 1,
+              score: 1,
+              matchResult: 1,
+              gameResult: 1,
+              ratingDelta: 1,
+              ratingChanges: 1,
+              booking: 1
+            }
+          }
+        )
+        .sort({ 'booking.startTs': 1, createdAt: 1, _id: 1 })
+        .toArray()) as MongoGameDoc[];
+
+      games = docs
+        .map((doc) => this.mapMongoGame(doc))
+        .filter((game): game is Game => game !== null);
+    } else {
+      games = (await this.lkPadelHubClient.listGames()).filter((game) =>
+        this.matchesTournamentId(game, variants)
+      );
+    }
+
+    return games
+      .filter((game) => this.matchesTournamentId(game, variants))
+      .filter((game) => this.canViewGame(game, user))
+      .map((game) => this.sanitizeGameForUser(game, user))
+      .sort((left, right) => {
+        return (
+          this.compareNullableSortValues(
+            this.resolveGameDateSortValue(left),
+            this.resolveGameDateSortValue(right)
+          ) ||
+          this.compareNullableSortValues(
+            this.resolveGameCreatedSortValue(left),
+            this.resolveGameCreatedSortValue(right)
+          )
+        );
+      });
+  }
+
+  private buildTournamentIdVariants(tournamentId: string): Set<string> {
+    const normalized = String(tournamentId || '').trim();
+    const variants = new Set<string>();
+    if (!normalized) {
+      return variants;
+    }
+
+    variants.add(normalized);
+    variants.add(normalized.toLowerCase());
+    variants.add(normalized.toUpperCase());
+    variants.add(normalized.replace(/:/g, '_'));
+    variants.add(normalized.replace(/_/g, ':'));
+    return variants;
+  }
+
+  private matchesTournamentId(game: Game, variants: string[]): boolean {
+    const tournamentId = this.readString(game.tournamentId);
+    if (!tournamentId) {
+      return false;
+    }
+    return variants.includes(tournamentId);
+  }
+
+  private collectTournamentGameParticipants(game: Game): string[] {
+    const values = new Set<string>();
+
+    (Array.isArray(game.participantDetails) ? game.participantDetails : []).forEach((participant) => {
+      const normalized = this.readString(participant?.name);
+      if (normalized) {
+        values.add(normalized);
+      }
+    });
+
+    (Array.isArray(game.participantNames) ? game.participantNames : []).forEach((participant) => {
+      const normalized = this.readString(participant);
+      if (normalized) {
+        values.add(normalized);
+      }
+    });
+
+    this.extractTournamentMatchTeams(game).forEach((team) => {
+      team.players.forEach((player) => {
+        const normalized = this.readString(player);
+        if (normalized) {
+          values.add(normalized);
+        }
+      });
+    });
+
+    this.extractTournamentRatingDeltaEntries(game.ratingDeltaLines).forEach((entry) => {
+      values.add(entry.player);
+    });
+
+    return Array.from(values.values()).sort((left, right) => left.localeCompare(right, 'ru'));
+  }
+
+  private ensureTournamentStandingRow(
+    standings: Map<
+      string,
+      {
+        player: string;
+        playedGames: number;
+        wins: number;
+        losses: number;
+        totalDelta: number;
+      }
+    >,
+    player: string
+  ): {
+    player: string;
+    playedGames: number;
+    wins: number;
+    losses: number;
+    totalDelta: number;
+  } {
+    const key = String(player || '').trim().toLocaleLowerCase('ru');
+    const existing = standings.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const created = {
+      player: String(player || '').trim(),
+      playedGames: 0,
+      wins: 0,
+      losses: 0,
+      totalDelta: 0
+    };
+    standings.set(key, created);
+    return created;
+  }
+
+  private extractTournamentMatchTeams(game: Game): TournamentResultMatchTeam[] {
+    const lines = Array.isArray(game.teamParticipantLines) ? game.teamParticipantLines : [];
+    const teams: TournamentResultMatchTeam[] = [];
+    let currentTeam: TournamentResultMatchTeam | null = null;
+
+    lines.forEach((line) => {
+      const normalized = this.readString(line);
+      if (!normalized) {
+        return;
+      }
+
+      const teamMatch = normalized.match(/^команда\s+(.+)$/i);
+      if (teamMatch) {
+        currentTeam = {
+          name: String(teamMatch[1] || '').trim() || String(teams.length + 1),
+          players: []
+        };
+        teams.push(currentTeam);
+        return;
+      }
+
+      if (!currentTeam) {
+        return;
+      }
+      currentTeam.players.push(normalized);
+    });
+
+    return teams.filter((team) => team.players.length > 0);
+  }
+
+  private extractTournamentRatingDeltaEntries(
+    lines: string[] | undefined
+  ): Array<{ player: string; delta: number }> {
+    return (Array.isArray(lines) ? lines : [])
+      .map((line) => {
+        const normalized = this.readString(line);
+        if (!normalized) {
+          return null;
+        }
+
+        const match = normalized.match(/^(.*?):.*\(([+\-]?\d+(?:[.,]\d+)?)\)\s*$/);
+        if (!match) {
+          return null;
+        }
+
+        const player = String(match[1] || '').trim();
+        const delta = Number(String(match[2] || '').replace(',', '.'));
+        if (!player || !Number.isFinite(delta)) {
+          return null;
+        }
+
+        return { player, delta };
+      })
+      .filter((entry): entry is { player: string; delta: number } => Boolean(entry));
+  }
+
+  private applyTournamentWinLoss(
+    standings: Map<
+      string,
+      {
+        player: string;
+        playedGames: number;
+        wins: number;
+        losses: number;
+        totalDelta: number;
+      }
+    >,
+    game: Game
+  ): void {
+    const teams = this.extractTournamentMatchTeams(game);
+    if (teams.length < 2) {
+      return;
+    }
+
+    const winnerIndex = this.resolveTournamentWinnerIndex(game.resultLines);
+    if (winnerIndex === null || winnerIndex > 1) {
+      return;
+    }
+
+    teams.forEach((team, index) => {
+      team.players.forEach((player) => {
+        const row = this.ensureTournamentStandingRow(standings, player);
+        if (index === winnerIndex) {
+          row.wins += 1;
+        } else if (index === (winnerIndex === 0 ? 1 : 0)) {
+          row.losses += 1;
+        }
+      });
+    });
+  }
+
+  private resolveTournamentWinnerIndex(resultLines: string[] | undefined): number | null {
+    const scores = (Array.isArray(resultLines) ? resultLines : [])
+      .map((line) => this.extractTournamentScorePair(line))
+      .filter((entry): entry is [number, number] => Boolean(entry));
+    if (scores.length === 0) {
+      return null;
+    }
+
+    const totals = scores.reduce(
+      (acc, entry) => {
+        acc[0] += entry[0];
+        acc[1] += entry[1];
+        return acc;
+      },
+      [0, 0]
+    );
+    if (totals[0] === totals[1]) {
+      return null;
+    }
+    return totals[0] > totals[1] ? 0 : 1;
+  }
+
+  private extractTournamentScorePair(line: string): [number, number] | null {
+    const normalized = this.readString(line);
+    if (!normalized) {
+      return null;
+    }
+
+    const match = normalized.match(/^(\d+(?:[.,]\d+)?)\s*[:\-]\s*(\d+(?:[.,]\d+)?)$/);
+    if (!match) {
+      return null;
+    }
+
+    const left = Number(String(match[1] || '').replace(',', '.'));
+    const right = Number(String(match[2] || '').replace(',', '.'));
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      return null;
+    }
+    return [left, right];
+  }
+
+  private roundTournamentDelta(value: number): number {
+    return Math.round(value * 100) / 100;
   }
 
   private isRestrictedStationAdmin(user?: RequestUser): boolean {
@@ -1537,6 +1967,7 @@ export class GamesService implements OnModuleDestroy {
 
   private mapMongoGame(doc: MongoGameDoc, options?: { includeDetails?: boolean }): Game | null {
     const id = this.readString(doc.id) ?? this.readObjectId(doc._id);
+    const metadata = this.toRecord(doc.metadata);
     const studioName = this.readString(doc.booking?.studioName);
     const roomName = this.readString(doc.booking?.roomName);
     const bookingDate = this.readString(doc.booking?.date);
@@ -1581,6 +2012,11 @@ export class GamesService implements OnModuleDestroy {
       name: locationName || `Игра ${id}`,
       status: this.normalizeMongoStatus(rawStatus, doc.archived),
       rawStatus: rawStatus ?? undefined,
+      tournamentId:
+        this.readString(doc.tournamentId) ??
+        this.readString(metadata.tournamentId) ??
+        this.readString(metadata.tournament_id) ??
+        undefined,
       startsAt: startsAt ?? undefined,
       createdAt: this.resolveGameCreatedAt(doc) ?? undefined,
       updatedAt: this.readString(doc.updatedAt) ?? undefined,

@@ -6,6 +6,7 @@ import { GamesService } from './games.service';
 @Module({
   imports: [LkPadelHubModule],
   controllers: [GamesController],
-  providers: [GamesService]
+  providers: [GamesService],
+  exports: [GamesService]
 })
 export class GamesModule {}

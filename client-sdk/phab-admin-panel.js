@@ -4544,6 +4544,9 @@
       getCustomTournament: function (tournamentId) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'GET');
       },
+      getTournamentResults: function (tournamentId) {
+        return request('/tournaments/' + encodeURIComponent(tournamentId) + '/results', 'GET');
+      },
       createCustomTournamentFromSource: function (sourceTournamentId, payload) {
         return request(
           '/tournaments/custom/from-source/' + encodeURIComponent(sourceTournamentId),
@@ -13603,6 +13606,35 @@
       return input;
     }
 
+    function createTournamentBlockSwitch(label, checked) {
+      var root = document.createElement('div');
+      root.className = 'phab-admin-dialog-option';
+
+      var toggleLabel = document.createElement('label');
+      toggleLabel.className = 'phab-admin-switch';
+      root.appendChild(toggleLabel);
+
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'phab-admin-switch-input';
+      input.checked = checked === true;
+      toggleLabel.appendChild(input);
+
+      var track = document.createElement('span');
+      track.className = 'phab-admin-switch-track';
+      toggleLabel.appendChild(track);
+
+      var text = document.createElement('span');
+      text.className = 'phab-admin-switch-text';
+      text.textContent = String(label || '');
+      root.appendChild(text);
+
+      return {
+        root: root,
+        input: input
+      };
+    }
+
     function createTournamentSelect(options, value) {
       var select = document.createElement('select');
       select.className = 'phab-admin-input';
@@ -13617,6 +13649,151 @@
         select.value = String(select.options[0].value || '');
       }
       return select;
+    }
+
+    function formatTournamentSignedNumber(value) {
+      var numeric = Number(value || 0);
+      if (!Number.isFinite(numeric)) {
+        return '0';
+      }
+      var normalized = Math.round(numeric * 100) / 100;
+      if (normalized === 0) {
+        return '0';
+      }
+      return (normalized > 0 ? '+' : '') + String(normalized);
+    }
+
+    function normalizeTournamentResults(payload) {
+      var source = normalizeObject(payload);
+      return {
+        tournamentId: String(source.tournamentId || ''),
+        resolvedTournamentId: String(source.resolvedTournamentId || ''),
+        summary: {
+          totalGames: Math.max(0, Number(normalizeObject(source.summary).totalGames || 0) || 0),
+          gamesWithResult: Math.max(
+            0,
+            Number(normalizeObject(source.summary).gamesWithResult || 0) || 0
+          ),
+          uniquePlayers: Math.max(
+            0,
+            Number(normalizeObject(source.summary).uniquePlayers || 0) || 0
+          ),
+          lastGameAt: String(normalizeObject(source.summary).lastGameAt || '')
+        },
+        games: normalizeArray(source.games).map(function (item, index) {
+          var record = normalizeObject(item);
+          return {
+            gameId: String(record.gameId || 'game-' + index),
+            title: String(record.title || record.name || 'Игра'),
+            startsAt: String(record.startsAt || ''),
+            stationName: String(record.stationName || ''),
+            courtName: String(record.courtName || ''),
+            locationName: String(record.locationName || ''),
+            participants: normalizeArray(record.participants).map(function (value) {
+              return String(value || '').trim();
+            }).filter(Boolean),
+            result: String(record.result || ''),
+            resultLines: normalizeArray(record.resultLines).map(function (value) {
+              return String(value || '').trim();
+            }).filter(Boolean),
+            ratingDelta: String(record.ratingDelta || ''),
+            ratingDeltaLines: normalizeArray(record.ratingDeltaLines).map(function (value) {
+              return String(value || '').trim();
+            }).filter(Boolean)
+          };
+        }),
+        matches: normalizeArray(source.matches).map(function (item, index) {
+          var record = normalizeObject(item);
+          return {
+            gameId: String(record.gameId || 'match-' + index),
+            title: String(record.title || record.name || 'Матч'),
+            startsAt: String(record.startsAt || ''),
+            stationName: String(record.stationName || ''),
+            courtName: String(record.courtName || ''),
+            locationName: String(record.locationName || ''),
+            teams: normalizeArray(record.teams).map(function (team, teamIndex) {
+              var teamRecord = normalizeObject(team);
+              return {
+                name: String(teamRecord.name || 'Команда ' + String(teamIndex + 1)),
+                players: normalizeArray(teamRecord.players).map(function (value) {
+                  return String(value || '').trim();
+                }).filter(Boolean)
+              };
+            }).filter(function (team) {
+              return team.players.length > 0;
+            }),
+            resultLines: normalizeArray(record.resultLines).map(function (value) {
+              return String(value || '').trim();
+            }).filter(Boolean),
+            ratingDeltaLines: normalizeArray(record.ratingDeltaLines).map(function (value) {
+              return String(value || '').trim();
+            }).filter(Boolean)
+          };
+        }),
+        standings: normalizeArray(source.standings).map(function (item, index) {
+          var record = normalizeObject(item);
+          return {
+            player: String(record.player || 'Игрок ' + String(index + 1)),
+            playedGames: Math.max(0, Number(record.playedGames || 0) || 0),
+            wins: Math.max(0, Number(record.wins || 0) || 0),
+            losses: Math.max(0, Number(record.losses || 0) || 0),
+            totalDelta: Number(record.totalDelta || 0) || 0
+          };
+        })
+      };
+    }
+
+    function createTournamentResultsTable(columns, rows, emptyLabel) {
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-games-table-wrap';
+
+      var table = document.createElement('table');
+      table.className = 'phab-admin-games-table';
+      wrap.appendChild(table);
+
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      normalizeArray(columns).forEach(function (column) {
+        var th = document.createElement('th');
+        th.textContent = String(column.label || '');
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      var tbody = document.createElement('tbody');
+      table.appendChild(tbody);
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = Math.max(1, normalizeArray(columns).length);
+        emptyCell.textContent = String(emptyLabel || 'Нет данных');
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        return wrap;
+      }
+
+      rows.forEach(function (rowData, rowIndex) {
+        var row = document.createElement('tr');
+        normalizeArray(columns).forEach(function (column) {
+          var cell = document.createElement('td');
+          var value = typeof column.render === 'function'
+            ? column.render(rowData, rowIndex)
+            : rowData && column.key
+              ? rowData[column.key]
+              : '';
+          if (value && typeof Node !== 'undefined' && value instanceof Node) {
+            cell.appendChild(value);
+          } else {
+            cell.textContent = String(value || '-');
+          }
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+      });
+
+      return wrap;
     }
 
     function readTournamentOptionalInteger(rawValue, minValue, fallbackNull) {
@@ -14252,11 +14429,35 @@
         'Формат строк участников: Имя | Телефон | Уровень | paid. Для waitlist последняя колонка не обязательна.';
       dom.tournamentEditorBody.appendChild(help);
 
+      var editorViewKey = String((customTournament && customTournament.id) || (tournament && tournament.id) || '');
+      var mechanicsSectionToggleCard = createCommunitySectionCard(
+        'Служебные блоки',
+        'Дополнительные секции карточки раскрываются и подгружаются по переключателю.'
+      );
+      dom.tournamentEditorBody.appendChild(mechanicsSectionToggleCard.card);
+
+      var sectionToggles = document.createElement('div');
+      sectionToggles.className = 'phab-admin-dialog-options';
+      sectionToggles.style.display = 'flex';
+      sectionToggles.style.width = '100%';
+      sectionToggles.style.alignItems = 'stretch';
+      mechanicsSectionToggleCard.body.appendChild(sectionToggles);
+
+      var mechanicsSectionToggle = createTournamentBlockSwitch('Показать механику', false);
+      sectionToggles.appendChild(mechanicsSectionToggle.root);
+
+      var resultsSectionToggle = createTournamentBlockSwitch('Показать результат', false);
+      sectionToggles.appendChild(resultsSectionToggle.root);
+
+      var mechanicsSectionHost = document.createElement('div');
+      mechanicsSectionHost.className = 'phab-admin-hidden';
+      dom.tournamentEditorBody.appendChild(mechanicsSectionHost);
+
       var mechanicsCard = createCommunitySectionCard(
         'Турнирная механика',
         'Параметры генерации и поведения турнирной сетки, продублированные из LK.'
       );
-      dom.tournamentEditorBody.appendChild(mechanicsCard.card);
+      mechanicsSectionHost.appendChild(mechanicsCard.card);
 
       var mechanicsForm = document.createElement('div');
       mechanicsForm.className = 'phab-admin-community-form-grid';
@@ -14443,7 +14644,7 @@
         'Весовые коэффициенты',
         'Тонкая настройка штрафов, баланса и распределения bye.'
       );
-      dom.tournamentEditorBody.appendChild(mechanicsWeightsCard.card);
+      mechanicsSectionHost.appendChild(mechanicsWeightsCard.card);
 
       var mechanicsWeightsForm = document.createElement('div');
       mechanicsWeightsForm.className = 'phab-admin-community-form-grid';
@@ -14465,7 +14666,7 @@
         'История изменений',
         'Кто, когда и что поменял в карточке и турнирной механике.'
       );
-      dom.tournamentEditorBody.appendChild(historyCard.card);
+      mechanicsSectionHost.appendChild(historyCard.card);
 
       var historyList = document.createElement('div');
       historyList.className = 'phab-admin-community-history-list';
@@ -14500,7 +14701,305 @@
         });
       }
 
+      var resultsSectionHost = document.createElement('div');
+      resultsSectionHost.className = 'phab-admin-hidden';
+      dom.tournamentEditorBody.appendChild(resultsSectionHost);
+
+      var resultsRequestId = editorViewKey;
+      var resultsState = {
+        loading: null,
+        payload: null
+      };
+
+      function renderTournamentResultsLoading() {
+        clearNode(resultsSectionHost);
+        var loadingCard = createCommunitySectionCard(
+          'Результаты турнира',
+          'Подгружаем результаты игр, матчей и турнирную таблицу.'
+        );
+        resultsSectionHost.appendChild(loadingCard.card);
+
+        var loadingNote = document.createElement('div');
+        loadingNote.className = 'phab-admin-empty';
+        loadingNote.textContent = 'Загружаем результаты турнира...';
+        loadingCard.body.appendChild(loadingNote);
+      }
+
+      function renderTournamentResultsError(message) {
+        clearNode(resultsSectionHost);
+        var errorCard = createCommunitySectionCard(
+          'Результаты турнира',
+          'Не удалось получить данные результата из источника.'
+        );
+        resultsSectionHost.appendChild(errorCard.card);
+
+        var errorNote = document.createElement('div');
+        errorNote.className = 'phab-admin-empty';
+        errorNote.textContent = String(message || 'Не удалось загрузить результаты турнира.');
+        errorCard.body.appendChild(errorNote);
+      }
+
+      function renderTournamentResults(payload) {
+        clearNode(resultsSectionHost);
+        var results = normalizeTournamentResults(payload);
+
+        var summaryCard = createCommunitySectionCard(
+          'Результаты турнира',
+          'Отдельный lazy-блок с играми, матчами и таблицей по турниру.'
+        );
+        resultsSectionHost.appendChild(summaryCard.card);
+
+        var summaryStats = document.createElement('div');
+        summaryStats.className = 'phab-admin-community-summary';
+        summaryCard.body.appendChild(summaryStats);
+        summaryStats.appendChild(
+          createCommunityStatCard('Игры', String(results.summary.totalGames))
+        );
+        summaryStats.appendChild(
+          createCommunityStatCard('С результатом', String(results.summary.gamesWithResult))
+        );
+        summaryStats.appendChild(
+          createCommunityStatCard('Игроки', String(results.summary.uniquePlayers))
+        );
+        summaryStats.appendChild(
+          createCommunityStatCard(
+            'Последняя игра',
+            results.summary.lastGameAt ? formatDateTimeFull(results.summary.lastGameAt) : '-'
+          )
+        );
+
+        if (results.games.length === 0) {
+          var emptyNote = document.createElement('div');
+          emptyNote.className = 'phab-admin-empty';
+          emptyNote.textContent =
+            'По этому турниру пока не найдено связанных игр с результатами.';
+          summaryCard.body.appendChild(emptyNote);
+        }
+
+        var gamesCard = createCommunitySectionCard(
+          'Результаты игр',
+          'Сводка по каждой игре турнира.'
+        );
+        resultsSectionHost.appendChild(gamesCard.card);
+        gamesCard.body.appendChild(
+          createTournamentResultsTable(
+            [
+              {
+                label: 'Игра',
+                render: function (row) {
+                  return row.title;
+                }
+              },
+              {
+                label: 'Когда',
+                render: function (row) {
+                  return row.startsAt ? formatDateTimeFull(row.startsAt) : '-';
+                }
+              },
+              {
+                label: 'Локация',
+                render: function (row) {
+                  return [
+                    row.stationName || '',
+                    row.courtName || '',
+                    !row.stationName && !row.courtName ? row.locationName || '' : ''
+                  ].filter(Boolean).join(' · ') || '-';
+                }
+              },
+              {
+                label: 'Участники',
+                render: function (row) {
+                  return row.participants.length > 0 ? row.participants.join(', ') : '-';
+                }
+              },
+              {
+                label: 'Счёт',
+                render: function (row) {
+                  return row.result || (row.resultLines.length > 0 ? row.resultLines.join(' / ') : '-');
+                }
+              },
+              {
+                label: 'Δ рейтинг',
+                render: function (row) {
+                  return row.ratingDelta || (row.ratingDeltaLines.length > 0
+                    ? row.ratingDeltaLines.join(' • ')
+                    : '-');
+                }
+              }
+            ],
+            results.games,
+            'Связанные игры ещё не появились.'
+          )
+        );
+
+        var matchesCard = createCommunitySectionCard(
+          'Результаты матчей',
+          'Команды, счёт по сетам и изменение рейтинга.'
+        );
+        resultsSectionHost.appendChild(matchesCard.card);
+        matchesCard.body.appendChild(
+          createTournamentResultsTable(
+            [
+              {
+                label: 'Матч',
+                render: function (row) {
+                  return row.title;
+                }
+              },
+              {
+                label: 'Когда',
+                render: function (row) {
+                  return row.startsAt ? formatDateTimeFull(row.startsAt) : '-';
+                }
+              },
+              {
+                label: 'Команды',
+                render: function (row) {
+                  if (!Array.isArray(row.teams) || row.teams.length === 0) {
+                    return '-';
+                  }
+                  return row.teams.map(function (team) {
+                    return team.name + ': ' + team.players.join(', ');
+                  }).join(' • ');
+                }
+              },
+              {
+                label: 'Сеты',
+                render: function (row) {
+                  return row.resultLines.length > 0 ? row.resultLines.join(' / ') : '-';
+                }
+              },
+              {
+                label: 'Δ рейтинг',
+                render: function (row) {
+                  return row.ratingDeltaLines.length > 0 ? row.ratingDeltaLines.join(' • ') : '-';
+                }
+              }
+            ],
+            results.matches,
+            'Матчевые результаты ещё не найдены.'
+          )
+        );
+
+        var standingsCard = createCommunitySectionCard(
+          'Турнирная таблица',
+          'Агрегированная таблица по игрокам на основе найденных игр турнира.'
+        );
+        resultsSectionHost.appendChild(standingsCard.card);
+        standingsCard.body.appendChild(
+          createTournamentResultsTable(
+            [
+              {
+                label: '#',
+                render: function (_row, index) {
+                  return String(index + 1);
+                }
+              },
+              {
+                label: 'Игрок',
+                render: function (row) {
+                  return row.player;
+                }
+              },
+              {
+                label: 'Матчи',
+                render: function (row) {
+                  return String(row.playedGames);
+                }
+              },
+              {
+                label: 'Победы',
+                render: function (row) {
+                  return String(row.wins);
+                }
+              },
+              {
+                label: 'Поражения',
+                render: function (row) {
+                  return String(row.losses);
+                }
+              },
+              {
+                label: 'Δ рейтинг',
+                render: function (row) {
+                  return formatTournamentSignedNumber(row.totalDelta);
+                }
+              }
+            ],
+            results.standings,
+            'Турнирная таблица появится после появления связанных игр и результатов.'
+          )
+        );
+      }
+
+      function ensureTournamentResultsLoaded() {
+        if (resultsState.payload) {
+          renderTournamentResults(resultsState.payload);
+          return Promise.resolve(resultsState.payload);
+        }
+        if (resultsState.loading) {
+          return resultsState.loading;
+        }
+
+        renderTournamentResultsLoading();
+        resultsState.loading = api.getTournamentResults(resultsRequestId)
+          .then(function (response) {
+            resultsState.loading = null;
+            resultsState.payload = response;
+            if (
+              state.tournamentEditor &&
+              state.tournamentEditor.viewKey === editorViewKey &&
+              resultsSectionToggle.input.checked
+            ) {
+              renderTournamentResults(response);
+            }
+            return response;
+          })
+          .catch(function (error) {
+            resultsState.loading = null;
+            var message =
+              error && error.message
+                ? error.message
+                : 'Не удалось загрузить результаты турнира.';
+            if (
+              state.tournamentEditor &&
+              state.tournamentEditor.viewKey === editorViewKey &&
+              resultsSectionToggle.input.checked
+            ) {
+              renderTournamentResultsError(message);
+            }
+            throw error;
+          });
+
+        return resultsState.loading;
+      }
+
+      function syncTournamentOptionalSections() {
+        mechanicsSectionHost.classList.toggle(
+          'phab-admin-hidden',
+          mechanicsSectionToggle.input.checked !== true
+        );
+        resultsSectionHost.classList.toggle(
+          'phab-admin-hidden',
+          resultsSectionToggle.input.checked !== true
+        );
+        if (resultsSectionToggle.input.checked === true) {
+          ensureTournamentResultsLoaded().catch(function (error) {
+            setStatus(
+              error && error.message
+                ? error.message
+                : 'Не удалось загрузить результаты турнира.',
+              true
+            );
+          });
+        }
+      }
+
+      mechanicsSectionToggle.input.addEventListener('change', syncTournamentOptionalSections);
+      resultsSectionToggle.input.addEventListener('change', syncTournamentOptionalSections);
+
       state.tournamentEditor = {
+        viewKey: editorViewKey,
         sourceTournamentId: sourceTournamentId,
         customTournamentId: customTournament ? String(customTournament.id || '') : '',
         form: {
@@ -14554,6 +15053,8 @@
           mechanicsWeightPairInternalImbalance: mechanicsWeightInputs.pairInternalImbalance
         }
       };
+
+      syncTournamentOptionalSections();
 
       dom.tournamentEditorModal.classList.remove('phab-admin-hidden');
       window.setTimeout(function () {

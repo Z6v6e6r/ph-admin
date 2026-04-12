@@ -16,7 +16,7 @@ import { CreateCustomTournamentFromSourceDto } from './dto/create-custom-tournam
 import { GenerateTournamentScheduleDto } from './dto/generate-tournament-schedule.dto';
 import { SimulateTournamentRatingDto } from './dto/simulate-tournament-rating.dto';
 import { UpdateCustomTournamentDto } from './dto/update-custom-tournament.dto';
-import { CustomTournament, Tournament } from './tournaments.types';
+import { CustomTournament, Tournament, TournamentResultsView } from './tournaments.types';
 import { TournamentsService } from './tournaments.service';
 
 @Controller('tournaments')
@@ -76,6 +76,14 @@ export class TournamentsController {
     @Body() dto: SimulateTournamentRatingDto
   ): Promise<AmericanoRatingSimulationResult> {
     return this.tournamentsService.simulateRating(dto);
+  }
+
+  @Get(':id/results')
+  getResults(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<TournamentResultsView> {
+    return this.tournamentsService.getResults(id, user);
   }
 
   @Get(':id')

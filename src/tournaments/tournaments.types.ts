@@ -76,6 +76,61 @@ export interface TournamentChangeLogEntry {
   changes: TournamentChangeLogField[];
 }
 
+export interface TournamentResultsSummary {
+  totalGames: number;
+  gamesWithResult: number;
+  uniquePlayers: number;
+  lastGameAt?: string;
+}
+
+export interface TournamentResultGameEntry {
+  gameId: string;
+  title: string;
+  startsAt?: string;
+  stationName?: string;
+  courtName?: string;
+  locationName?: string;
+  participants: string[];
+  result?: string;
+  resultLines: string[];
+  ratingDelta?: string;
+  ratingDeltaLines: string[];
+}
+
+export interface TournamentResultMatchTeam {
+  name: string;
+  players: string[];
+}
+
+export interface TournamentResultMatchEntry {
+  gameId: string;
+  title: string;
+  startsAt?: string;
+  stationName?: string;
+  courtName?: string;
+  locationName?: string;
+  teams: TournamentResultMatchTeam[];
+  resultLines: string[];
+  ratingDeltaLines: string[];
+}
+
+export interface TournamentResultStandingEntry {
+  player: string;
+  playedGames: number;
+  wins: number;
+  losses: number;
+  totalDelta: number;
+}
+
+export interface TournamentResultsView {
+  tournamentId: string;
+  resolvedTournamentId: string;
+  summary: TournamentResultsSummary;
+  games: TournamentResultGameEntry[];
+  matches: TournamentResultMatchEntry[];
+  standings: TournamentResultStandingEntry[];
+}
+
 export interface Tournament {
   id: string;
   source: TournamentSource;

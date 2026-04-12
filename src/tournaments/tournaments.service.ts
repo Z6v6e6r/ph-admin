@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException
 } from '@nestjs/common';
+import { RequestUser } from '../common/rbac/request-user.interface';
+import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
@@ -35,6 +37,7 @@ import {
   TournamentParticipant,
   TournamentPublicClientProfile,
   TournamentPublicDirectoryResponse,
+  TournamentResultsView,
   TournamentPublicView,
   TournamentRegistrationResponse,
   TournamentStatus
@@ -68,6 +71,7 @@ export class TournamentsService {
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
     private readonly vivaTournamentsService: VivaTournamentsService,
+    private readonly gamesService: GamesService,
     private readonly tournamentsPersistence: TournamentsPersistenceService,
     private readonly americanoScheduleService: AmericanoScheduleService,
     private readonly americanoRatingSimulationService: AmericanoRatingSimulationService
@@ -142,6 +146,29 @@ export class TournamentsService {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
     return this.hydrateCustomTournament(tournament);
+  }
+
+  async getResults(id: string, user?: RequestUser): Promise<TournamentResultsView> {
+    const requestedId = this.pickString(id);
+    if (!requestedId) {
+      throw new BadRequestException('Tournament id is required');
+    }
+
+    const customTournament = await this.findCustomTournamentByIdSafe(requestedId);
+    const sourceTournamentSnapshot = customTournament
+      ? this.getSourceTournamentSnapshot(customTournament)
+      : {};
+    const sourceTournamentId =
+      customTournament?.sourceTournamentId ||
+      this.pickString(sourceTournamentSnapshot.id) ||
+      requestedId;
+    const results = await this.gamesService.getTournamentResults(sourceTournamentId, user);
+
+    return {
+      ...results,
+      tournamentId: requestedId,
+      resolvedTournamentId: sourceTournamentId
+    };
   }
 
   async createCustomFromSource(
