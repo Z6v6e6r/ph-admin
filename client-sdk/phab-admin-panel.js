@@ -13739,8 +13739,502 @@
             losses: Math.max(0, Number(record.losses || 0) || 0),
             totalDelta: Number(record.totalDelta || 0) || 0
           };
-        })
+        }),
+        mechanicsStatsRows: normalizeArray(source.mechanicsStatsRows),
+        mechanicsHistoryRows: normalizeArray(source.mechanicsHistoryRows),
+        sourceLabel: String(source.sourceLabel || '')
       };
+    }
+
+    function parseTournamentNumber(value) {
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+      var normalized = String(value == null ? '' : value).trim().replace(',', '.');
+      if (!normalized) {
+        return null;
+      }
+      var numeric = Number(normalized);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function listTournamentMechanicsContainers(raw) {
+      var root = normalizeObject(raw);
+      var containers = [root];
+      [
+        'results',
+        'result',
+        'stats',
+        'statistics',
+        'scoreboard',
+        'table',
+        'standings',
+        'rating',
+        'ratingSimulation',
+        'simulation',
+        'data',
+        'payload'
+      ].forEach(function (key) {
+        var value = normalizeObject(root[key]);
+        if (Object.keys(value).length > 0) {
+          containers.push(value);
+        }
+      });
+      return containers;
+    }
+
+    function findTournamentMechanicsSimulation(containers) {
+      var found = null;
+      normalizeArray(containers).some(function (container) {
+        if (Array.isArray(container.rounds) && Array.isArray(container.players)) {
+          found = container;
+          return true;
+        }
+        return false;
+      });
+      return found;
+    }
+
+    function buildTournamentByeMapFromMechanicsHistory(history) {
+      var byeMap = {};
+      normalizeArray(history).forEach(function (round) {
+        var record = normalizeObject(round);
+        normalizeArray(record.byes).forEach(function (player) {
+          var key = String(player || '').trim();
+          if (!key) {
+            return;
+          }
+          byeMap[key] = (byeMap[key] || 0) + 1;
+        });
+      });
+      return byeMap;
+    }
+
+    function buildTournamentResultsFromMechanicsSimulation(mechanics, simulation) {
+      var byeMap = buildTournamentByeMapFromMechanicsHistory(mechanics && mechanics.history);
+      var playersMap = {};
+      var mechanicsHistoryRows = [];
+      var matches = [];
+
+      function ensurePlayer(name) {
+        var key = String(name || '').trim();
+        if (!key) {
+          return null;
+        }
+        if (!playersMap[key]) {
+          playersMap[key] = {
+            participant: key,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+            points: 0,
+            difference: 0,
+            bye: byeMap[key] || 0,
+            totalDelta: 0
+          };
+        }
+        return playersMap[key];
+      }
+
+      normalizeArray(simulation.players).forEach(function (player) {
+        var record = normalizeObject(player);
+        var name = String(record.name || record.playerName || record.id || '').trim();
+        if (!name) {
+          return;
+        }
+        var row = ensurePlayer(name);
+        if (!row) {
+          return;
+        }
+        var initialRating = parseTournamentNumber(record.initialRating);
+        var finalRating = parseTournamentNumber(record.finalRating);
+        var totalDelta = parseTournamentNumber(record.totalDelta);
+        row.totalDelta = totalDelta !== null
+          ? totalDelta
+          : initialRating !== null && finalRating !== null
+            ? finalRating - initialRating
+            : row.totalDelta;
+      });
+
+      normalizeArray(simulation.rounds).forEach(function (round, roundIndex) {
+        var roundRecord = normalizeObject(round);
+        var roundNumber = Number(roundRecord.roundNumber || roundIndex + 1) || (roundIndex + 1);
+        normalizeArray(roundRecord.matches).forEach(function (match, matchIndex) {
+          var matchRecord = normalizeObject(match);
+          var team1 = normalizeArray(matchRecord.team1).map(function (value) {
+            return String(value || '').trim();
+          }).filter(Boolean);
+          var team2 = normalizeArray(matchRecord.team2).map(function (value) {
+            return String(value || '').trim();
+          }).filter(Boolean);
+          var score1 = parseTournamentNumber(matchRecord.totalTeam1);
+          var score2 = parseTournamentNumber(matchRecord.totalTeam2);
+          var resultLines = [];
+
+          if (score1 !== null && score2 !== null) {
+            resultLines.push(String(score1) + ':' + String(score2));
+          } else {
+            normalizeArray(matchRecord.sets).forEach(function (set) {
+              var setRecord = normalizeObject(set);
+              var left = parseTournamentNumber(setRecord.team1);
+              var right = parseTournamentNumber(setRecord.team2);
+              if (left !== null && right !== null) {
+                resultLines.push(String(left) + ':' + String(right));
+              }
+            });
+            if (resultLines.length > 0) {
+              score1 = 0;
+              score2 = 0;
+              resultLines.forEach(function (line) {
+                var parts = String(line).split(':');
+                score1 += Number(parts[0] || 0) || 0;
+                score2 += Number(parts[1] || 0) || 0;
+              });
+            }
+          }
+
+          var winner = null;
+          if (score1 !== null && score2 !== null) {
+            if (score1 > score2) {
+              winner = 'team1';
+            } else if (score2 > score1) {
+              winner = 'team2';
+            } else {
+              winner = 'draw';
+            }
+          }
+
+          team1.forEach(function (player) {
+            var row = ensurePlayer(player);
+            if (!row) {
+              return;
+            }
+            if (score1 !== null && score2 !== null) {
+              row.points += score1;
+              row.difference += score1 - score2;
+            }
+            if (winner === 'team1') {
+              row.wins += 1;
+            } else if (winner === 'team2') {
+              row.losses += 1;
+            } else if (winner === 'draw') {
+              row.draws += 1;
+            }
+          });
+
+          team2.forEach(function (player) {
+            var row = ensurePlayer(player);
+            if (!row) {
+              return;
+            }
+            if (score1 !== null && score2 !== null) {
+              row.points += score2;
+              row.difference += score2 - score1;
+            }
+            if (winner === 'team2') {
+              row.wins += 1;
+            } else if (winner === 'team1') {
+              row.losses += 1;
+            } else if (winner === 'draw') {
+              row.draws += 1;
+            }
+          });
+
+          var ratingDeltaLines = [];
+          normalizeArray(matchRecord.ratingImpact).forEach(function (entry) {
+            var impact = normalizeObject(entry);
+            var participant = String(impact.name || impact.playerName || impact.id || '').trim();
+            var before = parseTournamentNumber(impact.before);
+            var after = parseTournamentNumber(impact.after);
+            var delta = parseTournamentNumber(impact.delta);
+            if (!participant) {
+              return;
+            }
+            if (delta === null && before !== null && after !== null) {
+              delta = after - before;
+            }
+            ratingDeltaLines.push(
+              participant +
+                ': ' +
+                (before !== null ? String(before) : '?') +
+                ' -> ' +
+                (after !== null ? String(after) : '?') +
+                ' (' +
+                formatTournamentSignedNumber(delta || 0) +
+                ')'
+            );
+            mechanicsHistoryRows.push({
+              participant: participant,
+              match: 'round-' + String(roundNumber) + ' / round-' + String(roundNumber) + '-match-' + String(matchIndex + 1),
+              score:
+                score1 !== null && score2 !== null
+                  ? String(score1) + ' - ' + String(score2)
+                  : resultLines.join(' / '),
+              delta: formatTournamentSignedNumber(delta || 0),
+              ratingFlow:
+                (before !== null ? String(before) : '?') +
+                ' -> ' +
+                (after !== null ? String(after) : '?')
+            });
+          });
+
+          matches.push({
+            gameId: 'mechanics-round-' + String(roundNumber) + '-match-' + String(matchIndex + 1),
+            title: 'Раунд ' + String(roundNumber) + ', матч ' + String(matchIndex + 1),
+            startsAt: '',
+            stationName: '',
+            courtName: '',
+            locationName: '',
+            teams: [
+              { name: 'Команда A', players: team1 },
+              { name: 'Команда B', players: team2 }
+            ],
+            resultLines: resultLines,
+            ratingDeltaLines: ratingDeltaLines
+          });
+        });
+      });
+
+      var mechanicsStatsRows = Object.keys(playersMap)
+        .map(function (key) {
+          var row = playersMap[key];
+          return {
+            participant: row.participant,
+            wdl: String(row.wins) + ' - ' + String(row.draws) + ' - ' + String(row.losses),
+            points: row.points,
+            bye: row.bye || 0,
+            difference: row.difference,
+            playedGames: row.wins + row.draws + row.losses,
+            wins: row.wins,
+            losses: row.losses,
+            totalDelta: row.totalDelta
+          };
+        })
+        .sort(function (left, right) {
+          if (right.points !== left.points) {
+            return right.points - left.points;
+          }
+          if (right.difference !== left.difference) {
+            return right.difference - left.difference;
+          }
+          return String(left.participant).localeCompare(String(right.participant), 'ru');
+        });
+
+      return normalizeTournamentResults({
+        tournamentId: '',
+        resolvedTournamentId: 'mechanics',
+        sourceLabel: 'mechanics',
+        summary: {
+          totalGames: matches.length,
+          gamesWithResult: matches.filter(function (item) {
+            return normalizeArray(item.resultLines).length > 0;
+          }).length,
+          uniquePlayers: mechanicsStatsRows.length,
+          lastGameAt: ''
+        },
+        matches: matches,
+        standings: mechanicsStatsRows.map(function (row) {
+          return {
+            player: row.participant,
+            playedGames: row.playedGames,
+            wins: row.wins,
+            losses: row.losses,
+            totalDelta: row.totalDelta
+          };
+        }),
+        mechanicsStatsRows: mechanicsStatsRows,
+        mechanicsHistoryRows: mechanicsHistoryRows
+      });
+    }
+
+    function findTournamentMechanicsStatsRows(containers) {
+      var rows = [];
+      normalizeArray(containers).some(function (container) {
+        return ['standings', 'table', 'rows', 'players', 'stats'].some(function (key) {
+          var list = normalizeArray(container[key]);
+          var normalized = list
+            .map(function (item) {
+              var record = normalizeObject(item);
+              var participant = String(
+                record.participant ||
+                  record.player ||
+                  record.playerName ||
+                  record.name ||
+                  ''
+              ).trim();
+              if (!participant) {
+                return null;
+              }
+              var wins = parseTournamentNumber(record.wins);
+              var draws = parseTournamentNumber(record.draws);
+              var losses = parseTournamentNumber(record.losses);
+              var points = parseTournamentNumber(record.points);
+              var bye = parseTournamentNumber(record.bye);
+              var difference = parseTournamentNumber(
+                record.difference != null ? record.difference : record.diff
+              );
+              var wdl = String(record.wdl || record.record || '').trim();
+              if (
+                !wdl &&
+                (wins !== null || draws !== null || losses !== null)
+              ) {
+                wdl =
+                  String(wins || 0) +
+                  ' - ' +
+                  String(draws || 0) +
+                  ' - ' +
+                  String(losses || 0);
+              }
+              if (
+                !wdl &&
+                points === null &&
+                bye === null &&
+                difference === null
+              ) {
+                return null;
+              }
+              return {
+                participant: participant,
+                wdl: wdl || '-',
+                points: points !== null ? points : '-',
+                bye: bye !== null ? bye : '-',
+                difference: difference !== null ? difference : 0,
+                playedGames: Math.max(0, Number((wins || 0) + (draws || 0) + (losses || 0))),
+                wins: Math.max(0, Number(wins || 0)),
+                losses: Math.max(0, Number(losses || 0)),
+                totalDelta: 0
+              };
+            })
+            .filter(Boolean);
+          if (normalized.length > 0) {
+            rows = normalized;
+            return true;
+          }
+          return false;
+        });
+      });
+      return rows;
+    }
+
+    function findTournamentMechanicsHistoryRows(containers) {
+      var rows = [];
+      normalizeArray(containers).some(function (container) {
+        return ['historyRows', 'matchHistory', 'matchesHistory', 'history', 'rows'].some(function (key) {
+          var list = normalizeArray(container[key]);
+          var normalized = list
+            .map(function (item) {
+              var record = normalizeObject(item);
+              if (Array.isArray(record.matches)) {
+                return null;
+              }
+              var participant = String(
+                record.participant ||
+                  record.player ||
+                  record.playerName ||
+                  record.name ||
+                  ''
+              ).trim();
+              var matchLabel = String(
+                record.match ||
+                  record.matchLabel ||
+                  record.matchId ||
+                  record.roundMatch ||
+                  record.roundLabel ||
+                  ''
+              ).trim();
+              var score = String(record.score || record.result || '').trim();
+              var deltaValue = parseTournamentNumber(
+                record.delta != null ? record.delta : record.ratingDelta
+              );
+              var ratingFlow = String(
+                record.ratingFlow ||
+                  (
+                    (record.before != null || record.after != null)
+                      ? String(record.before != null ? record.before : '?') +
+                        ' -> ' +
+                        String(record.after != null ? record.after : '?')
+                      : ''
+                  )
+              ).trim();
+              if (!participant || (!matchLabel && !score && !ratingFlow && deltaValue === null)) {
+                return null;
+              }
+              return {
+                participant: participant,
+                match: matchLabel || '-',
+                score: score || '-',
+                delta: deltaValue !== null ? formatTournamentSignedNumber(deltaValue) : '-',
+                ratingFlow: ratingFlow || '-'
+              };
+            })
+            .filter(Boolean);
+          if (normalized.length > 0) {
+            rows = normalized;
+            return true;
+          }
+          return false;
+        });
+      });
+      return rows;
+    }
+
+    function buildTournamentResultsFromMechanicsData(mechanics) {
+      var source = normalizeObject(mechanics);
+      var raw = normalizeObject(source.raw);
+      var containers = listTournamentMechanicsContainers(raw);
+      var simulation = findTournamentMechanicsSimulation(containers);
+      if (simulation) {
+        return buildTournamentResultsFromMechanicsSimulation(source, simulation);
+      }
+
+      var mechanicsStatsRows = findTournamentMechanicsStatsRows(containers);
+      var mechanicsHistoryRows = findTournamentMechanicsHistoryRows(containers);
+      if (mechanicsStatsRows.length > 0 || mechanicsHistoryRows.length > 0) {
+        return normalizeTournamentResults({
+          tournamentId: '',
+          resolvedTournamentId: 'mechanics',
+          sourceLabel: 'mechanics',
+          summary: {
+            totalGames: mechanicsHistoryRows.length,
+            gamesWithResult: mechanicsHistoryRows.filter(function (row) {
+              return String(row.score || '').trim().length > 0 && String(row.score || '') !== '-';
+            }).length,
+            uniquePlayers: mechanicsStatsRows.length,
+            lastGameAt: ''
+          },
+          standings: mechanicsStatsRows.map(function (row) {
+            return {
+              player: row.participant,
+              playedGames: row.playedGames,
+              wins: row.wins,
+              losses: row.losses,
+              totalDelta: 0
+            };
+          }),
+          mechanicsStatsRows: mechanicsStatsRows,
+          mechanicsHistoryRows: mechanicsHistoryRows
+        });
+      }
+
+      var direct = null;
+      containers.some(function (container) {
+        if (
+          Array.isArray(container.games) ||
+          Array.isArray(container.matches) ||
+          Array.isArray(container.standings)
+        ) {
+          direct = container;
+          return true;
+        }
+        return false;
+      });
+      if (direct) {
+        var normalizedDirect = normalizeTournamentResults(direct);
+        normalizedDirect.sourceLabel = 'mechanics';
+        return normalizedDirect;
+      }
+
+      return null;
     }
 
     function createTournamentResultsTable(columns, rows, emptyLabel) {
@@ -13833,6 +14327,7 @@
         enabled: source.enabled !== false,
         notes: String(source.notes || ''),
         history: normalizeArray(source.history),
+        raw: normalizeObject(source.raw),
         config: {
           mode: String(config.mode || defaultMode),
           rounds: config.rounds === null || config.rounds === undefined || config.rounds === ''
@@ -14137,6 +14632,7 @@
         mechanics: {
           enabled: Boolean(form.mechanicsEnabled.checked),
           notes: String(form.mechanicsNotes.value || '').trim() || undefined,
+          raw: form.mechanicsRaw || undefined,
           config: {
             mode: String(form.mechanicsMode.value || 'short_americano').trim(),
             rounds: readTournamentOptionalInteger(form.mechanicsRounds.value, 1, true),
@@ -14742,10 +15238,14 @@
       function renderTournamentResults(payload) {
         clearNode(resultsSectionHost);
         var results = normalizeTournamentResults(payload);
+        var hasMechanicsStats = normalizeArray(results.mechanicsStatsRows).length > 0;
+        var hasMechanicsHistory = normalizeArray(results.mechanicsHistoryRows).length > 0;
 
         var summaryCard = createCommunitySectionCard(
           'Результаты турнира',
-          'Отдельный lazy-блок с играми, матчами и таблицей по турниру.'
+          results.sourceLabel === 'mechanics'
+            ? 'Данные результата взяты напрямую из payload турнирной механики.'
+            : 'Отдельный lazy-блок с играми, матчами и таблицей по турниру.'
         );
         resultsSectionHost.appendChild(summaryCard.card);
 
@@ -14768,11 +15268,13 @@
           )
         );
 
-        if (results.games.length === 0) {
+        if (results.games.length === 0 && !hasMechanicsStats && !hasMechanicsHistory) {
           var emptyNote = document.createElement('div');
           emptyNote.className = 'phab-admin-empty';
           emptyNote.textContent =
-            'По этому турниру пока не найдено связанных игр с результатами.';
+            results.sourceLabel === 'mechanics'
+              ? 'В payload механики пока нет развернутого результата.'
+              : 'По этому турниру пока не найдено связанных игр с результатами.';
           summaryCard.body.appendChild(emptyNote);
         }
 
@@ -14834,105 +15336,203 @@
 
         var matchesCard = createCommunitySectionCard(
           'Результаты матчей',
-          'Команды, счёт по сетам и изменение рейтинга.'
+          hasMechanicsHistory
+            ? 'История матчей и изменение рейтинга из payload механики.'
+            : 'Команды, счёт по сетам и изменение рейтинга.'
         );
         resultsSectionHost.appendChild(matchesCard.card);
-        matchesCard.body.appendChild(
-          createTournamentResultsTable(
-            [
-              {
-                label: 'Матч',
-                render: function (row) {
-                  return row.title;
-                }
-              },
-              {
-                label: 'Когда',
-                render: function (row) {
-                  return row.startsAt ? formatDateTimeFull(row.startsAt) : '-';
-                }
-              },
-              {
-                label: 'Команды',
-                render: function (row) {
-                  if (!Array.isArray(row.teams) || row.teams.length === 0) {
-                    return '-';
+        if (hasMechanicsHistory) {
+          matchesCard.body.appendChild(
+            createTournamentResultsTable(
+              [
+                {
+                  label: 'Участник',
+                  render: function (row) {
+                    return row.participant || '-';
                   }
-                  return row.teams.map(function (team) {
-                    return team.name + ': ' + team.players.join(', ');
-                  }).join(' • ');
+                },
+                {
+                  label: 'Матч',
+                  render: function (row) {
+                    return row.match || '-';
+                  }
+                },
+                {
+                  label: 'Счёт',
+                  render: function (row) {
+                    return row.score || '-';
+                  }
+                },
+                {
+                  label: 'Δ рейтинг',
+                  render: function (row) {
+                    return row.delta || '-';
+                  }
+                },
+                {
+                  label: 'Рейтинг',
+                  render: function (row) {
+                    return row.ratingFlow || '-';
+                  }
                 }
-              },
-              {
-                label: 'Сеты',
-                render: function (row) {
-                  return row.resultLines.length > 0 ? row.resultLines.join(' / ') : '-';
+              ],
+              results.mechanicsHistoryRows,
+              'История матчей в механике пока не найдена.'
+            )
+          );
+        } else {
+          matchesCard.body.appendChild(
+            createTournamentResultsTable(
+              [
+                {
+                  label: 'Матч',
+                  render: function (row) {
+                    return row.title;
+                  }
+                },
+                {
+                  label: 'Когда',
+                  render: function (row) {
+                    return row.startsAt ? formatDateTimeFull(row.startsAt) : '-';
+                  }
+                },
+                {
+                  label: 'Команды',
+                  render: function (row) {
+                    if (!Array.isArray(row.teams) || row.teams.length === 0) {
+                      return '-';
+                    }
+                    return row.teams.map(function (team) {
+                      return team.name + ': ' + team.players.join(', ');
+                    }).join(' • ');
+                  }
+                },
+                {
+                  label: 'Сеты',
+                  render: function (row) {
+                    return row.resultLines.length > 0 ? row.resultLines.join(' / ') : '-';
+                  }
+                },
+                {
+                  label: 'Δ рейтинг',
+                  render: function (row) {
+                    return row.ratingDeltaLines.length > 0 ? row.ratingDeltaLines.join(' • ') : '-';
+                  }
                 }
-              },
-              {
-                label: 'Δ рейтинг',
-                render: function (row) {
-                  return row.ratingDeltaLines.length > 0 ? row.ratingDeltaLines.join(' • ') : '-';
-                }
-              }
-            ],
-            results.matches,
-            'Матчевые результаты ещё не найдены.'
-          )
-        );
+              ],
+              results.matches,
+              'Матчевые результаты ещё не найдены.'
+            )
+          );
+        }
 
         var standingsCard = createCommunitySectionCard(
           'Турнирная таблица',
-          'Агрегированная таблица по игрокам на основе найденных игр турнира.'
+          hasMechanicsStats
+            ? 'Таблица собрана из payload турнирной механики.'
+            : 'Агрегированная таблица по игрокам на основе найденных игр турнира.'
         );
         resultsSectionHost.appendChild(standingsCard.card);
-        standingsCard.body.appendChild(
-          createTournamentResultsTable(
-            [
-              {
-                label: '#',
-                render: function (_row, index) {
-                  return String(index + 1);
+        if (hasMechanicsStats) {
+          standingsCard.body.appendChild(
+            createTournamentResultsTable(
+              [
+                {
+                  label: '#',
+                  render: function (_row, index) {
+                    return String(index + 1);
+                  }
+                },
+                {
+                  label: 'Участник',
+                  render: function (row) {
+                    return row.participant || '-';
+                  }
+                },
+                {
+                  label: 'В/Н/П',
+                  render: function (row) {
+                    return row.wdl || '-';
+                  }
+                },
+                {
+                  label: 'Очки',
+                  render: function (row) {
+                    return row.points != null ? String(row.points) : '-';
+                  }
+                },
+                {
+                  label: 'Bye',
+                  render: function (row) {
+                    return row.bye != null ? String(row.bye) : '-';
+                  }
+                },
+                {
+                  label: 'Разница',
+                  render: function (row) {
+                    return formatTournamentSignedNumber(row.difference || 0);
+                  }
                 }
-              },
-              {
-                label: 'Игрок',
-                render: function (row) {
-                  return row.player;
+              ],
+              results.mechanicsStatsRows,
+              'Турнирная таблица в механике пока не найдена.'
+            )
+          );
+        } else {
+          standingsCard.body.appendChild(
+            createTournamentResultsTable(
+              [
+                {
+                  label: '#',
+                  render: function (_row, index) {
+                    return String(index + 1);
+                  }
+                },
+                {
+                  label: 'Игрок',
+                  render: function (row) {
+                    return row.player;
+                  }
+                },
+                {
+                  label: 'Матчи',
+                  render: function (row) {
+                    return String(row.playedGames);
+                  }
+                },
+                {
+                  label: 'Победы',
+                  render: function (row) {
+                    return String(row.wins);
+                  }
+                },
+                {
+                  label: 'Поражения',
+                  render: function (row) {
+                    return String(row.losses);
+                  }
+                },
+                {
+                  label: 'Δ рейтинг',
+                  render: function (row) {
+                    return formatTournamentSignedNumber(row.totalDelta);
+                  }
                 }
-              },
-              {
-                label: 'Матчи',
-                render: function (row) {
-                  return String(row.playedGames);
-                }
-              },
-              {
-                label: 'Победы',
-                render: function (row) {
-                  return String(row.wins);
-                }
-              },
-              {
-                label: 'Поражения',
-                render: function (row) {
-                  return String(row.losses);
-                }
-              },
-              {
-                label: 'Δ рейтинг',
-                render: function (row) {
-                  return formatTournamentSignedNumber(row.totalDelta);
-                }
-              }
-            ],
-            results.standings,
-            'Турнирная таблица появится после появления связанных игр и результатов.'
-          )
-        );
+              ],
+              results.standings,
+              'Турнирная таблица появится после появления связанных игр и результатов.'
+            )
+          );
+        }
       }
 
       function ensureTournamentResultsLoaded() {
+        var mechanicsResults = buildTournamentResultsFromMechanicsData(mechanics);
+        if (mechanicsResults) {
+          resultsState.payload = mechanicsResults;
+          renderTournamentResults(mechanicsResults);
+          return Promise.resolve(mechanicsResults);
+        }
         if (resultsState.payload) {
           renderTournamentResults(resultsState.payload);
           return Promise.resolve(resultsState.payload);
@@ -15043,6 +15643,7 @@
           mechanicsPairingExactThreshold: mechanicsPairingExactThresholdInput,
           mechanicsMatchExactThreshold: mechanicsMatchExactThresholdInput,
           mechanicsNotes: mechanicsNotesInput,
+          mechanicsRaw: mechanics.raw,
           mechanicsWeightPartnerRepeat: mechanicsWeightInputs.partnerRepeat,
           mechanicsWeightPartnerImmediateRepeat: mechanicsWeightInputs.partnerImmediateRepeat,
           mechanicsWeightOpponentRepeat: mechanicsWeightInputs.opponentRepeat,

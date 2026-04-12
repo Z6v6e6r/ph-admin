@@ -1025,7 +1025,11 @@ export class TournamentsService {
       enabled: existing?.enabled !== false,
       config: resolvedConfig,
       history: Array.isArray(existing?.history) ? existing?.history : undefined,
-      notes: this.pickString(existing?.notes) ?? undefined
+      notes: this.pickString(existing?.notes) ?? undefined,
+      raw:
+        existing?.raw && typeof existing.raw === 'object'
+          ? (existing.raw as Record<string, unknown>)
+          : undefined
     };
   }
 

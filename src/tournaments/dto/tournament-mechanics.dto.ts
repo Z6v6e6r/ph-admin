@@ -197,4 +197,8 @@ export class TournamentMechanicsDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  @IsOptional()
+  @IsObject()
+  raw?: Record<string, unknown>;
 }

@@ -57,6 +57,7 @@ export interface TournamentMechanics {
   config: AmericanoGeneratorConfig;
   history?: AmericanoHistoricalRound[];
   notes?: string;
+  raw?: Record<string, unknown>;
 }
 
 export interface TournamentChangeLogField {

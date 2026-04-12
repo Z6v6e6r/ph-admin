@@ -568,13 +568,61 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   private normalizeMechanics(value: unknown): TournamentMechanics {
     const record = this.toRecord(value);
     const config = this.normalizeMechanicsConfig(record?.config);
+    const normalizedHistory = this.normalizeMechanicsHistory(record?.history);
+    const normalizedNotes = this.pickString(record?.notes) ?? undefined;
+    const normalizedEnabled = record?.enabled === false ? false : true;
 
     return {
-      enabled: record?.enabled === false ? false : true,
+      enabled: normalizedEnabled,
       config,
-      history: this.normalizeMechanicsHistory(record?.history),
-      notes: this.pickString(record?.notes) ?? undefined
+      history: normalizedHistory,
+      notes: normalizedNotes,
+      raw: this.normalizeMechanicsRaw(record, {
+        enabled: normalizedEnabled,
+        config,
+        history: normalizedHistory,
+        notes: normalizedNotes
+      })
     };
+  }
+
+  private normalizeMechanicsRaw(
+    record: Record<string, unknown> | null,
+    normalized: {
+      enabled: boolean;
+      config: AmericanoGeneratorConfig;
+      history?: AmericanoHistoricalRound[];
+      notes?: string;
+    }
+  ): Record<string, unknown> | undefined {
+    if (!record) {
+      return undefined;
+    }
+
+    const source = this.toRecord(record.raw) ?? record;
+    const payload: Record<string, unknown> = {};
+
+    Object.entries(source).forEach(([key, value]) => {
+      if (key === 'raw') {
+        return;
+      }
+      payload[key] = value;
+    });
+
+    payload.enabled = normalized.enabled;
+    payload.config = normalized.config;
+    if (normalized.history !== undefined) {
+      payload.history = normalized.history;
+    } else {
+      delete payload.history;
+    }
+    if (normalized.notes !== undefined) {
+      payload.notes = normalized.notes;
+    } else {
+      delete payload.notes;
+    }
+
+    return Object.keys(payload).length > 0 ? payload : undefined;
   }
 
   private normalizeMechanicsConfig(value: unknown): AmericanoGeneratorConfig {
