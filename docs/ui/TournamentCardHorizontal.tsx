@@ -56,7 +56,7 @@ export function TournamentCardHorizontal({
       format={type}
       subscriptions={subscriptions}
       freeSpots={freeSpots}
-      actionLabel={freeSpots <= 0 ? 'Просмотр' : 'Записаться'}
+      actionLabel={freeSpots <= 0 ? 'Лист ожидания' : 'Записаться'}
       onActionClick={onActionClick}
       className={className}
     />
