@@ -175,8 +175,8 @@ export class TournamentsPublicController {
         data-limit="${this.escapeHtml(normalizedLimitAttr)}"
         data-include-past="${normalizedIncludePast ? '1' : '0'}"
         data-refresh-ms="${this.escapeHtml(String(normalizedRefreshMs))}"
-        data-title="${this.escapeHtml(normalizedTitle)}"
-        data-subtitle="${this.escapeHtml(normalizedSubtitle)}"
+        data-title=""
+        data-subtitle=""
         data-variant="screen"
       ></div>
     </main>
