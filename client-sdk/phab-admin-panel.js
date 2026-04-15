@@ -183,6 +183,8 @@
   var MAX_MESSAGE_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
   var MAX_MESSAGE_ATTACHMENT_SIZE_BYTES = 4 * 1024 * 1024;
   var MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024;
+  var MAX_ADVERTISING_SOURCE_IMAGE_BYTES = 15 * 1024 * 1024;
+  var MAX_ADVERTISING_IMAGE_SIZE_BYTES = 900 * 1024;
   var DEFAULT_QUICK_REPLY_OPTIONS = [
     { label: 'Сертификат', text: 'Сертификат' },
     { label: 'Оплата', text: 'Оплата' },
@@ -4678,6 +4680,12 @@
       updateVivaSettings: function (payload) {
         return request('/messenger/settings/viva', 'PATCH', payload);
       },
+      getCabinetHomeAdvertisingSettings: function () {
+        return request('/advertising/cabinet-home/admin', 'GET');
+      },
+      updateCabinetHomeAdvertisingSettings: function (payload) {
+        return request('/advertising/cabinet-home/admin', 'PATCH', payload);
+      },
       createQuickReplyRule: function (payload) {
         return request('/messenger/settings/quick-replies', 'POST', payload);
       },
@@ -5061,6 +5069,12 @@
     tabSettings.textContent = 'Настройки';
     tabs.appendChild(tabSettings);
 
+    var tabAdvertising = document.createElement('button');
+    tabAdvertising.className = 'phab-admin-tab';
+    tabAdvertising.type = 'button';
+    tabAdvertising.textContent = 'Реклама';
+    tabs.appendChild(tabAdvertising);
+
     var content = document.createElement('div');
     content.className = 'phab-admin-content';
     root.appendChild(content);
@@ -5103,6 +5117,10 @@
     var settingsSection = document.createElement('div');
     settingsSection.className = 'phab-admin-hidden';
     content.appendChild(settingsSection);
+
+    var advertisingSection = document.createElement('div');
+    advertisingSection.className = 'phab-admin-hidden';
+    content.appendChild(advertisingSection);
 
     var messagesGrid = document.createElement('div');
     messagesGrid.className = 'phab-admin-msg-grid';
@@ -6285,6 +6303,137 @@
     quickReplyTable.className = 'phab-admin-quick-reply-table';
     quickReplyTableWrap.appendChild(quickReplyTable);
 
+    var advertisingTabs = document.createElement('div');
+    advertisingTabs.className = 'phab-admin-community-tabs phab-admin-settings-tabs';
+    advertisingSection.appendChild(advertisingTabs);
+
+    var advertisingCabinetHomeTabBtn = document.createElement('button');
+    advertisingCabinetHomeTabBtn.className =
+      'phab-admin-community-tab phab-admin-community-tab-active';
+    advertisingCabinetHomeTabBtn.type = 'button';
+    advertisingCabinetHomeTabBtn.textContent = 'ЛК главная';
+    advertisingTabs.appendChild(advertisingCabinetHomeTabBtn);
+
+    var advertisingCabinetHomePane = document.createElement('div');
+    advertisingCabinetHomePane.className = 'phab-admin-settings-pane';
+    advertisingSection.appendChild(advertisingCabinetHomePane);
+
+    var advertisingGrid = document.createElement('div');
+    advertisingGrid.className = 'phab-admin-settings-grid';
+    advertisingCabinetHomePane.appendChild(advertisingGrid);
+
+    var advertisingConfigCard = document.createElement('div');
+    advertisingConfigCard.className = 'phab-admin-settings-card';
+    advertisingGrid.appendChild(advertisingConfigCard);
+
+    var advertisingConfigHead = document.createElement('div');
+    advertisingConfigHead.className = 'phab-admin-settings-head';
+    advertisingConfigHead.textContent = 'Настройки показа';
+    advertisingConfigCard.appendChild(advertisingConfigHead);
+
+    var advertisingConfigForm = document.createElement('div');
+    advertisingConfigForm.className = 'phab-admin-settings-form';
+    advertisingConfigCard.appendChild(advertisingConfigForm);
+
+    var advertisingRotationWrap = document.createElement('label');
+    advertisingRotationWrap.className = 'phab-admin-check';
+    advertisingConfigForm.appendChild(advertisingRotationWrap);
+
+    var advertisingRotationInput = document.createElement('input');
+    advertisingRotationInput.type = 'checkbox';
+    advertisingRotationWrap.appendChild(advertisingRotationInput);
+    advertisingRotationWrap.appendChild(
+      document.createTextNode('Каждый раз показывать следующую акцию')
+    );
+
+    var advertisingConfigMeta = document.createElement('div');
+    advertisingConfigMeta.className = 'phab-admin-settings-row-meta';
+    advertisingConfigMeta.textContent =
+      'Если включено, ЛК запоминает последнюю показанную акцию по пользователю и на следующем открытии показывает следующую по порядку.';
+    advertisingConfigForm.appendChild(advertisingConfigMeta);
+
+    var advertisingConfigSaveBtn = document.createElement('button');
+    advertisingConfigSaveBtn.className = 'phab-admin-btn';
+    advertisingConfigSaveBtn.type = 'button';
+    advertisingConfigSaveBtn.textContent = 'Сохранить показ';
+    advertisingConfigForm.appendChild(advertisingConfigSaveBtn);
+
+    var advertisingAddCard = document.createElement('div');
+    advertisingAddCard.className = 'phab-admin-settings-card';
+    advertisingGrid.appendChild(advertisingAddCard);
+
+    var advertisingAddHead = document.createElement('div');
+    advertisingAddHead.className = 'phab-admin-settings-head';
+    advertisingAddHead.textContent = 'Новая акция';
+    advertisingAddCard.appendChild(advertisingAddHead);
+
+    var advertisingAddForm = document.createElement('div');
+    advertisingAddForm.className = 'phab-admin-settings-form';
+    advertisingAddCard.appendChild(advertisingAddForm);
+
+    var advertisingDraftTitleLabel = document.createElement('label');
+    advertisingDraftTitleLabel.className = 'phab-admin-settings-label';
+    advertisingDraftTitleLabel.textContent = 'Название (опционально)';
+    advertisingAddForm.appendChild(advertisingDraftTitleLabel);
+
+    var advertisingDraftTitleInput = document.createElement('input');
+    advertisingDraftTitleInput.className = 'phab-admin-settings-input';
+    advertisingDraftTitleInput.placeholder = 'Например, Турнир выходного дня';
+    advertisingAddForm.appendChild(advertisingDraftTitleInput);
+
+    var advertisingDraftHrefLabel = document.createElement('label');
+    advertisingDraftHrefLabel.className = 'phab-admin-settings-label';
+    advertisingDraftHrefLabel.textContent = 'Ссылка перехода';
+    advertisingAddForm.appendChild(advertisingDraftHrefLabel);
+
+    var advertisingDraftHrefInput = document.createElement('input');
+    advertisingDraftHrefInput.className = 'phab-admin-settings-input';
+    advertisingDraftHrefInput.placeholder = 'https://... или /relative-path';
+    advertisingAddForm.appendChild(advertisingDraftHrefInput);
+
+    var advertisingDraftFileLabel = document.createElement('label');
+    advertisingDraftFileLabel.className = 'phab-admin-settings-label';
+    advertisingDraftFileLabel.textContent = 'Фото акции';
+    advertisingAddForm.appendChild(advertisingDraftFileLabel);
+
+    var advertisingDraftFileInput = document.createElement('input');
+    advertisingDraftFileInput.className = 'phab-admin-settings-input';
+    advertisingDraftFileInput.type = 'file';
+    advertisingDraftFileInput.accept = 'image/*';
+    advertisingAddForm.appendChild(advertisingDraftFileInput);
+
+    var advertisingDraftMeta = document.createElement('div');
+    advertisingDraftMeta.className = 'phab-admin-settings-row-meta';
+    advertisingDraftMeta.textContent =
+      'Перед отправкой изображение будет уменьшено и сохранено в web-формате для быстрой загрузки в ЛК.';
+    advertisingAddForm.appendChild(advertisingDraftMeta);
+
+    var advertisingDraftAddBtn = document.createElement('button');
+    advertisingDraftAddBtn.className = 'phab-admin-btn';
+    advertisingDraftAddBtn.type = 'button';
+    advertisingDraftAddBtn.textContent = 'Добавить акцию';
+    advertisingAddForm.appendChild(advertisingDraftAddBtn);
+
+    var advertisingListCard = document.createElement('div');
+    advertisingListCard.className = 'phab-admin-settings-card';
+    advertisingGrid.appendChild(advertisingListCard);
+
+    var advertisingListHead = document.createElement('div');
+    advertisingListHead.className = 'phab-admin-settings-head';
+    advertisingListHead.textContent = 'Акции в порядке показа';
+    advertisingListCard.appendChild(advertisingListHead);
+
+    var advertisingListMeta = document.createElement('div');
+    advertisingListMeta.className = 'phab-admin-settings-row-meta';
+    advertisingListMeta.textContent =
+      'Меняйте порядок кнопками вверх/вниз. В ротации участвуют только включенные акции.';
+    advertisingListCard.appendChild(advertisingListMeta);
+
+    var advertisingList = document.createElement('div');
+    advertisingList.className = 'phab-admin-photo-grid';
+    advertisingList.style.marginTop = '12px';
+    advertisingListCard.appendChild(advertisingList);
+
     var quickReplyModal = document.createElement('div');
     quickReplyModal.className = 'phab-admin-modal phab-admin-hidden';
     overlayHost.appendChild(quickReplyModal);
@@ -6893,6 +7042,7 @@
       tabLaboratory: tabLaboratory,
       tabAnalytics: tabAnalytics,
       tabSettings: tabSettings,
+      tabAdvertising: tabAdvertising,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
       logsSection: logsSection,
@@ -6901,6 +7051,7 @@
       laboratorySection: laboratorySection,
       analyticsSection: analyticsSection,
       settingsSection: settingsSection,
+      advertisingSection: advertisingSection,
       messagesGrid: messagesGrid,
       leftPane: leftPane,
       rightPane: rightPane,
@@ -7031,6 +7182,15 @@
       settingsQuickRepliesTabBtn: settingsQuickRepliesTabBtn,
       settingsGeneralPane: settingsGeneralPane,
       settingsQuickRepliesPane: settingsQuickRepliesPane,
+      advertisingCabinetHomeTabBtn: advertisingCabinetHomeTabBtn,
+      advertisingCabinetHomePane: advertisingCabinetHomePane,
+      advertisingRotationInput: advertisingRotationInput,
+      advertisingConfigSaveBtn: advertisingConfigSaveBtn,
+      advertisingDraftTitleInput: advertisingDraftTitleInput,
+      advertisingDraftHrefInput: advertisingDraftHrefInput,
+      advertisingDraftFileInput: advertisingDraftFileInput,
+      advertisingDraftAddBtn: advertisingDraftAddBtn,
+      advertisingList: advertisingList,
       quickReplyCreateBtn: quickReplyCreateBtn,
       quickReplyTable: quickReplyTable,
       quickReplyModal: quickReplyModal,
@@ -7255,6 +7415,56 @@
 
   function canManageQuickReplySettings(cfg) {
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
+  function canManageAdvertisingSettings(cfg) {
+    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
+  function estimateDataUrlSize(dataUrl) {
+    var normalized = String(dataUrl || '').trim();
+    var commaIndex = normalized.indexOf(',');
+    var body = commaIndex >= 0 ? normalized.slice(commaIndex + 1) : normalized;
+    return Math.max(0, Math.round((body.length * 3) / 4));
+  }
+
+  function normalizeAdvertisingAdItem(value, index) {
+    var ad = normalizeObject(value);
+    var href = String(ad.href || '').trim();
+    var imageUrl = String(ad.imageUrl || '').trim();
+    var imageAssetId = String(ad.imageAssetId || '').trim();
+    if (!href || !imageUrl) {
+      return null;
+    }
+    return {
+      id: String(ad.id || 'cabinet-home-ad-' + String(index + 1)).trim(),
+      title: String(ad.title || '').trim(),
+      href: href,
+      imageUrl: imageUrl,
+      imageAssetId: imageAssetId,
+      isActive: ad.isActive !== false,
+      position:
+        Number.isFinite(Number(ad.position)) && Number(ad.position) >= 0
+          ? Math.floor(Number(ad.position))
+          : index,
+      createdAt: String(ad.createdAt || '').trim(),
+      updatedAt: String(ad.updatedAt || '').trim()
+    };
+  }
+
+  function normalizeCabinetHomeAdvertisingSettings(value) {
+    var source = normalizeObject(value);
+    return {
+      rotationEnabled: source.rotationEnabled === true,
+      updatedAt: String(source.updatedAt || '').trim(),
+      updatedBy: String(source.updatedBy || '').trim(),
+      ads: normalizeArray(source.ads)
+        .map(normalizeAdvertisingAdItem)
+        .filter(Boolean)
+        .sort(function (left, right) {
+          return left.position - right.position;
+        })
+    };
   }
 
   function getQuickReplyTriggerLabel(triggerType) {
@@ -7580,6 +7790,7 @@
       tournamentsColumnWidths: {},
       tournamentsColumnWidths: {},
       settingsSubtab: 'general',
+      advertisingSubtab: 'cabinetHome',
       settings: {
         stations: [],
         connectors: [],
@@ -7587,6 +7798,14 @@
         adminUsers: [],
         viva: null,
         quickReplies: []
+      },
+      advertising: {
+        cabinetHome: {
+          rotationEnabled: false,
+          updatedAt: '',
+          updatedBy: '',
+          ads: []
+        }
       },
       quickReplyEditorRuleId: null,
       quickReplyEditorAttachments: [],
@@ -7632,6 +7851,7 @@
     dom.analyticsDialogsToInput.value = state.analyticsDialogsFilterTo;
     dom.analyticsDialogsFormatInput.value = state.analyticsDialogsExportFormat;
     dom.communitySearchInput.value = state.communitiesSearchQuery;
+    dom.advertisingRotationInput.checked = state.advertising.cabinetHome.rotationEnabled === true;
 
     function getStatusIconMarkup(isError) {
       if (isError) {
@@ -7742,6 +7962,20 @@
           : 'phab-admin-settings-pane phab-admin-hidden';
       dom.settingsQuickRepliesPane.className =
         state.settingsSubtab === 'quickReplies'
+          ? 'phab-admin-settings-pane'
+          : 'phab-admin-settings-pane phab-admin-hidden';
+    }
+
+    function setAdvertisingSubtab(nextSubtab) {
+      state.advertisingSubtab =
+        nextSubtab === 'cabinetHome' ? 'cabinetHome' : 'cabinetHome';
+      dom.advertisingCabinetHomeTabBtn.className =
+        'phab-admin-community-tab' +
+        (state.advertisingSubtab === 'cabinetHome'
+          ? ' phab-admin-community-tab-active'
+          : '');
+      dom.advertisingCabinetHomePane.className =
+        state.advertisingSubtab === 'cabinetHome'
           ? 'phab-admin-settings-pane'
           : 'phab-admin-settings-pane phab-admin-hidden';
     }
@@ -8294,7 +8528,8 @@
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
         { value: 'laboratory', label: 'Лаборатория', hidden: hideLaboratoryTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
-        { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin }
+        { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin },
+        { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin }
       ]
         .filter(function (item) {
           return item.hidden !== true;
@@ -9293,6 +9528,90 @@
         name: String(file.name || 'photo'),
         mimeType: mimeType,
         size: estimatedSize
+      };
+    }
+
+    async function optimizeAdvertisingImageFile(file) {
+      if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) {
+        throw new Error('Для акции можно загрузить только изображение');
+      }
+
+      if (Number(file.size || 0) > MAX_ADVERTISING_SOURCE_IMAGE_BYTES) {
+        throw new Error(
+          'Изображение акции слишком тяжелое. Выберите файл до ' +
+            formatFileSize(MAX_ADVERTISING_SOURCE_IMAGE_BYTES) +
+            '.'
+        );
+      }
+
+      var originalDataUrl = await readImageFileAsDataUrl(file);
+      var image = await loadImageFromDataUrl(originalDataUrl);
+      var width = image.naturalWidth || image.width || 0;
+      var height = image.naturalHeight || image.height || 0;
+      if (!width || !height) {
+        return {
+          name: String(file.name || 'advertisement'),
+          mimeType: String(file.type || 'image/webp'),
+          size: Number(file.size || 0),
+          dataUrl: originalDataUrl
+        };
+      }
+
+      var maxWidth = 1600;
+      var maxHeight = 900;
+      var baseScale = Math.min(1, maxWidth / width, maxHeight / height);
+      var scales = [1, 0.94, 0.88, 0.8];
+      var qualities = [0.88, 0.84, 0.8, 0.76, 0.72];
+      var bestDataUrl = originalDataUrl;
+      var bestSize = estimateDataUrlSize(originalDataUrl);
+      var bestMimeType = /^image\/(webp|png|jpeg|jpg)$/i.test(String(file.type || ''))
+        ? String(file.type || '').toLowerCase()
+        : 'image/webp';
+
+      for (var scaleIndex = 0; scaleIndex < scales.length; scaleIndex += 1) {
+        var scale = Math.min(1, baseScale * scales[scaleIndex]);
+        var targetWidth = Math.max(1, Math.round(width * scale));
+        var targetHeight = Math.max(1, Math.round(height * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        var context = canvas.getContext('2d');
+        if (!context) {
+          break;
+        }
+        context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+        for (var qualityIndex = 0; qualityIndex < qualities.length; qualityIndex += 1) {
+          var candidateMimeType = 'image/webp';
+          var candidateDataUrl = canvas.toDataURL(candidateMimeType, qualities[qualityIndex]);
+          var candidateSize = estimateDataUrlSize(candidateDataUrl);
+          if (!bestDataUrl || candidateSize < bestSize) {
+            bestDataUrl = candidateDataUrl;
+            bestSize = candidateSize;
+            bestMimeType = candidateMimeType;
+          }
+          if (candidateSize <= MAX_ADVERTISING_IMAGE_SIZE_BYTES) {
+            return {
+              name: String(file.name || 'advertisement'),
+              mimeType: candidateMimeType,
+              size: candidateSize,
+              dataUrl: candidateDataUrl
+            };
+          }
+        }
+      }
+
+      if (bestSize > MAX_ADVERTISING_IMAGE_SIZE_BYTES) {
+        throw new Error(
+          'Не удалось достаточно сжать изображение акции. Попробуйте файл меньше или проще по деталям.'
+        );
+      }
+
+      return {
+        name: String(file.name || 'advertisement'),
+        mimeType: bestMimeType,
+        size: bestSize,
+        dataUrl: bestDataUrl
       };
     }
 
@@ -21525,6 +21844,371 @@
       setSettingsSubtab(state.settingsSubtab);
     }
 
+    function getCabinetHomeAdvertisingState() {
+      return normalizeCabinetHomeAdvertisingSettings(
+        state.advertising && state.advertising.cabinetHome
+      );
+    }
+
+    async function saveCabinetHomeAdvertising(nextState, successText) {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+
+      var payload = {
+        rotationEnabled: nextState && nextState.rotationEnabled === true,
+        ads: normalizeArray(nextState && nextState.ads).map(function (item) {
+          return {
+            id: String(item && item.id || '').trim() || undefined,
+            title: String(item && item.title || '').trim() || undefined,
+            href: String(item && item.href || '').trim(),
+            imageAssetId: String(item && item.imageAssetId || '').trim() || undefined,
+            imageDataUrl: String(item && item.imageDataUrl || '').trim() || undefined,
+            isActive: item && item.isActive !== false
+          };
+        })
+      };
+
+      var response = await api.updateCabinetHomeAdvertisingSettings(payload);
+      state.advertising.cabinetHome = normalizeCabinetHomeAdvertisingSettings(response || {});
+      renderAdvertising();
+      setStatus(successText || 'Реклама обновлена', false);
+    }
+
+    async function saveCabinetHomeAdvertisingRotation() {
+      var current = getCabinetHomeAdvertisingState();
+      await saveCabinetHomeAdvertising(
+        {
+          rotationEnabled: Boolean(dom.advertisingRotationInput.checked),
+          ads: current.ads
+        },
+        'Настройки показа сохранены'
+      );
+    }
+
+    async function addCabinetHomeAdvertisingItem() {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+
+      var href = String(dom.advertisingDraftHrefInput.value || '').trim();
+      var file = dom.advertisingDraftFileInput.files && dom.advertisingDraftFileInput.files[0];
+      if (!href) {
+        setStatus('Укажите ссылку для новой акции', true);
+        return;
+      }
+      if (!file) {
+        setStatus('Выберите фото для новой акции', true);
+        return;
+      }
+
+      dom.advertisingDraftAddBtn.disabled = true;
+      try {
+        var optimized = await optimizeAdvertisingImageFile(file);
+        var current = getCabinetHomeAdvertisingState();
+        var nextAds = current.ads.slice();
+        nextAds.push({
+          title: String(dom.advertisingDraftTitleInput.value || '').trim(),
+          href: href,
+          imageDataUrl: optimized.dataUrl,
+          isActive: true
+        });
+        await saveCabinetHomeAdvertising(
+          {
+            rotationEnabled: current.rotationEnabled,
+            ads: nextAds
+          },
+          'Акция добавлена'
+        );
+        dom.advertisingDraftTitleInput.value = '';
+        dom.advertisingDraftHrefInput.value = '';
+        dom.advertisingDraftFileInput.value = '';
+      } finally {
+        dom.advertisingDraftAddBtn.disabled = false;
+      }
+    }
+
+    async function updateCabinetHomeAdvertisingItem(itemId, patch, successText) {
+      var current = getCabinetHomeAdvertisingState();
+      var nextAds = current.ads.map(function (item) {
+        if (String(item.id) !== String(itemId)) {
+          return Object.assign({}, item);
+        }
+        return Object.assign({}, item, patch || {});
+      });
+      await saveCabinetHomeAdvertising(
+        {
+          rotationEnabled: current.rotationEnabled,
+          ads: nextAds
+        },
+        successText || 'Акция сохранена'
+      );
+    }
+
+    async function deleteCabinetHomeAdvertisingItem(itemId) {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+      if (!window.confirm('Удалить эту акцию из показа?')) {
+        return;
+      }
+
+      var current = getCabinetHomeAdvertisingState();
+      await saveCabinetHomeAdvertising(
+        {
+          rotationEnabled: current.rotationEnabled,
+          ads: current.ads.filter(function (item) {
+            return String(item.id) !== String(itemId);
+          })
+        },
+        'Акция удалена'
+      );
+    }
+
+    async function moveCabinetHomeAdvertisingItem(itemId, direction) {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+
+      var current = getCabinetHomeAdvertisingState();
+      var items = current.ads.slice();
+      var index = items.findIndex(function (item) {
+        return String(item.id) === String(itemId);
+      });
+      if (index < 0) {
+        return;
+      }
+
+      var targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= items.length) {
+        return;
+      }
+
+      var moved = items[index];
+      items[index] = items[targetIndex];
+      items[targetIndex] = moved;
+
+      await saveCabinetHomeAdvertising(
+        {
+          rotationEnabled: current.rotationEnabled,
+          ads: items
+        },
+        'Порядок акций обновлен'
+      );
+    }
+
+    function renderAdvertising() {
+      var canManage = canManageAdvertisingSettings(cfg);
+      var cabinetHome = getCabinetHomeAdvertisingState();
+      state.advertising.cabinetHome = cabinetHome;
+
+      dom.advertisingRotationInput.checked = cabinetHome.rotationEnabled === true;
+      dom.advertisingRotationInput.disabled = !canManage;
+      dom.advertisingConfigSaveBtn.className = canManage
+        ? 'phab-admin-btn'
+        : 'phab-admin-btn phab-admin-hidden';
+      dom.advertisingDraftTitleInput.disabled = !canManage;
+      dom.advertisingDraftHrefInput.disabled = !canManage;
+      dom.advertisingDraftFileInput.disabled = !canManage;
+      dom.advertisingDraftAddBtn.className = canManage
+        ? 'phab-admin-btn'
+        : 'phab-admin-btn phab-admin-hidden';
+
+      clearNode(dom.advertisingList);
+
+      if (cabinetHome.ads.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Акции еще не добавлены';
+        dom.advertisingList.appendChild(empty);
+        setAdvertisingSubtab(state.advertisingSubtab);
+        return;
+      }
+
+      cabinetHome.ads.forEach(function (item, index) {
+        var card = document.createElement('div');
+        card.className = 'phab-admin-photo-card';
+        dom.advertisingList.appendChild(card);
+
+        var previewLink = document.createElement('a');
+        previewLink.className = 'phab-admin-photo-link';
+        previewLink.href = item.href;
+        previewLink.target = '_blank';
+        previewLink.rel = 'noopener noreferrer';
+        card.appendChild(previewLink);
+
+        var previewImage = document.createElement('img');
+        previewImage.className = 'phab-admin-photo-thumb';
+        previewImage.src = item.imageUrl;
+        previewImage.alt = item.title || 'Акция';
+        previewImage.loading = 'lazy';
+        previewLink.appendChild(previewImage);
+
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-photo-meta';
+        card.appendChild(meta);
+
+        var name = document.createElement('div');
+        name.className = 'phab-admin-photo-name';
+        name.textContent = item.title || 'Акция #' + String(index + 1);
+        meta.appendChild(name);
+
+        var sub = document.createElement('div');
+        sub.className = 'phab-admin-photo-sub';
+        sub.textContent =
+          (item.isActive ? 'Включена' : 'Выключена') +
+          (item.updatedAt ? ' · обновлено ' + formatTime(item.updatedAt) : '');
+        meta.appendChild(sub);
+
+        var titleLabel = document.createElement('label');
+        titleLabel.className = 'phab-admin-settings-label';
+        titleLabel.textContent = 'Название';
+        card.appendChild(titleLabel);
+
+        var titleInput = document.createElement('input');
+        titleInput.className = 'phab-admin-settings-input';
+        titleInput.value = item.title || '';
+        titleInput.disabled = !canManage;
+        card.appendChild(titleInput);
+
+        var hrefLabel = document.createElement('label');
+        hrefLabel.className = 'phab-admin-settings-label';
+        hrefLabel.textContent = 'Ссылка';
+        card.appendChild(hrefLabel);
+
+        var hrefInput = document.createElement('input');
+        hrefInput.className = 'phab-admin-settings-input';
+        hrefInput.value = item.href;
+        hrefInput.disabled = !canManage;
+        card.appendChild(hrefInput);
+
+        var activeWrap = document.createElement('label');
+        activeWrap.className = 'phab-admin-check';
+        card.appendChild(activeWrap);
+
+        var activeInput = document.createElement('input');
+        activeInput.type = 'checkbox';
+        activeInput.checked = item.isActive === true;
+        activeInput.disabled = !canManage;
+        activeWrap.appendChild(activeInput);
+        activeWrap.appendChild(document.createTextNode('Показывать'));
+
+        var fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.className = 'phab-admin-hidden';
+        fileInput.disabled = !canManage;
+        card.appendChild(fileInput);
+
+        var actions = document.createElement('div');
+        actions.className = 'phab-admin-quick-reply-actions';
+        actions.style.marginTop = '4px';
+        card.appendChild(actions);
+
+        var saveBtn = document.createElement('button');
+        saveBtn.className = 'phab-admin-btn-secondary';
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Сохранить';
+        saveBtn.disabled = !canManage;
+        saveBtn.addEventListener('click', function () {
+          updateCabinetHomeAdvertisingItem(
+            item.id,
+            {
+              title: String(titleInput.value || '').trim(),
+              href: String(hrefInput.value || '').trim(),
+              isActive: activeInput.checked
+            },
+            'Акция сохранена'
+          ).catch(handleError);
+        });
+        actions.appendChild(saveBtn);
+
+        var replaceBtn = document.createElement('button');
+        replaceBtn.className = 'phab-admin-btn-secondary';
+        replaceBtn.type = 'button';
+        replaceBtn.textContent = 'Заменить фото';
+        replaceBtn.disabled = !canManage;
+        replaceBtn.addEventListener('click', function () {
+          fileInput.click();
+        });
+        actions.appendChild(replaceBtn);
+
+        fileInput.addEventListener('change', function () {
+          var file = fileInput.files && fileInput.files[0];
+          if (!file) {
+            return;
+          }
+          replaceBtn.disabled = true;
+          optimizeAdvertisingImageFile(file)
+            .then(function (optimized) {
+              return updateCabinetHomeAdvertisingItem(
+                item.id,
+                { imageDataUrl: optimized.dataUrl },
+                'Фото акции обновлено'
+              );
+            })
+            .catch(handleError)
+            .finally(function () {
+              fileInput.value = '';
+              replaceBtn.disabled = !canManage;
+            });
+        });
+
+        var upBtn = document.createElement('button');
+        upBtn.className = 'phab-admin-btn-secondary';
+        upBtn.type = 'button';
+        upBtn.textContent = '↑';
+        upBtn.disabled = !canManage || index === 0;
+        upBtn.addEventListener('click', function () {
+          moveCabinetHomeAdvertisingItem(item.id, 'up').catch(handleError);
+        });
+        actions.appendChild(upBtn);
+
+        var downBtn = document.createElement('button');
+        downBtn.className = 'phab-admin-btn-secondary';
+        downBtn.type = 'button';
+        downBtn.textContent = '↓';
+        downBtn.disabled = !canManage || index === cabinetHome.ads.length - 1;
+        downBtn.addEventListener('click', function () {
+          moveCabinetHomeAdvertisingItem(item.id, 'down').catch(handleError);
+        });
+        actions.appendChild(downBtn);
+
+        var deleteBtn = document.createElement('button');
+        deleteBtn.className = 'phab-admin-btn-secondary';
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = 'Удалить';
+        deleteBtn.disabled = !canManage;
+        deleteBtn.addEventListener('click', function () {
+          deleteCabinetHomeAdvertisingItem(item.id).catch(handleError);
+        });
+        actions.appendChild(deleteBtn);
+      });
+
+      setAdvertisingSubtab(state.advertisingSubtab);
+    }
+
+    async function loadAdvertising() {
+      if (isRestrictedStationAdmin) {
+        state.advertising = {
+          cabinetHome: {
+            rotationEnabled: false,
+            updatedAt: '',
+            updatedBy: '',
+            ads: []
+          }
+        };
+        renderAdvertising();
+        return;
+      }
+
+      var cabinetHomeResponse = (await api.getCabinetHomeAdvertisingSettings()) || {};
+      state.advertising = {
+        cabinetHome: normalizeCabinetHomeAdvertisingSettings(cabinetHomeResponse)
+      };
+      renderAdvertising();
+    }
+
     async function loadDialogs(options) {
       var opts = options || {};
       var append = opts.append === true;
@@ -22026,7 +22710,10 @@
     }
 
     function switchTab(nextTab) {
-      if (isRestrictedStationAdmin && ['logs', 'analytics', 'settings'].indexOf(nextTab) >= 0) {
+      if (
+        isRestrictedStationAdmin &&
+        ['logs', 'analytics', 'settings', 'advertising'].indexOf(nextTab) >= 0
+      ) {
         nextTab = 'messages';
       }
       if (!canAccessCommunities(cfg) && nextTab === 'communities') {
@@ -22044,11 +22731,13 @@
       var isLaboratory = nextTab === 'laboratory';
       var isAnalytics = nextTab === 'analytics';
       var isSettings = nextTab === 'settings';
+      var isAdvertising = nextTab === 'advertising';
       var hideLogsTab = isRestrictedStationAdmin;
       var hideCommunitiesTab = !canAccessCommunities(cfg);
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
+      var hideAdvertisingTab = isRestrictedStationAdmin;
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
@@ -22074,6 +22763,10 @@
         'phab-admin-tab' +
         (isSettings ? ' phab-admin-tab-active' : '') +
         (hideSettingsTab ? ' phab-admin-hidden' : '');
+      dom.tabAdvertising.className =
+        'phab-admin-tab' +
+        (isAdvertising ? ' phab-admin-tab-active' : '') +
+        (hideAdvertisingTab ? ' phab-admin-hidden' : '');
       dom.mobileTabSelect.value = nextTab;
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
@@ -22083,8 +22776,12 @@
       dom.laboratorySection.className = isLaboratory ? '' : 'phab-admin-hidden';
       dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
+      dom.advertisingSection.className = isAdvertising ? '' : 'phab-admin-hidden';
       if (isAnalytics) {
         setAnalyticsSubtab(state.analyticsSubtab);
+      }
+      if (isAdvertising) {
+        setAdvertisingSubtab(state.advertisingSubtab);
       }
       if (!isMessages) {
         toggleMobileFiltersSheet(false);
@@ -22141,6 +22838,8 @@
           return;
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
+        } else if (state.activeTab === 'advertising') {
+          await loadAdvertising();
         } else {
           await loadSettings();
         }
@@ -22156,6 +22855,7 @@
         dom.tabLogs.classList.add('phab-admin-hidden');
         dom.tabAnalytics.classList.add('phab-admin-hidden');
         dom.tabSettings.classList.add('phab-admin-hidden');
+        dom.tabAdvertising.classList.add('phab-admin-hidden');
       }
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
@@ -22194,6 +22894,10 @@
         }
         if (nextTab === 'tournaments') {
           loadTournaments().catch(handleError);
+          return;
+        }
+        if (nextTab === 'advertising') {
+          loadAdvertising().catch(handleError);
           return;
         }
         loadSettings().catch(handleError);
@@ -22239,11 +22943,18 @@
         switchTab('settings');
         loadSettings().catch(handleError);
       });
+      dom.tabAdvertising.addEventListener('click', function () {
+        switchTab('advertising');
+        loadAdvertising().catch(handleError);
+      });
       dom.settingsGeneralTabBtn.addEventListener('click', function () {
         setSettingsSubtab('general');
       });
       dom.settingsQuickRepliesTabBtn.addEventListener('click', function () {
         setSettingsSubtab('quickReplies');
+      });
+      dom.advertisingCabinetHomeTabBtn.addEventListener('click', function () {
+        setAdvertisingSubtab('cabinetHome');
       });
       dom.messageModeToggle.addEventListener('change', function () {
         setIncludeServiceMessages(dom.messageModeToggle.checked).catch(handleError);
@@ -22303,6 +23014,12 @@
           return;
         }
         openCommunityFeedEditor(community, null, { mode: 'create' });
+      });
+      dom.advertisingConfigSaveBtn.addEventListener('click', function () {
+        saveCabinetHomeAdvertisingRotation().catch(handleError);
+      });
+      dom.advertisingDraftAddBtn.addEventListener('click', function () {
+        addCabinetHomeAdvertisingItem().catch(handleError);
       });
       dom.dialogFiltersBtn.addEventListener('click', function () {
         if (dom.dialogFiltersBtn.disabled) {

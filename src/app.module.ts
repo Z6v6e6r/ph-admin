@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { AdvertisingModule } from './advertising/advertising.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientScriptModule } from './client-script/client-script.module';
 import { CommunitiesModule } from './communities/communities.module';
@@ -17,6 +18,7 @@ import { WebPushModule } from './web-push/web-push.module';
 
 @Module({
   imports: [
+    AdvertisingModule,
     AuthModule,
     ClientScriptModule,
     CommunitiesModule,
