@@ -67,22 +67,22 @@ export function TournamentCardHorizontal({
   return (
     <article
       className={[
-        'w-full rounded-2xl border border-[#EEEEF1] bg-white p-4 shadow-[0_4px_12px_rgba(15,23,42,0.04)]',
+        'w-full rounded-2xl border border-[#ECECF2] bg-white p-4 shadow-[0_2px_8px_rgba(15,23,42,0.05)]',
         className
       ]
         .filter(Boolean)
         .join(' ')}
     >
-      <div className="flex items-start gap-3.5">
-        <div className="w-[64px] shrink-0">
-          <p className="text-[21px] font-semibold leading-[1.05] tracking-[-0.01em] text-[#111827]">{time}</p>
+      <div className="flex items-start gap-3">
+        <div className="w-[62px] shrink-0">
+          <p className="text-[20px] font-semibold leading-[1.05] tracking-[-0.01em] text-[#171A25]">{time}</p>
           <p className="mt-1 text-[13px] leading-none text-[#8A8F98]">{durationMinutes} мин</p>
         </div>
 
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-[16px] font-semibold leading-[1.2] text-[#111827]">{title}</h3>
+          <h3 className="truncate text-[15px] font-semibold leading-[1.2] text-[#171A25]">{title}</h3>
 
-          <div className="mt-1.5 flex items-center gap-1.5 text-[14px] leading-none text-[#6B7280]">
+          <div className="mt-1.5 flex items-center gap-1 text-[14px] leading-none text-[#666D7A]">
             <PinIcon />
             <span className="truncate">{location}</span>
           </div>
@@ -102,10 +102,10 @@ export function TournamentCardHorizontal({
                 </div>
               )}
             </div>
-            <p className="truncate text-[14px] leading-none text-[#111827]">{organizerName}</p>
+            <p className="truncate text-[14px] leading-none text-[#1E2230]">{organizerName}</p>
           </div>
 
-          <div className="mt-2 flex items-center gap-1.5 text-[14px] leading-none text-[#4B5563]">
+          <div className="mt-2 flex items-center gap-1.5 text-[14px] leading-none text-[#3A4051]">
             <UsersIcon />
             <span>
               {participants} / {capacity} {formatLabel}
@@ -113,17 +113,17 @@ export function TournamentCardHorizontal({
           </div>
         </div>
 
-        <div className="w-[116px] shrink-0 text-right">
+        <div className="w-[114px] shrink-0 text-right">
           <span
             className={[
-              'inline-flex rounded-xl px-2.5 py-1.5 text-[12px] font-medium leading-none',
-              type === 'Американо' ? 'bg-[#F1EAFF] text-[#6A4AC9]' : 'bg-[#FFF1E3] text-[#B8681D]'
+              'inline-flex rounded-xl px-2.5 py-1 text-[12px] font-medium leading-none',
+              type === 'Американо' ? 'bg-[#EFE9FF] text-[#6D53C8]' : 'bg-[#FFF0E2] text-[#BC6D21]'
             ].join(' ')}
           >
             {type}
           </span>
 
-          <div className="mt-2 space-y-1 text-[12px] leading-[1.2] text-[#6B7280]">
+          <div className="mt-2 space-y-1 text-[12px] leading-[1.2] text-[#666D7A]">
             {subscriptions.slice(0, 2).map((item, index) => (
               <p key={`${item.label}-${index}`} className="truncate">
                 {item.label} · {item.price}
@@ -131,17 +131,17 @@ export function TournamentCardHorizontal({
             ))}
           </div>
 
-          <span className="mt-2 inline-flex rounded-xl bg-[#F3F4F6] px-2.5 py-1.5 text-[12px] leading-none text-[#4B5563]">
+          <span className="mt-2 inline-flex rounded-xl bg-[#F3F4F7] px-2.5 py-1 text-[12px] leading-none text-[#4A5162]">
             {placesLabel}
           </span>
         </div>
       </div>
 
-      <div className="mt-3.5 flex justify-end">
+      <div className="mt-3 flex justify-center">
         <button
           type="button"
           onClick={onActionClick}
-          className="h-10 rounded-[20px] border border-[#DDDEE3] px-5 text-[14px] font-medium text-[#111827] transition-colors hover:bg-[#F6F7F9] active:bg-[#ECEEF2]"
+          className="h-10 min-w-[188px] rounded-[20px] border border-[#DADDEA] bg-white px-5 text-[14px] font-medium text-[#21263A] transition-colors hover:bg-[#F6F7FA] active:bg-[#EDF0F5]"
         >
           {actionLabel}
         </button>
