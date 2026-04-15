@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tournament Card Premium</title>
+  <style>
+    :root {
+      --bg: #f4f1f8;
+      --card-bg: #fbfafe;
+      --stroke: #e7e1f0;
+      --text: #1f1a33;
+      --muted: #7b7397;
+      --muted-2: #9288ab;
+      --shadow-card:
+        0 20px 50px rgba(69, 44, 125, 0.08),
+        0 3px 10px rgba(69, 44, 125, 0.05);
+      --shadow-soft:
+        0 12px 24px rgba(84, 58, 144, 0.08),
+        0 2px 4px rgba(84, 58, 144, 0.04);
+      --shadow-button:
+        0 16px 32px rgba(120, 84, 255, 0.24),
+        inset 0 1px 0 rgba(255,255,255,0.18);
+      --purple-1: #6a41ff;
+      --purple-2: #8f5dff;
+      --purple-3: #5f34f4;
+      --avatar-1: #6e43ff;
+      --avatar-2: #a263ff;
+      --line: rgba(120, 108, 157, 0.14);
+      --tariff-bg: #f7f4fb;
+      --tariff-border: #e7e0f0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top, rgba(255,255,255,0.88) 0%, rgba(244,241,248,1) 55%),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      padding: 32px 20px;
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      display: grid;
+      gap: 24px;
+    }
+
+    .card {
+      width: 100%;
+      background: linear-gradient(180deg, #fcfbff 0%, #faf7fd 100%);
+      border: 1px solid rgba(221, 214, 237, 0.9);
+      border-radius: 32px;
+      box-shadow: var(--shadow-card);
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .header-left {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 18px;
+      flex-wrap: nowrap;
+    }
+
+    .time {
+      font-size: 58px;
+      line-height: 0.95;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      color: #201a37;
+      white-space: nowrap;
+    }
+
+    .title {
+      min-width: 0;
+      padding-top: 6px;
+      font-size: 39px;
+      line-height: 1.05;
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      color: #231d38;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 22px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--purple-1) 0%, var(--purple-2) 100%);
+      color: #fff;
+      box-shadow:
+        0 10px 24px rgba(120, 84, 255, 0.18),
+        inset 0 1px 0 rgba(255,255,255,0.18);
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+    }
+
+    .badge svg {
+      width: 28px;
+      height: 28px;
+      flex: 0 0 28px;
+      display: block;
+    }
+
+    .meta {
+      margin-top: 22px;
+      font-size: 23px;
+      line-height: 1.35;
+      font-weight: 500;
+      color: var(--muted);
+      letter-spacing: -0.02em;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--line);
+      margin: 28px 0;
+    }
+
+    .organizer {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .avatar {
+      width: 104px;
+      height: 104px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #ab6eff 0%, var(--avatar-1) 58%, #6b42ff 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        0 12px 24px rgba(111, 71, 255, 0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 33px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      flex: 0 0 104px;
+    }
+
+    .organizer-name {
+      min-width: 0;
+      font-size: 32px;
+      line-height: 1.2;
+      font-weight: 500;
+      color: #2a2340;
+      letter-spacing: -0.03em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tariffs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .tariff {
+      background: linear-gradient(180deg, #faf8fd 0%, #f6f2fb 100%);
+      border: 1px solid var(--tariff-border);
+      border-radius: 24px;
+      min-height: 138px;
+      box-shadow: var(--shadow-soft);
+      padding: 28px 32px 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .tariff.is-selected {
+      border-color: #8f5dff;
+      box-shadow:
+        0 14px 30px rgba(111, 71, 255, 0.2),
+        inset 0 0 0 1px rgba(143, 93, 255, 0.28);
+      transform: translateY(-1px);
+    }
+
+    .tariff-title {
+      font-size: 30px;
+      line-height: 1.1;
+      font-weight: 500;
+      color: #70688d;
+      letter-spacing: -0.03em;
+    }
+
+    .tariff-price {
+      margin-top: 16px;
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 700;
+      color: #231d38;
+      letter-spacing: -0.035em;
+    }
+
+    .cta {
+      margin-top: 28px;
+      width: 100%;
+      height: 72px;
+      border: 0;
+      border-radius: 22px;
+      background: linear-gradient(90deg, #6f43ff 0%, #8857ff 50%, #7849ff 100%);
+      color: #fff;
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      box-shadow: var(--shadow-button);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .cta span {
+      opacity: 0.92;
+    }
+
+    .card.is-low-spots .cta span {
+      color: #ffe8ce;
+      opacity: 1;
+    }
+
+    .card.is-sold-out .cta {
+      background: linear-gradient(90deg, #8f84ad 0%, #9e93bb 50%, #8c82a8 100%);
+      box-shadow:
+        0 12px 24px rgba(95, 84, 122, 0.24),
+        inset 0 1px 0 rgba(255,255,255,0.15);
+    }
+
+    @media (max-width: 860px) {
+      .card { padding: 22px; border-radius: 26px; }
+      .time { font-size: 42px; }
+      .title { font-size: 30px; }
+      .badge { font-size: 22px; padding: 12px 18px; }
+      .badge svg { width: 22px; height: 22px; }
+      .meta { font-size: 18px; margin-top: 18px; }
+      .organizer-name { font-size: 26px; }
+      .avatar { width: 82px; height: 82px; font-size: 27px; flex-basis: 82px; }
+      .tariff { min-height: 116px; padding: 22px 24px; }
+      .tariff-title { font-size: 24px; }
+      .tariff-price { font-size: 28px; }
+      .cta { height: 62px; font-size: 28px; }
+    }
+
+    @media (max-width: 640px) {
+      body { padding: 16px; }
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+      }
+      .header-left {
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .time { font-size: 34px; }
+      .title {
+        font-size: 24px;
+        padding-top: 2px;
+        white-space: normal;
+      }
+      .badge {
+        align-self: flex-start;
+        font-size: 18px;
+        padding: 10px 16px;
+      }
+      .meta { font-size: 15px; }
+      .divider { margin: 20px 0; }
+      .organizer { gap: 14px; }
+      .avatar {
+        width: 68px;
+        height: 68px;
+        font-size: 22px;
+        flex-basis: 68px;
+      }
+      .organizer-name {
+        font-size: 22px;
+        white-space: normal;
+      }
+      .tariffs {
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .tariff {
+        min-height: 94px;
+        border-radius: 20px;
+        padding: 18px 18px 16px;
+      }
+      .tariff-title {
+        font-size: 20px;
+      }
+      .tariff-price {
+        margin-top: 10px;
+        font-size: 26px;
+      }
+      .cta {
+        height: 58px;
+        font-size: 24px;
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="cards" class="wrap"></div>
+
+  <script>
+    function tennisBallSvg() {
+      return `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" fill="#E7F099"></circle>
+        <path d="M7.2 6.5C9.6 8.2 10.8 10.2 10.8 12C10.8 13.8 9.6 15.8 7.2 17.5" stroke="#6D56D7" stroke-width="1.6" stroke-linecap="round"></path>
+        <path d="M16.8 6.5C14.4 8.2 13.2 10.2 13.2 12C13.2 13.8 14.4 15.8 16.8 17.5" stroke="#6D56D7" stroke-width="1.6" stroke-linecap="round"></path>
+      </svg>`;
+    }
+
+    /**
+     * @typedef {Object} TournamentCardData
+     * @property {string} time
+     * @property {string} title
+     * @property {string} typeLabel
+     * @property {string} meta
+     * @property {string} organizerInitials
+     * @property {string} organizerName
+     * @property {{title: string, price: string}[]} tariffs
+     * @property {number} selectedTariffIndex
+     * @property {number} spots
+     * @property {'normal' | 'low-spots' | 'sold-out'} availability
+     */
+
+    /** @param {TournamentCardData} data */
+    function renderTournamentCard(data) {
+      const isSoldOut = data.availability === 'sold-out';
+      const isLowSpots = data.availability === 'low-spots';
+      const ctaLabel = isSoldOut
+        ? 'Лист ожидания'
+        : 'Записаться';
+      const spotsText = isSoldOut ? '• Sold out' : `• ${data.spots} мест`;
+
+      return `
+        <article class="card ${isLowSpots ? 'is-low-spots' : ''} ${isSoldOut ? 'is-sold-out' : ''}">
+          <div class="header">
+            <div class="header-left">
+              <div class="time">${data.time}</div>
+              <div class="title">${data.title}</div>
+            </div>
+
+            <div class="badge">
+              ${tennisBallSvg()}
+              <span>${data.typeLabel}</span>
+            </div>
+          </div>
+
+          <div class="meta">${data.meta}</div>
+
+          <div class="divider"></div>
+
+          <div class="organizer">
+            <div class="avatar">${data.organizerInitials}</div>
+            <div class="organizer-name">${data.organizerName}</div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="tariffs">
+            ${data.tariffs.map((tariff, index) => `
+              <div class="tariff ${index === data.selectedTariffIndex ? 'is-selected' : ''}">
+                <div class="tariff-title">${tariff.title}</div>
+                <div class="tariff-price">${tariff.price}</div>
+              </div>
+            `).join('')}
+          </div>
+
+          <button class="cta" ${isSoldOut ? 'aria-disabled="true"' : ''}>
+            ${ctaLabel} <span>&nbsp;${spotsText}</span>
+          </button>
+        </article>
+      `;
+    }
+
+    const cardsData = [
+      {
+        time: '17:00',
+        title: 'Тест Селигерская',
+        typeLabel: 'Американо',
+        meta: '120 мин • Падл ХАБ Селигерская • D+ – C • MIX',
+        organizerInitials: 'OT',
+        organizerName: 'Артем Никитин • ПадлХАБ',
+        tariffs: [
+          { title: 'Энергия 1', price: '5500 ₽' },
+          { title: 'Энергия 5', price: '3960 ₽' }
+        ],
+        selectedTariffIndex: 0,
+        spots: 12,
+        availability: 'normal'
+      },
+      {
+        time: '19:30',
+        title: 'Вечерний ПадлХАБ',
+        typeLabel: 'Американо',
+        meta: '90 мин • Падл ХАБ Селигерская • C+ – B • MIX',
+        organizerInitials: 'AN',
+        organizerName: 'Анна Петрова • ПадлХАБ',
+        tariffs: [
+          { title: 'Энергия 1', price: '5900 ₽' },
+          { title: 'Энергия 5', price: '4200 ₽' }
+        ],
+        selectedTariffIndex: 1,
+        spots: 3,
+        availability: 'low-spots'
+      },
+      {
+        time: '21:00',
+        title: 'Ночной Турнир',
+        typeLabel: 'Американо',
+        meta: '120 мин • Падл ХАБ Селигерская • D+ – C • MIX',
+        organizerInitials: 'MK',
+        organizerName: 'Михаил Котов • ПадлХАБ',
+        tariffs: [
+          { title: 'Энергия 1', price: '5500 ₽' },
+          { title: 'Энергия 5', price: '3960 ₽' }
+        ],
+        selectedTariffIndex: 0,
+        spots: 0,
+        availability: 'sold-out'
+      }
+    ];
+
+    const root = document.getElementById('cards');
+    root.innerHTML = cardsData.map(renderTournamentCard).join('');
+  </script>
+</body>
+</html>
