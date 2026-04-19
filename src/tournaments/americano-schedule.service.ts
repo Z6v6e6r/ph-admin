@@ -10,7 +10,8 @@ import {
   AmericanoPlayer,
   AmericanoRound,
   AmericanoScheduleDiagnostics,
-  AmericanoScheduleResult
+  AmericanoScheduleResult,
+  AmericanoTeam
 } from './americano-schedule.types';
 
 interface ResolvedGeneratorConfig extends AmericanoGeneratorConfig {
@@ -68,6 +69,24 @@ interface GeneratorState {
   ratingScale: number;
 }
 
+interface TeamStanding {
+  team: AmericanoTeam;
+  points: number;
+  projectedPoints: number;
+  byes: number;
+  lastByeRound: number | null;
+}
+
+interface TeamRoundContext {
+  teamStrength: Map<string, number>;
+  teamOpponents: Map<string, Map<string, number>>;
+  teamScores: Map<string, number>;
+  teamByes: Map<string, number>;
+  lastTeamByeRound: Map<string, number | null>;
+  playerIds: string[];
+  ratingScale: number;
+}
+
 const DEFAULT_WEIGHTS: AmericanoPenaltyWeights = {
   partnerRepeat: 1000,
   partnerImmediateRepeat: 1200,
@@ -86,6 +105,10 @@ const DEFAULT_MATCH_EXACT_THRESHOLD = 12;
 @Injectable()
 export class AmericanoScheduleService {
   generateSchedule(input: AmericanoGenerateScheduleInput): AmericanoScheduleResult {
+    if (this.isTeamMode(input.config.mode)) {
+      return this.generateTeamModeSchedule(input);
+    }
+
     const players = this.validatePlayers(input.players);
     const config = this.resolveConfig(players, input.config);
     const history = this.normalizeHistory(input.history, players);
@@ -115,6 +138,15 @@ export class AmericanoScheduleService {
       rounds,
       diagnostics: this.buildDiagnostics(players, rounds)
     };
+  }
+
+  private isTeamMode(mode: AmericanoGeneratorConfig['mode']): boolean {
+    return (
+      mode === 'team_americano' ||
+      mode === 'team_mexicano' ||
+      mode === 'round_robin' ||
+      mode === 'flex_americano'
+    );
   }
 
   private generateSingleMatchFullTournament(
@@ -176,6 +208,469 @@ export class AmericanoScheduleService {
     };
 
     return solve(0, this.cloneState(initialState)).rounds;
+  }
+
+  private generateTeamModeSchedule(input: AmericanoGenerateScheduleInput): AmericanoScheduleResult {
+    const players = this.validatePlayers(input.players);
+    const config = this.resolveConfig(players, input.config);
+
+    if (config.mode === 'flex_americano') {
+      const flexConfig: AmericanoGeneratorConfig = {
+        ...config,
+        mode: 'short_americano',
+        rounds:
+          typeof input.config.rounds === 'number' && input.config.rounds > 0
+            ? input.config.rounds
+            : this.resolveDefaultRounds(players.length, 'flex_americano')
+      };
+      return this.generateSchedule({
+        players,
+        config: flexConfig,
+        history: input.history
+      });
+    }
+
+    const teams = this.resolveTeams(input, players);
+    const history = this.normalizeHistory(input.history, players);
+
+    if (teams.length < 2) {
+      throw new BadRequestException('Team formats require at least 2 teams');
+    }
+
+    if (config.mode === 'team_mexicano') {
+      return this.generateTeamMexicanoSchedule(players, teams, history, config);
+    }
+
+    return this.generateStaticTeamRoundRobin(players, teams, history, config);
+  }
+
+  private resolveTeams(
+    input: AmericanoGenerateScheduleInput,
+    players: AmericanoPlayer[]
+  ): AmericanoTeam[] {
+    const playerIds = new Set(players.map((player) => player.id));
+    if (Array.isArray(input.teams) && input.teams.length > 0) {
+      const seen = new Set<string>();
+      return input.teams.map((team, index) => {
+        const normalized = this.normalizePair(team);
+        normalized.forEach((playerId) => {
+          if (!playerIds.has(playerId)) {
+            throw new BadRequestException(
+              `Team ${index + 1} references unknown player ${playerId}`
+            );
+          }
+          if (seen.has(playerId)) {
+            throw new BadRequestException(`Player ${playerId} is assigned to multiple teams`);
+          }
+          seen.add(playerId);
+        });
+        return normalized;
+      });
+    }
+
+    if (players.length % 2 !== 0) {
+      throw new BadRequestException(
+        'Team formats require an even number of players or an explicit teams list'
+      );
+    }
+
+    const teams: AmericanoTeam[] = [];
+    for (let index = 0; index < players.length; index += 2) {
+      teams.push(this.normalizePair([players[index].id, players[index + 1].id]));
+    }
+    return teams;
+  }
+
+  private generateStaticTeamRoundRobin(
+    players: AmericanoPlayer[],
+    teams: AmericanoTeam[],
+    history: AmericanoHistoricalRound[],
+    config: ResolvedGeneratorConfig
+  ): AmericanoScheduleResult {
+    const context = this.createTeamRoundContext(players, teams, history);
+    const scheduledPairs = this.generateTeamRoundRobinPairs(teams);
+    const rounds = this.packTeamPairingsIntoRounds(scheduledPairs, config, context, 0);
+
+    return {
+      rounds,
+      diagnostics: this.buildTeamDiagnostics(players, rounds)
+    };
+  }
+
+  private generateTeamMexicanoSchedule(
+    players: AmericanoPlayer[],
+    teams: AmericanoTeam[],
+    history: AmericanoHistoricalRound[],
+    config: ResolvedGeneratorConfig
+  ): AmericanoScheduleResult {
+    const context = this.createTeamRoundContext(players, teams, history);
+    const rounds: AmericanoRound[] = [];
+
+    for (let roundIndex = 0; roundIndex < config.rounds; roundIndex += 1) {
+      const matches = this.buildTeamMexicanoRound(teams, context, config, roundIndex);
+      const usedPlayers = new Set(matches.flatMap((match) => [...match.team1, ...match.team2]));
+      const byes = context.playerIds.filter((playerId) => !usedPlayers.has(playerId));
+
+      byes.forEach((playerId) => {
+        context.teamByes.set(playerId, (context.teamByes.get(playerId) ?? 0) + 1);
+      });
+
+      matches.forEach((match) => {
+        this.bumpTeamOpponent(context, match.team1, match.team2);
+        const projection = this.projectTeamMexicanoPoints(match.team1, match.team2, context);
+        this.updateTeamScore(context.teamScores, match.team1, projection[0]);
+        this.updateTeamScore(context.teamScores, match.team2, projection[1]);
+      });
+
+      rounds.push({
+        roundNumber: roundIndex + 1,
+        matches,
+        byes
+      });
+    }
+
+    return {
+      rounds,
+      diagnostics: this.buildTeamDiagnostics(players, rounds)
+    };
+  }
+
+  private createTeamRoundContext(
+    players: AmericanoPlayer[],
+    teams: AmericanoTeam[],
+    history: AmericanoHistoricalRound[]
+  ): TeamRoundContext {
+    const teamStrength = new Map<string, number>();
+    const teamOpponents = new Map<string, Map<string, number>>();
+    const teamScores = new Map<string, number>();
+    const teamByes = new Map<string, number>();
+    const lastTeamByeRound = new Map<string, number | null>();
+    const playerMap = new Map(players.map((player) => [player.id, player]));
+    const strengths = players.map((player) => this.getPlayerStrength(player, new Map()));
+    const ratingScale =
+      strengths.length > 1 ? Math.max(100, Math.max(...strengths) - Math.min(...strengths)) : 100;
+
+    teams.forEach((team) => {
+      const key = this.encodeTeam(team);
+      const strength = team.reduce((sum, playerId) => {
+        const player = playerMap.get(playerId);
+        return sum + (player ? this.getPlayerStrength(player, new Map()) : 1500);
+      }, 0);
+      teamStrength.set(key, strength);
+      teamOpponents.set(key, new Map());
+      teamScores.set(key, 0);
+      team.forEach((playerId) => {
+        teamByes.set(playerId, 0);
+        lastTeamByeRound.set(playerId, null);
+      });
+    });
+
+    history.forEach((round, roundIndex) => {
+      round.matches.forEach((match) => {
+        this.bumpTeamOpponentRecord(teamOpponents, match.team1, match.team2);
+        this.updateTeamScore(teamScores, match.team1, match.score1 ?? 0);
+        this.updateTeamScore(teamScores, match.team2, match.score2 ?? 0);
+      });
+      (round.byes ?? []).forEach((playerId) => {
+        teamByes.set(playerId, (teamByes.get(playerId) ?? 0) + 1);
+        lastTeamByeRound.set(playerId, roundIndex);
+      });
+    });
+
+    return {
+      teamStrength,
+      teamOpponents,
+      teamScores,
+      teamByes,
+      lastTeamByeRound,
+      playerIds: players.map((player) => player.id),
+      ratingScale
+    };
+  }
+
+  private generateTeamRoundRobinPairs(
+    teams: AmericanoTeam[]
+  ): Array<{ team1: AmericanoTeam; team2: AmericanoTeam }> {
+    const working: Array<AmericanoTeam | null> = teams.map((team) => this.normalizePair(team));
+    if (working.length % 2 !== 0) {
+      working.push(null);
+    }
+
+    const rounds: Array<{ team1: AmericanoTeam; team2: AmericanoTeam }> = [];
+    const pool = [...working];
+
+    for (let roundIndex = 0; roundIndex < pool.length - 1; roundIndex += 1) {
+      for (let pairIndex = 0; pairIndex < pool.length / 2; pairIndex += 1) {
+        const left = pool[pairIndex];
+        const right = pool[pool.length - 1 - pairIndex];
+        if (left && right) {
+          rounds.push({ team1: left, team2: right });
+        }
+      }
+
+      const fixed = pool[0];
+      const rotating = pool.slice(1);
+      rotating.unshift(rotating.pop() as AmericanoTeam | null);
+      pool.splice(0, pool.length, fixed, ...rotating);
+    }
+
+    return rounds;
+  }
+
+  private packTeamPairingsIntoRounds(
+    pairings: Array<{ team1: AmericanoTeam; team2: AmericanoTeam }>,
+    config: ResolvedGeneratorConfig,
+    context: TeamRoundContext,
+    startRoundIndex: number
+  ): AmericanoRound[] {
+    const pending = pairings.slice();
+    const rounds: AmericanoRound[] = [];
+    const roundLimit = config.courts ?? Math.max(1, Math.floor(context.playerIds.length / 4));
+    let roundIndex = startRoundIndex;
+
+    while (pending.length > 0) {
+      const usedTeams = new Set<string>();
+      const matches: AmericanoMatch[] = [];
+
+      for (let index = 0; index < pending.length && matches.length < roundLimit; ) {
+        const pairing = pending[index];
+        const leftKey = this.encodeTeam(pairing.team1);
+        const rightKey = this.encodeTeam(pairing.team2);
+        if (usedTeams.has(leftKey) || usedTeams.has(rightKey)) {
+          index += 1;
+          continue;
+        }
+        usedTeams.add(leftKey);
+        usedTeams.add(rightKey);
+        matches.push(
+          this.createTeamMatch(pairing.team1, pairing.team2, context, roundIndex, matches.length)
+        );
+        pending.splice(index, 1);
+      }
+
+      const usedPlayers = new Set(matches.flatMap((match) => [...match.team1, ...match.team2]));
+      rounds.push({
+        roundNumber: rounds.length + 1,
+        matches,
+        byes: context.playerIds.filter((playerId) => !usedPlayers.has(playerId))
+      });
+      roundIndex += 1;
+    }
+
+    return rounds;
+  }
+
+  private buildTeamMexicanoRound(
+    teams: AmericanoTeam[],
+    context: TeamRoundContext,
+    config: ResolvedGeneratorConfig,
+    roundIndex: number
+  ): AmericanoMatch[] {
+    const orderedTeams = [...teams].sort((left, right) => {
+      const scoreDiff =
+        (context.teamScores.get(this.encodeTeam(right)) ?? 0) -
+        (context.teamScores.get(this.encodeTeam(left)) ?? 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      const strengthDiff =
+        (context.teamStrength.get(this.encodeTeam(right)) ?? 0) -
+        (context.teamStrength.get(this.encodeTeam(left)) ?? 0);
+      if (strengthDiff !== 0) {
+        return strengthDiff;
+      }
+      return this.encodeTeam(left).localeCompare(this.encodeTeam(right));
+    });
+
+    const matchLimit = config.courts ?? Math.floor(orderedTeams.length / 2);
+    const activeLimit = Math.min(orderedTeams.length - (orderedTeams.length % 2), matchLimit * 2);
+    const activeTeams = orderedTeams.slice(0, activeLimit);
+    const waitingTeams = orderedTeams.slice(activeLimit);
+
+    waitingTeams.forEach((team) => {
+      team.forEach((playerId) => {
+        context.teamByes.set(playerId, (context.teamByes.get(playerId) ?? 0) + 1);
+        context.lastTeamByeRound.set(playerId, roundIndex);
+      });
+    });
+
+    const remaining = activeTeams.slice();
+    const matches: AmericanoMatch[] = [];
+
+    while (remaining.length >= 2) {
+      const anchor = remaining.shift() as AmericanoTeam;
+      let bestIndex = 0;
+      let bestCost = Number.POSITIVE_INFINITY;
+
+      remaining.forEach((candidate, candidateIndex) => {
+        const rankDistance = candidateIndex + 1;
+        const repeatPenalty =
+          this.getTeamOpponentCount(context, anchor, candidate) > 0 ? 1000 : 0;
+        const balancePenalty = this.computeTeamBalancePenalty(anchor, candidate, context) * 100;
+        const totalCost = rankDistance * 15 + repeatPenalty + balancePenalty;
+        if (totalCost < bestCost) {
+          bestCost = totalCost;
+          bestIndex = candidateIndex;
+        }
+      });
+
+      const opponent = remaining.splice(bestIndex, 1)[0];
+      matches.push(this.createTeamMatch(anchor, opponent, context, roundIndex, matches.length));
+    }
+
+    return matches;
+  }
+
+  private createTeamMatch(
+    team1: AmericanoTeam,
+    team2: AmericanoTeam,
+    context: TeamRoundContext,
+    roundIndex: number,
+    courtIndex: number
+  ): AmericanoMatch {
+    const balanceScore = this.computeTeamBalancePenalty(team1, team2, context);
+    const repeatedOpponentsPenalty = this.getTeamOpponentCount(context, team1, team2) * 100;
+    return {
+      court: courtIndex + 1,
+      team1: this.normalizePair(team1),
+      team2: this.normalizePair(team2),
+      quality: {
+        balanceScore: this.roundNumber(balanceScore),
+        repeatedPartnersPenalty: 0,
+        repeatedOpponentsPenalty,
+        totalCost: this.roundNumber(balanceScore * 100 + repeatedOpponentsPenalty + roundIndex * 0.01)
+      }
+    };
+  }
+
+  private computeTeamBalancePenalty(
+    team1: AmericanoTeam,
+    team2: AmericanoTeam,
+    context: TeamRoundContext
+  ): number {
+    const left = context.teamStrength.get(this.encodeTeam(team1)) ?? 0;
+    const right = context.teamStrength.get(this.encodeTeam(team2)) ?? 0;
+    return Math.abs(left - right) / Math.max(1, context.ratingScale);
+  }
+
+  private getTeamOpponentCount(
+    context: TeamRoundContext,
+    team1: AmericanoTeam,
+    team2: AmericanoTeam
+  ): number {
+    const leftKey = this.encodeTeam(team1);
+    const rightKey = this.encodeTeam(team2);
+    return context.teamOpponents.get(leftKey)?.get(rightKey) ?? 0;
+  }
+
+  private bumpTeamOpponent(
+    context: TeamRoundContext,
+    team1: AmericanoTeam,
+    team2: AmericanoTeam
+  ): void {
+    this.bumpTeamOpponentRecord(context.teamOpponents, team1, team2);
+  }
+
+  private bumpTeamOpponentRecord(
+    opponents: Map<string, Map<string, number>>,
+    team1: AmericanoTeam,
+    team2: AmericanoTeam
+  ): void {
+    const leftKey = this.encodeTeam(team1);
+    const rightKey = this.encodeTeam(team2);
+    const leftMap = opponents.get(leftKey) ?? new Map<string, number>();
+    const rightMap = opponents.get(rightKey) ?? new Map<string, number>();
+    leftMap.set(rightKey, (leftMap.get(rightKey) ?? 0) + 1);
+    rightMap.set(leftKey, (rightMap.get(leftKey) ?? 0) + 1);
+    opponents.set(leftKey, leftMap);
+    opponents.set(rightKey, rightMap);
+  }
+
+  private projectTeamMexicanoPoints(
+    team1: AmericanoTeam,
+    team2: AmericanoTeam,
+    context: TeamRoundContext
+  ): [number, number] {
+    const target = 21;
+    const left = context.teamStrength.get(this.encodeTeam(team1)) ?? 0;
+    const right = context.teamStrength.get(this.encodeTeam(team2)) ?? 0;
+    const diff = left - right;
+    const spread = Math.max(-5, Math.min(5, Math.round(diff / Math.max(1, context.ratingScale / 3))));
+    const leftScore = Math.max(0, Math.min(target, Math.round(target / 2 + spread)));
+    return [leftScore, target - leftScore];
+  }
+
+  private updateTeamScore(
+    scoreMap: Map<string, number>,
+    team: AmericanoTeam,
+    delta: number
+  ): void {
+    const key = this.encodeTeam(team);
+    scoreMap.set(key, (scoreMap.get(key) ?? 0) + delta);
+  }
+
+  private encodeTeam(team: AmericanoTeam): string {
+    return this.normalizePair(team).join('|');
+  }
+
+  private buildTeamDiagnostics(
+    players: AmericanoPlayer[],
+    rounds: AmericanoRound[]
+  ): AmericanoScheduleDiagnostics {
+    const byeCounts = Object.fromEntries(players.map((player) => [player.id, 0]));
+    const opponentPairs = new Map<string, number>();
+    const balanceScores: number[] = [];
+
+    rounds.forEach((round) => {
+      round.byes.forEach((playerId) => {
+        byeCounts[playerId] = (byeCounts[playerId] ?? 0) + 1;
+      });
+      round.matches.forEach((match) => {
+        balanceScores.push(Number(match.quality?.balanceScore ?? 0) || 0);
+        const key = [this.encodeTeam(match.team1), this.encodeTeam(match.team2)].sort().join('::');
+        opponentPairs.set(key, (opponentPairs.get(key) ?? 0) + 1);
+      });
+    });
+
+    const byeValues = Object.values(byeCounts);
+    const repeatedOpponentPairs = [...opponentPairs.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key.split('::')[0].split('|') as [string, string]);
+
+    return {
+      totalPlayers: players.length,
+      totalRounds: rounds.length,
+      partnerCoveragePercent: 100,
+      opponentCoveragePercent: this.roundNumber(
+        rounds.length === 0 ? 0 : Math.min(100, (opponentPairs.size / Math.max(1, rounds.length)) * 100)
+      ),
+      byesDistribution: byeCounts,
+      repeatedPartnerPairs: [],
+      repeatedOpponentPairs,
+      partnerCoverageByPlayer: Object.fromEntries(
+        players.map((player) => [
+          player.id,
+          {
+            uniquePartners: 1,
+            missingPartners: 0
+          }
+        ])
+      ),
+      balance: {
+        averagePenalty:
+          balanceScores.length > 0
+            ? this.roundNumber(balanceScores.reduce((sum, value) => sum + value, 0) / balanceScores.length)
+            : 0,
+        medianPenalty: this.roundNumber(this.computeMedian(balanceScores)),
+        worstPenalty: this.roundNumber(balanceScores.length > 0 ? Math.max(...balanceScores) : 0)
+      },
+      byeStats: {
+        min: byeValues.length > 0 ? Math.min(...byeValues) : 0,
+        max: byeValues.length > 0 ? Math.max(...byeValues) : 0,
+        standardDeviation: this.roundNumber(this.computeStandardDeviation(byeValues)),
+        consecutiveByes: []
+      }
+    };
   }
 
   private validatePlayers(players: AmericanoPlayer[]): AmericanoPlayer[] {
@@ -325,6 +820,20 @@ export class AmericanoScheduleService {
   }
 
   private resolveDefaultRounds(playerCount: number, mode: AmericanoGeneratorConfig['mode']): number {
+    if (mode === 'team_americano' || mode === 'round_robin') {
+      const teamCount = Math.floor(playerCount / 2);
+      return teamCount > 1 ? teamCount - 1 + (teamCount % 2) : 1;
+    }
+    if (mode === 'team_mexicano') {
+      const teamCount = Math.floor(playerCount / 2);
+      return Math.max(2, Math.min(teamCount, 5));
+    }
+    if (mode === 'flex_americano') {
+      return playerCount % 4 === 0
+        ? Math.min(playerCount - 1, Math.max(3, Math.ceil(playerCount / 2)))
+        : playerCount;
+    }
+
     const fullCoverageRounds = playerCount % 2 === 0 ? playerCount - 1 : playerCount;
     if (mode === 'full_americano') {
       return fullCoverageRounds;
@@ -350,7 +859,18 @@ export class AmericanoScheduleService {
     const balanceStrictnessMultiplier =
       config.strictBalance === 'high' ? 1.35 : config.strictBalance === 'low' ? 0.7 : 1;
 
-    if (config.mode === 'full_americano') {
+    if (config.mode === 'team_americano' || config.mode === 'round_robin') {
+      weights.balance *= 0.8;
+      weights.opponentRepeat *= 2;
+    } else if (config.mode === 'team_mexicano') {
+      weights.balance *= 1.2;
+      weights.opponentRepeat *= 2.2;
+      weights.partnerRepeat = 0;
+      weights.partnerImmediateRepeat = 0;
+    } else if (config.mode === 'flex_americano') {
+      weights.unevenBye *= 1.4;
+      weights.consecutiveBye *= 1.4;
+    } else if (config.mode === 'full_americano') {
       weights.partnerRepeat *= 1.35;
       weights.partnerImmediateRepeat *= 1.2;
       weights.balance *= 0.9;
@@ -1956,6 +2476,27 @@ export class AmericanoScheduleService {
       value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
       return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
     };
+  }
+
+  private computeMedian(values: number[]): number {
+    if (values.length === 0) {
+      return 0;
+    }
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1
+      ? sorted[middle]
+      : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  private computeStandardDeviation(values: number[]): number {
+    if (values.length === 0) {
+      return 0;
+    }
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance =
+      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
   }
 
   private clampOptional(value: number | undefined, min: number, max: number): number | undefined {

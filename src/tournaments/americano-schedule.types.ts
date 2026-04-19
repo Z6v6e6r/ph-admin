@@ -2,7 +2,11 @@ export type TournamentMode =
   | 'full_americano'
   | 'short_americano'
   | 'competitive_americano'
-  | 'dynamic_americano';
+  | 'dynamic_americano'
+  | 'team_americano'
+  | 'team_mexicano'
+  | 'flex_americano'
+  | 'round_robin';
 
 export type StrictnessLevel = 'high' | 'medium' | 'low';
 export type FirstRoundSeedingMode = 'auto' | 'rating_quartets' | 'off';
@@ -51,10 +55,13 @@ export interface AmericanoGeneratorConfig {
 }
 
 export type AmericanoPair = [string, string];
+export type AmericanoTeam = [string, string];
 
 export interface AmericanoHistoricalMatch {
   team1: AmericanoPair;
   team2: AmericanoPair;
+  score1?: number;
+  score2?: number;
 }
 
 export interface AmericanoHistoricalRound {
@@ -119,6 +126,7 @@ export interface AmericanoScheduleResult {
 
 export interface AmericanoGenerateScheduleInput {
   players: AmericanoPlayer[];
+  teams?: AmericanoTeam[];
   config: AmericanoGeneratorConfig;
   history?: AmericanoHistoricalRound[];
 }

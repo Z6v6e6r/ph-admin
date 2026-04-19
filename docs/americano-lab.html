@@ -400,6 +400,28 @@
         min-width: 84px;
       }
 
+      .surface-hidden {
+        display: none;
+      }
+
+      .pairs-shell {
+        overflow: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(18, 52, 45, 0.08);
+        background: rgba(255, 255, 255, 0.64);
+      }
+
+      .pair-status {
+        margin-top: 12px;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .pair-status.error {
+        color: var(--danger);
+      }
+
       .diag-grid {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1010,6 +1032,10 @@
                   <option value="full_americano">Full Americano</option>
                   <option value="short_americano" selected>Short Americano</option>
                   <option value="competitive_americano">Competitive Americano</option>
+                  <option value="flex_americano">Americano Flex</option>
+                  <option value="team_americano">Парный Американо</option>
+                  <option value="team_mexicano">Парный Мексикано</option>
+                  <option value="round_robin">Робин Раунд</option>
                 </select>
               </label>
 
@@ -1187,6 +1213,28 @@
             </div>
           </div>
 
+          <div id="fixedTeamsSection" class="surface surface-hidden">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">Фиксированные пары</h2>
+                <div class="section-note">Редактор активен только для командных режимов. Можно вручную собрать постоянные пары и отправить их в `teams`.</div>
+              </div>
+            </div>
+            <div class="pairs-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Игрок 1</th>
+                    <th>Игрок 2</th>
+                  </tr>
+                </thead>
+                <tbody id="fixedTeamsBody"></tbody>
+              </table>
+            </div>
+            <div id="fixedTeamsStatus" class="pair-status">Для командных режимов пары заполняются по порядку игроков, но их можно изменить вручную.</div>
+          </div>
+
           <div class="surface">
             <div id="status" class="status"></div>
             <div class="section-head">
@@ -1294,6 +1342,9 @@
           simulateRatingBtn: document.getElementById('simulateRatingBtn'),
           resetScoresBtn: document.getElementById('resetScoresBtn'),
           playersBody: document.getElementById('playersBody'),
+          fixedTeamsSection: document.getElementById('fixedTeamsSection'),
+          fixedTeamsBody: document.getElementById('fixedTeamsBody'),
+          fixedTeamsStatus: document.getElementById('fixedTeamsStatus'),
           diagnostics: document.getElementById('diagnostics'),
           ratingSummary: document.getElementById('ratingSummary'),
           roundsOutput: document.getElementById('roundsOutput'),
@@ -1314,7 +1365,8 @@
           ratingResult: null,
           ratingDirty: false,
           matchScores: {},
-          activeHelpKey: null
+          activeHelpKey: null,
+          fixedTeams: []
         };
 
         var HELP_CONTENT = {
@@ -1328,9 +1380,9 @@
           mode: {
             title: 'Режим турнира',
             summary: 'Меняет приоритеты алгоритма при сборке пар и матчей.',
-            meaning: 'Full Americano сильнее давит на новых партнёров, Short ограничивает длительность турнира, Competitive больше защищает ровный баланс матчей.',
-            impact: 'На одном и том же составе режим может заметно менять сетку: кто с кем встаёт в пару, сколько будет повторов соперников и насколько ровными окажутся корты.',
-            tip: 'Для клубного вечера чаще подходит Full или Short. Для более спортивного сценария сравнивайте с Competitive.'
+            meaning: 'Full, Short и Competitive работают как индивидуальные режимы Americano. Flex оставляет ту же индивидуальную механику, но делает акцент на ровную ротацию bye. Парный Американо и Робин Раунд фиксируют пары по порядку игроков в таблице: P1+P2, P3+P4 и так далее. Парный Мексикано сводит близкие по таблице пары друг с другом.',
+            impact: 'На одном и том же составе режим меняет не только баланс матчей, но и саму логику турнира: в индивидуальных режимах партнёры вращаются, а в командных пары остаются постоянными.',
+            tip: 'Для командных форматов держите чётное число игроков и учитывайте, что лаборатория собирает постоянные пары последовательно из списка игроков.'
           },
           rounds: {
             title: 'Раунды',
@@ -1613,6 +1665,160 @@
           };
         }
 
+        function isFixedTeamMode(mode) {
+          return mode === 'team_americano' || mode === 'team_mexicano' || mode === 'round_robin';
+        }
+
+        function buildDefaultFixedTeams(players) {
+          var next = [];
+          for (var index = 0; index < players.length - 1; index += 2) {
+            next.push([
+              String(players[index] && players[index].id || ''),
+              String(players[index + 1] && players[index + 1].id || '')
+            ]);
+          }
+          return next;
+        }
+
+        function syncFixedTeamsWithPlayers() {
+          var validIds = {};
+          state.players.forEach(function (player) {
+            validIds[String(player.id || '')] = true;
+          });
+
+          var teamCount = Math.floor(state.players.length / 2);
+          var existing = Array.isArray(state.fixedTeams) ? state.fixedTeams.slice(0, teamCount) : [];
+          while (existing.length < teamCount) {
+            existing.push(['', '']);
+          }
+
+          var used = {};
+          existing = existing.map(function (team) {
+            var left = Array.isArray(team) ? String(team[0] || '') : '';
+            var right = Array.isArray(team) ? String(team[1] || '') : '';
+            if (!validIds[left] || used[left]) {
+              left = '';
+            }
+            if (left) {
+              used[left] = true;
+            }
+            if (!validIds[right] || used[right]) {
+              right = '';
+            }
+            if (right) {
+              used[right] = true;
+            }
+            return [left, right];
+          });
+
+          var fallback = buildDefaultFixedTeams(state.players);
+          fallback.forEach(function (team, index) {
+            if (!existing[index]) {
+              existing[index] = ['', ''];
+            }
+            if (!existing[index][0] && team[0] && !used[team[0]]) {
+              existing[index][0] = team[0];
+              used[team[0]] = true;
+            }
+            if (!existing[index][1] && team[1] && !used[team[1]]) {
+              existing[index][1] = team[1];
+              used[team[1]] = true;
+            }
+          });
+
+          state.fixedTeams = existing;
+        }
+
+        function buildPlayerOptions(selectedId, excludedId) {
+          var options = ['<option value="">Выбрать игрока</option>'];
+          state.players.forEach(function (player) {
+            var playerId = String(player.id || '');
+            var disabled = excludedId && playerId === excludedId ? ' disabled' : '';
+            var selected = playerId === selectedId ? ' selected' : '';
+            options.push(
+              '<option value="' + escapeAttr(playerId) + '"' + selected + disabled + '>' +
+              escapeHtml(playerId) +
+              '</option>'
+            );
+          });
+          return options.join('');
+        }
+
+        function validateFixedTeams() {
+          var errors = [];
+          var used = {};
+          state.fixedTeams.forEach(function (team, index) {
+            var left = String(team && team[0] || '');
+            var right = String(team && team[1] || '');
+            if (!left || !right) {
+              errors.push('Пара ' + String(index + 1) + ' заполнена не полностью.');
+              return;
+            }
+            if (left === right) {
+              errors.push('Пара ' + String(index + 1) + ' содержит одного и того же игрока дважды.');
+            }
+            if (used[left]) {
+              errors.push('Игрок ' + left + ' встречается более одного раза.');
+            }
+            if (used[right]) {
+              errors.push('Игрок ' + right + ' встречается более одного раза.');
+            }
+            used[left] = true;
+            used[right] = true;
+          });
+
+          if (state.players.length % 2 !== 0) {
+            errors.push('Для фиксированных пар нужно чётное число игроков.');
+          }
+
+          return errors;
+        }
+
+        function renderFixedTeams() {
+          var mode = String(dom.mode.value || 'short_americano');
+          var active = isFixedTeamMode(mode);
+          dom.fixedTeamsSection.className = active ? 'surface' : 'surface surface-hidden';
+          if (!active) {
+            return;
+          }
+
+          syncFixedTeamsWithPlayers();
+          dom.fixedTeamsBody.innerHTML = '';
+
+          state.fixedTeams.forEach(function (team, index) {
+            var row = document.createElement('tr');
+            var left = String(team && team[0] || '');
+            var right = String(team && team[1] || '');
+            row.innerHTML = [
+              '<td>' + escapeHtml(String(index + 1)) + '</td>',
+              '<td><select class="select" data-team-index="' + index + '" data-side="0">' + buildPlayerOptions(left, right) + '</select></td>',
+              '<td><select class="select" data-team-index="' + index + '" data-side="1">' + buildPlayerOptions(right, left) + '</select></td>'
+            ].join('');
+            dom.fixedTeamsBody.appendChild(row);
+          });
+
+          Array.prototype.slice.call(dom.fixedTeamsBody.querySelectorAll('select')).forEach(function (select) {
+            select.addEventListener('change', function (event) {
+              var target = event.target;
+              var teamIndex = Number(target.getAttribute('data-team-index'));
+              var side = Number(target.getAttribute('data-side'));
+              if (!state.fixedTeams[teamIndex]) {
+                state.fixedTeams[teamIndex] = ['', ''];
+              }
+              state.fixedTeams[teamIndex][side] = String(target.value || '');
+              renderFixedTeams();
+              clearRatingSimulation();
+            });
+          });
+
+          var errors = validateFixedTeams();
+          dom.fixedTeamsStatus.className = errors.length > 0 ? 'pair-status error' : 'pair-status';
+          dom.fixedTeamsStatus.textContent =
+            errors.length > 0
+              ? errors.join(' ')
+              : 'Пары готовы к отправке в `teams`. В командных режимах backend возьмёт именно этот список.';
+        }
+
         function rebuildPlayers() {
           var count = clamp(parsePositiveInteger(dom.playerCount.value) || 12, 4, 48);
           dom.playerCount.value = String(count);
@@ -1634,6 +1840,8 @@
           }
           state.players = next;
           renderPlayers();
+          syncFixedTeamsWithPlayers();
+          renderFixedTeams();
           clearRatingSimulation();
         }
 
@@ -1657,6 +1865,7 @@
             });
           });
           renderPlayers();
+          renderFixedTeams();
           clearRatingSimulation();
         }
 
@@ -1666,6 +1875,7 @@
             return Object.assign({}, player, { rating: 1500, gameRating: equalizedGameRating });
           });
           renderPlayers();
+          renderFixedTeams();
           clearRatingSimulation();
         }
 
@@ -1696,6 +1906,8 @@
               var value = target.value;
               if (key === 'id') {
                 state.players[index][key] = value.trim() || ('P' + String(index + 1));
+                syncFixedTeamsWithPlayers();
+                renderFixedTeams();
                 clearRatingSimulation();
                 return;
               }
@@ -1706,6 +1918,7 @@
               } else {
                 state.players[index][key] = Number.isFinite(numeric) ? numeric : 0;
               }
+              renderFixedTeams();
               clearRatingSimulation();
             });
           });
@@ -1773,7 +1986,7 @@
         }
 
         function buildPayload() {
-          return {
+          var payload = {
             players: state.players.map(function (player, index) {
               return {
                 id: String(player.id || ('P' + String(index + 1))).trim() || ('P' + String(index + 1)),
@@ -1787,6 +2000,18 @@
             }),
             config: readConfig()
           };
+
+          if (isFixedTeamMode(payload.config.mode)) {
+            payload.teams = state.fixedTeams
+              .filter(function (team) {
+                return Array.isArray(team) && team[0] && team[1];
+              })
+              .map(function (team) {
+                return [String(team[0]), String(team[1])];
+              });
+          }
+
+          return payload;
         }
 
         function buildRatingPayload() {
@@ -2259,6 +2484,13 @@
 
         async function runGeneration() {
           var payload = buildPayload();
+          if (isFixedTeamMode(payload.config.mode)) {
+            var fixedTeamErrors = validateFixedTeams();
+            if (fixedTeamErrors.length > 0) {
+              setStatus(fixedTeamErrors.join(' '), 'error');
+              return;
+            }
+          }
           state.result = null;
           clearRatingSimulation();
           dom.rawJson.textContent = JSON.stringify(payload, null, 2);
@@ -2371,6 +2603,10 @@
         dom.simulateRatingBtn.addEventListener('click', runRatingSimulation);
         dom.resetScoresBtn.addEventListener('click', resetScores);
         dom.playerCount.addEventListener('change', rebuildPlayers);
+        dom.mode.addEventListener('change', function () {
+          renderFixedTeams();
+          dom.rawJson.textContent = JSON.stringify(buildPayload(), null, 2);
+        });
         dom.matchPointTarget.addEventListener('change', function () {
           var target = getTargetPoints();
           dom.matchPointTarget.value = String(target);
@@ -2395,6 +2631,7 @@
         });
 
         rebuildPlayers();
+        renderFixedTeams();
         renderDiagnostics(null);
         renderRatingSummary(null);
         renderRounds(null);

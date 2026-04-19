@@ -13895,7 +13895,11 @@
       { value: 'short_americano', label: 'Short Americano' },
       { value: 'full_americano', label: 'Full Americano' },
       { value: 'competitive_americano', label: 'Competitive Americano' },
-      { value: 'dynamic_americano', label: 'Dynamic Americano' }
+      { value: 'dynamic_americano', label: 'Dynamic Americano' },
+      { value: 'flex_americano', label: 'Americano Flex' },
+      { value: 'team_americano', label: 'Парный Американо' },
+      { value: 'team_mexicano', label: 'Парный Мексикано' },
+      { value: 'round_robin', label: 'Робин Раунд' }
     ];
     var TOURNAMENT_MECHANICS_SEEDING_OPTIONS = [
       { value: 'auto', label: 'Auto' },

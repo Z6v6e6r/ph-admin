@@ -67,7 +67,11 @@ class AmericanoGeneratorConfigDto {
     'full_americano',
     'short_americano',
     'competitive_americano',
-    'dynamic_americano'
+    'dynamic_americano',
+    'team_americano',
+    'team_mexicano',
+    'flex_americano',
+    'round_robin'
   ])
   mode!: TournamentMode;
 
@@ -157,6 +161,16 @@ class AmericanoHistoricalMatchDto {
   @ArrayMaxSize(2)
   @IsString({ each: true })
   team2!: [string, string];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  score1?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  score2?: number;
 }
 
 class AmericanoHistoricalRoundDto {
@@ -184,6 +198,12 @@ export class GenerateTournamentScheduleDto {
   @ValidateNested({ each: true })
   @Type(() => AmericanoPlayerDto)
   players!: AmericanoPlayerDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(24)
+  teams?: [string, string][];
 
   @ValidateNested()
   @Type(() => AmericanoGeneratorConfigDto)

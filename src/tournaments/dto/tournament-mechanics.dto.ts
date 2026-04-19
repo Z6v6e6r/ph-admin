@@ -67,7 +67,11 @@ export class TournamentMechanicsConfigDto {
     'full_americano',
     'short_americano',
     'competitive_americano',
-    'dynamic_americano'
+    'dynamic_americano',
+    'team_americano',
+    'team_mexicano',
+    'flex_americano',
+    'round_robin'
   ])
   mode!: TournamentMode;
 

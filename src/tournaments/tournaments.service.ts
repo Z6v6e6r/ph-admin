@@ -1041,7 +1041,11 @@ export class TournamentsService {
       existingMode === 'full_americano' ||
       existingMode === 'short_americano' ||
       existingMode === 'competitive_americano' ||
-      existingMode === 'dynamic_americano'
+      existingMode === 'dynamic_americano' ||
+      existingMode === 'team_americano' ||
+      existingMode === 'team_mexicano' ||
+      existingMode === 'flex_americano' ||
+      existingMode === 'round_robin'
     ) {
       return existingMode;
     }

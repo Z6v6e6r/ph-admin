@@ -1156,7 +1156,11 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       normalized === 'full_americano' ||
       normalized === 'short_americano' ||
       normalized === 'competitive_americano' ||
-      normalized === 'dynamic_americano'
+      normalized === 'dynamic_americano' ||
+      normalized === 'team_americano' ||
+      normalized === 'team_mexicano' ||
+      normalized === 'flex_americano' ||
+      normalized === 'round_robin'
     ) {
       return normalized;
     }
