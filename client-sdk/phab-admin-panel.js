@@ -2797,25 +2797,25 @@
         background:
           linear-gradient(
             90deg,
-            rgba(255,246,232,.98) 0%,
-            rgba(255,232,145,.42) 22%,
-            rgba(201,242,216,.58) 100%
+            rgba(244,240,255,.98) 0%,
+            rgba(225,216,255,.92) 24%,
+            rgba(115,83,217,.14) 100%
           );
       }
       .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin:hover{
         background:
           linear-gradient(
             90deg,
-            rgba(255,240,219,1) 0%,
-            rgba(255,223,154,.6) 24%,
-            rgba(201,242,216,.72) 100%
+            rgba(240,235,255,1) 0%,
+            rgba(216,204,255,.94) 24%,
+            rgba(115,83,217,.22) 100%
           ) !important;
       }
       .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin td{
-        border-bottom-color:rgba(255,90,60,.16);
+        border-bottom-color:rgba(115,83,217,.18);
       }
       .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin td:first-child{
-        box-shadow:inset 4px 0 0 var(--cup-red);
+        box-shadow:inset 4px 0 0 #6f4df6;
       }
       .phab-admin-tournament-source-chip{
         display:inline-flex;
@@ -2832,32 +2832,32 @@
         white-space:nowrap;
       }
       .phab-admin-tournament-source-chip--custom-skin{
-        border-color:rgba(255,90,60,.18);
+        border-color:rgba(111,77,246,.22);
         background:
           linear-gradient(
             90deg,
-            rgba(255,246,232,.96) 0%,
-            rgba(255,232,145,.5) 56%,
-            rgba(201,242,216,.62) 100%
+            rgba(250,248,255,.98) 0%,
+            rgba(236,230,255,.94) 52%,
+            rgba(115,83,217,.18) 100%
           );
-        color:#8f2d13;
-        box-shadow:0 10px 20px rgba(255,90,60,.12);
+        color:#5b3fb5;
+        box-shadow:0 10px 20px rgba(111,77,246,.14);
       }
       .phab-admin-btn-secondary.phab-admin-btn-secondary--tournament-custom{
-        border-color:rgba(255,90,60,.2);
+        border-color:rgba(111,77,246,.24);
         background:
           linear-gradient(
             90deg,
-            rgba(255,246,232,.96) 0%,
-            rgba(255,232,145,.5) 48%,
-            rgba(255,255,255,.96) 100%
+            rgba(248,245,255,.98) 0%,
+            rgba(229,220,255,.92) 48%,
+            rgba(255,255,255,.98) 100%
           );
-        color:#8f2d13;
-        box-shadow:0 10px 18px rgba(255,90,60,.1);
+        color:#5b3fb5;
+        box-shadow:0 10px 18px rgba(111,77,246,.12);
       }
       .phab-admin-btn-secondary.phab-admin-btn-secondary--tournament-custom:hover{
         transform:translateY(-1px);
-        box-shadow:0 12px 22px rgba(255,90,60,.16);
+        box-shadow:0 12px 22px rgba(111,77,246,.18);
       }
       .phab-admin-games-row{
         cursor:pointer;
