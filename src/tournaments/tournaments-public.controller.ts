@@ -24,6 +24,9 @@ type JoinSubmission = {
   phone?: string;
   levelLabel?: string;
   notes?: string;
+  selectedSubscriptionId?: string;
+  selectedPurchaseOptionId?: string;
+  purchaseConfirmed: boolean;
   waitlist: boolean;
   format?: string;
 };
@@ -262,12 +265,20 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (flow.code === 'READY_TO_JOIN') {
+    if (
+      flow.code === 'READY_TO_JOIN'
+      || flow.code === 'SUBSCRIPTION_AVAILABLE'
+      || (flow.code === 'PURCHASE_REQUIRED' && submission.purchaseConfirmed)
+    ) {
       const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
-        notes: submission.notes
+        notes: submission.notes,
+        selectedSubscriptionId: submission.selectedSubscriptionId,
+        selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
+        purchaseConfirmed: submission.purchaseConfirmed,
+        subscriptions: client.subscriptions
       });
       if (this.wantsJson(request, submission.format)) {
         response.json(outcome);
@@ -340,6 +351,9 @@ export class TournamentsPublicController {
       phone: this.pickString(record.phone) ?? undefined,
       levelLabel: this.pickString(record.levelLabel) ?? undefined,
       notes: this.pickString(record.notes) ?? undefined,
+      selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
+      selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+      purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
       format: this.pickString(record.format) ?? undefined
     };
@@ -403,7 +417,11 @@ export class TournamentsPublicController {
     const levelValue = String(client.levelLabel ?? '').trim().toUpperCase();
     const spotsLabel = `${tournament.participantsCount}/${tournament.maxPlayers}`;
     const actionLabel =
-      flow.code === 'READY_TO_JOIN'
+      flow.code === 'SUBSCRIPTION_AVAILABLE'
+        ? 'Списать абонемент и записаться'
+        : flow.code === 'PURCHASE_REQUIRED'
+          ? 'Подтвердить покупку и записаться'
+          : flow.code === 'READY_TO_JOIN'
         ? tournament.skin.ctaLabel || 'Записаться'
         : flow.code === 'LEVEL_NOT_ALLOWED'
           ? 'Проверить уровень ещё раз'
@@ -411,9 +429,10 @@ export class TournamentsPublicController {
     const statusTone =
       flow.code === 'LEVEL_NOT_ALLOWED'
         ? 'warning'
-        : flow.code === 'READY_TO_JOIN'
+        : flow.code === 'READY_TO_JOIN' || flow.code === 'SUBSCRIPTION_AVAILABLE'
           ? 'success'
           : 'info';
+    const selectedSubscriptionId = this.escapeHtml(flow.payment.selectedSubscription?.id || '');
     const alreadyDone =
       flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED';
 
@@ -793,6 +812,45 @@ export class TournamentsPublicController {
 
         <div class="status status-${statusTone}">${this.escapeHtml(flow.message)}</div>
 
+        ${
+          flow.payment.required
+            ? `<div class="metric" style="margin-bottom:18px;">
+          <span class="metric-label">Оплата участия</span>
+          <span class="metric-value">${this.escapeHtml(flow.payment.message)}</span>
+          ${
+            flow.payment.availableSubscriptions.length > 0
+              ? `<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
+            ${flow.payment.availableSubscriptions
+              .map(
+                (item) =>
+                  `<span class="chip">${this.escapeHtml(item.label)}${
+                    typeof item.remainingUses === 'number'
+                      ? ` · ${this.escapeHtml(String(item.remainingUses))} спис.`
+                      : ''
+                  }</span>`
+              )
+              .join('')}
+          </div>`
+              : ''
+          }
+          ${
+            flow.payment.purchaseOptions.length > 0
+              ? `<div style="margin-top:10px; display:grid; gap:8px;">
+            ${flow.payment.purchaseOptions
+              .map(
+                (item) =>
+                  `<div class="row"><strong>${this.escapeHtml(item.label)}</strong> · ${this.escapeHtml(item.priceLabel)}${
+                    item.description ? `<br />${this.escapeHtml(item.description)}` : ''
+                  }</div>`
+              )
+              .join('')}
+          </div>`
+              : ''
+          }
+        </div>`
+            : ''
+        }
+
         <form method="post" action="${this.escapeHtml(tournament.joinUrl)}">
           <label>
             Имя и фамилия
@@ -833,6 +891,33 @@ export class TournamentsPublicController {
             Комментарий для организатора
             <textarea name="notes" maxlength="500" placeholder="Если нужно, расскажите о себе или оставьте заметку."></textarea>
           </label>
+
+          ${
+            flow.code === 'SUBSCRIPTION_AVAILABLE'
+              ? `<input type="hidden" name="selectedSubscriptionId" value="${selectedSubscriptionId}" />`
+              : ''
+          }
+
+          ${
+            flow.code === 'PURCHASE_REQUIRED'
+              ? `<input type="hidden" name="purchaseConfirmed" value="1" />
+          ${
+            flow.payment.purchaseOptions.length > 0
+              ? `<label>
+            Тариф покупки
+            <select name="selectedPurchaseOptionId">
+              ${flow.payment.purchaseOptions
+                .map(
+                  (item) =>
+                    `<option value="${this.escapeHtml(item.id)}">${this.escapeHtml(item.label)} · ${this.escapeHtml(item.priceLabel)}</option>`
+                )
+                .join('')}
+            </select>
+          </label>`
+              : ''
+          }`
+              : ''
+          }
 
           <div class="actions">
             <button class="button" type="submit">${this.escapeHtml(actionLabel)}</button>

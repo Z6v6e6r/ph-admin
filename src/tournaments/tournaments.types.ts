@@ -170,6 +170,30 @@ export interface Tournament {
   updatedBy?: TournamentActor;
 }
 
+export interface TournamentAcceptedSubscriptionRule {
+  id: string;
+  label: string;
+  description?: string;
+  writeOffLabel?: string;
+  compatibleTournamentTypes?: string[];
+  compatibleAccessLevels?: string[];
+}
+
+export interface TournamentPurchaseOption {
+  id: string;
+  label: string;
+  priceLabel: string;
+  description?: string;
+}
+
+export interface TournamentBookingConfig {
+  enabled: boolean;
+  required: boolean;
+  acceptedSubscriptions: TournamentAcceptedSubscriptionRule[];
+  purchaseOptions: TournamentPurchaseOption[];
+  purchaseFlowUrl?: string;
+}
+
 export interface CustomTournament extends Tournament {
   source: 'CUSTOM';
   slug: string;
@@ -206,6 +230,7 @@ export interface TournamentPublicView {
   registrationOpen: boolean;
   allowedManagerPhonesCount: number;
   skin: TournamentSkin;
+  booking: TournamentBookingConfig;
   sourceTournamentId?: string;
   sourceTournament?: Pick<
     Tournament,
@@ -243,11 +268,13 @@ export interface TournamentRegistrationResponse {
     | 'REGISTERED'
     | 'WAITLISTED'
     | 'ALREADY_REGISTERED'
-    | 'ALREADY_WAITLISTED';
+    | 'ALREADY_WAITLISTED'
+    | 'PURCHASE_REQUIRED';
   message: string;
   tournamentId?: string;
   tournamentSlug?: string;
   participant?: TournamentParticipant;
+  payment?: TournamentJoinPaymentState;
 }
 
 export interface TournamentMechanicsAccessResponse {
@@ -255,6 +282,16 @@ export interface TournamentMechanicsAccessResponse {
   code: 'OK' | 'PHONE_REQUIRED' | 'ACCESS_DENIED';
   message: string;
   tournamentSlug?: string;
+}
+
+export interface TournamentClientSubscription {
+  id: string;
+  label: string;
+  remainingUses?: number;
+  description?: string;
+  validUntil?: string;
+  compatibleTournamentTypes?: string[];
+  compatibleAccessLevels?: string[];
 }
 
 export interface TournamentPublicClientProfile {
@@ -265,6 +302,7 @@ export interface TournamentPublicClientProfile {
   phone?: string;
   levelLabel?: string;
   onboardingCompleted: boolean;
+  subscriptions: TournamentClientSubscription[];
 }
 
 export type TournamentJoinFlowCode =
@@ -272,11 +310,23 @@ export type TournamentJoinFlowCode =
   | 'PROFILE_REQUIRED'
   | 'ONBOARDING_REQUIRED'
   | 'READY_TO_JOIN'
+  | 'SUBSCRIPTION_AVAILABLE'
+  | 'PURCHASE_REQUIRED'
   | 'LEVEL_NOT_ALLOWED'
   | 'REGISTERED'
   | 'WAITLISTED'
   | 'ALREADY_REGISTERED'
   | 'ALREADY_WAITLISTED';
+
+export interface TournamentJoinPaymentState {
+  required: boolean;
+  code: 'NOT_REQUIRED' | 'SUBSCRIPTION_AVAILABLE' | 'PURCHASE_REQUIRED';
+  message: string;
+  availableSubscriptions: TournamentClientSubscription[];
+  selectedSubscription?: TournamentClientSubscription;
+  purchaseOptions: TournamentPurchaseOption[];
+  purchaseFlowUrl?: string;
+}
 
 export interface TournamentJoinFlowResponse {
   ok: boolean;
@@ -287,6 +337,7 @@ export interface TournamentJoinFlowResponse {
   access: TournamentAccessCheckResponse;
   missingFields: Array<'phone' | 'levelLabel'>;
   waitlistAllowed: boolean;
+  payment: TournamentJoinPaymentState;
   authRequired?: boolean;
   authUrl?: string;
   authCheckUrl?: string;

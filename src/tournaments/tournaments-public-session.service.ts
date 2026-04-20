@@ -2,13 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
 import { Request, Response } from 'express';
 import { RequestUser } from '../common/rbac/request-user.interface';
-import { TournamentPublicClientProfile } from './tournaments.types';
+import {
+  TournamentClientSubscription,
+  TournamentPublicClientProfile
+} from './tournaments.types';
 
 interface TournamentPublicSessionPayload {
   clientId: string;
   name?: string;
   phone?: string;
   levelLabel?: string;
+  subscriptions?: TournamentClientSubscription[];
   iat: number;
   exp: number;
 }
@@ -82,6 +86,7 @@ export class TournamentsPublicSessionService {
       name: this.pickString(patch.name) ?? this.pickString(current.name) ?? undefined,
       phone: this.normalizePhone(patch.phone) ?? this.normalizePhone(current.phone) ?? undefined,
       levelLabel,
+      subscriptions: current.subscriptions,
       iat: now,
       exp: now + this.ttlDays * 24 * 60 * 60
     };
@@ -95,7 +100,8 @@ export class TournamentsPublicSessionService {
       name: this.pickString(payload.name) ?? undefined,
       phone: this.normalizePhone(payload.phone) ?? undefined,
       levelLabel,
-      onboardingCompleted: Boolean(levelLabel)
+      onboardingCompleted: Boolean(levelLabel),
+      subscriptions: this.normalizeSubscriptions(payload.subscriptions)
     };
   }
 
@@ -122,6 +128,7 @@ export class TournamentsPublicSessionService {
       this.normalizeLevel(request.headers['x-user-level-label'])
       ?? this.normalizeLevel(request.headers['x-user-level'])
       ?? undefined;
+    const subscriptions = this.readSubscriptionsHeader(request.headers['x-user-subscriptions']);
 
     return {
       id: String(resolvedUser.id),
@@ -130,7 +137,8 @@ export class TournamentsPublicSessionService {
       name,
       phone,
       levelLabel,
-      onboardingCompleted: Boolean(levelLabel)
+      onboardingCompleted: Boolean(levelLabel),
+      subscriptions
     };
   }
 
@@ -148,13 +156,18 @@ export class TournamentsPublicSessionService {
       this.normalizeLevel(client.levelLabel)
       ?? this.normalizeLevel(session.levelLabel)
       ?? undefined;
+    const subscriptions =
+      client.subscriptions.length > 0
+        ? client.subscriptions
+        : this.normalizeSubscriptions(session.subscriptions);
 
     return {
       ...client,
       name,
       phone,
       levelLabel,
-      onboardingCompleted: Boolean(levelLabel)
+      onboardingCompleted: Boolean(levelLabel),
+      subscriptions
     };
   }
 
@@ -180,7 +193,8 @@ export class TournamentsPublicSessionService {
       name: this.pickString(payload.name) ?? undefined,
       phone: this.normalizePhone(payload.phone) ?? undefined,
       levelLabel,
-      onboardingCompleted: Boolean(levelLabel)
+      onboardingCompleted: Boolean(levelLabel),
+      subscriptions: this.normalizeSubscriptions(payload.subscriptions)
     };
   }
 
@@ -316,6 +330,93 @@ export class TournamentsPublicSessionService {
     return text
       .toUpperCase()
       .replace(/\s+/g, ' ');
+  }
+
+  private readSubscriptionsHeader(value: unknown): TournamentClientSubscription[] {
+    const raw = this.pickString(value);
+    if (!raw) {
+      return [];
+    }
+
+    try {
+      return this.normalizeSubscriptions(JSON.parse(raw));
+    } catch (_error) {
+      const items = raw
+        .split(';')
+        .map((entry, index) => {
+          const label = this.pickString(entry);
+          if (!label) {
+            return null;
+          }
+          return {
+            id: `sub-${index + 1}`,
+            label,
+            remainingUses: 1
+          } satisfies TournamentClientSubscription;
+        });
+      return items.filter(Boolean) as TournamentClientSubscription[];
+    }
+  }
+
+  private normalizeSubscriptions(value: unknown): TournamentClientSubscription[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const subscriptions: TournamentClientSubscription[] = [];
+    value.forEach((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const record = item as Record<string, unknown>;
+      const label = this.pickString(record.label) ?? this.pickString(record.name);
+      if (!label) {
+        return;
+      }
+
+      subscriptions.push({
+        id:
+          this.pickString(record.id)
+          ?? this.pickString(record.subscriptionId)
+          ?? `sub-${index + 1}`,
+        label,
+        remainingUses: this.pickPositiveNumber(
+          record.remainingUses ?? record.remaining ?? record.uses
+        ),
+        description: this.pickString(record.description) ?? undefined,
+        validUntil: this.pickString(record.validUntil ?? record.expiresAt) ?? undefined,
+        compatibleTournamentTypes: this.pickStringArray(
+          record.compatibleTournamentTypes ?? record.tournamentTypes
+        ),
+        compatibleAccessLevels: this.pickStringArray(
+          record.compatibleAccessLevels ?? record.accessLevels
+        )
+      });
+    });
+    return subscriptions;
+  }
+
+  private pickStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+    const items = value
+      .map((item) => this.pickString(item))
+      .filter((item): item is string => Boolean(item));
+    return items.length > 0 ? items : undefined;
+  }
+
+  private pickPositiveNumber(value: unknown): number | undefined {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return undefined;
+    }
+    return numeric;
   }
 
   private pickString(value: unknown): string | null {

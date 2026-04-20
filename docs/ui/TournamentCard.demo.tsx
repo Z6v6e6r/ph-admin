@@ -1,55 +1,49 @@
 import React from 'react';
 import { TournamentCard } from './TournamentCard';
 
-const demoItems = [
-  {
-    id: 'open',
-    time: '18:00',
-    durationText: '120 мин',
-    title: 'Падел турнир от PadlxAB',
-    tournamentLabel: 'Padel турнир',
-    location: 'Селигерская',
-    organizerName: 'Artem Nikitin',
-    organizerAvatarUrl: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&w=128&q=80',
-    participants: 1,
-    capacity: 12,
-    divisionLabel: 'MIX',
-    format: 'Американо' as const,
-    subscriptions: [
-      { label: 'Энергия 1', price: '5500 ₽' },
-      { label: 'Энергия 5', price: '3960 ₽' }
-    ],
-    freeSpots: 11,
-    actionLabel: 'Записаться' as const
-  },
-  {
-    id: 'full',
-    time: '20:00',
-    durationText: '120 мин',
-    title: 'Падел турнир от PadlxAB',
-    tournamentLabel: 'Padel турнир',
-    location: 'Селигерская',
-    organizerName: 'Maria Smirnova',
-    organizerAvatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=128&q=80',
-    participants: 12,
-    capacity: 12,
-    divisionLabel: 'MIX',
-    format: 'Мексикано' as const,
-    subscriptions: [
-      { label: 'Энергия 1', price: '5500 ₽' },
-      { label: 'Энергия 5', price: '3960 ₽' }
-    ],
-    freeSpots: 0,
-    actionLabel: 'Просмотр' as const
-  }
-];
+const participants = [
+  { id: '1', name: 'Игорь\nМахнов', levelLabel: 'D+' },
+  { id: '2', name: 'Дани\nИсаев', levelLabel: 'D+' },
+  { id: '3', name: 'Елена\nПолкова', levelLabel: 'C+' },
+  { id: '4', name: 'Алисия\nВадиков', levelLabel: 'C+' },
+  { id: '5', name: 'Евгений\nМордров', levelLabel: 'D+' },
+  { id: '6', name: 'Мордвинов\nРавин', levelLabel: 'C+' },
+  { id: '7', name: 'Валерий\nТкачев', levelLabel: 'D+' },
+  { id: '8', name: 'Ткачев\nМаков', levelLabel: 'C+' },
+  { id: '9', name: 'Максим\nРаков', levelLabel: 'D+' },
+  { id: '10', name: 'Павел\nОрлов', levelLabel: 'D+' },
+  { id: '11', name: 'Илья\nПавлов', levelLabel: 'D+' },
+  { id: '12', name: 'Павлов\nСВ', levelLabel: 'C+' }
+].map((item) => ({
+  ...item,
+  name: item.name.replace('\n', ' ')
+}));
 
 export function TournamentCardDemo() {
   return (
-    <section className="mx-auto w-full max-w-md space-y-3 bg-[#F6F6FA] p-3">
-      {demoItems.map((item) => (
-        <TournamentCard key={item.id} {...item} />
-      ))}
+    <section className="mx-auto w-full max-w-[420px] bg-[linear-gradient(180deg,#F1E7FF_0%,#FFF7FB_100%)] p-4">
+      <TournamentCard
+        title="Padel Weekend Cup"
+        subtitle="от PadlxAB"
+        monthBadge="АПР"
+        dayBadge="15"
+        statusTitle="Вы в турнире!"
+        organizerName="Игорь Махнов"
+        organizerRoleLabel="Организатор"
+        participants={participants}
+        warmup={{
+          title: 'РАЗМИНКА!',
+          startsAt: '09:00',
+          note: 'Площадка. Разогреваемся.',
+          players: participants.slice(0, 4)
+        }}
+        capacity={16}
+        divisionLabel="MIX"
+        subscriptions={[
+          { label: 'Абонемент турниры', price: '1 списание' },
+          { label: 'Покупка участия', price: '2 500 ₽' }
+        ]}
+      />
     </section>
   );
 }

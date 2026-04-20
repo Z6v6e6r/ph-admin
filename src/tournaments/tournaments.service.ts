@@ -29,12 +29,17 @@ import {
 import {
   CustomTournament,
   Tournament,
+  TournamentAcceptedSubscriptionRule,
   TournamentAccessCheckResponse,
+  TournamentBookingConfig,
+  TournamentClientSubscription,
   TournamentGender,
   TournamentJoinFlowResponse,
+  TournamentJoinPaymentState,
   TournamentMechanics,
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
+  TournamentPurchaseOption,
   TournamentPublicClientProfile,
   TournamentPublicDirectoryResponse,
   TournamentResultsView,
@@ -49,6 +54,10 @@ interface RegistrationInput {
   levelLabel?: string;
   gender?: TournamentGender;
   notes?: string;
+  selectedSubscriptionId?: string;
+  selectedPurchaseOptionId?: string;
+  purchaseConfirmed?: boolean;
+  subscriptions?: TournamentClientSubscription[];
 }
 
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
@@ -254,11 +263,13 @@ export class TournamentsService {
     const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
     const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
     const access = this.evaluateAccess(tournament, normalizedLevel);
+    const payment = this.resolveJoinPayment(tournament, client, normalizedLevel);
     const normalizedClient: TournamentPublicClientProfile = {
       ...client,
       phone: normalizedPhone,
       levelLabel: normalizedLevel,
-      onboardingCompleted: Boolean(normalizedLevel)
+      onboardingCompleted: Boolean(normalizedLevel),
+      subscriptions: this.normalizeClientSubscriptions(client.subscriptions)
     };
     const requireAuth = options?.requireAuth === true;
     const missingFields: Array<'phone' | 'levelLabel'> = [];
@@ -274,6 +285,7 @@ export class TournamentsService {
         access,
         missingFields: [],
         waitlistAllowed: false,
+        payment,
         authRequired: true
       };
     }
@@ -299,7 +311,8 @@ export class TournamentsService {
           client: normalizedClient,
           access,
           missingFields: [],
-          waitlistAllowed: false
+          waitlistAllowed: false,
+          payment
         };
       }
 
@@ -316,7 +329,8 @@ export class TournamentsService {
           client: normalizedClient,
           access,
           missingFields: [],
-          waitlistAllowed: false
+          waitlistAllowed: false,
+          payment
         };
       }
     }
@@ -330,7 +344,8 @@ export class TournamentsService {
         client: normalizedClient,
         access,
         missingFields,
-        waitlistAllowed: false
+        waitlistAllowed: false,
+        payment
       };
     }
 
@@ -344,21 +359,53 @@ export class TournamentsService {
         client: normalizedClient,
         access,
         missingFields,
-        waitlistAllowed: false
+        waitlistAllowed: false,
+        payment
       };
     }
 
     if (!access.ok && access.code === 'LEVEL_NOT_ALLOWED') {
+      const levelRangeLabel = this.describeTournamentLevelRange(tournament.accessLevels);
       return {
         ok: false,
         code: 'LEVEL_NOT_ALLOWED',
-        message:
-          'Текущий уровень не подходит под условия турнира. Можно оставить заявку в листе ожидания для подтверждения от организатора.',
+        message: `Турнир для уровня ${levelRangeLabel}. Вы не можете записаться в турнир, но можете записаться в лист ожидания и отправить организатору заявку на рассмотрение вашего участия.`,
         tournament: publicTournament,
         client: normalizedClient,
         access,
         missingFields: [],
-        waitlistAllowed: true
+        waitlistAllowed: true,
+        payment
+      };
+    }
+
+    if (payment.required && payment.code === 'PURCHASE_REQUIRED') {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message:
+          'Подходящий абонемент не найден. Перейдите к покупке, чтобы завершить запись в турнир.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields: [],
+        waitlistAllowed: false,
+        payment
+      };
+    }
+
+    if (payment.required && payment.code === 'SUBSCRIPTION_AVAILABLE') {
+      return {
+        ok: true,
+        code: 'SUBSCRIPTION_AVAILABLE',
+        message:
+          'Найден подходящий абонемент. Его можно списать и сразу подтвердить участие в турнире.',
+        tournament: publicTournament,
+        client: normalizedClient,
+        access,
+        missingFields: [],
+        waitlistAllowed: false,
+        payment
       };
     }
 
@@ -370,7 +417,8 @@ export class TournamentsService {
       client: normalizedClient,
       access,
       missingFields: [],
-      waitlistAllowed: false
+      waitlistAllowed: false,
+      payment
     };
   }
 
@@ -390,6 +438,7 @@ export class TournamentsService {
     this.ensurePersistenceEnabled();
     const tournament = await this.requireCustomBySlug(slug);
     const normalizedPhone = this.normalizePhone(input.phone);
+    const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
     if (!normalizedPhone) {
       return {
         ok: false,
@@ -409,15 +458,46 @@ export class TournamentsService {
       };
     }
 
+    const payment = this.resolveJoinPayment(
+      tournament,
+      {
+        id: normalizedPhone,
+        authorized: true,
+        authSource: 'headers',
+        name: input.name,
+        phone: normalizedPhone,
+        levelLabel: normalizedLevel,
+        onboardingCompleted: Boolean(normalizedLevel),
+        subscriptions: this.readClientSubscriptionsFromInput(input)
+      },
+      normalizedLevel
+    );
+
+    if (payment.required && payment.code === 'PURCHASE_REQUIRED' && input.purchaseConfirmed !== true) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message:
+          'Подходящий абонемент не найден. Сначала завершите покупку, затем повторите запись.',
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+
     const participant: TournamentParticipant = {
       name: String(input.name || '').trim() || normalizedPhone,
       phone: normalizedPhone,
-      levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
+      levelLabel: normalizedLevel,
       gender: input.gender ?? 'MIXED',
-      paymentStatus: 'UNPAID',
+      paymentStatus: payment.required ? 'PAID' : 'UNPAID',
       status: 'REGISTERED' as const,
       registeredAt: new Date().toISOString(),
-      notes: this.pickString(input.notes) ?? undefined
+      paidAt: payment.required ? new Date().toISOString() : undefined,
+      notes: this.composeRegistrationNotes(
+        this.pickString(input.notes) ?? undefined,
+        payment,
+        input.selectedPurchaseOptionId
+      )
     };
 
     const existingParticipant = tournament.participants.find(
@@ -430,7 +510,8 @@ export class TournamentsService {
         message: 'Игрок уже записан в турнир.',
         tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
-        participant: existingParticipant
+        participant: existingParticipant,
+        payment
       };
     }
 
@@ -444,7 +525,8 @@ export class TournamentsService {
         message: 'Игрок уже находится в листе ожидания.',
         tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
-        participant: existingWaitlistParticipant
+        participant: existingWaitlistParticipant,
+        payment
       };
     }
 
@@ -463,7 +545,8 @@ export class TournamentsService {
         message: 'Свободных мест нет. Игрок добавлен в лист ожидания.',
         tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
-        participant: nextWaitlist[nextWaitlist.length - 1]
+        participant: nextWaitlist[nextWaitlist.length - 1],
+        payment
       };
     }
 
@@ -477,7 +560,8 @@ export class TournamentsService {
       message: 'Игрок успешно записан в турнир.',
       tournamentId: tournament.id,
       tournamentSlug: tournament.slug,
-      participant
+      participant,
+      payment
     };
   }
 
@@ -1201,6 +1285,263 @@ export class TournamentsService {
     };
   }
 
+  private resolveJoinPayment(
+    tournament: CustomTournament,
+    client: TournamentPublicClientProfile,
+    levelLabel?: string
+  ): TournamentJoinPaymentState {
+    const booking = this.resolveBookingConfig(tournament);
+    if (!booking.required) {
+      return {
+        required: false,
+        code: 'NOT_REQUIRED',
+        message: 'Дополнительная оплата для участия в турнире не требуется.',
+        availableSubscriptions: [],
+        purchaseOptions: booking.purchaseOptions,
+        purchaseFlowUrl: booking.purchaseFlowUrl
+      };
+    }
+
+    const normalizedLevel = this.normalizeLevel(levelLabel) ?? undefined;
+    const availableSubscriptions = this.normalizeClientSubscriptions(client.subscriptions).filter(
+      (subscription) => this.isSubscriptionCompatible(subscription, booking, tournament, normalizedLevel)
+    );
+
+    if (availableSubscriptions.length > 0) {
+      return {
+        required: true,
+        code: 'SUBSCRIPTION_AVAILABLE',
+        message: `Можно списать абонемент «${availableSubscriptions[0].label}» для подтверждения участия.`,
+        availableSubscriptions,
+        selectedSubscription: availableSubscriptions[0],
+        purchaseOptions: booking.purchaseOptions,
+        purchaseFlowUrl: booking.purchaseFlowUrl
+      };
+    }
+
+    return {
+      required: true,
+      code: 'PURCHASE_REQUIRED',
+      message: 'Подходящий абонемент не найден. Сначала нужно купить участие.',
+      availableSubscriptions: [],
+      purchaseOptions: booking.purchaseOptions,
+      purchaseFlowUrl: booking.purchaseFlowUrl
+    };
+  }
+
+  private resolveBookingConfig(tournament: CustomTournament): TournamentBookingConfig {
+    const details =
+      tournament.details && typeof tournament.details === 'object'
+        ? (tournament.details as Record<string, unknown>)
+        : {};
+    const rawBooking = this.toRecord(details.booking) ?? this.toRecord(details.joinFlow) ?? {};
+    const acceptedSubscriptions = this.normalizeAcceptedSubscriptions(
+      rawBooking.acceptedSubscriptions ?? rawBooking.subscriptions
+    );
+    const purchaseOptions = this.normalizePurchaseOptions(
+      rawBooking.purchaseOptions ?? rawBooking.tariffs
+    );
+    const enabled =
+      rawBooking.enabled === true
+      || rawBooking.paymentRequired === true
+      || acceptedSubscriptions.length > 0
+      || purchaseOptions.length > 0;
+    const required =
+      rawBooking.paymentRequired === true || (enabled && (acceptedSubscriptions.length > 0 || purchaseOptions.length > 0));
+
+    return {
+      enabled,
+      required,
+      acceptedSubscriptions,
+      purchaseOptions,
+      purchaseFlowUrl: this.pickString(rawBooking.purchaseFlowUrl ?? rawBooking.purchaseUrl) ?? undefined
+    };
+  }
+
+  private normalizeAcceptedSubscriptions(value: unknown): TournamentAcceptedSubscriptionRule[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const items: TournamentAcceptedSubscriptionRule[] = [];
+    value.forEach((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const record = item as Record<string, unknown>;
+      const label = this.pickString(record.label) ?? this.pickString(record.name);
+      if (!label) {
+        return;
+      }
+      items.push({
+        id:
+          this.pickString(record.id)
+          ?? this.pickString(record.subscriptionId)
+          ?? `accepted-${index + 1}`,
+        label,
+        description: this.pickString(record.description) ?? undefined,
+        writeOffLabel: this.pickString(record.writeOffLabel) ?? undefined,
+        compatibleTournamentTypes: this.pickStringArray(
+          record.compatibleTournamentTypes ?? record.tournamentTypes
+        ),
+        compatibleAccessLevels: this.pickStringArray(
+          record.compatibleAccessLevels ?? record.accessLevels
+        )
+      });
+    });
+    return items;
+  }
+
+  private normalizePurchaseOptions(value: unknown): TournamentPurchaseOption[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const items: TournamentPurchaseOption[] = [];
+    value.forEach((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const record = item as Record<string, unknown>;
+      const label = this.pickString(record.label) ?? this.pickString(record.title);
+      const priceLabel =
+        this.pickString(record.priceLabel)
+        ?? this.pickString(record.price)
+        ?? this.pickString(record.amount);
+      if (!label || !priceLabel) {
+        return;
+      }
+      items.push({
+        id: this.pickString(record.id) ?? `purchase-${index + 1}`,
+        label,
+        priceLabel,
+        description: this.pickString(record.description) ?? undefined
+      });
+    });
+    return items;
+  }
+
+  private normalizeClientSubscriptions(value: unknown): TournamentClientSubscription[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const subscriptions: TournamentClientSubscription[] = [];
+    value.forEach((item, index) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const record = item as Record<string, unknown>;
+      const label = this.pickString(record.label) ?? this.pickString(record.name);
+      if (!label) {
+        return;
+      }
+      subscriptions.push({
+        id:
+          this.pickString(record.id)
+          ?? this.pickString(record.subscriptionId)
+          ?? `client-sub-${index + 1}`,
+        label,
+        remainingUses: this.pickNumber(record.remainingUses ?? record.remaining ?? record.uses),
+        description: this.pickString(record.description) ?? undefined,
+        validUntil: this.pickString(record.validUntil ?? record.expiresAt) ?? undefined,
+        compatibleTournamentTypes: this.pickStringArray(
+          record.compatibleTournamentTypes ?? record.tournamentTypes
+        ),
+        compatibleAccessLevels: this.pickStringArray(
+          record.compatibleAccessLevels ?? record.accessLevels
+        )
+      });
+    });
+    return subscriptions;
+  }
+
+  private isSubscriptionCompatible(
+    subscription: TournamentClientSubscription,
+    booking: TournamentBookingConfig,
+    tournament: CustomTournament,
+    levelLabel?: string
+  ): boolean {
+    const hasRemainingUses =
+      subscription.remainingUses === undefined || subscription.remainingUses > 0;
+    if (!hasRemainingUses) {
+      return false;
+    }
+
+    const normalizedSubscriptionLabel = subscription.label.trim().toLowerCase();
+    const normalizedLevel = this.normalizeLevel(levelLabel) ?? undefined;
+    const matchingRule =
+      booking.acceptedSubscriptions.find((rule) => {
+        const sameId = rule.id === subscription.id;
+        const sameLabel = rule.label.trim().toLowerCase() === normalizedSubscriptionLabel;
+        return sameId || sameLabel;
+      }) ?? null;
+
+    const ruleOrSubscriptionTypes =
+      matchingRule?.compatibleTournamentTypes ?? subscription.compatibleTournamentTypes;
+    if (
+      Array.isArray(ruleOrSubscriptionTypes)
+      && ruleOrSubscriptionTypes.length > 0
+      && !ruleOrSubscriptionTypes.includes(tournament.tournamentType)
+    ) {
+      return false;
+    }
+
+    const ruleOrSubscriptionLevels =
+      matchingRule?.compatibleAccessLevels ?? subscription.compatibleAccessLevels;
+    if (
+      normalizedLevel
+      && Array.isArray(ruleOrSubscriptionLevels)
+      && ruleOrSubscriptionLevels.length > 0
+      && !ruleOrSubscriptionLevels.includes(normalizedLevel)
+    ) {
+      return false;
+    }
+
+    if (booking.acceptedSubscriptions.length === 0) {
+      return true;
+    }
+
+    return matchingRule !== null;
+  }
+
+  private readClientSubscriptionsFromInput(input: RegistrationInput): TournamentClientSubscription[] {
+    return this.normalizeClientSubscriptions((input as RegistrationInput & {
+      subscriptions?: TournamentClientSubscription[];
+    }).subscriptions);
+  }
+
+  private composeRegistrationNotes(
+    notes: string | undefined,
+    payment: TournamentJoinPaymentState,
+    selectedPurchaseOptionId?: string
+  ): string | undefined {
+    const chunks: string[] = [];
+    if (notes) {
+      chunks.push(notes);
+    }
+    if (payment.code === 'SUBSCRIPTION_AVAILABLE' && payment.selectedSubscription?.label) {
+      chunks.push(`Абонемент списан: ${payment.selectedSubscription.label}`);
+    }
+    if (payment.code === 'PURCHASE_REQUIRED' && selectedPurchaseOptionId) {
+      chunks.push(`Покупка подтверждена: ${selectedPurchaseOptionId}`);
+    }
+    return chunks.length > 0 ? chunks.join(' | ') : undefined;
+  }
+
+  private describeTournamentLevelRange(accessLevels: string[]): string {
+    const normalized = accessLevels
+      .map((item) => this.normalizeLevel(item))
+      .filter((item): item is string => Boolean(item));
+    if (normalized.length === 0) {
+      return 'без ограничений по уровню';
+    }
+    if (normalized.length === 1) {
+      return normalized[0];
+    }
+    return `${normalized[0]} - ${normalized[normalized.length - 1]}`;
+  }
+
   private toPublicView(tournament: CustomTournament): TournamentPublicView {
     const sourceTournamentSnapshot =
       tournament.details && typeof tournament.details === 'object'
@@ -1230,6 +1571,7 @@ export class TournamentsService {
       registrationOpen: this.isTournamentRegistrationOpen(tournament),
       allowedManagerPhonesCount: tournament.allowedManagerPhones.length,
       skin: tournament.skin,
+      booking: this.resolveBookingConfig(tournament),
       sourceTournamentId: tournament.sourceTournamentId,
       sourceTournament: sourceTournamentSnapshot
         ? {
@@ -1349,6 +1691,22 @@ export class TournamentsService {
 
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+  }
+
+  private pickStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+    const items = value
+      .map((item) => this.pickString(item))
+      .filter((item): item is string => Boolean(item));
+    return items.length > 0 ? items : undefined;
+  }
+
+  private toRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
   }
 
   private normalizeGender(value: unknown): TournamentGender | undefined {
