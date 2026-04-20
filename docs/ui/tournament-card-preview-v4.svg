@@ -1,0 +1,48 @@
+<svg width="820" height="250" viewBox="0 0 820 250" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="820" height="250" fill="#F5F3FA"/>
+
+  <g filter="url(#shadow)">
+    <rect x="18" y="18" width="784" height="214" rx="20" fill="white" stroke="#ECE9F3"/>
+  </g>
+
+  <text x="40" y="63" fill="#1C1C1E" font-size="30" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="700">18:00</text>
+  <text x="41" y="87" fill="#8E8E93" font-size="18" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">120 мин</text>
+  <circle cx="64" cy="126" r="24" fill="#ECECF1"/>
+
+  <line x1="164" y1="42" x2="164" y2="194" stroke="#E8E4F1"/>
+
+  <text x="182" y="60" fill="#1C1C1E" font-size="40" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="600">Падел турнир от PadlxAB</text>
+  <circle cx="190" cy="84" r="5" fill="#6A5A9E"/>
+  <text x="203" y="90" fill="#6A5A9E" font-size="17" text-decoration="underline" text-decoration-style="dotted" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Терехово</text>
+
+  <text x="182" y="126" fill="#1C1C1E" font-size="18" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Artem Nikitin</text>
+
+  <line x1="182" y1="150" x2="612" y2="150" stroke="#ECE9F3"/>
+  <text x="182" y="176" fill="#3E3560" font-size="29" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="600">16 / 16 MIX</text>
+
+  <rect x="638" y="32" width="140" height="30" rx="12" fill="#FFF0E3"/>
+  <text x="662" y="52" fill="#B26B2A" font-size="23" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="500">Мексикано</text>
+
+  <rect x="614" y="74" width="164" height="64" rx="12" fill="#F3F0F8"/>
+  <text x="628" y="100" fill="#6A6680" font-size="16" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Энергия 1 · 5500 ₽</text>
+  <text x="628" y="123" fill="#6A6680" font-size="16" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Энергия 5 · 3960 ₽</text>
+
+  <rect x="662" y="146" width="116" height="30" rx="12" fill="#F1EFF5"/>
+  <text x="695" y="166" fill="#4D4860" font-size="16" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="500">Нет мест</text>
+
+  <rect x="296" y="180" width="260" height="40" rx="16" fill="white" stroke="#DCD8E9"/>
+  <text x="366" y="206" fill="#302A40" font-size="18" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-weight="600">Лист ожидания</text>
+
+  <defs>
+    <filter id="shadow" x="0" y="0" width="820" height="250" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="4"/>
+      <feGaussianBlur stdDeviation="7"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.180392 0 0 0 0 0.129412 0 0 0 0 0.290196 0 0 0 0.06 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+  </defs>
+</svg>

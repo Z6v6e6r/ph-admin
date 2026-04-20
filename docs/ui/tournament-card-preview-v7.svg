@@ -1,0 +1,43 @@
+<svg width="860" height="280" viewBox="0 0 860 280" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="860" height="280" fill="#F6F6FA"/>
+  <g filter="url(#s)">
+    <rect x="20" y="24" width="820" height="232" rx="20" fill="#FFFFFF" stroke="#F2F2F2"/>
+  </g>
+
+  <text x="44" y="72" fill="#1C1C1E" font-size="36" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-weight="700">18:00</text>
+  <text x="44" y="97" fill="#8E8E93" font-size="20" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">120 мин</text>
+
+  <text x="136" y="68" fill="#1C1C1E" font-size="28" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-weight="600">Падел турнир от PadlxAB</text>
+
+  <text x="136" y="94" fill="#8E8E93" font-size="20" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">120 мин • Селигерская</text>
+
+  <circle cx="156" cy="126" r="20" fill="#ECECF1"/>
+  <text x="186" y="133" fill="#1C1C1E" font-size="18" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">Artem Nikitin</text>
+
+  <text x="136" y="164" fill="#1C1C1E" font-size="18" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-weight="600">11 / 16 MIX</text>
+
+  <rect x="700" y="44" width="120" height="28" rx="12" fill="#6F5BFF"/>
+  <text x="718" y="63" fill="#FFFFFF" font-size="14" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">Американо</text>
+
+  <text x="652" y="102" fill="#8E8E93" font-size="14" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">Энергия 1 · 5500 ₽</text>
+  <text x="652" y="124" fill="#8E8E93" font-size="14" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">Энергия 5 · 3960 ₽</text>
+
+  <rect x="728" y="136" width="92" height="24" rx="12" fill="#FFF3E8"/>
+  <text x="741" y="152" fill="#D97706" font-size="12" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">🔥 5 мест</text>
+
+  <rect x="136" y="192" width="684" height="44" rx="16" fill="#F3F3F7"/>
+  <text x="426" y="221" fill="#1C1C1E" font-size="22" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-weight="600">Записаться</text>
+
+  <defs>
+    <filter id="s" x="0" y="0" width="860" height="280" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="8"/>
+      <feGaussianBlur stdDeviation="12"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.06 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+  </defs>
+</svg>
