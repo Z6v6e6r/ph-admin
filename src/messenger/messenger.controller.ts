@@ -1083,7 +1083,10 @@ export class MessengerController {
   }
 
   private shouldIncludeDialogInList(dialog: StationDialogSummary): boolean {
-    if (dialog.isResolved === true) {
+    if (
+      dialog.isResolved === true &&
+      dialog.connector === ConnectorRoute.PROMO_WEB_MESSENGER
+    ) {
       return false;
     }
 

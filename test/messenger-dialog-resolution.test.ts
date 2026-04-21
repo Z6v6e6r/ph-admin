@@ -109,6 +109,38 @@ function createResolvedPromoMessage(): ChatMessage {
   };
 }
 
+function createResolvedRegularThread(): ChatThread {
+  return {
+    id: 'regular-thread-1',
+    connector: ConnectorRoute.MAX_BOT,
+    stationId: 'Yasenevo',
+    stationName: 'Ясенево',
+    clientId: 'client-1',
+    subject: 'Обычный чат',
+    status: ThreadStatus.OPEN,
+    isResolved: true,
+    resolvedAt: '2026-04-20T10:00:00.000Z',
+    resolvedByUserId: 'AG',
+    lastMessageAt: '2026-04-20T09:45:00.000Z',
+    lastRankingMessageAt: '2026-04-20T09:45:00.000Z',
+    lastStaffReadAt: '2026-04-20T09:45:00.000Z',
+    createdAt: '2026-04-20T09:00:00.000Z',
+    updatedAt: '2026-04-20T10:00:00.000Z'
+  };
+}
+
+function createResolvedRegularMessage(): ChatMessage {
+  return {
+    id: 'regular-message-1',
+    threadId: 'regular-thread-1',
+    senderId: 'client-1',
+    senderRole: Role.CLIENT,
+    origin: MessageOrigin.HUMAN,
+    text: 'Добрый день',
+    createdAt: '2026-04-20T09:45:00.000Z'
+  };
+}
+
 function createService(
   persistence: InMemoryMessengerPersistence
 ): MessengerService {
@@ -124,14 +156,14 @@ function createUser(): RequestUser {
     id: 'super-admin-1',
     roles: [Role.SUPER_ADMIN],
     stationIds: [],
-    connectorRoutes: [ConnectorRoute.PROMO_WEB_MESSENGER]
+    connectorRoutes: [ConnectorRoute.PROMO_WEB_MESSENGER, ConnectorRoute.MAX_BOT]
   };
 }
 
 async function main(): Promise<void> {
   const persistence = new InMemoryMessengerPersistence({
-    threads: [createResolvedPromoThread()],
-    messages: [createResolvedPromoMessage()],
+    threads: [createResolvedPromoThread(), createResolvedRegularThread()],
+    messages: [createResolvedPromoMessage(), createResolvedRegularMessage()],
     stations: [],
     connectors: [],
     accessRules: [],
@@ -146,9 +178,15 @@ async function main(): Promise<void> {
   await (service as any).hydrateFromPersistence();
 
   const summaries = service.listDialogs(user);
-  assert.equal(summaries.length, 1);
-  assert.equal(summaries[0].isResolved, true);
-  assert.equal(summaries[0].pendingClientMessagesCount, 0);
+  assert.equal(summaries.length, 2);
+  assert.equal(
+    summaries.find((item) => item.threadId === 'promo-thread-1')?.pendingClientMessagesCount,
+    0
+  );
+  assert.equal(
+    summaries.find((item) => item.threadId === 'regular-thread-1')?.pendingClientMessagesCount,
+    0
+  );
 
   const controller = new MessengerController(
     service,
@@ -158,9 +196,12 @@ async function main(): Promise<void> {
   );
   const visible = await controller.listDialogs(user, {});
 
-  assert.deepEqual(visible, []);
+  assert.deepEqual(
+    visible.map((item) => item.threadId),
+    ['regular-thread-1']
+  );
 
-  console.log('Messenger resolved dialog visibility test passed');
+  console.log('Messenger promo dialog visibility test passed');
 }
 
 main().catch((error) => {
