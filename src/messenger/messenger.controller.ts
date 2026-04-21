@@ -1083,6 +1083,10 @@ export class MessengerController {
   }
 
   private shouldIncludeDialogInList(dialog: StationDialogSummary): boolean {
+    if (dialog.isResolved === true) {
+      return false;
+    }
+
     return this.resolveDialogRankTimestamp(dialog) > 0;
   }
 

@@ -11776,10 +11776,7 @@
           }
         }
 
-        applyDialogs(state.allDialogs, {
-          forceRender: true,
-          silent: true
-        });
+        await refreshDialogsView();
         renderMessageModeToggle();
       } finally {
         state.updatingResolution = false;

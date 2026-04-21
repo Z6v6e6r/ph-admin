@@ -192,7 +192,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       for (const thread of state.threads) {
         this.pendingStaffResponses.set(
           thread.id,
-          this.rebuildPendingResponsesForThread(thread.id)
+          this.rebuildPendingResponsesForThread(thread.id, thread.isResolved === true)
         );
       }
 
@@ -1802,7 +1802,14 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     this.persistence.persistResponseMetrics(thread.id, metrics);
   }
 
-  private rebuildPendingResponsesForThread(threadId: string): PendingStaffResponse[] {
+  private rebuildPendingResponsesForThread(
+    threadId: string,
+    isResolved = false
+  ): PendingStaffResponse[] {
+    if (isResolved) {
+      return [];
+    }
+
     const threadMessages = this.messages.get(threadId) ?? [];
     const pending: PendingStaffResponse[] = [];
 
