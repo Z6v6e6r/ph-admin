@@ -27,7 +27,7 @@ export class TournamentsPublicSessionService {
   );
   private readonly requireRealAuth = this.readBooleanEnv(
     'TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH',
-    false
+    true
   );
   private readonly secret =
     this.readEnv('TOURNAMENTS_PUBLIC_SESSION_SECRET')

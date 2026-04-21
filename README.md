@@ -131,7 +131,7 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
 - `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.ru/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир)
 - `TOURNAMENTS_PUBLIC_DIRECTORY_URL=https://padlhub.ru/tournaments` (опционально; куда вести пользователя после успешной заявки или из join-flow)
-- `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
+- `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; по умолчанию `true`. Если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_URL=https://padlhub.ru/lk_new` (опционально; куда вести пользователя для реальной авторизации LK; на 9 апреля 2026 актуальная точка входа именно `padlhub.ru/lk_new`)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS=1500` (опционально; рекомендованный интервал polling для Tilda-блока после открытия LK в popup)
 - `TOURNAMENTS_PUBLIC_SESSION_COOKIE=ph_tournament_client` (опционально; имя signed-cookie публичной турнирной сессии)
@@ -279,7 +279,9 @@ https://example.com/api/tournaments/public/showcase?stationId=nagatino&limit=6&r
 Join-flow внутри виджета делает следующее:
 
 - при первом заходе создает защищенную cookie-сессию с черновиком турнирных данных
-- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED`, открывает LK и poll'ит `authCheckUrl`
+- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED`, `authUrl` (на `TOURNAMENTS_PUBLIC_LK_AUTH_URL`) и `authCheckUrl`
+- `authUrl` всегда содержит `returnUrl=<absolute_join_url>` и `source=tournament_join`; после логина в `lk_new` пользователь возвращается в этот `returnUrl`
+- после возврата из `lk_new` виджет poll'ит `authCheckUrl` до тех пор, пока ответ не перестанет быть `AUTH_REQUIRED`
 - если телефона нет, просит указать его
 - если для турнира задан `accessLevels` и уровень не определен, просит выбрать свой уровень
 - если уровень подходит, записывает в турнир
@@ -324,9 +326,21 @@ Dev fallback:
 Для обратной совместимости пользователь может передаваться заголовками:
 
 - `x-user-id: <id>`
+- `x-user-name: <display_name>` или `x-user-title: <display_name>` (опционально)
+- `x-user-phone: <phone>` или `x-user-primary-phone: <phone>` (опционально, но нужен для автозаполнения join-flow)
+- `x-user-level-label: <level>` или `x-user-level: <level>` (опционально; используется для проверки допуска по уровню)
+- `x-user-subscriptions: <json_or_semicolon_list>` (опционально; JSON-массив абонементов или строка `Абонемент 1; Абонемент 2`)
 - `x-user-roles: ROLE_1,ROLE_2` или `x-user-role: ROLE`
 - `x-station-ids: station_1,station_2` или `x-station-id: station_1` (для ограничения доступа сотрудника по станциям)
 - `x-connector-routes: MAX_ACADEMY_BOT,LK_ACADEMY_WEB_MESSENGER,PROMO_WEB_MESSENGER` или `x-connector-route: MAX_ACADEMY_BOT` (для ограничения доступа сотрудника по видам коннекторов; если заголовка нет, доступны все)
+
+Для `project-fixed 6` контракт после авторизации для турнирного join-flow:
+
+- обязательно передавать `x-user-id` и поддерживать возврат на `returnUrl`, который backend добавляет в `authUrl`
+- рекомендуется передавать `x-user-phone`, `x-user-level-label`, `x-user-subscriptions` для бесшовного flow без ручного ввода
+- как альтернатива headers можно передавать `Authorization: Bearer <token>`; backend сначала пытается валидировать Bearer/cookie, затем fallback на `x-user-*`
+
+Подробная спецификация интеграции находится в [docs/project-fixed6-tournaments-auth-contract.md](/Users/zver/Desktop/ph-ab/docs/project-fixed6-tournaments-auth-contract.md).
 
 Пример:
 

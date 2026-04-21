@@ -32,6 +32,7 @@ async function bootstrap(): Promise<void> {
       'x-user-primary-phone',
       'x-user-level',
       'x-user-level-label',
+      'x-user-subscriptions',
       'x-user-max-public-url',
       'x-connector-route',
       'x-connector-routes',
