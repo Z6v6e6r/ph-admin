@@ -142,7 +142,7 @@ API работает на `http://localhost:3000/api`.
 
 - `GET /api/tournaments/public`
 - `GET /api/tournaments/public/list`
-- `GET /api/tournaments/public/:slug` - публичная карточка турнира со skin, параметрами, участниками и waitlist
+- `GET /api/tournaments/public/:slug` - browser-friendly публичная карточка турнира для запросов с `Accept: text/html` (или `format=html`); при `Accept: application/json` или `format=json` вернет JSON
 - `GET /api/tournaments/public/:slug/join` - browser-friendly join flow для ссылки с Tilda; при `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` сначала проверяет реальную авторизацию в LK, затем телефон/уровень и ведет до записи или waitlist
 - `POST /api/tournaments/public/:slug/join` - submit join-flow (поддерживает HTML form и JSON; при `Accept: application/json` или `format=json` вернет JSON)
 - `POST /api/tournaments/public/:slug/access-check` - проверка допуска по уровню (`levelLabel`); если уровень не передан, сервис вернет статус онбординга

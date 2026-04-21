@@ -298,8 +298,25 @@ export class TournamentsPublicController {
   }
 
   @Get(':slug')
-  findPublicBySlug(@Param('slug') slug: string): Promise<TournamentPublicView> {
-    return this.tournamentsService.getPublicBySlug(slug);
+  async findPublicBySlug(
+    @Param('slug') slug: string,
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query('format') format?: string
+  ): Promise<void> {
+    const tournament = await this.tournamentsService.getPublicBySlug(slug);
+
+    if (this.wantsJson(request, format)) {
+      response.json(tournament);
+      return;
+    }
+
+    if (this.wantsHtml(request, format)) {
+      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request));
+      return;
+    }
+
+    response.json(tournament);
   }
 
   @Post(':slug/access-check')
@@ -344,6 +361,352 @@ export class TournamentsPublicController {
     };
   }
 
+  private renderPublicTournamentHtml(
+    tournament: TournamentPublicView,
+    request: Request
+  ): string {
+    const title = this.pickString(tournament.skin.title) ?? tournament.name;
+    const subtitle =
+      this.pickString(tournament.skin.subtitle)
+      ?? [
+        this.formatTournamentDate(tournament.startsAt),
+        tournament.studioName,
+        tournament.trainerName
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    const description =
+      this.pickString(tournament.skin.description)
+      ?? 'Откройте карточку записи, авторизуйтесь через LK PadelHub и завершите регистрацию в пару шагов.';
+    const badgeLabel = this.pickString(tournament.skin.badgeLabel)
+      ?? (tournament.registrationOpen ? 'Регистрация открыта' : 'Регистрация закрыта');
+    const accessLabel =
+      tournament.accessLevels.length > 0
+        ? tournament.accessLevels.join(', ')
+        : 'Без ограничений';
+    const participantsLabel = `${tournament.participantsCount}/${tournament.maxPlayers}`;
+    const bookingLabel = tournament.booking.required
+      ? 'Оплата обязательна'
+      : tournament.booking.enabled
+        ? 'Есть варианты оплаты'
+        : 'Оплата не требуется';
+    const imageUrl = this.pickString(tournament.skin.imageUrl);
+    const absolutePublicUrl = this.toAbsoluteUrl(tournament.publicUrl, request);
+    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request);
+    const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request);
+    const actionLabel = tournament.registrationOpen
+      ? this.pickString(tournament.skin.ctaLabel) ?? 'Открыть запись'
+      : 'Посмотреть детали';
+    const skinTags = Array.isArray(tournament.skin.tags)
+      ? tournament.skin.tags.map((item) => String(item ?? '').trim()).filter(Boolean)
+      : [];
+    const chipLabels = Array.from(
+      new Set(
+        [
+          tournament.tournamentType,
+          this.formatGenderLabel(tournament.gender),
+          `Уровень: ${accessLabel}`,
+          bookingLabel,
+          ...skinTags
+        ].filter(Boolean)
+      )
+    );
+
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(title)} - Турнир PadelHub</title>
+    <meta name="description" content="${this.escapeHtml(description)}" />
+    <meta property="og:title" content="${this.escapeHtml(title)}" />
+    <meta property="og:description" content="${this.escapeHtml(description)}" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${this.escapeHtml(absolutePublicUrl)}" />
+    ${
+      imageUrl
+        ? `<meta property="og:image" content="${this.escapeHtml(
+            this.toAbsoluteUrl(imageUrl, request)
+          )}" />`
+        : ''
+    }
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Helvetica Neue", Arial, sans-serif;
+        background:
+          radial-gradient(circle at 12% 18%, rgba(194, 243, 214, 0.84), transparent 28%),
+          radial-gradient(circle at 84% 14%, rgba(255, 210, 166, 0.78), transparent 30%),
+          linear-gradient(148deg, #f7f4ea 0%, #fffdf7 40%, #eef7ff 100%);
+        color: #1f2c21;
+        padding: 18px;
+      }
+      .page {
+        max-width: 980px;
+        margin: 0 auto;
+      }
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border-radius: 30px;
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82)),
+          ${
+            imageUrl
+              ? `url("${this.escapeHtml(this.toAbsoluteUrl(imageUrl, request))}") center/cover no-repeat`
+              : 'linear-gradient(90deg, rgba(236, 244, 255, 0.5), rgba(255, 247, 230, 0.48))'
+          };
+        box-shadow: 0 28px 80px rgba(31, 44, 33, 0.14);
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(140deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.02));
+        pointer-events: none;
+      }
+      .hero-content {
+        position: relative;
+        z-index: 1;
+        padding: 26px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(31, 44, 33, 0.08);
+        font-size: 11px;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: rgba(31, 44, 33, 0.7);
+      }
+      .title {
+        margin: 16px 0 10px;
+        font-size: clamp(34px, 5vw, 58px);
+        line-height: 0.96;
+        letter-spacing: -0.045em;
+      }
+      .subtitle {
+        margin: 0;
+        max-width: 720px;
+        font-size: 17px;
+        line-height: 1.5;
+        color: rgba(31, 44, 33, 0.76);
+      }
+      .body {
+        display: grid;
+        gap: 18px;
+        margin-top: 18px;
+      }
+      .summary,
+      .details {
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(31, 44, 33, 0.08);
+        border-radius: 26px;
+        padding: 22px;
+        box-shadow: 0 20px 56px rgba(31, 44, 33, 0.1);
+        backdrop-filter: blur(10px);
+      }
+      .summary-text {
+        margin: 0 0 18px;
+        font-size: 15px;
+        line-height: 1.6;
+        color: rgba(31, 44, 33, 0.76);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .chip {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(31, 44, 33, 0.06);
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px;
+      }
+      .metric {
+        padding: 14px;
+        border-radius: 20px;
+        background: rgba(247, 244, 234, 0.9);
+        border: 1px solid rgba(31, 44, 33, 0.06);
+      }
+      .metric-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(31, 44, 33, 0.52);
+      }
+      .metric-value {
+        font-size: 15px;
+        line-height: 1.45;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .button,
+      .button-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 50px;
+        padding: 0 18px;
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      .button {
+        background: linear-gradient(90deg, #f45f34 0%, #f5974c 100%);
+        color: #fff;
+      }
+      .button-secondary {
+        background: rgba(31, 44, 33, 0.08);
+        color: #1f2c21;
+      }
+      .footnote {
+        margin-top: 16px;
+        font-size: 12px;
+        line-height: 1.55;
+        color: rgba(31, 44, 33, 0.56);
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: 12px;
+        }
+        .hero-content,
+        .summary,
+        .details {
+          padding: 18px;
+        }
+        .hero,
+        .summary,
+        .details {
+          border-radius: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div class="hero-content">
+          <span class="eyebrow">${this.escapeHtml(badgeLabel)}</span>
+          <h1 class="title">${this.escapeHtml(title)}</h1>
+          <p class="subtitle">${this.escapeHtml(subtitle)}</p>
+        </div>
+      </section>
+
+      <section class="body">
+        <article class="summary">
+          <p class="summary-text">${this.escapeHtml(description)}</p>
+          <ul class="chips">
+            ${chipLabels
+              .map((item) => `<li class="chip">${this.escapeHtml(item)}</li>`)
+              .join('')}
+          </ul>
+
+          <div class="actions">
+            <a class="button" href="${this.escapeHtml(absoluteJoinUrl)}">${this.escapeHtml(actionLabel)}</a>
+            <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К списку турниров</a>
+          </div>
+          <p class="footnote">
+            Кнопка записи открывает browser-friendly flow: авторизация через LK, проверка уровня и запись в турнир или waitlist.
+          </p>
+        </article>
+
+        <article class="details">
+          <div class="metrics">
+            <div class="metric">
+              <span class="metric-label">Дата и время старта</span>
+              <span class="metric-value">${this.escapeHtml(
+                this.formatTournamentDate(tournament.startsAt)
+              )}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Дата и время конца</span>
+              <span class="metric-value">${this.escapeHtml(
+                this.formatTournamentDate(tournament.endsAt)
+              )}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Формат</span>
+              <span class="metric-value">${this.escapeHtml(tournament.tournamentType)}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Пол</span>
+              <span class="metric-value">${this.escapeHtml(
+                this.formatGenderLabel(tournament.gender)
+              )}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Уровень</span>
+              <span class="metric-value">${this.escapeHtml(accessLabel)}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Участники</span>
+              <span class="metric-value">${this.escapeHtml(participantsLabel)}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Waitlist</span>
+              <span class="metric-value">${this.escapeHtml(String(tournament.waitlistCount))}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Площадка</span>
+              <span class="metric-value">${this.escapeHtml(
+                tournament.studioName || 'PadelHub'
+              )}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Тренер</span>
+              <span class="metric-value">${this.escapeHtml(
+                tournament.trainerName || 'Организатор турнира'
+              )}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Оплата</span>
+              <span class="metric-value">${this.escapeHtml(bookingLabel)}</span>
+            </div>
+            ${
+              tournament.sourceTournament?.name
+                ? `<div class="metric">
+              <span class="metric-label">Источник</span>
+              <span class="metric-value">${this.escapeHtml(
+                tournament.sourceTournament.name
+              )}</span>
+            </div>`
+                : ''
+            }
+            <div class="metric">
+              <span class="metric-label">Публичная ссылка</span>
+              <span class="metric-value">${this.escapeHtml(absolutePublicUrl)}</span>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>`;
+  }
+
   private normalizeJoinSubmission(value: unknown): JoinSubmission {
     const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
     return {
@@ -365,6 +728,14 @@ export class TournamentsPublicController {
     }
     const accept = String(request.headers.accept ?? '').toLowerCase();
     return accept.includes('application/json');
+  }
+
+  private wantsHtml(request: Request, format?: string): boolean {
+    if (String(format ?? '').trim().toLowerCase() === 'html') {
+      return true;
+    }
+    const accept = String(request.headers.accept ?? '').toLowerCase();
+    return accept.includes('text/html') || accept.includes('application/xhtml+xml');
   }
 
   private sendHtml(response: Response, html: string): void {
@@ -1091,6 +1462,16 @@ export class TournamentsPublicController {
       const selected = level === selectedValue ? ' selected' : '';
       return `<option value="${this.escapeHtml(level)}"${selected}>${this.escapeHtml(level)}</option>`;
     }).join('');
+  }
+
+  private formatGenderLabel(value: TournamentPublicView['gender']): string {
+    if (value === 'MALE') {
+      return 'Мужчины';
+    }
+    if (value === 'FEMALE') {
+      return 'Женщины';
+    }
+    return 'М/Ж';
   }
 
   private formatTournamentDate(value?: string): string {
