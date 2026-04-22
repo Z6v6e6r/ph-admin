@@ -2391,6 +2391,11 @@
     return 'schedule';
   }
 
+  function syncResponsiveViewMode(state) {
+    state.viewMode = getDefaultViewMode();
+    return state.viewMode;
+  }
+
   function sortItems(items) {
     return items.slice().sort(function (left, right) {
       var leftDate = parseDate(left.startsAt);
@@ -3332,10 +3337,6 @@
     var row = createElement('div', 'phab-tournaments__toolbar-row');
     var daysPanel = createElement('div', 'phab-tournaments__days-panel');
     var rail = createElement('div', 'phab-tournaments__day-rail');
-    var toolbarMeta = createElement('div', 'phab-tournaments__toolbar-meta');
-    var view = createElement('div', 'phab-tournaments__view');
-    var scheduleButton = createElement('button', 'phab-tournaments__view-button', 'Список');
-    var cardsButton = createElement('button', 'phab-tournaments__view-button', 'Карточки');
     var currentIndex = dayGroups.findIndex(function (group) {
       return group.key === state.selectedDayKey;
     });
@@ -3363,26 +3364,7 @@
       )
     );
 
-    scheduleButton.type = 'button';
-    cardsButton.type = 'button';
-    scheduleButton.className += state.viewMode === 'schedule' ? ' is-active' : '';
-    cardsButton.className += state.viewMode === 'cards' ? ' is-active' : '';
-    scheduleButton.setAttribute('aria-pressed', state.viewMode === 'schedule' ? 'true' : 'false');
-    cardsButton.setAttribute('aria-pressed', state.viewMode === 'cards' ? 'true' : 'false');
-    scheduleButton.addEventListener('click', function () {
-      state.viewMode = 'schedule';
-      renderTournaments(mount, state.payload, state);
-    });
-    cardsButton.addEventListener('click', function () {
-      state.viewMode = 'cards';
-      renderTournaments(mount, state.payload, state);
-    });
-
-    view.appendChild(scheduleButton);
-    view.appendChild(cardsButton);
-    toolbarMeta.appendChild(view);
     row.appendChild(daysPanel);
-    row.appendChild(toolbarMeta);
     toolbar.appendChild(row);
 
     return toolbar;
@@ -3654,6 +3636,7 @@
         state.config.includePast
       )
     );
+    syncResponsiveViewMode(state);
     var dayGroups = buildDayGroups(items);
     var selectedGroup;
     var root = createElement(
@@ -3906,9 +3889,6 @@
 
   function readConfig(mount) {
     var dataset = mount.dataset || {};
-    var rawView = String(dataset.view || DEFAULTS.view).trim().toLowerCase();
-    var normalizedView =
-      rawView === 'cards' || rawView === 'schedule' ? rawView : DEFAULTS.view;
 
     return {
       apiBaseUrl: normalizeApiBaseUrl(dataset.apiBase || DEFAULTS.apiBaseUrl),
@@ -3918,8 +3898,7 @@
       refreshMs: normalizeRefreshMs(dataset.refreshMs),
       variant: String(dataset.variant || DEFAULTS.variant).trim() || DEFAULTS.variant,
       title: String(dataset.title || DEFAULTS.title).trim(),
-      subtitle: String(dataset.subtitle || DEFAULTS.subtitle).trim(),
-      view: normalizedView
+      subtitle: String(dataset.subtitle || DEFAULTS.subtitle).trim()
     };
   }
 
@@ -3941,7 +3920,7 @@
       items: [],
       dayGroups: [],
       selectedDayKey: '',
-      viewMode: config.view || getDefaultViewMode(),
+      viewMode: getDefaultViewMode(),
       draft: {
         name: '',
         phone: '',
