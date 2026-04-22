@@ -15158,6 +15158,22 @@
       return option ? option.label : normalized;
     }
 
+    function formatTournamentLevelSelectionLabel(value) {
+      var normalized = normalizeTournamentLevelToken(value);
+      if (!normalized) {
+        return String(value || '').trim();
+      }
+      if (TOURNAMENT_BASE_LEVEL_OPTIONS.indexOf(normalized) >= 0) {
+        var band = getTournamentLevelBand(normalized);
+        return band ? normalized + ' · ' + band.display.replace(/\./g, ',') : normalized;
+      }
+      var option = findTournamentLevelOption(normalized);
+      if (!option) {
+        return normalized;
+      }
+      return option.base + ' · ' + String(option.token || '').replace(/\./g, ',');
+    }
+
     function normalizeTournamentAccessLevels(values) {
       var seen = {};
       return normalizeArray(values)
@@ -15346,9 +15362,9 @@
         note.textContent = fullRange
           ? 'Без ограничений по уровню.'
           : 'Выбрано: ' +
-            formatTournamentLevelLabel(values[0]) +
+            formatTournamentLevelSelectionLabel(values[0]) +
             ' - ' +
-            formatTournamentLevelLabel(values[values.length - 1]);
+            formatTournamentLevelSelectionLabel(values[values.length - 1]);
         var leftUnits = left / divisionCount;
         var rightUnits = right / divisionCount;
 
