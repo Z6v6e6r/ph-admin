@@ -1670,17 +1670,48 @@
         right:0;
         top:24px;
         height:6px;
+        pointer-events:none;
+      }
+      .phab-admin-tournament-levels-sections{
+        display:grid;
+        grid-template-columns:repeat(7,minmax(0,1fr));
+        gap:8px;
+        height:100%;
+      }
+      .phab-admin-tournament-levels-section{
+        position:relative;
+        height:100%;
         border-radius:999px;
         background:
           linear-gradient(
             90deg,
             rgba(97,7,136,.14) 0%,
-            rgba(97,7,136,.14) var(--range-left,0%),
-            rgba(97,7,136,.82) var(--range-left,0%),
-            rgba(97,7,136,.82) var(--range-right,100%),
-            rgba(97,7,136,.14) var(--range-right,100%),
+            rgba(97,7,136,.14) calc(var(--segment-fill-from,0) * 100%),
+            rgba(97,7,136,.82) calc(var(--segment-fill-from,0) * 100%),
+            rgba(97,7,136,.82) calc(var(--segment-fill-to,0) * 100%),
+            rgba(97,7,136,.14) calc(var(--segment-fill-to,0) * 100%),
             rgba(97,7,136,.14) 100%
           );
+        box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);
+      }
+      .phab-admin-tournament-levels-marker{
+        position:absolute;
+        top:50%;
+        width:8px;
+        height:8px;
+        border-radius:50%;
+        background:rgba(111,56,211,.26);
+        box-shadow:0 0 0 2px rgba(255,255,255,.96);
+        transform:translate(-50%,-50%);
+        transition:background-color .18s ease,box-shadow .18s ease,transform .18s ease;
+      }
+      .phab-admin-tournament-levels-marker--minor{
+        width:6px;
+        height:6px;
+      }
+      .phab-admin-tournament-levels-marker.is-active{
+        background:#6f38d3;
+        box-shadow:0 0 0 2px rgba(255,255,255,.96),0 4px 10px rgba(97,7,136,.16);
       }
       .phab-admin-tournament-levels-range input[type=range]{
         -webkit-appearance:none;
@@ -15119,6 +15150,10 @@
     function createTournamentAccessLevelsControl(initialValues) {
       var root = document.createElement('div');
       root.className = 'phab-admin-tournament-levels';
+      var sectionCount = TOURNAMENT_BASE_LEVEL_OPTIONS.length;
+      var subdivisionCount = TOURNAMENT_LEVEL_SUBDIVISION_OPTIONS.length;
+      var sectionNodes = [];
+      var markerNodes = [];
 
       var rangeWrap = document.createElement('div');
       rangeWrap.className = 'phab-admin-tournament-levels-range';
@@ -15127,6 +15162,31 @@
       var rail = document.createElement('div');
       rail.className = 'phab-admin-tournament-levels-rail';
       rangeWrap.appendChild(rail);
+
+      var sections = document.createElement('div');
+      sections.className = 'phab-admin-tournament-levels-sections';
+      rail.appendChild(sections);
+      TOURNAMENT_BASE_LEVEL_OPTIONS.forEach(function (_level, baseIndex) {
+        var section = document.createElement('div');
+        section.className = 'phab-admin-tournament-levels-section';
+        sections.appendChild(section);
+        sectionNodes.push(section);
+
+        TOURNAMENT_LEVEL_SUBDIVISION_OPTIONS.forEach(function (_subdivision, subdivisionIndex) {
+          if (subdivisionIndex === 0) {
+            return;
+          }
+          var marker = document.createElement('span');
+          marker.className =
+            'phab-admin-tournament-levels-marker phab-admin-tournament-levels-marker--minor';
+          marker.style.left = String(subdivisionIndex / subdivisionCount * 100) + '%';
+          section.appendChild(marker);
+          markerNodes.push({
+            node: marker,
+            rank: baseIndex * subdivisionCount + subdivisionIndex
+          });
+        });
+      });
 
       var minInput = document.createElement('input');
       minInput.type = 'range';
@@ -15173,6 +15233,10 @@
       minInput.value = String(minIndex);
       maxInput.value = String(maxIndex);
 
+      function clampLevelSectionValue(value) {
+        return Math.max(0, Math.min(1, value));
+      }
+
       function sync() {
         var left = Math.min(Number(minInput.value || 0) || 0, Number(maxInput.value || 0) || 0);
         var right = Math.max(Number(minInput.value || 0) || 0, Number(maxInput.value || 0) || 0);
@@ -15189,14 +15253,25 @@
             formatTournamentLevelLabel(values[0]) +
             ' - ' +
             formatTournamentLevelLabel(values[values.length - 1]);
-        rail.style.setProperty(
-          '--range-left',
-          String(left / Math.max(1, TOURNAMENT_LEVEL_OPTIONS.length - 1) * 100) + '%'
-        );
-        rail.style.setProperty(
-          '--range-right',
-          String(right / Math.max(1, TOURNAMENT_LEVEL_OPTIONS.length - 1) * 100) + '%'
-        );
+        var trackMax = Math.max(1, TOURNAMENT_LEVEL_OPTIONS.length - 1);
+        var leftUnits = left / trackMax * sectionCount;
+        var rightUnits = right / trackMax * sectionCount;
+
+        sectionNodes.forEach(function (sectionNode, sectionIndex) {
+          var fillFrom = clampLevelSectionValue(leftUnits - sectionIndex);
+          var fillTo = clampLevelSectionValue(rightUnits - sectionIndex);
+          if (fillTo < fillFrom) {
+            var swap = fillFrom;
+            fillFrom = fillTo;
+            fillTo = swap;
+          }
+          sectionNode.style.setProperty('--segment-fill-from', String(fillFrom));
+          sectionNode.style.setProperty('--segment-fill-to', String(fillTo));
+        });
+
+        markerNodes.forEach(function (entry) {
+          entry.node.classList.toggle('is-active', entry.rank >= left && entry.rank <= right);
+        });
       }
 
       minInput.addEventListener('input', function () {
