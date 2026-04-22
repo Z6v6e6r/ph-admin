@@ -2410,6 +2410,26 @@
     });
   }
 
+  function filterVisibleItems(items, includePast) {
+    var todayKey;
+
+    if (includePast) {
+      return items.slice();
+    }
+
+    todayKey = formatDateKey(new Date());
+
+    return items.filter(function (item) {
+      var parsed = parseDate(item.startsAt);
+
+      if (!parsed) {
+        return true;
+      }
+
+      return formatDateKey(parsed) >= todayKey;
+    });
+  }
+
   function buildDayGroups(items) {
     var grouped = {};
     var ordered = [];
@@ -3627,9 +3647,12 @@
   function renderTournaments(mount, payload, state) {
     var response = normalizeObject(payload);
     var items = sortItems(
-      normalizeArray(response.items).map(function (entry) {
-        return normalizeObject(entry);
-      })
+      filterVisibleItems(
+        normalizeArray(response.items).map(function (entry) {
+          return normalizeObject(entry);
+        }),
+        state.config.includePast
+      )
     );
     var dayGroups = buildDayGroups(items);
     var selectedGroup;
