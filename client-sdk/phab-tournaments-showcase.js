@@ -89,9 +89,20 @@
         --ph-tournament-gray-soft: #f3f4f6;
         --ph-tournament-gray-ink: #4b5563;
         --ph-tournament-shadow: 0 4px 30px rgba(0, 0, 0, 0.07);
+        --ph-tournament-card-bg: #1f1f20;
+        --ph-tournament-card-line: #2e2e2f;
+        --ph-tournament-card-line-soft: #49494a;
+        --ph-tournament-card-ink: #fafafa;
+        --ph-tournament-card-ink-soft: #b9b9bf;
+        --ph-tournament-card-accent: #a88ef6;
+        --ph-tournament-card-accent-soft: rgba(95, 192, 240, 0.08);
+        --ph-tournament-card-accent-ink: #5fc0f0;
+        --ph-tournament-card-map: #b2a0eb;
         --ph-tournament-display-font: "RF Dewi UltraBold", "Source Code Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --ph-tournament-button-font: "RF Dewi Expanded UltraBold Italic", "RF Dewi UltraBold", "Source Code Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --ph-tournament-time-font: "Source Code Pro Regular", "Source Code Pro", "Roboto", "Roboto Flex", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-ui-font: "Inter Display", "Inter", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-card-title-font: "RF Dewi UltraBold", "Inter Display", "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       .phab-tournaments {
@@ -416,6 +427,7 @@
 
       .phab-tournaments__collection--cards {
         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        align-items: start;
       }
 
       .phab-tournaments__collection--schedule {
@@ -788,6 +800,286 @@
         gap: 8px;
         align-items: center;
         flex-wrap: wrap;
+      }
+
+      .phab-tournaments__entry--card {
+        width: 100%;
+        max-width: 319px;
+        min-height: 241px;
+        padding: 14px 12px;
+        gap: 20px;
+        border: none;
+        border-radius: 12px;
+        background: var(--ph-tournament-card-bg);
+        box-shadow: none;
+        color: var(--ph-tournament-card-ink);
+        justify-self: center;
+      }
+
+      .phab-tournaments__card-compact-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+        width: 100%;
+      }
+
+      .phab-tournaments__card-compact-heading {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+
+      .phab-tournaments__card-compact-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-height: 18px;
+        max-width: 100%;
+        padding: 5px 6px;
+        border-radius: 24px;
+        background: var(--ph-tournament-card-accent-soft);
+        color: var(--ph-tournament-card-accent-ink);
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 10px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      .phab-tournaments__card-compact-badge-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .phab-tournaments__card-compact-badge-icon {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 8px;
+        display: inline-flex;
+      }
+
+      .phab-tournaments__card-compact-badge-icon svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .phab-tournaments__card-compact-title {
+        width: 100%;
+        margin: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ph-tournament-card-ink);
+        font-family: var(--ph-tournament-card-title-font);
+        font-size: 18px;
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+      }
+
+      .phab-tournaments__card-compact-price {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 74px;
+        min-height: 33px;
+        padding: 8px 12px;
+        border: 1.5px dashed var(--ph-tournament-card-line);
+        border-radius: 6px;
+      }
+
+      .phab-tournaments__card-compact-price-value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ph-tournament-card-ink);
+        font-family: var(--ph-tournament-card-title-font);
+        font-size: 14px;
+        line-height: 1.24;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .phab-tournaments__card-compact-info {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .phab-tournaments__card-compact-meta {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .phab-tournaments__card-compact-meta-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ph-tournament-card-ink);
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+
+      .phab-tournaments__card-compact-meta--location .phab-tournaments__card-compact-meta-text {
+        flex: 1 1 auto;
+      }
+
+      .phab-tournaments__card-compact-meta-icon {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 12px;
+        display: inline-flex;
+        color: var(--ph-tournament-card-ink);
+      }
+
+      .phab-tournaments__card-compact-meta-icon svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .phab-tournaments__card-compact-map {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        min-height: 13px;
+        margin-left: auto;
+        padding: 0 0 1px;
+        border-bottom: 1px dashed var(--ph-tournament-card-map);
+        color: var(--ph-tournament-card-map);
+        text-decoration: none;
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 400;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      .phab-tournaments__card-compact-map:hover {
+        color: #c8b8ff;
+        border-bottom-color: #c8b8ff;
+      }
+
+      .phab-tournaments__card-compact-capacity {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        width: 100%;
+      }
+
+      .phab-tournaments__card-compact-progress {
+        display: flex;
+        gap: 2px;
+        width: 100%;
+      }
+
+      .phab-tournaments__card-compact-progress-segment {
+        height: 3px;
+        flex: 1 1 0;
+        background: var(--ph-tournament-card-line-soft);
+      }
+
+      .phab-tournaments__card-compact-progress-segment:first-child {
+        border-radius: 24px 0 0 24px;
+      }
+
+      .phab-tournaments__card-compact-progress-segment:last-child {
+        border-radius: 0 24px 24px 0;
+      }
+
+      .phab-tournaments__card-compact-progress-segment.is-filled {
+        background: var(--ph-tournament-card-ink);
+      }
+
+      .phab-tournaments__card-compact-capacity-texts {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+      }
+
+      .phab-tournaments__card-compact-capacity-value,
+      .phab-tournaments__card-compact-capacity-note {
+        min-width: 0;
+        color: var(--ph-tournament-card-ink);
+        font-family: var(--ph-tournament-ui-font);
+        line-height: 1;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .phab-tournaments__card-compact-capacity-value {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .phab-tournaments__card-compact-capacity-note {
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        text-align: right;
+      }
+
+      .phab-tournaments__card-compact-cta {
+        appearance: none;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 32px;
+        padding: 10px 24px 10px 20px;
+        border-radius: 24px;
+        background: var(--ph-tournament-card-accent);
+        color: #121212;
+        text-decoration: none;
+        cursor: pointer;
+        transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+
+      .phab-tournaments__card-compact-cta:hover {
+        transform: none;
+        opacity: 0.94;
+      }
+
+      .phab-tournaments__card-compact-cta--secondary {
+        background: transparent;
+        color: var(--ph-tournament-card-ink);
+        box-shadow: inset 0 0 0 1px var(--ph-tournament-card-line-soft);
+      }
+
+      .phab-tournaments__card-compact-cta:disabled,
+      .phab-tournaments__card-compact-cta--disabled {
+        background: transparent;
+        color: var(--ph-tournament-card-ink-soft);
+        box-shadow: inset 0 0 0 1px var(--ph-tournament-card-line);
+        cursor: default;
+        opacity: 1;
       }
 
       .phab-tournaments__entry--premium {
@@ -1255,6 +1547,10 @@
           border-radius: 26px;
         }
 
+        .phab-tournaments__entry--card {
+          max-width: none;
+        }
+
         .phab-tournaments__premium-time {
           font-size: 42px;
         }
@@ -1320,6 +1616,14 @@
 
         .phab-tournaments__card-row,
         .phab-tournaments__card-title-wrap {
+          flex-wrap: wrap;
+        }
+
+        .phab-tournaments__card-compact-head {
+          gap: 16px;
+        }
+
+        .phab-tournaments__card-compact-capacity-texts {
           flex-wrap: wrap;
         }
 
@@ -1551,6 +1855,26 @@
     return 'Время уточняется';
   }
 
+  function formatCardScheduleLabel(card) {
+    var start = parseDate(card.startsAt);
+    var end = parseDate(card.endsAt);
+
+    if (!start) {
+      return 'Дата уточняется';
+    }
+
+    var dateLabel = start.toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long'
+    });
+
+    if (end) {
+      return dateLabel + ', ' + formatTime(start) + '—' + formatTime(end);
+    }
+
+    return dateLabel + ', ' + formatTime(start);
+  }
+
   function formatDurationMinutes(card) {
     var start = parseDate(card.startsAt);
     var end = parseDate(card.endsAt);
@@ -1606,6 +1930,39 @@
     return list.join('/');
   }
 
+  function normalizeLevelLabel(value) {
+    return String(value || '').trim().toUpperCase();
+  }
+
+  function rankLevel(level) {
+    var normalized = normalizeLevelLabel(level);
+    var index = LEVEL_OPTIONS.indexOf(normalized);
+    return index === -1 ? LEVEL_OPTIONS.length : index;
+  }
+
+  function sortLevels(levels) {
+    return normalizeArray(levels)
+      .map(normalizeLevelLabel)
+      .filter(Boolean)
+      .sort(function (left, right) {
+        return rankLevel(left) - rankLevel(right);
+      });
+  }
+
+  function formatAccessLevelRange(levels) {
+    var list = sortLevels(levels);
+
+    if (list.length === 0) {
+      return 'без ограничений';
+    }
+
+    if (list.length === 1) {
+      return list[0];
+    }
+
+    return 'от ' + list[0] + ' до ' + list[list.length - 1];
+  }
+
   function pluralizeSpots(count) {
     var numeric = Math.max(0, Number(count) || 0);
     var mod10 = numeric % 10;
@@ -1644,6 +2001,17 @@
     return String(participantsCount) + ' / ' + String(Math.round(maxPlayers));
   }
 
+  function formatParticipantsSummary(card) {
+    var participantsCount = Math.max(0, Number(card.participantsCount) || 0);
+    var maxPlayers = Number(card.maxPlayers);
+
+    if (!Number.isFinite(maxPlayers) || maxPlayers <= 0) {
+      return 'Состав уточняется';
+    }
+
+    return String(participantsCount) + '/' + String(Math.round(maxPlayers)) + ' участников';
+  }
+
   function formatGenderLabel(gender) {
     var value = String(gender || '').toUpperCase();
     if (value === 'MIXED') {
@@ -1658,12 +2026,35 @@
     return '';
   }
 
+  function formatGenderBadgeLabel(gender) {
+    var value = String(gender || '').toUpperCase();
+    if (value === 'MIXED') {
+      return 'микст';
+    }
+    if (value === 'MALE') {
+      return 'мужчины';
+    }
+    if (value === 'FEMALE') {
+      return 'женщины';
+    }
+    return '';
+  }
+
   function resolveLocationLabel(card) {
     return (
       String(card.studioName || '').trim()
       || String(normalizeObject(card.sourceTournament).studioName || '').trim()
       || 'PadelHub'
     );
+  }
+
+  function resolveMapUrl(card) {
+    var location = resolveLocationLabel(card);
+    if (!location || location === 'PadelHub') {
+      return '';
+    }
+
+    return 'https://yandex.ru/maps/?text=' + encodeURIComponent(location);
   }
 
   function resolveTrainerLabel(card) {
@@ -1691,6 +2082,74 @@
   function resolvePrimaryImage(card) {
     var skin = normalizeObject(card.skin);
     return String(skin.imageUrl || '').trim();
+  }
+
+  function resolveCardBadgeLabel(card) {
+    return [String(card.tournamentType || 'Турнир').trim(), formatGenderBadgeLabel(card.gender)]
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  function resolveCardPriceLabel(card) {
+    var booking = normalizeObject(card.booking);
+    var purchaseOption = normalizeArray(booking.purchaseOptions)[0];
+    var acceptedSubscription = normalizeArray(booking.acceptedSubscriptions)[0];
+
+    if (purchaseOption) {
+      var purchase = normalizeObject(purchaseOption);
+      var purchasePrice = String(purchase.priceLabel || purchase.price || '').trim();
+      if (purchasePrice) {
+        return purchasePrice;
+      }
+    }
+
+    if (acceptedSubscription) {
+      var subscription = normalizeObject(acceptedSubscription);
+      var writeOffLabel = String(subscription.writeOffLabel || '').trim();
+      if (writeOffLabel) {
+        return writeOffLabel;
+      }
+      var subscriptionLabel = String(subscription.label || '').trim();
+      if (subscriptionLabel) {
+        return subscriptionLabel;
+      }
+    }
+
+    return booking.required ? 'Оплата' : 'Без оплаты';
+  }
+
+  function resolveProgressFilledSegments(card) {
+    var totalSegments = 12;
+    var maxPlayers = Number(card.maxPlayers);
+    var participantsCount = Math.max(0, Number(card.participantsCount) || 0);
+    var normalizedMaxPlayers;
+
+    if (!Number.isFinite(maxPlayers) || maxPlayers <= 0) {
+      return 0;
+    }
+
+    if (participantsCount <= 0) {
+      return 0;
+    }
+
+    normalizedMaxPlayers = Math.max(1, Math.round(maxPlayers));
+
+    return Math.max(
+      1,
+      Math.min(totalSegments, Math.round((participantsCount / normalizedMaxPlayers) * totalSegments))
+    );
+  }
+
+  function resolveRemainingSpotsLabel(descriptor) {
+    if (descriptor.spotsLeft === null || descriptor.spotsLeft === undefined) {
+      return 'места уточняются';
+    }
+
+    if (descriptor.spotsLeft <= 0) {
+      return 'мест нет';
+    }
+
+    return 'осталось: ' + pluralizeSpots(descriptor.spotsLeft);
   }
 
   function resolveInitials(value) {
@@ -1902,14 +2361,14 @@
     if (descriptor.key === 'full' || descriptor.key === 'waitlist') {
       return {
         kind: 'secondary',
-        label: 'Лист ожидания',
+        label: 'В лист ожидания',
         mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
       };
     }
 
     return {
       kind: 'primary',
-      label: String(skin.ctaLabel || '').trim() || 'Записаться',
+      label: String(skin.ctaLabel || '').trim() || 'Принять участие',
       mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
     };
   }
@@ -2053,6 +2512,98 @@
 
   function createInfoPill(text) {
     return createElement('span', 'phab-tournaments__pill', text);
+  }
+
+  function createCompactBadgeIcon() {
+    var icon = createElement('span', 'phab-tournaments__card-compact-badge-icon');
+    icon.innerHTML =
+      '<svg viewBox="0 0 8 8" fill="none" aria-hidden="true">' +
+      '<circle cx="2.25" cy="5.75" r="1.25" fill="#A88EF6"></circle>' +
+      '<circle cx="5.9" cy="2.1" r="1.1" fill="#A88EF6"></circle>' +
+      '<path d="M2.8 5.1L5.1 2.8" stroke="#5FC0F0" stroke-width="1.1" stroke-linecap="round"></path>' +
+      '<circle cx="2.1" cy="2.15" r="1.35" fill="#5FC0F0"></circle>' +
+      '</svg>';
+    return icon;
+  }
+
+  function createCompactMetaIcon(kind) {
+    var icon = createElement(
+      'span',
+      'phab-tournaments__card-compact-meta-icon phab-tournaments__card-compact-meta-icon--' + kind
+    );
+    var svgByKind = {
+      calendar:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<rect x="1.25" y="2.25" width="9.5" height="8.5" rx="1.5" stroke="currentColor" stroke-width="1.1"></rect>' +
+        '<path d="M3.2 1.25V3.1M8.8 1.25V3.1M1.25 4.25H10.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '</svg>',
+      location:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<path d="M6 10.65C6 10.65 9.15 7.92 9.15 5.25C9.15 3.51 7.74 2.1 6 2.1C4.26 2.1 2.85 3.51 2.85 5.25C2.85 7.92 6 10.65 6 10.65Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"></path>' +
+        '<circle cx="6" cy="5.25" r="1.2" fill="currentColor"></circle>' +
+        '</svg>',
+      level:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<rect x="1.25" y="6.6" width="2.1" height="4.15" rx="0.7" fill="currentColor"></rect>' +
+        '<rect x="4.95" y="4.45" width="2.1" height="6.3" rx="0.7" fill="currentColor"></rect>' +
+        '<rect x="8.65" y="2.3" width="2.1" height="8.45" rx="0.7" fill="currentColor"></rect>' +
+        '</svg>'
+    };
+
+    icon.innerHTML = svgByKind[kind] || '';
+    return icon;
+  }
+
+  function createCompactMetaRow(kind, text, trailing) {
+    var row = createElement(
+      'div',
+      'phab-tournaments__card-compact-meta phab-tournaments__card-compact-meta--' + kind
+    );
+    appendChildren(row, [
+      createCompactMetaIcon(kind),
+      createElement('span', 'phab-tournaments__card-compact-meta-text', text),
+      trailing || null
+    ]);
+    return row;
+  }
+
+  function createCompactMapLink(card) {
+    var mapUrl = resolveMapUrl(card);
+
+    if (!mapUrl) {
+      return createElement('span', 'phab-tournaments__card-compact-map', 'на карте');
+    }
+
+    var link = createElement('a', 'phab-tournaments__card-compact-map', 'на карте');
+    link.href = mapUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
+  }
+
+  function createCompactCapacityBlock(card, descriptor) {
+    var block = createElement('div', 'phab-tournaments__card-compact-capacity');
+    var progress = createElement('div', 'phab-tournaments__card-compact-progress');
+    var filledSegments = resolveProgressFilledSegments(card);
+    var totalSegments = 12;
+    var index;
+
+    for (index = 0; index < totalSegments; index += 1) {
+      var segment = createElement('span', 'phab-tournaments__card-compact-progress-segment');
+      if (index < filledSegments) {
+        segment.className += ' is-filled';
+      }
+      progress.appendChild(segment);
+    }
+
+    block.appendChild(progress);
+    block.appendChild(
+      appendChildren(createElement('div', 'phab-tournaments__card-compact-capacity-texts'), [
+        createElement('span', 'phab-tournaments__card-compact-capacity-value', formatParticipantsSummary(card)),
+        createElement('span', 'phab-tournaments__card-compact-capacity-note', resolveRemainingSpotsLabel(descriptor))
+      ])
+    );
+    return block;
   }
 
   function createAvatar(card) {
@@ -2211,6 +2762,22 @@
     return control;
   }
 
+  function createCardModeActionControl(card, action, state, mount) {
+    var control = createActionControl(card, action, state, mount);
+
+    control.className = 'phab-tournaments__card-compact-cta';
+
+    if (action.kind === 'secondary') {
+      control.className += ' phab-tournaments__card-compact-cta--secondary';
+    }
+
+    if (action.mode === 'disabled') {
+      control.className += ' phab-tournaments__card-compact-cta--disabled';
+    }
+
+    return control;
+  }
+
   function createBallIcon() {
     var holder = createElement('span', 'phab-tournaments__premium-badge-ball');
     holder.innerHTML =
@@ -2347,7 +2914,38 @@
   function createCardModeCard(card, state, mount) {
     var descriptor = resolveTournamentState(card);
     var action = resolveAction(card, descriptor);
-    return createPremiumCard(card, descriptor, action, state, mount);
+    var article = createElement('article', 'phab-tournaments__entry phab-tournaments__entry--card');
+    var header = createElement('div', 'phab-tournaments__card-compact-head');
+    var heading = createElement('div', 'phab-tournaments__card-compact-heading');
+    var badge = createElement('div', 'phab-tournaments__card-compact-badge');
+    var badgeText = createElement('span', 'phab-tournaments__card-compact-badge-text', resolveCardBadgeLabel(card));
+    var price = createElement('div', 'phab-tournaments__card-compact-price');
+    var info = createElement('div', 'phab-tournaments__card-compact-info');
+
+    appendChildren(badge, [createCompactBadgeIcon(), badgeText]);
+    appendChildren(heading, [
+      badge,
+      createElement('h3', 'phab-tournaments__card-compact-title', resolveTitle(card))
+    ]);
+    price.appendChild(
+      createElement('span', 'phab-tournaments__card-compact-price-value', resolveCardPriceLabel(card))
+    );
+    appendChildren(header, [heading, price]);
+
+    appendChildren(info, [
+      createCompactMetaRow('calendar', formatCardScheduleLabel(card)),
+      createCompactMetaRow('location', resolveLocationLabel(card), createCompactMapLink(card)),
+      createCompactMetaRow('level', formatAccessLevelRange(card.accessLevels))
+    ]);
+
+    appendChildren(article, [
+      header,
+      info,
+      createCompactCapacityBlock(card, descriptor),
+      createCardModeActionControl(card, action, state, mount)
+    ]);
+
+    return article;
   }
 
   function createDayButton(group, state, mount) {
