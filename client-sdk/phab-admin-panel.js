@@ -1662,44 +1662,15 @@
       }
       .phab-admin-tournament-levels-range{
         position:relative;
-        padding:28px 0 30px;
+        padding:14px 0 30px;
       }
       .phab-admin-tournament-levels-rail{
         position:absolute;
         left:0;
         right:0;
-        top:38px;
+        top:24px;
         height:6px;
         pointer-events:none;
-      }
-      .phab-admin-tournament-levels-scale{
-        position:absolute;
-        left:0;
-        right:0;
-        top:0;
-        height:18px;
-        pointer-events:none;
-      }
-      .phab-admin-tournament-levels-scale-label{
-        position:absolute;
-        top:0;
-        font-size:8px;
-        line-height:1;
-        font-weight:700;
-        letter-spacing:-0.02em;
-        color:rgba(51,0,32,.46);
-        white-space:nowrap;
-        transform:translateX(-50%);
-        font-variant-numeric:tabular-nums;
-      }
-      .phab-admin-tournament-levels-scale-label.is-edge-start{
-        transform:none;
-      }
-      .phab-admin-tournament-levels-scale-label.is-edge-end{
-        transform:translateX(-100%);
-      }
-      .phab-admin-tournament-levels-scale-label.is-active{
-        color:rgba(97,7,136,.86);
       }
       .phab-admin-tournament-levels-sections{
         display:grid;
@@ -14086,24 +14057,38 @@
 
     var TOURNAMENT_BASE_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
     var TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+    var TOURNAMENT_LEVEL_BANDS = [
+      { base: 'D', min: 1, max: 2, display: '1.0-2.0' },
+      { base: 'D+', min: 2, max: 3, display: '2.0-3.0' },
+      { base: 'C', min: 3, max: 3.5, display: '3.0-3.5' },
+      { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
+      { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
+      { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
+      { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+    ];
     var TOURNAMENT_LEVEL_OPTIONS = [];
     (function () {
-      for (var index = 0; index <= TOURNAMENT_BASE_LEVEL_OPTIONS.length * TOURNAMENT_LEVEL_DIVISION_COUNT; index += 1) {
-        var score = 1 + index / TOURNAMENT_LEVEL_DIVISION_COUNT;
-        var token = formatTournamentLevelScoreToken(score);
-        var base = resolveTournamentLevelBaseByScore(score);
-        if (!token || !base) {
-          continue;
+      TOURNAMENT_LEVEL_BANDS.forEach(function (band, bandIndex) {
+        for (var step = 0; step <= TOURNAMENT_LEVEL_DIVISION_COUNT; step += 1) {
+          if (bandIndex > 0 && step === 0) {
+            continue;
+          }
+          var progress = step / TOURNAMENT_LEVEL_DIVISION_COUNT;
+          var score = band.min + (band.max - band.min) * progress;
+          var token = formatTournamentLevelScoreToken(score);
+          if (!token) {
+            continue;
+          }
+          TOURNAMENT_LEVEL_OPTIONS.push({
+            token: token,
+            base: band.base,
+            numericValue: score,
+            label: band.base,
+            rangeLabel: band.display,
+            rank: TOURNAMENT_LEVEL_OPTIONS.length
+          });
         }
-        TOURNAMENT_LEVEL_OPTIONS.push({
-          token: token,
-          base: base,
-          numericValue: score,
-          numericLabel: formatTournamentLevelScoreLabel(score),
-          label: base + ' · ' + formatTournamentLevelScoreLabel(score),
-          rank: index
-        });
-      }
+      });
     })();
     var TOURNAMENT_STATUS_OPTIONS = [
       { value: 'PLANNED', label: 'Запланирован' },
@@ -15009,15 +14994,11 @@
       return map[normalized] || raw;
     }
 
-    function getTournamentLevelBaseRange(base) {
-      var baseIndex = TOURNAMENT_BASE_LEVEL_OPTIONS.indexOf(String(base || '').trim().toUpperCase());
-      if (baseIndex < 0) {
-        return null;
-      }
-      return {
-        start: baseIndex + 1,
-        end: baseIndex + 2
-      };
+    function getTournamentLevelBand(base) {
+      var normalized = String(base || '').trim().toUpperCase();
+      return TOURNAMENT_LEVEL_BANDS.find(function (item) {
+        return item.base === normalized;
+      }) || null;
     }
 
     function formatTournamentLevelScoreToken(value) {
@@ -15025,15 +15006,7 @@
       if (!Number.isFinite(numeric)) {
         return '';
       }
-      var normalized = Math.round(numeric * TOURNAMENT_LEVEL_DIVISION_COUNT) / TOURNAMENT_LEVEL_DIVISION_COUNT;
-      if (Math.abs(normalized - Math.round(normalized)) < 0.0001) {
-        return String(Math.round(normalized));
-      }
-      return String(normalized.toFixed(2)).replace(/0+$/, '').replace(/\.$/, '');
-    }
-
-    function formatTournamentLevelScoreLabel(value) {
-      return formatTournamentLevelScoreToken(value).replace('.', ',');
+      return String(numeric.toFixed(3)).replace(/0+$/, '').replace(/\.$/, '');
     }
 
     function normalizeTournamentLevelScoreToken(value) {
@@ -15045,15 +15018,12 @@
       if (!Number.isFinite(numeric)) {
         return '';
       }
-      if (numeric < 1 || numeric > TOURNAMENT_BASE_LEVEL_OPTIONS.length + 1) {
+      if (numeric < TOURNAMENT_LEVEL_BANDS[0].min || numeric > TOURNAMENT_LEVEL_BANDS[TOURNAMENT_LEVEL_BANDS.length - 1].max) {
         return '';
       }
-      var normalizedToken = formatTournamentLevelScoreToken(numeric);
-      if (!normalizedToken) {
-        return '';
-      }
-      var exact = Number(normalizedToken);
-      return Math.abs(exact - numeric) < 0.0001 ? normalizedToken : '';
+      return TOURNAMENT_LEVEL_OPTIONS.find(function (item) {
+        return Math.abs(item.numericValue - numeric) < 0.0001;
+      }) ? formatTournamentLevelScoreToken(numeric) : '';
     }
 
     function resolveTournamentLevelBaseByScore(score) {
@@ -15061,28 +15031,29 @@
       if (!Number.isFinite(numeric)) {
         return '';
       }
-      var baseIndex = Math.ceil(numeric) - 2;
-      if (numeric <= 1) {
-        baseIndex = 0;
-      }
-      baseIndex = Math.max(0, Math.min(TOURNAMENT_BASE_LEVEL_OPTIONS.length - 1, baseIndex));
-      return TOURNAMENT_BASE_LEVEL_OPTIONS[baseIndex] || '';
+      var matched = TOURNAMENT_LEVEL_BANDS.find(function (band, bandIndex) {
+        if (bandIndex === TOURNAMENT_LEVEL_BANDS.length - 1) {
+          return numeric >= band.min - 0.0001;
+        }
+        return numeric >= band.min - 0.0001 && numeric < band.max - 0.0001;
+      });
+      return matched ? matched.base : '';
     }
 
     function resolveTournamentLegacyLevelScore(base, value) {
       var normalized = String(value || '').trim().toUpperCase();
-      var range = getTournamentLevelBaseRange(base);
-      if (!normalized || !range) {
+      var band = getTournamentLevelBand(base);
+      if (!normalized || !band) {
         return '';
       }
       if (/BEGINNER|НОВИЧ|НАЧИН/.test(normalized)) {
-        return formatTournamentLevelScoreToken(range.start + 0.25);
+        return formatTournamentLevelScoreToken(band.min + (band.max - band.min) * 0.25);
       }
       if (/MIDDLE|INTERMEDIATE|MEDIUM|СРЕДН/.test(normalized)) {
-        return formatTournamentLevelScoreToken(range.start + 0.5);
+        return formatTournamentLevelScoreToken(band.min + (band.max - band.min) * 0.5);
       }
       if (/ADVANCED|PRO|ПРОДВ/.test(normalized)) {
-        return formatTournamentLevelScoreToken(range.start + 0.75);
+        return formatTournamentLevelScoreToken(band.min + (band.max - band.min) * 0.75);
       }
       return '';
     }
@@ -15139,11 +15110,11 @@
         return base;
       }
 
-      var range = getTournamentLevelBaseRange(base);
+      var range = getTournamentLevelBand(base);
       var remainderScore = normalizeTournamentLevelScoreToken(remainder);
       if (range && remainderScore) {
         var numericScore = Number(remainderScore);
-        if (numericScore >= range.start - 0.0001 && numericScore <= range.end + 0.0001) {
+        if (numericScore >= range.min - 0.0001 && numericScore <= range.max + 0.0001) {
           return remainderScore;
         }
       }
@@ -15161,12 +15132,12 @@
         return [];
       }
       if (TOURNAMENT_BASE_LEVEL_OPTIONS.indexOf(normalized) >= 0) {
-        var range = getTournamentLevelBaseRange(normalized);
+        var range = getTournamentLevelBand(normalized);
         return TOURNAMENT_LEVEL_OPTIONS.filter(function (item) {
           return (
             range &&
-            item.numericValue >= range.start - 0.0001 &&
-            item.numericValue <= range.end + 0.0001
+            item.numericValue >= range.min - 0.0001 &&
+            item.numericValue <= range.max + 0.0001
           );
         }).map(function (item) {
           return item.token;
@@ -15282,32 +15253,10 @@
       var divisionCount = TOURNAMENT_LEVEL_DIVISION_COUNT;
       var sectionNodes = [];
       var markerNodes = [];
-      var scaleNodes = [];
 
       var rangeWrap = document.createElement('div');
       rangeWrap.className = 'phab-admin-tournament-levels-range';
       root.appendChild(rangeWrap);
-
-      var scale = document.createElement('div');
-      scale.className = 'phab-admin-tournament-levels-scale';
-      rangeWrap.appendChild(scale);
-      TOURNAMENT_LEVEL_OPTIONS.forEach(function (option, optionIndex) {
-        var scaleLabel = document.createElement('span');
-        scaleLabel.className = 'phab-admin-tournament-levels-scale-label';
-        if (optionIndex === 0) {
-          scaleLabel.classList.add('is-edge-start');
-        } else if (optionIndex === TOURNAMENT_LEVEL_OPTIONS.length - 1) {
-          scaleLabel.classList.add('is-edge-end');
-        }
-        scaleLabel.textContent = option.numericLabel;
-        scaleLabel.style.left =
-          String(option.rank / Math.max(1, TOURNAMENT_LEVEL_OPTIONS.length - 1) * 100) + '%';
-        scale.appendChild(scaleLabel);
-        scaleNodes.push({
-          node: scaleLabel,
-          rank: option.rank
-        });
-      });
 
       var rail = document.createElement('div');
       rail.className = 'phab-admin-tournament-levels-rail';
@@ -15416,9 +15365,6 @@
         });
 
         markerNodes.forEach(function (entry) {
-          entry.node.classList.toggle('is-active', entry.rank >= left && entry.rank <= right);
-        });
-        scaleNodes.forEach(function (entry) {
           entry.node.classList.toggle('is-active', entry.rank >= left && entry.rank <= right);
         });
       }

@@ -18,32 +18,15 @@ import {
 import { TournamentsService } from './tournaments.service';
 
 const TOURNAMENT_BASE_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
-const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
-const TOURNAMENT_LEVEL_OPTIONS = Array.from(
-  { length: TOURNAMENT_BASE_LEVEL_OPTIONS.length * TOURNAMENT_LEVEL_DIVISION_COUNT + 1 },
-  (_value, index) => {
-    const score = 1 + index / TOURNAMENT_LEVEL_DIVISION_COUNT;
-    const base = resolveTournamentLevelBaseByScore(score);
-    return {
-      value: formatTournamentLevelScoreToken(score),
-      label: `${base} · ${formatTournamentLevelScoreLabel(score)}`
-    };
-  }
-);
-
-function formatTournamentLevelScoreToken(value: number): string {
-  const normalized =
-    Math.round(Number(value ?? 0) * TOURNAMENT_LEVEL_DIVISION_COUNT)
-    / TOURNAMENT_LEVEL_DIVISION_COUNT;
-  if (Math.abs(normalized - Math.round(normalized)) < 0.0001) {
-    return String(Math.round(normalized));
-  }
-  return normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-}
-
-function formatTournamentLevelScoreLabel(value: number): string {
-  return formatTournamentLevelScoreToken(value).replace('.', ',');
-}
+const TOURNAMENT_LEVEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'D', label: 'D · 1.0-2.0' },
+  { value: 'D+', label: 'D+ · 2.0-3.0' },
+  { value: 'C', label: 'C · 3.0-3.5' },
+  { value: 'C+', label: 'C+ · 3.5-4.0' },
+  { value: 'B', label: 'B · 4.0-4.7' },
+  { value: 'B+', label: 'B+ · 4.7-5.5' },
+  { value: 'A', label: 'A · 5.5+' }
+];
 
 function normalizeTournamentLevelOptionToken(value: unknown): string {
   const normalized = String(value ?? '')
@@ -60,20 +43,28 @@ function normalizeTournamentLevelOptionToken(value: unknown): string {
   if (!Number.isFinite(numeric)) {
     return normalized;
   }
-  if (numeric < 1 || numeric > TOURNAMENT_BASE_LEVEL_OPTIONS.length + 1) {
-    return normalized;
+  if (numeric >= 5.5) {
+    return 'A';
   }
-  const token = formatTournamentLevelScoreToken(numeric);
-  return Math.abs(Number(token) - numeric) < 0.0001 ? token : normalized;
-}
-
-function resolveTournamentLevelBaseByScore(score: number): (typeof TOURNAMENT_BASE_LEVEL_OPTIONS)[number] {
-  let baseIndex = Math.ceil(score) - 2;
-  if (score <= 1) {
-    baseIndex = 0;
+  if (numeric >= 4.7) {
+    return 'B+';
   }
-  baseIndex = Math.max(0, Math.min(TOURNAMENT_BASE_LEVEL_OPTIONS.length - 1, baseIndex));
-  return TOURNAMENT_BASE_LEVEL_OPTIONS[baseIndex];
+  if (numeric >= 4) {
+    return 'B';
+  }
+  if (numeric >= 3.5) {
+    return 'C+';
+  }
+  if (numeric >= 3) {
+    return 'C';
+  }
+  if (numeric >= 2) {
+    return 'D+';
+  }
+  if (numeric >= 1) {
+    return 'D';
+  }
+  return normalized;
 }
 
 type JoinSubmission = {

@@ -76,6 +76,15 @@ const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+const TOURNAMENT_LEVEL_BANDS = [
+  { base: 'D', min: 1, max: 2, display: '1.0-2.0' },
+  { base: 'D+', min: 2, max: 3, display: '2.0-3.0' },
+  { base: 'C', min: 3, max: 3.5, display: '3.0-3.5' },
+  { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
+  { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
+  { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
+  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+] as const;
 const TOURNAMENT_LEVEL_LEGACY_ALIASES = [
   { offset: 0.25, aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
   { offset: 0.5, aliases: ['MIDDLE', 'INTERMEDIATE', 'MEDIUM', 'СРЕДН'] },
@@ -1826,21 +1835,21 @@ export class TournamentsService {
       token,
       base,
       step: Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT),
-      label: `${base} · ${this.formatLevelScoreLabel(numericScore)}`,
-      rank: Math.round((numericScore - 1) * TOURNAMENT_LEVEL_DIVISION_COUNT),
+      label: base,
+      rank: this.findLevelRankByToken(token),
       minScore: numericScore,
       maxScore: numericScore
     };
   }
 
   private getLevelBaseRange(base: string): { start: number; end: number } | null {
-    const baseIndex = TOURNAMENT_BASE_LEVELS.indexOf(base as (typeof TOURNAMENT_BASE_LEVELS)[number]);
-    if (baseIndex < 0) {
+    const band = TOURNAMENT_LEVEL_BANDS.find((item) => item.base === base);
+    if (!band) {
       return null;
     }
     return {
-      start: baseIndex + 1,
-      end: baseIndex + 2
+      start: band.min,
+      end: band.max
     };
   }
 
@@ -1849,26 +1858,20 @@ export class TournamentsService {
       return null;
     }
 
-    let baseIndex = Math.ceil(score) - 2;
-    if (score <= 1) {
-      baseIndex = 0;
-    }
-    baseIndex = Math.max(0, Math.min(TOURNAMENT_BASE_LEVELS.length - 1, baseIndex));
-    return TOURNAMENT_BASE_LEVELS[baseIndex] ?? null;
+    const matched = TOURNAMENT_LEVEL_BANDS.find((band, index) => {
+      if (index === TOURNAMENT_LEVEL_BANDS.length - 1) {
+        return score >= band.min - 0.0001;
+      }
+      return score >= band.min - 0.0001 && score < band.max - 0.0001;
+    });
+    return matched?.base ?? null;
   }
 
   private formatLevelScoreToken(value: number): string {
-    const normalized =
-      Math.round(Number(value ?? 0) * TOURNAMENT_LEVEL_DIVISION_COUNT)
-      / TOURNAMENT_LEVEL_DIVISION_COUNT;
-    if (Math.abs(normalized - Math.round(normalized)) < 0.0001) {
-      return String(Math.round(normalized));
-    }
-    return normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-  }
-
-  private formatLevelScoreLabel(value: number): string {
-    return this.formatLevelScoreToken(value).replace('.', ',');
+    return Number(value ?? 0)
+      .toFixed(3)
+      .replace(/0+$/, '')
+      .replace(/\.$/, '');
   }
 
   private normalizeLevelScoreToken(value: unknown): string | null {
@@ -1883,12 +1886,12 @@ export class TournamentsService {
     if (!Number.isFinite(numeric)) {
       return null;
     }
-    if (numeric < 1 || numeric > TOURNAMENT_BASE_LEVELS.length + 1) {
+    if (numeric < TOURNAMENT_LEVEL_BANDS[0].min || numeric > TOURNAMENT_LEVEL_BANDS[TOURNAMENT_LEVEL_BANDS.length - 1].max) {
       return null;
     }
 
     const token = this.formatLevelScoreToken(numeric);
-    return Math.abs(Number(token) - numeric) < 0.0001 ? token : null;
+    return this.findLevelRankByToken(token) >= 0 ? token : null;
   }
 
   private resolveLegacyLevelScore(base: string, value: string): number | null {
@@ -1905,6 +1908,24 @@ export class TournamentsService {
       item.aliases.some((alias) => normalized.includes(alias))
     );
     return matched ? baseRange.start + matched.offset : null;
+  }
+
+  private findLevelRankByToken(token: string): number {
+    const normalized = this.formatLevelScoreToken(Number(token));
+    let rank = 0;
+    for (const [bandIndex, band] of TOURNAMENT_LEVEL_BANDS.entries()) {
+      for (let step = 0; step <= TOURNAMENT_LEVEL_DIVISION_COUNT; step += 1) {
+        if (bandIndex > 0 && step === 0) {
+          continue;
+        }
+        const value = band.min + (band.max - band.min) * (step / TOURNAMENT_LEVEL_DIVISION_COUNT);
+        if (this.formatLevelScoreToken(value) === normalized) {
+          return rank;
+        }
+        rank += 1;
+      }
+    }
+    return -1;
   }
 
   private normalizeLevel(value?: string): string | null {
