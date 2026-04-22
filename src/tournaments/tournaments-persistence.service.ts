@@ -61,6 +61,7 @@ export interface CreateCustomTournamentMutation {
   studioName?: string;
   trainerId?: string;
   trainerName?: string;
+  trainerAvatarUrl?: string | null;
   exerciseTypeId?: string;
   skin?: TournamentSkin;
   mechanics?: unknown;
@@ -84,6 +85,7 @@ export interface UpdateCustomTournamentMutation {
   studioName?: string;
   trainerId?: string;
   trainerName?: string;
+  trainerAvatarUrl?: string | null;
   exerciseTypeId?: string;
   skin?: TournamentSkin;
   mechanics?: unknown;
@@ -257,6 +259,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.trainerName !== undefined) {
       setPayload.trainerName = this.pickString(mutation.trainerName) ?? null;
     }
+    if (mutation.trainerAvatarUrl !== undefined) {
+      setPayload.trainerAvatarUrl = this.pickNullableString(mutation.trainerAvatarUrl) ?? null;
+    }
     if (mutation.exerciseTypeId !== undefined) {
       setPayload.exerciseTypeId = this.pickString(mutation.exerciseTypeId) ?? null;
     }
@@ -383,6 +388,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       studioName: this.pickString(document.studioName) ?? undefined,
       trainerId: this.pickString(document.trainerId) ?? undefined,
       trainerName: this.pickString(document.trainerName) ?? undefined,
+      trainerAvatarUrl: this.pickNullableString(document.trainerAvatarUrl) ?? undefined,
       exerciseTypeId: this.pickString(document.exerciseTypeId) ?? undefined,
       startsAt,
       endsAt,
@@ -446,6 +452,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       studioName: this.pickString(mutation.studioName) ?? null,
       trainerId: this.pickString(mutation.trainerId) ?? null,
       trainerName: this.pickString(mutation.trainerName) ?? null,
+      trainerAvatarUrl: this.pickNullableString(mutation.trainerAvatarUrl) ?? null,
       exerciseTypeId: this.pickString(mutation.exerciseTypeId) ?? null,
       skin: this.normalizeSkin(mutation.skin),
       mechanics: this.normalizeMechanics(mutation.mechanics),
@@ -536,9 +543,11 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
         name,
         phone: normalizedPhone ?? undefined,
         levelLabel: this.pickString(record.levelLabel) ?? undefined,
+        avatarUrl: this.pickNullableString(record.avatarUrl) ?? this.pickNullableString(record.photo),
         gender: this.normalizeGender(record.gender),
         paymentStatus: this.normalizePaymentStatus(record.paymentStatus),
         status: this.normalizeParticipantStatus(record.status) ?? defaultStatus,
+        waitlistReason: this.normalizeWaitlistReason(record.waitlistReason) ?? undefined,
         registeredAt: this.pickString(record.registeredAt) ?? undefined,
         paidAt: this.pickString(record.paidAt) ?? undefined,
         notes: this.pickString(record.notes) ?? undefined
@@ -1269,6 +1278,18 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       .trim()
       .toUpperCase();
     if (normalized === 'REGISTERED' || normalized === 'WAITLIST') {
+      return normalized;
+    }
+    return null;
+  }
+
+  private normalizeWaitlistReason(
+    value: unknown
+  ): 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL' | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase();
+    if (normalized === 'FULL' || normalized === 'LEVEL_MISMATCH' || normalized === 'MANUAL') {
       return normalized;
     }
     return null;

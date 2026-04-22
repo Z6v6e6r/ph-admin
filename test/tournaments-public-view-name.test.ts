@@ -67,6 +67,7 @@ function createService(customTournament: CustomTournament): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
     { listTournaments: async () => [] } as never,
+    { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
       findCustomTournamentBySlug: async (slug: string) =>

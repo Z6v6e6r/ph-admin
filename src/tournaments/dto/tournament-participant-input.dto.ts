@@ -31,6 +31,11 @@ export class TournamentParticipantInputDto {
   levelLabel?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  avatarUrl?: string;
+
+  @IsOptional()
   @IsIn(['MALE', 'FEMALE', 'MIXED'])
   gender?: TournamentGender;
 
@@ -41,6 +46,10 @@ export class TournamentParticipantInputDto {
   @IsOptional()
   @IsIn(['REGISTERED', 'WAITLIST'])
   status?: TournamentParticipantStatus;
+
+  @IsOptional()
+  @IsIn(['FULL', 'LEVEL_MISMATCH', 'MANUAL'])
+  waitlistReason?: 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL';
 
   @IsOptional()
   @IsString()

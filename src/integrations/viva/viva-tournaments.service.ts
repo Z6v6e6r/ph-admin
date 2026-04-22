@@ -9,6 +9,7 @@ import {
 interface VivaEntitySummary {
   id: string;
   name?: string;
+  avatarUrl?: string | null;
 }
 
 interface VivaExerciseTypeResolution {
@@ -82,10 +83,16 @@ export class VivaTournamentsService {
 
     const studioNames = new Map(studios.map((studio) => [studio.id, studio.name]));
     const trainerNames = new Map(trainers.map((trainer) => [trainer.id, trainer.name]));
+    const trainerAvatars = new Map(trainers.map((trainer) => [trainer.id, trainer.avatarUrl]));
     const deduplicated = new Map<string, Tournament>();
 
     for (const exercise of [todayExercises, ...otherExercises].flat()) {
-      const tournament = this.toTournament(exercise, studioNames, trainerNames);
+      const tournament = this.toTournament(
+        exercise,
+        studioNames,
+        trainerNames,
+        trainerAvatars
+      );
       if (tournament) {
         deduplicated.set(tournament.id, tournament);
       }
@@ -123,7 +130,8 @@ export class VivaTournamentsService {
           this.readString(record.fullName) ??
           this.readString(record.full_name) ??
           this.readString(record.displayName) ??
-          this.readString(record.display_name)
+          this.readString(record.display_name),
+        avatarUrl: this.readAvatarUrl(record) ?? null
       });
     }
 
@@ -189,7 +197,8 @@ export class VivaTournamentsService {
   private toTournament(
     exercise: VivaRawRecord,
     studioNames: Map<string, string | undefined>,
-    trainerNames: Map<string, string | undefined>
+    trainerNames: Map<string, string | undefined>,
+    trainerAvatars: Map<string, string | null | undefined>
   ): Tournament | null {
     const direction = this.readRecord(exercise.direction);
     const type = this.readRecord(exercise.type);
@@ -287,6 +296,12 @@ export class VivaTournamentsService {
       this.readDisplayName(this.readFirstRecord(exercise.trainers)) ??
       this.readDisplayName(exercise.trainer) ??
       this.readDisplayName(exercise.coach);
+    const trainerAvatarUrl =
+      (trainerId ? trainerAvatars.get(trainerId) : undefined) ??
+      this.readAvatarUrl(this.readFirstRecord(exercise.trainers)) ??
+      this.readAvatarUrl(exercise.trainer) ??
+      this.readAvatarUrl(exercise.coach) ??
+      undefined;
 
     return {
       id,
@@ -308,6 +323,7 @@ export class VivaTournamentsService {
       studioName: studioName ?? undefined,
       trainerId: trainerId ?? undefined,
       trainerName: trainerName ?? undefined,
+      trainerAvatarUrl,
       exerciseTypeId: exerciseType.id,
       tournamentType: tournamentType ?? undefined,
       maxPlayers: maxPlayers ?? undefined,
@@ -637,6 +653,12 @@ export class VivaTournamentsService {
         this.readString(record.grade) ??
         this.readString(record.rating) ??
         undefined,
+      avatarUrl:
+        this.readAvatarUrl(record) ??
+        this.readAvatarUrl(record.client) ??
+        this.readAvatarUrl(record.user) ??
+        this.readAvatarUrl(record.person) ??
+        undefined,
       paymentStatus: paymentStatus ?? undefined,
       status: 'REGISTERED'
     };
@@ -878,6 +900,24 @@ export class VivaTournamentsService {
     const firstName = this.readString(record.firstName) ?? this.readString(record.first_name);
     const lastName = this.readString(record.lastName) ?? this.readString(record.last_name);
     return [firstName, lastName].filter(Boolean).join(' ') || undefined;
+  }
+
+  private readAvatarUrl(value: unknown): string | undefined {
+    const record = this.readRecord(value);
+    if (!record) {
+      return undefined;
+    }
+
+    return (
+      this.readString(record.photo) ??
+      this.readString(record.avatar) ??
+      this.readString(record.avatarUrl) ??
+      this.readString(record.avatar_url) ??
+      this.readString(record.imageUrl) ??
+      this.readString(record.image_url) ??
+      this.readString(record.photoUrl) ??
+      this.readString(record.photo_url)
+    );
   }
 
   private readDateTimeString(value: unknown): string | undefined {

@@ -15,6 +15,8 @@ export interface VivaClientCabinetLookup {
   status: VivaClientCabinetStatus;
   vivaClientId?: string;
   vivaCabinetUrl?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
 }
 
 export interface VivaAdminSettingsSnapshot {
@@ -254,7 +256,8 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
 
     const payload = (await response.json().catch(() => null)) as VivaClientsSearchResponse | null;
-    const vivaClientId = this.extractClientId(payload);
+    const client = this.extractClientRecord(payload);
+    const vivaClientId = client ? this.extractClientId(client) : undefined;
     if (!vivaClientId) {
       return { phone, status: 'NOT_FOUND' };
     }
@@ -263,7 +266,9 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       phone,
       status: 'FOUND',
       vivaClientId,
-      vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`
+      vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`,
+      displayName: client ? this.extractClientName(client) : undefined,
+      avatarUrl: client ? this.extractClientAvatarUrl(client) ?? null : null
     };
   }
 
@@ -436,7 +441,9 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return Boolean(config.tokenUrl && config.clientId && config.username && config.password);
   }
 
-  private extractClientId(payload: VivaClientsSearchResponse | null): string | undefined {
+  private extractClientRecord(
+    payload: VivaClientsSearchResponse | null
+  ): Record<string, unknown> | undefined {
     if (!payload || !Array.isArray(payload.content) || payload.content.length === 0) {
       return undefined;
     }
@@ -446,8 +453,42 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       return undefined;
     }
 
+    return candidate;
+  }
+
+  private extractClientId(candidate: Record<string, unknown>): string | undefined {
     const id = String(candidate.id ?? '').trim();
     return id || undefined;
+  }
+
+  private extractClientName(candidate: Record<string, unknown>): string | undefined {
+    const directName =
+      this.pickString(candidate.name) ??
+      this.pickString(candidate.title) ??
+      this.pickString(candidate.fullName) ??
+      this.pickString(candidate.full_name) ??
+      this.pickString(candidate.displayName) ??
+      this.pickString(candidate.display_name);
+    if (directName) {
+      return directName;
+    }
+
+    const firstName = this.pickString(candidate.firstName) ?? this.pickString(candidate.first_name);
+    const lastName = this.pickString(candidate.lastName) ?? this.pickString(candidate.last_name);
+    return [firstName, lastName].filter(Boolean).join(' ') || undefined;
+  }
+
+  private extractClientAvatarUrl(candidate: Record<string, unknown>): string | undefined {
+    return (
+      this.pickString(candidate.photo) ??
+      this.pickString(candidate.avatar) ??
+      this.pickString(candidate.avatarUrl) ??
+      this.pickString(candidate.avatar_url) ??
+      this.pickString(candidate.imageUrl) ??
+      this.pickString(candidate.image_url) ??
+      this.pickString(candidate.photoUrl) ??
+      this.pickString(candidate.photo_url)
+    );
   }
 
   private buildAbortSignal(): AbortSignal | undefined {
@@ -490,6 +531,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   private normalizeOptional(value?: string): string | undefined {
     const normalized = String(value ?? '').trim();
     return normalized || undefined;
+  }
+
+  private pickString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
   }
 
   private readPositiveNumberEnv(name: string, fallback: number): number {

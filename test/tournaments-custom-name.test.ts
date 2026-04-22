@@ -81,6 +81,7 @@ async function main(): Promise<void> {
   const service = new TournamentsService(
     { listTournaments: async () => [] } as never,
     { listTournaments: async () => [sourceTournament] } as never,
+    { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
       listCustomTournaments: async () => [customTournament]

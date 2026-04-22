@@ -17,7 +17,18 @@ import {
 } from './tournaments.types';
 import { TournamentsService } from './tournaments.service';
 
-const TOURNAMENT_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+const TOURNAMENT_BASE_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
+const TOURNAMENT_LEVEL_SUBDIVISIONS = [
+  { key: 'BEGINNER', label: 'начинающий' },
+  { key: 'MIDDLE', label: 'средний' },
+  { key: 'ADVANCED', label: 'продвинутый' }
+] as const;
+const TOURNAMENT_LEVEL_OPTIONS = TOURNAMENT_BASE_LEVEL_OPTIONS.flatMap((base) =>
+  TOURNAMENT_LEVEL_SUBDIVISIONS.map((subdivision) => ({
+    value: `${base}:${subdivision.key}`,
+    label: `${base} · ${subdivision.label}`
+  }))
+);
 
 type JoinSubmission = {
   name?: string;
@@ -1444,7 +1455,7 @@ export class TournamentsPublicController {
           </div>
           <div class="row">
             <span class="label">Уровень</span>
-            ${this.escapeHtml(client.levelLabel || 'Не указан')}
+            ${this.escapeHtml(this.formatLevelLabel(client.levelLabel) || 'Не указан')}
           </div>
         </div>
         <div class="actions">
@@ -1458,10 +1469,23 @@ export class TournamentsPublicController {
   }
 
   private renderLevelOptions(selectedValue?: string): string {
+    const normalizedSelected = String(selectedValue ?? '').trim().toUpperCase();
     return TOURNAMENT_LEVEL_OPTIONS.map((level) => {
-      const selected = level === selectedValue ? ' selected' : '';
-      return `<option value="${this.escapeHtml(level)}"${selected}>${this.escapeHtml(level)}</option>`;
+      const selected = level.value === normalizedSelected ? ' selected' : '';
+      return `<option value="${this.escapeHtml(level.value)}"${selected}>${this.escapeHtml(level.label)}</option>`;
     }).join('');
+  }
+
+  private formatLevelLabel(value?: string): string {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase();
+    if (!normalized) {
+      return '';
+    }
+
+    const matched = TOURNAMENT_LEVEL_OPTIONS.find((item) => item.value === normalized);
+    return matched ? matched.label : normalized;
   }
 
   private formatGenderLabel(value: TournamentPublicView['gender']): string {

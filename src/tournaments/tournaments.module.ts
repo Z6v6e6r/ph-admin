@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { GamesModule } from '../games/games.module';
 import { LkPadelHubModule } from '../integrations/lk-padelhub/lk-padelhub.module';
+import { VivaAdminService } from '../integrations/viva/viva-admin.service';
 import { AmericanoRatingSimulationService } from './americano-rating-simulation.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import { AmericanoScheduleService } from './americano-schedule.service';
@@ -19,7 +20,8 @@ import { TournamentsService } from './tournaments.service';
     TournamentsService,
     TournamentsPersistenceService,
     TournamentsPublicSessionService,
-    VivaTournamentsService
+    VivaTournamentsService,
+    VivaAdminService
   ]
 })
 export class TournamentsModule {}

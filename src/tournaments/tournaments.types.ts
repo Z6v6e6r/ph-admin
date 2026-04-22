@@ -16,6 +16,7 @@ export type TournamentSource = 'LK_PADELHUB' | 'VIVA' | 'CUSTOM';
 export type TournamentGender = 'MALE' | 'FEMALE' | 'MIXED';
 export type TournamentPaymentStatus = 'UNPAID' | 'PAID';
 export type TournamentParticipantStatus = 'REGISTERED' | 'WAITLIST';
+export type TournamentWaitlistReason = 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL';
 export type TournamentAccessCheckCode =
   | 'OK'
   | 'ONBOARDING_REQUIRED'
@@ -28,9 +29,11 @@ export interface TournamentParticipant {
   name: string;
   phone?: string;
   levelLabel?: string;
+  avatarUrl?: string | null;
   gender?: TournamentGender;
   paymentStatus?: TournamentPaymentStatus;
   status?: TournamentParticipantStatus;
+  waitlistReason?: TournamentWaitlistReason;
   registeredAt?: string;
   paidAt?: string;
   notes?: string;
@@ -143,6 +146,7 @@ export interface Tournament {
   studioName?: string;
   trainerId?: string;
   trainerName?: string;
+  trainerAvatarUrl?: string | null;
   exerciseTypeId?: string;
   startsAt?: string;
   endsAt?: string;

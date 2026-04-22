@@ -3,11 +3,13 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException
+  NotFoundException,
+  Optional
 } from '@nestjs/common';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
+import { VivaAdminService } from '../integrations/viva/viva-admin.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
   AmericanoRatingSimulationResult,
@@ -60,8 +62,24 @@ interface RegistrationInput {
   subscriptions?: TournamentClientSubscription[];
 }
 
+type TournamentLevelSubdivisionKey = (typeof TOURNAMENT_LEVEL_SUBDIVISIONS)[number]['key'];
+
+interface TournamentLevelDescriptor {
+  token: string;
+  base: string;
+  subdivision: TournamentLevelSubdivisionKey | null;
+  label: string;
+  rank: number;
+}
+
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
+const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
+const TOURNAMENT_LEVEL_SUBDIVISIONS = [
+  { key: 'BEGINNER', label: 'начинающий', aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
+  { key: 'MIDDLE', label: 'средний', aliases: ['MIDDLE', 'INTERMEDIATE', 'MEDIUM', 'СРЕДН'] },
+  { key: 'ADVANCED', label: 'продвинутый', aliases: ['ADVANCED', 'PRO', 'ПРОДВ'] }
+] as const;
 const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
   partnerRepeat: 1000,
   partnerImmediateRepeat: 1200,
@@ -83,7 +101,8 @@ export class TournamentsService {
     private readonly gamesService: GamesService,
     private readonly tournamentsPersistence: TournamentsPersistenceService,
     private readonly americanoScheduleService: AmericanoScheduleService,
-    private readonly americanoRatingSimulationService: AmericanoRatingSimulationService
+    private readonly americanoRatingSimulationService: AmericanoRatingSimulationService,
+    @Optional() private readonly vivaAdminService?: VivaAdminService
   ) {}
 
   async generateSchedule(
@@ -154,7 +173,7 @@ export class TournamentsService {
     if (!tournament) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    return this.hydrateCustomTournament(tournament);
+    return this.enrichTournamentVivaProfiles(await this.hydrateCustomTournament(tournament));
   }
 
   async getResults(id: string, user?: RequestUser): Promise<TournamentResultsView> {
@@ -484,7 +503,7 @@ export class TournamentsService {
       };
     }
 
-    const participant: TournamentParticipant = {
+    const participant = await this.enrichTournamentParticipantWithViva({
       name: String(input.name || '').trim() || normalizedPhone,
       phone: normalizedPhone,
       levelLabel: normalizedLevel,
@@ -498,7 +517,7 @@ export class TournamentsService {
         payment,
         input.selectedPurchaseOptionId
       )
-    };
+    });
 
     const existingParticipant = tournament.participants.find(
       (item) => this.normalizePhone(item.phone) === normalizedPhone
@@ -534,7 +553,11 @@ export class TournamentsService {
     if (tournament.participants.length >= maxPlayers) {
       const nextWaitlist: TournamentParticipant[] = [
         ...tournament.waitlist,
-        { ...participant, status: 'WAITLIST' as const }
+        {
+          ...participant,
+          status: 'WAITLIST' as const,
+          waitlistReason: 'FULL'
+        }
       ];
       await this.updateCustom(tournament.id, {
         waitlist: nextWaitlist
@@ -609,16 +632,17 @@ export class TournamentsService {
       };
     }
 
-    const participant: TournamentParticipant = {
+    const participant = await this.enrichTournamentParticipantWithViva({
       name: String(input.name || '').trim() || normalizedPhone,
       phone: normalizedPhone,
       levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
       gender: input.gender ?? 'MIXED',
       paymentStatus: 'UNPAID',
       status: 'WAITLIST' as const,
+      waitlistReason: 'LEVEL_MISMATCH',
       registeredAt: new Date().toISOString(),
       notes: this.pickString(input.notes) ?? undefined
-    };
+    });
 
     const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
     await this.updateCustom(tournament.id, {
@@ -894,6 +918,10 @@ export class TournamentsService {
       studioName: this.pickString(mutation.studioName) ?? sourceTournament.studioName,
       trainerId: this.pickString(mutation.trainerId) ?? sourceTournament.trainerId,
       trainerName: this.pickString(mutation.trainerName) ?? sourceTournament.trainerName,
+      trainerAvatarUrl:
+        mutation.trainerAvatarUrl !== undefined
+          ? mutation.trainerAvatarUrl
+          : sourceTournament.trainerAvatarUrl ?? null,
       exerciseTypeId: sourceTournament.exerciseTypeId,
       mechanics:
         mutation.mechanics
@@ -933,6 +961,7 @@ export class TournamentsService {
       studioName: mutation.studioName,
       trainerId: mutation.trainerId,
       trainerName: mutation.trainerName,
+      trainerAvatarUrl: mutation.trainerAvatarUrl,
       exerciseTypeId: mutation.exerciseTypeId,
       skin: mutation.skin,
       mechanics: mutation.mechanics,
@@ -954,6 +983,7 @@ export class TournamentsService {
       studioName: sourceTournament.studioName,
       trainerId: sourceTournament.trainerId,
       trainerName: sourceTournament.trainerName,
+      trainerAvatarUrl: sourceTournament.trainerAvatarUrl,
       exerciseTypeId: sourceTournament.exerciseTypeId,
       tournamentType: sourceTournament.tournamentType,
       maxPlayers: sourceTournament.maxPlayers,
@@ -1001,21 +1031,8 @@ export class TournamentsService {
     const sourceTournamentSnapshot = sourceTournament
       ? this.buildSourceTournamentSnapshot(sourceTournament)
       : this.getSourceTournamentSnapshot(tournament);
-    const sourceParticipants = this.readSnapshotParticipants(sourceTournamentSnapshot);
-    const mergedParticipants = this.mergeTournamentParticipants(
-      sourceParticipants,
-      tournament.participants
-    );
-    const paidParticipantsCount = mergedParticipants.filter(
-      (item) => item.paymentStatus === 'PAID'
-    ).length;
-    const sourceParticipantsCount =
-      this.pickNumber(sourceTournamentSnapshot.participantsCount) ?? sourceParticipants.length;
-    const mergedParticipantsCount = Math.max(
-      mergedParticipants.length,
-      sourceParticipantsCount,
-      Number(tournament.participantsCount || 0)
-    );
+    const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
+    const paidParticipantsCount = participants.filter((item) => item.paymentStatus === 'PAID').length;
 
     return {
       ...tournament,
@@ -1023,6 +1040,10 @@ export class TournamentsService {
         Number(tournament.maxPlayers || 0) ||
         this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
         8,
+      trainerAvatarUrl:
+        tournament.trainerAvatarUrl
+        ?? this.pickString(sourceTournamentSnapshot.trainerAvatarUrl)
+        ?? undefined,
       mechanics: this.buildDefaultTournamentMechanics({
         existing: tournament.mechanics,
         tournamentType:
@@ -1032,8 +1053,8 @@ export class TournamentsService {
           this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
           8
       }),
-      participants: mergedParticipants,
-      participantsCount: mergedParticipantsCount,
+      participants,
+      participantsCount: participants.length,
       paidParticipantsCount:
         paidParticipantsCount > 0 ? paidParticipantsCount : tournament.paidParticipantsCount,
       details: {
@@ -1228,10 +1249,12 @@ export class TournamentsService {
       name,
       phone: this.normalizePhone(record.phone) ?? undefined,
       levelLabel: this.pickString(record.levelLabel) ?? undefined,
+      avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo) ?? undefined,
       gender: this.normalizeGender(record.gender),
       paymentStatus:
         paymentStatus === 'PAID' ? 'PAID' : paymentStatus === 'UNPAID' ? 'UNPAID' : undefined,
       status: status === 'WAITLIST' ? 'WAITLIST' : 'REGISTERED',
+      waitlistReason: this.normalizeWaitlistReason(record.waitlistReason) ?? undefined,
       registeredAt: this.pickString(record.registeredAt) ?? undefined,
       paidAt: this.pickString(record.paidAt) ?? undefined,
       notes: this.pickString(record.notes) ?? undefined
@@ -1264,7 +1287,7 @@ export class TournamentsService {
       };
     }
 
-    if (!tournament.accessLevels.includes(normalizedLevel)) {
+    if (!this.isLevelAllowedByList(normalizedLevel, tournament.accessLevels)) {
       return {
         ok: false,
         code: 'LEVEL_NOT_ALLOWED',
@@ -1493,7 +1516,7 @@ export class TournamentsService {
       normalizedLevel
       && Array.isArray(ruleOrSubscriptionLevels)
       && ruleOrSubscriptionLevels.length > 0
-      && !ruleOrSubscriptionLevels.includes(normalizedLevel)
+      && !this.isLevelAllowedByList(normalizedLevel, ruleOrSubscriptionLevels)
     ) {
       return false;
     }
@@ -1530,16 +1553,17 @@ export class TournamentsService {
   }
 
   private describeTournamentLevelRange(accessLevels: string[]): string {
-    const normalized = accessLevels
-      .map((item) => this.normalizeLevel(item))
-      .filter((item): item is string => Boolean(item));
-    if (normalized.length === 0) {
+    const descriptors = accessLevels
+      .map((item) => this.parseLevelDescriptor(item))
+      .filter((item): item is TournamentLevelDescriptor => Boolean(item))
+      .sort((left, right) => left.rank - right.rank);
+    if (descriptors.length === 0) {
       return 'без ограничений по уровню';
     }
-    if (normalized.length === 1) {
-      return normalized[0];
+    if (descriptors.length === 1) {
+      return descriptors[0].label;
     }
-    return `${normalized[0]} - ${normalized[normalized.length - 1]}`;
+    return `${descriptors[0].label} - ${descriptors[descriptors.length - 1].label}`;
   }
 
   private toPublicView(tournament: CustomTournament): TournamentPublicView {
@@ -1630,12 +1654,187 @@ export class TournamentsService {
     return digits;
   }
 
-  private normalizeLevel(value?: string): string | null {
-    const cleaned = String(value ?? '')
+  private async enrichTournamentVivaProfiles(
+    tournament: CustomTournament
+  ): Promise<CustomTournament> {
+    if (!this.vivaAdminService) {
+      return tournament;
+    }
+
+    const participants = await Promise.all(
+      tournament.participants.map((participant) =>
+        participant.avatarUrl ? Promise.resolve(participant) : this.enrichTournamentParticipantWithViva(participant)
+      )
+    );
+    const waitlist = await Promise.all(
+      tournament.waitlist.map((participant) =>
+        participant.avatarUrl ? Promise.resolve(participant) : this.enrichTournamentParticipantWithViva(participant)
+      )
+    );
+
+    return {
+      ...tournament,
+      trainerAvatarUrl:
+        tournament.trainerAvatarUrl
+        ?? this.pickNullableString(this.getSourceTournamentSnapshot(tournament).trainerAvatarUrl)
+        ?? undefined,
+      participants,
+      participantsCount: participants.length,
+      paidParticipantsCount: participants.filter((item) => item.paymentStatus === 'PAID').length,
+      waitlist,
+      waitlistCount: waitlist.length
+    };
+  }
+
+  private async enrichTournamentParticipantWithViva(
+    participant: TournamentParticipant
+  ): Promise<TournamentParticipant> {
+    if (!this.vivaAdminService) {
+      return participant;
+    }
+
+    const normalizedPhone = this.normalizePhone(participant.phone);
+    if (!normalizedPhone) {
+      return participant;
+    }
+
+    try {
+      const lookup = await this.vivaAdminService.lookupClientCabinetByPhone(normalizedPhone);
+      if (!lookup || lookup.status !== 'FOUND') {
+        return participant;
+      }
+
+      return {
+        ...participant,
+        id: participant.id ?? lookup.vivaClientId ?? undefined,
+        name: lookup.displayName ?? participant.name,
+        phone: normalizedPhone,
+        avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to enrich tournament participant ${normalizedPhone} from Viva: ${String(error)}`
+      );
+      return participant;
+    }
+  }
+
+  private isLevelAllowedByList(levelLabel: string, allowedLevels: string[]): boolean {
+    const candidate = this.parseLevelDescriptor(levelLabel);
+    if (!candidate) {
+      return false;
+    }
+
+    return allowedLevels
+      .map((item) => this.parseLevelDescriptor(item))
+      .filter((item): item is TournamentLevelDescriptor => Boolean(item))
+      .some((allowed) => {
+        if (allowed.token === candidate.token) {
+          return true;
+        }
+        if (allowed.base !== candidate.base) {
+          return false;
+        }
+        return candidate.subdivision === null || allowed.subdivision === null;
+      });
+  }
+
+  private parseLevelDescriptor(value: unknown): TournamentLevelDescriptor | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/[·•]/g, ' ')
+      .replace(/\s+/g, ' ');
+    if (!normalized) {
+      return null;
+    }
+
+    const bases = [...TOURNAMENT_BASE_LEVELS].sort((left, right) => right.length - left.length);
+    const base = bases.find((item) => {
+      if (normalized === item) {
+        return true;
+      }
+      if (!normalized.startsWith(item)) {
+        return false;
+      }
+      const nextChar = normalized.charAt(item.length);
+      return nextChar === ':' || nextChar === '-' || nextChar === ' ' || nextChar === '';
+    });
+    if (!base) {
+      return null;
+    }
+
+    const baseIndex = TOURNAMENT_BASE_LEVELS.indexOf(base);
+    if (baseIndex < 0) {
+      return null;
+    }
+
+    const remainder = normalized.slice(base.length).replace(/^[:\-\s]+/, '');
+    if (!remainder) {
+      return {
+        token: base,
+        base,
+        subdivision: null,
+        label: base,
+        rank: baseIndex * TOURNAMENT_LEVEL_SUBDIVISIONS.length + 1
+      };
+    }
+
+    const subdivisionKey = this.resolveLevelSubdivisionKey(remainder);
+    if (!subdivisionKey) {
+      return null;
+    }
+
+    const subdivisionIndex = TOURNAMENT_LEVEL_SUBDIVISIONS.findIndex(
+      (item) => item.key === subdivisionKey
+    );
+    const subdivision = TOURNAMENT_LEVEL_SUBDIVISIONS[subdivisionIndex];
+
+    return {
+      token: `${base}:${subdivision.key}`,
+      base,
+      subdivision: subdivision.key,
+      label: `${base} · ${subdivision.label}`,
+      rank: baseIndex * TOURNAMENT_LEVEL_SUBDIVISIONS.length + subdivisionIndex + 1
+    };
+  }
+
+  private resolveLevelSubdivisionKey(value: string): TournamentLevelSubdivisionKey | null {
+    const normalized = String(value ?? '')
       .trim()
       .toUpperCase()
       .replace(/\s+/g, ' ');
-    return cleaned || null;
+    if (!normalized) {
+      return null;
+    }
+
+    const matched = TOURNAMENT_LEVEL_SUBDIVISIONS.find((item) =>
+      item.aliases.some((alias) => normalized.includes(alias))
+    );
+    return matched ? matched.key : null;
+  }
+
+  private normalizeLevel(value?: string): string | null {
+    return this.parseLevelDescriptor(value)?.token ?? null;
+  }
+
+  private normalizeWaitlistReason(
+    value: unknown
+  ): 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL' | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase();
+    if (normalized === 'FULL' || normalized === 'LEVEL_MISMATCH' || normalized === 'MANUAL') {
+      return normalized;
+    }
+    return null;
+  }
+
+  private pickNullableString(value: unknown): string | null | undefined {
+    if (value === null) {
+      return null;
+    }
+    return this.pickString(value);
   }
 
   private pickString(value: unknown): string | undefined {
