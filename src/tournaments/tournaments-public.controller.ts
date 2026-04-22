@@ -18,17 +18,63 @@ import {
 import { TournamentsService } from './tournaments.service';
 
 const TOURNAMENT_BASE_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
-const TOURNAMENT_LEVEL_SUBDIVISIONS = [
-  { key: 'BEGINNER', label: 'начинающий' },
-  { key: 'MIDDLE', label: 'средний' },
-  { key: 'ADVANCED', label: 'продвинутый' }
-] as const;
-const TOURNAMENT_LEVEL_OPTIONS = TOURNAMENT_BASE_LEVEL_OPTIONS.flatMap((base) =>
-  TOURNAMENT_LEVEL_SUBDIVISIONS.map((subdivision) => ({
-    value: `${base}:${subdivision.key}`,
-    label: `${base} · ${subdivision.label}`
-  }))
+const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+const TOURNAMENT_LEVEL_OPTIONS = Array.from(
+  { length: TOURNAMENT_BASE_LEVEL_OPTIONS.length * TOURNAMENT_LEVEL_DIVISION_COUNT + 1 },
+  (_value, index) => {
+    const score = 1 + index / TOURNAMENT_LEVEL_DIVISION_COUNT;
+    const base = resolveTournamentLevelBaseByScore(score);
+    return {
+      value: formatTournamentLevelScoreToken(score),
+      label: `${base} · ${formatTournamentLevelScoreLabel(score)}`
+    };
+  }
 );
+
+function formatTournamentLevelScoreToken(value: number): string {
+  const normalized =
+    Math.round(Number(value ?? 0) * TOURNAMENT_LEVEL_DIVISION_COUNT)
+    / TOURNAMENT_LEVEL_DIVISION_COUNT;
+  if (Math.abs(normalized - Math.round(normalized)) < 0.0001) {
+    return String(Math.round(normalized));
+  }
+  return normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatTournamentLevelScoreLabel(value: number): string {
+  return formatTournamentLevelScoreToken(value).replace('.', ',');
+}
+
+function normalizeTournamentLevelOptionToken(value: unknown): string {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/,/g, '.');
+  if (!normalized) {
+    return '';
+  }
+  if (TOURNAMENT_BASE_LEVEL_OPTIONS.includes(normalized as (typeof TOURNAMENT_BASE_LEVEL_OPTIONS)[number])) {
+    return normalized;
+  }
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return normalized;
+  }
+  if (numeric < 1 || numeric > TOURNAMENT_BASE_LEVEL_OPTIONS.length + 1) {
+    return normalized;
+  }
+  const token = formatTournamentLevelScoreToken(numeric);
+  return Math.abs(Number(token) - numeric) < 0.0001 ? token : normalized;
+}
+
+function resolveTournamentLevelBaseByScore(score: number): (typeof TOURNAMENT_BASE_LEVEL_OPTIONS)[number] {
+  let baseIndex = Math.ceil(score) - 2;
+  if (score <= 1) {
+    baseIndex = 0;
+  }
+  baseIndex = Math.max(0, Math.min(TOURNAMENT_BASE_LEVEL_OPTIONS.length - 1, baseIndex));
+  return TOURNAMENT_BASE_LEVEL_OPTIONS[baseIndex];
+}
 
 type JoinSubmission = {
   name?: string;
@@ -1469,17 +1515,22 @@ export class TournamentsPublicController {
   }
 
   private renderLevelOptions(selectedValue?: string): string {
-    const normalizedSelected = String(selectedValue ?? '').trim().toUpperCase();
-    return TOURNAMENT_LEVEL_OPTIONS.map((level) => {
+    const normalizedSelected = normalizeTournamentLevelOptionToken(selectedValue);
+    const options = [...TOURNAMENT_LEVEL_OPTIONS];
+    if (normalizedSelected && !options.some((level) => level.value === normalizedSelected)) {
+      options.unshift({
+        value: normalizedSelected,
+        label: this.formatLevelLabel(normalizedSelected)
+      });
+    }
+    return options.map((level) => {
       const selected = level.value === normalizedSelected ? ' selected' : '';
       return `<option value="${this.escapeHtml(level.value)}"${selected}>${this.escapeHtml(level.label)}</option>`;
     }).join('');
   }
 
   private formatLevelLabel(value?: string): string {
-    const normalized = String(value ?? '')
-      .trim()
-      .toUpperCase();
+    const normalized = normalizeTournamentLevelOptionToken(value);
     if (!normalized) {
       return '';
     }

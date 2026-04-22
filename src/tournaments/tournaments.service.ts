@@ -62,23 +62,24 @@ interface RegistrationInput {
   subscriptions?: TournamentClientSubscription[];
 }
 
-type TournamentLevelSubdivisionKey = (typeof TOURNAMENT_LEVEL_SUBDIVISIONS)[number]['key'];
-
 interface TournamentLevelDescriptor {
   token: string;
   base: string;
-  subdivision: TournamentLevelSubdivisionKey | null;
+  step: number | null;
   label: string;
   rank: number;
+  minScore: number;
+  maxScore: number;
 }
 
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
-const TOURNAMENT_LEVEL_SUBDIVISIONS = [
-  { key: 'BEGINNER', label: 'начинающий', aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
-  { key: 'MIDDLE', label: 'средний', aliases: ['MIDDLE', 'INTERMEDIATE', 'MEDIUM', 'СРЕДН'] },
-  { key: 'ADVANCED', label: 'продвинутый', aliases: ['ADVANCED', 'PRO', 'ПРОДВ'] }
+const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+const TOURNAMENT_LEVEL_LEGACY_ALIASES = [
+  { offset: 0.25, aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
+  { offset: 0.5, aliases: ['MIDDLE', 'INTERMEDIATE', 'MEDIUM', 'СРЕДН'] },
+  { offset: 0.75, aliases: ['ADVANCED', 'PRO', 'ПРОДВ'] }
 ] as const;
 const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
   partnerRepeat: 1000,
@@ -1728,25 +1729,26 @@ export class TournamentsService {
     return allowedLevels
       .map((item) => this.parseLevelDescriptor(item))
       .filter((item): item is TournamentLevelDescriptor => Boolean(item))
-      .some((allowed) => {
-        if (allowed.token === candidate.token) {
-          return true;
-        }
-        if (allowed.base !== candidate.base) {
-          return false;
-        }
-        return candidate.subdivision === null || allowed.subdivision === null;
-      });
+      .some(
+        (allowed) =>
+          allowed.minScore <= candidate.maxScore && allowed.maxScore >= candidate.minScore
+      );
   }
 
   private parseLevelDescriptor(value: unknown): TournamentLevelDescriptor | null {
     const normalized = String(value ?? '')
       .trim()
       .toUpperCase()
+      .replace(/,/g, '.')
       .replace(/[·•]/g, ' ')
       .replace(/\s+/g, ' ');
     if (!normalized) {
       return null;
+    }
+
+    const directScoreToken = this.normalizeLevelScoreToken(normalized);
+    if (directScoreToken) {
+      return this.createExactLevelDescriptor(Number(directScoreToken));
     }
 
     const bases = [...TOURNAMENT_BASE_LEVELS].sort((left, right) => right.length - left.length);
@@ -1768,50 +1770,141 @@ export class TournamentsService {
     if (baseIndex < 0) {
       return null;
     }
+    const baseRange = this.getLevelBaseRange(base);
+    if (!baseRange) {
+      return null;
+    }
 
     const remainder = normalized.slice(base.length).replace(/^[:\-\s]+/, '');
     if (!remainder) {
       return {
         token: base,
         base,
-        subdivision: null,
+        step: null,
         label: base,
-        rank: baseIndex * TOURNAMENT_LEVEL_SUBDIVISIONS.length + 1
+        rank: baseIndex * TOURNAMENT_LEVEL_DIVISION_COUNT,
+        minScore: baseRange.start,
+        maxScore: baseRange.end
       };
     }
 
-    const subdivisionKey = this.resolveLevelSubdivisionKey(remainder);
-    if (!subdivisionKey) {
+    const remainderScoreToken = this.normalizeLevelScoreToken(remainder);
+    if (remainderScoreToken) {
+      const numericScore = Number(remainderScoreToken);
+      if (numericScore >= baseRange.start - 0.0001 && numericScore <= baseRange.end + 0.0001) {
+        return this.createExactLevelDescriptor(numericScore);
+      }
       return null;
     }
 
-    const subdivisionIndex = TOURNAMENT_LEVEL_SUBDIVISIONS.findIndex(
-      (item) => item.key === subdivisionKey
-    );
-    const subdivision = TOURNAMENT_LEVEL_SUBDIVISIONS[subdivisionIndex];
+    const legacyScore = this.resolveLegacyLevelScore(base, remainder);
+    if (legacyScore === null) {
+      return null;
+    }
+    return this.createExactLevelDescriptor(legacyScore);
+  }
+
+  private createExactLevelDescriptor(score: number): TournamentLevelDescriptor | null {
+    const token = this.normalizeLevelScoreToken(score);
+    if (!token) {
+      return null;
+    }
+
+    const numericScore = Number(token);
+    const base = this.resolveLevelBaseByScore(numericScore);
+    if (!base) {
+      return null;
+    }
+
+    const baseRange = this.getLevelBaseRange(base);
+    const baseIndex = TOURNAMENT_BASE_LEVELS.indexOf(base);
+    if (!baseRange || baseIndex < 0) {
+      return null;
+    }
 
     return {
-      token: `${base}:${subdivision.key}`,
+      token,
       base,
-      subdivision: subdivision.key,
-      label: `${base} · ${subdivision.label}`,
-      rank: baseIndex * TOURNAMENT_LEVEL_SUBDIVISIONS.length + subdivisionIndex + 1
+      step: Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT),
+      label: `${base} · ${this.formatLevelScoreLabel(numericScore)}`,
+      rank: Math.round((numericScore - 1) * TOURNAMENT_LEVEL_DIVISION_COUNT),
+      minScore: numericScore,
+      maxScore: numericScore
     };
   }
 
-  private resolveLevelSubdivisionKey(value: string): TournamentLevelSubdivisionKey | null {
+  private getLevelBaseRange(base: string): { start: number; end: number } | null {
+    const baseIndex = TOURNAMENT_BASE_LEVELS.indexOf(base as (typeof TOURNAMENT_BASE_LEVELS)[number]);
+    if (baseIndex < 0) {
+      return null;
+    }
+    return {
+      start: baseIndex + 1,
+      end: baseIndex + 2
+    };
+  }
+
+  private resolveLevelBaseByScore(score: number): (typeof TOURNAMENT_BASE_LEVELS)[number] | null {
+    if (!Number.isFinite(score)) {
+      return null;
+    }
+
+    let baseIndex = Math.ceil(score) - 2;
+    if (score <= 1) {
+      baseIndex = 0;
+    }
+    baseIndex = Math.max(0, Math.min(TOURNAMENT_BASE_LEVELS.length - 1, baseIndex));
+    return TOURNAMENT_BASE_LEVELS[baseIndex] ?? null;
+  }
+
+  private formatLevelScoreToken(value: number): string {
+    const normalized =
+      Math.round(Number(value ?? 0) * TOURNAMENT_LEVEL_DIVISION_COUNT)
+      / TOURNAMENT_LEVEL_DIVISION_COUNT;
+    if (Math.abs(normalized - Math.round(normalized)) < 0.0001) {
+      return String(Math.round(normalized));
+    }
+    return normalized.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  private formatLevelScoreLabel(value: number): string {
+    return this.formatLevelScoreToken(value).replace('.', ',');
+  }
+
+  private normalizeLevelScoreToken(value: unknown): string | null {
     const normalized = String(value ?? '')
       .trim()
-      .toUpperCase()
-      .replace(/\s+/g, ' ');
+      .replace(/,/g, '.');
     if (!normalized) {
       return null;
     }
 
-    const matched = TOURNAMENT_LEVEL_SUBDIVISIONS.find((item) =>
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) {
+      return null;
+    }
+    if (numeric < 1 || numeric > TOURNAMENT_BASE_LEVELS.length + 1) {
+      return null;
+    }
+
+    const token = this.formatLevelScoreToken(numeric);
+    return Math.abs(Number(token) - numeric) < 0.0001 ? token : null;
+  }
+
+  private resolveLegacyLevelScore(base: string, value: string): number | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, ' ');
+    const baseRange = this.getLevelBaseRange(base);
+    if (!normalized || !baseRange) {
+      return null;
+    }
+
+    const matched = TOURNAMENT_LEVEL_LEGACY_ALIASES.find((item) =>
       item.aliases.some((alias) => normalized.includes(alias))
     );
-    return matched ? matched.key : null;
+    return matched ? baseRange.start + matched.offset : null;
   }
 
   private normalizeLevel(value?: string): string | null {
