@@ -254,7 +254,8 @@ export class TournamentsPublicController {
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
         requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
       }),
-      request
+      request,
+      user
     );
 
     if (this.wantsJson(request, format)) {
@@ -267,7 +268,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    this.sendHtml(response, this.renderJoinHtml(flow));
+    this.sendHtml(response, this.renderJoinHtml(flow, request, user));
   }
 
   @Post(':slug/join')
@@ -294,7 +295,8 @@ export class TournamentsPublicController {
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
         requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
       }),
-      request
+      request,
+      user
     );
 
     if (submission.waitlist && flow.code === 'LEVEL_NOT_ALLOWED') {
@@ -309,7 +311,7 @@ export class TournamentsPublicController {
         return;
       }
 
-      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client));
+      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client, request, user));
       return;
     }
 
@@ -333,7 +335,7 @@ export class TournamentsPublicController {
         return;
       }
 
-      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client));
+      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client, request, user));
       return;
     }
 
@@ -342,7 +344,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    this.sendHtml(response, this.renderJoinHtml(flow));
+    this.sendHtml(response, this.renderJoinHtml(flow, request, user));
   }
 
   @Get(':slug')
@@ -350,6 +352,7 @@ export class TournamentsPublicController {
     @Param('slug') slug: string,
     @Req() request: Request,
     @Res() response: Response,
+    @CurrentUser() user?: RequestUser,
     @Query('format') format?: string
   ): Promise<void> {
     const tournament = await this.tournamentsService.getPublicBySlug(slug);
@@ -360,7 +363,7 @@ export class TournamentsPublicController {
     }
 
     if (this.wantsHtml(request, format)) {
-      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request));
+      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request, user));
       return;
     }
 
@@ -393,10 +396,11 @@ export class TournamentsPublicController {
 
   private enrichJoinFlow(
     flow: TournamentJoinFlowResponse,
-    request: Request
+    request: Request,
+    user?: RequestUser
   ): TournamentJoinFlowResponse {
     const authRequired = flow.code === 'AUTH_REQUIRED';
-    const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request);
+    const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
     const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
 
     return {
@@ -411,7 +415,8 @@ export class TournamentsPublicController {
 
   private renderPublicTournamentHtml(
     tournament: TournamentPublicView,
-    request: Request
+    request: Request,
+    user?: RequestUser
   ): string {
     const title = this.pickString(tournament.skin.title) ?? tournament.name;
     const subtitle =
@@ -439,9 +444,9 @@ export class TournamentsPublicController {
         ? 'Есть варианты оплаты'
         : 'Оплата не требуется';
     const imageUrl = this.pickString(tournament.skin.imageUrl);
-    const absolutePublicUrl = this.toAbsoluteUrl(tournament.publicUrl, request);
-    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request);
-    const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request);
+    const absolutePublicUrl = this.toAbsoluteUrl(tournament.publicUrl, request, user);
+    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
     const actionLabel = tournament.registrationOpen
       ? this.pickString(tournament.skin.ctaLabel) ?? 'Открыть запись'
       : 'Посмотреть детали';
@@ -474,7 +479,7 @@ export class TournamentsPublicController {
     ${
       imageUrl
         ? `<meta property="og:image" content="${this.escapeHtml(
-            this.toAbsoluteUrl(imageUrl, request)
+            this.toAbsoluteUrl(imageUrl, request, user)
           )}" />`
         : ''
     }
@@ -504,7 +509,7 @@ export class TournamentsPublicController {
           linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82)),
           ${
             imageUrl
-              ? `url("${this.escapeHtml(this.toAbsoluteUrl(imageUrl, request))}") center/cover no-repeat`
+              ? `url("${this.escapeHtml(this.toAbsoluteUrl(imageUrl, request, user))}") center/cover no-repeat`
               : 'linear-gradient(90deg, rgba(236, 244, 255, 0.5), rgba(255, 247, 230, 0.48))'
           };
         box-shadow: 0 28px 80px rgba(31, 44, 33, 0.14);
@@ -801,18 +806,22 @@ export class TournamentsPublicController {
     return url.toString();
   }
 
-  private toAbsoluteUrl(value: string, request: Request): string {
+  private toAbsoluteUrl(value: string, request: Request, user?: RequestUser): string {
     const normalized = String(value ?? '').trim();
     if (!normalized) {
-      return this.getRequestBaseUrl(request);
+      return this.getRequestBaseUrl(request, user);
     }
     if (/^https?:\/\//i.test(normalized)) {
       return normalized;
     }
-    return new URL(normalized, this.getRequestBaseUrl(request)).toString();
+    return new URL(normalized, this.getRequestBaseUrl(request, user)).toString();
   }
 
-  private getRequestBaseUrl(request: Request): string {
+  private getRequestBaseUrl(request: Request, user?: RequestUser): string {
+    const maxPublicUrl = this.pickString(user?.maxPublicUrl);
+    if (maxPublicUrl && /^https?:\/\//i.test(maxPublicUrl)) {
+      return maxPublicUrl;
+    }
     const forwardedProto = this.pickString(request.headers['x-forwarded-proto']);
     const protocol = forwardedProto ?? (request.secure ? 'https' : 'http');
     const host = this.pickString(request.headers['x-forwarded-host'])
@@ -827,9 +836,15 @@ export class TournamentsPublicController {
     return nextUrl.toString();
   }
 
-  private renderJoinHtml(flow: TournamentJoinFlowResponse): string {
+  private renderJoinHtml(
+    flow: TournamentJoinFlowResponse,
+    request: Request,
+    user?: RequestUser
+  ): string {
     const tournament = flow.tournament;
     const client = flow.client;
+    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
     const needsLevel = tournament.accessLevels.length > 0;
     const phoneValue = this.escapeHtml(this.formatPhone(client.phone));
     const nameValue = this.escapeHtml(String(client.name ?? ''));
@@ -845,6 +860,11 @@ export class TournamentsPublicController {
         : flow.code === 'LEVEL_NOT_ALLOWED'
           ? 'Проверить уровень ещё раз'
           : 'Продолжить';
+    const cardActionHtml =
+      flow.code === 'AUTH_REQUIRED'
+        ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>`
+        : `<button class="phab-tournament-join-card__cta" type="submit" form="phab-tournament-join-form">${this.escapeHtml(actionLabel)}</button>`;
+    const compactCardHtml = this.renderJoinTournamentCard(flow, cardActionHtml);
     const statusTone =
       flow.code === 'LEVEL_NOT_ALLOWED'
         ? 'warning'
@@ -867,7 +887,9 @@ export class TournamentsPublicController {
           tournamentId: tournament.id,
           tournamentSlug: tournament.slug
         },
-        client
+        client,
+        request,
+        user
       );
     }
 
@@ -967,11 +989,13 @@ export class TournamentsPublicController {
         line-height: 1.5;
         color: rgba(31, 44, 33, 0.56);
       }
+      ${this.renderJoinTournamentCardStyles()}
     </style>
   </head>
   <body>
     <main class="page">
-      <section class="card">
+      ${compactCardHtml}
+      <section class="card join-panel">
         <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
         <p class="subtitle">${this.escapeHtml(
           tournament.skin.subtitle
@@ -996,7 +1020,7 @@ export class TournamentsPublicController {
         </div>
         <div class="actions">
           <a class="button" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>
-          <a class="button-secondary" href="${this.escapeHtml(this.directoryUrl)}">К турнирам</a>
+          <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К турнирам</a>
         </div>
         <p class="footnote">
           После входа в личный кабинет вернитесь к этой ссылке или повторно нажмите кнопку турнира на Tilda-странице.
@@ -1173,6 +1197,7 @@ export class TournamentsPublicController {
         line-height: 1.5;
         color: rgba(31, 44, 33, 0.56);
       }
+      ${this.renderJoinTournamentCardStyles()}
       @media (max-width: 640px) {
         body {
           padding: 12px;
@@ -1186,6 +1211,7 @@ export class TournamentsPublicController {
   </head>
   <body>
     <main class="page">
+      ${compactCardHtml}
       <section class="card">
         <p class="eyebrow">PadelHub Tournament Join</p>
         <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
@@ -1270,7 +1296,7 @@ export class TournamentsPublicController {
             : ''
         }
 
-        <form method="post" action="${this.escapeHtml(tournament.joinUrl)}">
+        <form id="phab-tournament-join-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
           <label>
             Имя и фамилия
             <input
@@ -1340,13 +1366,13 @@ export class TournamentsPublicController {
 
           <div class="actions">
             <button class="button" type="submit">${this.escapeHtml(actionLabel)}</button>
-            <a class="button-secondary" href="${this.escapeHtml(this.directoryUrl)}">К турнирам</a>
+            <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К турнирам</a>
           </div>
         </form>
 
         ${
           flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed
-            ? `<form method="post" action="${this.escapeHtml(tournament.joinUrl)}" style="margin-top:12px;">
+            ? `<form method="post" action="${this.escapeHtml(absoluteJoinUrl)}" style="margin-top:12px;">
           <input type="hidden" name="name" value="${nameValue}" />
           <input type="hidden" name="phone" value="${phoneValue}" />
           <input type="hidden" name="levelLabel" value="${this.escapeHtml(levelValue)}" />
@@ -1368,11 +1394,417 @@ export class TournamentsPublicController {
 </html>`;
   }
 
+  private renderJoinTournamentCard(flow: TournamentJoinFlowResponse, actionHtml: string): string {
+    const tournament = flow.tournament;
+    const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
+    const genderLabel = this.formatGenderCardLabel(tournament.gender);
+    const participantsLabel = `${Math.max(0, Number(tournament.participantsCount) || 0)}/${Math.max(
+      0,
+      Number(tournament.maxPlayers) || 0
+    )} участников`;
+    const spotsLeft = Math.max(
+      0,
+      Math.max(0, Number(tournament.maxPlayers) || 0)
+      - Math.max(0, Number(tournament.participantsCount) || 0)
+    );
+    const progress = this.renderJoinTournamentCardProgress(tournament);
+    const durationLabel = this.formatDurationCompact(tournament.startsAt, tournament.endsAt);
+    const title = tournament.skin.title || tournament.name || 'Турнир';
+    const badgeLabel = tournament.tournamentType || 'Турнир';
+    const organizerName = tournament.trainerName || 'Организатор турнира';
+    const organizerHandle = `@${String(tournament.slug || 'padelhub').replace(/^@+/, '')}`;
+
+    return `<article class="phab-tournament-join-card" aria-label="${this.escapeHtml(title)}">
+        <div class="phab-tournament-join-card__profile">
+          <div class="phab-tournament-join-card__profile-main">
+            <div class="phab-tournament-join-card__avatar">${this.escapeHtml(this.resolveInitials(organizerName))}</div>
+            <div class="phab-tournament-join-card__profile-copy">
+              <p class="phab-tournament-join-card__organizer">${this.escapeHtml(organizerName)}</p>
+              <p class="phab-tournament-join-card__handle">${this.escapeHtml(organizerHandle)}</p>
+            </div>
+          </div>
+          <span class="phab-tournament-join-card__more" aria-hidden="true">•••</span>
+        </div>
+
+        <div class="phab-tournament-join-card__surface">
+          <div class="phab-tournament-join-card__head">
+            <div class="phab-tournament-join-card__heading">
+              <span class="phab-tournament-join-card__tag">
+                <span class="phab-tournament-join-card__tag-dot" aria-hidden="true"></span>
+                ${this.escapeHtml(badgeLabel)}
+              </span>
+              <h1 class="phab-tournament-join-card__title">${this.escapeHtml(title)}</h1>
+            </div>
+            <div class="phab-tournament-join-card__date">
+              <span class="phab-tournament-join-card__date-day">${this.escapeHtml(this.formatDateBadgeDay(tournament.startsAt))}</span>
+              <span class="phab-tournament-join-card__date-weekday">${this.escapeHtml(this.formatDateBadgeWeekday(tournament.startsAt))}</span>
+            </div>
+          </div>
+
+          <div class="phab-tournament-join-card__info">
+            <div class="phab-tournament-join-card__meta">
+              <span class="phab-tournament-join-card__icon" aria-hidden="true">□</span>
+              <span>${this.escapeHtml(this.formatCardScheduleLabel(tournament.startsAt, tournament.endsAt))}</span>
+            </div>
+            <div class="phab-tournament-join-card__meta">
+              <span class="phab-tournament-join-card__icon" aria-hidden="true">⌖</span>
+              <span>${this.escapeHtml(tournament.studioName || 'PadelHub')}</span>
+              <a class="phab-tournament-join-card__map" href="${this.escapeHtml(
+                this.buildMapUrl(tournament.studioName || 'PadelHub')
+              )}" target="_blank" rel="noopener noreferrer">на карте</a>
+            </div>
+            <div class="phab-tournament-join-card__meta">
+              <span class="phab-tournament-join-card__icon" aria-hidden="true">▥</span>
+              <span>${this.escapeHtml(accessLabel)}</span>
+            </div>
+            ${
+              genderLabel
+                ? `<div class="phab-tournament-join-card__meta">
+              <span class="phab-tournament-join-card__icon" aria-hidden="true">♢</span>
+              <span>${this.escapeHtml(genderLabel)}</span>
+            </div>`
+                : ''
+            }
+          </div>
+
+          <div class="phab-tournament-join-card__capacity">
+            <div class="phab-tournament-join-card__progress">${progress}</div>
+            <div class="phab-tournament-join-card__capacity-texts">
+              <span>${this.escapeHtml(participantsLabel)}</span>
+              <span>${this.escapeHtml(spotsLeft > 0 ? `осталось: ${this.pluralizeSpots(spotsLeft)}` : 'мест нет')}</span>
+            </div>
+          </div>
+
+          ${actionHtml}
+        </div>
+
+        <div class="phab-tournament-join-card__footer">
+          <div class="phab-tournament-join-card__footer-metrics">
+            <span class="is-accent">♥ ${this.escapeHtml(String(Math.max(0, Number(tournament.participantsCount) || 0)))}</span>
+            <span>▱ ${this.escapeHtml(String(Math.max(0, Number(tournament.waitlistCount) || 0)))}</span>
+          </div>
+          ${durationLabel ? `<span class="phab-tournament-join-card__duration">${this.escapeHtml(durationLabel)}</span>` : ''}
+        </div>
+      </article>`;
+  }
+
+  private renderJoinTournamentCardStyles(): string {
+    return `
+      .phab-tournament-join-card {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: min(100%, 359px);
+        min-height: 363px;
+        margin: 0 auto 18px;
+        padding: 0 20px 16px;
+        gap: 12px;
+        border-bottom: 0.5px solid #ededed;
+        color: #1f1e20;
+      }
+      .phab-tournament-join-card * { box-sizing: border-box; }
+      .phab-tournament-join-card__profile,
+      .phab-tournament-join-card__footer {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        width: 100%;
+        gap: 16px;
+      }
+      .phab-tournament-join-card__profile-main {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 8px;
+      }
+      .phab-tournament-join-card__avatar {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        flex: 0 0 36px;
+        overflow: hidden;
+        border-radius: 8px;
+        background: #d9d9d9;
+        color: #1f1e20;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .phab-tournament-join-card__profile-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 5px;
+        min-width: 0;
+      }
+      .phab-tournament-join-card__organizer,
+      .phab-tournament-join-card__handle {
+        max-width: 224px;
+        margin: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .phab-tournament-join-card__organizer {
+        font-size: 14px;
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+      }
+      .phab-tournament-join-card__handle {
+        color: #b4b4b4;
+        font-size: 11px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+      .phab-tournament-join-card__more {
+        width: 16px;
+        height: 16px;
+        color: #b4b4b4;
+        font-size: 10px;
+        line-height: 16px;
+        text-align: center;
+      }
+      .phab-tournament-join-card__surface {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        width: 100%;
+        min-height: 263px;
+        padding: 14px 12px;
+        gap: 20px;
+        border-radius: 12px;
+        background: #fafafa;
+      }
+      .phab-tournament-join-card__head {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        width: 100%;
+        gap: 24px;
+      }
+      .phab-tournament-join-card__heading {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        min-width: 0;
+        padding-right: 58px;
+        gap: 8px;
+      }
+      .phab-tournament-join-card__tag {
+        display: inline-flex;
+        align-items: center;
+        max-width: 100%;
+        min-height: 18px;
+        padding: 5px 6px;
+        gap: 3px;
+        border-radius: 24px;
+        background: rgba(47, 157, 212, 0.08);
+        color: #2f9dd4;
+        font-size: 10px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .phab-tournament-join-card__tag-dot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 8px;
+        border-radius: 999px;
+        background: #2f9dd4;
+      }
+      .phab-tournament-join-card__title {
+        width: 100%;
+        margin: 0;
+        overflow: hidden;
+        color: #1f1e20;
+        font-size: 18px;
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: 0.01em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .phab-tournament-join-card__date {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 51px;
+        padding: 8px;
+        gap: 4px;
+        border-radius: 8px;
+        background: #fff;
+      }
+      .phab-tournament-join-card__date-day {
+        font-size: 18px;
+        line-height: 1.24;
+        font-weight: 800;
+      }
+      .phab-tournament-join-card__date-weekday {
+        color: #8766eb;
+        font-size: 9px;
+        line-height: 1;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+      .phab-tournament-join-card__info,
+      .phab-tournament-join-card__capacity {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        width: 100%;
+        gap: 10px;
+      }
+      .phab-tournament-join-card__meta {
+        display: flex;
+        align-items: flex-start;
+        width: 100%;
+        min-width: 0;
+        gap: 4px;
+        color: #353436;
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+      .phab-tournament-join-card__meta span:nth-child(2) {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .phab-tournament-join-card__icon {
+        width: 12px;
+        flex: 0 0 12px;
+        color: #888889;
+        text-align: center;
+      }
+      .phab-tournament-join-card__map {
+        margin-left: auto;
+        padding-bottom: 1px;
+        border-bottom: 1px dashed #8766eb;
+        color: #8766eb;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .phab-tournament-join-card__progress {
+        display: flex;
+        width: 100%;
+        gap: 2px;
+      }
+      .phab-tournament-join-card__segment {
+        height: 3px;
+        flex: 1 1 0;
+        background: #e8e8e9;
+      }
+      .phab-tournament-join-card__segment:first-child {
+        border-radius: 24px 0 0 24px;
+      }
+      .phab-tournament-join-card__segment:last-child {
+        border-radius: 0 24px 24px 0;
+      }
+      .phab-tournament-join-card__segment.is-filled {
+        background: #8766eb;
+      }
+      .phab-tournament-join-card__capacity-texts {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        gap: 8px;
+        color: #1f1e20;
+      }
+      .phab-tournament-join-card__capacity-texts span:first-child {
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .phab-tournament-join-card__capacity-texts span:last-child {
+        font-size: 10px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+      .phab-tournament-join-card__cta {
+        appearance: none;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 32px;
+        padding: 10px 24px 10px 20px;
+        border-radius: 24px;
+        background: #8766eb;
+        color: #fafafa;
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+      }
+      .phab-tournament-join-card__footer {
+        align-items: center;
+        min-height: 24px;
+      }
+      .phab-tournament-join-card__footer-metrics {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+      }
+      .phab-tournament-join-card__footer-metrics .is-accent {
+        color: #8766eb;
+      }
+      .phab-tournament-join-card__duration {
+        margin-left: auto;
+        color: #b4b4b4;
+        font-size: 11px;
+        line-height: 1;
+        font-weight: 500;
+      }
+      .join-panel {
+        margin-top: 18px;
+      }
+    `;
+  }
+
+  private renderJoinTournamentCardProgress(tournament: TournamentPublicView): string {
+    const maxPlayers = Math.max(1, Math.round(Number(tournament.maxPlayers) || 1));
+    const participantsCount = Math.max(0, Math.round(Number(tournament.participantsCount) || 0));
+    const filled = Math.min(maxPlayers, participantsCount);
+    return Array.from({ length: maxPlayers }, (_item, index) =>
+      `<span class="phab-tournament-join-card__segment${index < filled ? ' is-filled' : ''}"></span>`
+    ).join('');
+  }
+
   private renderOutcomeHtml(
     tournament: TournamentPublicView,
     outcome: TournamentRegistrationResponse,
-    client: TournamentPublicClientProfile
+    client: TournamentPublicClientProfile,
+    request: Request,
+    user?: RequestUser
   ): string {
+    const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
+    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
     const success =
       outcome.code === 'REGISTERED'
       || outcome.code === 'WAITLISTED'
@@ -1496,8 +1928,8 @@ export class TournamentsPublicController {
           </div>
         </div>
         <div class="actions">
-          <a class="button" href="${this.escapeHtml(this.directoryUrl)}">К списку турниров</a>
-          <a class="button-secondary" href="${this.escapeHtml(tournament.joinUrl)}">Открыть карточку заявки</a>
+          <a class="button" href="${this.escapeHtml(absoluteDirectoryUrl)}">К списку турниров</a>
+          <a class="button-secondary" href="${this.escapeHtml(absoluteJoinUrl)}">Открыть карточку заявки</a>
         </div>
       </section>
     </main>
@@ -1540,14 +1972,102 @@ export class TournamentsPublicController {
     return 'М/Ж';
   }
 
-  private formatTournamentDate(value?: string): string {
-    if (!value) {
+  private formatGenderCardLabel(value: TournamentPublicView['gender']): string {
+    if (value === 'MALE') {
+      return 'Мужчины';
+    }
+    if (value === 'FEMALE') {
+      return 'Женщины';
+    }
+    return 'Микст';
+  }
+
+  private formatAccessLevelRange(levels: string[]): string {
+    const order = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+    const list = Array.isArray(levels)
+      ? levels
+          .map((item) => String(item ?? '').trim().toUpperCase())
+          .filter(Boolean)
+          .sort((left, right) => {
+            const leftIndex = order.indexOf(left);
+            const rightIndex = order.indexOf(right);
+            return (leftIndex === -1 ? order.length : leftIndex)
+              - (rightIndex === -1 ? order.length : rightIndex);
+          })
+      : [];
+
+    if (list.length === 0) {
+      return 'без ограничений';
+    }
+    if (list.length === 1) {
+      return list[0];
+    }
+    return `от ${list[0]} до ${list[list.length - 1]}`;
+  }
+
+  private formatCardScheduleLabel(startsAt?: string, endsAt?: string): string {
+    const start = this.parseDate(startsAt);
+    const end = this.parseDate(endsAt);
+    if (!start) {
       return 'Дата уточняется';
     }
 
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      return value;
+    const dateLabel = start.toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long'
+    });
+    const startTime = this.formatTime(start);
+
+    if (end) {
+      return `${dateLabel}, ${startTime}—${this.formatTime(end)}`;
+    }
+
+    return `${dateLabel}, ${startTime}`;
+  }
+
+  private formatDateBadgeDay(value?: string): string {
+    const parsed = this.parseDate(value);
+    return parsed ? String(parsed.getDate()) : '—';
+  }
+
+  private formatDateBadgeWeekday(value?: string): string {
+    const parsed = this.parseDate(value);
+    return parsed
+      ? parsed.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '')
+      : '';
+  }
+
+  private formatDurationCompact(startsAt?: string, endsAt?: string): string {
+    const start = this.parseDate(startsAt);
+    const end = this.parseDate(endsAt);
+    if (!start || !end) {
+      return '';
+    }
+
+    const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+    if (minutes <= 0) {
+      return '';
+    }
+    if (minutes < 60) {
+      return `${minutes} мин.`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const restMinutes = minutes % 60;
+    return restMinutes > 0 ? `${hours} ч. ${restMinutes} мин.` : `${hours} ч.`;
+  }
+
+  private formatTime(value: Date): string {
+    return value.toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  private formatTournamentDate(value?: string): string {
+    const parsed = this.parseDate(value);
+    if (!parsed) {
+      return 'Дата уточняется';
     }
 
     return parsed.toLocaleString('ru-RU', {
@@ -1556,6 +2076,46 @@ export class TournamentsPublicController {
       hour: '2-digit',
       minute: '2-digit'
     });
+  }
+
+  private parseDate(value?: string): Date | null {
+    if (!value) {
+      return null;
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private resolveInitials(value: string): string {
+    const words = String(value || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (words.length === 0) {
+      return 'PH';
+    }
+    if (words.length === 1) {
+      return words[0].slice(0, 2).toUpperCase();
+    }
+    return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase();
+  }
+
+  private buildMapUrl(location: string): string {
+    return `https://yandex.ru/maps/?text=${encodeURIComponent(location)}`;
+  }
+
+  private pluralizeSpots(count: number): string {
+    const numeric = Math.max(0, Math.floor(Number(count) || 0));
+    const mod10 = numeric % 10;
+    const mod100 = numeric % 100;
+
+    if (mod10 === 1 && mod100 !== 11) {
+      return `${numeric} место`;
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return `${numeric} места`;
+    }
+    return `${numeric} мест`;
   }
 
   private formatPhone(value?: string): string {

@@ -113,6 +113,7 @@ async function main(): Promise<void> {
       tournament.slug,
       createRequest('text/html,application/xhtml+xml'),
       capture.response,
+      undefined,
       undefined
     );
 
@@ -131,6 +132,7 @@ async function main(): Promise<void> {
       tournament.slug,
       createRequest(),
       capture.response,
+      undefined,
       undefined
     );
 
@@ -144,6 +146,7 @@ async function main(): Promise<void> {
       tournament.slug,
       createRequest('application/json'),
       capture.response,
+      undefined,
       undefined
     );
 

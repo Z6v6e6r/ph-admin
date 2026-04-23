@@ -208,7 +208,7 @@
       .phab-tournaments__toolbar {
         display: grid;
         gap: 14px;
-        padding: 16px;
+        padding: 18px 16px;
         border-radius: 20px;
       }
 
@@ -219,7 +219,7 @@
 
       .phab-tournaments__days-panel {
         display: flex;
-        gap: 12px;
+        gap: 10px;
         align-items: center;
         min-width: 0;
         width: 100%;
@@ -231,24 +231,20 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 44px;
-        height: 44px;
+        width: 38px;
+        height: 38px;
         padding: 0;
         border-radius: 999px;
         background: var(--ph-tournament-white);
         color: var(--ph-tournament-ink);
-        font-size: 17px;
+        font-size: 20px;
         line-height: 1;
         cursor: pointer;
-        transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+        transition: opacity 120ms ease, box-shadow 120ms ease;
         font-family: var(--ph-tournament-button-font);
         font-style: italic;
         font-weight: 800;
-        flex: 0 0 44px;
-      }
-
-      .phab-tournaments__day-nav:hover {
-        transform: translateY(-1px);
+        flex: 0 0 38px;
       }
 
       .phab-tournaments__day-nav:disabled {
@@ -262,7 +258,7 @@
         gap: 12px;
         min-width: 0;
         overflow-x: auto;
-        padding-bottom: 2px;
+        padding: 0 2px 8px;
         scrollbar-width: none;
         scroll-behavior: smooth;
         flex: 1 1 auto;
@@ -278,26 +274,20 @@
         display: inline-flex;
         flex-direction: column;
         align-items: center;
-        justify-content: flex-end;
-        gap: 0;
-        min-width: 64px;
+        gap: 6px;
+        min-width: 44px;
         padding: 0;
         background: transparent;
         color: var(--ph-tournament-ink);
         cursor: pointer;
-        transition: transform 120ms ease, opacity 120ms ease;
-      }
-
-      .phab-tournaments__day:hover {
-        transform: translateY(-1px);
       }
 
       .phab-tournaments__day-weekday {
-        margin-bottom: 8px;
-        font-size: 11px;
+        margin: 0;
+        font-size: 12px;
         line-height: 1;
         font-weight: 700;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
         color: #bdbdbd;
         font-family: var(--ph-tournament-time-font);
@@ -306,19 +296,20 @@
       .phab-tournaments__day-month,
       .phab-tournaments__day-date {
         display: flex;
-        width: 64px;
+        width: 44px;
         align-items: center;
         justify-content: center;
       }
 
       .phab-tournaments__day-month {
-        min-height: 24px;
-        border-radius: 18px 18px 0 0;
+        min-height: 21px;
+        padding: 3px 8px;
+        border-radius: 8px 8px 0 0;
         background: #1a1a1a;
         color: #ffffff;
-        font-size: 12px;
+        font-size: 10px;
         line-height: 1;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
         font-family: var(--ph-tournament-button-font);
         font-style: italic;
@@ -326,16 +317,17 @@
       }
 
       .phab-tournaments__day-date {
-        min-height: 58px;
+        min-height: 31px;
+        padding: 6px 12px;
         border: 1px solid var(--ph-tournament-line);
         border-top: none;
-        border-radius: 0 0 18px 18px;
+        border-radius: 0 0 8px 8px;
         background: var(--ph-tournament-white);
         color: var(--ph-tournament-ink);
-        box-shadow: 0 2px 0 rgba(0, 0, 0, 0.04);
-        font-size: 22px;
+        box-shadow: none;
+        font-size: 16px;
         line-height: 1;
-        letter-spacing: -0.04em;
+        letter-spacing: -0.02em;
         font-family: var(--ph-tournament-button-font);
         font-style: italic;
         font-weight: 800;
@@ -809,9 +801,12 @@
       }
 
       .phab-tournaments__entry--card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         width: 100%;
         max-width: 359px;
-        min-height: 0;
+        min-height: 363px;
         padding: 0 20px 16px;
         gap: 12px;
         border: none;
@@ -918,12 +913,13 @@
 
       .phab-tournaments__card-compact-surface {
         box-sizing: border-box;
+        position: relative;
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: flex-start;
         width: 100%;
-        min-height: 241px;
+        min-height: 263px;
         padding: 14px 12px;
         gap: 20px;
         background: var(--ph-tournament-card-bg);
@@ -931,11 +927,13 @@
       }
 
       .phab-tournaments__card-compact-head {
+        position: relative;
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
         gap: 24px;
         width: 100%;
+        isolation: isolate;
       }
 
       .phab-tournaments__card-compact-heading {
@@ -945,6 +943,7 @@
         gap: 8px;
         min-width: 0;
         flex: 1 1 auto;
+        padding-right: 58px;
       }
 
       .phab-tournaments__card-compact-badge {
@@ -999,8 +998,8 @@
       }
 
       .phab-tournaments__card-compact-price {
+        display: none;
         flex: 0 0 auto;
-        display: inline-flex;
         align-items: center;
         justify-content: center;
         min-width: 74px;
@@ -1020,6 +1019,48 @@
         line-height: 1.24;
         font-weight: 800;
         text-align: center;
+      }
+
+      .phab-tournaments__card-compact-date-badge {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 51px;
+        padding: 8px;
+        gap: 4px;
+        border-radius: 8px;
+        background: #ffffff;
+        z-index: 2;
+      }
+
+      .phab-tournaments__card-compact-date-day,
+      .phab-tournaments__card-compact-date-weekday {
+        width: 100%;
+        margin: 0;
+        text-align: center;
+      }
+
+      .phab-tournaments__card-compact-date-day {
+        color: var(--ph-tournament-card-ink);
+        font-family: var(--ph-tournament-card-title-font);
+        font-size: 18px;
+        line-height: 1.24;
+        font-weight: 800;
+      }
+
+      .phab-tournaments__card-compact-date-weekday {
+        color: var(--ph-tournament-card-accent);
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 9px;
+        line-height: 1;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
       }
 
       .phab-tournaments__card-compact-info {
@@ -1656,26 +1697,26 @@
         }
 
         .phab-tournaments__day-nav {
-          width: 40px;
-          height: 40px;
+          width: 38px;
+          height: 38px;
           font-size: 16px;
-          flex-basis: 40px;
+          flex-basis: 38px;
         }
 
         .phab-tournaments__day-month,
         .phab-tournaments__day-date {
-          width: 60px;
+          width: 44px;
         }
 
         .phab-tournaments__day-month {
-          min-height: 22px;
-          border-radius: 16px 16px 0 0;
+          min-height: 21px;
+          border-radius: 8px 8px 0 0;
         }
 
         .phab-tournaments__day-date {
-          min-height: 54px;
-          font-size: 20px;
-          border-radius: 0 0 16px 16px;
+          min-height: 31px;
+          font-size: 16px;
+          border-radius: 0 0 8px 8px;
         }
 
         .phab-tournaments__toolbar-side {
@@ -1724,7 +1765,7 @@
           border-radius: 26px;
         }
 
-        .phab-tournaments__entry--card {
+      .phab-tournaments__entry--card {
           width: calc(100% + 40px);
           max-width: none;
           margin: 0 -20px;
@@ -1800,6 +1841,10 @@
 
         .phab-tournaments__card-compact-head {
           gap: 16px;
+        }
+
+        .phab-tournaments__card-compact-heading {
+          padding-right: 52px;
         }
 
         .phab-tournaments__card-compact-capacity-texts {
@@ -2112,6 +2157,16 @@
     return date.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '');
   }
 
+  function formatDateBadgeDay(value) {
+    var parsed = parseDate(value);
+    return parsed ? String(parsed.getDate()) : '—';
+  }
+
+  function formatDateBadgeWeekday(value) {
+    var parsed = parseDate(value);
+    return parsed ? formatWeekdayShort(parsed) : '';
+  }
+
   function formatMonthShort(date) {
     return date.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '');
   }
@@ -2250,6 +2305,11 @@
     return '';
   }
 
+  function formatGenderCardLabel(gender) {
+    var label = formatGenderBadgeLabel(gender);
+    return label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
+  }
+
   function resolveLocationLabel(card) {
     return (
       String(card.studioName || '').trim()
@@ -2305,9 +2365,7 @@
   }
 
   function resolveCardBadgeLabel(card) {
-    return [String(card.tournamentType || 'Турнир').trim(), formatGenderBadgeLabel(card.gender)]
-      .filter(Boolean)
-      .join(' · ');
+    return String(card.tournamentType || 'Турнир').trim() || 'Турнир';
   }
 
   function resolveCardPriceLabel(card) {
@@ -2494,6 +2552,25 @@
         return group.key === state.selectedDayKey;
       }) || dayGroups[0] || null
     );
+  }
+
+  function scrollActiveDayIntoView(mount) {
+    if (!mount || typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      return;
+    }
+
+    window.requestAnimationFrame(function () {
+      var activeDay = mount.querySelector('.phab-tournaments__day.is-active');
+      if (!activeDay || typeof activeDay.scrollIntoView !== 'function') {
+        return;
+      }
+
+      activeDay.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest'
+      });
+    });
   }
 
   function resolveTournamentState(card) {
@@ -2835,6 +2912,13 @@
         '<rect x="1.25" y="6.6" width="2.1" height="4.15" rx="0.7" fill="currentColor"></rect>' +
         '<rect x="4.95" y="4.45" width="2.1" height="6.3" rx="0.7" fill="currentColor"></rect>' +
         '<rect x="8.65" y="2.3" width="2.1" height="8.45" rx="0.7" fill="currentColor"></rect>' +
+        '</svg>',
+      gender:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<circle cx="4.55" cy="3.4" r="1.75" stroke="currentColor" stroke-width="1.1"></circle>' +
+        '<path d="M1.65 10.1C1.95 8.25 2.95 7.05 4.55 7.05C6.15 7.05 7.15 8.25 7.45 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '<circle cx="8.35" cy="4.05" r="1.35" stroke="currentColor" stroke-width="1.1"></circle>' +
+        '<path d="M7.45 7.35C8.9 7.45 9.85 8.45 10.15 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
         '</svg>'
     };
 
@@ -2893,6 +2977,15 @@
       ])
     );
     return block;
+  }
+
+  function createCompactDateBadge(card) {
+    var badge = createElement('div', 'phab-tournaments__card-compact-date-badge');
+    appendChildren(badge, [
+      createElement('span', 'phab-tournaments__card-compact-date-day', formatDateBadgeDay(card.startsAt)),
+      createElement('span', 'phab-tournaments__card-compact-date-weekday', formatDateBadgeWeekday(card.startsAt))
+    ]);
+    return badge;
   }
 
   function createCompactFooterMetricIcon(kind) {
@@ -3259,6 +3352,7 @@
     var badge = createElement('div', 'phab-tournaments__card-compact-badge');
     var badgeText = createElement('span', 'phab-tournaments__card-compact-badge-text', resolveCardBadgeLabel(card));
     var price = createElement('div', 'phab-tournaments__card-compact-price');
+    var genderLabel = formatGenderCardLabel(card.gender);
     var info = createElement('div', 'phab-tournaments__card-compact-info');
 
     appendChildren(badge, [createCompactBadgeIcon(), badgeText]);
@@ -3269,12 +3363,13 @@
     price.appendChild(
       createElement('span', 'phab-tournaments__card-compact-price-value', resolveCardPriceLabel(card))
     );
-    appendChildren(header, [heading, price]);
+    appendChildren(header, [heading, price, createCompactDateBadge(card)]);
 
     appendChildren(info, [
       createCompactMetaRow('calendar', formatCardScheduleLabel(card)),
       createCompactMetaRow('location', resolveLocationLabel(card), createCompactMapLink(card)),
-      createCompactMetaRow('level', formatAccessLevelRange(card.accessLevels))
+      createCompactMetaRow('level', formatAccessLevelRange(card.accessLevels)),
+      genderLabel ? createCompactMetaRow('gender', genderLabel) : null
     ]);
 
     appendChildren(surface, [
@@ -3697,6 +3792,7 @@
     mount.innerHTML = '';
     mount.appendChild(root);
     mount.appendChild(renderDialog(mount, state));
+    scrollActiveDayIntoView(mount);
   }
 
   function renderLoading(mount) {
