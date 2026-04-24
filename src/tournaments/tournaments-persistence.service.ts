@@ -56,6 +56,7 @@ export interface CreateCustomTournamentMutation {
   participants: TournamentParticipant[];
   waitlist: TournamentParticipant[];
   allowedManagerPhones: string[];
+  publicationCommunityIds?: string[];
   slug?: string;
   studioId?: string;
   studioName?: string;
@@ -80,6 +81,7 @@ export interface UpdateCustomTournamentMutation {
   participants?: TournamentParticipant[];
   waitlist?: TournamentParticipant[];
   allowedManagerPhones?: string[];
+  publicationCommunityIds?: string[];
   slug?: string;
   studioId?: string;
   studioName?: string;
@@ -244,6 +246,11 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.allowedManagerPhones !== undefined) {
       setPayload.allowedManagerPhones = this.normalizePhoneList(mutation.allowedManagerPhones);
     }
+    if (mutation.publicationCommunityIds !== undefined) {
+      setPayload.publicationCommunityIds = this.normalizeCommunityIds(
+        mutation.publicationCommunityIds
+      );
+    }
     if (mutation.slug !== undefined) {
       setPayload.slug = await this.ensureUniqueSlug(mutation.slug, id);
     }
@@ -384,6 +391,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       paidParticipantsCount: participants.filter((item) => item.paymentStatus === 'PAID').length,
       waitlistCount: waitlist.length,
       allowedManagerPhones: this.normalizePhoneList(document.allowedManagerPhones),
+      publicationCommunityIds: this.normalizeCommunityIds(document.publicationCommunityIds),
       studioId: this.pickString(document.studioId) ?? undefined,
       studioName: this.pickString(document.studioName) ?? undefined,
       trainerId: this.pickString(document.trainerId) ?? undefined,
@@ -448,6 +456,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       participants: this.normalizeParticipants(mutation.participants, 'REGISTERED'),
       waitlist: this.normalizeParticipants(mutation.waitlist, 'WAITLIST'),
       allowedManagerPhones: this.normalizePhoneList(mutation.allowedManagerPhones),
+      publicationCommunityIds: this.normalizeCommunityIds(mutation.publicationCommunityIds),
       studioId: this.pickString(mutation.studioId) ?? null,
       studioName: this.pickString(mutation.studioName) ?? null,
       trainerId: this.pickString(mutation.trainerId) ?? null,
@@ -983,6 +992,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       this.formatAuditList(beforeTournament.allowedManagerPhones),
       this.formatAuditList(afterTournament.allowedManagerPhones)
     );
+    pushChange(
+      'publicationCommunityIds',
+      'Публикация в сообщества',
+      this.formatAuditList(beforeTournament.publicationCommunityIds),
+      this.formatAuditList(afterTournament.publicationCommunityIds)
+    );
     pushChange('slug', 'Slug', beforeTournament.slug, afterTournament.slug);
     pushChange('studioName', 'Клуб', beforeTournament.studioName, afterTournament.studioName);
     pushChange('trainerName', 'Тренер', beforeTournament.trainerName, afterTournament.trainerName);
@@ -1216,6 +1231,14 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
             .toUpperCase()
             .replace(/\s+/g, ' ')
         )
+      )
+    );
+  }
+
+  private normalizeCommunityIds(value: unknown): string[] {
+    return Array.from(
+      new Set(
+        this.normalizeStringArray(value).map((item) => item.trim()).filter(Boolean)
       )
     );
   }

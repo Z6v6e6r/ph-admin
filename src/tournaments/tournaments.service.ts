@@ -886,6 +886,7 @@ export class TournamentsService {
       waitlist: mergedCustomTournament.waitlist,
       waitlistCount: mergedCustomTournament.waitlistCount,
       allowedManagerPhones: mergedCustomTournament.allowedManagerPhones,
+      publicationCommunityIds: mergedCustomTournament.publicationCommunityIds,
       skin: mergedCustomTournament.skin
     };
   }
@@ -922,6 +923,9 @@ export class TournamentsService {
       waitlist: Array.isArray(mutation.waitlist) ? mutation.waitlist : [],
       allowedManagerPhones: Array.isArray(mutation.allowedManagerPhones)
         ? mutation.allowedManagerPhones
+        : [],
+      publicationCommunityIds: Array.isArray(mutation.publicationCommunityIds)
+        ? mutation.publicationCommunityIds
         : [],
       slug: this.pickString(mutation.slug) ?? undefined,
       studioId: this.pickString(mutation.studioId) ?? sourceTournament.studioId,
@@ -966,6 +970,7 @@ export class TournamentsService {
       participants: mutation.participants,
       waitlist: mutation.waitlist,
       allowedManagerPhones: mutation.allowedManagerPhones,
+      publicationCommunityIds: mutation.publicationCommunityIds,
       slug: mutation.slug,
       studioId: mutation.studioId,
       studioName: mutation.studioName,

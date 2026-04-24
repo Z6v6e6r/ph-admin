@@ -167,6 +167,7 @@ export interface Tournament {
   waitlist?: TournamentParticipant[];
   waitlistCount?: number;
   allowedManagerPhones?: string[];
+  publicationCommunityIds?: string[];
   skin?: TournamentSkin;
   mechanics?: TournamentMechanics;
   changeLog?: TournamentChangeLogEntry[];
@@ -209,6 +210,7 @@ export interface CustomTournament extends Tournament {
   participants: TournamentParticipant[];
   waitlist: TournamentParticipant[];
   allowedManagerPhones: string[];
+  publicationCommunityIds?: string[];
   skin: TournamentSkin;
   mechanics: TournamentMechanics;
   changeLog: TournamentChangeLogEntry[];

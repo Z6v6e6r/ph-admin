@@ -59,6 +59,13 @@ export class CreateCustomTournamentFromSourceDto {
   allowedManagerPhones?: string[];
 
   @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(120, { each: true })
+  publicationCommunityIds?: string[];
+
+  @IsOptional()
   @IsString()
   @MaxLength(120)
   slug?: string;

@@ -2460,6 +2460,75 @@
         font-size:14px;
         color:var(--cup-wine);
       }
+      .phab-admin-tournament-community-publish{
+        display:flex;
+        gap:10px;
+        overflow-x:auto;
+        padding:2px 0 8px;
+        scroll-snap-type:x proximity;
+      }
+      .phab-admin-tournament-community-card{
+        position:relative;
+        display:flex;
+        flex:0 0 118px;
+        min-height:116px;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        gap:8px;
+        padding:12px 10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:14px;
+        background:rgba(255,255,255,.92);
+        color:rgba(51,0,32,.58);
+        cursor:pointer;
+        scroll-snap-align:start;
+      }
+      .phab-admin-tournament-community-card input{
+        position:absolute;
+        top:8px;
+        right:8px;
+        width:18px;
+        height:18px;
+        margin:0;
+        accent-color:#7d35d8;
+      }
+      .phab-admin-tournament-community-card.is-selected{
+        border-color:rgba(125,53,216,.42);
+        box-shadow:0 8px 20px rgba(125,53,216,.13);
+        color:var(--cup-wine);
+      }
+      .phab-admin-tournament-community-avatar{
+        width:56px;
+        height:56px;
+        border-radius:999px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        overflow:hidden;
+        background:linear-gradient(135deg,rgba(207,255,182,.75),rgba(182,253,255,.72));
+        color:rgba(51,0,32,.55);
+        font-weight:900;
+      }
+      .phab-admin-tournament-community-avatar img{
+        display:block;
+        width:100%;
+        height:100%;
+        object-fit:cover;
+      }
+      .phab-admin-tournament-community-name{
+        width:100%;
+        min-height:28px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        text-align:center;
+        font-size:11px;
+        line-height:1.16;
+        font-weight:900;
+        color:inherit;
+        overflow:hidden;
+      }
       .phab-admin-dialog-tags{
         display:flex;
         flex-wrap:wrap;
@@ -15498,6 +15567,9 @@
         status: String(form.status.value || 'REGISTRATION').trim().toUpperCase(),
         studioName: String(form.studioName.value || '').trim() || undefined,
         allowedManagerPhones: parseTournamentPhoneList(form.allowedManagerPhones.value),
+        publicationCommunityIds: normalizeTournamentPublicationCommunityIds(
+          String(form.publicationCommunityIds.value || '').split(',')
+        ),
         skin: {
           title: String(form.skinTitle.value || '').trim() || undefined,
           subtitle: String(form.skinSubtitle.value || '').trim() || undefined,
@@ -15584,6 +15656,181 @@
           });
       });
       return button;
+    }
+
+    function normalizeTournamentPublicationCommunityIds(values) {
+      var seen = {};
+      return normalizeArray(values)
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(function (item) {
+          if (!item || seen[item]) {
+            return false;
+          }
+          seen[item] = true;
+          return true;
+        });
+    }
+
+    function getTournamentCommunityInitials(community) {
+      return String((community && community.name) || 'CM')
+        .trim()
+        .split(/\s+/)
+        .map(function (chunk) {
+          return chunk.charAt(0);
+        })
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'CM';
+    }
+
+    function createTournamentCommunityPublicationControl(communities, selectedIds) {
+      var root = document.createElement('div');
+      root.className = 'phab-admin-tournament-community-publish';
+
+      var hiddenInput = document.createElement('input');
+      hiddenInput.type = 'hidden';
+
+      var selectedMap = {};
+      normalizeTournamentPublicationCommunityIds(selectedIds).forEach(function (communityId) {
+        selectedMap[communityId] = true;
+      });
+
+      function sync() {
+        hiddenInput.value = Object.keys(selectedMap).filter(function (communityId) {
+          return selectedMap[communityId] === true;
+        }).join(',');
+      }
+
+      var availableCommunities = normalizeArray(communities).filter(function (community) {
+        return community && community.id;
+      });
+
+      if (availableCommunities.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Доступных сообществ пока нет.';
+        root.appendChild(empty);
+        sync();
+        return {
+          root: root,
+          input: hiddenInput
+        };
+      }
+
+      availableCommunities.forEach(function (community) {
+        var communityId = String(community.id || '').trim();
+        var card = document.createElement('label');
+        card.className = 'phab-admin-tournament-community-card';
+        root.appendChild(card);
+
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selectedMap[communityId] === true;
+        card.appendChild(checkbox);
+
+        var avatar = document.createElement('div');
+        avatar.className = 'phab-admin-tournament-community-avatar';
+        var logo = String(community.logo || '').trim();
+        if (logo) {
+          var image = document.createElement('img');
+          image.src = logo;
+          image.alt = String(community.name || 'Сообщество');
+          avatar.appendChild(image);
+        } else {
+          avatar.textContent = getTournamentCommunityInitials(community);
+        }
+        card.appendChild(avatar);
+
+        var name = document.createElement('div');
+        name.className = 'phab-admin-tournament-community-name';
+        name.textContent = String(community.name || community.slug || communityId);
+        card.appendChild(name);
+
+        function syncCard() {
+          selectedMap[communityId] = checkbox.checked === true;
+          card.classList.toggle('is-selected', checkbox.checked === true);
+          sync();
+        }
+
+        checkbox.addEventListener('change', syncCard);
+        syncCard();
+      });
+
+      root.appendChild(hiddenInput);
+      return {
+        root: root,
+        input: hiddenInput
+      };
+    }
+
+    async function loadTournamentPublicationCommunities() {
+      if (state.communities.length > 0) {
+        return state.communities;
+      }
+      state.communities = sortCommunities(normalizeArray(await api.getCommunities()));
+      return state.communities;
+    }
+
+    function buildTournamentCommunityFeedPayload(tournament) {
+      var skin = normalizeObject(tournament && tournament.skin);
+      var tags = normalizeArray(skin.tags)
+        .map(function (item) {
+          return String(item || '').trim();
+        })
+        .filter(Boolean);
+      tags.push('турнир');
+
+      return {
+        kind: 'TOURNAMENT',
+        title: String(skin.title || (tournament && tournament.name) || 'Турнир').trim(),
+        body: String(skin.description || '').trim(),
+        previewLabel: [
+          String(skin.subtitle || (tournament && tournament.studioName) || '').trim(),
+          formatDateTimeFull(tournament && tournament.startsAt)
+        ].filter(function (item) {
+          return item && item !== '-';
+        }).join(' · '),
+        ctaLabel: String(skin.ctaLabel || 'Записаться').trim(),
+        imageUrl: String(skin.imageUrl || '').trim() || null,
+        startAt: String((tournament && tournament.startsAt) || '').trim() || undefined,
+        endAt: String((tournament && tournament.endsAt) || '').trim() || undefined,
+        stationName: String((tournament && tournament.studioName) || '').trim(),
+        levelLabel: describeTournamentAccessLevels(tournament && tournament.accessLevels),
+        tags: tags,
+        details: {
+          tournamentId: String((tournament && tournament.id) || '').trim(),
+          tournamentSlug: String((tournament && tournament.slug) || '').trim(),
+          publicUrl: String((tournament && tournament.publicUrl) || '').trim(),
+          source: 'TOURNAMENT_EDITOR'
+        }
+      };
+    }
+
+    async function publishTournamentToCommunities(tournament, communityIds) {
+      var ids = normalizeTournamentPublicationCommunityIds(communityIds);
+      var failed = [];
+      if (ids.length === 0) {
+        return {
+          total: 0,
+          failed: failed
+        };
+      }
+
+      var payload = buildTournamentCommunityFeedPayload(tournament);
+      for (var index = 0; index < ids.length; index += 1) {
+        var communityId = ids[index];
+        try {
+          await api.createCommunityFeedItem(communityId, payload);
+        } catch (_error) {
+          failed.push(communityId);
+        }
+      }
+      return {
+        total: ids.length,
+        failed: failed
+      };
     }
 
     function getTournamentPersonInitials(value) {
@@ -15753,6 +16000,7 @@
           sourceSnapshot.tournamentType ||
           ''
       );
+      var publicationCommunities = await loadTournamentPublicationCommunities();
 
       clearNode(dom.tournamentEditorBody);
       dom.tournamentEditorTitle.textContent = 'Настройка турнира';
@@ -15874,6 +16122,13 @@
       allowedPhonesInput.value = normalizeArray(model && model.allowedManagerPhones).join('\n');
       allowedPhonesInput.placeholder = '+79991234567';
       appendCommunityFormField(form, 'Телефоны с доступом к механике', allowedPhonesInput, true);
+
+      var publicationControl = createTournamentCommunityPublicationControl(
+        publicationCommunities,
+        model && model.publicationCommunityIds
+      );
+      var publicationCommunityIdsInput = publicationControl.input;
+      appendCommunityFormField(form, 'Публикация в сообщества', publicationControl.root, true);
 
       var participantsList = createTournamentPersonList(normalizeArray(model && model.participants), {
         emptyText: 'Записанных участников пока нет.',
@@ -16607,6 +16862,9 @@
         viewKey: editorViewKey,
         sourceTournamentId: sourceTournamentId,
         customTournamentId: customTournament ? String(customTournament.id || '') : '',
+        initialPublicationCommunityIds: normalizeTournamentPublicationCommunityIds(
+          model && model.publicationCommunityIds
+        ),
         form: {
           name: nameInput,
           status: statusSelect,
@@ -16618,6 +16876,7 @@
           studioName: studioNameInput,
           slug: slugInput,
           allowedManagerPhones: allowedPhonesInput,
+          publicationCommunityIds: publicationCommunityIdsInput,
           skinTitle: skinTitleInput,
           skinSubtitle: skinSubtitleInput,
           skinCtaLabel: skinCtaInput,
@@ -16682,16 +16941,40 @@
       dom.tournamentEditorSaveBtn.disabled = true;
       dom.tournamentEditorSaveBtn.textContent = editor.customTournamentId ? 'Сохраняем...' : 'Создаём...';
       try {
+        var savedTournament = null;
         if (editor.customTournamentId) {
-          await api.updateCustomTournament(editor.customTournamentId, payload);
-          setStatus('Турнир обновлён', false);
+          savedTournament = await api.updateCustomTournament(editor.customTournamentId, payload);
         } else {
           if (!editor.sourceTournamentId) {
             throw new Error('Не удалось определить источник турнира.');
           }
-          await api.createCustomTournamentFromSource(editor.sourceTournamentId, payload);
-          setStatus('Турнир создан', false);
+          savedTournament = await api.createCustomTournamentFromSource(editor.sourceTournamentId, payload);
         }
+        var previousPublicationMap = {};
+        normalizeTournamentPublicationCommunityIds(editor.initialPublicationCommunityIds).forEach(
+          function (communityId) {
+            previousPublicationMap[communityId] = true;
+          }
+        );
+        var communitiesToPublish = normalizeTournamentPublicationCommunityIds(
+          payload.publicationCommunityIds
+        ).filter(function (communityId) {
+          return previousPublicationMap[communityId] !== true;
+        });
+        var publishResult = await publishTournamentToCommunities(
+          savedTournament || payload,
+          communitiesToPublish
+        );
+        var publishSuffix = '';
+        if (publishResult.total > 0 && publishResult.failed.length === 0) {
+          publishSuffix = ', опубликован в сообщества';
+        } else if (publishResult.failed.length > 0) {
+          publishSuffix = ', но часть публикаций не создалась';
+        }
+        setStatus(
+          (editor.customTournamentId ? 'Турнир обновлён' : 'Турнир создан') + publishSuffix,
+          publishResult.failed.length > 0
+        );
         await loadTournaments();
         closeTournamentEditorModal();
       } finally {
