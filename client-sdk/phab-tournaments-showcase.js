@@ -3170,15 +3170,16 @@
   function createActionControl(card, action, state, mount) {
     var joinUrl = resolveUrl(card.joinUrl, state.config);
     var publicUrl = resolveUrl(card.publicUrl, state.config);
+    var crossOriginTargetUrl = publicUrl || joinUrl;
     var className =
       action.kind === 'secondary'
         ? 'phab-tournaments__button-secondary'
         : 'phab-tournaments__button';
     var control;
 
-    if (action.mode === 'public' && publicUrl) {
+    if ((action.mode === 'public' && publicUrl) || (action.mode === 'join' && state.crossOriginApi && crossOriginTargetUrl)) {
       control = createElement('a', className, action.label);
-      control.href = publicUrl;
+      control.href = action.mode === 'join' ? crossOriginTargetUrl : publicUrl;
       control.target = '_blank';
       control.rel = 'noopener noreferrer';
       return control;
@@ -3331,7 +3332,7 @@
         createElement(
           'p',
           'phab-tournaments__hint',
-          'После нажатия откроется отдельная страница записи на backend PadelHub.'
+          'После нажатия откроется страница события турнира на PadelHub.'
         )
       );
     }
