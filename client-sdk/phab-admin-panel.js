@@ -5907,6 +5907,27 @@
     tournamentsSummary.textContent = 'Всего турниров: 0';
     tournamentsControls.appendChild(tournamentsSummary);
 
+    var tournamentsPagination = document.createElement('div');
+    tournamentsPagination.className = 'phab-admin-games-pagination';
+    tournamentsControls.appendChild(tournamentsPagination);
+
+    var tournamentsPrevPageBtn = document.createElement('button');
+    tournamentsPrevPageBtn.className = 'phab-admin-btn-secondary';
+    tournamentsPrevPageBtn.type = 'button';
+    tournamentsPrevPageBtn.textContent = 'Назад';
+    tournamentsPagination.appendChild(tournamentsPrevPageBtn);
+
+    var tournamentsPageInfo = document.createElement('span');
+    tournamentsPageInfo.className = 'phab-admin-games-page-info';
+    tournamentsPageInfo.textContent = 'Страница 1 из 1';
+    tournamentsPagination.appendChild(tournamentsPageInfo);
+
+    var tournamentsNextPageBtn = document.createElement('button');
+    tournamentsNextPageBtn.className = 'phab-admin-btn-secondary';
+    tournamentsNextPageBtn.type = 'button';
+    tournamentsNextPageBtn.textContent = 'Дальше';
+    tournamentsPagination.appendChild(tournamentsNextPageBtn);
+
     var tournamentsTableWrap = document.createElement('div');
     tournamentsTableWrap.className = 'phab-admin-games-table-wrap';
     tournamentsSection.appendChild(tournamentsTableWrap);
@@ -7320,6 +7341,9 @@
       tournamentsApplyBtn: tournamentsApplyBtn,
       tournamentsResetBtn: tournamentsResetBtn,
       tournamentsSummary: tournamentsSummary,
+      tournamentsPrevPageBtn: tournamentsPrevPageBtn,
+      tournamentsPageInfo: tournamentsPageInfo,
+      tournamentsNextPageBtn: tournamentsNextPageBtn,
       tournamentsTable: tournamentsTable,
       communitySearchInput: communitySearchInput,
       communitiesList: communitiesList,
@@ -7902,6 +7926,8 @@
       analyticsDialogsFilterTo: getTodayDateInputValue(),
       analyticsDialogsExportFormat: 'json',
       tournaments: [],
+      tournamentsPageSize: 30,
+      tournamentsPage: 1,
       tournamentsFilterStation: 'ALL',
       tournamentsFilterFrom: '',
       tournamentsFilterTo: '',
@@ -7947,7 +7973,6 @@
       communitySavingId: null,
       communityDeletingId: null,
       communityManagingKey: null,
-      tournamentsColumnWidths: {},
       tournamentsColumnWidths: {},
       settingsSubtab: 'general',
       advertisingSubtab: 'cabinetHome',
@@ -13737,6 +13762,49 @@
       });
     }
 
+    function clampTournamentsPage(totalItems) {
+      var pageSize = Number(state.tournamentsPageSize || 30);
+      if (!Number.isFinite(pageSize) || pageSize <= 0) {
+        pageSize = 30;
+      }
+      var totalPages = Math.max(1, Math.ceil(Number(totalItems || 0) / pageSize) || 1);
+      var page = Number(state.tournamentsPage || 1);
+      if (!Number.isFinite(page) || page <= 0) {
+        page = 1;
+      }
+      if (page > totalPages) {
+        page = totalPages;
+      }
+      state.tournamentsPageSize = pageSize;
+      state.tournamentsPage = page;
+      return { pageSize: pageSize, totalPages: totalPages, page: page };
+    }
+
+    function updateTournamentsPaginationControls(totalItems, totalPages) {
+      if (totalItems === 0) {
+        dom.tournamentsPageInfo.textContent = 'Страница 1 из 1 · 0 турниров';
+        dom.tournamentsPrevPageBtn.disabled = true;
+        dom.tournamentsNextPageBtn.disabled = true;
+        return;
+      }
+
+      var from = (state.tournamentsPage - 1) * state.tournamentsPageSize + 1;
+      var to = Math.min(totalItems, state.tournamentsPage * state.tournamentsPageSize);
+      dom.tournamentsPageInfo.textContent =
+        'Страница ' +
+        String(state.tournamentsPage) +
+        ' из ' +
+        String(totalPages) +
+        ' · ' +
+        String(from) +
+        '-' +
+        String(to) +
+        ' из ' +
+        String(totalItems);
+      dom.tournamentsPrevPageBtn.disabled = state.tournamentsPage <= 1;
+      dom.tournamentsNextPageBtn.disabled = state.tournamentsPage >= totalPages;
+    }
+
     function renderTournamentFilters(filteredCount, totalCount) {
       ensureCommunitySelectOptions(
         dom.tournamentsStationInput,
@@ -13779,6 +13847,7 @@
       state.tournamentsFilterStation = nextStation;
       state.tournamentsFilterFrom = nextFrom;
       state.tournamentsFilterTo = nextTo;
+      state.tournamentsPage = 1;
       renderTournaments();
     }
 
@@ -13786,6 +13855,7 @@
       state.tournamentsFilterStation = 'ALL';
       state.tournamentsFilterFrom = '';
       state.tournamentsFilterTo = '';
+      state.tournamentsPage = 1;
       dom.tournamentsStationInput.value = 'ALL';
       dom.tournamentsFromInput.value = '';
       dom.tournamentsToInput.value = '';
@@ -13794,7 +13864,13 @@
 
     function renderTournaments() {
       var tournaments = getFilteredTournaments();
+      var pagination = clampTournamentsPage(tournaments.length);
+      var pageTournaments = tournaments.slice(
+        (pagination.page - 1) * pagination.pageSize,
+        pagination.page * pagination.pageSize
+      );
       renderTournamentFilters(tournaments.length, normalizeArray(state.tournaments).length);
+      updateTournamentsPaginationControls(tournaments.length, pagination.totalPages);
       clearNode(dom.tournamentsTable);
 
       var columns = [
@@ -13844,7 +13920,7 @@
       var tbody = document.createElement('tbody');
       dom.tournamentsTable.appendChild(tbody);
 
-      if (tournaments.length === 0) {
+      if (pageTournaments.length === 0) {
         var tr = document.createElement('tr');
         var td = document.createElement('td');
         td.colSpan = columns.length;
@@ -13857,7 +13933,7 @@
         return;
       }
 
-      tournaments.forEach(function (tournament) {
+      pageTournaments.forEach(function (tournament) {
         var tr = document.createElement('tr');
         var hasCustomSkin = isTournamentCustomSkinned(tournament);
         if (hasCustomSkin) {
@@ -23055,6 +23131,7 @@
 
     async function loadTournaments() {
       state.tournaments = (await api.getTournaments()) || [];
+      state.tournamentsPage = 1;
       renderTournaments();
     }
 
@@ -23741,6 +23818,21 @@
       });
       dom.tournamentsResetBtn.addEventListener('click', function () {
         resetTournamentFilters();
+      });
+      dom.tournamentsPrevPageBtn.addEventListener('click', function () {
+        if (state.tournamentsPage <= 1) {
+          return;
+        }
+        state.tournamentsPage -= 1;
+        renderTournaments();
+      });
+      dom.tournamentsNextPageBtn.addEventListener('click', function () {
+        var totalPages = clampTournamentsPage(getFilteredTournaments().length).totalPages;
+        if (state.tournamentsPage >= totalPages) {
+          return;
+        }
+        state.tournamentsPage += 1;
+        renderTournaments();
       });
       dom.tournamentsStationInput.addEventListener('change', function () {
         applyTournamentFilters();
