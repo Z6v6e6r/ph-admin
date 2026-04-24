@@ -34,7 +34,7 @@ export class VivaTournamentsService {
   );
   private readonly lookaheadDays = this.readPositiveNumberEnv(
     'VIVA_TOURNAMENT_LOOKAHEAD_DAYS',
-    14
+    45
   );
   private readonly requestTimeoutMs = this.readPositiveNumberEnv(
     'VIVA_END_USER_TIMEOUT_MS',
