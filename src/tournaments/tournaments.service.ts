@@ -1602,6 +1602,12 @@ export class TournamentsService {
       ).length,
       waitlistCount: tournament.waitlist.length,
       maxPlayers: tournament.maxPlayers,
+      participants: tournament.participants.map((participant) =>
+        this.toPublicParticipantView(participant)
+      ),
+      waitlist: tournament.waitlist.map((participant) =>
+        this.toPublicParticipantView(participant)
+      ),
       registrationOpen: this.isTournamentRegistrationOpen(tournament),
       allowedManagerPhonesCount: tournament.allowedManagerPhones.length,
       skin: tournament.skin,
@@ -1621,6 +1627,20 @@ export class TournamentsService {
             exerciseTypeId: this.pickString(sourceTournamentSnapshot.exerciseTypeId) ?? undefined
           }
         : undefined
+    };
+  }
+
+  private toPublicParticipantView(
+    participant: TournamentParticipant
+  ): Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'> {
+    return {
+      id: participant.id,
+      name: participant.name,
+      levelLabel: participant.levelLabel,
+      avatarUrl: participant.avatarUrl,
+      gender: participant.gender,
+      paymentStatus: participant.paymentStatus,
+      status: participant.status
     };
   }
 

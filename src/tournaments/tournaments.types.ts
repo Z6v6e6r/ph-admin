@@ -231,6 +231,12 @@ export interface TournamentPublicView {
   paidParticipantsCount: number;
   waitlistCount: number;
   maxPlayers: number;
+  participants?: Array<
+    Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'>
+  >;
+  waitlist?: Array<
+    Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'>
+  >;
   registrationOpen: boolean;
   allowedManagerPhonesCount: number;
   skin: TournamentSkin;

@@ -419,6 +419,480 @@ export class TournamentsPublicController {
     user?: RequestUser
   ): string {
     const title = this.pickString(tournament.skin.title) ?? tournament.name;
+    const subtitle = this.pickString(tournament.skin.subtitle) ?? 'от PadlxAB';
+    const imageUrl = this.pickString(tournament.skin.imageUrl);
+    const absoluteImageUrl = imageUrl ? this.toAbsoluteUrl(imageUrl, request, user) : '';
+    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
+    const maxPlayers = Math.max(1, Number(tournament.maxPlayers) || 1);
+    const participantsCount = Math.max(0, Number(tournament.participantsCount) || participants.length);
+    const accessLabel =
+      tournament.accessLevels.length > 0 ? tournament.accessLevels.join(', ') : 'OPEN';
+    const genderLabel = this.formatGenderLabel(tournament.gender).toUpperCase();
+    const capacityLabel = `${participantsCount} / ${maxPlayers}`;
+    const statusLabel =
+      participantsCount >= maxPlayers
+        ? 'СОСТАВ НАБРАН'
+        : tournament.registrationOpen
+          ? 'ИДЕТ ЗАПИСЬ'
+          : 'РЕГИСТРАЦИЯ ЗАКРЫТА';
+    const actionLabel = tournament.registrationOpen
+      ? this.pickString(tournament.skin.ctaLabel) ?? 'Записаться'
+      : 'Посмотреть статус';
+    const participantCards =
+      participants.length > 0
+        ? participants
+            .slice(0, maxPlayers)
+            .map((participant) => {
+              const name = this.pickString(participant.name) ?? 'Игрок';
+              const level = this.pickString(participant.levelLabel) ?? '';
+              const avatarUrl = this.pickString(participant.avatarUrl);
+              return `<article class="participant">
+                <div class="avatar">
+                  ${
+                    avatarUrl
+                      ? `<img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(name)}" />`
+                      : this.escapeHtml(this.resolveInitials(name))
+                  }
+                  ${level ? `<span class="level">${this.escapeHtml(level)}</span>` : ''}
+                </div>
+                <p>${this.escapeHtml(name)}</p>
+              </article>`;
+            })
+            .join('')
+        : `<div class="empty">Участники появятся после первых записей.</div>`;
+    const teaserAvatars =
+      participants.length > 0
+        ? participants
+            .slice(0, 4)
+            .map((participant) => {
+              const name = this.pickString(participant.name) ?? 'Игрок';
+              const avatarUrl = this.pickString(participant.avatarUrl);
+              const level = this.pickString(participant.levelLabel) ?? '';
+              return `<span class="teaser-avatar">
+                ${
+                  avatarUrl
+                    ? `<img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(name)}" />`
+                    : this.escapeHtml(this.resolveInitials(name))
+                }
+                ${level ? `<b>${this.escapeHtml(level)}</b>` : ''}
+              </span>`;
+            })
+            .join('')
+        : '';
+
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${this.escapeHtml(title)} - карточка турнира</title>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        font-family: "Manrope", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #fbf8ff;
+        color: #221d35;
+      }
+      .page {
+        width: min(100%, 760px);
+        min-height: 100vh;
+        margin: 0 auto;
+        background: #fffaff;
+        box-shadow: 0 24px 90px rgba(44, 31, 83, 0.12);
+      }
+      .poster {
+        position: relative;
+        min-height: 230px;
+        overflow: hidden;
+        border-radius: 0 0 2px 2px;
+        background:
+          linear-gradient(90deg, rgba(98, 54, 219, 0.86), rgba(154, 87, 255, 0.72)),
+          ${
+            absoluteImageUrl
+              ? `url("${this.escapeHtml(absoluteImageUrl)}") center/cover no-repeat`
+              : 'radial-gradient(circle at 24% 34%, rgba(231, 240, 153, 0.88), transparent 10%), linear-gradient(135deg, #5d40d7, #b65dff 58%, #5148c8)'
+          };
+      }
+      .poster::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(25,18,74,0.28));
+      }
+      .back {
+        position: absolute;
+        z-index: 1;
+        top: 28px;
+        left: 24px;
+        width: 38px;
+        height: 38px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        text-decoration: none;
+        font-size: 42px;
+        line-height: 1;
+      }
+      .poster-copy {
+        position: relative;
+        z-index: 1;
+        min-height: 230px;
+        padding: 42px 28px 28px 260px;
+        display: grid;
+        align-content: center;
+        color: #fff;
+        text-shadow: 0 2px 12px rgba(22, 13, 60, 0.28);
+      }
+      .poster-title {
+        margin: 0;
+        font-size: clamp(38px, 9vw, 64px);
+        line-height: 0.96;
+        font-weight: 900;
+      }
+      .poster-subtitle {
+        margin: 14px 0 0;
+        font-size: 22px;
+        font-weight: 700;
+      }
+      .date-badge {
+        position: absolute;
+        z-index: 1;
+        top: 28px;
+        right: 28px;
+        min-width: 88px;
+        padding: 12px 10px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, #251b52, #8b4cf0);
+        color: #fff;
+        text-align: center;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22);
+      }
+      .date-badge span { display: block; font-weight: 900; }
+      .date-badge span:first-child { font-size: 20px; letter-spacing: 0.06em; }
+      .date-badge span:last-child { font-size: 38px; line-height: 1; }
+      .content {
+        padding: 24px;
+        display: grid;
+        gap: 22px;
+      }
+      .headline {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(30px, 6vw, 42px);
+        line-height: 1.05;
+        font-weight: 900;
+      }
+      .organizer {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+      }
+      .organizer-avatar {
+        width: 64px;
+        height: 64px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, #7256ef, #a36dff);
+        color: #fff;
+        font-weight: 900;
+      }
+      .organizer-name {
+        margin: 0 0 5px;
+        font-size: 22px;
+        font-weight: 800;
+      }
+      .pill {
+        display: inline-flex;
+        min-height: 32px;
+        align-items: center;
+        padding: 7px 14px;
+        border-radius: 999px;
+        background: #f0e7ff;
+        color: #6540c8;
+        font-weight: 800;
+      }
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid #e7dfef;
+        border-radius: 12px;
+      }
+      .tab {
+        min-height: 58px;
+        display: grid;
+        place-items: center;
+        color: #776f89;
+        font-size: 20px;
+        font-weight: 800;
+      }
+      .tab.is-active {
+        background: linear-gradient(135deg, #7547f4, #9f67ff);
+        color: #fff;
+      }
+      .status-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: baseline;
+      }
+      .section-title {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.1;
+        font-weight: 900;
+      }
+      .muted {
+        color: #7b748c;
+      }
+      .schedule {
+        margin: 8px 0 0;
+        font-size: 20px;
+        line-height: 1.35;
+        font-weight: 900;
+      }
+      .details {
+        margin: 6px 0 0;
+        color: #736c84;
+        font-size: 18px;
+      }
+      .participants-card {
+        border: 1px solid #eee7f4;
+        border-radius: 18px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .teaser {
+        min-height: 92px;
+        padding: 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #fdfbff;
+      }
+      .teaser-avatar {
+        position: relative;
+        width: 54px;
+        height: 54px;
+        margin-left: -18px;
+        border: 3px solid #fdfbff;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        overflow: visible;
+        background: #e9e2f3;
+        color: #2a2142;
+        font-weight: 900;
+      }
+      .teaser-avatar:first-child { margin-left: 0; }
+      .teaser-avatar img {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        object-fit: cover;
+      }
+      .teaser-avatar b,
+      .level {
+        position: absolute;
+        right: -8px;
+        bottom: -4px;
+        min-width: 34px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #211b48;
+        color: #fff;
+        font-size: 14px;
+        line-height: 1;
+        text-align: center;
+      }
+      .players {
+        padding: 14px 14px 18px;
+        border-top: 1px solid #eee7f4;
+      }
+      .players-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        padding: 0 4px 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 18px 14px;
+      }
+      .participant {
+        min-width: 0;
+        text-align: center;
+      }
+      .avatar {
+        position: relative;
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 9px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        background: #eee9f7;
+        color: #33294d;
+        font-weight: 900;
+      }
+      .avatar img {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        object-fit: cover;
+      }
+      .participant p {
+        margin: 0;
+        color: #554d68;
+        font-size: 16px;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+      }
+      .empty {
+        padding: 26px;
+        color: #756d85;
+        text-align: center;
+      }
+      .bracket-note {
+        margin-top: 18px;
+        min-height: 46px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #eee7f4;
+        border-radius: 12px;
+        color: #7b748c;
+        font-size: 20px;
+      }
+      .cta {
+        display: grid;
+        place-items: center;
+        min-height: 64px;
+        border-radius: 20px;
+        background: linear-gradient(90deg, #7749f5, #ff6047);
+        color: #fff;
+        text-decoration: none;
+        font-size: 22px;
+        font-weight: 900;
+      }
+      @media (max-width: 640px) {
+        .page { min-height: 100vh; box-shadow: none; }
+        .poster { min-height: 176px; }
+        .poster-copy {
+          min-height: 176px;
+          padding: 54px 20px 22px 112px;
+        }
+        .poster-title { font-size: 38px; }
+        .poster-subtitle { font-size: 16px; }
+        .date-badge {
+          min-width: 70px;
+          top: 20px;
+          right: 18px;
+        }
+        .content { padding: 18px; }
+        .organizer { grid-template-columns: 54px minmax(0, 1fr); }
+        .organizer .pill:last-child { display: none; }
+        .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .avatar { width: 62px; height: 62px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="poster">
+        <a class="back" href="${this.escapeHtml(this.toAbsoluteUrl(this.directoryUrl, request, user))}" aria-label="Назад">‹</a>
+        <div class="date-badge">
+          <span>${this.escapeHtml(this.formatDateBadgeWeekday(tournament.startsAt).toUpperCase() || 'ДАТА')}</span>
+          <span>${this.escapeHtml(this.formatDateBadgeDay(tournament.startsAt))}</span>
+        </div>
+        <div class="poster-copy">
+          <h2 class="poster-title">${this.escapeHtml(title)}</h2>
+          <p class="poster-subtitle">${this.escapeHtml(subtitle)}</p>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="headline">
+          <h1>${this.escapeHtml(
+            participantsCount > 0 ? 'Вы в турнире!' : statusLabel
+          )}</h1>
+          <span class="pill">${this.escapeHtml(accessLabel)}</span>
+        </div>
+
+        <div class="organizer">
+          <div class="organizer-avatar">${this.escapeHtml(
+            this.resolveInitials(tournament.trainerName || 'PadelHub')
+          )}</div>
+          <div>
+            <p class="organizer-name">${this.escapeHtml(
+              tournament.trainerName || 'Организатор'
+            )}</p>
+            <span class="pill">Организатор</span>
+          </div>
+          <span class="pill">Организатор</span>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Разделы турнира">
+          <div class="tab is-active">Статус</div>
+          <div class="tab">Регламент</div>
+        </div>
+
+        <section>
+          <div class="status-row">
+            <h2 class="section-title">Участники турнира</h2>
+            <strong>${this.escapeHtml(capacityLabel)} ${this.escapeHtml(genderLabel)}</strong>
+          </div>
+          <p class="schedule">${this.escapeHtml(title)}</p>
+          <p class="details">${this.escapeHtml(
+            [
+              this.formatCardScheduleLabel(tournament.startsAt, tournament.endsAt),
+              tournament.studioName || 'Площадка уточняется'
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          )}</p>
+        </section>
+
+        <section class="participants-card">
+          ${teaserAvatars ? `<div class="teaser">${teaserAvatars}</div>` : ''}
+          <div class="players">
+            <div class="players-head">
+              <div>
+                <h2 class="section-title">Участники турнира</h2>
+                <div class="muted">${this.escapeHtml(capacityLabel)} ${this.escapeHtml(genderLabel)}</div>
+              </div>
+              <strong>${this.escapeHtml(capacityLabel)}</strong>
+            </div>
+            <div class="grid">${participantCards}</div>
+            <div class="bracket-note">Сетка скоро появится</div>
+          </div>
+        </section>
+
+        <a class="cta" href="${this.escapeHtml(absoluteJoinUrl)}">${this.escapeHtml(actionLabel)}</a>
+      </section>
+    </main>
+  </body>
+</html>`;
+  }
+
+  private renderPublicTournamentLegacyHtml(
+    tournament: TournamentPublicView,
+    request: Request,
+    user?: RequestUser
+  ): string {
+    const title = this.pickString(tournament.skin.title) ?? tournament.name;
     const subtitle =
       this.pickString(tournament.skin.subtitle)
       ?? [

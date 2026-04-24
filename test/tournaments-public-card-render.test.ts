@@ -21,6 +21,27 @@ function createTournament(): TournamentPublicView {
     paidParticipantsCount: 3,
     waitlistCount: 1,
     maxPlayers: 16,
+    participants: [
+      {
+        id: 'player-1',
+        name: 'Игорь Махнов',
+        levelLabel: 'D+',
+        avatarUrl: null,
+        gender: 'MIXED',
+        paymentStatus: 'PAID',
+        status: 'REGISTERED'
+      },
+      {
+        id: 'player-2',
+        name: 'Елена Полкова',
+        levelLabel: 'C+',
+        avatarUrl: null,
+        gender: 'MIXED',
+        paymentStatus: 'PAID',
+        status: 'REGISTERED'
+      }
+    ],
+    waitlist: [],
     registrationOpen: true,
     allowedManagerPhonesCount: 0,
     skin: {
@@ -122,7 +143,10 @@ async function main(): Promise<void> {
     assert.equal(capture.getHeader('content-type'), 'text/html; charset=utf-8');
     assert.match(html ?? '', /Девичник/);
     assert.match(html ?? '', /ТестMiniApp/);
-    assert.match(html ?? '', /Падел турнир от ПадлхАБ/);
+    assert.match(html ?? '', /Вы в турнире!/);
+    assert.match(html ?? '', /Участники турнира/);
+    assert.match(html ?? '', /Елена Полкова/);
+    assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
   }
 
