@@ -15794,8 +15794,12 @@
         }).join(' · '),
         ctaLabel: String(skin.ctaLabel || 'Записаться').trim(),
         imageUrl: String(skin.imageUrl || '').trim() || null,
-        startAt: String((tournament && tournament.startsAt) || '').trim() || undefined,
-        endAt: String((tournament && tournament.endsAt) || '').trim() || undefined,
+        startAt: isIsoDateString(tournament && tournament.startsAt)
+          ? String(tournament.startsAt).trim()
+          : undefined,
+        endAt: isIsoDateString(tournament && tournament.endsAt)
+          ? String(tournament.endsAt).trim()
+          : undefined,
         stationName: String((tournament && tournament.studioName) || '').trim(),
         levelLabel: describeTournamentAccessLevels(tournament && tournament.accessLevels),
         tags: tags,
@@ -15808,12 +15812,54 @@
       };
     }
 
+    function isIsoDateString(value) {
+      var text = String(value || '').trim();
+      if (!text || !/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+        return false;
+      }
+      return !Number.isNaN(Date.parse(text));
+    }
+
+    function getTournamentFeedDetails(item) {
+      var details = normalizeObject(item && item.details);
+      var nestedDetails = normalizeObject(details.details);
+      return Object.assign({}, details, nestedDetails);
+    }
+
+    function isTournamentAlreadyPublishedInCommunity(item, tournament) {
+      if (String(item && item.kind || '').toUpperCase() !== 'TOURNAMENT') {
+        return false;
+      }
+
+      var details = getTournamentFeedDetails(item);
+      var tournamentId = String((tournament && tournament.id) || '').trim();
+      var tournamentSlug = String((tournament && tournament.slug) || '').trim();
+      var publicUrl = String((tournament && tournament.publicUrl) || '').trim();
+
+      return Boolean(
+        (tournamentId && String(details.tournamentId || '').trim() === tournamentId) ||
+        (tournamentSlug && String(details.tournamentSlug || '').trim() === tournamentSlug) ||
+        (publicUrl && String(details.publicUrl || '').trim() === publicUrl)
+      );
+    }
+
+    async function hasTournamentCommunityFeedItem(communityId, tournament) {
+      var items = normalizeArray(await api.getCommunityManagedFeed(communityId));
+      return items.some(function (item) {
+        return isTournamentAlreadyPublishedInCommunity(item, tournament);
+      });
+    }
+
     async function publishTournamentToCommunities(tournament, communityIds) {
       var ids = normalizeTournamentPublicationCommunityIds(communityIds);
       var failed = [];
+      var created = 0;
+      var skipped = 0;
       if (ids.length === 0) {
         return {
           total: 0,
+          created: created,
+          skipped: skipped,
           failed: failed
         };
       }
@@ -15822,13 +15868,20 @@
       for (var index = 0; index < ids.length; index += 1) {
         var communityId = ids[index];
         try {
+          if (await hasTournamentCommunityFeedItem(communityId, tournament)) {
+            skipped += 1;
+            continue;
+          }
           await api.createCommunityFeedItem(communityId, payload);
+          created += 1;
         } catch (_error) {
           failed.push(communityId);
         }
       }
       return {
         total: ids.length,
+        created: created,
+        skipped: skipped,
         failed: failed
       };
     }
@@ -16950,23 +17003,15 @@
           }
           savedTournament = await api.createCustomTournamentFromSource(editor.sourceTournamentId, payload);
         }
-        var previousPublicationMap = {};
-        normalizeTournamentPublicationCommunityIds(editor.initialPublicationCommunityIds).forEach(
-          function (communityId) {
-            previousPublicationMap[communityId] = true;
-          }
-        );
         var communitiesToPublish = normalizeTournamentPublicationCommunityIds(
           payload.publicationCommunityIds
-        ).filter(function (communityId) {
-          return previousPublicationMap[communityId] !== true;
-        });
+        );
         var publishResult = await publishTournamentToCommunities(
           savedTournament || payload,
           communitiesToPublish
         );
         var publishSuffix = '';
-        if (publishResult.total > 0 && publishResult.failed.length === 0) {
+        if (publishResult.created > 0 && publishResult.failed.length === 0) {
           publishSuffix = ', опубликован в сообщества';
         } else if (publishResult.failed.length > 0) {
           publishSuffix = ', но часть публикаций не создалась';
