@@ -8,6 +8,7 @@ import { CommunitiesService } from './communities.service';
 @Module({
   imports: [LkPadelHubModule],
   controllers: [CommunitiesController, CommunitiesPublicController],
-  providers: [CommunitiesService, CommunitiesPersistenceService]
+  providers: [CommunitiesService, CommunitiesPersistenceService],
+  exports: [CommunitiesService]
 })
 export class CommunitiesModule {}

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CommunitiesModule } from '../communities/communities.module';
 import { GamesModule } from '../games/games.module';
 import { LkPadelHubModule } from '../integrations/lk-padelhub/lk-padelhub.module';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
@@ -12,7 +13,7 @@ import { TournamentsPublicController } from './tournaments-public.controller';
 import { TournamentsService } from './tournaments.service';
 
 @Module({
-  imports: [LkPadelHubModule, GamesModule],
+  imports: [LkPadelHubModule, GamesModule, CommunitiesModule],
   controllers: [TournamentsController, TournamentsPublicController],
   providers: [
     AmericanoScheduleService,

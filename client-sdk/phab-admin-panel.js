@@ -17010,22 +17010,9 @@
           }
           savedTournament = await api.createCustomTournamentFromSource(editor.sourceTournamentId, payload);
         }
-        var communitiesToPublish = normalizeTournamentPublicationCommunityIds(
-          payload.publicationCommunityIds
-        );
-        var publishResult = await publishTournamentToCommunities(
-          savedTournament || payload,
-          communitiesToPublish
-        );
-        var publishSuffix = '';
-        if (publishResult.created > 0 && publishResult.failed.length === 0) {
-          publishSuffix = ', опубликован в сообщества';
-        } else if (publishResult.failed.length > 0) {
-          publishSuffix = ', но часть публикаций не создалась';
-        }
         setStatus(
-          (editor.customTournamentId ? 'Турнир обновлён' : 'Турнир создан') + publishSuffix,
-          publishResult.failed.length > 0
+          editor.customTournamentId ? 'Турнир обновлён' : 'Турнир создан',
+          false
         );
         await loadTournaments();
         closeTournamentEditorModal();

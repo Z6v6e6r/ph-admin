@@ -7,6 +7,8 @@ import {
   Optional
 } from '@nestjs/common';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { CommunitiesService } from '../communities/communities.service';
+import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
@@ -32,6 +34,7 @@ import {
   CustomTournament,
   Tournament,
   TournamentAcceptedSubscriptionRule,
+  TournamentActor,
   TournamentAccessCheckResponse,
   TournamentBookingConfig,
   TournamentClientSubscription,
@@ -112,7 +115,8 @@ export class TournamentsService {
     private readonly tournamentsPersistence: TournamentsPersistenceService,
     private readonly americanoScheduleService: AmericanoScheduleService,
     private readonly americanoRatingSimulationService: AmericanoRatingSimulationService,
-    @Optional() private readonly vivaAdminService?: VivaAdminService
+    @Optional() private readonly vivaAdminService?: VivaAdminService,
+    @Optional() private readonly communitiesService?: CommunitiesService
   ) {}
 
   async generateSchedule(
@@ -229,7 +233,9 @@ export class TournamentsService {
     }
 
     const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
-    return this.hydrateCustomTournament(created);
+    const hydrated = await this.hydrateCustomTournament(created);
+    await this.publishTournamentToSelectedCommunities(hydrated, normalizedMutation.actor);
+    return hydrated;
   }
 
   async updateCustom(
@@ -241,7 +247,9 @@ export class TournamentsService {
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    return this.hydrateCustomTournament(updated);
+    const hydrated = await this.hydrateCustomTournament(updated);
+    await this.publishTournamentToSelectedCommunities(hydrated, mutation.actor);
+    return hydrated;
   }
 
   async getPublicBySlug(slug: string): Promise<TournamentPublicView> {
@@ -1579,6 +1587,162 @@ export class TournamentsService {
       return descriptors[0].label;
     }
     return `${descriptors[0].label} - ${descriptors[descriptors.length - 1].label}`;
+  }
+
+  private async publishTournamentToSelectedCommunities(
+    tournament: CustomTournament,
+    actor?: TournamentActor
+  ): Promise<void> {
+    if (!this.communitiesService) {
+      return;
+    }
+
+    const communityIds = this.normalizePublicationCommunityIds(tournament.publicationCommunityIds);
+    if (communityIds.length === 0) {
+      return;
+    }
+
+    for (const communityId of communityIds) {
+      try {
+        const alreadyPublished = await this.isTournamentPublishedInCommunity(
+          communityId,
+          tournament
+        );
+        if (alreadyPublished) {
+          continue;
+        }
+
+        await this.communitiesService.createFeedItem(communityId, {
+          ...this.buildTournamentCommunityFeedPayload(tournament),
+          actor: this.toCommunityActor(actor)
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to publish tournament ${tournament.id} to community ${communityId}: ${String(error)}`
+        );
+      }
+    }
+  }
+
+  private async isTournamentPublishedInCommunity(
+    communityId: string,
+    tournament: CustomTournament
+  ): Promise<boolean> {
+    if (!this.communitiesService) {
+      return false;
+    }
+
+    try {
+      const items = await this.communitiesService.listFeedItems(communityId);
+      return items.some((item) => this.isTournamentFeedItem(item, tournament));
+    } catch (error) {
+      this.logger.warn(
+        `Failed to check tournament ${tournament.id} feed item in community ${communityId}: ${String(error)}`
+      );
+      return false;
+    }
+  }
+
+  private isTournamentFeedItem(item: CommunityFeedItem, tournament: CustomTournament): boolean {
+    if (item.kind !== 'TOURNAMENT') {
+      return false;
+    }
+
+    const rawDetails = this.toRecord(item.details) ?? {};
+    const nestedDetails = this.toRecord(rawDetails.details) ?? {};
+    const details = {
+      ...rawDetails,
+      ...nestedDetails
+    };
+
+    return Boolean(
+      (tournament.id && this.pickString(details.tournamentId) === tournament.id) ||
+      (tournament.slug && this.pickString(details.tournamentSlug) === tournament.slug) ||
+      (tournament.publicUrl && this.pickString(details.publicUrl) === tournament.publicUrl)
+    );
+  }
+
+  private buildTournamentCommunityFeedPayload(tournament: CustomTournament) {
+    const skin = tournament.skin ?? {};
+    const tags = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(skin.tags) ? skin.tags : []),
+          'турнир'
+        ]
+          .map((item) => this.pickString(item))
+          .filter((item): item is string => Boolean(item))
+      )
+    );
+
+    return {
+      kind: 'TOURNAMENT' as const,
+      title: this.pickString(skin.title) ?? tournament.name,
+      body: this.pickString(skin.description) ?? undefined,
+      previewLabel: [
+        this.pickString(skin.subtitle) ?? tournament.studioName,
+        this.formatPublicFeedDate(tournament.startsAt)
+      ]
+        .filter((item): item is string => Boolean(item))
+        .join(' · ') || undefined,
+      ctaLabel: this.pickString(skin.ctaLabel) ?? 'Записаться',
+      imageUrl: this.pickNullableString(skin.imageUrl) ?? null,
+      startAt: this.pickIsoString(tournament.startsAt),
+      endAt: this.pickIsoString(tournament.endsAt),
+      stationName: this.pickString(tournament.studioName) ?? undefined,
+      levelLabel: this.describeTournamentLevelRange(tournament.accessLevels),
+      tags,
+      details: {
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        publicUrl: tournament.publicUrl,
+        source: 'TOURNAMENT_SERVICE'
+      }
+    };
+  }
+
+  private normalizePublicationCommunityIds(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .map((item) => this.pickString(item))
+          .filter((item): item is string => Boolean(item))
+      )
+    );
+  }
+
+  private toCommunityActor(actor?: TournamentActor): { id?: string; name?: string } | undefined {
+    const id = this.pickString(actor?.id);
+    const name = this.pickString(actor?.name) ?? this.pickString(actor?.login);
+    return id || name ? { ...(id ? { id } : {}), ...(name ? { name } : {}) } : undefined;
+  }
+
+  private pickIsoString(value: unknown): string | undefined {
+    const text = this.pickString(value);
+    if (!text || !Number.isFinite(Date.parse(text))) {
+      return undefined;
+    }
+    return text;
+  }
+
+  private formatPublicFeedDate(value: unknown): string | undefined {
+    const text = this.pickIsoString(value);
+    if (!text) {
+      return undefined;
+    }
+
+    const formatter = new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Moscow'
+    });
+    return formatter.format(new Date(text));
   }
 
   private toPublicView(tournament: CustomTournament): TournamentPublicView {
