@@ -15867,11 +15867,18 @@
       var payload = buildTournamentCommunityFeedPayload(tournament);
       for (var index = 0; index < ids.length; index += 1) {
         var communityId = ids[index];
+        var alreadyPublished = false;
         try {
-          if (await hasTournamentCommunityFeedItem(communityId, tournament)) {
-            skipped += 1;
-            continue;
-          }
+          alreadyPublished = await hasTournamentCommunityFeedItem(communityId, tournament);
+        } catch (_lookupError) {
+          alreadyPublished = false;
+        }
+        if (alreadyPublished) {
+          skipped += 1;
+          continue;
+        }
+
+        try {
           await api.createCommunityFeedItem(communityId, payload);
           created += 1;
         } catch (_error) {
