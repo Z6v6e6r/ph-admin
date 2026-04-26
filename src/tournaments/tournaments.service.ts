@@ -1664,6 +1664,7 @@ export class TournamentsService {
 
   private buildTournamentCommunityFeedPayload(tournament: CustomTournament) {
     const skin = tournament.skin ?? {};
+    const publicTournament = this.toPublicView(tournament);
     const tags = Array.from(
       new Set(
         [
@@ -1691,11 +1692,32 @@ export class TournamentsService {
       endAt: this.pickIsoString(tournament.endsAt),
       stationName: this.pickString(tournament.studioName) ?? undefined,
       levelLabel: this.describeTournamentLevelRange(tournament.accessLevels),
+      participants: tournament.participants.slice(0, 8).map((participant) => ({
+        id: participant.id,
+        name: participant.name,
+        avatar: participant.avatarUrl ?? null,
+        levelLabel: participant.levelLabel
+      })),
       tags,
       details: {
         tournamentId: tournament.id,
         tournamentSlug: tournament.slug,
         publicUrl: tournament.publicUrl,
+        joinUrl: publicTournament.joinUrl,
+        cardVariant: 'TOURNAMENTS_SHOWCASE_COMPACT',
+        tournamentType: tournament.tournamentType,
+        gender: tournament.gender,
+        accessLevels: tournament.accessLevels,
+        startsAt: tournament.startsAt,
+        endsAt: tournament.endsAt,
+        studioName: tournament.studioName,
+        trainerName: tournament.trainerName,
+        trainerAvatarUrl: tournament.trainerAvatarUrl ?? null,
+        maxPlayers: tournament.maxPlayers,
+        participantsCount: tournament.participants.length,
+        waitlistCount: tournament.waitlist.length,
+        skin,
+        publicTournament,
         source: 'TOURNAMENT_SERVICE'
       }
     };

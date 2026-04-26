@@ -114,7 +114,11 @@ async function main(): Promise<void> {
   assert.equal(createdFeedItems[0]?.communityId, 'community-a');
   assert.equal(createdFeedItems[0]?.payload.kind, 'TOURNAMENT');
   assert.equal(createdFeedItems[0]?.payload.title, 'Падел турнир от ПадлхАБ');
-  assert.deepEqual((createdFeedItems[0]?.payload.details as Record<string, unknown>).tournamentId, tournament.id);
+  const details = createdFeedItems[0]?.payload.details as Record<string, unknown>;
+  assert.deepEqual(details.tournamentId, tournament.id);
+  assert.equal(details.cardVariant, 'TOURNAMENTS_SHOWCASE_COMPACT');
+  assert.equal((details.publicTournament as Record<string, unknown>).id, tournament.id);
+  assert.equal((details.publicTournament as Record<string, unknown>).joinUrl, `${tournament.publicUrl}/join`);
 
   console.log('Tournament community publication test passed');
 }

@@ -307,6 +307,80 @@
       '  line-height: 1;',
       '  box-shadow: 0 14px 30px rgba(255, 90, 60, 0.26);',
       '}',
+      '.phab-community-feed__card--tournament-showcase {',
+      '  --ph-tournament-card-bg: #fafafa;',
+      '  --ph-tournament-card-line: #e8e8e9;',
+      '  --ph-tournament-card-line-soft: #e8e8e9;',
+      '  --ph-tournament-card-border: #ededed;',
+      '  --ph-tournament-card-ink: #1f1e20;',
+      '  --ph-tournament-card-ink-soft: #b4b4b4;',
+      '  --ph-tournament-card-meta: #353436;',
+      '  --ph-tournament-card-icon: #888889;',
+      '  --ph-tournament-card-accent: #8766eb;',
+      '  --ph-tournament-card-accent-soft: rgba(47, 157, 212, 0.08);',
+      '  --ph-tournament-card-accent-ink: #2f9dd4;',
+      '  --ph-tournament-ui-font: "Inter Display", "Inter", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+      '  --ph-tournament-card-title-font: "RF Dewi UltraBold", "Inter Display", "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+      '  display: flex;',
+      '  flex-direction: column;',
+      '  align-items: center;',
+      '  width: 100%;',
+      '  max-width: 359px;',
+      '  min-height: 363px;',
+      '  padding: 0 20px 16px;',
+      '  gap: 12px;',
+      '  border: none;',
+      '  border-radius: 0;',
+      '  border-bottom: 0.5px solid var(--ph-tournament-card-border);',
+      '  background: transparent;',
+      '  box-shadow: none;',
+      '  color: var(--ph-tournament-card-ink);',
+      '  justify-self: center;',
+      '  overflow: visible;',
+      '}',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-profile { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-profile-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-avatar { width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; overflow: hidden; display: grid; place-items: center; background: #d9d9d9; color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-card-title-font); font-size: 12px; line-height: 1; font-weight: 800; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-copy { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 5px; min-width: 0; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-name, .phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-handle { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-name { color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-card-title-font); font-size: 14px; line-height: 1; font-weight: 700; letter-spacing: 0.01em; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-handle { color: var(--ph-tournament-card-ink-soft); font-family: var(--ph-tournament-ui-font); font-size: 11px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-surface { box-sizing: border-box; position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; width: 100%; min-height: 263px; padding: 14px 12px; gap: 20px; background: var(--ph-tournament-card-bg); border-radius: 12px; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; width: 100%; isolation: isolate; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; flex: 1 1 auto; padding-right: 58px; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-height: 18px; max-width: 100%; padding: 5px 6px; border-radius: 24px; background: var(--ph-tournament-card-accent-soft); color: var(--ph-tournament-card-accent-ink); font-family: var(--ph-tournament-ui-font); font-size: 10px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge-text { overflow: hidden; text-overflow: ellipsis; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge-icon { width: 8px; height: 8px; flex: 0 0 8px; display: inline-flex; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge-icon svg { width: 100%; height: 100%; display: block; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-title { width: 100%; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-card-title-font); font-size: 18px; line-height: 1; font-weight: 800; letter-spacing: 0.01em; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-date-badge { position: absolute; top: 0; right: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 51px; padding: 8px; gap: 4px; border-radius: 8px; background: #ffffff; z-index: 2; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-date-day, .phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-date-weekday { width: 100%; margin: 0; text-align: center; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-date-day { color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-card-title-font); font-size: 18px; line-height: 1.24; font-weight: 800; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-date-weekday { color: var(--ph-tournament-card-accent); font-family: var(--ph-tournament-ui-font); font-size: 9px; line-height: 1; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-info { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta { display: flex; align-items: flex-start; gap: 4px; width: 100%; min-width: 0; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ph-tournament-card-meta); font-family: var(--ph-tournament-ui-font); font-size: 12px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta-icon { width: 12px; height: 12px; flex: 0 0 12px; display: inline-flex; color: var(--ph-tournament-card-icon); }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta-icon svg { width: 100%; height: 100%; display: block; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress { display: flex; gap: 2px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment { height: 3px; flex: 1 1 0; background: var(--ph-tournament-card-line-soft); }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment:first-child { border-radius: 24px 0 0 24px; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment:last-child { border-radius: 0 24px 24px 0; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment.is-filled { background: var(--ph-tournament-card-accent); }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity-texts { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity-value, .phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity-note { min-width: 0; color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-ui-font); line-height: 1; font-weight: 500; white-space: nowrap; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity-value { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity-note { font-size: 10px; letter-spacing: 0.02em; text-align: right; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-cta { appearance: none; border: none; display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 32px; padding: 10px 24px 10px 20px; border-radius: 24px; background: var(--ph-tournament-card-accent); color: #fafafa; text-decoration: none; cursor: pointer; transition: opacity 120ms ease, background 120ms ease, color 120ms ease; font-family: var(--ph-tournament-ui-font); font-size: 12px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-cta:hover { opacity: 0.94; background: #7655e2; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-cta--disabled { background: transparent; color: var(--ph-tournament-card-ink-soft); box-shadow: inset 0 0 0 1px var(--ph-tournament-card-line); cursor: default; opacity: 1; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-footer-metrics { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-footer-metric { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 4px 0; border-radius: 32px; color: var(--ph-tournament-card-meta); font-family: var(--ph-tournament-ui-font); font-size: 12px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-footer-metric.is-accent { color: var(--ph-tournament-card-accent); }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-footer-time { margin-left: auto; color: var(--ph-tournament-card-ink-soft); font-family: var(--ph-tournament-ui-font); font-size: 11px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; }',
       '.phab-community-feed__image {',
       '  width: 100%;',
       '  aspect-ratio: 16 / 9;',
@@ -611,154 +685,317 @@
     return avatar;
   }
 
+  function appendChildren(parent, children) {
+    normalizeArray(children).forEach(function (child) {
+      if (child) {
+        parent.appendChild(child);
+      }
+    });
+    return parent;
+  }
+
+  function resolveTournamentCardData(item, participants, tournamentSkin) {
+    var details = normalizeObject(item.details);
+    var publicTournament = pickFirstObject([
+      details.publicTournament,
+      details.tournament,
+      details.customTournament
+    ]);
+    var skin = pickFirstObject([
+      publicTournament.skin,
+      details.skin,
+      details.tournamentSkin
+    ]);
+    var startsAt = normalizeString(publicTournament.startsAt || details.startsAt || item.startAt);
+    var endsAt = normalizeString(publicTournament.endsAt || details.endsAt || item.endAt);
+    var maxPlayers = normalizePositiveInteger(
+      publicTournament.maxPlayers || details.maxPlayers || tournamentSkin.maxPlayers,
+      0
+    );
+    var participantsCount = normalizePositiveInteger(
+      publicTournament.participantsCount || details.participantsCount || tournamentSkin.participantsCount,
+      participants.length
+    );
+
+    return {
+      title: normalizeString(skin.title || publicTournament.name || tournamentSkin.title || item.title) || 'Турнир PadelHub',
+      badgeLabel: normalizeString(skin.badgeLabel || details.badgeLabel || publicTournament.tournamentType || details.tournamentType) || 'Рейтинговая игра',
+      ctaLabel: normalizeString(skin.ctaLabel || tournamentSkin.ctaLabel || item.ctaLabel) || 'Записаться',
+      publicUrl: normalizeString(publicTournament.publicUrl || details.publicUrl || tournamentSkin.publicUrl),
+      trainerName: normalizeString(publicTournament.trainerName || details.trainerName || item.authorName) || 'PadelHub',
+      trainerAvatarUrl: normalizeString(publicTournament.trainerAvatarUrl || details.trainerAvatarUrl || tournamentSkin.imageUrl),
+      profileHandle: normalizeString(publicTournament.studioName || details.studioName || item.stationName || item.courtName) || '@padelhub',
+      tournamentType: normalizeString(publicTournament.tournamentType || details.tournamentType) || 'Турнир',
+      gender: normalizeString(publicTournament.gender || details.gender),
+      levelLabel: normalizeString(item.levelLabel || details.levelLabel) || formatAccessLevelRange(publicTournament.accessLevels || details.accessLevels),
+      stationName: normalizeString(publicTournament.studioName || details.studioName || item.stationName || item.courtName),
+      startsAt: startsAt,
+      endsAt: endsAt,
+      maxPlayers: maxPlayers,
+      participantsCount: participantsCount,
+      waitlistCount: normalizePositiveInteger(publicTournament.waitlistCount || details.waitlistCount, 0),
+      registrationOpen: publicTournament.registrationOpen !== false,
+      spotsLeft: maxPlayers > 0 ? Math.max(0, maxPlayers - participantsCount) : null
+    };
+  }
+
+  function formatAccessLevelRange(value) {
+    var levels = normalizeArray(value)
+      .map(normalizeString)
+      .filter(Boolean);
+    if (levels.length === 0) {
+      return '';
+    }
+    if (levels.length === 1) {
+      return levels[0];
+    }
+    return levels[0] + ' - ' + levels[levels.length - 1];
+  }
+
+  function formatTournamentGenderLabel(value) {
+    var normalized = normalizeString(value).toUpperCase();
+    if (normalized === 'FEMALE' || normalized === 'WOMEN' || normalized === 'Ж') {
+      return 'Ж';
+    }
+    if (normalized === 'MALE' || normalized === 'MEN' || normalized === 'М') {
+      return 'М';
+    }
+    if (normalized === 'MIXED' || normalized === 'MIX') {
+      return 'М/Ж';
+    }
+    return '';
+  }
+
+  function formatTournamentDateParts(value) {
+    var parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return { day: '', weekday: '' };
+    }
+    return {
+      day: parsed.toLocaleDateString('ru-RU', { day: '2-digit' }),
+      weekday: parsed.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '')
+    };
+  }
+
+  function formatTournamentTime(value) {
+    var parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return '';
+    }
+    return parsed.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatTournamentScheduleLabel(card) {
+    var date = new Date(card.startsAt);
+    var dateLabel = Number.isNaN(date.getTime())
+      ? ''
+      : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace('.', '');
+    var start = formatTournamentTime(card.startsAt);
+    var end = formatTournamentTime(card.endsAt);
+    return [dateLabel, start && end ? start + '-' + end : start].filter(Boolean).join(', ');
+  }
+
+  function formatTournamentDurationLabel(card) {
+    var start = new Date(card.startsAt);
+    var end = new Date(card.endsAt);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+      return '';
+    }
+    var minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+    if (minutes >= 60) {
+      var hours = Math.floor(minutes / 60);
+      var rest = minutes % 60;
+      return String(hours) + ' ч' + (rest ? ' ' + String(rest) + ' мин' : '');
+    }
+    return String(minutes) + ' мин';
+  }
+
+  function resolveTournamentRemainingSpotsLabel(card) {
+    if (!card.registrationOpen) {
+      return 'Запись закрыта';
+    }
+    if (card.spotsLeft === null) {
+      return 'Есть места';
+    }
+    if (card.spotsLeft <= 0) {
+      return 'Нет мест';
+    }
+    return 'осталось ' + String(card.spotsLeft);
+  }
+
+  function createTournamentCompactIcon(kind) {
+    var icon = createElement(
+      'span',
+      kind === 'badge'
+        ? 'phab-tournaments__card-compact-badge-icon'
+        : 'phab-tournaments__card-compact-meta-icon phab-tournaments__card-compact-meta-icon--' + kind
+    );
+    var svgByKind = {
+      badge:
+        '<svg viewBox="0 0 8 8" fill="none" aria-hidden="true">' +
+        '<circle cx="2.35" cy="5.6" r="1.2" fill="#2F9DD4"></circle>' +
+        '<circle cx="5.8" cy="2.2" r="1.15" fill="#2F9DD4"></circle>' +
+        '<path d="M2.95 5L5.1 2.9" stroke="#2F9DD4" stroke-width="1.05" stroke-linecap="round"></path>' +
+        '<circle cx="2.1" cy="2.1" r="1.25" fill="#2F9DD4"></circle>' +
+        '</svg>',
+      calendar:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<rect x="1.25" y="2.25" width="9.5" height="8.5" rx="1.5" stroke="currentColor" stroke-width="1.1"></rect>' +
+        '<path d="M3.2 1.25V3.1M8.8 1.25V3.1M1.25 4.25H10.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '</svg>',
+      location:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<path d="M6 10.65C6 10.65 9.15 7.92 9.15 5.25C9.15 3.51 7.74 2.1 6 2.1C4.26 2.1 2.85 3.51 2.85 5.25C2.85 7.92 6 10.65 6 10.65Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"></path>' +
+        '<circle cx="6" cy="5.25" r="1.2" fill="currentColor"></circle>' +
+        '</svg>',
+      level:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<rect x="1.25" y="6.6" width="2.1" height="4.15" rx="0.7" fill="currentColor"></rect>' +
+        '<rect x="4.95" y="4.45" width="2.1" height="6.3" rx="0.7" fill="currentColor"></rect>' +
+        '<rect x="8.65" y="2.3" width="2.1" height="8.45" rx="0.7" fill="currentColor"></rect>' +
+        '</svg>',
+      gender:
+        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<circle cx="4.55" cy="3.4" r="1.75" stroke="currentColor" stroke-width="1.1"></circle>' +
+        '<path d="M1.65 10.1C1.95 8.25 2.95 7.05 4.55 7.05C6.15 7.05 7.15 8.25 7.45 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '<circle cx="8.35" cy="4.05" r="1.35" stroke="currentColor" stroke-width="1.1"></circle>' +
+        '<path d="M7.45 7.35C8.9 7.45 9.85 8.45 10.15 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '</svg>'
+    };
+    icon.innerHTML = svgByKind[kind] || '';
+    return icon;
+  }
+
+  function createTournamentCompactMetaRow(kind, text, trailing) {
+    if (!normalizeString(text)) {
+      return null;
+    }
+    return appendChildren(
+      createElement('div', 'phab-tournaments__card-compact-meta phab-tournaments__card-compact-meta--' + kind),
+      [
+        createTournamentCompactIcon(kind),
+        createElement('span', 'phab-tournaments__card-compact-meta-text', text),
+        trailing || null
+      ]
+    );
+  }
+
+  function createTournamentCompactAvatar(card) {
+    var avatar = createElement('div', 'phab-tournaments__card-compact-organizer-avatar');
+    if (card.trainerAvatarUrl) {
+      var img = document.createElement('img');
+      img.src = card.trainerAvatarUrl;
+      img.alt = card.trainerName;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.onerror = function () {
+        img.remove();
+        avatar.textContent = buildInitials(card.trainerName);
+      };
+      avatar.appendChild(img);
+      return avatar;
+    }
+    avatar.textContent = buildInitials(card.trainerName);
+    return avatar;
+  }
+
+  function createTournamentCompactProgress(card) {
+    var block = createElement('div', 'phab-tournaments__card-compact-capacity');
+    var progress = createElement('div', 'phab-tournaments__card-compact-progress');
+    var total = Math.max(1, Math.min(16, card.maxPlayers || 8));
+    var filled = Math.max(0, Math.min(total, card.maxPlayers ? card.participantsCount : 0));
+    var index;
+    for (index = 0; index < total; index += 1) {
+      progress.appendChild(
+        createElement(
+          'span',
+          'phab-tournaments__card-compact-progress-segment' + (index < filled ? ' is-filled' : '')
+        )
+      );
+    }
+    block.appendChild(progress);
+    block.appendChild(
+      appendChildren(createElement('div', 'phab-tournaments__card-compact-capacity-texts'), [
+        createElement(
+          'span',
+          'phab-tournaments__card-compact-capacity-value',
+          card.maxPlayers ? String(card.participantsCount) + '/' + String(card.maxPlayers) : String(card.participantsCount) + ' записались'
+        ),
+        createElement('span', 'phab-tournaments__card-compact-capacity-note', resolveTournamentRemainingSpotsLabel(card))
+      ])
+    );
+    return block;
+  }
+
   function createTournamentFeedCard(item, participants, tournamentSkin) {
+    var card = resolveTournamentCardData(item, participants, tournamentSkin);
     var article = createElement(
       'article',
-      'phab-community-feed__card phab-community-feed__card--tournament-skin'
+      'phab-community-feed__card phab-community-feed__card--tournament-showcase phab-tournaments__entry phab-tournaments__entry--card'
     );
-    var hero = createElement(
-      'div',
-      'phab-community-feed__tournament-hero' + (tournamentSkin.imageUrl ? '' : ' phab-community-feed__tournament-hero--plain')
-    );
-    var overlayClassName =
-      'phab-community-feed__tournament-overlay' +
-      (tournamentSkin.imageUrl ? '' : ' phab-community-feed__tournament-overlay--plain');
+    var profile = createElement('div', 'phab-tournaments__card-compact-profile');
+    var profileMain = createElement('div', 'phab-tournaments__card-compact-profile-main');
+    var profileCopy = createElement('div', 'phab-tournaments__card-compact-organizer-copy');
+    var surface = createElement('div', 'phab-tournaments__card-compact-surface');
+    var head = createElement('div', 'phab-tournaments__card-compact-head');
+    var heading = createElement('div', 'phab-tournaments__card-compact-heading');
+    var badge = createElement('div', 'phab-tournaments__card-compact-badge');
+    var dateParts = formatTournamentDateParts(card.startsAt);
+    var info = createElement('div', 'phab-tournaments__card-compact-info');
+    var footer = createElement('div', 'phab-tournaments__card-compact-footer');
+    var metrics = createElement('div', 'phab-tournaments__card-compact-footer-metrics');
+    var cta = createElement('a', 'phab-tournaments__card-compact-cta', card.ctaLabel);
+    var genderLabel = formatTournamentGenderLabel(card.gender);
+    var durationLabel = formatTournamentDurationLabel(card);
 
-    if (tournamentSkin.imageUrl) {
-      var heroImage = document.createElement('img');
-      heroImage.className = 'phab-community-feed__tournament-image';
-      heroImage.src = tournamentSkin.imageUrl;
-      heroImage.alt = tournamentSkin.title || 'Турнир PadelHub';
-      heroImage.loading = 'lazy';
-      heroImage.referrerPolicy = 'no-referrer';
-      heroImage.onerror = function () {
-        heroImage.remove();
-        hero.className = 'phab-community-feed__tournament-hero phab-community-feed__tournament-hero--plain';
-        overlay.className = 'phab-community-feed__tournament-overlay phab-community-feed__tournament-overlay--plain';
-      };
-      hero.appendChild(heroImage);
-    }
+    appendChildren(profileCopy, [
+      createElement('p', 'phab-tournaments__card-compact-organizer-name', card.trainerName),
+      createElement('p', 'phab-tournaments__card-compact-organizer-handle', card.profileHandle)
+    ]);
+    appendChildren(profileMain, [createTournamentCompactAvatar(card), profileCopy]);
+    appendChildren(profile, [profileMain]);
 
-    var overlay = createElement('div', overlayClassName);
-    var overlayText = createElement('div', 'phab-community-feed__tournament-overlay-text');
-    overlay.appendChild(overlayText);
-    if (tournamentSkin.badgeLabel) {
-      overlayText.appendChild(
-        createElement('span', 'phab-community-feed__tournament-badge', tournamentSkin.badgeLabel)
-      );
-    }
-    if (tournamentSkin.subtitle) {
-      overlayText.appendChild(
-        createElement('p', 'phab-community-feed__tournament-subtitle', tournamentSkin.subtitle)
-      );
-    }
-    hero.appendChild(overlay);
-    article.appendChild(hero);
+    appendChildren(badge, [
+      createTournamentCompactIcon('badge'),
+      createElement('span', 'phab-tournaments__card-compact-badge-text', card.badgeLabel)
+    ]);
+    appendChildren(heading, [
+      badge,
+      createElement('h3', 'phab-tournaments__card-compact-title', card.title)
+    ]);
+    appendChildren(head, [
+      heading,
+      appendChildren(createElement('div', 'phab-tournaments__card-compact-date-badge'), [
+        createElement('span', 'phab-tournaments__card-compact-date-day', dateParts.day),
+        createElement('span', 'phab-tournaments__card-compact-date-weekday', dateParts.weekday)
+      ])
+    ]);
 
-    var badges = createElement('div', 'phab-community-feed__tournament-meta');
-    var scheduleLabel = formatSchedule(item.startAt, item.endAt);
-    var stationLabel = normalizeString(item.stationName || item.courtName);
-    appendBadge(badges, resolveKindLabel(item.kind), 'kind');
-    if (scheduleLabel) {
-      badges.appendChild(
-        createElement('span', 'phab-community-feed__tournament-pill phab-community-feed__tournament-pill--accent', scheduleLabel)
-      );
-    }
-    if (stationLabel) {
-      badges.appendChild(
-        createElement('span', 'phab-community-feed__tournament-pill', stationLabel)
-      );
-    }
-    if (item.levelLabel) {
-      badges.appendChild(
-        createElement('span', 'phab-community-feed__tournament-pill', item.levelLabel)
-      );
-    }
-    if (badges.childNodes.length > 0) {
-      article.appendChild(badges);
+    appendChildren(info, [
+      createTournamentCompactMetaRow('calendar', formatTournamentScheduleLabel(card)),
+      createTournamentCompactMetaRow('location', card.stationName),
+      createTournamentCompactMetaRow('level', card.levelLabel),
+      genderLabel ? createTournamentCompactMetaRow('gender', genderLabel) : null
+    ]);
+
+    cta.href = card.publicUrl || '#';
+    cta.target = '_blank';
+    cta.rel = 'noopener noreferrer';
+    if (!card.publicUrl) {
+      cta.className += ' phab-tournaments__card-compact-cta--disabled';
+      cta.removeAttribute('href');
     }
 
-    article.appendChild(
-      createElement('h3', 'phab-community-feed__card-title', tournamentSkin.title || 'Турнир PadelHub')
-    );
-
-    if (tournamentSkin.description) {
-      article.appendChild(
-        createElement('p', 'phab-community-feed__tournament-summary', tournamentSkin.description)
-      );
-    }
-
-    var footer = createElement('div', 'phab-community-feed__tournament-footer');
-    var attendees = createElement('div', 'phab-community-feed__tournament-attendees');
-    var avatarStack = createElement('div', 'phab-community-feed__tournament-avatar-stack');
-    var attendeeCopy = createElement('div', 'phab-community-feed__tournament-attendees-copy');
-    var visibleParticipants = participants.slice(0, 5);
-    var hiddenParticipantsCount = Math.max(0, participants.length - visibleParticipants.length);
-    var attendeeValue = tournamentSkin.maxPlayers > 0
-      ? String(tournamentSkin.participantsCount) + ' из ' + String(tournamentSkin.maxPlayers) + ' мест'
-      : String(tournamentSkin.participantsCount) + ' записались';
-    var attendeeNames = visibleParticipants
-      .map(function (participant) {
-        return normalizeObject(participant).name;
-      })
-      .filter(Boolean);
-
-    visibleParticipants.forEach(function (participant) {
-      avatarStack.appendChild(createTournamentParticipantAvatar(participant, 0));
-    });
-    if (hiddenParticipantsCount > 0) {
-      avatarStack.appendChild(createTournamentParticipantAvatar(null, hiddenParticipantsCount));
-    }
-    if (avatarStack.childNodes.length === 0) {
-      avatarStack.appendChild(createTournamentParticipantAvatar({ name: 'Свободно' }, 0));
-    }
-
-    attendeeCopy.appendChild(
-      createElement('p', 'phab-community-feed__tournament-attendees-label', 'Запись в турнир')
-    );
-    attendeeCopy.appendChild(
-      createElement('p', 'phab-community-feed__tournament-attendees-value', attendeeValue)
-    );
-    attendeeCopy.appendChild(
-      createElement(
-        'p',
-        'phab-community-feed__tournament-attendees-names',
-        attendeeNames.length > 0
-          ? attendeeNames.join(', ') + (hiddenParticipantsCount > 0 ? ' +' + String(hiddenParticipantsCount) : '')
-          : 'Список участников пополняется'
-      )
-    );
-
-    attendees.appendChild(avatarStack);
-    attendees.appendChild(attendeeCopy);
-    footer.appendChild(attendees);
-
-    if (tournamentSkin.publicUrl) {
-      var cta = createElement(
-        'a',
-        'phab-community-feed__tournament-cta',
-        tournamentSkin.ctaLabel || 'Записаться'
-      );
-      cta.href = tournamentSkin.publicUrl;
-      cta.target = '_blank';
-      cta.rel = 'noopener noreferrer';
-      footer.appendChild(cta);
-    }
-
-    article.appendChild(footer);
-
-    var authorParts = [];
-    if (item.authorName) {
-      authorParts.push(item.authorName);
-    }
-    if (item.publishedAt) {
-      authorParts.push(formatDateTime(item.publishedAt));
-    }
-    if (authorParts.length > 0) {
-      article.appendChild(
-        createElement('p', 'phab-community-feed__author', authorParts.filter(Boolean).join(' · '))
-      );
-    }
+    appendChildren(surface, [head, info, createTournamentCompactProgress(card), cta]);
+    appendChildren(metrics, [
+      createElement('span', 'phab-tournaments__card-compact-footer-metric is-accent', String(card.participantsCount)),
+      createElement('span', 'phab-tournaments__card-compact-footer-metric', String(card.waitlistCount))
+    ]);
+    appendChildren(footer, [
+      metrics,
+      durationLabel ? createElement('span', 'phab-tournaments__card-compact-footer-time', durationLabel) : null
+    ]);
+    appendChildren(article, [profile, surface, footer]);
 
     return article;
   }
