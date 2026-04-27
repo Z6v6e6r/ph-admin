@@ -191,6 +191,20 @@
     { label: 'Адрес', text: 'Адрес' },
     { label: 'Спасибо!', text: 'Спасибо!' }
   ];
+  var DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG = {
+    enabled: true,
+    stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
+    stationNameIncludes: ['терехово', 'terekhovo'],
+    roomIds: [],
+    roomNameIncludes: ['new'],
+    shareAmounts: {
+      twoTeams: 500,
+      fourPlayers: 250
+    },
+    baseShareAmount: 2000,
+    vivaDirectionId: 4485,
+    vivaExerciseTypeId: 1208
+  };
   var QUICK_REPLY_STATION_UNASSIGNED = 'UNASSIGNED';
   var QUICK_REPLY_TRIGGER_OPTIONS = [
     { value: 'EXACT_PHRASE', label: 'Фраза целиком' },
@@ -4915,6 +4929,12 @@
       updateCabinetHomeAdvertisingSettings: function (payload) {
         return request('/advertising/cabinet-home/admin', 'PATCH', payload);
       },
+      getSplitPaymentPromoSettings: function () {
+        return request('/advertising/split-payment-promo/admin', 'GET');
+      },
+      updateSplitPaymentPromoSettings: function (payload) {
+        return request('/advertising/split-payment-promo/admin', 'PATCH', payload);
+      },
       createQuickReplyRule: function (payload) {
         return request('/messenger/settings/quick-replies', 'POST', payload);
       },
@@ -5303,6 +5323,12 @@
     tabAdvertising.type = 'button';
     tabAdvertising.textContent = 'Реклама';
     tabs.appendChild(tabAdvertising);
+
+    var tabSplitPromo = document.createElement('button');
+    tabSplitPromo.className = 'phab-admin-tab';
+    tabSplitPromo.type = 'button';
+    tabSplitPromo.textContent = 'Split-акция';
+    tabs.appendChild(tabSplitPromo);
 
     var content = document.createElement('div');
     content.className = 'phab-admin-content';
@@ -6187,6 +6213,12 @@
     settingsQuickRepliesTabBtn.textContent = 'Быстрые ответы';
     settingsTabs.appendChild(settingsQuickRepliesTabBtn);
 
+    var settingsSplitPromoTabBtn = document.createElement('button');
+    settingsSplitPromoTabBtn.className = 'phab-admin-community-tab';
+    settingsSplitPromoTabBtn.type = 'button';
+    settingsSplitPromoTabBtn.textContent = 'Split-акция';
+    settingsTabs.appendChild(settingsSplitPromoTabBtn);
+
     var settingsGeneralPane = document.createElement('div');
     settingsGeneralPane.className = 'phab-admin-settings-pane';
     settingsSection.appendChild(settingsGeneralPane);
@@ -6194,6 +6226,10 @@
     var settingsQuickRepliesPane = document.createElement('div');
     settingsQuickRepliesPane.className = 'phab-admin-settings-pane phab-admin-hidden';
     settingsSection.appendChild(settingsQuickRepliesPane);
+
+    var settingsSplitPromoPane = document.createElement('div');
+    settingsSplitPromoPane.className = 'phab-admin-settings-pane phab-admin-hidden';
+    settingsSection.appendChild(settingsSplitPromoPane);
 
     var settingsGrid = document.createElement('div');
     settingsGrid.className = 'phab-admin-settings-grid';
@@ -6552,6 +6588,142 @@
     var quickReplyTable = document.createElement('table');
     quickReplyTable.className = 'phab-admin-quick-reply-table';
     quickReplyTableWrap.appendChild(quickReplyTable);
+
+    var splitPromoGrid = document.createElement('div');
+    splitPromoGrid.className = 'phab-admin-settings-grid phab-admin-split-promo-grid';
+    settingsSplitPromoPane.appendChild(splitPromoGrid);
+
+    var splitPromoCard = document.createElement('div');
+    splitPromoCard.className = 'phab-admin-settings-card phab-admin-split-promo-card';
+    splitPromoGrid.appendChild(splitPromoCard);
+
+    var splitPromoHead = document.createElement('div');
+    splitPromoHead.className = 'phab-admin-settings-head';
+    splitPromoHead.textContent = 'Раздельная оплата игр';
+    splitPromoCard.appendChild(splitPromoHead);
+
+    var splitPromoList = document.createElement('div');
+    splitPromoList.className = 'phab-admin-settings-list';
+    splitPromoCard.appendChild(splitPromoList);
+
+    var splitPromoForm = document.createElement('div');
+    splitPromoForm.className = 'phab-admin-settings-form';
+    splitPromoCard.appendChild(splitPromoForm);
+
+    var splitPromoEnabledWrap = document.createElement('label');
+    splitPromoEnabledWrap.className = 'phab-admin-check';
+    splitPromoForm.appendChild(splitPromoEnabledWrap);
+
+    var splitPromoEnabledInput = document.createElement('input');
+    splitPromoEnabledInput.type = 'checkbox';
+    splitPromoEnabledWrap.appendChild(splitPromoEnabledInput);
+    splitPromoEnabledWrap.appendChild(document.createTextNode('Акция включена'));
+
+    var splitPromoStationIdsLabel = document.createElement('label');
+    splitPromoStationIdsLabel.className = 'phab-admin-settings-label';
+    splitPromoStationIdsLabel.textContent = 'Station IDs (CSV)';
+    splitPromoForm.appendChild(splitPromoStationIdsLabel);
+
+    var splitPromoStationIdsInput = document.createElement('input');
+    splitPromoStationIdsInput.className = 'phab-admin-settings-input';
+    splitPromoStationIdsInput.placeholder = '6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1';
+    splitPromoStationIdsLabel.appendChild(splitPromoStationIdsInput);
+
+    var splitPromoStationNamesLabel = document.createElement('label');
+    splitPromoStationNamesLabel.className = 'phab-admin-settings-label';
+    splitPromoStationNamesLabel.textContent = 'Название станции содержит (CSV)';
+    splitPromoForm.appendChild(splitPromoStationNamesLabel);
+
+    var splitPromoStationNamesInput = document.createElement('input');
+    splitPromoStationNamesInput.className = 'phab-admin-settings-input';
+    splitPromoStationNamesInput.placeholder = 'терехово, terekhovo';
+    splitPromoStationNamesLabel.appendChild(splitPromoStationNamesInput);
+
+    var splitPromoRoomIdsLabel = document.createElement('label');
+    splitPromoRoomIdsLabel.className = 'phab-admin-settings-label';
+    splitPromoRoomIdsLabel.textContent = 'Room IDs кортов new (CSV, пусто = по имени)';
+    splitPromoForm.appendChild(splitPromoRoomIdsLabel);
+
+    var splitPromoRoomIdsInput = document.createElement('input');
+    splitPromoRoomIdsInput.className = 'phab-admin-settings-input';
+    splitPromoRoomIdsInput.placeholder = 'room-id-1, room-id-2';
+    splitPromoRoomIdsLabel.appendChild(splitPromoRoomIdsInput);
+
+    var splitPromoRoomNamesLabel = document.createElement('label');
+    splitPromoRoomNamesLabel.className = 'phab-admin-settings-label';
+    splitPromoRoomNamesLabel.textContent = 'Название корта содержит (CSV)';
+    splitPromoForm.appendChild(splitPromoRoomNamesLabel);
+
+    var splitPromoRoomNamesInput = document.createElement('input');
+    splitPromoRoomNamesInput.className = 'phab-admin-settings-input';
+    splitPromoRoomNamesInput.placeholder = 'new';
+    splitPromoRoomNamesLabel.appendChild(splitPromoRoomNamesInput);
+
+    var splitPromoTwoTeamsLabel = document.createElement('label');
+    splitPromoTwoTeamsLabel.className = 'phab-admin-settings-label';
+    splitPromoTwoTeamsLabel.textContent = 'Цена при делении на 2 команды';
+    splitPromoForm.appendChild(splitPromoTwoTeamsLabel);
+
+    var splitPromoTwoTeamsInput = document.createElement('input');
+    splitPromoTwoTeamsInput.className = 'phab-admin-settings-input';
+    splitPromoTwoTeamsInput.type = 'number';
+    splitPromoTwoTeamsInput.min = '0';
+    splitPromoTwoTeamsInput.step = '1';
+    splitPromoTwoTeamsLabel.appendChild(splitPromoTwoTeamsInput);
+
+    var splitPromoFourPlayersLabel = document.createElement('label');
+    splitPromoFourPlayersLabel.className = 'phab-admin-settings-label';
+    splitPromoFourPlayersLabel.textContent = 'Цена при делении на 4 игроков';
+    splitPromoForm.appendChild(splitPromoFourPlayersLabel);
+
+    var splitPromoFourPlayersInput = document.createElement('input');
+    splitPromoFourPlayersInput.className = 'phab-admin-settings-input';
+    splitPromoFourPlayersInput.type = 'number';
+    splitPromoFourPlayersInput.min = '0';
+    splitPromoFourPlayersInput.step = '1';
+    splitPromoFourPlayersLabel.appendChild(splitPromoFourPlayersInput);
+
+    var splitPromoBaseShareLabel = document.createElement('label');
+    splitPromoBaseShareLabel.className = 'phab-admin-settings-label';
+    splitPromoBaseShareLabel.textContent = 'Базовая цена участника';
+    splitPromoForm.appendChild(splitPromoBaseShareLabel);
+
+    var splitPromoBaseShareInput = document.createElement('input');
+    splitPromoBaseShareInput.className = 'phab-admin-settings-input';
+    splitPromoBaseShareInput.type = 'number';
+    splitPromoBaseShareInput.min = '0';
+    splitPromoBaseShareInput.step = '1';
+    splitPromoBaseShareLabel.appendChild(splitPromoBaseShareInput);
+
+    var splitPromoDirectionLabel = document.createElement('label');
+    splitPromoDirectionLabel.className = 'phab-admin-settings-label';
+    splitPromoDirectionLabel.textContent = 'Viva direction ID';
+    splitPromoForm.appendChild(splitPromoDirectionLabel);
+
+    var splitPromoDirectionInput = document.createElement('input');
+    splitPromoDirectionInput.className = 'phab-admin-settings-input';
+    splitPromoDirectionInput.type = 'number';
+    splitPromoDirectionInput.min = '1';
+    splitPromoDirectionInput.step = '1';
+    splitPromoDirectionLabel.appendChild(splitPromoDirectionInput);
+
+    var splitPromoExerciseTypeLabel = document.createElement('label');
+    splitPromoExerciseTypeLabel.className = 'phab-admin-settings-label';
+    splitPromoExerciseTypeLabel.textContent = 'Viva exercise type ID';
+    splitPromoForm.appendChild(splitPromoExerciseTypeLabel);
+
+    var splitPromoExerciseTypeInput = document.createElement('input');
+    splitPromoExerciseTypeInput.className = 'phab-admin-settings-input';
+    splitPromoExerciseTypeInput.type = 'number';
+    splitPromoExerciseTypeInput.min = '1';
+    splitPromoExerciseTypeInput.step = '1';
+    splitPromoExerciseTypeLabel.appendChild(splitPromoExerciseTypeInput);
+
+    var splitPromoSaveBtn = document.createElement('button');
+    splitPromoSaveBtn.className = 'phab-admin-btn';
+    splitPromoSaveBtn.type = 'button';
+    splitPromoSaveBtn.textContent = 'Сохранить split-акцию';
+    splitPromoForm.appendChild(splitPromoSaveBtn);
 
     var advertisingTabs = document.createElement('div');
     advertisingTabs.className = 'phab-admin-community-tabs phab-admin-settings-tabs';
@@ -7293,6 +7465,7 @@
       tabAnalytics: tabAnalytics,
       tabSettings: tabSettings,
       tabAdvertising: tabAdvertising,
+      tabSplitPromo: tabSplitPromo,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
       logsSection: logsSection,
@@ -7433,8 +7606,10 @@
       communityPreviewBody: communityPreviewBody,
       settingsGeneralTabBtn: settingsGeneralTabBtn,
       settingsQuickRepliesTabBtn: settingsQuickRepliesTabBtn,
+      settingsSplitPromoTabBtn: settingsSplitPromoTabBtn,
       settingsGeneralPane: settingsGeneralPane,
       settingsQuickRepliesPane: settingsQuickRepliesPane,
+      settingsSplitPromoPane: settingsSplitPromoPane,
       advertisingCabinetHomeTabBtn: advertisingCabinetHomeTabBtn,
       advertisingCabinetHomePane: advertisingCabinetHomePane,
       advertisingRotationInput: advertisingRotationInput,
@@ -7444,6 +7619,18 @@
       advertisingDraftFileInput: advertisingDraftFileInput,
       advertisingDraftAddBtn: advertisingDraftAddBtn,
       advertisingList: advertisingList,
+      splitPromoList: splitPromoList,
+      splitPromoEnabledInput: splitPromoEnabledInput,
+      splitPromoStationIdsInput: splitPromoStationIdsInput,
+      splitPromoStationNamesInput: splitPromoStationNamesInput,
+      splitPromoRoomIdsInput: splitPromoRoomIdsInput,
+      splitPromoRoomNamesInput: splitPromoRoomNamesInput,
+      splitPromoTwoTeamsInput: splitPromoTwoTeamsInput,
+      splitPromoFourPlayersInput: splitPromoFourPlayersInput,
+      splitPromoBaseShareInput: splitPromoBaseShareInput,
+      splitPromoDirectionInput: splitPromoDirectionInput,
+      splitPromoExerciseTypeInput: splitPromoExerciseTypeInput,
+      splitPromoSaveBtn: splitPromoSaveBtn,
       quickReplyCreateBtn: quickReplyCreateBtn,
       quickReplyTable: quickReplyTable,
       quickReplyModal: quickReplyModal,
@@ -7717,6 +7904,68 @@
         .sort(function (left, right) {
           return left.position - right.position;
         })
+    };
+  }
+
+  function normalizeMoneySetting(value, fallback) {
+    var parsed = Number(String(value == null ? '' : value).trim().replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return fallback;
+    }
+    return Math.round(parsed);
+  }
+
+  function normalizeIntSetting(value, fallback) {
+    var parsed = Number(String(value == null ? '' : value).trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.floor(parsed);
+  }
+
+  function normalizeStringListSetting(value, fallback) {
+    var list = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(',')
+        : [];
+    var normalized = Array.from(
+      new Set(
+        list
+          .map(function (item) {
+            return String(item || '').trim();
+          })
+          .filter(Boolean)
+      )
+    );
+    return normalized.length > 0 ? normalized : (fallback || []).slice();
+  }
+
+  function normalizeSplitPaymentPromoSettings(value) {
+    var source = normalizeObject(value);
+    var defaults = DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG;
+    var shareAmounts = normalizeObject(source.shareAmounts);
+    return {
+      enabled: source.enabled !== false,
+      stationIds: normalizeStringListSetting(source.stationIds, defaults.stationIds),
+      stationNameIncludes: normalizeStringListSetting(
+        source.stationNameIncludes,
+        defaults.stationNameIncludes
+      ),
+      roomIds: normalizeStringListSetting(source.roomIds, defaults.roomIds),
+      roomNameIncludes: normalizeStringListSetting(source.roomNameIncludes, defaults.roomNameIncludes),
+      shareAmounts: {
+        twoTeams: normalizeMoneySetting(shareAmounts.twoTeams, defaults.shareAmounts.twoTeams),
+        fourPlayers: normalizeMoneySetting(shareAmounts.fourPlayers, defaults.shareAmounts.fourPlayers)
+      },
+      baseShareAmount: normalizeMoneySetting(source.baseShareAmount, defaults.baseShareAmount),
+      vivaDirectionId: normalizeIntSetting(source.vivaDirectionId, defaults.vivaDirectionId),
+      vivaExerciseTypeId: normalizeIntSetting(
+        source.vivaExerciseTypeId,
+        defaults.vivaExerciseTypeId
+      ),
+      updatedAt: String(source.updatedAt || '').trim(),
+      updatedBy: String(source.updatedBy || '').trim()
     };
   }
 
@@ -8051,7 +8300,8 @@
         accessRules: [],
         adminUsers: [],
         viva: null,
-        quickReplies: []
+        quickReplies: [],
+        splitPaymentPromo: normalizeSplitPaymentPromoSettings(null)
       },
       advertising: {
         cabinetHome: {
@@ -8199,7 +8449,11 @@
 
     function setSettingsSubtab(nextSubtab) {
       state.settingsSubtab =
-        nextSubtab === 'quickReplies' ? 'quickReplies' : 'general';
+        nextSubtab === 'quickReplies'
+          ? 'quickReplies'
+          : nextSubtab === 'splitPromo'
+            ? 'splitPromo'
+            : 'general';
       dom.settingsGeneralTabBtn.className =
         'phab-admin-community-tab' +
         (state.settingsSubtab === 'general'
@@ -8210,12 +8464,21 @@
         (state.settingsSubtab === 'quickReplies'
           ? ' phab-admin-community-tab-active'
           : '');
+      dom.settingsSplitPromoTabBtn.className =
+        'phab-admin-community-tab' +
+        (state.settingsSubtab === 'splitPromo'
+          ? ' phab-admin-community-tab-active'
+          : '');
       dom.settingsGeneralPane.className =
         state.settingsSubtab === 'general'
           ? 'phab-admin-settings-pane'
           : 'phab-admin-settings-pane phab-admin-hidden';
       dom.settingsQuickRepliesPane.className =
         state.settingsSubtab === 'quickReplies'
+          ? 'phab-admin-settings-pane'
+          : 'phab-admin-settings-pane phab-admin-hidden';
+      dom.settingsSplitPromoPane.className =
+        state.settingsSubtab === 'splitPromo'
           ? 'phab-admin-settings-pane'
           : 'phab-admin-settings-pane phab-admin-hidden';
     }
@@ -8783,7 +9046,8 @@
         { value: 'laboratory', label: 'Лаборатория', hidden: hideLaboratoryTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
         { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin },
-        { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin }
+        { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin },
+        { value: 'splitPromo', label: 'Split-акция', hidden: isRestrictedStationAdmin }
       ]
         .filter(function (item) {
           return item.hidden !== true;
@@ -22838,6 +23102,69 @@
       });
     }
 
+    function renderSettingsSplitPaymentPromo() {
+      var settings = normalizeSplitPaymentPromoSettings(
+        state.settings && state.settings.splitPaymentPromo
+      );
+      var canManage = canManageAdvertisingSettings(cfg);
+
+      clearNode(dom.splitPromoList);
+      var row = document.createElement('div');
+      row.className = 'phab-admin-settings-row';
+      dom.splitPromoList.appendChild(row);
+
+      var main = document.createElement('div');
+      main.className = 'phab-admin-settings-row-main';
+      row.appendChild(main);
+
+      var title = document.createElement('div');
+      title.className = 'phab-admin-settings-row-title';
+      title.textContent = settings.enabled ? 'Акция включена' : 'Акция выключена';
+      main.appendChild(title);
+
+      var meta = document.createElement('div');
+      meta.className = 'phab-admin-settings-row-meta';
+      meta.textContent =
+        'станции: ' +
+        (settings.stationIds.length ? settings.stationIds.join(', ') : settings.stationNameIncludes.join(', ')) +
+        ' · корты: ' +
+        (settings.roomIds.length ? settings.roomIds.join(', ') : settings.roomNameIncludes.join(', ')) +
+        ' · 2 команды: ' +
+        formatMoney(settings.shareAmounts.twoTeams) +
+        ' · 4 игрока: ' +
+        formatMoney(settings.shareAmounts.fourPlayers) +
+        (settings.updatedAt ? ' · обновлено: ' + formatDateTimeFull(settings.updatedAt) : '') +
+        (settings.updatedBy ? ' · кем: ' + settings.updatedBy : '');
+      main.appendChild(meta);
+
+      dom.splitPromoEnabledInput.checked = settings.enabled === true;
+      dom.splitPromoStationIdsInput.value = settings.stationIds.join(', ');
+      dom.splitPromoStationNamesInput.value = settings.stationNameIncludes.join(', ');
+      dom.splitPromoRoomIdsInput.value = settings.roomIds.join(', ');
+      dom.splitPromoRoomNamesInput.value = settings.roomNameIncludes.join(', ');
+      dom.splitPromoTwoTeamsInput.value = String(settings.shareAmounts.twoTeams);
+      dom.splitPromoFourPlayersInput.value = String(settings.shareAmounts.fourPlayers);
+      dom.splitPromoBaseShareInput.value = String(settings.baseShareAmount);
+      dom.splitPromoDirectionInput.value = String(settings.vivaDirectionId);
+      dom.splitPromoExerciseTypeInput.value = String(settings.vivaExerciseTypeId);
+
+      [
+        dom.splitPromoEnabledInput,
+        dom.splitPromoStationIdsInput,
+        dom.splitPromoStationNamesInput,
+        dom.splitPromoRoomIdsInput,
+        dom.splitPromoRoomNamesInput,
+        dom.splitPromoTwoTeamsInput,
+        dom.splitPromoFourPlayersInput,
+        dom.splitPromoBaseShareInput,
+        dom.splitPromoDirectionInput,
+        dom.splitPromoExerciseTypeInput,
+        dom.splitPromoSaveBtn
+      ].forEach(function (input) {
+        input.disabled = !canManage;
+      });
+    }
+
     function renderSettings() {
       renderSettingsStations();
       renderSettingsConnectors();
@@ -22845,6 +23172,7 @@
       renderSettingsViva();
       renderSettingsAdminUsers();
       renderSettingsQuickReplies();
+      renderSettingsSplitPaymentPromo();
       setSettingsSubtab(state.settingsSubtab);
     }
 
@@ -22852,6 +23180,47 @@
       return normalizeCabinetHomeAdvertisingSettings(
         state.advertising && state.advertising.cabinetHome
       );
+    }
+
+    function readSplitPaymentPromoForm() {
+      var stationIds = parseCsvInput(dom.splitPromoStationIdsInput.value);
+      var stationNameIncludes = parseCsvInput(dom.splitPromoStationNamesInput.value);
+      if (stationIds.length === 0 && stationNameIncludes.length === 0) {
+        throw new Error('Укажите Терехово через Station ID или часть названия станции');
+      }
+
+      return {
+        enabled: dom.splitPromoEnabledInput.checked === true,
+        stationIds: stationIds,
+        stationNameIncludes: stationNameIncludes,
+        roomIds: parseCsvInput(dom.splitPromoRoomIdsInput.value),
+        roomNameIncludes: parseCsvInput(dom.splitPromoRoomNamesInput.value),
+        shareAmounts: {
+          twoTeams: normalizeMoneySetting(dom.splitPromoTwoTeamsInput.value, 500),
+          fourPlayers: normalizeMoneySetting(dom.splitPromoFourPlayersInput.value, 250)
+        },
+        baseShareAmount: normalizeMoneySetting(dom.splitPromoBaseShareInput.value, 2000),
+        vivaDirectionId: normalizeIntSetting(dom.splitPromoDirectionInput.value, 4485),
+        vivaExerciseTypeId: normalizeIntSetting(dom.splitPromoExerciseTypeInput.value, 1208)
+      };
+    }
+
+    async function saveSplitPaymentPromoSettings() {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+
+      var payload = readSplitPaymentPromoForm();
+      dom.splitPromoSaveBtn.disabled = true;
+      try {
+        var response = await api.updateSplitPaymentPromoSettings(payload);
+        state.settings.splitPaymentPromo = normalizeSplitPaymentPromoSettings(response || payload);
+        renderSettings();
+        setSettingsSubtab('splitPromo');
+        setStatus('Настройки split-акции сохранены', false);
+      } finally {
+        dom.splitPromoSaveBtn.disabled = false;
+      }
     }
 
     async function saveCabinetHomeAdvertising(nextState, successText) {
@@ -23505,7 +23874,8 @@
           accessRules: [],
           adminUsers: [],
           viva: null,
-          quickReplies: []
+          quickReplies: [],
+          splitPaymentPromo: normalizeSplitPaymentPromoSettings(null)
         };
         renderSettings();
         return;
@@ -23514,6 +23884,15 @@
       var adminUsersResponse = (await api.getAdminUsers()) || {};
       var vivaSettings =
         canManageVivaSettings(cfg) ? (await api.getVivaSettings()) || null : null;
+      var splitPaymentPromoSettings = null;
+      if (canManageAdvertisingSettings(cfg)) {
+        try {
+          splitPaymentPromoSettings = (await api.getSplitPaymentPromoSettings()) || null;
+        } catch (error) {
+          splitPaymentPromoSettings = null;
+          handleError(error);
+        }
+      }
       state.settings = {
         stations: settings.stations || [],
         connectors: (settings.connectors || [])
@@ -23526,7 +23905,8 @@
           .map(normalizeQuickReplyRule)
           .filter(function (rule) {
             return Boolean(rule && rule.id);
-          })
+          }),
+        splitPaymentPromo: normalizeSplitPaymentPromoSettings(splitPaymentPromoSettings)
       };
       renderSettings();
       if (state.activeTab === 'messages') {
@@ -23717,7 +24097,7 @@
     function switchTab(nextTab) {
       if (
         isRestrictedStationAdmin &&
-        ['logs', 'analytics', 'settings', 'advertising'].indexOf(nextTab) >= 0
+        ['logs', 'analytics', 'settings', 'advertising', 'splitPromo'].indexOf(nextTab) >= 0
       ) {
         nextTab = 'messages';
       }
@@ -23735,7 +24115,8 @@
       var isCommunities = nextTab === 'communities';
       var isLaboratory = nextTab === 'laboratory';
       var isAnalytics = nextTab === 'analytics';
-      var isSettings = nextTab === 'settings';
+      var isSplitPromo = nextTab === 'splitPromo';
+      var isSettings = nextTab === 'settings' || isSplitPromo;
       var isAdvertising = nextTab === 'advertising';
       var hideLogsTab = isRestrictedStationAdmin;
       var hideCommunitiesTab = !canAccessCommunities(cfg);
@@ -23743,6 +24124,7 @@
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
       var hideAdvertisingTab = isRestrictedStationAdmin;
+      var hideSplitPromoTab = isRestrictedStationAdmin;
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
@@ -23766,12 +24148,16 @@
         (hideAnalyticsTab ? ' phab-admin-hidden' : '');
       dom.tabSettings.className =
         'phab-admin-tab' +
-        (isSettings ? ' phab-admin-tab-active' : '') +
+        (isSettings && !isSplitPromo ? ' phab-admin-tab-active' : '') +
         (hideSettingsTab ? ' phab-admin-hidden' : '');
       dom.tabAdvertising.className =
         'phab-admin-tab' +
         (isAdvertising ? ' phab-admin-tab-active' : '') +
         (hideAdvertisingTab ? ' phab-admin-hidden' : '');
+      dom.tabSplitPromo.className =
+        'phab-admin-tab' +
+        (isSplitPromo ? ' phab-admin-tab-active' : '') +
+        (hideSplitPromoTab ? ' phab-admin-hidden' : '');
       dom.mobileTabSelect.value = nextTab;
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
@@ -23787,6 +24173,9 @@
       }
       if (isAdvertising) {
         setAdvertisingSubtab(state.advertisingSubtab);
+      }
+      if (isSplitPromo) {
+        setSettingsSubtab('splitPromo');
       }
       if (!isMessages) {
         toggleMobileFiltersSheet(false);
@@ -23843,11 +24232,14 @@
           return;
         } else if (state.activeTab === 'tournaments') {
           await loadTournaments();
-        } else if (state.activeTab === 'advertising') {
-          await loadAdvertising();
-        } else {
-          await loadSettings();
-        }
+      } else if (state.activeTab === 'advertising') {
+        await loadAdvertising();
+      } else if (state.activeTab === 'splitPromo') {
+        setSettingsSubtab('splitPromo');
+        await loadSettings();
+      } else {
+        await loadSettings();
+      }
         setStatus('Готово', false);
       } catch (error) {
         handleError(error);
@@ -23861,6 +24253,7 @@
         dom.tabAnalytics.classList.add('phab-admin-hidden');
         dom.tabSettings.classList.add('phab-admin-hidden');
         dom.tabAdvertising.classList.add('phab-admin-hidden');
+        dom.tabSplitPromo.classList.add('phab-admin-hidden');
       }
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
@@ -23903,6 +24296,11 @@
         }
         if (nextTab === 'advertising') {
           loadAdvertising().catch(handleError);
+          return;
+        }
+        if (nextTab === 'splitPromo') {
+          setSettingsSubtab('splitPromo');
+          loadSettings().catch(handleError);
           return;
         }
         loadSettings().catch(handleError);
@@ -23952,11 +24350,19 @@
         switchTab('advertising');
         loadAdvertising().catch(handleError);
       });
+      dom.tabSplitPromo.addEventListener('click', function () {
+        switchTab('splitPromo');
+        setSettingsSubtab('splitPromo');
+        loadSettings().catch(handleError);
+      });
       dom.settingsGeneralTabBtn.addEventListener('click', function () {
         setSettingsSubtab('general');
       });
       dom.settingsQuickRepliesTabBtn.addEventListener('click', function () {
         setSettingsSubtab('quickReplies');
+      });
+      dom.settingsSplitPromoTabBtn.addEventListener('click', function () {
+        setSettingsSubtab('splitPromo');
       });
       dom.advertisingCabinetHomeTabBtn.addEventListener('click', function () {
         setAdvertisingSubtab('cabinetHome');
@@ -24022,6 +24428,9 @@
       });
       dom.advertisingConfigSaveBtn.addEventListener('click', function () {
         saveCabinetHomeAdvertisingRotation().catch(handleError);
+      });
+      dom.splitPromoSaveBtn.addEventListener('click', function () {
+        saveSplitPaymentPromoSettings().catch(handleError);
       });
       dom.advertisingDraftAddBtn.addEventListener('click', function () {
         addCabinetHomeAdvertisingItem().catch(handleError);

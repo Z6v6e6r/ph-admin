@@ -61,3 +61,33 @@ export interface CabinetHomeAdvertisingPublicSnapshot {
   ads: CabinetHomeAdvertisingPublicAdItem[];
   updatedAt?: string;
 }
+
+export interface SplitPaymentPromoShareAmounts {
+  twoTeams: number;
+  fourPlayers: number;
+}
+
+export interface SplitPaymentPromoSettingsRecord {
+  key: string;
+  enabled: boolean;
+  stationIds: string[];
+  stationNameIncludes: string[];
+  roomIds: string[];
+  roomNameIncludes: string[];
+  shareAmounts: SplitPaymentPromoShareAmounts;
+  baseShareAmount: number;
+  vivaDirectionId: number;
+  vivaExerciseTypeId: number;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export type SplitPaymentPromoPublicSnapshot = Omit<
+  SplitPaymentPromoSettingsRecord,
+  'key' | 'updatedBy'
+>;
+
+export type SplitPaymentPromoAdminSnapshot = Omit<
+  SplitPaymentPromoSettingsRecord,
+  'key'
+>;

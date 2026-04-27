@@ -9,12 +9,16 @@ import { randomUUID } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { UpdateCabinetHomeAdvertisingDto } from './dto/update-cabinet-home-advertising.dto';
+import { UpdateSplitPaymentPromoDto } from './dto/update-split-payment-promo.dto';
 import {
   AdvertisingAssetRecord,
   CabinetHomeAdvertisingAdRecord,
   CabinetHomeAdvertisingAdminSnapshot,
   CabinetHomeAdvertisingPublicSnapshot,
-  CabinetHomeAdvertisingSettingsRecord
+  CabinetHomeAdvertisingSettingsRecord,
+  SplitPaymentPromoAdminSnapshot,
+  SplitPaymentPromoPublicSnapshot,
+  SplitPaymentPromoSettingsRecord
 } from './advertising.types';
 
 type ParsedDataUrl = {
@@ -40,18 +44,23 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     String(process.env.ADVERTISING_ASSETS_COLLECTION ?? '').trim()
     || 'advertising_assets';
   private readonly cabinetHomeKey = 'cabinet_home';
+  private readonly splitPaymentPromoKey = 'split_payment_promo';
   private readonly maxImageSizeBytes = 2 * 1024 * 1024;
   private client?: MongoClient;
   private db?: Db;
   private cabinetHomeSettings: CabinetHomeAdvertisingSettingsRecord =
     this.createEmptyCabinetHomeSettings();
   private cabinetHomeLoaded = false;
+  private splitPaymentPromoSettings: SplitPaymentPromoSettingsRecord =
+    this.createDefaultSplitPaymentPromoSettings();
+  private splitPaymentPromoLoaded = false;
   private readonly assetCache = new Map<string, AdvertisingAssetRecord>();
 
   async onModuleInit(): Promise<void> {
     if (!this.mongoUri) {
       this.logger.log('MONGODB_URI is empty. Advertising settings use in-memory mode.');
       this.cabinetHomeLoaded = true;
+      this.splitPaymentPromoLoaded = true;
       return;
     }
 
@@ -65,6 +74,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       this.db = this.client.db(this.dbName);
       await this.ensureIndexes();
       await this.hydrateCabinetHomeSettings();
+      await this.hydrateSplitPaymentPromoSettings();
       this.logger.log(
         `Advertising settings persistence enabled. db=${this.dbName}, settings=${this.settingsCollectionName}, assets=${this.assetsCollectionName}`
       );
@@ -72,6 +82,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`MongoDB connect failed for advertising settings: ${String(error)}`);
       this.db = undefined;
       this.cabinetHomeLoaded = true;
+      this.splitPaymentPromoLoaded = true;
       await this.safeCloseClient();
     }
   }
@@ -90,6 +101,16 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   ): Promise<CabinetHomeAdvertisingPublicSnapshot> {
     const settings = await this.ensureCabinetHomeSettingsLoaded();
     return this.toPublicSnapshot(settings, baseUrl);
+  }
+
+  async getSplitPaymentPromoAdminSnapshot(): Promise<SplitPaymentPromoAdminSnapshot> {
+    const settings = await this.ensureSplitPaymentPromoSettingsLoaded();
+    return this.toSplitPaymentPromoAdminSnapshot(settings);
+  }
+
+  async getSplitPaymentPromoPublicSnapshot(): Promise<SplitPaymentPromoPublicSnapshot> {
+    const settings = await this.ensureSplitPaymentPromoSettingsLoaded();
+    return this.toSplitPaymentPromoPublicSnapshot(settings);
   }
 
   async updateCabinetHomeSettings(
@@ -156,6 +177,43 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return this.toAdminSnapshot(nextSettings, baseUrl);
   }
 
+  async updateSplitPaymentPromoSettings(
+    input: UpdateSplitPaymentPromoDto,
+    updatedBy: string | undefined
+  ): Promise<SplitPaymentPromoAdminSnapshot> {
+    const current = await this.ensureSplitPaymentPromoSettingsLoaded();
+    const now = new Date().toISOString();
+    const nextSettings: SplitPaymentPromoSettingsRecord = {
+      key: this.splitPaymentPromoKey,
+      enabled: input.enabled === true,
+      stationIds: this.normalizeStringList(input.stationIds),
+      stationNameIncludes: this.normalizeStringList(input.stationNameIncludes),
+      roomIds: this.normalizeStringList(input.roomIds),
+      roomNameIncludes: this.normalizeStringList(input.roomNameIncludes),
+      shareAmounts: {
+        twoTeams: this.normalizeMoney(input.shareAmounts?.twoTeams, current.shareAmounts.twoTeams),
+        fourPlayers: this.normalizeMoney(input.shareAmounts?.fourPlayers, current.shareAmounts.fourPlayers)
+      },
+      baseShareAmount: this.normalizeMoney(input.baseShareAmount, current.baseShareAmount),
+      vivaDirectionId: this.normalizePositiveInteger(input.vivaDirectionId, current.vivaDirectionId),
+      vivaExerciseTypeId: this.normalizePositiveInteger(
+        input.vivaExerciseTypeId,
+        current.vivaExerciseTypeId
+      ),
+      updatedAt: now,
+      updatedBy: this.normalizeOptional(updatedBy) ?? current.updatedBy
+    };
+
+    if (nextSettings.stationIds.length === 0 && nextSettings.stationNameIncludes.length === 0) {
+      throw new BadRequestException('Station restriction is required for split-payment promo');
+    }
+
+    this.splitPaymentPromoSettings = nextSettings;
+    this.splitPaymentPromoLoaded = true;
+    await this.persistSplitPaymentPromoSettings(nextSettings);
+    return this.toSplitPaymentPromoAdminSnapshot(nextSettings);
+  }
+
   async getAsset(assetId: string): Promise<AdvertisingAssetRecord | null> {
     const normalizedAssetId = this.normalizeOptional(assetId);
     if (!normalizedAssetId) {
@@ -200,11 +258,34 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     this.cabinetHomeLoaded = true;
   }
 
+  private async hydrateSplitPaymentPromoSettings(): Promise<void> {
+    if (!this.db) {
+      this.splitPaymentPromoLoaded = true;
+      return;
+    }
+
+    const record = await this.settings().findOne(
+      { key: this.splitPaymentPromoKey },
+      { projection: { _id: 0 } }
+    );
+    this.splitPaymentPromoSettings = this.normalizeSplitPaymentPromoSettingsRecord(
+      (record as SplitPaymentPromoSettingsRecord | null) ?? null
+    );
+    this.splitPaymentPromoLoaded = true;
+  }
+
   private async ensureCabinetHomeSettingsLoaded(): Promise<CabinetHomeAdvertisingSettingsRecord> {
     if (!this.cabinetHomeLoaded) {
       await this.hydrateCabinetHomeSettings();
     }
     return this.cabinetHomeSettings;
+  }
+
+  private async ensureSplitPaymentPromoSettingsLoaded(): Promise<SplitPaymentPromoSettingsRecord> {
+    if (!this.splitPaymentPromoLoaded) {
+      await this.hydrateSplitPaymentPromoSettings();
+    }
+    return this.splitPaymentPromoSettings;
   }
 
   private toAdminSnapshot(
@@ -254,6 +335,41 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  private toSplitPaymentPromoAdminSnapshot(
+    settings: SplitPaymentPromoSettingsRecord
+  ): SplitPaymentPromoAdminSnapshot {
+    return {
+      enabled: settings.enabled === true,
+      stationIds: settings.stationIds,
+      stationNameIncludes: settings.stationNameIncludes,
+      roomIds: settings.roomIds,
+      roomNameIncludes: settings.roomNameIncludes,
+      shareAmounts: settings.shareAmounts,
+      baseShareAmount: settings.baseShareAmount,
+      vivaDirectionId: settings.vivaDirectionId,
+      vivaExerciseTypeId: settings.vivaExerciseTypeId,
+      updatedAt: settings.updatedAt,
+      updatedBy: settings.updatedBy
+    };
+  }
+
+  private toSplitPaymentPromoPublicSnapshot(
+    settings: SplitPaymentPromoSettingsRecord
+  ): SplitPaymentPromoPublicSnapshot {
+    return {
+      enabled: settings.enabled === true,
+      stationIds: settings.stationIds,
+      stationNameIncludes: settings.stationNameIncludes,
+      roomIds: settings.roomIds,
+      roomNameIncludes: settings.roomNameIncludes,
+      shareAmounts: settings.shareAmounts,
+      baseShareAmount: settings.baseShareAmount,
+      vivaDirectionId: settings.vivaDirectionId,
+      vivaExerciseTypeId: settings.vivaExerciseTypeId,
+      updatedAt: settings.updatedAt
+    };
+  }
+
   private normalizeSettingsRecord(
     record: CabinetHomeAdvertisingSettingsRecord | null
   ): CabinetHomeAdvertisingSettingsRecord {
@@ -292,6 +408,66 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       key: this.cabinetHomeKey,
       rotationEnabled: false,
       ads: []
+    };
+  }
+
+  private createDefaultSplitPaymentPromoSettings(): SplitPaymentPromoSettingsRecord {
+    return {
+      key: this.splitPaymentPromoKey,
+      enabled: true,
+      stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
+      stationNameIncludes: ['терехово', 'terekhovo'],
+      roomIds: [],
+      roomNameIncludes: ['new'],
+      shareAmounts: {
+        twoTeams: 500,
+        fourPlayers: 250
+      },
+      baseShareAmount: 2000,
+      vivaDirectionId: 4485,
+      vivaExerciseTypeId: 1208
+    };
+  }
+
+  private normalizeSplitPaymentPromoSettingsRecord(
+    record: SplitPaymentPromoSettingsRecord | null
+  ): SplitPaymentPromoSettingsRecord {
+    const defaults = this.createDefaultSplitPaymentPromoSettings();
+    if (!record) {
+      return defaults;
+    }
+
+    return {
+      key: this.splitPaymentPromoKey,
+      enabled: record.enabled !== false,
+      stationIds: this.normalizeStringList(record.stationIds, defaults.stationIds),
+      stationNameIncludes: this.normalizeStringList(
+        record.stationNameIncludes,
+        defaults.stationNameIncludes
+      ),
+      roomIds: this.normalizeStringList(record.roomIds),
+      roomNameIncludes: this.normalizeStringList(
+        record.roomNameIncludes,
+        defaults.roomNameIncludes
+      ),
+      shareAmounts: {
+        twoTeams: this.normalizeMoney(record.shareAmounts?.twoTeams, defaults.shareAmounts.twoTeams),
+        fourPlayers: this.normalizeMoney(
+          record.shareAmounts?.fourPlayers,
+          defaults.shareAmounts.fourPlayers
+        )
+      },
+      baseShareAmount: this.normalizeMoney(record.baseShareAmount, defaults.baseShareAmount),
+      vivaDirectionId: this.normalizePositiveInteger(
+        record.vivaDirectionId,
+        defaults.vivaDirectionId
+      ),
+      vivaExerciseTypeId: this.normalizePositiveInteger(
+        record.vivaExerciseTypeId,
+        defaults.vivaExerciseTypeId
+      ),
+      updatedAt: this.normalizeOptional(record.updatedAt),
+      updatedBy: this.normalizeOptional(record.updatedBy)
     };
   }
 
@@ -373,6 +549,38 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return normalized ? normalized : undefined;
   }
 
+  private normalizeStringList(value: unknown, fallback: string[] = []): string[] {
+    const rawItems = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(',')
+        : [];
+    const normalized = Array.from(
+      new Set(
+        rawItems
+          .map((item) => String(item ?? '').trim())
+          .filter((item) => item.length > 0)
+      )
+    );
+    return normalized.length > 0 ? normalized : fallback.slice();
+  }
+
+  private normalizeMoney(value: unknown, fallback: number): number {
+    const parsed = Number(String(value ?? '').trim().replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return fallback;
+    }
+    return Math.round(parsed);
+  }
+
+  private normalizePositiveInteger(value: unknown, fallback: number): number {
+    const parsed = Number(String(value ?? '').trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.floor(parsed);
+  }
+
   private async persistCabinetHomeSettings(
     settings: CabinetHomeAdvertisingSettingsRecord
   ): Promise<void> {
@@ -382,7 +590,21 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
 
     await this.settings().updateOne(
       { key: this.cabinetHomeKey },
-      { $set: settings },
+      { $set: settings as unknown as Record<string, unknown> },
+      { upsert: true }
+    );
+  }
+
+  private async persistSplitPaymentPromoSettings(
+    settings: SplitPaymentPromoSettingsRecord
+  ): Promise<void> {
+    if (!this.db) {
+      return;
+    }
+
+    await this.settings().updateOne(
+      { key: this.splitPaymentPromoKey },
+      { $set: settings as unknown as Record<string, unknown> },
       { upsert: true }
     );
   }
@@ -396,10 +618,8 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     await this.assets().updateOne({ id: asset.id }, { $set: asset }, { upsert: true });
   }
 
-  private settings(): Collection<CabinetHomeAdvertisingSettingsRecord> {
-    return this.requireDb().collection<CabinetHomeAdvertisingSettingsRecord>(
-      this.settingsCollectionName
-    );
+  private settings(): Collection<Record<string, unknown>> {
+    return this.requireDb().collection<Record<string, unknown>>(this.settingsCollectionName);
   }
 
   private assets(): Collection<AdvertisingAssetRecord> {

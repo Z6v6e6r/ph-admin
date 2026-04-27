@@ -14,10 +14,13 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { UpdateCabinetHomeAdvertisingDto } from './dto/update-cabinet-home-advertising.dto';
+import { UpdateSplitPaymentPromoDto } from './dto/update-split-payment-promo.dto';
 import { AdvertisingService } from './advertising.service';
 import {
   CabinetHomeAdvertisingAdminSnapshot,
-  CabinetHomeAdvertisingPublicSnapshot
+  CabinetHomeAdvertisingPublicSnapshot,
+  SplitPaymentPromoAdminSnapshot,
+  SplitPaymentPromoPublicSnapshot
 } from './advertising.types';
 
 @Controller('advertising')
@@ -31,6 +34,11 @@ export class AdvertisingController {
     return this.advertisingService.getCabinetHomePublicSnapshot(
       this.getRequestBaseUrl(request)
     );
+  }
+
+  @Get('split-payment-promo')
+  getSplitPaymentPromoPublic(): Promise<SplitPaymentPromoPublicSnapshot> {
+    return this.advertisingService.getSplitPaymentPromoPublicSnapshot();
   }
 
   @Get('cabinet-home/admin')
@@ -48,6 +56,18 @@ export class AdvertisingController {
     );
   }
 
+  @Get('split-payment-promo/admin')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  async getSplitPaymentPromoAdmin(
+    @CurrentUser() user?: RequestUser
+  ): Promise<SplitPaymentPromoAdminSnapshot> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+
+    return this.advertisingService.getSplitPaymentPromoAdminSnapshot();
+  }
+
   @Patch('cabinet-home/admin')
   @Roles(Role.SUPER_ADMIN, Role.MANAGER)
   async updateCabinetHomeAdmin(
@@ -63,6 +83,22 @@ export class AdvertisingController {
       dto,
       user.title || user.login || user.id,
       this.getRequestBaseUrl(request)
+    );
+  }
+
+  @Patch('split-payment-promo/admin')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  async updateSplitPaymentPromoAdmin(
+    @Body() dto: UpdateSplitPaymentPromoDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<SplitPaymentPromoAdminSnapshot> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+
+    return this.advertisingService.updateSplitPaymentPromoSettings(
+      dto,
+      user.title || user.login || user.id
     );
   }
 
