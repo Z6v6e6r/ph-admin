@@ -2,10 +2,11 @@
   var STYLE_ID = 'phab-tournaments-showcase-style';
   var DEFAULT_API_BASE_URL = inferApiBaseUrl(document.currentScript && document.currentScript.src);
   var LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+  var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULTS = {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     stationIds: [],
-    limit: 12,
+    limit: 48,
     includePast: false,
     refreshMs: 0,
     variant: 'embed',
@@ -207,9 +208,12 @@
 
       .phab-tournaments__toolbar {
         display: grid;
-        gap: 14px;
-        padding: 18px 16px;
-        border-radius: 20px;
+        gap: 0;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
       }
 
       .phab-tournaments__toolbar-row {
@@ -219,32 +223,14 @@
 
       .phab-tournaments__days-panel {
         display: flex;
-        gap: 10px;
+        gap: 0;
         align-items: center;
         min-width: 0;
         width: 100%;
       }
 
       .phab-tournaments__day-nav {
-        appearance: none;
-        border: 1px solid var(--ph-tournament-line);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 38px;
-        height: 38px;
-        padding: 0;
-        border-radius: 999px;
-        background: var(--ph-tournament-white);
-        color: var(--ph-tournament-ink);
-        font-size: 20px;
-        line-height: 1;
-        cursor: pointer;
-        transition: opacity 120ms ease, box-shadow 120ms ease;
-        font-family: var(--ph-tournament-button-font);
-        font-style: italic;
-        font-weight: 800;
-        flex: 0 0 38px;
+        display: none;
       }
 
       .phab-tournaments__day-nav:disabled {
@@ -255,10 +241,10 @@
 
       .phab-tournaments__day-rail {
         display: flex;
-        gap: 12px;
+        gap: 6px;
         min-width: 0;
         overflow-x: auto;
-        padding: 0 2px 8px;
+        padding: 0 6px 10px;
         scrollbar-width: none;
         scroll-behavior: smooth;
         flex: 1 1 auto;
@@ -274,8 +260,8 @@
         display: inline-flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
-        min-width: 44px;
+        gap: 7px;
+        min-width: 48px;
         padding: 0;
         background: transparent;
         color: var(--ph-tournament-ink);
@@ -296,7 +282,7 @@
       .phab-tournaments__day-month,
       .phab-tournaments__day-date {
         display: flex;
-        width: 44px;
+        width: 48px;
         align-items: center;
         justify-content: center;
       }
@@ -325,7 +311,7 @@
         background: var(--ph-tournament-white);
         color: var(--ph-tournament-ink);
         box-shadow: none;
-        font-size: 16px;
+        font-size: 18px;
         line-height: 1;
         letter-spacing: -0.02em;
         font-family: var(--ph-tournament-button-font);
@@ -334,7 +320,7 @@
       }
 
       .phab-tournaments__day.is-active .phab-tournaments__day-weekday {
-        color: var(--ph-tournament-purple);
+        color: #bdbdbd;
       }
 
       .phab-tournaments__day.is-active .phab-tournaments__day-date {
@@ -1683,17 +1669,17 @@
         }
 
         .phab-tournaments__hero,
-        .phab-tournaments__toolbar,
         .phab-tournaments__dialog {
           padding: 16px;
         }
 
         .phab-tournaments__days-panel {
-          gap: 10px;
+          gap: 0;
         }
 
         .phab-tournaments__day-rail {
-          gap: 10px;
+          gap: 6px;
+          padding: 0 0 10px;
         }
 
         .phab-tournaments__day-nav {
@@ -1705,7 +1691,7 @@
 
         .phab-tournaments__day-month,
         .phab-tournaments__day-date {
-          width: 44px;
+          width: 48px;
         }
 
         .phab-tournaments__day-month {
@@ -1715,7 +1701,7 @@
 
         .phab-tournaments__day-date {
           min-height: 31px;
-          font-size: 16px;
+          font-size: 18px;
           border-radius: 0 0 8px 8px;
         }
 
@@ -2473,14 +2459,29 @@
     });
   }
 
+  function getStartOfToday() {
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+  }
+
+  function addDays(date, days) {
+    var next = new Date(date.getTime());
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
   function filterVisibleItems(items, includePast) {
-    var todayKey;
+    var today;
+    var endDay;
 
     if (includePast) {
       return items.slice();
     }
 
-    todayKey = formatDateKey(new Date());
+    today = getStartOfToday();
+    endDay = addDays(today, DEFAULT_FORWARD_DAYS - 1);
+    endDay.setHours(23, 59, 59, 999);
 
     return items.filter(function (item) {
       var parsed = parseDate(item.startsAt);
@@ -2489,11 +2490,27 @@
         return true;
       }
 
-      return formatDateKey(parsed) >= todayKey;
+      return parsed.getTime() >= today.getTime() && parsed.getTime() <= endDay.getTime();
     });
   }
 
-  function buildDayGroups(items) {
+  function toDayGroup(group) {
+    var weekday = group.date ? formatWeekdayShort(group.date).toUpperCase() : '...';
+    var month = group.date ? formatMonthShort(group.date).toUpperCase() : 'DATE';
+    var dayNumber = group.date ? String(group.date.getDate()).padStart(2, '0') : '—';
+
+    return {
+      key: group.key,
+      date: group.date,
+      items: group.items,
+      weekday: weekday,
+      month: month,
+      dayNumber: dayNumber,
+      headline: group.date ? formatDayLabel(group.date) : 'Турниры без даты'
+    };
+  }
+
+  function buildExistingDayGroups(items) {
     var grouped = {};
     var ordered = [];
 
@@ -2514,20 +2531,52 @@
     });
 
     return ordered.map(function (group) {
-      var weekday = group.date ? formatWeekdayShort(group.date).toUpperCase() : '...';
-      var month = group.date ? formatMonthShort(group.date).toUpperCase() : 'DATE';
-      var dayNumber = group.date ? String(group.date.getDate()) : '—';
-
-      return {
-        key: group.key,
-        date: group.date,
-        items: group.items,
-        weekday: weekday,
-        month: month,
-        dayNumber: dayNumber,
-        headline: group.date ? formatDayLabel(group.date) : 'Турниры без даты'
-      };
+      return toDayGroup(group);
     });
+  }
+
+  function buildForwardDayGroups(items) {
+    var grouped = {};
+    var today = getStartOfToday();
+    var groups = [];
+
+    items.forEach(function (item) {
+      var parsed = parseDate(item.startsAt);
+      var key = parsed ? formatDateKey(parsed) : 'unknown';
+
+      if (!grouped[key]) {
+        grouped[key] = [];
+      }
+      grouped[key].push(item);
+    });
+
+    for (var index = 0; index < DEFAULT_FORWARD_DAYS; index += 1) {
+      var date = addDays(today, index);
+      var key = formatDateKey(date);
+      groups.push(
+        toDayGroup({
+          key: key,
+          date: date,
+          items: grouped[key] || []
+        })
+      );
+    }
+
+    if (grouped.unknown && grouped.unknown.length > 0) {
+      groups.push(
+        toDayGroup({
+          key: 'unknown',
+          date: null,
+          items: grouped.unknown
+        })
+      );
+    }
+
+    return groups;
+  }
+
+  function buildDayGroups(items, includePast) {
+    return includePast ? buildExistingDayGroups(items) : buildForwardDayGroups(items);
   }
 
   function ensureSelectedDay(state, dayGroups) {
@@ -2710,7 +2759,7 @@
       url.searchParams.set('stationId', config.stationIds.join(','));
     }
     if (config.limit > 0) {
-      url.searchParams.set('limit', String(config.limit));
+      url.searchParams.set('limit', String(Math.max(config.limit, DEFAULTS.limit)));
     }
     if (config.includePast) {
       url.searchParams.set('includePast', 'true');
@@ -3733,7 +3782,7 @@
       )
     );
     syncResponsiveViewMode(state);
-    var dayGroups = buildDayGroups(items);
+    var dayGroups = buildDayGroups(items, state.config.includePast);
     var selectedGroup;
     var root = createElement(
       'section',
@@ -3762,7 +3811,9 @@
       board.appendChild(
         createStatusCard(
           'Пока нет доступных турниров',
-          'Проверьте фильтры stationId/includePast или убедитесь, что у турниров есть public URL.'
+          selectedGroup
+            ? 'На выбранную дату турниров пока нет.'
+            : 'Проверьте фильтры stationId/includePast или убедитесь, что у турниров есть public URL.'
         )
       );
     } else {

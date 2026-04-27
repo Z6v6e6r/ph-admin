@@ -75,8 +75,9 @@ interface TournamentLevelDescriptor {
   maxScore: number;
 }
 
-const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 24;
-const PUBLIC_TOURNAMENTS_LIMIT_MAX = 48;
+const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 48;
+const PUBLIC_TOURNAMENTS_LIMIT_MAX = 96;
+const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
 const TOURNAMENT_LEVEL_BANDS = [
@@ -810,6 +811,10 @@ export class TournamentsService {
       return false;
     }
 
+    if (!options.includePast && !this.isTournamentWithinPublicForwardWindow(tournament)) {
+      return false;
+    }
+
     if (options.stationIds.length === 0) {
       return true;
     }
@@ -823,6 +828,22 @@ export class TournamentsService {
     }
 
     return options.stationIds.some((stationId) => candidates.includes(stationId));
+  }
+
+  private isTournamentWithinPublicForwardWindow(tournament: CustomTournament): boolean {
+    const startsAt = Date.parse(tournament.startsAt ?? '');
+    if (!Number.isFinite(startsAt)) {
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const end = new Date(today);
+    end.setDate(end.getDate() + PUBLIC_TOURNAMENTS_FORWARD_DAYS - 1);
+    end.setHours(23, 59, 59, 999);
+
+    return startsAt >= today.getTime() && startsAt <= end.getTime();
   }
 
   private comparePublicTournaments(left: CustomTournament, right: CustomTournament): number {
