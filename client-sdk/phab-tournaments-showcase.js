@@ -2603,22 +2603,57 @@
     );
   }
 
-  function scrollActiveDayIntoView(mount) {
-    if (!mount || typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+  function scheduleDayRailShift(mount, state, dayGroups, nextDayKey) {
+    var rail = mount ? mount.querySelector('.phab-tournaments__day-rail') : null;
+    var currentIndex = dayGroups.findIndex(function (group) {
+      return group.key === state.selectedDayKey;
+    });
+    var nextIndex = dayGroups.findIndex(function (group) {
+      return group.key === nextDayKey;
+    });
+
+    state.dayRailScrollLeft = rail ? rail.scrollLeft : state.dayRailScrollLeft || 0;
+    state.dayRailShiftDirection =
+      currentIndex >= 0 && nextIndex >= 0
+        ? Math.max(-1, Math.min(1, nextIndex - currentIndex))
+        : 0;
+    state.dayRailShiftPending = state.dayRailShiftDirection !== 0;
+  }
+
+  function shiftDayRail(mount, state) {
+    if (
+      !mount
+      || !state.dayRailShiftPending
+      || typeof window === 'undefined'
+      || typeof window.requestAnimationFrame !== 'function'
+    ) {
       return;
     }
 
     window.requestAnimationFrame(function () {
-      var activeDay = mount.querySelector('.phab-tournaments__day.is-active');
-      if (!activeDay || typeof activeDay.scrollIntoView !== 'function') {
+      var rail = mount.querySelector('.phab-tournaments__day-rail');
+      var firstDay = rail ? rail.querySelector('.phab-tournaments__day') : null;
+      var step = firstDay
+        ? firstDay.getBoundingClientRect().width
+        : 48;
+
+      if (!rail) {
+        state.dayRailShiftPending = false;
         return;
       }
 
-      activeDay.scrollIntoView({
+      if (firstDay) {
+        var styles = window.getComputedStyle ? window.getComputedStyle(rail) : null;
+        var gap = styles ? parseFloat(styles.columnGap || styles.gap || '0') : 0;
+        step += Number.isFinite(gap) ? gap : 0;
+      }
+
+      rail.scrollLeft = state.dayRailScrollLeft || 0;
+      rail.scrollTo({
+        left: Math.max(0, (state.dayRailScrollLeft || 0) + state.dayRailShiftDirection * step),
         behavior: 'smooth',
-        inline: 'center',
-        block: 'nearest'
       });
+      state.dayRailShiftPending = false;
     });
   }
 
@@ -3453,6 +3488,7 @@
     ]);
 
     button.addEventListener('click', function () {
+      scheduleDayRailShift(mount, state, state.dayGroups || [], group.key);
       state.selectedDayKey = group.key;
       renderTournaments(mount, state.payload, state);
     });
@@ -3470,6 +3506,7 @@
       });
       var nextIndex = Math.max(0, Math.min(dayGroups.length - 1, currentIndex + delta));
       if (dayGroups[nextIndex]) {
+        scheduleDayRailShift(mount, state, dayGroups, dayGroups[nextIndex].key);
         state.selectedDayKey = dayGroups[nextIndex].key;
         renderTournaments(mount, state.payload, state);
       }
@@ -3844,7 +3881,7 @@
     mount.innerHTML = '';
     mount.appendChild(root);
     mount.appendChild(renderDialog(mount, state));
-    scrollActiveDayIntoView(mount);
+    shiftDayRail(mount, state);
   }
 
   function renderLoading(mount) {
@@ -4081,7 +4118,10 @@
       outcome: null,
       authPending: null,
       authTimer: 0,
-      reloadOnClose: false
+      reloadOnClose: false,
+      dayRailScrollLeft: 0,
+      dayRailShiftDirection: 0,
+      dayRailShiftPending: false
     };
 
     mount.__phabTournamentsInitialized = true;
