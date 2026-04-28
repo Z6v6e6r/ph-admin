@@ -192,6 +192,7 @@ export interface TournamentPurchaseOption {
   label: string;
   priceLabel: string;
   description?: string;
+  productType?: 'SUBSCRIPTION' | 'ONE_TIME';
 }
 
 export interface TournamentBookingConfig {
@@ -200,6 +201,9 @@ export interface TournamentBookingConfig {
   acceptedSubscriptions: TournamentAcceptedSubscriptionRule[];
   purchaseOptions: TournamentPurchaseOption[];
   purchaseFlowUrl?: string;
+  vivaWidgetId?: string;
+  vivaExerciseId?: string;
+  vivaStudioId?: string;
 }
 
 export interface CustomTournament extends Tournament {
@@ -289,7 +293,8 @@ export interface TournamentRegistrationResponse {
     | 'WAITLISTED'
     | 'ALREADY_REGISTERED'
     | 'ALREADY_WAITLISTED'
-    | 'PURCHASE_REQUIRED';
+    | 'PURCHASE_REQUIRED'
+    | 'PURCHASE_STARTED';
   message: string;
   tournamentId?: string;
   tournamentSlug?: string;
@@ -346,6 +351,8 @@ export interface TournamentJoinPaymentState {
   selectedSubscription?: TournamentClientSubscription;
   purchaseOptions: TournamentPurchaseOption[];
   purchaseFlowUrl?: string;
+  checkoutUrl?: string;
+  transactionId?: string;
 }
 
 export interface TournamentJoinFlowResponse {

@@ -65,6 +65,16 @@ interface RegistrationInput {
   subscriptions?: TournamentClientSubscription[];
 }
 
+interface JoinPurchaseTransactionInput extends RegistrationInput {
+  successUrl: string;
+  failUrl: string;
+}
+
+interface VivaJoinTransactionResponse {
+  transactionId?: string;
+  checkoutUrl?: string;
+}
+
 interface TournamentLevelDescriptor {
   token: string;
   base: string;
@@ -108,6 +118,14 @@ const DEFAULT_TOURNAMENT_MECHANICS_WEIGHTS: AmericanoPenaltyWeights = {
 @Injectable()
 export class TournamentsService {
   private readonly logger = new Logger(TournamentsService.name);
+  private readonly vivaEndUserApiBaseUrl =
+    this.normalizeBaseUrl(process.env.VIVA_END_USER_API_BASE_URL)
+    || this.normalizeBaseUrl(process.env.VIVA_ADMIN_API_BASE_URL)
+    || 'https://api.vivacrm.ru';
+  private readonly vivaEndUserWidgetId =
+    this.pickString(process.env.VIVA_END_USER_WIDGET_ID) ?? 'iSkq6G';
+  private readonly vivaEndUserRequestTimeoutMs =
+    this.readPositiveNumberEnv('VIVA_END_USER_TIMEOUT_MS', 5000);
 
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
@@ -604,6 +622,103 @@ export class TournamentsService {
       tournamentSlug: tournament.slug,
       participant,
       payment
+    };
+  }
+
+  async createPublicJoinPurchaseTransaction(
+    slug: string,
+    input: JoinPurchaseTransactionInput
+  ): Promise<TournamentRegistrationResponse> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomBySlug(slug);
+    const normalizedPhone = this.normalizePhone(input.phone);
+    const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
+    if (!normalizedPhone) {
+      return {
+        ok: false,
+        code: 'PHONE_REQUIRED',
+        message: 'Для покупки участия нужен номер телефона.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const access = this.evaluateAccess(tournament, input.levelLabel);
+    if (!access.ok) {
+      return {
+        ok: false,
+        code: access.code,
+        message: access.message,
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const payment = this.resolveJoinPayment(
+      tournament,
+      {
+        id: normalizedPhone,
+        authorized: true,
+        authSource: 'headers',
+        name: input.name,
+        phone: normalizedPhone,
+        levelLabel: normalizedLevel,
+        onboardingCompleted: Boolean(normalizedLevel),
+        subscriptions: this.readClientSubscriptionsFromInput(input)
+      },
+      normalizedLevel
+    );
+
+    if (!payment.required || payment.code !== 'PURCHASE_REQUIRED') {
+      return this.registerPublicParticipant(slug, input);
+    }
+
+    const booking = this.resolveBookingConfig(tournament);
+    const purchaseOption = this.resolveSelectedPurchaseOption(
+      booking.purchaseOptions,
+      input.selectedPurchaseOptionId
+    );
+    if (!purchaseOption) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Для покупки участия нужен тариф.',
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+
+    const transaction = await this.createVivaJoinTransaction({
+      booking,
+      purchaseOption,
+      tournament,
+      phone: normalizedPhone,
+      successUrl: input.successUrl,
+      failUrl: input.failUrl
+    });
+
+    if (!transaction.checkoutUrl) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Viva создала транзакцию без ссылки на оплату. Попробуйте повторить позже.',
+        tournamentSlug: tournament.slug,
+        payment: {
+          ...payment,
+          transactionId: transaction.transactionId
+        }
+      };
+    }
+
+    return {
+      ok: true,
+      code: 'PURCHASE_STARTED',
+      message: 'Покупка участия создана. Перейдите к оплате, чтобы завершить запись.',
+      tournamentId: tournament.id,
+      tournamentSlug: tournament.slug,
+      payment: {
+        ...payment,
+        checkoutUrl: transaction.checkoutUrl,
+        transactionId: transaction.transactionId
+      }
     };
   }
 
@@ -1408,6 +1523,7 @@ export class TournamentsService {
         ? (tournament.details as Record<string, unknown>)
         : {};
     const rawBooking = this.toRecord(details.booking) ?? this.toRecord(details.joinFlow) ?? {};
+    const rawViva = this.toRecord(rawBooking.viva) ?? {};
     const acceptedSubscriptions = this.normalizeAcceptedSubscriptions(
       rawBooking.acceptedSubscriptions ?? rawBooking.subscriptions
     );
@@ -1427,7 +1543,20 @@ export class TournamentsService {
       required,
       acceptedSubscriptions,
       purchaseOptions,
-      purchaseFlowUrl: this.pickString(rawBooking.purchaseFlowUrl ?? rawBooking.purchaseUrl) ?? undefined
+      purchaseFlowUrl: this.pickString(rawBooking.purchaseFlowUrl ?? rawBooking.purchaseUrl) ?? undefined,
+      vivaWidgetId:
+        this.pickString(rawBooking.vivaWidgetId ?? rawBooking.widgetId ?? rawViva.widgetId)
+        ?? undefined,
+      vivaExerciseId:
+        this.pickString(rawBooking.vivaExerciseId ?? rawBooking.exerciseId ?? rawViva.exerciseId)
+        ?? this.pickString(tournament.sourceTournamentId)
+        ?? this.pickString(this.getSourceTournamentSnapshot(tournament).id)
+        ?? undefined,
+      vivaStudioId:
+        this.pickString(rawBooking.vivaStudioId ?? rawBooking.studioId ?? rawViva.studioId)
+        ?? this.pickString(tournament.studioId)
+        ?? this.pickString(this.getSourceTournamentSnapshot(tournament).studioId)
+        ?? undefined
     };
   }
 
@@ -1488,10 +1617,139 @@ export class TournamentsService {
         id: this.pickString(record.id) ?? `purchase-${index + 1}`,
         label,
         priceLabel,
-        description: this.pickString(record.description) ?? undefined
+        description: this.pickString(record.description) ?? undefined,
+        productType: this.normalizeVivaProductType(record.productType ?? record.type)
       });
     });
     return items;
+  }
+
+  private resolveSelectedPurchaseOption(
+    purchaseOptions: TournamentPurchaseOption[],
+    selectedPurchaseOptionId?: string
+  ): TournamentPurchaseOption | null {
+    if (purchaseOptions.length === 0) {
+      return null;
+    }
+    const selectedId = this.pickString(selectedPurchaseOptionId);
+    if (selectedId) {
+      return purchaseOptions.find((item) => item.id === selectedId) ?? null;
+    }
+    return purchaseOptions[0];
+  }
+
+  private normalizeVivaProductType(value: unknown): 'SUBSCRIPTION' | 'ONE_TIME' | undefined {
+    const normalized = this.pickString(value)?.toUpperCase().replace(/[-\s]+/g, '_');
+    if (normalized === 'SUBSCRIPTION' || normalized === 'ONE_TIME') {
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private async createVivaJoinTransaction(input: {
+    booking: TournamentBookingConfig;
+    purchaseOption: TournamentPurchaseOption;
+    tournament: CustomTournament;
+    phone: string;
+    successUrl: string;
+    failUrl: string;
+  }): Promise<VivaJoinTransactionResponse> {
+    const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    const exerciseId = this.pickString(input.booking.vivaExerciseId);
+    const studioId = this.pickString(input.booking.vivaStudioId);
+    if (!widgetId || !exerciseId || !studioId) {
+      throw new BadRequestException(
+        'Для покупки через Viva нужны widgetId, exerciseId и studioId в details.booking'
+      );
+    }
+
+    const productType = input.purchaseOption.productType ?? 'SUBSCRIPTION';
+    const url = new URL(
+      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    );
+    const payload = {
+      products: [
+        {
+          id: input.purchaseOption.id,
+          type: productType,
+          count: 1,
+          bookingRequests: [
+            {
+              exerciseId,
+              client: null,
+              comment: null,
+              marketingAttribution: {}
+            }
+          ]
+        }
+      ],
+      clientPhone: input.phone,
+      paymentMethod: 'WIDGET',
+      successUrl: input.successUrl,
+      failUrl: input.failUrl,
+      exerciseId,
+      promoCode: null,
+      studioId
+    };
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Origin: 'https://padlhub.ru',
+        Referer: 'https://padlhub.ru/'
+      },
+      body: JSON.stringify(payload),
+      signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+    });
+
+    const responsePayload = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      throw new BadRequestException(
+        `Viva transaction failed with status ${response.status}`
+      );
+    }
+
+    const record = this.toRecord(responsePayload) ?? {};
+    const nestedPayment = this.toRecord(record.payment) ?? {};
+    const nestedData = this.toRecord(record.data) ?? {};
+    const nestedResult = this.toRecord(record.result) ?? {};
+    const nestedTransaction = this.toRecord(record.transaction) ?? {};
+    const checkoutUrl =
+      this.pickString(record.paymentUrl)
+      ?? this.pickString(record.payment_url)
+      ?? this.pickString(record.paymentLink)
+      ?? this.pickString(record.payment_link)
+      ?? this.pickString(record.checkoutUrl)
+      ?? this.pickString(record.checkout_url)
+      ?? this.pickString(record.redirectUrl)
+      ?? this.pickString(record.redirect_url)
+      ?? this.pickString(record.confirmationUrl)
+      ?? this.pickString(record.confirmation_url)
+      ?? this.pickString(record.url)
+      ?? this.pickString(nestedPayment.url)
+      ?? this.pickString(nestedPayment.paymentUrl)
+      ?? this.pickString(nestedPayment.redirectUrl)
+      ?? this.pickString(nestedData.paymentUrl)
+      ?? this.pickString(nestedData.url)
+      ?? this.pickString(nestedResult.paymentUrl)
+      ?? this.pickString(nestedResult.url);
+    const transactionId =
+      this.pickString(record.id)
+      ?? this.pickString(record.transactionId)
+      ?? this.pickString(record.transaction_id)
+      ?? this.pickString(record.orderId)
+      ?? this.pickString(record.order_id)
+      ?? this.pickString(nestedData.id)
+      ?? this.pickString(nestedResult.id)
+      ?? this.pickString(nestedTransaction.id);
+
+    return {
+      transactionId,
+      checkoutUrl
+    };
   }
 
   private normalizeClientSubscriptions(value: unknown): TournamentClientSubscription[] {
@@ -2204,6 +2462,29 @@ export class TournamentsService {
     }
     const trimmed = value.trim();
     return trimmed || undefined;
+  }
+
+  private normalizeBaseUrl(value?: string): string | undefined {
+    const normalized = this.pickString(value);
+    return normalized ? normalized.replace(/\/+$/, '') : undefined;
+  }
+
+  private readPositiveNumberEnv(name: string, fallback: number): number {
+    const raw = Number(process.env[name] ?? '');
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return fallback;
+    }
+    return Math.floor(raw);
+  }
+
+  private buildAbortSignal(timeoutMs: number): AbortSignal | undefined {
+    const abortSignalTimeout = (AbortSignal as typeof AbortSignal & {
+      timeout?: (delay: number) => AbortSignal;
+    }).timeout;
+
+    return typeof abortSignalTimeout === 'function'
+      ? abortSignalTimeout(timeoutMs)
+      : undefined;
   }
 
   private normalizeFilterValues(values?: string[]): string[] {

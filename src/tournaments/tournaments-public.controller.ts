@@ -315,10 +315,39 @@ export class TournamentsPublicController {
       return;
     }
 
+    if (flow.code === 'PURCHASE_REQUIRED' && submission.purchaseConfirmed) {
+      const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
+      const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
+      const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
+      const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+        name: client.name ?? '',
+        phone: client.phone ?? '',
+        levelLabel: client.levelLabel,
+        notes: submission.notes,
+        selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
+        purchaseConfirmed: true,
+        subscriptions: client.subscriptions,
+        successUrl,
+        failUrl
+      });
+
+      if (this.wantsJson(request, submission.format)) {
+        response.json(outcome);
+        return;
+      }
+
+      if (outcome.payment?.checkoutUrl) {
+        response.redirect(outcome.payment.checkoutUrl);
+        return;
+      }
+
+      this.sendHtml(response, this.renderOutcomeHtml(flow.tournament, outcome, client, request, user));
+      return;
+    }
+
     if (
       flow.code === 'READY_TO_JOIN'
       || flow.code === 'SUBSCRIPTION_AVAILABLE'
-      || (flow.code === 'PURCHASE_REQUIRED' && submission.purchaseConfirmed)
     ) {
       const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
         name: client.name ?? '',

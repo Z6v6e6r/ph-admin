@@ -75,9 +75,13 @@ function createTournament(): CustomTournament {
           {
             id: 'single-entry',
             label: 'Разовое участие',
-            priceLabel: '2 500 ₽'
+            priceLabel: '2 500 ₽',
+            productType: 'SUBSCRIPTION'
           }
-        ]
+        ],
+        vivaWidgetId: 'iSkq6G',
+        vivaExerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+        vivaStudioId: '588b6151-f4f5-47d9-9449-80edf8cbc748'
       }
     }
   };
@@ -199,6 +203,50 @@ async function main(): Promise<void> {
     subscriptions: []
   });
   assert.equal(blockedPurchaseRegistration.code, 'PURCHASE_REQUIRED');
+
+  const originalFetch = globalThis.fetch;
+  let transactionRequest: { url: string; body: Record<string, unknown> } | undefined;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    transactionRequest = {
+      url: String(url),
+      body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+    };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 'tx-1',
+        paymentUrl: 'https://pay.tbank.ru/Yk04YJoQ'
+      })
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const purchaseStart = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+      name: 'Игрок с покупкой Viva',
+      phone: '+7 999 000-11-28',
+      levelLabel: 'C',
+      selectedPurchaseOptionId: 'single-entry',
+      subscriptions: [],
+      successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+      failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+    });
+    assert.equal(purchaseStart.code, 'PURCHASE_STARTED');
+    assert.equal(purchaseStart.payment?.checkoutUrl, 'https://pay.tbank.ru/Yk04YJoQ');
+    assert.equal(
+      transactionRequest?.url,
+      'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/transactions'
+    );
+    assert.equal(transactionRequest?.body.clientPhone, '79990001128');
+    const products = transactionRequest?.body.products as Array<Record<string, unknown>>;
+    assert.equal(products[0]?.id, 'single-entry');
+    assert.equal(products[0]?.type, 'SUBSCRIPTION');
+    const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
+    assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
+    assert.equal(transactionRequest?.body.studioId, '588b6151-f4f5-47d9-9449-80edf8cbc748');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 
   const paidRegistration = await service.registerPublicParticipant(tournament.slug, {
     name: 'Игрок с покупкой',
