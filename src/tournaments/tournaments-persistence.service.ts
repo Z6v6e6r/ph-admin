@@ -68,6 +68,7 @@ export interface CreateCustomTournamentMutation {
   exerciseTypeId?: string;
   skin?: TournamentSkin;
   mechanics?: unknown;
+  details?: Record<string, unknown>;
   actor?: TournamentActor;
 }
 
@@ -95,6 +96,7 @@ export interface UpdateCustomTournamentMutation {
   exerciseTypeId?: string;
   skin?: TournamentSkin;
   mechanics?: unknown;
+  details?: Record<string, unknown>;
   actor?: TournamentActor;
 }
 
@@ -288,6 +290,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.mechanics !== undefined) {
       setPayload.mechanics = this.normalizeMechanics(mutation.mechanics);
     }
+    if (mutation.details !== undefined) {
+      const detailsRecord = this.toRecord(mutation.details);
+      setPayload.details = detailsRecord ?? null;
+    }
 
     const actor = this.toActorRecord(mutation.actor, now);
     const nextDocument: MongoCustomTournamentDocument = {
@@ -419,9 +425,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       changeLog: this.normalizeChangeLog(document.changeLog),
       createdBy: this.normalizeActor(document.createdBy),
       updatedBy: this.normalizeActor(document.updatedBy),
-      details: this.isRecord(document.sourceTournamentSnapshot)
-        ? { sourceTournamentSnapshot: document.sourceTournamentSnapshot }
-        : undefined
+      details: this.normalizeDetailsRecord(document)
     };
   }
 
@@ -457,6 +461,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       sourceTournamentSnapshot: this.isRecord(mutation.sourceTournamentSnapshot)
         ? mutation.sourceTournamentSnapshot
         : null,
+      details: this.toRecord(mutation.details) ?? null,
       name: this.pickString(mutation.name) ?? `Турнир ${id}`,
       status: mutation.status ?? TournamentStatus.REGISTRATION,
       startsAt: this.pickString(mutation.startsAt) ?? null,
@@ -486,6 +491,17 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       updatedAt: now,
       archived: false
     };
+  }
+
+  private normalizeDetailsRecord(
+    document: MongoCustomTournamentDocument
+  ): Record<string, unknown> | undefined {
+    const details = this.toRecord(document.details) ?? {};
+    const sourceSnapshot = this.toRecord(document.sourceTournamentSnapshot);
+    if (sourceSnapshot) {
+      details.sourceTournamentSnapshot = sourceSnapshot;
+    }
+    return Object.keys(details).length > 0 ? details : undefined;
   }
 
   private async restoreExistingTournamentDocument(

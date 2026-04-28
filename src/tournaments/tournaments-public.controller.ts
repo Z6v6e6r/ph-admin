@@ -260,13 +260,47 @@ export class TournamentsPublicController {
     @Res() response: Response,
     @CurrentUser() user?: RequestUser,
     @Query('format') format?: string,
-    @Query('autoAuth') autoAuth?: string
+    @Query('autoAuth') autoAuth?: string,
+    @Query('paymentsuccess') paymentSuccess?: string,
+    @Query('paymentfailed') paymentFailed?: string
   ): Promise<void> {
     const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
       request,
       response,
       user
     );
+
+    if (this.parseBoolean(paymentSuccess)) {
+      const outcome = await this.tournamentsService.confirmPublicJoinAfterPayment(slug, {
+        phone: client.phone,
+        fallbackName: client.name ?? undefined,
+        fallbackLevelLabel: client.levelLabel ?? undefined
+      });
+      if (this.wantsJson(request, format)) {
+        response.json(outcome);
+        return;
+      }
+      const tournament = await this.tournamentsService.getPublicBySlug(slug);
+      this.sendHtml(response, this.renderOutcomeHtml(tournament, outcome, client, request, user));
+      return;
+    }
+
+    if (this.parseBoolean(paymentFailed)) {
+      const failedOutcome: TournamentRegistrationResponse = {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Оплата не завершена. Повторите оплату, чтобы подтвердить запись.',
+        tournamentSlug: slug
+      };
+      if (this.wantsJson(request, format)) {
+        response.json(failedOutcome);
+        return;
+      }
+      const tournament = await this.tournamentsService.getPublicBySlug(slug);
+      this.sendHtml(response, this.renderOutcomeHtml(tournament, failedOutcome, client, request, user));
+      return;
+    }
+
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
         requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
@@ -1740,7 +1774,6 @@ export class TournamentsPublicController {
     const phoneValue = this.escapeHtml(this.formatPhone(client.phone));
     const nameValue = this.escapeHtml(String(client.name ?? ''));
     const levelValue = String(client.levelLabel ?? '').trim().toUpperCase();
-    const spotsLabel = `${tournament.participantsCount}/${tournament.maxPlayers}`;
     const actionLabel =
       flow.code === 'SUBSCRIPTION_AVAILABLE'
         ? 'Списать абонемент и записаться'
@@ -1753,20 +1786,110 @@ export class TournamentsPublicController {
         : flow.code === 'LEVEL_NOT_ALLOWED'
           ? 'Проверить уровень ещё раз'
           : 'Продолжить';
+    const showPhoneInput =
+      flow.code === 'PROFILE_REQUIRED'
+      || flow.code === 'PHONE_VERIFICATION_REQUIRED'
+      || !this.formatPhone(client.phone);
+    const showAuthCodeInput =
+      flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED';
+    const authCodeRequiredAttr = flow.code === 'PHONE_VERIFICATION_REQUIRED' ? ' required' : '';
+    const selectedPurchaseOptionId =
+      this.escapeHtml(flow.payment.purchaseOptions[0]?.id || '');
+    const cardFormHtml =
+      flow.code === 'AUTH_REQUIRED'
+        ? ''
+        : `<form id="phab-tournament-join-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}" class="phab-tournament-join-card__form">
+            <input type="hidden" name="name" value="${nameValue}" />
+            ${
+              showPhoneInput
+                ? `<label class="phab-tournament-join-card__field">
+              <span>Телефон</span>
+              <input
+                type="tel"
+                name="phone"
+                maxlength="30"
+                value="${phoneValue}"
+                placeholder="+7 999 123-45-67"
+                required
+              />
+            </label>`
+                : `<input type="hidden" name="phone" value="${phoneValue}" />`
+            }
+            ${
+              showAuthCodeInput
+                ? `<label class="phab-tournament-join-card__field">
+              <span>Код авторизации</span>
+              <input
+                type="text"
+                name="authCode"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="8"
+                placeholder="Введите код из SMS"
+               ${authCodeRequiredAttr}
+              />
+            </label>`
+                : ''
+            }
+            ${
+              needsLevel
+                ? `<label class="phab-tournament-join-card__field">
+              <span>Уровень игрока</span>
+              <select name="levelLabel" required>
+                <option value="">Выберите уровень</option>
+                ${this.renderLevelOptions(levelValue)}
+              </select>
+            </label>`
+                : ''
+            }
+            <input type="hidden" name="notes" value="" />
+            ${
+              flow.code === 'SUBSCRIPTION_AVAILABLE'
+                ? `<input type="hidden" name="selectedSubscriptionId" value="${this.escapeHtml(flow.payment.selectedSubscription?.id || '')}" />`
+                : ''
+            }
+            ${
+              flow.code === 'PURCHASE_REQUIRED'
+                ? `<input type="hidden" name="purchaseConfirmed" value="1" />
+            ${
+              flow.payment.purchaseOptions.length > 0
+                ? `<label class="phab-tournament-join-card__field">
+              <span>Тариф покупки</span>
+              <select name="selectedPurchaseOptionId">
+                ${flow.payment.purchaseOptions
+                  .map(
+                    (item) =>
+                      `<option value="${this.escapeHtml(item.id)}"${
+                        this.escapeHtml(item.id) === selectedPurchaseOptionId ? ' selected' : ''
+                      }>${this.escapeHtml(item.label)} · ${this.escapeHtml(item.priceLabel)}</option>`
+                  )
+                  .join('')}
+              </select>
+            </label>`
+                : ''
+            }`
+                : ''
+            }
+          </form>`;
+    const cardSecondaryActionHtml =
+      flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed
+        ? `<form id="phab-tournament-join-waitlist-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
+            <input type="hidden" name="name" value="${nameValue}" />
+            <input type="hidden" name="phone" value="${phoneValue}" />
+            <input type="hidden" name="levelLabel" value="${this.escapeHtml(levelValue)}" />
+            <input type="hidden" name="waitlist" value="1" />
+          </form>`
+        : '';
     const cardActionHtml =
       flow.code === 'AUTH_REQUIRED'
         ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>`
         : `<button class="phab-tournament-join-card__cta" type="submit" form="phab-tournament-join-form">${this.escapeHtml(actionLabel)}</button>`;
-    const compactCardHtml = this.renderJoinTournamentCard(flow, cardActionHtml);
-    const statusTone =
-      flow.code === 'LEVEL_NOT_ALLOWED'
-        ? 'warning'
-        : flow.code === 'READY_TO_JOIN' || flow.code === 'SUBSCRIPTION_AVAILABLE'
-          ? 'success'
-          : flow.code === 'PHONE_VERIFICATION_REQUIRED'
-            ? 'warning'
-          : 'info';
-    const selectedSubscriptionId = this.escapeHtml(flow.payment.selectedSubscription?.id || '');
+    const compactCardHtml = this.renderJoinTournamentCard(
+      flow,
+      cardActionHtml,
+      cardFormHtml,
+      cardSecondaryActionHtml
+    );
     const alreadyDone =
       flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED';
 
@@ -2107,196 +2230,17 @@ export class TournamentsPublicController {
   <body>
     <main class="page">
       ${compactCardHtml}
-      <section class="card">
-        <p class="eyebrow">PadelHub Tournament Join</p>
-        <h1 class="title">${this.escapeHtml(tournament.skin.title || tournament.name)}</h1>
-        <p class="subtitle">${this.escapeHtml(
-          tournament.skin.subtitle
-          || [this.formatTournamentDate(tournament.startsAt), tournament.studioName]
-            .filter(Boolean)
-            .join(' · ')
-        )}</p>
-
-        <div class="grid">
-          <div class="metric">
-            <span class="metric-label">Когда</span>
-            <span class="metric-value">${this.escapeHtml(
-              this.formatTournamentDate(tournament.startsAt)
-            )}</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Площадка</span>
-            <span class="metric-value">${this.escapeHtml(
-              tournament.studioName || 'PadelHub'
-            )}</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Тренер</span>
-            <span class="metric-value">${this.escapeHtml(
-              tournament.trainerName || 'Организатор турнира'
-            )}</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">Места</span>
-            <span class="metric-value">${this.escapeHtml(spotsLabel)}</span>
-          </div>
-        </div>
-
-        <ul class="chips">
-          <li class="chip">${this.escapeHtml(tournament.tournamentType)}</li>
-          <li class="chip">${this.escapeHtml(
-            needsLevel ? `Уровни: ${tournament.accessLevels.join(', ')}` : 'Без ограничений по уровню'
-          )}</li>
-          <li class="chip">${tournament.registrationOpen ? 'Регистрация открыта' : 'Регистрация закрыта'}</li>
-        </ul>
-
-        <div class="status status-${statusTone}">${this.escapeHtml(flow.message)}</div>
-
-        ${
-          flow.payment.required
-            ? `<div class="metric" style="margin-bottom:18px;">
-          <span class="metric-label">Оплата участия</span>
-          <span class="metric-value">${this.escapeHtml(flow.payment.message)}</span>
-          ${
-            flow.payment.availableSubscriptions.length > 0
-              ? `<div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
-            ${flow.payment.availableSubscriptions
-              .map(
-                (item) =>
-                  `<span class="chip">${this.escapeHtml(item.label)}${
-                    typeof item.remainingUses === 'number'
-                      ? ` · ${this.escapeHtml(String(item.remainingUses))} спис.`
-                      : ''
-                  }</span>`
-              )
-              .join('')}
-          </div>`
-              : ''
-          }
-          ${
-            flow.payment.purchaseOptions.length > 0
-              ? `<div style="margin-top:10px; display:grid; gap:8px;">
-            ${flow.payment.purchaseOptions
-              .map(
-                (item) =>
-                  `<div class="row"><strong>${this.escapeHtml(item.label)}</strong> · ${this.escapeHtml(item.priceLabel)}${
-                    item.description ? `<br />${this.escapeHtml(item.description)}` : ''
-                  }</div>`
-              )
-              .join('')}
-          </div>`
-              : ''
-          }
-        </div>`
-            : ''
-        }
-
-        <form id="phab-tournament-join-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
-          <label>
-            Имя и фамилия
-            <input
-              type="text"
-              name="name"
-              maxlength="180"
-              value="${nameValue}"
-              placeholder="Как к вам обращаться"
-            />
-          </label>
-
-          <input type="hidden" name="phone" value="${phoneValue}" />
-
-          ${
-            flow.code === 'PHONE_VERIFICATION_REQUIRED'
-              ? `<label>
-            Код из SMS
-            <input
-              type="text"
-              name="authCode"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="8"
-              placeholder="Введите код"
-              required
-            />
-          </label>`
-              : ''
-          }
-
-          ${
-            needsLevel
-              ? `<label>
-            Уровень игрока
-            <select name="levelLabel" required>
-              <option value="">Выберите уровень</option>
-              ${this.renderLevelOptions(levelValue)}
-            </select>
-          </label>`
-              : ''
-          }
-
-          <label>
-            Комментарий для организатора
-            <textarea name="notes" maxlength="500" placeholder="Если нужно, расскажите о себе или оставьте заметку."></textarea>
-          </label>
-
-          ${
-            flow.code === 'SUBSCRIPTION_AVAILABLE'
-              ? `<input type="hidden" name="selectedSubscriptionId" value="${selectedSubscriptionId}" />`
-              : ''
-          }
-
-          ${
-            flow.code === 'PURCHASE_REQUIRED'
-              ? `<input type="hidden" name="purchaseConfirmed" value="1" />
-          ${
-            flow.payment.purchaseOptions.length > 0
-              ? `<label>
-            Тариф покупки
-            <select name="selectedPurchaseOptionId">
-              ${flow.payment.purchaseOptions
-                .map(
-                  (item) =>
-                    `<option value="${this.escapeHtml(item.id)}">${this.escapeHtml(item.label)} · ${this.escapeHtml(item.priceLabel)}</option>`
-                )
-                .join('')}
-            </select>
-          </label>`
-              : ''
-          }`
-              : ''
-          }
-
-          <div class="actions">
-            <button class="button" type="submit">${this.escapeHtml(actionLabel)}</button>
-            <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К турнирам</a>
-          </div>
-        </form>
-
-        ${
-          flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed
-            ? `<form method="post" action="${this.escapeHtml(absoluteJoinUrl)}" style="margin-top:12px;">
-          <input type="hidden" name="name" value="${nameValue}" />
-          <input type="hidden" name="phone" value="${phoneValue}" />
-          <input type="hidden" name="levelLabel" value="${this.escapeHtml(levelValue)}" />
-          <input type="hidden" name="waitlist" value="1" />
-          <div class="actions">
-            <button class="button-secondary" type="submit">Добавиться в лист ожидания</button>
-          </div>
-        </form>`
-            : ''
-        }
-
-        <p class="footnote">
-          Backend сохраняет черновик заявки в защищённой cookie-сессии, а авторизация пользователя проверяется
-          через личный кабинет PadelHub.
-        </p>
-      </section>
     </main>
   </body>
 </html>`;
   }
 
-  private renderJoinTournamentCard(flow: TournamentJoinFlowResponse, actionHtml: string): string {
+  private renderJoinTournamentCard(
+    flow: TournamentJoinFlowResponse,
+    actionHtml: string,
+    formHtml = '',
+    secondaryActionHtml = ''
+  ): string {
     const tournament = flow.tournament;
     const client = flow.client;
     const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
@@ -2384,7 +2328,15 @@ export class TournamentsPublicController {
             <span class="phab-tournament-join-card__phone-value">${this.escapeHtml(phoneLabel)}</span>
           </div>
 
+          ${formHtml}
+
           ${actionHtml}
+          ${
+            secondaryActionHtml
+              ? '<button class="phab-tournament-join-card__cta phab-tournament-join-card__cta--secondary" type="submit" form="phab-tournament-join-waitlist-form">В лист ожидания</button>'
+              : ''
+          }
+          ${secondaryActionHtml}
         </div>
 
         <div class="phab-tournament-join-card__footer">
@@ -2685,6 +2637,43 @@ export class TournamentsPublicController {
         font-size: 14px;
         line-height: 1.3;
         font-weight: 600;
+        color: #1f1e20;
+      }
+      .phab-tournament-join-card__form {
+        display: grid;
+        width: 100%;
+        gap: 10px;
+        margin: 2px 0 10px;
+      }
+      .phab-tournament-join-card__field {
+        display: grid;
+        gap: 4px;
+        font-size: 10px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #8d8a95;
+      }
+      .phab-tournament-join-card__field input,
+      .phab-tournament-join-card__field select {
+        width: 100%;
+        min-height: 36px;
+        border: 1px solid #d9d5e4;
+        border-radius: 12px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: 0;
+        color: #1f1e20;
+        background: #fff;
+        text-transform: none;
+      }
+      .phab-tournament-join-card__cta--secondary {
+        margin-top: 8px;
+        background: #e8e8e9;
         color: #1f1e20;
       }
       .phab-tournament-join-card__footer {

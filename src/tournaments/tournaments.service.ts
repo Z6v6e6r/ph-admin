@@ -75,6 +75,16 @@ interface VivaJoinTransactionResponse {
   checkoutUrl?: string;
 }
 
+interface PendingJoinPayment {
+  transactionId: string;
+  phone: string;
+  name?: string;
+  levelLabel?: string;
+  notes?: string;
+  selectedPurchaseOptionId?: string;
+  createdAt: string;
+}
+
 interface TournamentLevelDescriptor {
   token: string;
   base: string;
@@ -758,6 +768,18 @@ export class TournamentsService {
       failUrl: input.failUrl
     });
 
+    if (transaction.transactionId) {
+      await this.savePendingJoinPayment(tournament, {
+        transactionId: transaction.transactionId,
+        phone: normalizedPhone,
+        name: this.pickString(input.name) ?? undefined,
+        levelLabel: normalizedLevel,
+        notes: this.pickString(input.notes) ?? undefined,
+        selectedPurchaseOptionId: purchaseOption.id,
+        createdAt: new Date().toISOString()
+      });
+    }
+
     if (!transaction.checkoutUrl) {
       return {
         ok: false,
@@ -783,6 +805,60 @@ export class TournamentsService {
         transactionId: transaction.transactionId
       }
     };
+  }
+
+  async confirmPublicJoinAfterPayment(
+    slug: string,
+    input: {
+      phone?: string;
+      fallbackName?: string;
+      fallbackLevelLabel?: string;
+    }
+  ): Promise<TournamentRegistrationResponse> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomBySlug(slug);
+    const normalizedPhone = this.normalizePhone(input.phone);
+    if (!normalizedPhone) {
+      return {
+        ok: false,
+        code: 'PHONE_REQUIRED',
+        message: 'Для подтверждения оплаты нужен номер телефона.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const pending = this.findPendingJoinPayment(tournament, normalizedPhone);
+    if (!pending) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Не найдена ожидающая транзакция оплаты для этого номера.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const verification = await this.verifyVivaTransaction({
+      booking: this.resolveBookingConfig(tournament),
+      transactionId: pending.transactionId
+    });
+    if (!verification.paid) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Оплата пока не подтверждена Viva. Попробуйте обновить страницу через несколько секунд.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    await this.removePendingJoinPayment(tournament, pending.transactionId);
+    return this.registerPublicParticipant(slug, {
+      name: pending.name ?? input.fallbackName ?? normalizedPhone,
+      phone: normalizedPhone,
+      levelLabel: pending.levelLabel ?? input.fallbackLevelLabel,
+      notes: pending.notes,
+      selectedPurchaseOptionId: pending.selectedPurchaseOptionId,
+      purchaseConfirmed: true
+    });
   }
 
   async addPublicParticipantToWaitlist(
@@ -1873,6 +1949,134 @@ export class TournamentsService {
       transactionId,
       checkoutUrl
     };
+  }
+
+  private async verifyVivaTransaction(input: {
+    booking: TournamentBookingConfig;
+    transactionId: string;
+  }): Promise<{ paid: boolean }> {
+    const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    if (!widgetId) {
+      return { paid: false };
+    }
+
+    const candidates = [
+      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(input.transactionId)}`,
+      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(input.transactionId)}/status`
+    ];
+
+    for (const path of candidates) {
+      try {
+        const url = new URL(path, `${this.vivaEndUserApiBaseUrl}/`);
+        const response = await fetch(url.toString(), {
+          headers: { Accept: 'application/json' },
+          signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+        });
+        if (!response.ok) {
+          continue;
+        }
+        const payload = (await response.json().catch(() => null)) as unknown;
+        if (this.isVivaPaymentSuccessful(payload)) {
+          return { paid: true };
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return { paid: false };
+  }
+
+  private isVivaPaymentSuccessful(payload: unknown): boolean {
+    const normalized = JSON.stringify(payload ?? {}).toUpperCase();
+    return normalized.includes('"PAID"')
+      || normalized.includes('"SUCCEEDED"')
+      || normalized.includes('"SUCCESS"')
+      || normalized.includes('"COMPLETED"');
+  }
+
+  private findPendingJoinPayment(
+    tournament: CustomTournament,
+    phone: string
+  ): PendingJoinPayment | null {
+    const details = this.toRecord(tournament.details) ?? {};
+    const booking = this.toRecord(details.booking) ?? {};
+    const pending = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
+    const normalizedPhone = this.normalizePhone(phone);
+    if (!normalizedPhone) {
+      return null;
+    }
+    for (const item of pending) {
+      const record = this.toRecord(item);
+      if (!record) {
+        continue;
+      }
+      const itemPhone = this.normalizePhone(record.phone);
+      const transactionId = this.pickString(record.transactionId);
+      if (!itemPhone || !transactionId) {
+        continue;
+      }
+      if (itemPhone !== normalizedPhone) {
+        continue;
+      }
+      return {
+        transactionId,
+        phone: itemPhone,
+        name: this.pickString(record.name) ?? undefined,
+        levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
+        notes: this.pickString(record.notes) ?? undefined,
+        selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+        createdAt: this.pickString(record.createdAt) ?? new Date().toISOString()
+      };
+    }
+    return null;
+  }
+
+  private async savePendingJoinPayment(
+    tournament: CustomTournament,
+    pending: PendingJoinPayment
+  ): Promise<void> {
+    const details = this.toRecord(tournament.details) ?? {};
+    const booking = this.toRecord(details.booking) ?? {};
+    const current = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
+    const next = [
+      ...current.filter((item) => {
+        const record = this.toRecord(item);
+        return this.pickString(record?.transactionId) !== pending.transactionId;
+      }),
+      pending
+    ];
+    await this.updateCustom(tournament.id, {
+      details: {
+        ...details,
+        booking: {
+          ...booking,
+          pendingJoinPayments: next
+        }
+      }
+    });
+  }
+
+  private async removePendingJoinPayment(
+    tournament: CustomTournament,
+    transactionId: string
+  ): Promise<void> {
+    const details = this.toRecord(tournament.details) ?? {};
+    const booking = this.toRecord(details.booking) ?? {};
+    const current = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
+    const next = current.filter((item) => {
+      const record = this.toRecord(item);
+      return this.pickString(record?.transactionId) !== transactionId;
+    });
+    await this.updateCustom(tournament.id, {
+      details: {
+        ...details,
+        booking: {
+          ...booking,
+          pendingJoinPayments: next
+        }
+      }
+    });
   }
 
   private normalizeClientSubscriptions(value: unknown): TournamentClientSubscription[] {
