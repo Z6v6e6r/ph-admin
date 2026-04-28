@@ -1081,10 +1081,11 @@
       }
 
       .phab-tournaments__card-compact-meta--location .phab-tournaments__card-compact-meta-text {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
       }
 
       .phab-tournaments__card-compact-meta--gender .phab-tournaments__card-compact-price {
+        align-self: flex-end;
         margin-left: auto;
       }
 
