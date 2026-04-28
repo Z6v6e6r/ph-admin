@@ -122,8 +122,18 @@ function createResponseCapture(): {
 
 function createFlow(
   tournament: TournamentPublicView,
-  code: TournamentJoinFlowResponse['code']
+  code: TournamentJoinFlowResponse['code'],
+  options?: {
+    waitlistAllowed?: boolean;
+    accessOk?: boolean;
+    accessCode?: TournamentJoinFlowResponse['access']['code'];
+    accessMessage?: string;
+  }
 ): TournamentJoinFlowResponse {
+  const waitlistAllowed = options?.waitlistAllowed ?? false;
+  const accessOk = options?.accessOk ?? true;
+  const accessCode = options?.accessCode ?? 'OK';
+  const accessMessage = options?.accessMessage ?? (accessOk ? 'Уровень подходит.' : 'Уровень не подходит.');
   return {
     ok: code === 'READY_TO_JOIN',
     code,
@@ -140,13 +150,13 @@ function createFlow(
       subscriptions: []
     },
     access: {
-      ok: true,
-      code: 'OK',
-      message: 'Уровень подходит.',
+      ok: accessOk,
+      code: accessCode,
+      message: accessMessage,
       accessLevels: tournament.accessLevels
     },
     missingFields: code === 'PROFILE_REQUIRED' ? ['phone'] : [],
-    waitlistAllowed: false,
+    waitlistAllowed,
     payment: {
       required: false,
       code: 'NOT_REQUIRED',
@@ -251,7 +261,51 @@ async function main(): Promise<void> {
     );
 
     const html = capture.getHtml();
-    assert.match(html ?? '', /Записаться на занятие/);
+    assert.doesNotMatch(html ?? '', /Записаться на занятие/);
+    assert.match(html ?? '', /(Девки жгем|Записаться на турнир)/);
+  }
+
+  {
+    const controllerWithFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () =>
+          createFlow(tournament, 'LEVEL_NOT_ALLOWED', {
+            waitlistAllowed: false,
+            accessOk: false,
+            accessCode: 'LEVEL_NOT_ALLOWED',
+            accessMessage: 'Уровень игрока не подходит под условия этого турнира.'
+          })
+      } as never,
+      {
+        ensureAuthorizedClient: () => ({
+          id: 'client-1',
+          authorized: true,
+          authSource: 'headers',
+          phone: '79990001122',
+          phoneVerified: true,
+          onboardingCompleted: true,
+          levelLabel: 'A',
+          subscriptions: []
+        }),
+        requiresRealAuth: () => true
+      } as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithFlow.renderJoinPage(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    const html = capture.getHtml();
+    assert.match(html ?? '', /Подобрать турнир по уровню/);
+    assert.match(html ?? '', /\/tournaments\?level=/);
   }
 
   {

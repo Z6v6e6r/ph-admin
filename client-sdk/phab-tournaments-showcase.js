@@ -4,6 +4,7 @@
   var LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
   var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULT_INITIAL_FORWARD_DAYS = 1;
+  var SMS_RESEND_COOLDOWN_MS = 30000;
   var DEFAULTS = {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     stationIds: [],
@@ -2863,14 +2864,14 @@
       return {
         kind: 'secondary',
         label: 'В лист ожидания',
-        mode: publicUrl ? 'public' : joinUrl ? 'join' : 'disabled'
+        mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
       };
     }
 
     return {
       kind: 'primary',
       label: String(skin.ctaLabel || '').trim() || 'Принять участие',
-      mode: publicUrl ? 'public' : joinUrl ? 'join' : 'disabled'
+      mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
     };
   }
 
@@ -2996,6 +2997,58 @@
     if (client.levelLabel) {
       state.draft.levelLabel = String(client.levelLabel);
     }
+    var phoneVerification = normalizeObject(flow.phoneVerification);
+    if (phoneVerification.ok) {
+      state.phoneVerificationMessage = String(phoneVerification.message || '').trim();
+      state.smsResendAvailableAt = Date.now() + SMS_RESEND_COOLDOWN_MS;
+    } else if (flow.code !== 'PHONE_VERIFICATION_REQUIRED') {
+      state.phoneVerificationMessage = '';
+      state.smsResendAvailableAt = 0;
+    }
+  }
+
+  function formatCountdown(seconds) {
+    return String(Math.max(0, Math.ceil(seconds))) + 'с';
+  }
+
+  function startSmsResendTimer(button, state) {
+    function update() {
+      if (!button.isConnected) {
+        return false;
+      }
+      var remainingMs = Math.max(0, Number(state.smsResendAvailableAt || 0) - Date.now());
+      if (remainingMs <= 0) {
+        button.disabled = false;
+        button.textContent = 'Отправить код повторно';
+        return false;
+      }
+      button.disabled = true;
+      button.textContent = 'Отправить код повторно (' + formatCountdown(remainingMs / 1000) + ')';
+      return true;
+    }
+
+    if (!update()) {
+      return;
+    }
+
+    var timerId = window.setInterval(function () {
+      if (!update()) {
+        window.clearInterval(timerId);
+      }
+    }, 1000);
+  }
+
+  function buildLevelFallbackUrl(state) {
+    var flow = normalizeObject(state.flow);
+    var access = normalizeObject(flow.access);
+    var level =
+      String(state.draft.levelLabel || '').trim()
+      || String(access.levelLabel || '').trim();
+    var url = new URL('/tournaments', window.location.origin);
+    if (level) {
+      url.searchParams.set('level', level);
+    }
+    return url.toString();
   }
 
   function clearAuth(state) {
@@ -3427,30 +3480,16 @@
   }
 
   function createCardModeActionControl(card, action, state, mount) {
-    var cardModeAction = action;
-    var publicUrl = String(card.publicUrl || '').trim();
-    var control;
-
-    if (action.mode !== 'disabled' && publicUrl) {
-      cardModeAction = {
-        kind: action.kind,
-        label: action.label,
-        mode: 'public'
-      };
-    }
-
-    control = createActionControl(card, cardModeAction, state, mount);
+    var control = createActionControl(card, action, state, mount);
 
     control.className = 'phab-tournaments__card-compact-cta';
-    if (cardModeAction.mode !== 'disabled') {
-      control.textContent = 'Принять участие';
-    }
+    control.textContent = action.label;
 
-    if (cardModeAction.kind === 'secondary') {
+    if (action.kind === 'secondary') {
       control.className += ' phab-tournaments__card-compact-cta--secondary';
     }
 
-    if (cardModeAction.mode === 'disabled') {
+    if (action.mode === 'disabled') {
       control.className += ' phab-tournaments__card-compact-cta--disabled';
     }
 
@@ -3918,6 +3957,15 @@
       codeInput.value = state.draft.authCode || '';
       codeField.appendChild(codeInput);
       dialog.appendChild(codeField);
+      if (state.phoneVerificationMessage) {
+        dialog.appendChild(
+          createElement(
+            'p',
+            'phab-tournaments__footnote',
+            state.phoneVerificationMessage
+          )
+        );
+      }
     }
 
     if (needsLevel) {
@@ -4011,11 +4059,34 @@
       });
     } else {
       secondaryButton.addEventListener('click', function () {
+        if (flow.code === 'LEVEL_NOT_ALLOWED' && !flow.waitlistAllowed) {
+          window.location.href = buildLevelFallbackUrl(state);
+          return;
+        }
         closeDialog(mount, state);
       });
     }
 
+    if (flow.code === 'PHONE_VERIFICATION_REQUIRED') {
+      var resendButton = createElement(
+        'button',
+        'phab-tournaments__button-secondary',
+        'Отправить код повторно'
+      );
+      resendButton.type = 'button';
+      resendButton.addEventListener('click', function () {
+        readDraftFromDialog(dialog, state);
+        state.draft.authCode = '';
+        submitJoin(mount, state, false);
+      });
+      startSmsResendTimer(resendButton, state);
+      actions.appendChild(resendButton);
+    }
+
     actions.appendChild(primaryButton);
+    if (flow.code === 'LEVEL_NOT_ALLOWED' && !flow.waitlistAllowed) {
+      secondaryButton.textContent = 'Подобрать турнир по уровню';
+    }
     actions.appendChild(secondaryButton);
     dialog.appendChild(actions);
     dialog.appendChild(
@@ -4358,6 +4429,8 @@
         selectedSubscriptionId: '',
         selectedPurchaseOptionId: ''
       },
+      phoneVerificationMessage: '',
+      smsResendAvailableAt: 0,
       activeJoinUrl: '',
       activeItem: null,
       flow: null,

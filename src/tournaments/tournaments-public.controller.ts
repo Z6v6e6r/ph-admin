@@ -1177,7 +1177,7 @@ export class TournamentsPublicController {
 
     const actionLabel =
       tournament.registrationOpen
-        ? 'Записаться на занятие'
+        ? 'Записаться на турнир'
         : defaultActionLabel;
     const actionHref =
       flowCode === 'AUTH_REQUIRED' && flow?.authUrl
@@ -1294,7 +1294,7 @@ export class TournamentsPublicController {
           root.classList.remove('is-loading');
           root.innerHTML =
             '<a class="public-action__button" href="' + escapeHtml(joinUrl) + '">' +
-              escapeHtml(label || 'Записаться на занятие') +
+              escapeHtml(label || 'Записаться на турнир') +
             '</a>';
         }
 
@@ -1328,7 +1328,7 @@ export class TournamentsPublicController {
               renderButton('Открыть заявку');
               return;
             }
-            renderButton('Записаться на занятие');
+            renderButton('Записаться на турнир');
           })
           .catch(function () {
             root.classList.remove('is-loading');
@@ -1784,7 +1784,7 @@ export class TournamentsPublicController {
           : flow.code === 'READY_TO_JOIN'
         ? tournament.skin.ctaLabel || 'Записаться'
         : flow.code === 'LEVEL_NOT_ALLOWED'
-          ? 'Проверить уровень ещё раз'
+          ? flow.waitlistAllowed ? 'Проверить уровень ещё раз' : 'Подобрать турнир по уровню'
           : 'Продолжить';
     const showPhoneInput =
       flow.code === 'PROFILE_REQUIRED'
@@ -1883,6 +1883,10 @@ export class TournamentsPublicController {
     const cardActionHtml =
       flow.code === 'AUTH_REQUIRED'
         ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>`
+        : flow.code === 'LEVEL_NOT_ALLOWED' && !flow.waitlistAllowed
+          ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(
+            this.appendQueryParam(absoluteDirectoryUrl, 'level', levelValue || String(client.levelLabel ?? ''))
+          )}">${this.escapeHtml(actionLabel)}</a>`
         : `<button class="phab-tournament-join-card__cta" type="submit" form="phab-tournament-join-form">${this.escapeHtml(actionLabel)}</button>`;
     const compactCardHtml = this.renderJoinTournamentCard(
       flow,

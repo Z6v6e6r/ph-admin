@@ -129,7 +129,7 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
-- `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.su/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир; на `padlhub.ru` путь `/api` обслуживает Tilda, поэтому API-ссылки должны вести на API-хост)
+- `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.su/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир; если `padlhub.ru/api` занят Tilda, используйте отдельный API-host)
 - `TOURNAMENTS_PUBLIC_DIRECTORY_URL=https://padlhub.ru/tournaments` (опционально; куда вести пользователя после успешной заявки или из join-flow)
 - `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; по умолчанию `true`. Если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_URL=https://padlhub.ru/lk_new` (опционально; куда вести пользователя для реальной авторизации LK; на 9 апреля 2026 актуальная точка входа именно `padlhub.ru/lk_new`)
@@ -268,6 +268,12 @@ https://example.com/api/communities/public/showcase?stationId=nagatino&limit=6&r
 ></div>
 <script src="https://example.com/api/client-script/tournaments-showcase.js" defer></script>
 ```
+
+Рекомендация по доменам для production:
+
+- предпочитать один origin для страницы и API (`https://<host>/api`), чтобы не ловить кросс-доменные ограничения браузера
+- если это невозможно (например, страница на `padlhub.ru`, API на `padlhub.su`), обязательно указывать явный `data-api-base` в embed и держать `TOURNAMENTS_PUBLIC_BASE_URL`/`TOURNAMENTS_PUBLIC_DIRECTORY_URL` согласованными
+- проверять, что `publicUrl` и `joinUrl` резолвятся в тот же API-host, который отдает `client-script/tournaments-showcase.js`
 
 Опционально можно добавить:
 
