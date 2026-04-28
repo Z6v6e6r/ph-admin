@@ -456,7 +456,25 @@ export class TournamentsPublicController {
     }
 
     if (this.wantsHtml(request, format)) {
-      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request, user));
+      let flow: TournamentJoinFlowResponse | undefined;
+      if (
+        typeof this.tournamentsPublicSessionService.ensureAuthorizedClient === 'function'
+        && typeof this.tournamentsPublicSessionService.requiresRealAuth === 'function'
+      ) {
+        const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
+          request,
+          response,
+          user
+        );
+        flow = this.enrichJoinFlow(
+          await this.tournamentsService.getPublicJoinFlow(slug, client, {
+            requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+          }),
+          request,
+          user
+        );
+      }
+      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request, user, flow));
       return;
     }
 
@@ -509,7 +527,8 @@ export class TournamentsPublicController {
   private renderPublicTournamentHtml(
     tournament: TournamentPublicView,
     request: Request,
-    user?: RequestUser
+    user?: RequestUser,
+    flow?: TournamentJoinFlowResponse
   ): string {
     const title = this.pickString(tournament.skin.title) ?? tournament.name;
     const subtitle = this.pickString(tournament.skin.subtitle) ?? 'от PadlxAB';
@@ -532,9 +551,21 @@ export class TournamentsPublicController {
         : tournament.registrationOpen
           ? 'ИДЕТ ЗАПИСЬ'
           : 'РЕГИСТРАЦИЯ ЗАКРЫТА';
-    const actionLabel = tournament.registrationOpen
+    const defaultActionLabel = tournament.registrationOpen
       ? this.pickString(tournament.skin.ctaLabel) ?? 'Записаться'
       : 'Посмотреть статус';
+    const actionLabel =
+      flow?.code === 'PROFILE_REQUIRED'
+        ? 'Указать номер телефона'
+        : flow?.code === 'PHONE_VERIFICATION_REQUIRED'
+          ? 'Подтвердить номер телефона'
+          : flow?.code === 'AUTH_REQUIRED'
+            ? 'Войти через LK'
+            : defaultActionLabel;
+    const actionHref =
+      flow?.code === 'AUTH_REQUIRED' && flow.authUrl
+        ? flow.authUrl
+        : absoluteJoinUrl;
     const participantCards =
       participants.length > 0
         ? participants
@@ -985,7 +1016,7 @@ export class TournamentsPublicController {
           </div>
         </section>
 
-        <a class="cta" href="${this.escapeHtml(absoluteJoinUrl)}">${this.escapeHtml(actionLabel)}</a>
+        <a class="cta" href="${this.escapeHtml(actionHref)}">${this.escapeHtml(actionLabel)}</a>
       </section>
     </main>
   </body>
