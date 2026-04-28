@@ -5,6 +5,7 @@
   var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULT_INITIAL_FORWARD_DAYS = 1;
   var SMS_RESEND_COOLDOWN_MS = 30000;
+  var VIVA_API_BASE_URL = 'https://api.vivacrm.ru';
   var DEFAULTS = {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     stationIds: [],
@@ -4027,7 +4028,7 @@
         purchaseButton.addEventListener('click', function () {
           readDraftFromDialog(dialog, state);
           state.draft.selectedPurchaseOptionId = purchaseId;
-          submitJoin(mount, state, false);
+          startDirectVivaPurchase(mount, state, purchase);
         });
         purchaseList.appendChild(purchaseButton);
       });
@@ -4359,6 +4360,178 @@
         };
         renderTournaments(mount, state.payload, state);
       });
+  }
+
+  function startDirectVivaPurchase(mount, state, purchaseOption) {
+    var flow = normalizeObject(state.flow);
+    var tournament = normalizeObject(flow.tournament);
+    var booking = normalizeObject(tournament.booking);
+    var widgetId = String(booking.vivaWidgetId || 'iSkq6G').trim();
+    var exerciseId = String(booking.vivaExerciseId || '').trim();
+    var studioId = String(booking.vivaStudioId || '').trim();
+    var purchase = normalizeObject(purchaseOption);
+    var productId = String(purchase.id || state.draft.selectedPurchaseOptionId || '').trim();
+
+    if (!widgetId || !exerciseId || !studioId || !productId) {
+      state.outcome = {
+        ok: false,
+        message: 'Не хватает данных Viva для покупки участия.'
+      };
+      renderTournaments(mount, state.payload, state);
+      return;
+    }
+
+    createVivaTransaction({
+      widgetId: widgetId,
+      exerciseId: exerciseId,
+      studioId: studioId,
+      productId: productId,
+      productType: normalizeVivaTransactionProductType(purchase.productType),
+      phone: state.draft.phone,
+      successUrl: buildPaymentReturnUrl(state.activeJoinUrl, 'paymentsuccess'),
+      failUrl: buildPaymentReturnUrl(state.activeJoinUrl, 'paymentfailed')
+    })
+      .then(function (transaction) {
+        var transactionId = findVivaTransactionId(transaction);
+        var checkoutUrl = findVivaCheckoutUrl(transaction);
+        if (!transactionId || !checkoutUrl) {
+          throw new Error('Viva не вернула ссылку оплаты или номер транзакции.');
+        }
+        return formFetch(state.activeJoinUrl, {
+          format: 'json',
+          name: state.draft.name,
+          phone: state.draft.phone,
+          levelLabel: state.draft.levelLabel,
+          notes: state.draft.notes,
+          selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
+          directTransactionId: transactionId,
+          directCheckoutUrl: checkoutUrl,
+          purchaseConfirmed: '1',
+          waitlist: '0'
+        });
+      })
+      .then(function (payload) {
+        handleJoinResponse(mount, state, payload);
+      })
+      .catch(function (error) {
+        state.outcome = {
+          ok: false,
+          message: 'Не удалось создать оплату Viva: ' + error.message
+        };
+        renderTournaments(mount, state.payload, state);
+      });
+  }
+
+  function createVivaTransaction(options) {
+    var url = new URL(
+      '/end-user/api/v1/' + encodeURIComponent(options.widgetId) + '/transactions',
+      VIVA_API_BASE_URL + '/'
+    );
+    var payload = {
+      products: [
+        {
+          id: options.productId,
+          type: options.productType,
+          count: 1,
+          bookingRequests: [
+            {
+              exerciseId: options.exerciseId,
+              client: null,
+              comment: null,
+              marketingAttribution: {}
+            }
+          ]
+        }
+      ],
+      clientPhone: String(options.phone || '').replace(/\D+/g, ''),
+      paymentMethod: 'WIDGET',
+      successUrl: options.successUrl,
+      failUrl: options.failUrl,
+      exerciseId: options.exerciseId,
+      promoCode: null,
+      studioId: options.studioId
+    };
+
+    return fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }).then(function (response) {
+      return response.json().catch(function () {
+        return {};
+      }).then(function (payload) {
+        if (!response.ok) {
+          throw new Error(String(payload.message || payload.error || 'status ' + response.status));
+        }
+        return payload;
+      });
+    });
+  }
+
+  function normalizeVivaTransactionProductType(value) {
+    return String(value || '').toUpperCase() === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
+  }
+
+  function buildPaymentReturnUrl(joinUrl, flag) {
+    var url = new URL(joinUrl, window.location.href);
+    url.searchParams.set(flag, 'true');
+    return url.toString();
+  }
+
+  function findVivaCheckoutUrl(payload) {
+    return findFirstMatchingString(payload, function (key, value) {
+      var normalizedKey = String(key || '').toLowerCase().replace(/[\s-]+/g, '_');
+      if (!/^https?:\/\//i.test(value)) {
+        return false;
+      }
+      if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
+        return false;
+      }
+      return /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
+        || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
+    });
+  }
+
+  function findVivaTransactionId(payload) {
+    return findFirstMatchingString(payload, function (key, value) {
+      var normalizedKey = String(key || '').toLowerCase().replace(/[\s-]+/g, '_');
+      return Boolean(value) && /^(id|transactionid|transaction_id|orderid|order_id)$/.test(normalizedKey);
+    });
+  }
+
+  function findFirstMatchingString(value, matches, key, seen) {
+    var currentKey = key || '';
+    var visited = seen || [];
+    if (typeof value === 'string' && value.trim() && matches(currentKey, value.trim())) {
+      return value.trim();
+    }
+    if (!value || typeof value !== 'object' || visited.indexOf(value) >= 0) {
+      return '';
+    }
+    visited.push(value);
+
+    if (Array.isArray(value)) {
+      for (var index = 0; index < value.length; index += 1) {
+        var arrayFound = findFirstMatchingString(value[index], matches, currentKey, visited);
+        if (arrayFound) {
+          return arrayFound;
+        }
+      }
+      return '';
+    }
+
+    var keys = Object.keys(value);
+    for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+      var childKey = keys[keyIndex];
+      var found = findFirstMatchingString(value[childKey], matches, childKey, visited);
+      if (found) {
+        return found;
+      }
+    }
+    return '';
   }
 
   function loadTournaments(mount, state, options) {

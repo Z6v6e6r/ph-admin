@@ -815,6 +815,92 @@ export class TournamentsService {
     };
   }
 
+  async rememberPublicJoinPurchaseTransaction(
+    slug: string,
+    input: RegistrationInput & {
+      transactionId?: string;
+      checkoutUrl?: string;
+    }
+  ): Promise<TournamentRegistrationResponse> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomBySlug(slug);
+    const normalizedPhone = this.normalizePhone(input.phone);
+    const transactionId = this.pickString(input.transactionId);
+    if (!normalizedPhone) {
+      return {
+        ok: false,
+        code: 'PHONE_REQUIRED',
+        message: 'Для покупки участия нужен номер телефона.',
+        tournamentSlug: tournament.slug
+      };
+    }
+    if (!transactionId) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Viva создала транзакцию без номера. Попробуйте повторить позже.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const access = this.evaluateAccess(tournament, input.levelLabel);
+    if (!access.ok) {
+      return {
+        ok: false,
+        code: access.code,
+        message: access.message,
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const payment = this.resolveJoinPayment(
+      tournament,
+      {
+        id: normalizedPhone,
+        authorized: true,
+        authSource: 'headers',
+        name: input.name,
+        phone: normalizedPhone,
+        levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
+        onboardingCompleted: Boolean(this.normalizeLevel(input.levelLabel)),
+        subscriptions: this.readClientSubscriptionsFromInput(input)
+      },
+      input.levelLabel,
+      await this.fetchVivaJoinPurchaseOptions(tournament)
+    );
+
+    if (!payment.required || payment.code !== 'PURCHASE_REQUIRED') {
+      return this.registerPublicParticipant(slug, input);
+    }
+
+    const purchaseOption = this.resolveSelectedPurchaseOption(
+      payment.purchaseOptions,
+      input.selectedPurchaseOptionId
+    );
+    await this.savePendingJoinPayment(tournament, {
+      transactionId,
+      phone: normalizedPhone,
+      name: this.pickString(input.name) ?? undefined,
+      levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
+      notes: this.pickString(input.notes) ?? undefined,
+      selectedPurchaseOptionId: purchaseOption?.id ?? this.pickString(input.selectedPurchaseOptionId) ?? undefined,
+      createdAt: new Date().toISOString()
+    });
+
+    return {
+      ok: true,
+      code: 'PURCHASE_STARTED',
+      message: 'Покупка участия создана. Перейдите к оплате, чтобы завершить запись.',
+      tournamentId: tournament.id,
+      tournamentSlug: tournament.slug,
+      payment: {
+        ...payment,
+        checkoutUrl: this.pickString(input.checkoutUrl) ?? undefined,
+        transactionId
+      }
+    };
+  }
+
   async confirmPublicJoinAfterPayment(
     slug: string,
     input: {

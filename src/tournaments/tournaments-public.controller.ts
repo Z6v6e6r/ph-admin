@@ -74,6 +74,8 @@ type JoinSubmission = {
   notes?: string;
   selectedSubscriptionId?: string;
   selectedPurchaseOptionId?: string;
+  directTransactionId?: string;
+  directCheckoutUrl?: string;
   authCode?: string;
   purchaseConfirmed: boolean;
   waitlist: boolean;
@@ -425,7 +427,17 @@ export class TournamentsPublicController {
       const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
       const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
-      const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+      const outcome = submission.directTransactionId
+        ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
+          name: client.name ?? '',
+          phone: client.phone ?? '',
+          levelLabel: client.levelLabel,
+          notes: submission.notes,
+          selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
+          transactionId: submission.directTransactionId,
+          checkoutUrl: submission.directCheckoutUrl
+        })
+        : await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
@@ -1693,6 +1705,8 @@ export class TournamentsPublicController {
       notes: this.pickString(record.notes) ?? undefined,
       selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
       selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+      directTransactionId: this.pickString(record.directTransactionId) ?? undefined,
+      directCheckoutUrl: this.pickString(record.directCheckoutUrl) ?? undefined,
       authCode: this.pickString(record.authCode) ?? undefined,
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
