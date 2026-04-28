@@ -100,13 +100,15 @@ export class TournamentsPublicController {
     @Query('stationId') stationId?: string,
     @Query('limit') limit?: string,
     @Query('includePast') includePast?: string,
-    @Query('forwardDays') forwardDays?: string
+    @Query('forwardDays') forwardDays?: string,
+    @Query('date') date?: string
   ): Promise<TournamentPublicDirectoryResponse> {
     return this.tournamentsService.listPublicDirectory({
       stationIds: this.parseCsv(stationId),
       limit: this.parsePositiveInteger(limit),
       includePast: this.parseBoolean(includePast),
-      forwardDays: this.parsePositiveInteger(forwardDays)
+      forwardDays: this.parsePositiveInteger(forwardDays),
+      date
     });
   }
 
@@ -115,13 +117,15 @@ export class TournamentsPublicController {
     @Query('stationId') stationId?: string,
     @Query('limit') limit?: string,
     @Query('includePast') includePast?: string,
-    @Query('forwardDays') forwardDays?: string
+    @Query('forwardDays') forwardDays?: string,
+    @Query('date') date?: string
   ): Promise<TournamentPublicDirectoryResponse> {
     return this.tournamentsService.listPublicDirectory({
       stationIds: this.parseCsv(stationId),
       limit: this.parsePositiveInteger(limit),
       includePast: this.parseBoolean(includePast),
-      forwardDays: this.parsePositiveInteger(forwardDays)
+      forwardDays: this.parsePositiveInteger(forwardDays),
+      date
     });
   }
 

@@ -282,24 +282,35 @@ export class TournamentsService {
     stationIds?: string[];
     includePast?: boolean;
     forwardDays?: number;
+    date?: string;
   }): Promise<TournamentPublicDirectoryResponse> {
     this.ensurePersistenceEnabled();
     const limit = this.normalizePublicLimit(options?.limit);
     const stationIds = this.normalizeFilterValues(options?.stationIds);
     const includePast = options?.includePast === true;
     const forwardDays = this.normalizePublicForwardDays(options?.forwardDays);
-    const tournaments = await this.listHydratedCustomTournamentsSafe();
+    const date = this.normalizePublicDate(options?.date);
+    const tournaments = await this.listCustomTournamentsSafe();
 
-    const items = tournaments
+    const candidates = tournaments
       .filter((tournament) =>
         this.matchesPublicTournamentFilters(tournament, {
           stationIds,
           includePast,
-          forwardDays
+          forwardDays,
+          date
         })
       )
       .sort((left, right) => this.comparePublicTournaments(left, right))
-      .slice(0, limit)
+      .slice(0, limit);
+    const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(candidates);
+    const hydrated = await Promise.all(
+      candidates.map((tournament) => this.hydrateCustomTournamentFromSourceMap(
+        tournament,
+        sourceTournamentsById
+      ))
+    );
+    const items = hydrated
       .map((tournament) => this.toPublicView(tournament));
 
     return {
@@ -908,10 +919,11 @@ export class TournamentsService {
 
   private async listHydratedCustomTournamentsSafe(): Promise<CustomTournament[]> {
     const tournaments = await this.listCustomTournamentsSafe();
+    const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(tournaments);
     return Promise.all(
       tournaments.map(async (tournament) => {
         try {
-          return await this.hydrateCustomTournament(tournament);
+          return await this.hydrateCustomTournamentFromSourceMap(tournament, sourceTournamentsById);
         } catch (error) {
           this.logger.warn(
             `Failed to hydrate public tournament ${tournament.id}: ${String(error)}`
@@ -920,6 +932,31 @@ export class TournamentsService {
         }
       })
     );
+  }
+
+  private async buildSourceTournamentMapForCustomTournaments(
+    tournaments: CustomTournament[]
+  ): Promise<Map<string, Tournament>> {
+    const sourceIds = new Set(
+      tournaments
+        .map((tournament) => this.pickString(tournament.sourceTournamentId))
+        .filter((sourceId): sourceId is string => Boolean(sourceId))
+    );
+    if (sourceIds.size === 0) {
+      return new Map();
+    }
+
+    try {
+      const sourceTournaments = await this.listSourceTournaments();
+      return new Map(
+        sourceTournaments
+          .filter((tournament) => sourceIds.has(tournament.id))
+          .map((tournament) => [tournament.id, tournament])
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to load source tournaments for public list: ${String(error)}`);
+      return new Map();
+    }
   }
 
   private async findCustomTournamentByIdSafe(id: string): Promise<CustomTournament | null> {
@@ -969,6 +1006,7 @@ export class TournamentsService {
       stationIds: string[];
       includePast: boolean;
       forwardDays: number;
+      date?: string;
     }
   ): boolean {
     if (
@@ -979,8 +1017,13 @@ export class TournamentsService {
       return false;
     }
 
+    if (options.date && !this.isTournamentOnPublicDate(tournament, options.date)) {
+      return false;
+    }
+
     if (
-      !options.includePast
+      !options.date
+      && !options.includePast
       && !this.isTournamentWithinPublicForwardWindow(tournament, options.forwardDays)
     ) {
       return false;
@@ -1018,6 +1061,14 @@ export class TournamentsService {
     end.setHours(23, 59, 59, 999);
 
     return startsAt >= today.getTime() && startsAt <= end.getTime();
+  }
+
+  private isTournamentOnPublicDate(tournament: CustomTournament, date: string): boolean {
+    const startsAt = Date.parse(tournament.startsAt ?? '');
+    if (!Number.isFinite(startsAt)) {
+      return false;
+    }
+    return this.formatPublicDateKey(new Date(startsAt)) === date;
   }
 
   private comparePublicTournaments(left: CustomTournament, right: CustomTournament): number {
@@ -1246,6 +1297,19 @@ export class TournamentsService {
       );
       return this.mergeCustomWithSourceTournament(tournament);
     }
+  }
+
+  private async hydrateCustomTournamentFromSourceMap(
+    tournament: CustomTournament,
+    sourceTournamentsById: Map<string, Tournament>
+  ): Promise<CustomTournament> {
+    if (!tournament.sourceTournamentId) {
+      return this.ensureTournamentDefaults(tournament);
+    }
+    return this.mergeCustomWithSourceTournament(
+      tournament,
+      sourceTournamentsById.get(tournament.sourceTournamentId)
+    );
   }
 
   private mergeCustomWithSourceTournament(
@@ -2699,6 +2763,22 @@ export class TournamentsService {
     }
 
     return Math.min(120, Math.max(1, Math.floor(numericForwardDays)));
+  }
+
+  private normalizePublicDate(value?: string): string | undefined {
+    const text = this.pickString(value);
+    if (!text || !/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return undefined;
+    }
+    return text;
+  }
+
+  private formatPublicDateKey(date: Date): string {
+    return [
+      String(date.getFullYear()),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0')
+    ].join('-');
   }
 
   private pickNumber(value: unknown): number | undefined {

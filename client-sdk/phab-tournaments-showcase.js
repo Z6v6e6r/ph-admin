@@ -2881,12 +2881,14 @@
     return card;
   }
 
-  function buildRequestUrl(config, forwardDays) {
+  function buildRequestUrl(config, options) {
+    var requestOptions = options || {};
     var url = new URL(
       normalizeApiBaseUrl(config.apiBaseUrl) + '/tournaments/public/list',
       window.location.href
     );
-    var days = normalizePositiveInteger(forwardDays, config.forwardDays);
+    var days = normalizePositiveInteger(requestOptions.forwardDays, config.forwardDays);
+    var dateKey = String(requestOptions.dateKey || '').trim();
 
     if (config.stationIds.length > 0) {
       url.searchParams.set('stationId', config.stationIds.join(','));
@@ -2897,7 +2899,9 @@
     if (config.includePast) {
       url.searchParams.set('includePast', 'true');
     }
-    if (!config.includePast && days > 0) {
+    if (!config.includePast && dateKey) {
+      url.searchParams.set('date', dateKey);
+    } else if (!config.includePast && days > 0) {
       url.searchParams.set('forwardDays', String(days));
     }
 
@@ -2942,6 +2946,33 @@
         'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
       },
       body: new URLSearchParams(payload).toString()
+    });
+  }
+
+  function mergeTournamentPayload(currentPayload, nextPayload) {
+    var current = normalizeObject(currentPayload);
+    var next = normalizeObject(nextPayload);
+    var byKey = {};
+    var items = [];
+
+    normalizeArray(current.items).concat(normalizeArray(next.items)).forEach(function (item) {
+      var record = normalizeObject(item);
+      var key = String(record.id || record.slug || record.joinUrl || '').trim();
+      if (!key) {
+        key = 'item-' + items.length;
+      }
+      if (!byKey[key]) {
+        items.push(record);
+      }
+      byKey[key] = record;
+    });
+
+    return Object.assign({}, current, next, {
+      count: items.length,
+      items: items.map(function (item) {
+        var key = String(item.id || item.slug || item.joinUrl || '').trim();
+        return byKey[key] || item;
+      })
     });
   }
 
@@ -4009,14 +4040,14 @@
           return normalizeObject(entry);
         }),
         state.config.includePast,
-        state.loadedForwardDays || state.config.forwardDays
+        state.config.forwardDays
       )
     );
     syncResponsiveViewMode(state);
     var dayGroups = buildDayGroups(
       items,
       state.config.includePast,
-      state.loadedForwardDays || state.config.forwardDays
+      state.config.forwardDays
     );
     var selectedGroup;
     var root = createElement(
