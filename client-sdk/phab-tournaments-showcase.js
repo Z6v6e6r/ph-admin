@@ -3364,18 +3364,30 @@
   }
 
   function createCardModeActionControl(card, action, state, mount) {
-    var control = createActionControl(card, action, state, mount);
+    var cardModeAction = action;
+    var publicUrl = String(card.publicUrl || '').trim();
+    var control;
+
+    if (action.mode !== 'disabled' && publicUrl) {
+      cardModeAction = {
+        kind: action.kind,
+        label: action.label,
+        mode: 'public'
+      };
+    }
+
+    control = createActionControl(card, cardModeAction, state, mount);
 
     control.className = 'phab-tournaments__card-compact-cta';
-    if (action.mode !== 'disabled') {
+    if (cardModeAction.mode !== 'disabled') {
       control.textContent = 'Принять участие';
     }
 
-    if (action.kind === 'secondary') {
+    if (cardModeAction.kind === 'secondary') {
       control.className += ' phab-tournaments__card-compact-cta--secondary';
     }
 
-    if (action.mode === 'disabled') {
+    if (cardModeAction.mode === 'disabled') {
       control.className += ' phab-tournaments__card-compact-cta--disabled';
     }
 
