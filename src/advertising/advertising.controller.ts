@@ -39,9 +39,18 @@ export class AdvertisingController {
 
   @Get('split-payment-promo')
   getSplitPaymentPromoPublic(
-    @Query('forDate') forDate?: string
+    @Query('forDate') forDate?: string,
+    @Query('date') date?: string,
+    @Query('gameDate') gameDate?: string,
+    @Query('startAt') startAt?: string,
+    @Query('startsAt') startsAt?: string
   ): Promise<SplitPaymentPromoPublicSnapshot> {
-    return this.advertisingService.getSplitPaymentPromoPublicSnapshot(forDate);
+    const resolvedForDate = this.pickString(forDate)
+      ?? this.pickString(date)
+      ?? this.pickString(gameDate)
+      ?? this.pickString(startAt)
+      ?? this.pickString(startsAt);
+    return this.advertisingService.getSplitPaymentPromoPublicSnapshot(resolvedForDate);
   }
 
   @Get('cabinet-home/admin')
