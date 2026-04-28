@@ -89,6 +89,14 @@ export class TournamentsPublicController {
   private readonly lkPollMs = this.parsePositiveInteger(
     String(process.env.TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS ?? '').trim()
   ) ?? 1500;
+  private readonly vivaEndUserApiBaseUrl =
+    (
+      String(process.env.VIVA_END_USER_API_BASE_URL ?? '').trim()
+      || String(process.env.VIVA_ADMIN_API_BASE_URL ?? '').trim()
+      || 'https://api.vivacrm.ru'
+    ).replace(/\/+$/, '');
+  private readonly vivaEndUserWidgetId =
+    String(process.env.VIVA_END_USER_WIDGET_ID ?? '').trim() || 'iSkq6G';
 
   constructor(
     private readonly tournamentsService: TournamentsService,
@@ -554,18 +562,13 @@ export class TournamentsPublicController {
     const defaultActionLabel = tournament.registrationOpen
       ? this.pickString(tournament.skin.ctaLabel) ?? 'Записаться'
       : 'Посмотреть статус';
-    const actionLabel =
-      flow?.code === 'PROFILE_REQUIRED'
-        ? 'Указать номер телефона'
-        : flow?.code === 'PHONE_VERIFICATION_REQUIRED'
-          ? 'Подтвердить номер телефона'
-          : flow?.code === 'AUTH_REQUIRED'
-            ? 'Войти через LK'
-            : defaultActionLabel;
-    const actionHref =
-      flow?.code === 'AUTH_REQUIRED' && flow.authUrl
-        ? flow.authUrl
-        : absoluteJoinUrl;
+    const actionHtml = this.renderPublicTournamentActionHtml(
+      tournament,
+      absoluteJoinUrl,
+      defaultActionLabel,
+      flow
+    );
+    const actionScript = this.renderPublicTournamentActionScript(absoluteJoinUrl);
     const participantCards =
       participants.length > 0
         ? participants
@@ -921,6 +924,81 @@ export class TournamentsPublicController {
         font-size: 22px;
         font-weight: 900;
       }
+      .public-action {
+        border-radius: 18px;
+        background: #f1f2f7;
+        padding: 16px;
+      }
+      .public-action__phone {
+        display: grid;
+        gap: 12px;
+        text-align: center;
+      }
+      .public-action__title {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.25;
+        font-weight: 900;
+        color: #1f1f25;
+      }
+      .public-action__row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+      }
+      .public-action label {
+        display: grid;
+        gap: 5px;
+        text-align: left;
+        color: #70717b;
+        font-size: 12px;
+      }
+      .public-action input {
+        width: 100%;
+        min-height: 50px;
+        border: none;
+        border-radius: 5px;
+        background: #fff;
+        padding: 10px 12px;
+        color: #202127;
+        font: inherit;
+        font-size: 18px;
+        outline: none;
+      }
+      .public-action__button {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        min-height: 64px;
+        border: none;
+        border-radius: 5px;
+        background: #15191d;
+        color: #fff;
+        cursor: pointer;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      .public-action__hint {
+        margin: 0;
+        color: #70717b;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+      .public-action__hint a {
+        color: inherit;
+      }
+      .public-action__status {
+        display: none;
+        margin: 0 0 10px;
+        color: #70717b;
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .public-action.is-loading .public-action__status {
+        display: block;
+      }
       @media (max-width: 640px) {
         .page { min-height: 100vh; box-shadow: none; }
         .poster { min-height: 176px; }
@@ -1016,11 +1094,213 @@ export class TournamentsPublicController {
           </div>
         </section>
 
-        <a class="cta" href="${this.escapeHtml(actionHref)}">${this.escapeHtml(actionLabel)}</a>
+        ${actionHtml}
       </section>
     </main>
+    ${actionScript}
   </body>
 </html>`;
+  }
+
+  private renderPublicTournamentActionHtml(
+    tournament: TournamentPublicView,
+    absoluteJoinUrl: string,
+    defaultActionLabel: string,
+    flow?: TournamentJoinFlowResponse
+  ): string {
+    const flowCode = flow?.code ?? '';
+    const phoneValue = this.escapeHtml(this.formatPhone(flow?.client.phone));
+    const showPhoneForm =
+      tournament.registrationOpen
+      && (flowCode === 'PROFILE_REQUIRED' || flowCode === 'PHONE_VERIFICATION_REQUIRED');
+
+    if (showPhoneForm) {
+      return `<section class="public-action" data-phab-public-action>
+          <p class="public-action__status">Проверяем авторизацию...</p>
+          <form class="public-action__phone" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
+            <p class="public-action__title">Введите номер телефона, чтобы записаться</p>
+            <div class="public-action__row">
+              <label>
+                Телефон
+                <input
+                  type="tel"
+                  name="phone"
+                  value="${phoneValue}"
+                  inputmode="tel"
+                  autocomplete="tel"
+                  placeholder="+7"
+                  required
+                />
+              </label>
+            </div>
+            <button class="public-action__button" type="submit">Продолжить</button>
+            <p class="public-action__hint">
+              Указывая код, вы соглашаетесь с условиями Публичной Оферты и Обработкой Персональных Данных
+            </p>
+          </form>
+        </section>`;
+    }
+
+    const actionLabel =
+      tournament.registrationOpen
+        ? 'Записаться на занятие'
+        : defaultActionLabel;
+    const actionHref =
+      flowCode === 'AUTH_REQUIRED' && flow?.authUrl
+        ? flow.authUrl
+        : absoluteJoinUrl;
+
+    return `<section class="public-action" data-phab-public-action>
+        <p class="public-action__status">Проверяем авторизацию...</p>
+        <a class="public-action__button" href="${this.escapeHtml(actionHref)}">${this.escapeHtml(actionLabel)}</a>
+      </section>`;
+  }
+
+  private renderPublicTournamentActionScript(absoluteJoinUrl: string): string {
+    const profileUrl = new URL(
+      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    ).toString();
+    const flowUrl = this.appendQueryParam(absoluteJoinUrl, 'format', 'json');
+
+    return `<script>
+      (function () {
+        var root = document.querySelector('[data-phab-public-action]');
+        if (!root || !window.fetch) return;
+
+        var profileUrl = ${JSON.stringify(profileUrl)};
+        var flowUrl = ${JSON.stringify(flowUrl)};
+        var joinUrl = ${JSON.stringify(absoluteJoinUrl)};
+
+        function escapeHtml(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] || char;
+          });
+        }
+
+        function pick(record, keys) {
+          if (!record || typeof record !== 'object') return '';
+          for (var index = 0; index < keys.length; index += 1) {
+            var value = record[keys[index]];
+            if (value !== null && value !== undefined && String(value).trim()) {
+              return String(value).trim();
+            }
+          }
+          return '';
+        }
+
+        function pickPhone(profile) {
+          var direct = pick(profile, ['phone', 'phoneNumber', 'primaryPhone', 'mobile', 'mainPhone']);
+          var client = profile && typeof profile.client === 'object' ? profile.client : null;
+          var nested = pick(client, ['phone', 'phoneNumber', 'primaryPhone', 'mobile', 'mainPhone']);
+          var phones = Array.isArray(profile && profile.phones) ? profile.phones : [];
+          var firstPhone = phones.length ? pick(phones[0], ['phone', 'phoneNumber', 'value', 'number']) : '';
+          return direct || nested || firstPhone;
+        }
+
+        function pickName(profile) {
+          var direct = pick(profile, ['name', 'fullName', 'displayName', 'title']);
+          var firstName = pick(profile, ['firstName']);
+          var lastName = pick(profile, ['lastName']);
+          var client = profile && typeof profile.client === 'object' ? profile.client : null;
+          return direct || [firstName, lastName].filter(Boolean).join(' ') || pick(client, ['name', 'fullName', 'displayName']);
+        }
+
+        function pickLevel(profile) {
+          return pick(profile, ['levelLabel', 'level', 'ratingLabel', 'rating']);
+        }
+
+        function normalizeSubscriptions(value) {
+          if (!Array.isArray(value)) return [];
+          return value.map(function (item, index) {
+            var record = item && typeof item === 'object' ? item : {};
+            var label = pick(record, ['label', 'name', 'title']);
+            if (!label) return null;
+            return {
+              id: pick(record, ['id', 'subscriptionId', 'productId']) || 'viva-sub-' + (index + 1),
+              label: label,
+              remainingUses: Number(record.remainingUses || record.visitsLeft || record.remaining || record.uses || 1) || 1,
+              validUntil: pick(record, ['validUntil', 'expirationDate', 'expiresAt'])
+            };
+          }).filter(Boolean);
+        }
+
+        function buildHeaders(profile) {
+          var client = profile && typeof profile.client === 'object' ? profile.client : null;
+          var phone = pickPhone(profile);
+          var id = pick(profile, ['id', 'clientId', 'userId', 'uuid']) || pick(client, ['id', 'clientId', 'userId', 'uuid']) || phone;
+          var name = pickName(profile);
+          var level = pickLevel(profile);
+          var subscriptions =
+            normalizeSubscriptions(profile && profile.availableClientSubscriptions)
+              .concat(normalizeSubscriptions(profile && profile.subscriptions))
+              .concat(normalizeSubscriptions(profile && profile.clientSubscriptions));
+          var headers = { Accept: 'application/json', 'x-user-id': id || 'viva-client' };
+          if (name) headers['x-user-name'] = name;
+          if (phone) headers['x-user-phone'] = phone;
+          if (level) headers['x-user-level-label'] = level;
+          if (subscriptions.length) headers['x-user-subscriptions'] = JSON.stringify(subscriptions);
+          return { headers: headers, phone: phone };
+        }
+
+        function renderPhone(phone) {
+          root.classList.remove('is-loading');
+          root.innerHTML =
+            '<form class="public-action__phone" method="post" action="' + escapeHtml(joinUrl) + '">' +
+              '<p class="public-action__title">Введите номер телефона, чтобы записаться</p>' +
+              '<div class="public-action__row"><label>Телефон' +
+                '<input type="tel" name="phone" inputmode="tel" autocomplete="tel" placeholder="+7" required value="' + escapeHtml(phone || '') + '" />' +
+              '</label></div>' +
+              '<button class="public-action__button" type="submit">Продолжить</button>' +
+              '<p class="public-action__hint">Указывая код, вы соглашаетесь с условиями Публичной Оферты и Обработкой Персональных Данных</p>' +
+            '</form>';
+        }
+
+        function renderButton(label) {
+          root.classList.remove('is-loading');
+          root.innerHTML =
+            '<a class="public-action__button" href="' + escapeHtml(joinUrl) + '">' +
+              escapeHtml(label || 'Записаться на занятие') +
+            '</a>';
+        }
+
+        fetch(profileUrl, {
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' }
+        })
+          .then(function (response) {
+            if (!response.ok) throw new Error('profile_unavailable');
+            return response.json();
+          })
+          .then(function (profile) {
+            var auth = buildHeaders(profile || {});
+            return fetch(flowUrl, {
+              credentials: 'include',
+              headers: auth.headers
+            }).then(function (response) {
+              if (!response.ok) throw new Error('join_flow_unavailable');
+              return response.json().then(function (flow) {
+                return { flow: flow, phone: auth.phone };
+              });
+            });
+          })
+          .then(function (result) {
+            var flow = result.flow || {};
+            if (flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED') {
+              renderPhone(result.phone || (flow.client && flow.client.phone));
+              return;
+            }
+            if (flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED') {
+              renderButton('Открыть заявку');
+              return;
+            }
+            renderButton('Записаться на занятие');
+          })
+          .catch(function () {
+            root.classList.remove('is-loading');
+          });
+      })();
+    </script>`;
   }
 
   private renderPublicTournamentLegacyHtml(

@@ -74,7 +74,19 @@ export class TournamentsPublicSessionService {
     const session = this.readSessionCookie(request);
     const headerClient = this.resolveHeaderClient(request, user);
     if (headerClient) {
-      return this.mergeHeaderClientWithSession(headerClient, session);
+      const client = this.mergeHeaderClientWithSession(headerClient, session);
+      const now = Math.floor(Date.now() / 1000);
+      this.writeSessionCookie(response, request, {
+        clientId: String(client.id || '').trim() || `tour-${randomUUID()}`,
+        name: this.pickString(client.name) ?? undefined,
+        phone: this.normalizePhone(client.phone) ?? undefined,
+        phoneVerified: Boolean(this.normalizePhone(client.phone)),
+        levelLabel: this.normalizeLevel(client.levelLabel) ?? undefined,
+        subscriptions: client.subscriptions,
+        iat: now,
+        exp: now + this.ttlDays * 24 * 60 * 60
+      });
+      return client;
     }
 
     if (session) {

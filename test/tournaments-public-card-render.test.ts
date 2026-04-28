@@ -1,7 +1,11 @@
 import * as assert from 'node:assert/strict';
 import { Request, Response } from 'express';
 import { TournamentsPublicController } from '../src/tournaments/tournaments-public.controller';
-import { TournamentPublicView, TournamentStatus } from '../src/tournaments/tournaments.types';
+import {
+  TournamentJoinFlowResponse,
+  TournamentPublicView,
+  TournamentStatus
+} from '../src/tournaments/tournaments.types';
 
 function createTournament(): TournamentPublicView {
   return {
@@ -116,6 +120,43 @@ function createResponseCapture(): {
   };
 }
 
+function createFlow(
+  tournament: TournamentPublicView,
+  code: TournamentJoinFlowResponse['code']
+): TournamentJoinFlowResponse {
+  return {
+    ok: code === 'READY_TO_JOIN',
+    code,
+    message: code === 'PROFILE_REQUIRED'
+      ? 'Чтобы присоединиться к турниру, укажите номер телефона.'
+      : 'Можно записаться.',
+    tournament,
+    client: {
+      id: 'client-1',
+      authorized: code !== 'PROFILE_REQUIRED',
+      authSource: 'cookie',
+      phoneVerified: code !== 'PROFILE_REQUIRED',
+      onboardingCompleted: true,
+      subscriptions: []
+    },
+    access: {
+      ok: true,
+      code: 'OK',
+      message: 'Уровень подходит.',
+      accessLevels: tournament.accessLevels
+    },
+    missingFields: code === 'PROFILE_REQUIRED' ? ['phone'] : [],
+    waitlistAllowed: false,
+    payment: {
+      required: false,
+      code: 'NOT_REQUIRED',
+      message: 'Оплата не требуется.',
+      availableSubscriptions: [],
+      purchaseOptions: []
+    }
+  };
+}
+
 async function main(): Promise<void> {
   const tournament = createTournament();
   const controller = new TournamentsPublicController(
@@ -148,6 +189,69 @@ async function main(): Promise<void> {
     assert.match(html ?? '', /Елена Полкова/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
+  }
+
+  {
+    const controllerWithFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () => createFlow(tournament, 'PROFILE_REQUIRED')
+      } as never,
+      {
+        ensureAuthorizedClient: () => ({
+          id: 'guest-1',
+          authorized: false,
+          authSource: 'cookie',
+          onboardingCompleted: false,
+          subscriptions: []
+        }),
+        requiresRealAuth: () => true
+      } as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithFlow.findPublicBySlug(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined
+    );
+
+    const html = capture.getHtml();
+    assert.match(html ?? '', /Введите номер телефона, чтобы записаться/);
+    assert.match(html ?? '', /name="phone"/);
+  }
+
+  {
+    const controllerWithFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () => createFlow(tournament, 'READY_TO_JOIN')
+      } as never,
+      {
+        ensureAuthorizedClient: () => ({
+          id: 'client-1',
+          authorized: true,
+          authSource: 'headers',
+          phone: '79990001122',
+          phoneVerified: true,
+          onboardingCompleted: true,
+          subscriptions: []
+        }),
+        requiresRealAuth: () => true
+      } as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithFlow.findPublicBySlug(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined
+    );
+
+    const html = capture.getHtml();
+    assert.match(html ?? '', /Записаться на занятие/);
   }
 
   {

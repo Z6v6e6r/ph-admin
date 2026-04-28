@@ -2863,14 +2863,14 @@
       return {
         kind: 'secondary',
         label: 'В лист ожидания',
-        mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
+        mode: publicUrl ? 'public' : joinUrl ? 'join' : 'disabled'
       };
     }
 
     return {
       kind: 'primary',
       label: String(skin.ctaLabel || '').trim() || 'Принять участие',
-      mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
+      mode: publicUrl ? 'public' : joinUrl ? 'join' : 'disabled'
     };
   }
 
@@ -3414,8 +3414,6 @@
     if (action.mode === 'public' && publicUrl) {
       control = createElement('a', className, action.label);
       control.href = publicUrl;
-      control.target = '_blank';
-      control.rel = 'noopener noreferrer';
       return control;
     }
 
