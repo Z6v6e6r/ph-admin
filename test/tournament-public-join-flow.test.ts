@@ -240,7 +240,7 @@ async function main(): Promise<void> {
     subscriptions: []
   });
   assert.equal(purchaseFlow.code, 'PURCHASE_REQUIRED');
-  assert.equal(purchaseFlow.payment.purchaseOptions.length, 2);
+  assert.equal(purchaseFlow.payment.purchaseOptions.length, 1);
 
   globalThis.fetch = (async (url: RequestInfo | URL) => {
     const value = String(url);
@@ -417,12 +417,12 @@ async function main(): Promise<void> {
     phone: '+7 999 000-11-27',
     levelLabel: 'C',
     purchaseConfirmed: true,
-    selectedPurchaseOptionId: 'catalog-one-time',
+    selectedPurchaseOptionId: 'catalog-subscription',
     subscriptions: []
   });
   assert.equal(paidRegistration.code, 'REGISTERED');
   assert.equal(paidRegistration.participant?.paymentStatus, 'PAID');
-  assert.match(paidRegistration.participant?.notes ?? '', /catalog-one-time/);
+  assert.match(paidRegistration.participant?.notes ?? '', /catalog-subscription/);
 
   globalThis.fetch = originalFetch;
 

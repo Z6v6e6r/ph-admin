@@ -2421,12 +2421,11 @@ export class TournamentsService {
         return this.normalizeVivaProductCatalog(list, productType);
       };
 
-      const [subscriptions, oneTimes] = await Promise.all([
-        loadCatalog('subscriptions', 'SUBSCRIPTION'),
-        loadCatalog('one-times', 'ONE_TIME')
+      const [subscriptions] = await Promise.all([
+        loadCatalog('subscriptions', 'SUBSCRIPTION')
       ]);
       const merged = new Map<string, TournamentPurchaseOption>();
-      [...subscriptions, ...oneTimes].forEach((item) => {
+      subscriptions.forEach((item) => {
         merged.set(item.id, item);
       });
       return Array.from(merged.values());
