@@ -338,7 +338,9 @@ async function main(): Promise<void> {
   });
   assert.equal(blockedPurchaseRegistration.code, 'PURCHASE_REQUIRED');
 
-  let transactionRequest: { url: string; body: Record<string, unknown> } | undefined;
+  let transactionRequest:
+    | { url: string; headers: Record<string, string>; body: Record<string, unknown> }
+    | undefined;
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const value = String(url);
     if (value.includes('/products/subscriptions')) {
@@ -364,6 +366,7 @@ async function main(): Promise<void> {
     }
     transactionRequest = {
       url: value,
+      headers: init?.headers as Record<string, string>,
       body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
     };
     return {
@@ -398,6 +401,7 @@ async function main(): Promise<void> {
       'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/transactions'
     );
     assert.equal(transactionRequest?.body.clientPhone, '79990001128');
+    assert.equal(transactionRequest?.headers.Authorization, undefined);
     const products = transactionRequest?.body.products as Array<Record<string, unknown>>;
     assert.equal(products[0]?.id, 'single-entry');
     assert.equal(products[0]?.type, 'SERVICE');

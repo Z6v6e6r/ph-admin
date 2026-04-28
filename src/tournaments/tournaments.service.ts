@@ -63,7 +63,6 @@ interface RegistrationInput {
   selectedPurchaseOptionId?: string;
   purchaseConfirmed?: boolean;
   subscriptions?: TournamentClientSubscription[];
-  vivaAuthorization?: string;
 }
 
 interface JoinPurchaseTransactionInput extends RegistrationInput {
@@ -601,8 +600,7 @@ export class TournamentsService {
           tournament,
           phone: normalizedPhone,
           successUrl: this.buildPublicJoinUrl(tournament.publicUrl),
-          failUrl: this.buildPublicJoinUrl(tournament.publicUrl),
-          authorization: input.vivaAuthorization
+          failUrl: this.buildPublicJoinUrl(tournament.publicUrl)
         });
         if (transaction.checkoutUrl) {
           return {
@@ -775,8 +773,7 @@ export class TournamentsService {
       tournament,
       phone: normalizedPhone,
       successUrl: input.successUrl,
-      failUrl: input.failUrl,
-      authorization: input.vivaAuthorization
+      failUrl: input.failUrl
     });
 
     if (transaction.transactionId) {
@@ -1923,7 +1920,6 @@ export class TournamentsService {
     phone: string;
     successUrl: string;
     failUrl: string;
-    authorization?: string;
   }): Promise<VivaJoinTransactionResponse> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     const exerciseId = this.pickString(input.booking.vivaExerciseId);
@@ -1972,10 +1968,7 @@ export class TournamentsService {
         Accept: 'application/json',
         'Content-Type': 'application/json',
         Origin: 'https://padlhub.ru',
-        Referer: 'https://padlhub.ru/',
-        ...(this.pickString(input.authorization)
-          ? { Authorization: String(this.pickString(input.authorization)) }
-          : {})
+        Referer: 'https://padlhub.ru/'
       },
       body: JSON.stringify(payload),
       signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
