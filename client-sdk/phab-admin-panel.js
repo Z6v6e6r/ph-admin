@@ -5021,6 +5021,18 @@
     return year + '-' + month + '-' + day;
   }
 
+  function buildEndOfDayIsoFromDateInput(value) {
+    var normalized = String(value || '').trim();
+    if (!normalized) {
+      return undefined;
+    }
+    var date = new Date(normalized + 'T23:59:59');
+    if (Number.isNaN(date.getTime())) {
+      return undefined;
+    }
+    return date.toISOString();
+  }
+
   function getTodayDateInputValue() {
     return formatDateInputValue(new Date());
   }
@@ -6622,12 +6634,12 @@
 
     var splitPromoExpiresAtLabel = document.createElement('label');
     splitPromoExpiresAtLabel.className = 'phab-admin-settings-label';
-    splitPromoExpiresAtLabel.textContent = 'Срок действия до';
+    splitPromoExpiresAtLabel.textContent = 'Действует на даты игр до (включительно)';
     splitPromoForm.appendChild(splitPromoExpiresAtLabel);
 
     var splitPromoExpiresAtInput = document.createElement('input');
     splitPromoExpiresAtInput.className = 'phab-admin-settings-input';
-    splitPromoExpiresAtInput.type = 'datetime-local';
+    splitPromoExpiresAtInput.type = 'date';
     splitPromoExpiresAtLabel.appendChild(splitPromoExpiresAtInput);
 
     var splitPromoStationIdsLabel = document.createElement('label');
@@ -23148,7 +23160,7 @@
       meta.textContent =
         'станции: ' +
         (settings.stationIds.length ? settings.stationIds.join(', ') : settings.stationNameIncludes.join(', ')) +
-        (settings.expiresAt ? ' · действует до: ' + formatDateTimeFull(settings.expiresAt) : '') +
+        (settings.expiresAt ? ' · действует на даты игр до: ' + formatDateInputValue(settings.expiresAt) : '') +
         ' · корты: ' +
         (settings.roomIds.length ? settings.roomIds.join(', ') : settings.roomNameIncludes.join(', ')) +
         ' · 2 команды: ' +
@@ -23160,7 +23172,7 @@
       main.appendChild(meta);
 
       dom.splitPromoEnabledInput.checked = settings.enabled === true;
-      dom.splitPromoExpiresAtInput.value = formatDateTimeLocalInputValue(settings.expiresAt);
+      dom.splitPromoExpiresAtInput.value = formatDateInputValue(settings.expiresAt);
       dom.splitPromoStationIdsInput.value = settings.stationIds.join(', ');
       dom.splitPromoStationNamesInput.value = settings.stationNameIncludes.join(', ');
       dom.splitPromoRoomIdsInput.value = settings.roomIds.join(', ');
@@ -23215,9 +23227,7 @@
 
       return {
         enabled: dom.splitPromoEnabledInput.checked === true,
-        expiresAt: dom.splitPromoExpiresAtInput.value
-          ? new Date(dom.splitPromoExpiresAtInput.value).toISOString()
-          : undefined,
+        expiresAt: buildEndOfDayIsoFromDateInput(dom.splitPromoExpiresAtInput.value),
         stationIds: stationIds,
         stationNameIncludes: stationNameIncludes,
         roomIds: parseCsvInput(dom.splitPromoRoomIdsInput.value),

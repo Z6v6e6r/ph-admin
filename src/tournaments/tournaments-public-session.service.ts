@@ -27,6 +27,11 @@ interface PhoneAuthTokenResponse {
   error_description?: string;
 }
 
+interface ResolvedPhoneAuthToken {
+  accessToken: string;
+  expiresIn?: number;
+}
+
 @Injectable()
 export class TournamentsPublicSessionService {
   private readonly logger = new Logger(TournamentsPublicSessionService.name);
@@ -61,6 +66,10 @@ export class TournamentsPublicSessionService {
     'TOURNAMENTS_PUBLIC_AUTH_TIMEOUT_MS',
     5000
   );
+  private readonly externalAccessTokenCache = new Map<
+    string,
+    { token: string; expiresAt: number }
+  >();
 
   requiresRealAuth(): boolean {
     return this.requireRealAuth;
@@ -200,6 +209,11 @@ export class TournamentsPublicSessionService {
     if (!authResult) {
       return null;
     }
+    this.storeExternalAccessToken(
+      current.id,
+      authResult.accessToken,
+      authResult.expiresIn
+    );
 
     const payload: TournamentPublicSessionPayload = {
       clientId: current.id,
@@ -213,6 +227,26 @@ export class TournamentsPublicSessionService {
     };
     this.writeSessionCookie(response, request, payload);
     return this.toClientProfile(payload, 'cookie', true);
+  }
+
+  resolveExternalAuthorizationHeader(
+    request: Request,
+    client: TournamentPublicClientProfile
+  ): string | undefined {
+    const directAuthorization = this.pickString(request.headers.authorization);
+    if (directAuthorization) {
+      return directAuthorization;
+    }
+
+    const cached = this.externalAccessTokenCache.get(String(client.id || ''));
+    if (!cached) {
+      return undefined;
+    }
+    if (cached.expiresAt <= Date.now()) {
+      this.externalAccessTokenCache.delete(String(client.id || ''));
+      return undefined;
+    }
+    return `Bearer ${cached.token}`;
   }
 
   private resolveHeaderClient(
@@ -550,7 +584,10 @@ export class TournamentsPublicSessionService {
     }
   }
 
-  private async verifyExternalPhoneCode(phone: string, code: string): Promise<boolean> {
+  private async verifyExternalPhoneCode(
+    phone: string,
+    code: string
+  ): Promise<ResolvedPhoneAuthToken | null> {
     try {
       const body = new URLSearchParams();
       body.set('grant_type', 'password');
@@ -577,13 +614,32 @@ export class TournamentsPublicSessionService {
         this.logger.warn(
           `Phone auth token request failed: ${response.status} ${payload?.error ?? ''}`
         );
-        return false;
+        return null;
       }
-      return true;
+      return {
+        accessToken: payload.access_token,
+        expiresIn: typeof payload.expires_in === 'number' ? payload.expires_in : undefined
+      };
     } catch (error) {
       this.logger.warn(`Phone auth token request failed: ${String(error)}`);
-      return false;
+      return null;
     }
+  }
+
+  private storeExternalAccessToken(clientId: string, token: string, expiresIn?: number): void {
+    const normalizedClientId = String(clientId || '').trim();
+    const normalizedToken = this.pickString(token);
+    if (!normalizedClientId || !normalizedToken) {
+      return;
+    }
+    const ttlSeconds =
+      Number.isFinite(expiresIn as number) && Number(expiresIn) > 0
+        ? Number(expiresIn)
+        : 30 * 60;
+    this.externalAccessTokenCache.set(normalizedClientId, {
+      token: normalizedToken,
+      expiresAt: Date.now() + ttlSeconds * 1000
+    });
   }
 
   private buildAbortSignal(timeoutMs: number): AbortSignal | undefined {

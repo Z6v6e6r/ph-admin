@@ -308,7 +308,6 @@ export class TournamentsPublicController {
       request,
       user
     );
-
     if (this.wantsJson(request, format)) {
       response.json(flow);
       return;
@@ -382,6 +381,10 @@ export class TournamentsPublicController {
       request,
       user
     );
+    const vivaAuthorization = this.tournamentsPublicSessionService.resolveExternalAuthorizationHeader(
+      request,
+      client
+    );
 
     if (flow.code === 'PHONE_VERIFICATION_REQUIRED' && submission.phone && !submission.authCode) {
       const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
@@ -434,6 +437,7 @@ export class TournamentsPublicController {
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: true,
         subscriptions: client.subscriptions,
+        vivaAuthorization,
         successUrl,
         failUrl
       });
@@ -464,7 +468,8 @@ export class TournamentsPublicController {
         selectedSubscriptionId: submission.selectedSubscriptionId,
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: submission.purchaseConfirmed,
-        subscriptions: client.subscriptions
+        subscriptions: client.subscriptions,
+        vivaAuthorization
       });
       if (this.wantsJson(request, submission.format)) {
         response.json(outcome);
