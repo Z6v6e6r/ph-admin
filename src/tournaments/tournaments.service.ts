@@ -1964,8 +1964,21 @@ export class TournamentsService {
 
     const responsePayload = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
+      const responseRecord = this.toRecord(responsePayload);
+      const responseDetails = this.pickString(
+        responseRecord
+          ? (
+            responseRecord.message
+            ?? responseRecord.error
+            ?? responseRecord.description
+            ?? responseRecord.detail
+          )
+          : undefined
+      );
       throw new BadRequestException(
-        `Viva transaction failed with status ${response.status}`
+        responseDetails
+          ? `Viva transaction failed with status ${response.status}: ${responseDetails}`
+          : `Viva transaction failed with status ${response.status}`
       );
     }
 
