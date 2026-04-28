@@ -131,6 +131,18 @@ function buildSubscriptions(): TournamentClientSubscription[] {
 async function main(): Promise<void> {
   const tournament = createTournament();
   const service = createService(tournament);
+  const originalFetch = globalThis.fetch;
+  const paymentTypesFetch = (async (url: RequestInfo | URL) => {
+    if (String(url).includes('/bookings/payment-types')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
+      } as Response;
+    }
+    throw new Error(`Unexpected fetch in test: ${String(url)}`);
+  }) as typeof fetch;
+  globalThis.fetch = paymentTypesFetch;
 
   const unauthorizedFlow = await service.getPublicJoinFlow(
     tournament.slug,
@@ -143,7 +155,21 @@ async function main(): Promise<void> {
     },
     { requireAuth: true }
   );
-  assert.equal(unauthorizedFlow.code, 'AUTH_REQUIRED');
+  assert.equal(unauthorizedFlow.code, 'PROFILE_REQUIRED');
+
+  const unverifiedPhoneFlow = await service.getPublicJoinFlow(
+    tournament.slug,
+    {
+      id: 'guest-2',
+      authorized: false,
+      authSource: 'cookie',
+      phone: '+7 999 000-11-20',
+      onboardingCompleted: false,
+      subscriptions: []
+    },
+    { requireAuth: true }
+  );
+  assert.equal(unverifiedPhoneFlow.code, 'PHONE_VERIFICATION_REQUIRED');
 
   const disallowedLevelFlow = await service.getPublicJoinFlow(tournament.slug, {
     id: 'user-1',
@@ -185,6 +211,44 @@ async function main(): Promise<void> {
   assert.equal(purchaseFlow.code, 'PURCHASE_REQUIRED');
   assert.equal(purchaseFlow.payment.purchaseOptions.length, 1);
 
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    assert.match(String(url), /\/bookings\/payment-types\?phone=79990001129$/);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        paymentTypes: ['ON_PLACE'],
+        subscriptions: [
+          {
+            id: 'viva-pass',
+            name: 'Турнирный абонемент',
+            visitsLeft: 1,
+            expirationDate: '2026-05-02'
+          }
+        ]
+      })
+    } as Response;
+  }) as typeof fetch;
+  const vivaSubscriptionFlow = await service.getPublicJoinFlow(tournament.slug, {
+    id: 'user-4',
+    authorized: true,
+    authSource: 'headers',
+    name: 'Игрок',
+    phone: '+7 999 000-11-29',
+    levelLabel: 'C',
+    onboardingCompleted: true,
+    subscriptions: []
+  });
+  globalThis.fetch = paymentTypesFetch;
+  assert.equal(vivaSubscriptionFlow.code, 'SUBSCRIPTION_AVAILABLE');
+  assert.equal(vivaSubscriptionFlow.payment.selectedSubscription?.id, 'viva-pass');
+
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'write-off-1' })
+    }) as Response) as typeof fetch;
   const subscriptionRegistration = await service.registerPublicParticipant(tournament.slug, {
     name: 'Игорь Махнов',
     phone: '+7 999 000-11-25',
@@ -192,6 +256,7 @@ async function main(): Promise<void> {
     selectedSubscriptionId: 'tournament-pass',
     subscriptions: buildSubscriptions()
   });
+  globalThis.fetch = paymentTypesFetch;
   assert.equal(subscriptionRegistration.code, 'REGISTERED');
   assert.equal(subscriptionRegistration.participant?.paymentStatus, 'PAID');
   assert.match(subscriptionRegistration.participant?.notes ?? '', /Абонемент списан/);
@@ -204,7 +269,6 @@ async function main(): Promise<void> {
   });
   assert.equal(blockedPurchaseRegistration.code, 'PURCHASE_REQUIRED');
 
-  const originalFetch = globalThis.fetch;
   let transactionRequest: { url: string; body: Record<string, unknown> } | undefined;
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     transactionRequest = {

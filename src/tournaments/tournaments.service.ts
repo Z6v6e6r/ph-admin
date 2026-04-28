@@ -319,30 +319,40 @@ export class TournamentsService {
     const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
     const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
     const access = this.evaluateAccess(tournament, normalizedLevel);
-    const payment = this.resolveJoinPayment(tournament, client, normalizedLevel);
+    const vivaSubscriptions =
+      normalizedPhone && (client.authorized || client.phoneVerified)
+        ? await this.fetchVivaBookingSubscriptions(tournament, normalizedPhone)
+        : [];
     const normalizedClient: TournamentPublicClientProfile = {
       ...client,
       phone: normalizedPhone,
+      phoneVerified: client.phoneVerified === true,
       levelLabel: normalizedLevel,
       onboardingCompleted: Boolean(normalizedLevel),
-      subscriptions: this.normalizeClientSubscriptions(client.subscriptions)
+      subscriptions: this.mergeClientSubscriptions(
+        this.normalizeClientSubscriptions(client.subscriptions),
+        vivaSubscriptions
+      )
     };
+    const payment = this.resolveJoinPayment(tournament, normalizedClient, normalizedLevel);
     const requireAuth = options?.requireAuth === true;
     const missingFields: Array<'phone' | 'levelLabel'> = [];
 
-    if (requireAuth && !normalizedClient.authorized) {
+    if (requireAuth && !normalizedClient.authorized && !normalizedClient.phoneVerified) {
       return {
         ok: false,
-        code: 'AUTH_REQUIRED',
+        code: normalizedPhone ? 'PHONE_VERIFICATION_REQUIRED' : 'PROFILE_REQUIRED',
         message:
-          'Чтобы присоединиться к турниру, сначала войдите в личный кабинет PadelHub.',
+          normalizedPhone
+            ? 'Подтвердите номер телефона кодом, чтобы продолжить запись.'
+            : 'Чтобы присоединиться к турниру, укажите номер телефона.',
         tournament: publicTournament,
         client: normalizedClient,
         access,
-        missingFields: [],
+        missingFields: normalizedPhone ? [] : ['phone'],
         waitlistAllowed: false,
         payment,
-        authRequired: true
+        authRequired: false
       };
     }
 
@@ -538,6 +548,45 @@ export class TournamentsService {
         tournamentSlug: tournament.slug,
         payment
       };
+    }
+
+    if (payment.required && payment.code === 'SUBSCRIPTION_AVAILABLE') {
+      const booking = this.resolveBookingConfig(tournament);
+      const subscription =
+        this.resolveSelectedClientSubscription(
+          payment.availableSubscriptions,
+          input.selectedSubscriptionId
+        ) ?? payment.selectedSubscription;
+      if (subscription && this.canCreateVivaTransaction(booking)) {
+        const transaction = await this.createVivaJoinTransaction({
+          booking,
+          purchaseOption: {
+            id: subscription.id,
+            label: subscription.label,
+            priceLabel: '0',
+            productType: subscription.productType ?? 'SUBSCRIPTION'
+          },
+          tournament,
+          phone: normalizedPhone,
+          successUrl: this.buildPublicJoinUrl(tournament.publicUrl),
+          failUrl: this.buildPublicJoinUrl(tournament.publicUrl)
+        });
+        if (transaction.checkoutUrl) {
+          return {
+            ok: true,
+            code: 'PURCHASE_STARTED',
+            message: 'Списание создано. Перейдите к подтверждению, чтобы завершить запись.',
+            tournamentId: tournament.id,
+            tournamentSlug: tournament.slug,
+            payment: {
+              ...payment,
+              selectedSubscription: subscription,
+              checkoutUrl: transaction.checkoutUrl,
+              transactionId: transaction.transactionId
+            }
+          };
+        }
+      }
     }
 
     const participant = await this.enrichTournamentParticipantWithViva({
@@ -1638,9 +1687,9 @@ export class TournamentsService {
     return purchaseOptions[0];
   }
 
-  private normalizeVivaProductType(value: unknown): 'SUBSCRIPTION' | 'ONE_TIME' | undefined {
+  private normalizeVivaProductType(value: unknown): 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined {
     const normalized = this.pickString(value)?.toUpperCase().replace(/[-\s]+/g, '_');
-    if (normalized === 'SUBSCRIPTION' || normalized === 'ONE_TIME') {
+    if (normalized === 'SUBSCRIPTION' || normalized === 'ONE_TIME' || normalized === 'SERVICE') {
       return normalized;
     }
     return undefined;
@@ -1781,10 +1830,123 @@ export class TournamentsService {
         ),
         compatibleAccessLevels: this.pickStringArray(
           record.compatibleAccessLevels ?? record.accessLevels
-        )
+        ),
+        productType: this.normalizeVivaProductType(record.productType ?? record.type)
       });
     });
     return subscriptions;
+  }
+
+  private mergeClientSubscriptions(
+    left: TournamentClientSubscription[],
+    right: TournamentClientSubscription[]
+  ): TournamentClientSubscription[] {
+    const merged = new Map<string, TournamentClientSubscription>();
+    [...left, ...right].forEach((item) => {
+      const key = item.id || item.label;
+      if (!key) {
+        return;
+      }
+      merged.set(key, {
+        ...(merged.get(key) ?? {}),
+        ...item
+      });
+    });
+    return Array.from(merged.values());
+  }
+
+  private async fetchVivaBookingSubscriptions(
+    tournament: CustomTournament,
+    phone: string
+  ): Promise<TournamentClientSubscription[]> {
+    const booking = this.resolveBookingConfig(tournament);
+    const exerciseId = this.pickString(booking.vivaExerciseId);
+    if (!exerciseId) {
+      return [];
+    }
+
+    try {
+      const url = new URL(
+        `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings/payment-types`,
+        `${this.vivaEndUserApiBaseUrl}/`
+      );
+      url.searchParams.set('phone', phone);
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json'
+        },
+        signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+      });
+      if (!response.ok) {
+        return [];
+      }
+      const payload = (await response.json().catch(() => null)) as unknown;
+      const record = this.toRecord(payload) ?? {};
+      return this.normalizeVivaPaymentTypeSubscriptions(record.subscriptions);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva payment types for tournament ${tournament.id}: ${String(error)}`
+      );
+      return [];
+    }
+  }
+
+  private normalizeVivaPaymentTypeSubscriptions(value: unknown): TournamentClientSubscription[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map((item, index): TournamentClientSubscription | null => {
+        const record = this.toRecord(item);
+        if (!record) {
+          return null;
+        }
+        const label = this.pickString(record.name) ?? this.pickString(record.label);
+        if (!label) {
+          return null;
+        }
+        const visitsLeft = this.pickNumber(record.visitsLeft ?? record.remainingUses);
+        const minutesLeft = this.pickNumber(record.availableMinutes);
+        const remainingUses =
+          visitsLeft !== undefined
+            ? visitsLeft
+            : minutesLeft !== undefined && minutesLeft > 0
+              ? 1
+              : undefined;
+        return {
+          id:
+            this.pickString(record.id)
+            ?? this.pickString(record.subscriptionId)
+            ?? `viva-sub-${index + 1}`,
+          label,
+          remainingUses,
+          validUntil: this.pickString(record.expirationDate ?? record.validUntil) ?? undefined,
+          productType: 'SUBSCRIPTION'
+        };
+      })
+      .filter((item): item is TournamentClientSubscription => Boolean(item));
+  }
+
+  private resolveSelectedClientSubscription(
+    subscriptions: TournamentClientSubscription[],
+    selectedSubscriptionId?: string
+  ): TournamentClientSubscription | null {
+    if (subscriptions.length === 0) {
+      return null;
+    }
+    const selectedId = this.pickString(selectedSubscriptionId);
+    if (selectedId) {
+      return subscriptions.find((item) => item.id === selectedId) ?? null;
+    }
+    return subscriptions[0];
+  }
+
+  private canCreateVivaTransaction(booking: TournamentBookingConfig): boolean {
+    return Boolean(
+      (this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId)
+      && this.pickString(booking.vivaExerciseId)
+      && this.pickString(booking.vivaStudioId)
+    );
   }
 
   private isSubscriptionCompatible(

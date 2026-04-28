@@ -192,7 +192,7 @@ export interface TournamentPurchaseOption {
   label: string;
   priceLabel: string;
   description?: string;
-  productType?: 'SUBSCRIPTION' | 'ONE_TIME';
+  productType?: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE';
 }
 
 export interface TournamentBookingConfig {
@@ -317,6 +317,7 @@ export interface TournamentClientSubscription {
   validUntil?: string;
   compatibleTournamentTypes?: string[];
   compatibleAccessLevels?: string[];
+  productType?: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE';
 }
 
 export interface TournamentPublicClientProfile {
@@ -325,6 +326,7 @@ export interface TournamentPublicClientProfile {
   authSource: 'cookie' | 'headers' | 'anonymous';
   name?: string;
   phone?: string;
+  phoneVerified?: boolean;
   levelLabel?: string;
   onboardingCompleted: boolean;
   subscriptions: TournamentClientSubscription[];
@@ -332,6 +334,7 @@ export interface TournamentPublicClientProfile {
 
 export type TournamentJoinFlowCode =
   | 'AUTH_REQUIRED'
+  | 'PHONE_VERIFICATION_REQUIRED'
   | 'PROFILE_REQUIRED'
   | 'ONBOARDING_REQUIRED'
   | 'READY_TO_JOIN'

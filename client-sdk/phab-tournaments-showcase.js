@@ -2987,11 +2987,21 @@
     var phoneField = dialog.querySelector('[name="phone"]');
     var levelField = dialog.querySelector('[name="levelLabel"]');
     var notesField = dialog.querySelector('[name="notes"]');
+    var authCodeField = dialog.querySelector('[name="authCode"]');
+    var selectedSubscriptionField = dialog.querySelector('[name="selectedSubscriptionId"]');
+    var selectedPurchaseField = dialog.querySelector('[name="selectedPurchaseOptionId"]');
 
     state.draft.name = nameField ? String(nameField.value || '').trim() : '';
     state.draft.phone = phoneField ? String(phoneField.value || '').trim() : '';
     state.draft.levelLabel = levelField ? String(levelField.value || '').trim() : '';
     state.draft.notes = notesField ? String(notesField.value || '').trim() : '';
+    state.draft.authCode = authCodeField ? String(authCodeField.value || '').trim() : '';
+    state.draft.selectedSubscriptionId = selectedSubscriptionField
+      ? String(selectedSubscriptionField.value || '').trim()
+      : '';
+    state.draft.selectedPurchaseOptionId = selectedPurchaseField
+      ? String(selectedPurchaseField.value || '').trim()
+      : '';
   }
 
   function createChip(text, toneClass) {
@@ -3804,15 +3814,22 @@
     var statusTone =
       flow.code === 'LEVEL_NOT_ALLOWED'
         ? 'warning'
-        : flow.code === 'READY_TO_JOIN'
+        : flow.code === 'READY_TO_JOIN' || flow.code === 'SUBSCRIPTION_AVAILABLE'
           ? 'success'
           : 'info';
     var actionLabel =
-      flow.code === 'READY_TO_JOIN'
-        ? normalizeObject(flowTournament.skin).ctaLabel || 'Подтвердить участие'
-        : flow.code === 'LEVEL_NOT_ALLOWED'
-          ? 'Проверить ещё раз'
-          : 'Продолжить';
+      flow.code === 'PHONE_VERIFICATION_REQUIRED'
+        ? 'Подтвердить код'
+        : flow.code === 'SUBSCRIPTION_AVAILABLE'
+          ? 'Списать и записаться'
+          : flow.code === 'PURCHASE_REQUIRED'
+            ? 'Перейти к оплате'
+            : flow.code === 'READY_TO_JOIN'
+              ? normalizeObject(flowTournament.skin).ctaLabel || 'Подтвердить участие'
+              : flow.code === 'LEVEL_NOT_ALLOWED'
+                ? 'Проверить ещё раз'
+                : 'Продолжить';
+    var payment = normalizeObject(flow.payment);
 
     dialog.appendChild(
       createElement('h3', 'phab-tournaments__dialog-title', resolveTitle(flowTournament))
@@ -3852,6 +3869,20 @@
     phoneField.appendChild(phoneInput);
     dialog.appendChild(phoneField);
 
+    if (flow.code === 'PHONE_VERIFICATION_REQUIRED') {
+      var codeField = createElement('label', 'phab-tournaments__field');
+      codeField.appendChild(document.createTextNode('Код из SMS'));
+      var codeInput = document.createElement('input');
+      codeInput.name = 'authCode';
+      codeInput.type = 'text';
+      codeInput.inputMode = 'numeric';
+      codeInput.autocomplete = 'one-time-code';
+      codeInput.placeholder = 'Введите код';
+      codeInput.value = state.draft.authCode || '';
+      codeField.appendChild(codeInput);
+      dialog.appendChild(codeField);
+    }
+
     if (needsLevel) {
       var levelField = createElement('label', 'phab-tournaments__field');
       levelField.appendChild(document.createTextNode('Уровень игрока'));
@@ -3882,6 +3913,44 @@
     notesInput.value = state.draft.notes || '';
     notesField.appendChild(notesInput);
     dialog.appendChild(notesField);
+
+    if (flow.code === 'SUBSCRIPTION_AVAILABLE' && normalizeArray(payment.availableSubscriptions).length > 0) {
+      var subscriptionField = createElement('label', 'phab-tournaments__field');
+      subscriptionField.appendChild(document.createTextNode('Способ записи'));
+      var subscriptionSelect = document.createElement('select');
+      subscriptionSelect.name = 'selectedSubscriptionId';
+      normalizeArray(payment.availableSubscriptions).forEach(function (item) {
+        var subscription = normalizeObject(item);
+        var option = document.createElement('option');
+        option.value = String(subscription.id || '');
+        option.textContent = String(subscription.label || 'Абонемент');
+        if (state.draft.selectedSubscriptionId === option.value) {
+          option.selected = true;
+        }
+        subscriptionSelect.appendChild(option);
+      });
+      subscriptionField.appendChild(subscriptionSelect);
+      dialog.appendChild(subscriptionField);
+    }
+
+    if (flow.code === 'PURCHASE_REQUIRED' && normalizeArray(payment.purchaseOptions).length > 0) {
+      var purchaseField = createElement('label', 'phab-tournaments__field');
+      purchaseField.appendChild(document.createTextNode('Способ оплаты'));
+      var purchaseSelect = document.createElement('select');
+      purchaseSelect.name = 'selectedPurchaseOptionId';
+      normalizeArray(payment.purchaseOptions).forEach(function (item) {
+        var purchase = normalizeObject(item);
+        var purchaseOption = document.createElement('option');
+        purchaseOption.value = String(purchase.id || '');
+        purchaseOption.textContent = [purchase.label, purchase.priceLabel].filter(Boolean).join(' · ');
+        if (state.draft.selectedPurchaseOptionId === purchaseOption.value) {
+          purchaseOption.selected = true;
+        }
+        purchaseSelect.appendChild(purchaseOption);
+      });
+      purchaseField.appendChild(purchaseSelect);
+      dialog.appendChild(purchaseField);
+    }
 
     var actions = createElement('div', 'phab-tournaments__dialog-actions');
     var primaryButton = createElement('button', 'phab-tournaments__button', actionLabel);
@@ -4023,6 +4092,11 @@
 
   function handleJoinResponse(mount, state, payload) {
     var response = normalizeObject(payload);
+    var payment = normalizeObject(response.payment);
+    if (response.code === 'PURCHASE_STARTED' && payment.checkoutUrl) {
+      window.location.assign(String(payment.checkoutUrl));
+      return;
+    }
     if (response.code && response.tournament) {
       handleFlow(mount, state, response);
       return;
@@ -4159,6 +4233,10 @@
       phone: state.draft.phone,
       levelLabel: state.draft.levelLabel,
       notes: state.draft.notes,
+      authCode: state.draft.authCode,
+      selectedSubscriptionId: state.draft.selectedSubscriptionId,
+      selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
+      purchaseConfirmed: state.flow && state.flow.code === 'PURCHASE_REQUIRED' ? '1' : '0',
       waitlist: waitlist ? '1' : '0'
     })
       .then(function (payload) {
@@ -4226,7 +4304,10 @@
         name: '',
         phone: '',
         levelLabel: '',
-        notes: ''
+        notes: '',
+        authCode: '',
+        selectedSubscriptionId: '',
+        selectedPurchaseOptionId: ''
       },
       activeJoinUrl: '',
       activeItem: null,

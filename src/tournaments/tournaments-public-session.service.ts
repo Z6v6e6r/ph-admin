@@ -11,10 +11,17 @@ interface TournamentPublicSessionPayload {
   clientId: string;
   name?: string;
   phone?: string;
+  phoneVerified?: boolean;
   levelLabel?: string;
   subscriptions?: TournamentClientSubscription[];
   iat: number;
   exp: number;
+}
+
+interface PhoneCodeEntry {
+  code: string;
+  expiresAt: number;
+  attempts: number;
 }
 
 @Injectable()
@@ -33,6 +40,15 @@ export class TournamentsPublicSessionService {
     this.readEnv('TOURNAMENTS_PUBLIC_SESSION_SECRET')
     ?? this.readEnv('ADMIN_AUTH_SECRET')
     ?? 'dev-insecure-tournament-public-session-secret';
+  private readonly phoneCodeTtlMs = this.readPositiveNumberEnv(
+    'TOURNAMENTS_PUBLIC_PHONE_CODE_TTL_MS',
+    10 * 60 * 1000
+  );
+  private readonly exposePhoneCode = this.readBooleanEnv(
+    'TOURNAMENTS_PUBLIC_EXPOSE_PHONE_CODE',
+    false
+  );
+  private readonly phoneCodes = new Map<string, PhoneCodeEntry>();
 
   requiresRealAuth(): boolean {
     return this.requireRealAuth;
@@ -81,10 +97,13 @@ export class TournamentsPublicSessionService {
       this.normalizeLevel(patch.levelLabel)
       ?? this.normalizeLevel(current.levelLabel)
       ?? undefined;
+    const previousPhone = this.normalizePhone(current.phone);
+    const nextPhone = this.normalizePhone(patch.phone) ?? previousPhone ?? undefined;
     const payload: TournamentPublicSessionPayload = {
       clientId: String(current.id || '').trim() || `tour-${randomUUID()}`,
       name: this.pickString(patch.name) ?? this.pickString(current.name) ?? undefined,
-      phone: this.normalizePhone(patch.phone) ?? this.normalizePhone(current.phone) ?? undefined,
+      phone: nextPhone,
+      phoneVerified: current.phoneVerified === true && nextPhone === previousPhone,
       levelLabel,
       subscriptions: current.subscriptions,
       iat: now,
@@ -99,10 +118,87 @@ export class TournamentsPublicSessionService {
       authSource: current.authSource === 'headers' ? 'headers' : 'cookie',
       name: this.pickString(payload.name) ?? undefined,
       phone: this.normalizePhone(payload.phone) ?? undefined,
+      phoneVerified: payload.phoneVerified === true,
       levelLabel,
       onboardingCompleted: Boolean(levelLabel),
       subscriptions: this.normalizeSubscriptions(payload.subscriptions)
     };
+  }
+
+  createPhoneCode(
+    request: Request,
+    response: Response,
+    current: TournamentPublicClientProfile,
+    phone: unknown
+  ): { ok: boolean; message: string; phone?: string; debugCode?: string } {
+    const normalizedPhone = this.normalizePhone(phone);
+    if (!normalizedPhone) {
+      return { ok: false, message: 'Укажите корректный номер телефона.' };
+    }
+
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    this.phoneCodes.set(this.buildPhoneCodeKey(current.id, normalizedPhone), {
+      code,
+      expiresAt: Date.now() + this.phoneCodeTtlMs,
+      attempts: 0
+    });
+
+    this.writeSessionCookie(response, request, {
+      clientId: current.id,
+      name: current.name,
+      phone: normalizedPhone,
+      phoneVerified: false,
+      levelLabel: current.levelLabel,
+      subscriptions: current.subscriptions,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + this.ttlDays * 24 * 60 * 60
+    });
+
+    return {
+      ok: true,
+      message: 'Код подтверждения отправлен.',
+      phone: normalizedPhone,
+      debugCode: this.exposePhoneCode ? code : undefined
+    };
+  }
+
+  verifyPhoneCode(
+    request: Request,
+    response: Response,
+    current: TournamentPublicClientProfile,
+    phone: unknown,
+    code: unknown
+  ): TournamentPublicClientProfile | null {
+    const normalizedPhone = this.normalizePhone(phone);
+    const normalizedCode = this.pickString(code)?.replace(/\D+/g, '');
+    if (!normalizedPhone || !normalizedCode) {
+      return null;
+    }
+
+    const key = this.buildPhoneCodeKey(current.id, normalizedPhone);
+    const entry = this.phoneCodes.get(key);
+    if (!entry || entry.expiresAt < Date.now() || entry.attempts >= 5) {
+      this.phoneCodes.delete(key);
+      return null;
+    }
+    entry.attempts += 1;
+    if (entry.code !== normalizedCode) {
+      return null;
+    }
+    this.phoneCodes.delete(key);
+
+    const payload: TournamentPublicSessionPayload = {
+      clientId: current.id,
+      name: current.name,
+      phone: normalizedPhone,
+      phoneVerified: true,
+      levelLabel: current.levelLabel,
+      subscriptions: current.subscriptions,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + this.ttlDays * 24 * 60 * 60
+    };
+    this.writeSessionCookie(response, request, payload);
+    return this.toClientProfile(payload, 'cookie', true);
   }
 
   private resolveHeaderClient(
@@ -136,6 +232,7 @@ export class TournamentsPublicSessionService {
       authSource: 'headers',
       name,
       phone,
+      phoneVerified: Boolean(phone),
       levelLabel,
       onboardingCompleted: Boolean(levelLabel),
       subscriptions
@@ -151,7 +248,9 @@ export class TournamentsPublicSessionService {
     }
 
     const name = this.pickString(client.name) ?? this.pickString(session.name) ?? undefined;
-    const phone = this.normalizePhone(client.phone) ?? this.normalizePhone(session.phone) ?? undefined;
+    const clientPhone = this.normalizePhone(client.phone);
+    const sessionPhone = this.normalizePhone(session.phone);
+    const phone = clientPhone ?? sessionPhone ?? undefined;
     const levelLabel =
       this.normalizeLevel(client.levelLabel)
       ?? this.normalizeLevel(session.levelLabel)
@@ -165,6 +264,7 @@ export class TournamentsPublicSessionService {
       ...client,
       name,
       phone,
+      phoneVerified: clientPhone ? client.phoneVerified === true : session.phoneVerified === true,
       levelLabel,
       onboardingCompleted: Boolean(levelLabel),
       subscriptions
@@ -192,6 +292,7 @@ export class TournamentsPublicSessionService {
       authSource,
       name: this.pickString(payload.name) ?? undefined,
       phone: this.normalizePhone(payload.phone) ?? undefined,
+      phoneVerified: payload.phoneVerified === true,
       levelLabel,
       onboardingCompleted: Boolean(levelLabel),
       subscriptions: this.normalizeSubscriptions(payload.subscriptions)
@@ -390,10 +491,22 @@ export class TournamentsPublicSessionService {
         ),
         compatibleAccessLevels: this.pickStringArray(
           record.compatibleAccessLevels ?? record.accessLevels
-        )
+        ),
+        productType: this.normalizeProductType(record.productType ?? record.type)
       });
     });
     return subscriptions;
+  }
+
+  private buildPhoneCodeKey(clientId: string, phone: string): string {
+    return `${clientId}:${phone}`;
+  }
+
+  private normalizeProductType(value: unknown): 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined {
+    const normalized = this.pickString(value)?.toUpperCase().replace(/[-\s]+/g, '_');
+    return normalized === 'SUBSCRIPTION' || normalized === 'ONE_TIME' || normalized === 'SERVICE'
+      ? normalized
+      : undefined;
   }
 
   private pickStringArray(value: unknown): string[] | undefined {

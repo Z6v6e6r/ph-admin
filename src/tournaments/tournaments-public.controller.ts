@@ -74,6 +74,7 @@ type JoinSubmission = {
   notes?: string;
   selectedSubscriptionId?: string;
   selectedPurchaseOptionId?: string;
+  authCode?: string;
   purchaseConfirmed: boolean;
   waitlist: boolean;
   format?: string;
@@ -285,10 +286,42 @@ export class TournamentsPublicController {
       user
     );
     const submission = this.normalizeJoinSubmission(body);
+    let clientForRemember = currentClient;
+    if (submission.authCode) {
+      const verifiedClient = this.tournamentsPublicSessionService.verifyPhoneCode(
+        request,
+        response,
+        currentClient,
+        submission.phone ?? currentClient.phone,
+        submission.authCode
+      );
+      if (!verifiedClient) {
+        const flow = this.enrichJoinFlow(
+          await this.tournamentsService.getPublicJoinFlow(slug, currentClient, {
+            requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+          }),
+          request,
+          user
+        );
+        const payload = {
+          ...flow,
+          code: 'PHONE_VERIFICATION_REQUIRED' as const,
+          ok: false,
+          message: 'Код подтверждения не подошёл или устарел.'
+        };
+        if (this.wantsJson(request, submission.format)) {
+          response.json(payload);
+          return;
+        }
+        this.sendHtml(response, this.renderJoinHtml(payload, request, user));
+        return;
+      }
+      clientForRemember = verifiedClient;
+    }
     const client = this.tournamentsPublicSessionService.rememberClient(
       request,
       response,
-      currentClient,
+      clientForRemember,
       submission
     );
     const flow = this.enrichJoinFlow(
@@ -298,6 +331,29 @@ export class TournamentsPublicController {
       request,
       user
     );
+
+    if (flow.code === 'PHONE_VERIFICATION_REQUIRED' && submission.phone && !submission.authCode) {
+      const codeResult = this.tournamentsPublicSessionService.createPhoneCode(
+        request,
+        response,
+        client,
+        submission.phone
+      );
+      const nextFlow = {
+        ...flow,
+        message: codeResult.ok
+          ? 'Введите код подтверждения, отправленный на номер телефона.'
+          : codeResult.message,
+        phoneVerification: codeResult
+      };
+      if (this.wantsJson(request, submission.format)) {
+        response.json(nextFlow);
+        return;
+      }
+
+      this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+      return;
+    }
 
     if (submission.waitlist && flow.code === 'LEVEL_NOT_ALLOWED') {
       const outcome = await this.tournamentsService.addPublicParticipantToWaitlist(slug, {
@@ -1284,6 +1340,7 @@ export class TournamentsPublicController {
       notes: this.pickString(record.notes) ?? undefined,
       selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
       selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+      authCode: this.pickString(record.authCode) ?? undefined,
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
       format: this.pickString(record.format) ?? undefined
@@ -1370,6 +1427,8 @@ export class TournamentsPublicController {
         ? 'Списать абонемент и записаться'
         : flow.code === 'PURCHASE_REQUIRED'
           ? 'Подтвердить покупку и записаться'
+          : flow.code === 'PHONE_VERIFICATION_REQUIRED'
+            ? 'Подтвердить код'
           : flow.code === 'READY_TO_JOIN'
         ? tournament.skin.ctaLabel || 'Записаться'
         : flow.code === 'LEVEL_NOT_ALLOWED'
@@ -1385,6 +1444,8 @@ export class TournamentsPublicController {
         ? 'warning'
         : flow.code === 'READY_TO_JOIN' || flow.code === 'SUBSCRIPTION_AVAILABLE'
           ? 'success'
+          : flow.code === 'PHONE_VERIFICATION_REQUIRED'
+            ? 'warning'
           : 'info';
     const selectedSubscriptionId = this.escapeHtml(flow.payment.selectedSubscription?.id || '');
     const alreadyDone =
@@ -1834,6 +1895,23 @@ export class TournamentsPublicController {
               required
             />
           </label>
+
+          ${
+            flow.code === 'PHONE_VERIFICATION_REQUIRED'
+              ? `<label>
+            Код из SMS
+            <input
+              type="text"
+              name="authCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="Введите код"
+              required
+            />
+          </label>`
+              : ''
+          }
 
           ${
             needsLevel
