@@ -358,7 +358,13 @@ export class TournamentsService {
         vivaSubscriptions
       )
     };
-    const payment = this.resolveJoinPayment(tournament, normalizedClient, normalizedLevel);
+    const vivaPurchaseOptions = await this.fetchVivaJoinPurchaseOptions(tournament);
+    const payment = this.resolveJoinPayment(
+      tournament,
+      normalizedClient,
+      normalizedLevel,
+      vivaPurchaseOptions
+    );
     const requireAuth = options?.requireAuth === true;
     const missingFields: Array<'phone' | 'levelLabel'> = [];
 
@@ -560,7 +566,8 @@ export class TournamentsService {
         onboardingCompleted: Boolean(normalizedLevel),
         subscriptions: this.readClientSubscriptionsFromInput(input)
       },
-      normalizedLevel
+      normalizedLevel,
+      await this.fetchVivaJoinPurchaseOptions(tournament)
     );
 
     if (payment.required && payment.code === 'PURCHASE_REQUIRED' && input.purchaseConfirmed !== true) {
@@ -737,7 +744,8 @@ export class TournamentsService {
         onboardingCompleted: Boolean(normalizedLevel),
         subscriptions: this.readClientSubscriptionsFromInput(input)
       },
-      normalizedLevel
+      normalizedLevel,
+      await this.fetchVivaJoinPurchaseOptions(tournament)
     );
 
     if (!payment.required || payment.code !== 'PURCHASE_REQUIRED') {
@@ -746,7 +754,7 @@ export class TournamentsService {
 
     const booking = this.resolveBookingConfig(tournament);
     const purchaseOption = this.resolveSelectedPurchaseOption(
-      booking.purchaseOptions,
+      payment.purchaseOptions,
       input.selectedPurchaseOptionId
     );
     if (!purchaseOption) {
@@ -1675,16 +1683,22 @@ export class TournamentsService {
   private resolveJoinPayment(
     tournament: CustomTournament,
     client: TournamentPublicClientProfile,
-    levelLabel?: string
+    levelLabel?: string,
+    vivaPurchaseOptions?: TournamentPurchaseOption[]
   ): TournamentJoinPaymentState {
     const booking = this.resolveBookingConfig(tournament);
-    if (!booking.required) {
+    const purchaseOptions =
+      Array.isArray(vivaPurchaseOptions) && vivaPurchaseOptions.length > 0
+        ? vivaPurchaseOptions
+        : booking.purchaseOptions;
+    const requiresPurchase = booking.required || purchaseOptions.length > 0;
+    if (!requiresPurchase) {
       return {
         required: false,
         code: 'NOT_REQUIRED',
         message: 'Дополнительная оплата для участия в турнире не требуется.',
         availableSubscriptions: [],
-        purchaseOptions: booking.purchaseOptions,
+        purchaseOptions,
         purchaseFlowUrl: booking.purchaseFlowUrl
       };
     }
@@ -1701,7 +1715,7 @@ export class TournamentsService {
         message: `Можно списать абонемент «${availableSubscriptions[0].label}» для подтверждения участия.`,
         availableSubscriptions,
         selectedSubscription: availableSubscriptions[0],
-        purchaseOptions: booking.purchaseOptions,
+        purchaseOptions,
         purchaseFlowUrl: booking.purchaseFlowUrl
       };
     }
@@ -1711,7 +1725,7 @@ export class TournamentsService {
       code: 'PURCHASE_REQUIRED',
       message: 'Подходящий абонемент не найден. Сначала нужно купить участие.',
       availableSubscriptions: [],
-      purchaseOptions: booking.purchaseOptions,
+      purchaseOptions,
       purchaseFlowUrl: booking.purchaseFlowUrl
     };
   }
@@ -1818,6 +1832,50 @@ export class TournamentsService {
         priceLabel,
         description: this.pickString(record.description) ?? undefined,
         productType: this.normalizeVivaProductType(record.productType ?? record.type)
+      });
+    });
+    return items;
+  }
+
+  private normalizeVivaProductCatalog(
+    value: unknown,
+    productType: 'SUBSCRIPTION' | 'ONE_TIME'
+  ): TournamentPurchaseOption[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const items: TournamentPurchaseOption[] = [];
+    value.forEach((item, index) => {
+      const record = this.toRecord(item);
+      if (!record) {
+        return;
+      }
+      const id =
+        this.pickString(record.id)
+        ?? this.pickString(record.productId)
+        ?? this.pickString(record.subscriptionId)
+        ?? this.pickString(record.oneTimeId)
+        ?? `${productType.toLowerCase()}-${index + 1}`;
+      const label =
+        this.pickString(record.label)
+        ?? this.pickString(record.name)
+        ?? this.pickString(record.title)
+        ?? id;
+      const priceLabel =
+        this.pickString(record.priceLabel)
+        ?? this.pickString(record.price)
+        ?? this.pickString(record.amountLabel)
+        ?? this.pickString(record.amount)
+        ?? this.pickString(record.costLabel)
+        ?? this.pickString(record.cost)
+        ?? '—';
+      items.push({
+        id,
+        label,
+        priceLabel,
+        description: this.pickString(record.description) ?? undefined,
+        productType
       });
     });
     return items;
@@ -2164,6 +2222,58 @@ export class TournamentsService {
     } catch (error) {
       this.logger.warn(
         `Failed to load Viva payment types for tournament ${tournament.id}: ${String(error)}`
+      );
+      return [];
+    }
+  }
+
+  private async fetchVivaJoinPurchaseOptions(
+    tournament: CustomTournament
+  ): Promise<TournamentPurchaseOption[]> {
+    const booking = this.resolveBookingConfig(tournament);
+    const widgetId = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    const exerciseId = this.pickString(booking.vivaExerciseId);
+    if (!widgetId || !exerciseId) {
+      return [];
+    }
+
+    try {
+      const loadCatalog = async (
+        path: string,
+        productType: 'SUBSCRIPTION' | 'ONE_TIME'
+      ): Promise<TournamentPurchaseOption[]> => {
+        const url = new URL(
+          `/end-user/api/v2/${encodeURIComponent(widgetId)}/products/${path}`,
+          `${this.vivaEndUserApiBaseUrl}/`
+        );
+        url.searchParams.set('exerciseId', exerciseId);
+        const response = await fetch(url.toString(), {
+          headers: { Accept: 'application/json' },
+          signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+        });
+        if (!response.ok) {
+          return [];
+        }
+        const payload = (await response.json().catch(() => null)) as unknown;
+        const record = this.toRecord(payload);
+        const list =
+          (record && (record.items ?? record.products ?? record.result ?? record.data))
+          ?? payload;
+        return this.normalizeVivaProductCatalog(list, productType);
+      };
+
+      const [subscriptions, oneTimes] = await Promise.all([
+        loadCatalog('subscriptions', 'SUBSCRIPTION'),
+        loadCatalog('one-times', 'ONE_TIME')
+      ]);
+      const merged = new Map<string, TournamentPurchaseOption>();
+      [...subscriptions, ...oneTimes].forEach((item) => {
+        merged.set(item.id, item);
+      });
+      return Array.from(merged.values());
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva product catalog for tournament ${tournament.id}: ${String(error)}`
       );
       return [];
     }

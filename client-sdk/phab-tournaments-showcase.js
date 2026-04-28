@@ -3925,16 +3925,6 @@
       )
     );
 
-    var nameField = createElement('label', 'phab-tournaments__field');
-    nameField.appendChild(document.createTextNode('Имя и фамилия'));
-    var nameInput = document.createElement('input');
-    nameInput.name = 'name';
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Как к вам обращаться';
-    nameInput.value = state.draft.name || '';
-    nameField.appendChild(nameInput);
-    dialog.appendChild(nameField);
-
     var phoneField = createElement('label', 'phab-tournaments__field');
     phoneField.appendChild(document.createTextNode('Телефон'));
     var phoneInput = document.createElement('input');
@@ -4019,21 +4009,29 @@
     }
 
     if (flow.code === 'PURCHASE_REQUIRED' && normalizeArray(payment.purchaseOptions).length > 0) {
-      var purchaseField = createElement('label', 'phab-tournaments__field');
-      purchaseField.appendChild(document.createTextNode('Способ оплаты'));
-      var purchaseSelect = document.createElement('select');
-      purchaseSelect.name = 'selectedPurchaseOptionId';
+      var purchaseField = createElement('div', 'phab-tournaments__field');
+      purchaseField.appendChild(document.createTextNode('Доступные тарифы'));
+      var purchaseList = createElement('div', 'phab-tournaments__dialog-actions');
       normalizeArray(payment.purchaseOptions).forEach(function (item) {
         var purchase = normalizeObject(item);
-        var purchaseOption = document.createElement('option');
-        purchaseOption.value = String(purchase.id || '');
-        purchaseOption.textContent = [purchase.label, purchase.priceLabel].filter(Boolean).join(' · ');
-        if (state.draft.selectedPurchaseOptionId === purchaseOption.value) {
-          purchaseOption.selected = true;
+        var purchaseId = String(purchase.id || '').trim();
+        if (!purchaseId) {
+          return;
         }
-        purchaseSelect.appendChild(purchaseOption);
+        var purchaseButton = createElement(
+          'button',
+          'phab-tournaments__button-secondary',
+          [purchase.label, purchase.priceLabel].filter(Boolean).join(' · ')
+        );
+        purchaseButton.type = 'button';
+        purchaseButton.addEventListener('click', function () {
+          readDraftFromDialog(dialog, state);
+          state.draft.selectedPurchaseOptionId = purchaseId;
+          submitJoin(mount, state, false);
+        });
+        purchaseList.appendChild(purchaseButton);
       });
-      purchaseField.appendChild(purchaseSelect);
+      purchaseField.appendChild(purchaseList);
       dialog.appendChild(purchaseField);
     }
 
@@ -4045,11 +4043,13 @@
       flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed ? 'В лист ожидания' : 'Закрыть'
     );
 
-    primaryButton.type = 'button';
-    primaryButton.addEventListener('click', function () {
-      readDraftFromDialog(dialog, state);
-      submitJoin(mount, state, false);
-    });
+    if (flow.code !== 'PURCHASE_REQUIRED') {
+      primaryButton.type = 'button';
+      primaryButton.addEventListener('click', function () {
+        readDraftFromDialog(dialog, state);
+        submitJoin(mount, state, false);
+      });
+    }
 
     secondaryButton.type = 'button';
     if (flow.code === 'LEVEL_NOT_ALLOWED' && flow.waitlistAllowed) {
@@ -4083,7 +4083,9 @@
       actions.appendChild(resendButton);
     }
 
-    actions.appendChild(primaryButton);
+    if (flow.code !== 'PURCHASE_REQUIRED') {
+      actions.appendChild(primaryButton);
+    }
     if (flow.code === 'LEVEL_NOT_ALLOWED' && !flow.waitlistAllowed) {
       secondaryButton.textContent = 'Подобрать турнир по уровню';
     }
