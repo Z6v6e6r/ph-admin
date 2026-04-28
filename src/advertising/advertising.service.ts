@@ -186,6 +186,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     const nextSettings: SplitPaymentPromoSettingsRecord = {
       key: this.splitPaymentPromoKey,
       enabled: input.enabled === true,
+      expiresAt: this.normalizeOptionalDateTime(input.expiresAt),
       stationIds: this.normalizeStringList(input.stationIds),
       stationNameIncludes: this.normalizeStringList(input.stationNameIncludes),
       roomIds: this.normalizeStringList(input.roomIds),
@@ -340,6 +341,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   ): SplitPaymentPromoAdminSnapshot {
     return {
       enabled: settings.enabled === true,
+      expiresAt: settings.expiresAt,
       stationIds: settings.stationIds,
       stationNameIncludes: settings.stationNameIncludes,
       roomIds: settings.roomIds,
@@ -357,7 +359,8 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     settings: SplitPaymentPromoSettingsRecord
   ): SplitPaymentPromoPublicSnapshot {
     return {
-      enabled: settings.enabled === true,
+      enabled: this.isSplitPaymentPromoActive(settings),
+      expiresAt: settings.expiresAt,
       stationIds: settings.stationIds,
       stationNameIncludes: settings.stationNameIncludes,
       roomIds: settings.roomIds,
@@ -368,6 +371,20 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       vivaExerciseTypeId: settings.vivaExerciseTypeId,
       updatedAt: settings.updatedAt
     };
+  }
+
+  private isSplitPaymentPromoActive(settings: SplitPaymentPromoSettingsRecord): boolean {
+    if (settings.enabled !== true) {
+      return false;
+    }
+    if (!settings.expiresAt) {
+      return true;
+    }
+    const expiresAtMs = new Date(settings.expiresAt).getTime();
+    if (Number.isNaN(expiresAtMs)) {
+      return true;
+    }
+    return Date.now() <= expiresAtMs;
   }
 
   private normalizeSettingsRecord(
@@ -415,6 +432,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return {
       key: this.splitPaymentPromoKey,
       enabled: true,
+      expiresAt: undefined,
       stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
       stationNameIncludes: ['терехово', 'terekhovo'],
       roomIds: [],
@@ -440,6 +458,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return {
       key: this.splitPaymentPromoKey,
       enabled: record.enabled !== false,
+      expiresAt: this.normalizeOptionalDateTime(record.expiresAt),
       stationIds: this.normalizeStringList(record.stationIds, defaults.stationIds),
       stationNameIncludes: this.normalizeStringList(
         record.stationNameIncludes,
@@ -571,6 +590,18 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       return fallback;
     }
     return Math.round(parsed);
+  }
+
+  private normalizeOptionalDateTime(value: unknown): string | undefined {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return undefined;
+    }
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      return undefined;
+    }
+    return date.toISOString();
   }
 
   private normalizePositiveInteger(value: unknown, fallback: number): number {

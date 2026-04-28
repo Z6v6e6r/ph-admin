@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsInt,
   IsNumber,
   IsObject,
@@ -27,6 +28,10 @@ export class UpdateSplitPaymentPromoShareAmountsDto {
 export class UpdateSplitPaymentPromoDto {
   @IsBoolean()
   enabled!: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 
   @IsArray()
   @ArrayMaxSize(20)

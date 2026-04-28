@@ -395,7 +395,7 @@ async function main(): Promise<void> {
     assert.equal(transactionRequest?.body.clientPhone, '79990001128');
     const products = transactionRequest?.body.products as Array<Record<string, unknown>>;
     assert.equal(products[0]?.id, 'single-entry');
-    assert.equal(products[0]?.type, 'ONE_TIME');
+    assert.equal(products[0]?.type, 'SERVICE');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
     assert.equal(transactionRequest?.body.studioId, '588b6151-f4f5-47d9-9449-80edf8cbc748');

@@ -1903,6 +1903,16 @@ export class TournamentsService {
     return undefined;
   }
 
+  private resolveVivaTransactionProductType(
+    value: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined
+  ): 'SUBSCRIPTION' | 'SERVICE' {
+    if (value === 'SUBSCRIPTION') {
+      return 'SUBSCRIPTION';
+    }
+    // Viva /transactions enum does not accept ONE_TIME.
+    return 'SERVICE';
+  }
+
   private async createVivaJoinTransaction(input: {
     booking: TournamentBookingConfig;
     purchaseOption: TournamentPurchaseOption;
@@ -1920,7 +1930,9 @@ export class TournamentsService {
       );
     }
 
-    const productType = input.purchaseOption.productType ?? 'SUBSCRIPTION';
+    const productType = this.resolveVivaTransactionProductType(
+      input.purchaseOption.productType
+    );
     const url = new URL(
       `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions`,
       `${this.vivaEndUserApiBaseUrl}/`

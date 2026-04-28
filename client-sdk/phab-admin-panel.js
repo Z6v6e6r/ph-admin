@@ -193,6 +193,7 @@
   ];
   var DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG = {
     enabled: true,
+    expiresAt: '',
     stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
     stationNameIncludes: ['терехово', 'terekhovo'],
     roomIds: [],
@@ -6619,6 +6620,16 @@
     splitPromoEnabledWrap.appendChild(splitPromoEnabledInput);
     splitPromoEnabledWrap.appendChild(document.createTextNode('Акция включена'));
 
+    var splitPromoExpiresAtLabel = document.createElement('label');
+    splitPromoExpiresAtLabel.className = 'phab-admin-settings-label';
+    splitPromoExpiresAtLabel.textContent = 'Срок действия до';
+    splitPromoForm.appendChild(splitPromoExpiresAtLabel);
+
+    var splitPromoExpiresAtInput = document.createElement('input');
+    splitPromoExpiresAtInput.className = 'phab-admin-settings-input';
+    splitPromoExpiresAtInput.type = 'datetime-local';
+    splitPromoExpiresAtLabel.appendChild(splitPromoExpiresAtInput);
+
     var splitPromoStationIdsLabel = document.createElement('label');
     splitPromoStationIdsLabel.className = 'phab-admin-settings-label';
     splitPromoStationIdsLabel.textContent = 'Station IDs (CSV)';
@@ -7621,6 +7632,7 @@
       advertisingList: advertisingList,
       splitPromoList: splitPromoList,
       splitPromoEnabledInput: splitPromoEnabledInput,
+      splitPromoExpiresAtInput: splitPromoExpiresAtInput,
       splitPromoStationIdsInput: splitPromoStationIdsInput,
       splitPromoStationNamesInput: splitPromoStationNamesInput,
       splitPromoRoomIdsInput: splitPromoRoomIdsInput,
@@ -7947,6 +7959,7 @@
     var shareAmounts = normalizeObject(source.shareAmounts);
     return {
       enabled: source.enabled !== false,
+      expiresAt: String(source.expiresAt || '').trim(),
       stationIds: normalizeStringListSetting(source.stationIds, defaults.stationIds),
       stationNameIncludes: normalizeStringListSetting(
         source.stationNameIncludes,
@@ -23135,6 +23148,7 @@
       meta.textContent =
         'станции: ' +
         (settings.stationIds.length ? settings.stationIds.join(', ') : settings.stationNameIncludes.join(', ')) +
+        (settings.expiresAt ? ' · действует до: ' + formatDateTimeFull(settings.expiresAt) : '') +
         ' · корты: ' +
         (settings.roomIds.length ? settings.roomIds.join(', ') : settings.roomNameIncludes.join(', ')) +
         ' · 2 команды: ' +
@@ -23146,6 +23160,7 @@
       main.appendChild(meta);
 
       dom.splitPromoEnabledInput.checked = settings.enabled === true;
+      dom.splitPromoExpiresAtInput.value = formatDateTimeLocalInputValue(settings.expiresAt);
       dom.splitPromoStationIdsInput.value = settings.stationIds.join(', ');
       dom.splitPromoStationNamesInput.value = settings.stationNameIncludes.join(', ');
       dom.splitPromoRoomIdsInput.value = settings.roomIds.join(', ');
@@ -23158,6 +23173,7 @@
 
       [
         dom.splitPromoEnabledInput,
+        dom.splitPromoExpiresAtInput,
         dom.splitPromoStationIdsInput,
         dom.splitPromoStationNamesInput,
         dom.splitPromoRoomIdsInput,
@@ -23199,6 +23215,9 @@
 
       return {
         enabled: dom.splitPromoEnabledInput.checked === true,
+        expiresAt: dom.splitPromoExpiresAtInput.value
+          ? new Date(dom.splitPromoExpiresAtInput.value).toISOString()
+          : undefined,
         stationIds: stationIds,
         stationNameIncludes: stationNameIncludes,
         roomIds: parseCsvInput(dom.splitPromoRoomIdsInput.value),

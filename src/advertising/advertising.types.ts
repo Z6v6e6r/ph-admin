@@ -70,6 +70,7 @@ export interface SplitPaymentPromoShareAmounts {
 export interface SplitPaymentPromoSettingsRecord {
   key: string;
   enabled: boolean;
+  expiresAt?: string;
   stationIds: string[];
   stationNameIncludes: string[];
   roomIds: string[];
