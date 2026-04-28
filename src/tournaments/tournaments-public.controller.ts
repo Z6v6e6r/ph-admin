@@ -374,6 +374,7 @@ export class TournamentsPublicController {
       clientForRemember,
       submission
     );
+    await this.trySyncAuthorizedClientLevel(request, client, submission.levelLabel);
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
         requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
@@ -1706,6 +1707,64 @@ export class TournamentsPublicController {
     }
     const accept = String(request.headers.accept ?? '').toLowerCase();
     return accept.includes('application/json');
+  }
+
+  private async trySyncAuthorizedClientLevel(
+    request: Request,
+    client: TournamentPublicClientProfile,
+    submittedLevel?: string
+  ): Promise<void> {
+    if (!client.authorized) {
+      return;
+    }
+
+    const normalizedLevel = normalizeTournamentLevelOptionToken(
+      submittedLevel ?? client.levelLabel
+    );
+    if (!normalizedLevel) {
+      return;
+    }
+
+    const authCookie = this.pickString(request.headers.cookie);
+    const authHeader = this.pickString(request.headers.authorization);
+    if (!authCookie && !authHeader) {
+      return;
+    }
+
+    const profileUrl = new URL(
+      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    ).toString();
+    const payload = {
+      levelLabel: normalizedLevel,
+      level: normalizedLevel
+    };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    };
+
+    if (authCookie) {
+      headers.Cookie = authCookie;
+    }
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    for (const method of ['PATCH', 'PUT'] as const) {
+      try {
+        const response = await fetch(profileUrl, {
+          method,
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+          return;
+        }
+      } catch (_error) {
+        // Ignore sync errors: tournament join flow should not depend on profile update.
+      }
+    }
   }
 
   private wantsHtml(request: Request, format?: string): boolean {
