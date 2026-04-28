@@ -16495,10 +16495,9 @@
       skinBadgeInput.value = String(skin.badgeLabel || '');
       appendCommunityFormField(form, 'Skin: badge', skinBadgeInput);
 
-      var skinImageInput = document.createElement('input');
-      skinImageInput.className = 'phab-admin-input';
-      skinImageInput.value = String(skin.imageUrl || '');
-      appendCommunityFormField(form, 'Skin: image URL', skinImageInput);
+      var skinImageControl = createCommunityImageUploadControl(String(skin.imageUrl || ''));
+      var skinImageInput = skinImageControl.input;
+      appendCommunityFormField(form, 'Skin: фото шапки', skinImageControl.root, true);
 
       var skinTagsInput = document.createElement('input');
       skinTagsInput.className = 'phab-admin-input';

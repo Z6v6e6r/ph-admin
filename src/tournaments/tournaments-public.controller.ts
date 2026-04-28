@@ -422,12 +422,15 @@ export class TournamentsPublicController {
     const subtitle = this.pickString(tournament.skin.subtitle) ?? 'от PadlxAB';
     const imageUrl = this.pickString(tournament.skin.imageUrl);
     const absoluteImageUrl = imageUrl ? this.toAbsoluteUrl(imageUrl, request, user) : '';
+    const trainerAvatarUrl = this.pickString(tournament.trainerAvatarUrl);
+    const absoluteTrainerAvatarUrl = trainerAvatarUrl
+      ? this.toAbsoluteUrl(trainerAvatarUrl, request, user)
+      : '';
     const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
     const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
     const maxPlayers = Math.max(1, Number(tournament.maxPlayers) || 1);
     const participantsCount = Math.max(0, Number(tournament.participantsCount) || participants.length);
-    const accessLabel =
-      tournament.accessLevels.length > 0 ? tournament.accessLevels.join(', ') : 'OPEN';
+    const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
     const genderLabel = this.formatGenderLabel(tournament.gender).toUpperCase();
     const capacityLabel = `${participantsCount} / ${maxPlayers}`;
     const statusLabel =
@@ -606,6 +609,13 @@ export class TournamentsPublicController {
         background: linear-gradient(135deg, #7256ef, #a36dff);
         color: #fff;
         font-weight: 900;
+        overflow: hidden;
+      }
+      .organizer-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
       }
       .organizer-name {
         margin: 0 0 5px;
@@ -625,20 +635,20 @@ export class TournamentsPublicController {
       .tabs {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        overflow: hidden;
-        border: 1px solid #e7dfef;
-        border-radius: 12px;
+        gap: 8px;
       }
       .tab {
-        min-height: 58px;
+        min-height: 48px;
+        border-radius: 24px;
         display: grid;
         place-items: center;
-        color: #776f89;
+        background: #f4f0ff;
+        color: #8766eb;
         font-size: 20px;
         font-weight: 800;
       }
       .tab.is-active {
-        background: linear-gradient(135deg, #7547f4, #9f67ff);
+        background: #8766eb;
         color: #fff;
       }
       .status-row {
@@ -832,9 +842,11 @@ export class TournamentsPublicController {
         </div>
 
         <div class="organizer">
-          <div class="organizer-avatar">${this.escapeHtml(
-            this.resolveInitials(tournament.trainerName || 'PadelHub')
-          )}</div>
+          <div class="organizer-avatar">${
+            absoluteTrainerAvatarUrl
+              ? `<img src="${this.escapeHtml(absoluteTrainerAvatarUrl)}" alt="${this.escapeHtml(tournament.trainerName || 'Организатор')}" />`
+              : this.escapeHtml(this.resolveInitials(tournament.trainerName || 'PadelHub'))
+          }</div>
           <div>
             <p class="organizer-name">${this.escapeHtml(
               tournament.trainerName || 'Организатор'
@@ -2460,8 +2472,9 @@ export class TournamentsPublicController {
     const order = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
     const list = Array.isArray(levels)
       ? levels
-          .map((item) => String(item ?? '').trim().toUpperCase())
+          .map((item) => this.resolveAccessLevelBase(item))
           .filter(Boolean)
+          .filter((item, index, items) => items.indexOf(item) === index)
           .sort((left, right) => {
             const leftIndex = order.indexOf(left);
             const rightIndex = order.indexOf(right);
@@ -2477,6 +2490,38 @@ export class TournamentsPublicController {
       return list[0];
     }
     return `от ${list[0]} до ${list[list.length - 1]}`;
+  }
+
+  private resolveAccessLevelBase(value: unknown): string {
+    const normalized = String(value ?? '').trim().toUpperCase().replace(',', '.');
+    const direct = TOURNAMENT_BASE_LEVEL_OPTIONS.find((item) => item === normalized);
+    if (direct) {
+      return direct;
+    }
+
+    const score = Number(normalized);
+    if (!Number.isFinite(score)) {
+      return '';
+    }
+    if (score < 2) {
+      return 'D';
+    }
+    if (score < 3) {
+      return 'D+';
+    }
+    if (score < 3.5) {
+      return 'C';
+    }
+    if (score < 4) {
+      return 'C+';
+    }
+    if (score < 4.7) {
+      return 'B';
+    }
+    if (score < 5.5) {
+      return 'B+';
+    }
+    return 'A';
   }
 
   private formatCardScheduleLabel(startsAt?: string, endsAt?: string): string {

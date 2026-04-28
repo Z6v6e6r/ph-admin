@@ -1820,6 +1820,7 @@ export class TournamentsService {
       courtName: tournament.courtName,
       locationName: tournament.locationName,
       trainerName: tournament.trainerName,
+      trainerAvatarUrl: tournament.trainerAvatarUrl ?? null,
       participantsCount: tournament.participants.length,
       paidParticipantsCount: tournament.participants.filter(
         (item) => item.paymentStatus === 'PAID'

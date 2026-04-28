@@ -2420,6 +2420,14 @@
     return String(skin.imageUrl || '').trim();
   }
 
+  function resolveTrainerAvatar(card) {
+    var sourceTournament = normalizeObject(card.sourceTournament);
+    return (
+      String(card.trainerAvatarUrl || '').trim()
+      || String(sourceTournament.trainerAvatarUrl || '').trim()
+    );
+  }
+
   function resolveCardBadgeLabel(card) {
     return String(card.tournamentType || 'Турнир').trim() || 'Турнир';
   }
@@ -2432,14 +2440,14 @@
     var skinPriceLabel = String(skin.priceLabel || skin.price || skin.costLabel || '').trim();
 
     if (skinPriceLabel) {
-      return skinPriceLabel;
+      return formatCurrencySuffix(skinPriceLabel);
     }
 
     if (purchaseOption) {
       var purchase = normalizeObject(purchaseOption);
       var purchasePrice = String(purchase.priceLabel || purchase.price || '').trim();
       if (purchasePrice) {
-        return purchasePrice;
+        return formatCurrencySuffix(purchasePrice);
       }
     }
 
@@ -2456,6 +2464,14 @@
     }
 
     return 'Энергия';
+  }
+
+  function formatCurrencySuffix(label) {
+    var value = String(label || '').trim();
+    if (/^\d[\d\s.,]*$/.test(value)) {
+      return value + ' ₽';
+    }
+    return value;
   }
 
   function resolveProgressDescriptor(card) {
@@ -3016,7 +3032,7 @@
   }
 
   function createCompactOrganizerAvatar(card) {
-    var imageUrl = resolvePrimaryImage(card);
+    var imageUrl = resolveTrainerAvatar(card);
     var organizerName = resolveTrainerLabel(card);
     var avatar = createElement('div', 'phab-tournaments__card-compact-organizer-avatar');
 
@@ -3207,7 +3223,7 @@
   }
 
   function createAvatar(card) {
-    var imageUrl = resolvePrimaryImage(card);
+    var imageUrl = resolveTrainerAvatar(card);
     var avatar = createElement('div', 'phab-tournaments__avatar');
 
     if (imageUrl) {

@@ -234,6 +234,7 @@ export interface TournamentPublicView {
   courtName?: string;
   locationName?: string;
   trainerName?: string;
+  trainerAvatarUrl?: string | null;
   participantsCount: number;
   paidParticipantsCount: number;
   waitlistCount: number;
