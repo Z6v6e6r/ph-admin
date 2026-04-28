@@ -375,7 +375,7 @@ export class TournamentsPublicSessionService {
         `Max-Age=${maxAgeSeconds}`,
         'Path=/',
         'HttpOnly',
-        'SameSite=Lax',
+        this.isSecureRequest(request) ? 'SameSite=None' : 'SameSite=Lax',
         this.isSecureRequest(request) ? 'Secure' : ''
       ]
         .filter(Boolean)

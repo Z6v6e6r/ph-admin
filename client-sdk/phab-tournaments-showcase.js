@@ -3365,16 +3365,15 @@
   function createActionControl(card, action, state, mount) {
     var joinUrl = resolveUrl(card.joinUrl, state.config);
     var publicUrl = resolveUrl(card.publicUrl, state.config);
-    var crossOriginTargetUrl = publicUrl || joinUrl;
     var className =
       action.kind === 'secondary'
         ? 'phab-tournaments__button-secondary'
         : 'phab-tournaments__button';
     var control;
 
-    if ((action.mode === 'public' && publicUrl) || (action.mode === 'join' && state.crossOriginApi && crossOriginTargetUrl)) {
+    if (action.mode === 'public' && publicUrl) {
       control = createElement('a', className, action.label);
-      control.href = action.mode === 'join' ? crossOriginTargetUrl : publicUrl;
+      control.href = publicUrl;
       control.target = '_blank';
       control.rel = 'noopener noreferrer';
       return control;
@@ -3542,7 +3541,7 @@
         createElement(
           'p',
           'phab-tournaments__hint',
-          'После нажатия откроется страница события турнира на PadelHub.'
+          'Запись откроется внутри виджета.'
         )
       );
     }
@@ -4193,11 +4192,6 @@
 
   function openJoinFlow(mount, state, item, joinUrl) {
     if (!joinUrl) {
-      return;
-    }
-
-    if (state.crossOriginApi) {
-      window.location.assign(joinUrl);
       return;
     }
 
