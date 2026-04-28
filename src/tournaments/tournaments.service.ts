@@ -2042,8 +2042,8 @@ export class TournamentsService {
       ],
       clientPhone: input.phone,
       paymentMethod: 'WIDGET',
-      successUrl: input.successUrl,
-      failUrl: input.failUrl,
+      successUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
+      failUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed'),
       exerciseId,
       promoCode: null,
       studioId
@@ -2088,6 +2088,13 @@ export class TournamentsService {
       transactionId,
       checkoutUrl
     };
+  }
+
+  private buildVivaWidgetPaymentReturnUrl(exerciseId: string, flag: string): string {
+    const url = new URL('https://padlhub.ru/padel_torneos');
+    url.searchParams.set('TorneosPADL_exercise', exerciseId);
+    url.searchParams.set(flag, 'true');
+    return url.toString();
   }
 
   private findVivaCheckoutUrl(payload: unknown): string | undefined {
@@ -2421,11 +2428,12 @@ export class TournamentsService {
         return this.normalizeVivaProductCatalog(list, productType);
       };
 
-      const [subscriptions] = await Promise.all([
-        loadCatalog('subscriptions', 'SUBSCRIPTION')
+      const [subscriptions, oneTimes] = await Promise.all([
+        loadCatalog('subscriptions', 'SUBSCRIPTION'),
+        loadCatalog('one-times', 'ONE_TIME')
       ]);
       const merged = new Map<string, TournamentPurchaseOption>();
-      subscriptions.forEach((item) => {
+      [...subscriptions, ...oneTimes].forEach((item) => {
         merged.set(item.id, item);
       });
       return Array.from(merged.values());

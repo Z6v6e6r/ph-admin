@@ -4388,8 +4388,8 @@
       productId: productId,
       productType: normalizeVivaTransactionProductType(purchase.productType),
       phone: state.draft.phone,
-      successUrl: buildPaymentReturnUrl(state.activeJoinUrl, 'paymentsuccess'),
-      failUrl: buildPaymentReturnUrl(state.activeJoinUrl, 'paymentfailed')
+      successUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
+      failUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed')
     })
       .then(function (transaction) {
         var transactionId = findVivaTransactionId(transaction);
@@ -4475,8 +4475,9 @@
     return String(value || '').toUpperCase() === 'SERVICE' ? 'SERVICE' : 'SUBSCRIPTION';
   }
 
-  function buildPaymentReturnUrl(joinUrl, flag) {
-    var url = new URL(joinUrl, window.location.href);
+  function buildPaymentReturnUrl(exerciseId, flag) {
+    var url = new URL('https://padlhub.ru/padel_torneos');
+    url.searchParams.set('TorneosPADL_exercise', exerciseId);
     url.searchParams.set(flag, 'true');
     return url.toString();
   }

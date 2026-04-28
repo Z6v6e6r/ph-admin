@@ -240,7 +240,7 @@ async function main(): Promise<void> {
     subscriptions: []
   });
   assert.equal(purchaseFlow.code, 'PURCHASE_REQUIRED');
-  assert.equal(purchaseFlow.payment.purchaseOptions.length, 1);
+  assert.equal(purchaseFlow.payment.purchaseOptions.length, 2);
 
   globalThis.fetch = (async (url: RequestInfo | URL) => {
     const value = String(url);
@@ -407,6 +407,14 @@ async function main(): Promise<void> {
     assert.equal(products[0]?.type, 'SUBSCRIPTION');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
+    assert.equal(
+      transactionRequest?.body.successUrl,
+      'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentsuccess=true'
+    );
+    assert.equal(
+      transactionRequest?.body.failUrl,
+      'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentfailed=true'
+    );
     assert.equal(transactionRequest?.body.studioId, '588b6151-f4f5-47d9-9449-80edf8cbc748');
   } finally {
     globalThis.fetch = defaultVivaFetch;
