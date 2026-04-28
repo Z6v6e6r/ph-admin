@@ -108,9 +108,11 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return this.toSplitPaymentPromoAdminSnapshot(settings);
   }
 
-  async getSplitPaymentPromoPublicSnapshot(): Promise<SplitPaymentPromoPublicSnapshot> {
+  async getSplitPaymentPromoPublicSnapshot(
+    forDate?: string
+  ): Promise<SplitPaymentPromoPublicSnapshot> {
     const settings = await this.ensureSplitPaymentPromoSettingsLoaded();
-    return this.toSplitPaymentPromoPublicSnapshot(settings);
+    return this.toSplitPaymentPromoPublicSnapshot(settings, forDate);
   }
 
   async updateCabinetHomeSettings(
@@ -356,10 +358,11 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   }
 
   private toSplitPaymentPromoPublicSnapshot(
-    settings: SplitPaymentPromoSettingsRecord
+    settings: SplitPaymentPromoSettingsRecord,
+    forDate?: string
   ): SplitPaymentPromoPublicSnapshot {
     return {
-      enabled: this.isSplitPaymentPromoActive(settings),
+      enabled: this.isSplitPaymentPromoActive(settings, forDate),
       expiresAt: settings.expiresAt,
       stationIds: settings.stationIds,
       stationNameIncludes: settings.stationNameIncludes,
@@ -373,7 +376,10 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private isSplitPaymentPromoActive(settings: SplitPaymentPromoSettingsRecord): boolean {
+  private isSplitPaymentPromoActive(
+    settings: SplitPaymentPromoSettingsRecord,
+    forDate?: string
+  ): boolean {
     if (settings.enabled !== true) {
       return false;
     }
@@ -384,7 +390,20 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     if (Number.isNaN(expiresAtMs)) {
       return true;
     }
-    return Date.now() <= expiresAtMs;
+    const referenceMs = this.resolveReferenceTimeMs(forDate);
+    return referenceMs <= expiresAtMs;
+  }
+
+  private resolveReferenceTimeMs(forDate?: string): number {
+    const normalized = String(forDate ?? '').trim();
+    if (!normalized) {
+      return Date.now();
+    }
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      return Date.now();
+    }
+    return parsed.getTime();
   }
 
   private normalizeSettingsRecord(

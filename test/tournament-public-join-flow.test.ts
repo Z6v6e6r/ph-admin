@@ -370,8 +370,13 @@ async function main(): Promise<void> {
       ok: true,
       status: 200,
       json: async () => ({
-        id: 'tx-1',
-        paymentUrl: 'https://pay.tbank.ru/Yk04YJoQ'
+        successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+        data: {
+          id: 'tx-1',
+          payment: {
+            formUrl: 'https://pay.tbank.ru/Yk04YJoQ'
+          }
+        }
       })
     } as Response;
   }) as typeof fetch;

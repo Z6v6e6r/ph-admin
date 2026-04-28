@@ -2001,44 +2001,91 @@ export class TournamentsService {
       );
     }
 
-    const record = this.toRecord(responsePayload) ?? {};
-    const nestedPayment = this.toRecord(record.payment) ?? {};
-    const nestedData = this.toRecord(record.data) ?? {};
-    const nestedResult = this.toRecord(record.result) ?? {};
-    const nestedTransaction = this.toRecord(record.transaction) ?? {};
-    const checkoutUrl =
-      this.pickString(record.paymentUrl)
-      ?? this.pickString(record.payment_url)
-      ?? this.pickString(record.paymentLink)
-      ?? this.pickString(record.payment_link)
-      ?? this.pickString(record.checkoutUrl)
-      ?? this.pickString(record.checkout_url)
-      ?? this.pickString(record.redirectUrl)
-      ?? this.pickString(record.redirect_url)
-      ?? this.pickString(record.confirmationUrl)
-      ?? this.pickString(record.confirmation_url)
-      ?? this.pickString(record.url)
-      ?? this.pickString(nestedPayment.url)
-      ?? this.pickString(nestedPayment.paymentUrl)
-      ?? this.pickString(nestedPayment.redirectUrl)
-      ?? this.pickString(nestedData.paymentUrl)
-      ?? this.pickString(nestedData.url)
-      ?? this.pickString(nestedResult.paymentUrl)
-      ?? this.pickString(nestedResult.url);
-    const transactionId =
-      this.pickString(record.id)
-      ?? this.pickString(record.transactionId)
-      ?? this.pickString(record.transaction_id)
-      ?? this.pickString(record.orderId)
-      ?? this.pickString(record.order_id)
-      ?? this.pickString(nestedData.id)
-      ?? this.pickString(nestedResult.id)
-      ?? this.pickString(nestedTransaction.id);
+    const checkoutUrl = this.findVivaCheckoutUrl(responsePayload);
+    const transactionId = this.findVivaTransactionId(responsePayload);
 
     return {
       transactionId,
       checkoutUrl
     };
+  }
+
+  private findVivaCheckoutUrl(payload: unknown): string | undefined {
+    const exactKeys = new Set([
+      'paymenturl',
+      'payment_url',
+      'paymentlink',
+      'payment_link',
+      'checkouturl',
+      'checkout_url',
+      'redirecturl',
+      'redirect_url',
+      'confirmationurl',
+      'confirmation_url',
+      'formurl',
+      'form_url',
+      'payurl',
+      'pay_url'
+    ]);
+    return this.findFirstMatchingString(payload, (key, value) => {
+      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+      if (!this.isHttpUrl(value)) {
+        return false;
+      }
+      if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
+        return false;
+      }
+      return exactKeys.has(normalizedKey)
+        || /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
+        || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
+    });
+  }
+
+  private findVivaTransactionId(payload: unknown): string | undefined {
+    const exactKeys = new Set(['id', 'transactionid', 'transaction_id', 'orderid', 'order_id']);
+    return this.findFirstMatchingString(payload, (key, value) => {
+      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+      return Boolean(value) && exactKeys.has(normalizedKey);
+    });
+  }
+
+  private findFirstMatchingString(
+    value: unknown,
+    matches: (key: string, value: string) => boolean,
+    key = '',
+    seen = new Set<unknown>()
+  ): string | undefined {
+    const direct = this.pickString(value);
+    if (direct && matches(key, direct)) {
+      return direct;
+    }
+
+    if (!value || typeof value !== 'object' || seen.has(value)) {
+      return undefined;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = this.findFirstMatchingString(item, matches, key, seen);
+        if (found) {
+          return found;
+        }
+      }
+      return undefined;
+    }
+
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      const found = this.findFirstMatchingString(childValue, matches, childKey, seen);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  private isHttpUrl(value: string): boolean {
+    return /^https?:\/\//i.test(value);
   }
 
   private async verifyVivaTransaction(input: {

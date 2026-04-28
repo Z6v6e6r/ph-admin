@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Query,
   Req,
   Res,
   UnauthorizedException
@@ -37,8 +38,10 @@ export class AdvertisingController {
   }
 
   @Get('split-payment-promo')
-  getSplitPaymentPromoPublic(): Promise<SplitPaymentPromoPublicSnapshot> {
-    return this.advertisingService.getSplitPaymentPromoPublicSnapshot();
+  getSplitPaymentPromoPublic(
+    @Query('forDate') forDate?: string
+  ): Promise<SplitPaymentPromoPublicSnapshot> {
+    return this.advertisingService.getSplitPaymentPromoPublicSnapshot(forDate);
   }
 
   @Get('cabinet-home/admin')
