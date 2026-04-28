@@ -959,6 +959,8 @@ export class TournamentsService {
       slug: this.pickString(mutation.slug) ?? undefined,
       studioId: this.pickString(mutation.studioId) ?? sourceTournament.studioId,
       studioName: this.pickString(mutation.studioName) ?? sourceTournament.studioName,
+      courtName: this.pickString(mutation.courtName) ?? sourceTournament.courtName,
+      locationName: this.pickString(mutation.locationName) ?? sourceTournament.locationName,
       trainerId: this.pickString(mutation.trainerId) ?? sourceTournament.trainerId,
       trainerName: this.pickString(mutation.trainerName) ?? sourceTournament.trainerName,
       trainerAvatarUrl:
@@ -1003,6 +1005,8 @@ export class TournamentsService {
       slug: mutation.slug,
       studioId: mutation.studioId,
       studioName: mutation.studioName,
+      courtName: mutation.courtName,
+      locationName: mutation.locationName,
       trainerId: mutation.trainerId,
       trainerName: mutation.trainerName,
       trainerAvatarUrl: mutation.trainerAvatarUrl,
@@ -1025,6 +1029,8 @@ export class TournamentsService {
       endsAt: sourceTournament.endsAt,
       studioId: sourceTournament.studioId,
       studioName: sourceTournament.studioName,
+      courtName: sourceTournament.courtName,
+      locationName: sourceTournament.locationName,
       trainerId: sourceTournament.trainerId,
       trainerName: sourceTournament.trainerName,
       trainerAvatarUrl: sourceTournament.trainerAvatarUrl,
@@ -1712,6 +1718,8 @@ export class TournamentsService {
       startAt: this.pickIsoString(tournament.startsAt),
       endAt: this.pickIsoString(tournament.endsAt),
       stationName: this.pickString(tournament.studioName) ?? undefined,
+      courtName: this.pickString(tournament.courtName) ?? undefined,
+      locationName: this.pickString(tournament.locationName) ?? undefined,
       levelLabel: this.describeTournamentLevelRange(tournament.accessLevels),
       participants: tournament.participants.slice(0, 8).map((participant) => ({
         id: participant.id,
@@ -1732,6 +1740,8 @@ export class TournamentsService {
         startsAt: tournament.startsAt,
         endsAt: tournament.endsAt,
         studioName: tournament.studioName,
+        courtName: tournament.courtName,
+        locationName: tournament.locationName,
         trainerName: tournament.trainerName,
         trainerAvatarUrl: tournament.trainerAvatarUrl ?? null,
         maxPlayers: tournament.maxPlayers,
@@ -1807,6 +1817,8 @@ export class TournamentsService {
       startsAt: tournament.startsAt,
       endsAt: tournament.endsAt,
       studioName: tournament.studioName,
+      courtName: tournament.courtName,
+      locationName: tournament.locationName,
       trainerName: tournament.trainerName,
       participantsCount: tournament.participants.length,
       paidParticipantsCount: tournament.participants.filter(
@@ -1835,6 +1847,8 @@ export class TournamentsService {
             startsAt: this.pickString(sourceTournamentSnapshot.startsAt) ?? undefined,
             endsAt: this.pickString(sourceTournamentSnapshot.endsAt) ?? undefined,
             studioName: this.pickString(sourceTournamentSnapshot.studioName) ?? undefined,
+            courtName: this.pickString(sourceTournamentSnapshot.courtName) ?? undefined,
+            locationName: this.pickString(sourceTournamentSnapshot.locationName) ?? undefined,
             trainerName: this.pickString(sourceTournamentSnapshot.trainerName) ?? undefined,
             exerciseTypeId: this.pickString(sourceTournamentSnapshot.exerciseTypeId) ?? undefined
           }

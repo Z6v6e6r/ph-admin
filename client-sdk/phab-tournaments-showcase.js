@@ -984,26 +984,28 @@
       }
 
       .phab-tournaments__card-compact-price {
-        display: none;
+        display: inline-flex;
         flex: 0 0 auto;
         align-items: center;
         justify-content: center;
-        min-width: 74px;
-        min-height: 33px;
-        padding: 8px 12px;
-        border: 1.5px dashed var(--ph-tournament-card-line);
-        border-radius: 6px;
+        align-self: flex-start;
+        min-width: 0;
+        min-height: 22px;
+        padding: 5px 8px;
+        border-radius: 24px;
+        background: #f1edff;
       }
 
       .phab-tournaments__card-compact-price-value {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        color: var(--ph-tournament-card-ink);
-        font-family: var(--ph-tournament-card-title-font);
-        font-size: 14px;
-        line-height: 1.24;
-        font-weight: 800;
+        color: var(--ph-tournament-card-accent);
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 11px;
+        line-height: 1;
+        font-weight: 600;
+        letter-spacing: 0.02em;
         text-align: center;
       }
 
@@ -1082,6 +1084,10 @@
         flex: 1 1 auto;
       }
 
+      .phab-tournaments__card-compact-meta--gender .phab-tournaments__card-compact-price {
+        margin-left: auto;
+      }
+
       .phab-tournaments__card-compact-meta-icon {
         width: 12px;
         height: 12px;
@@ -1097,11 +1103,9 @@
       }
 
       .phab-tournaments__card-compact-map {
-        flex: 0 0 auto;
         display: inline-flex;
         align-items: center;
         min-height: 13px;
-        margin-left: auto;
         padding: 0 0 1px;
         border-bottom: 1px dashed var(--ph-tournament-card-map);
         color: var(--ph-tournament-card-map);
@@ -1112,6 +1116,23 @@
         font-weight: 400;
         letter-spacing: 0.02em;
         white-space: nowrap;
+      }
+
+      .phab-tournaments__card-compact-court {
+        flex: 0 0 auto;
+        color: var(--ph-tournament-card-meta);
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      .phab-tournaments__card-compact-court::before {
+        content: "•";
+        margin: 0 4px 0 2px;
+        color: var(--ph-tournament-card-icon);
       }
 
       .phab-tournaments__card-compact-map:hover {
@@ -1185,10 +1206,17 @@
       .phab-tournaments__card-compact-cta {
         appearance: none;
         border: none;
-        display: inline-flex;
-        align-items: center;
+        display: flex;
+        flex-direction: row;
         justify-content: center;
+        align-items: center;
+        gap: 4px;
+        flex: none;
+        order: 3;
+        align-self: stretch;
+        flex-grow: 0;
         width: 100%;
+        height: 32px;
         min-height: 32px;
         padding: 10px 24px 10px 20px;
         border-radius: 24px;
@@ -1202,6 +1230,18 @@
         line-height: 1;
         font-weight: 500;
         letter-spacing: 0.02em;
+      }
+
+      .phab-tournaments__card-compact-cta:visited {
+        color: #fafafa;
+      }
+
+      .phab-tournaments__card-compact-cta,
+      .phab-tournaments__card-compact-cta:link,
+      .phab-tournaments__card-compact-cta:visited,
+      .phab-tournaments__card-compact-cta:hover,
+      .phab-tournaments__card-compact-cta:active {
+        color: #fafafa !important;
       }
 
       .phab-tournaments__card-compact-cta:hover {
@@ -2304,6 +2344,35 @@
     );
   }
 
+  function resolveCourtLabel(card) {
+    var skin = normalizeObject(card.skin);
+    var sourceTournament = normalizeObject(card.sourceTournament);
+    var details = normalizeObject(card.details);
+    var booking = normalizeObject(card.booking);
+    var sourceDetails = normalizeObject(sourceTournament.details);
+    var label = (
+      String(card.courtName || '').trim()
+      || String(card.locationName || '').trim()
+      || String(card.roomName || '').trim()
+      || String(skin.courtName || '').trim()
+      || String(skin.locationName || '').trim()
+      || String(sourceTournament.courtName || '').trim()
+      || String(sourceTournament.locationName || '').trim()
+      || String(sourceTournament.roomName || '').trim()
+      || String(details.courtName || '').trim()
+      || String(details.locationName || '').trim()
+      || String(details.roomName || '').trim()
+      || String(booking.courtName || '').trim()
+      || String(booking.locationName || '').trim()
+      || String(booking.roomName || '').trim()
+      || String(sourceDetails.courtName || '').trim()
+      || String(sourceDetails.locationName || '').trim()
+      || String(sourceDetails.roomName || '').trim()
+    );
+
+    return label;
+  }
+
   function resolveMapUrl(card) {
     var location = resolveLocationLabel(card);
     if (!location || location === 'PadelHub') {
@@ -2355,9 +2424,15 @@
   }
 
   function resolveCardPriceLabel(card) {
+    var skin = normalizeObject(card.skin);
     var booking = normalizeObject(card.booking);
     var purchaseOption = normalizeArray(booking.purchaseOptions)[0];
     var acceptedSubscription = normalizeArray(booking.acceptedSubscriptions)[0];
+    var skinPriceLabel = String(skin.priceLabel || skin.price || skin.costLabel || '').trim();
+
+    if (skinPriceLabel) {
+      return skinPriceLabel;
+    }
 
     if (purchaseOption) {
       var purchase = normalizeObject(purchaseOption);
@@ -2379,7 +2454,7 @@
       }
     }
 
-    return booking.required ? 'Оплата' : 'Без оплаты';
+    return 'Энергия';
   }
 
   function resolveProgressDescriptor(card) {
@@ -2921,11 +2996,8 @@
   function createCompactBadgeIcon() {
     var icon = createElement('span', 'phab-tournaments__card-compact-badge-icon');
     icon.innerHTML =
-      '<svg viewBox="0 0 8 8" fill="none" aria-hidden="true">' +
-      '<circle cx="2.35" cy="5.6" r="1.2" fill="#2F9DD4"></circle>' +
-      '<circle cx="5.8" cy="2.2" r="1.15" fill="#2F9DD4"></circle>' +
-      '<path d="M2.95 5L5.1 2.9" stroke="#2F9DD4" stroke-width="1.05" stroke-linecap="round"></path>' +
-      '<circle cx="2.1" cy="2.1" r="1.25" fill="#2F9DD4"></circle>' +
+      '<svg width="8" height="8" viewBox="0 0 8 8" fill="none" aria-hidden="true">' +
+      '<path d="M5.23438 0C5.88459 0 6.44442 0.368244 6.71191 0.900391H6.94238C7.53498 0.900391 8 1.35255 8 1.92871C7.99995 2.50479 7.74889 2.99711 7.36621 3.40918C7.17696 3.59313 6.93847 3.75743 6.66699 3.85742C6.27576 4.79351 5.38208 5.47261 4.30762 5.58301V6.49902H5.2334C5.68595 6.49918 6.05664 6.85978 6.05664 7.2998V7.39941H6.46777C6.6363 7.39946 6.77609 7.53542 6.77637 7.69922C6.77637 7.86324 6.63646 7.99995 6.46777 8H1.5293C1.36059 7.99997 1.2207 7.86325 1.2207 7.69922C1.22098 7.53541 1.36076 7.39944 1.5293 7.39941H1.94043V7.2998C1.94043 6.85977 2.31111 6.49916 2.76367 6.49902H3.68945V5.58301C2.61632 5.47165 1.72387 4.79265 1.33301 3.85742C1.06154 3.75741 0.823027 3.59313 0.633789 3.40918C0.251107 2.99711 5.17542e-05 2.50479 0 1.92871C0 1.35256 0.465021 0.900396 1.05762 0.900391H1.28809C1.55558 0.368244 2.11541 0 2.76562 0H5.23438ZM4.24316 1.58398C4.10738 1.38014 3.89261 1.38011 3.75684 1.58398L3.53906 1.91211C3.50614 1.96412 3.43185 2.02013 3.37012 2.03613L2.97949 2.13281C2.74083 2.19284 2.67056 2.39701 2.83105 2.58105L3.08691 2.88477C3.12796 2.92885 3.15645 3.01723 3.15234 3.07715L3.12793 3.46875C3.11147 3.7088 3.28812 3.83311 3.51855 3.74512L3.89258 3.60059C3.95019 3.58058 4.04981 3.58058 4.10742 3.60059L4.48145 3.74512C4.7119 3.83314 4.88853 3.70882 4.87207 3.46875L4.84766 3.07715C4.84354 3.01713 4.87291 2.92878 4.91406 2.88477L5.16895 2.58105C5.32944 2.397 5.25919 2.19283 5.02051 2.13281L4.62988 2.03613C4.56815 2.02013 4.49386 1.96412 4.46094 1.91211L4.24316 1.58398Z" fill="#2F9DD4"></path>' +
       '</svg>';
     return icon;
   }
@@ -2982,14 +3054,13 @@
     );
     var svgByKind = {
       calendar:
-        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
-        '<rect x="1.25" y="2.25" width="9.5" height="8.5" rx="1.5" stroke="currentColor" stroke-width="1.1"></rect>' +
-        '<path d="M3.2 1.25V3.1M8.8 1.25V3.1M1.25 4.25H10.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<path d="M8.63881 1H7.80547H4.19436L3.36102 0.999928C1.86102 1.13882 1.13324 2.06667 1.02213 3.39445C1.01102 3.55556 1.14435 3.68889 1.29991 3.68889H10.6999C10.861 3.68889 10.9944 3.55 10.9777 3.39445C10.8666 2.06667 10.1388 1.13889 8.63881 1Z" fill="#888889"></path>' +
+        '<path d="M10.4445 4.24438H1.55556C1.25 4.24438 1 4.49438 1 4.79994V8.22217C1 9.88883 1.83333 10.9999 3.77778 10.9999H8.22223C10.1667 10.9999 11 9.88883 11 8.22217V4.79994C11 4.49438 10.75 4.24438 10.4445 4.24438ZM4.45 8.89439C4.42223 8.91661 4.39445 8.94439 4.36667 8.96106C4.33334 8.98328 4.3 8.99994 4.26667 9.01106C4.23334 9.02772 4.2 9.03883 4.16667 9.04439C4.12778 9.04994 4.09445 9.0555 4.05556 9.0555C3.98334 9.0555 3.91111 9.03883 3.84445 9.01106C3.77222 8.98328 3.71667 8.94439 3.66111 8.89439C3.56111 8.78883 3.5 8.64439 3.5 8.49994C3.5 8.3555 3.56111 8.21106 3.66111 8.1055C3.71667 8.0555 3.77222 8.01661 3.84445 7.98883C3.94445 7.94439 4.05556 7.93328 4.16667 7.9555C4.2 7.96106 4.23334 7.97217 4.26667 7.98883C4.3 7.99994 4.33334 8.01661 4.36667 8.03883C4.39445 8.06105 4.42223 8.08328 4.45 8.1055C4.55 8.21106 4.61111 8.3555 4.61111 8.49994C4.61111 8.64439 4.55 8.78883 4.45 8.89439ZM4.45 6.94994C4.34445 7.04994 4.2 7.11105 4.05556 7.11105C3.91111 7.11105 3.76667 7.04994 3.66111 6.94994C3.56111 6.84439 3.5 6.69994 3.5 6.5555C3.5 6.41105 3.56111 6.26661 3.66111 6.16105C3.81667 6.0055 4.06111 5.9555 4.26667 6.04439C4.33889 6.07216 4.4 6.11105 4.45 6.16105C4.55 6.26661 4.61111 6.41105 4.61111 6.5555C4.61111 6.69994 4.55 6.84439 4.45 6.94994ZM6.39445 8.89439C6.28889 8.99439 6.14445 9.0555 6 9.0555C5.85556 9.0555 5.71112 8.99439 5.60556 8.89439C5.50556 8.78883 5.44445 8.64439 5.44445 8.49994C5.44445 8.3555 5.50556 8.21106 5.60556 8.1055C5.81112 7.89994 6.18889 7.89994 6.39445 8.1055C6.49445 8.21106 6.55556 8.3555 6.55556 8.49994C6.55556 8.64439 6.49445 8.78883 6.39445 8.89439ZM6.39445 6.94994C6.36667 6.97216 6.33889 6.99439 6.31112 7.01661C6.27778 7.03883 6.24445 7.0555 6.21112 7.06661C6.17778 7.08328 6.14445 7.09439 6.11112 7.09994C6.07223 7.1055 6.03889 7.11105 6 7.11105C5.85556 7.11105 5.71112 7.04994 5.60556 6.94994C5.50556 6.84439 5.44445 6.69994 5.44445 6.5555C5.44445 6.41105 5.50556 6.26661 5.60556 6.16105C5.65556 6.11105 5.71667 6.07216 5.78889 6.04439C5.99445 5.9555 6.23889 6.0055 6.39445 6.16105C6.49445 6.26661 6.55556 6.41105 6.55556 6.5555C6.55556 6.69994 6.49445 6.84439 6.39445 6.94994ZM8.33889 6.94994C8.31112 6.97216 8.28334 6.99439 8.25556 7.01661C8.22223 7.03883 8.1889 7.0555 8.15556 7.06661C8.12223 7.08328 8.0889 7.09439 8.05556 7.09994C8.01667 7.1055 7.97778 7.11105 7.94445 7.11105C7.80001 7.11105 7.65556 7.04994 7.55001 6.94994C7.45001 6.84439 7.38889 6.69994 7.38889 6.5555C7.38889 6.41105 7.45001 6.26661 7.55001 6.16105C7.60556 6.11105 7.66112 6.07216 7.73334 6.04439C7.83334 5.99994 7.94445 5.98883 8.05556 6.01105C8.0889 6.01661 8.12223 6.02772 8.15556 6.04439C8.1889 6.0555 8.22223 6.07216 8.25556 6.09439C8.28334 6.11661 8.31112 6.13883 8.33889 6.16105C8.4389 6.26661 8.50001 6.41105 8.50001 6.5555C8.50001 6.69994 8.4389 6.84439 8.33889 6.94994Z" fill="#888889"></path>' +
         '</svg>',
       location:
-        '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
-        '<path d="M6 10.65C6 10.65 9.15 7.92 9.15 5.25C9.15 3.51 7.74 2.1 6 2.1C4.26 2.1 2.85 3.51 2.85 5.25C2.85 7.92 6 10.65 6 10.65Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"></path>' +
-        '<circle cx="6" cy="5.25" r="1.2" fill="currentColor"></circle>' +
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
+        '<path d="M10.3081 4.22421C9.78322 1.91459 7.76855 0.874756 5.99884 0.874756C5.99884 0.874756 5.99884 0.874756 5.99384 0.874756C4.22912 0.874756 2.20945 1.90959 1.68454 4.21921C1.09963 6.79879 2.67938 8.98344 4.10914 10.3582C4.63906 10.8681 5.31895 11.1231 5.99884 11.1231C6.67873 11.1231 7.35862 10.8681 7.88353 10.3582C9.3133 8.98344 10.893 6.80379 10.3081 4.22421ZM5.99884 6.7288C5.12898 6.7288 4.42409 6.02392 4.42409 5.15406C4.42409 4.2842 5.12898 3.57932 5.99884 3.57932C6.8687 3.57932 7.57358 4.2842 7.57358 5.15406C7.57358 6.02392 6.8687 6.7288 5.99884 6.7288Z" fill="#888889"></path>' +
         '</svg>',
       level:
         '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
@@ -2999,10 +3070,10 @@
         '</svg>',
       gender:
         '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
-        '<circle cx="4.55" cy="3.4" r="1.75" stroke="currentColor" stroke-width="1.1"></circle>' +
-        '<path d="M1.65 10.1C1.95 8.25 2.95 7.05 4.55 7.05C6.15 7.05 7.15 8.25 7.45 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
-        '<circle cx="8.35" cy="4.05" r="1.35" stroke="currentColor" stroke-width="1.1"></circle>' +
-        '<path d="M7.45 7.35C8.9 7.45 9.85 8.45 10.15 10.1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"></path>' +
+        '<path d="M4.50628 1C3.20251 1 2.14258 2.05993 2.14258 3.3637C2.14258 4.64259 3.1428 5.67764 4.44656 5.72242C4.48637 5.71745 4.52618 5.71745 4.55604 5.72242C4.56599 5.72242 4.57097 5.72242 4.58092 5.72242C4.5859 5.72242 4.5859 5.72242 4.59087 5.72242C5.86478 5.67764 6.865 4.64259 6.86998 3.3637C6.86998 2.05993 5.81005 1 4.50628 1Z" fill="#888889"></path>' +
+        '<path d="M7.03117 7.04379C5.6428 6.11822 3.37863 6.11822 1.98031 7.04379C1.34833 7.46677 1 8.03903 1 8.65111C1 9.26318 1.34833 9.83047 1.97534 10.2485C2.67201 10.7162 3.58763 10.9501 4.50325 10.9501C5.41887 10.9501 6.3345 10.7162 7.03117 10.2485C7.65817 9.82549 8.0065 9.2582 8.0065 8.64115C8.00153 8.02908 7.65817 7.46179 7.03117 7.04379Z" fill="#888889"></path>' +
+        '<path d="M9.97289 3.65736C10.0525 4.62274 9.36579 5.4687 8.41533 5.58315C8.41036 5.58315 8.41036 5.58315 8.40538 5.58315H8.39045C8.36059 5.58315 8.33074 5.58315 8.30586 5.5931C7.82316 5.61798 7.38028 5.46372 7.04688 5.18008C7.55942 4.72226 7.85302 4.03555 7.79331 3.28912C7.75847 2.88604 7.61914 2.5178 7.41014 2.2043C7.59923 2.10975 7.81819 2.05004 8.04212 2.03014C9.01745 1.94554 9.88829 2.67207 9.97289 3.65736Z" fill="#888889"></path>' +
+        '<path d="M10.9673 8.26008C10.9275 8.74277 10.619 9.16077 10.1014 9.44441C9.60382 9.71811 8.97681 9.84749 8.35479 9.83256C8.71307 9.50911 8.92207 9.10603 8.96188 8.67808C9.01165 8.06103 8.71805 7.46886 8.13086 6.99612C7.79745 6.73238 7.40931 6.52338 6.98633 6.36912C8.08607 6.05064 9.46946 6.26462 10.3204 6.95133C10.7782 7.31957 11.0121 7.78236 10.9673 8.26008Z" fill="#888889"></path>' +
         '</svg>'
     };
 
@@ -3017,24 +3088,43 @@
     );
     appendChildren(row, [
       createCompactMetaIcon(kind),
-      createElement('span', 'phab-tournaments__card-compact-meta-text', text),
+      text ? createElement('span', 'phab-tournaments__card-compact-meta-text', text) : null,
       trailing || null
     ]);
     return row;
   }
 
-  function createCompactMapLink(card) {
+  function createCompactLocationMetaRow(card) {
+    var row = createElement(
+      'div',
+      'phab-tournaments__card-compact-meta phab-tournaments__card-compact-meta--location'
+    );
+    appendChildren(row, [
+      createCompactMetaIcon('location'),
+      createCompactLocationLabel(card),
+      createCompactCourtLabel(card)
+    ]);
+    return row;
+  }
+
+  function createCompactLocationLabel(card) {
     var mapUrl = resolveMapUrl(card);
+    var location = resolveLocationLabel(card);
 
     if (!mapUrl) {
-      return createElement('span', 'phab-tournaments__card-compact-map', 'на карте');
+      return createElement('span', 'phab-tournaments__card-compact-meta-text', location);
     }
 
-    var link = createElement('a', 'phab-tournaments__card-compact-map', 'на карте');
+    var link = createElement('a', 'phab-tournaments__card-compact-meta-text phab-tournaments__card-compact-map', location);
     link.href = mapUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     return link;
+  }
+
+  function createCompactCourtLabel(card) {
+    var label = resolveCourtLabel(card);
+    return label ? createElement('span', 'phab-tournaments__card-compact-court', label) : null;
   }
 
   function createCompactCapacityBlock(card, descriptor) {
@@ -3104,19 +3194,13 @@
   function createCompactFooter(card) {
     var footer = createElement('div', 'phab-tournaments__card-compact-footer');
     var metrics = createElement('div', 'phab-tournaments__card-compact-footer-metrics');
-    var durationLabel = formatDurationCompact(card);
 
     appendChildren(metrics, [
       createCompactFooterMetric('engagement', card.participantsCount, true),
       createCompactFooterMetric('waitlist', card.waitlistCount, false)
     ]);
 
-    appendChildren(footer, [
-      metrics,
-      durationLabel
-        ? createElement('span', 'phab-tournaments__card-compact-footer-time', durationLabel)
-        : null
-    ]);
+    footer.appendChild(metrics);
 
     return footer;
   }
@@ -3282,6 +3366,9 @@
     var control = createActionControl(card, action, state, mount);
 
     control.className = 'phab-tournaments__card-compact-cta';
+    if (action.mode !== 'disabled') {
+      control.textContent = 'Принять участие';
+    }
 
     if (action.kind === 'secondary') {
       control.className += ' phab-tournaments__card-compact-cta--secondary';
@@ -3448,13 +3535,13 @@
     price.appendChild(
       createElement('span', 'phab-tournaments__card-compact-price-value', resolveCardPriceLabel(card))
     );
-    appendChildren(header, [heading, price, createCompactDateBadge(card)]);
+    appendChildren(header, [heading, createCompactDateBadge(card)]);
 
     appendChildren(info, [
       createCompactMetaRow('calendar', formatCardScheduleLabel(card)),
-      createCompactMetaRow('location', resolveLocationLabel(card), createCompactMapLink(card)),
+      createCompactLocationMetaRow(card),
       createCompactMetaRow('level', formatAccessLevelRange(card.accessLevels)),
-      genderLabel ? createCompactMetaRow('gender', genderLabel) : null
+      genderLabel ? createCompactMetaRow('gender', genderLabel, price) : null
     ]);
 
     appendChildren(surface, [
@@ -3849,7 +3936,7 @@
         createStatusCard(
           'Пока нет доступных турниров',
           selectedGroup
-            ? 'На выбранную дату турниров пока нет.'
+            ? 'ищем подходящие турниры на выбранную дату'
             : 'Проверьте фильтры stationId/includePast или убедитесь, что у турниров есть public URL.'
         )
       );
@@ -3889,7 +3976,7 @@
     mount.appendChild(
       createStatusCard(
         'Загружаем турниры',
-        'Собираем свежую витрину, карточки и состояния для мобильной и десктопной версии.'
+        'ищем подходящие турниры на выбранную дату'
       )
     );
   }

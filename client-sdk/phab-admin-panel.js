@@ -15840,6 +15840,7 @@
           description: String(form.skinDescription.value || '').trim() || undefined,
           imageUrl: String(form.skinImageUrl.value || '').trim() || null,
           ctaLabel: String(form.skinCtaLabel.value || '').trim() || undefined,
+          priceLabel: String(form.skinPriceLabel.value || '').trim() || undefined,
           badgeLabel: String(form.skinBadgeLabel.value || '').trim() || undefined,
           tags: String(form.skinTags.value || '')
             .split(',')
@@ -16057,6 +16058,7 @@
           return item && item !== '-';
         }).join(' · '),
         ctaLabel: String(skin.ctaLabel || 'Записаться').trim(),
+        priceLabel: String(skin.priceLabel || '').trim(),
         imageUrl: String(skin.imageUrl || '').trim() || null,
         startAt: isIsoDateString(tournament && tournament.startsAt)
           ? String(tournament.startsAt).trim()
@@ -16481,6 +16483,12 @@
       skinCtaInput.className = 'phab-admin-input';
       skinCtaInput.value = String(skin.ctaLabel || 'Записаться');
       appendCommunityFormField(form, 'Skin: CTA', skinCtaInput);
+
+      var skinPriceInput = document.createElement('input');
+      skinPriceInput.className = 'phab-admin-input';
+      skinPriceInput.placeholder = 'Энергия';
+      skinPriceInput.value = String(skin.priceLabel || '');
+      appendCommunityFormField(form, 'Skin: стоимость участия', skinPriceInput);
 
       var skinBadgeInput = document.createElement('input');
       skinBadgeInput.className = 'phab-admin-input';
@@ -17204,6 +17212,7 @@
           skinTitle: skinTitleInput,
           skinSubtitle: skinSubtitleInput,
           skinCtaLabel: skinCtaInput,
+          skinPriceLabel: skinPriceInput,
           skinBadgeLabel: skinBadgeInput,
           skinImageUrl: skinImageInput,
           skinTags: skinTagsInput,

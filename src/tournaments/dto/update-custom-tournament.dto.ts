@@ -78,6 +78,16 @@ export class UpdateCustomTournamentDto {
   @IsOptional()
   @IsString()
   @MaxLength(160)
+  courtName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(220)
+  locationName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
   trainerName?: string;
 
   @IsOptional()

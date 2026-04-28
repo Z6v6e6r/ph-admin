@@ -28,6 +28,11 @@ export class TournamentSkinDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
+  priceLabel?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(80)
   badgeLabel?: string;
 

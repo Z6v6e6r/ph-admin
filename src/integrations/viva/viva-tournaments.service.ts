@@ -291,6 +291,14 @@ export class VivaTournamentsService {
     const studioName =
       (studioId ? studioNames.get(studioId) : undefined) ??
       this.readDisplayName(studio);
+    const courtName =
+      this.readString(exercise.courtName) ??
+      this.readString(exercise.court_name) ??
+      this.readString(exercise.roomName) ??
+      this.readString(exercise.room_name) ??
+      this.readDisplayName(exercise.court) ??
+      this.readDisplayName(exercise.room);
+    const locationName = [studioName, courtName].filter(Boolean).join(' · ') || undefined;
     const trainerName =
       (trainerId ? trainerNames.get(trainerId) : undefined) ??
       this.readDisplayName(this.readFirstRecord(exercise.trainers)) ??
@@ -321,6 +329,8 @@ export class VivaTournamentsService {
         exerciseType.id,
       studioId: studioId ?? undefined,
       studioName: studioName ?? undefined,
+      courtName: courtName ?? undefined,
+      locationName,
       trainerId: trainerId ?? undefined,
       trainerName: trainerName ?? undefined,
       trainerAvatarUrl,

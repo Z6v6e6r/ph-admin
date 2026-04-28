@@ -45,6 +45,7 @@ export interface TournamentSkin {
   description?: string;
   imageUrl?: string | null;
   ctaLabel?: string;
+  priceLabel?: string;
   badgeLabel?: string;
   tags?: string[];
 }
@@ -144,6 +145,8 @@ export interface Tournament {
   gameId?: string;
   studioId?: string;
   studioName?: string;
+  courtName?: string;
+  locationName?: string;
   trainerId?: string;
   trainerName?: string;
   trainerAvatarUrl?: string | null;
@@ -228,6 +231,8 @@ export interface TournamentPublicView {
   startsAt?: string;
   endsAt?: string;
   studioName?: string;
+  courtName?: string;
+  locationName?: string;
   trainerName?: string;
   participantsCount: number;
   paidParticipantsCount: number;
@@ -253,6 +258,8 @@ export interface TournamentPublicView {
     | 'startsAt'
     | 'endsAt'
     | 'studioName'
+    | 'courtName'
+    | 'locationName'
     | 'trainerName'
     | 'exerciseTypeId'
   >;

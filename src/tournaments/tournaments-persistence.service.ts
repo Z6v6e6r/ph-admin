@@ -60,6 +60,8 @@ export interface CreateCustomTournamentMutation {
   slug?: string;
   studioId?: string;
   studioName?: string;
+  courtName?: string;
+  locationName?: string;
   trainerId?: string;
   trainerName?: string;
   trainerAvatarUrl?: string | null;
@@ -85,6 +87,8 @@ export interface UpdateCustomTournamentMutation {
   slug?: string;
   studioId?: string;
   studioName?: string;
+  courtName?: string;
+  locationName?: string;
   trainerId?: string;
   trainerName?: string;
   trainerAvatarUrl?: string | null;
@@ -260,6 +264,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.studioName !== undefined) {
       setPayload.studioName = this.pickString(mutation.studioName) ?? null;
     }
+    if (mutation.courtName !== undefined) {
+      setPayload.courtName = this.pickString(mutation.courtName) ?? null;
+    }
+    if (mutation.locationName !== undefined) {
+      setPayload.locationName = this.pickString(mutation.locationName) ?? null;
+    }
     if (mutation.trainerId !== undefined) {
       setPayload.trainerId = this.pickString(mutation.trainerId) ?? null;
     }
@@ -394,6 +404,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       publicationCommunityIds: this.normalizeCommunityIds(document.publicationCommunityIds),
       studioId: this.pickString(document.studioId) ?? undefined,
       studioName: this.pickString(document.studioName) ?? undefined,
+      courtName: this.pickString(document.courtName) ?? undefined,
+      locationName: this.pickString(document.locationName) ?? undefined,
       trainerId: this.pickString(document.trainerId) ?? undefined,
       trainerName: this.pickString(document.trainerName) ?? undefined,
       trainerAvatarUrl: this.pickNullableString(document.trainerAvatarUrl) ?? undefined,
@@ -459,6 +471,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       publicationCommunityIds: this.normalizeCommunityIds(mutation.publicationCommunityIds),
       studioId: this.pickString(mutation.studioId) ?? null,
       studioName: this.pickString(mutation.studioName) ?? null,
+      courtName: this.pickString(mutation.courtName) ?? null,
+      locationName: this.pickString(mutation.locationName) ?? null,
       trainerId: this.pickString(mutation.trainerId) ?? null,
       trainerName: this.pickString(mutation.trainerName) ?? null,
       trainerAvatarUrl: this.pickNullableString(mutation.trainerAvatarUrl) ?? null,
@@ -578,6 +592,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       description: this.pickString(record.description) ?? undefined,
       imageUrl: this.pickNullableString(record.imageUrl),
       ctaLabel: this.pickString(record.ctaLabel) ?? undefined,
+      priceLabel: this.pickString(record.priceLabel) ?? undefined,
       badgeLabel: this.pickString(record.badgeLabel) ?? undefined,
       tags: this.normalizeStringArray(record.tags)
     };
@@ -1042,6 +1057,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       'Skin: CTA',
       beforeTournament.skin.ctaLabel,
       afterTournament.skin.ctaLabel
+    );
+    pushChange(
+      'skin.priceLabel',
+      'Skin: стоимость',
+      beforeTournament.skin.priceLabel,
+      afterTournament.skin.priceLabel
     );
     pushChange(
       'skin.badgeLabel',
