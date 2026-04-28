@@ -3,10 +3,13 @@
   var DEFAULT_API_BASE_URL = inferApiBaseUrl(document.currentScript && document.currentScript.src);
   var LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
   var DEFAULT_FORWARD_DAYS = 30;
+  var DEFAULT_INITIAL_FORWARD_DAYS = 1;
   var DEFAULTS = {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     stationIds: [],
     limit: 48,
+    initialForwardDays: DEFAULT_INITIAL_FORWARD_DAYS,
+    forwardDays: DEFAULT_FORWARD_DAYS,
     includePast: false,
     refreshMs: 0,
     variant: 'embed',
@@ -2563,16 +2566,17 @@
     return next;
   }
 
-  function filterVisibleItems(items, includePast) {
+  function filterVisibleItems(items, includePast, forwardDays) {
     var today;
     var endDay;
+    var days = normalizePositiveInteger(forwardDays, DEFAULT_FORWARD_DAYS);
 
     if (includePast) {
       return items.slice();
     }
 
     today = getStartOfToday();
-    endDay = addDays(today, DEFAULT_FORWARD_DAYS - 1);
+    endDay = addDays(today, days - 1);
     endDay.setHours(23, 59, 59, 999);
 
     return items.filter(function (item) {
@@ -2627,10 +2631,11 @@
     });
   }
 
-  function buildForwardDayGroups(items) {
+  function buildForwardDayGroups(items, forwardDays) {
     var grouped = {};
     var today = getStartOfToday();
     var groups = [];
+    var days = normalizePositiveInteger(forwardDays, DEFAULT_FORWARD_DAYS);
 
     items.forEach(function (item) {
       var parsed = parseDate(item.startsAt);
@@ -2642,7 +2647,7 @@
       grouped[key].push(item);
     });
 
-    for (var index = 0; index < DEFAULT_FORWARD_DAYS; index += 1) {
+    for (var index = 0; index < days; index += 1) {
       var date = addDays(today, index);
       var key = formatDateKey(date);
       groups.push(
@@ -2667,8 +2672,8 @@
     return groups;
   }
 
-  function buildDayGroups(items, includePast) {
-    return includePast ? buildExistingDayGroups(items) : buildForwardDayGroups(items);
+  function buildDayGroups(items, includePast, forwardDays) {
+    return includePast ? buildExistingDayGroups(items) : buildForwardDayGroups(items, forwardDays);
   }
 
   function ensureSelectedDay(state, dayGroups) {
@@ -2876,11 +2881,12 @@
     return card;
   }
 
-  function buildRequestUrl(config) {
+  function buildRequestUrl(config, forwardDays) {
     var url = new URL(
       normalizeApiBaseUrl(config.apiBaseUrl) + '/tournaments/public/list',
       window.location.href
     );
+    var days = normalizePositiveInteger(forwardDays, config.forwardDays);
 
     if (config.stationIds.length > 0) {
       url.searchParams.set('stationId', config.stationIds.join(','));
@@ -2890,6 +2896,9 @@
     }
     if (config.includePast) {
       url.searchParams.set('includePast', 'true');
+    }
+    if (!config.includePast && days > 0) {
+      url.searchParams.set('forwardDays', String(days));
     }
 
     return url.toString();
@@ -3999,11 +4008,16 @@
         normalizeArray(response.items).map(function (entry) {
           return normalizeObject(entry);
         }),
-        state.config.includePast
+        state.config.includePast,
+        state.loadedForwardDays || state.config.forwardDays
       )
     );
     syncResponsiveViewMode(state);
-    var dayGroups = buildDayGroups(items, state.config.includePast);
+    var dayGroups = buildDayGroups(
+      items,
+      state.config.includePast,
+      state.loadedForwardDays || state.config.forwardDays
+    );
     var selectedGroup;
     var root = createElement(
       'section',
@@ -4245,18 +4259,25 @@
       });
   }
 
-  function loadTournaments(mount, state) {
-    renderLoading(mount);
+  function loadTournaments(mount, state, options) {
+    var loadOptions = options || {};
+    var forwardDays = normalizePositiveInteger(loadOptions.forwardDays, state.config.forwardDays);
+    if (!loadOptions.background) {
+      renderLoading(mount);
+    }
 
-    return jsonFetch(buildRequestUrl(state.config), {
+    return jsonFetch(buildRequestUrl(state.config, forwardDays), {
       credentials: state.crossOriginApi ? 'omit' : 'include'
     })
       .then(function (payload) {
+        state.loadedForwardDays = forwardDays;
         state.payload = payload;
         renderTournaments(mount, payload, state);
       })
       .catch(function (error) {
-        renderError(mount, 'Проверьте доступность каталога турниров: ' + error.message);
+        if (!loadOptions.background) {
+          renderError(mount, 'Проверьте доступность каталога турниров: ' + error.message);
+        }
       });
   }
 
@@ -4267,6 +4288,11 @@
       apiBaseUrl: normalizeApiBaseUrl(dataset.apiBase || DEFAULTS.apiBaseUrl),
       stationIds: normalizeCsv(dataset.stationIds || ''),
       limit: normalizePositiveInteger(dataset.limit, DEFAULTS.limit),
+      initialForwardDays: normalizePositiveInteger(
+        dataset.initialForwardDays || dataset.initialDays,
+        DEFAULTS.initialForwardDays
+      ),
+      forwardDays: normalizePositiveInteger(dataset.forwardDays, DEFAULTS.forwardDays),
       includePast: normalizeBoolean(dataset.includePast),
       refreshMs: normalizeRefreshMs(dataset.refreshMs),
       variant: String(dataset.variant || DEFAULTS.variant).trim() || DEFAULTS.variant,
@@ -4310,6 +4336,7 @@
       authPending: null,
       authTimer: 0,
       reloadOnClose: false,
+      loadedForwardDays: config.initialForwardDays,
       dayRailScrollLeft: 0,
       dayRailShiftDirection: 0,
       dayRailShiftPending: false
@@ -4317,11 +4344,25 @@
 
     mount.__phabTournamentsInitialized = true;
     mount.__phabTournamentsState = state;
-    loadTournaments(mount, state);
+    loadTournaments(mount, state, { forwardDays: config.initialForwardDays })
+      .then(function () {
+        if (
+          !config.includePast
+          && config.forwardDays > config.initialForwardDays
+          && !mount.__phabTournamentsDestroyed
+        ) {
+          window.setTimeout(function () {
+            loadTournaments(mount, state, {
+              forwardDays: config.forwardDays,
+              background: true
+            });
+          }, 0);
+        }
+      });
 
     if (config.refreshMs > 0) {
       mount.__phabTournamentsRefreshTimer = window.setInterval(function () {
-        loadTournaments(mount, state);
+        loadTournaments(mount, state, { forwardDays: config.forwardDays });
       }, config.refreshMs);
     }
   }

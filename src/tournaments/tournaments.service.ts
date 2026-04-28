@@ -281,18 +281,21 @@ export class TournamentsService {
     limit?: number;
     stationIds?: string[];
     includePast?: boolean;
+    forwardDays?: number;
   }): Promise<TournamentPublicDirectoryResponse> {
     this.ensurePersistenceEnabled();
     const limit = this.normalizePublicLimit(options?.limit);
     const stationIds = this.normalizeFilterValues(options?.stationIds);
     const includePast = options?.includePast === true;
+    const forwardDays = this.normalizePublicForwardDays(options?.forwardDays);
     const tournaments = await this.listHydratedCustomTournamentsSafe();
 
     const items = tournaments
       .filter((tournament) =>
         this.matchesPublicTournamentFilters(tournament, {
           stationIds,
-          includePast
+          includePast,
+          forwardDays
         })
       )
       .sort((left, right) => this.comparePublicTournaments(left, right))
@@ -965,6 +968,7 @@ export class TournamentsService {
     options: {
       stationIds: string[];
       includePast: boolean;
+      forwardDays: number;
     }
   ): boolean {
     if (
@@ -975,7 +979,10 @@ export class TournamentsService {
       return false;
     }
 
-    if (!options.includePast && !this.isTournamentWithinPublicForwardWindow(tournament)) {
+    if (
+      !options.includePast
+      && !this.isTournamentWithinPublicForwardWindow(tournament, options.forwardDays)
+    ) {
       return false;
     }
 
@@ -994,7 +1001,10 @@ export class TournamentsService {
     return options.stationIds.some((stationId) => candidates.includes(stationId));
   }
 
-  private isTournamentWithinPublicForwardWindow(tournament: CustomTournament): boolean {
+  private isTournamentWithinPublicForwardWindow(
+    tournament: CustomTournament,
+    forwardDays = PUBLIC_TOURNAMENTS_FORWARD_DAYS
+  ): boolean {
     const startsAt = Date.parse(tournament.startsAt ?? '');
     if (!Number.isFinite(startsAt)) {
       return false;
@@ -1004,7 +1014,7 @@ export class TournamentsService {
     today.setHours(0, 0, 0, 0);
 
     const end = new Date(today);
-    end.setDate(end.getDate() + PUBLIC_TOURNAMENTS_FORWARD_DAYS - 1);
+    end.setDate(end.getDate() + forwardDays - 1);
     end.setHours(23, 59, 59, 999);
 
     return startsAt >= today.getTime() && startsAt <= end.getTime();
@@ -2680,6 +2690,15 @@ export class TournamentsService {
       PUBLIC_TOURNAMENTS_LIMIT_MAX,
       Math.max(1, Math.floor(numericLimit))
     );
+  }
+
+  private normalizePublicForwardDays(forwardDays?: number): number {
+    const numericForwardDays = Number(forwardDays);
+    if (!Number.isFinite(numericForwardDays) || numericForwardDays <= 0) {
+      return PUBLIC_TOURNAMENTS_FORWARD_DAYS;
+    }
+
+    return Math.min(120, Math.max(1, Math.floor(numericForwardDays)));
   }
 
   private pickNumber(value: unknown): number | undefined {
