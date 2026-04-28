@@ -4472,7 +4472,7 @@
   }
 
   function normalizeVivaTransactionProductType(value) {
-    return String(value || '').toUpperCase() === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
+    return String(value || '').toUpperCase() === 'SERVICE' ? 'SERVICE' : 'SUBSCRIPTION';
   }
 
   function buildPaymentReturnUrl(joinUrl, flag) {

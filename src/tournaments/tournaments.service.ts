@@ -1992,11 +1992,12 @@ export class TournamentsService {
   private resolveVivaTransactionProductType(
     value: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined
   ): 'SUBSCRIPTION' | 'SERVICE' {
-    if (value === 'SUBSCRIPTION') {
-      return 'SUBSCRIPTION';
+    if (value === 'SERVICE') {
+      return 'SERVICE';
     }
-    // Viva /transactions enum does not accept ONE_TIME.
-    return 'SERVICE';
+    // Viva's public widget sends both subscription catalog entries and one-time catalog entries
+    // to /transactions as SUBSCRIPTION products.
+    return 'SUBSCRIPTION';
   }
 
   private async createVivaJoinTransaction(input: {
