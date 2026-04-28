@@ -1892,17 +1892,7 @@ export class TournamentsPublicController {
             />
           </label>
 
-          <label>
-            Телефон
-            <input
-              type="tel"
-              name="phone"
-              maxlength="30"
-              value="${phoneValue}"
-              placeholder="+7 999 123-45-67"
-              required
-            />
-          </label>
+          <input type="hidden" name="phone" value="${phoneValue}" />
 
           ${
             flow.code === 'PHONE_VERIFICATION_REQUIRED'
@@ -1997,6 +1987,7 @@ export class TournamentsPublicController {
 
   private renderJoinTournamentCard(flow: TournamentJoinFlowResponse, actionHtml: string): string {
     const tournament = flow.tournament;
+    const client = flow.client;
     const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
     const genderLabel = this.formatGenderCardLabel(tournament.gender);
     const participantsLabel = `${Math.max(0, Number(tournament.participantsCount) || 0)}/${Math.max(
@@ -2014,6 +2005,7 @@ export class TournamentsPublicController {
     const badgeLabel = tournament.tournamentType || 'Турнир';
     const organizerName = tournament.trainerName || 'Организатор турнира';
     const organizerHandle = `@${String(tournament.slug || 'padelhub').replace(/^@+/, '')}`;
+    const phoneLabel = this.formatPhone(client.phone) || 'Не указан';
 
     return `<article class="phab-tournament-join-card" aria-label="${this.escapeHtml(title)}">
         <div class="phab-tournament-join-card__profile">
@@ -2074,6 +2066,11 @@ export class TournamentsPublicController {
               <span>${this.escapeHtml(participantsLabel)}</span>
               <span>${this.escapeHtml(spotsLeft > 0 ? `осталось: ${this.pluralizeSpots(spotsLeft)}` : 'мест нет')}</span>
             </div>
+          </div>
+
+          <div class="phab-tournament-join-card__phone" aria-label="Телефон участника">
+            <span class="phab-tournament-join-card__phone-label">Телефон</span>
+            <span class="phab-tournament-join-card__phone-value">${this.escapeHtml(phoneLabel)}</span>
           </div>
 
           ${actionHtml}
@@ -2359,6 +2356,25 @@ export class TournamentsPublicController {
         font-weight: 500;
         letter-spacing: 0.02em;
         text-decoration: none;
+      }
+      .phab-tournament-join-card__phone {
+        display: grid;
+        gap: 2px;
+        margin: 2px 0 10px;
+      }
+      .phab-tournament-join-card__phone-label {
+        font-size: 10px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #8d8a95;
+      }
+      .phab-tournament-join-card__phone-value {
+        font-size: 14px;
+        line-height: 1.3;
+        font-weight: 600;
+        color: #1f1e20;
       }
       .phab-tournament-join-card__footer {
         align-items: center;
