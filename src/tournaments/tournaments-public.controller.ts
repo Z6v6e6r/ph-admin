@@ -288,7 +288,7 @@ export class TournamentsPublicController {
     const submission = this.normalizeJoinSubmission(body);
     let clientForRemember = currentClient;
     if (submission.authCode) {
-      const verifiedClient = this.tournamentsPublicSessionService.verifyPhoneCode(
+      const verifiedClient = await this.tournamentsPublicSessionService.verifyPhoneCode(
         request,
         response,
         currentClient,
@@ -333,7 +333,7 @@ export class TournamentsPublicController {
     );
 
     if (flow.code === 'PHONE_VERIFICATION_REQUIRED' && submission.phone && !submission.authCode) {
-      const codeResult = this.tournamentsPublicSessionService.createPhoneCode(
+      const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
         request,
         response,
         client,

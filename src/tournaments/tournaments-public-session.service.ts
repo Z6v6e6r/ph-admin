@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto';
 import { Request, Response } from 'express';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -18,14 +18,18 @@ interface TournamentPublicSessionPayload {
   exp: number;
 }
 
-interface PhoneCodeEntry {
-  code: string;
-  expiresAt: number;
-  attempts: number;
+interface PhoneAuthTokenResponse {
+  access_token?: string;
+  expires_in?: number;
+  refresh_token?: string;
+  refresh_expires_in?: number;
+  error?: string;
+  error_description?: string;
 }
 
 @Injectable()
 export class TournamentsPublicSessionService {
+  private readonly logger = new Logger(TournamentsPublicSessionService.name);
   private readonly cookieName =
     this.readEnv('TOURNAMENTS_PUBLIC_SESSION_COOKIE') ?? 'ph_tournament_client';
   private readonly ttlDays = this.readPositiveNumberEnv(
@@ -40,15 +44,23 @@ export class TournamentsPublicSessionService {
     this.readEnv('TOURNAMENTS_PUBLIC_SESSION_SECRET')
     ?? this.readEnv('ADMIN_AUTH_SECRET')
     ?? 'dev-insecure-tournament-public-session-secret';
-  private readonly phoneCodeTtlMs = this.readPositiveNumberEnv(
-    'TOURNAMENTS_PUBLIC_PHONE_CODE_TTL_MS',
-    10 * 60 * 1000
+  private readonly authBaseUrl =
+    this.normalizeBaseUrl(
+      this.readEnv('TOURNAMENTS_PUBLIC_KEYCLOAK_BASE_URL')
+      ?? this.readEnv('KEYCLOAK_BASE_URL')
+      ?? this.readEnv('VIVA_KEYCLOAK_BASE_URL')
+    ) ?? 'https://kc.vivacrm.ru';
+  private readonly authRealm = this.readEnv('TOURNAMENTS_PUBLIC_KEYCLOAK_REALM') ?? 'prod';
+  private readonly authTenantKey =
+    this.readEnv('TOURNAMENTS_PUBLIC_TENANT_KEY')
+    ?? this.readEnv('VIVA_END_USER_WIDGET_ID')
+    ?? 'iSkq6G';
+  private readonly authClientId = this.readEnv('TOURNAMENTS_PUBLIC_AUTH_CLIENT_ID') ?? 'widget';
+  private readonly authChannel = this.readEnv('TOURNAMENTS_PUBLIC_AUTH_CHANNEL') ?? 'cascade';
+  private readonly authRequestTimeoutMs = this.readPositiveNumberEnv(
+    'TOURNAMENTS_PUBLIC_AUTH_TIMEOUT_MS',
+    5000
   );
-  private readonly exposePhoneCode = this.readBooleanEnv(
-    'TOURNAMENTS_PUBLIC_EXPOSE_PHONE_CODE',
-    false
-  );
-  private readonly phoneCodes = new Map<string, PhoneCodeEntry>();
 
   requiresRealAuth(): boolean {
     return this.requireRealAuth;
@@ -125,23 +137,21 @@ export class TournamentsPublicSessionService {
     };
   }
 
-  createPhoneCode(
+  async createPhoneCode(
     request: Request,
     response: Response,
     current: TournamentPublicClientProfile,
     phone: unknown
-  ): { ok: boolean; message: string; phone?: string; debugCode?: string } {
+  ): Promise<{ ok: boolean; message: string; phone?: string }> {
     const normalizedPhone = this.normalizePhone(phone);
     if (!normalizedPhone) {
       return { ok: false, message: 'Укажите корректный номер телефона.' };
     }
 
-    const code = String(Math.floor(1000 + Math.random() * 9000));
-    this.phoneCodes.set(this.buildPhoneCodeKey(current.id, normalizedPhone), {
-      code,
-      expiresAt: Date.now() + this.phoneCodeTtlMs,
-      attempts: 0
-    });
+    const sent = await this.requestExternalPhoneCode(normalizedPhone);
+    if (!sent) {
+      return { ok: false, message: 'Не удалось отправить код. Попробуйте позже.' };
+    }
 
     this.writeSessionCookie(response, request, {
       clientId: current.id,
@@ -157,35 +167,27 @@ export class TournamentsPublicSessionService {
     return {
       ok: true,
       message: 'Код подтверждения отправлен.',
-      phone: normalizedPhone,
-      debugCode: this.exposePhoneCode ? code : undefined
+      phone: normalizedPhone
     };
   }
 
-  verifyPhoneCode(
+  async verifyPhoneCode(
     request: Request,
     response: Response,
     current: TournamentPublicClientProfile,
     phone: unknown,
     code: unknown
-  ): TournamentPublicClientProfile | null {
+  ): Promise<TournamentPublicClientProfile | null> {
     const normalizedPhone = this.normalizePhone(phone);
     const normalizedCode = this.pickString(code)?.replace(/\D+/g, '');
     if (!normalizedPhone || !normalizedCode) {
       return null;
     }
 
-    const key = this.buildPhoneCodeKey(current.id, normalizedPhone);
-    const entry = this.phoneCodes.get(key);
-    if (!entry || entry.expiresAt < Date.now() || entry.attempts >= 5) {
-      this.phoneCodes.delete(key);
+    const authResult = await this.verifyExternalPhoneCode(normalizedPhone, normalizedCode);
+    if (!authResult) {
       return null;
     }
-    entry.attempts += 1;
-    if (entry.code !== normalizedCode) {
-      return null;
-    }
-    this.phoneCodes.delete(key);
 
     const payload: TournamentPublicSessionPayload = {
       clientId: current.id,
@@ -433,6 +435,11 @@ export class TournamentsPublicSessionService {
       .replace(/\s+/g, ' ');
   }
 
+  private normalizeBaseUrl(value?: string): string | undefined {
+    const normalized = this.pickString(value);
+    return normalized ? normalized.replace(/\/+$/, '') : undefined;
+  }
+
   private readSubscriptionsHeader(value: unknown): TournamentClientSubscription[] {
     const raw = this.pickString(value);
     if (!raw) {
@@ -498,15 +505,80 @@ export class TournamentsPublicSessionService {
     return subscriptions;
   }
 
-  private buildPhoneCodeKey(clientId: string, phone: string): string {
-    return `${clientId}:${phone}`;
-  }
-
   private normalizeProductType(value: unknown): 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined {
     const normalized = this.pickString(value)?.toUpperCase().replace(/[-\s]+/g, '_');
     return normalized === 'SUBSCRIPTION' || normalized === 'ONE_TIME' || normalized === 'SERVICE'
       ? normalized
       : undefined;
+  }
+
+  private async requestExternalPhoneCode(phone: string): Promise<boolean> {
+    try {
+      const url = new URL(
+        `/realms/${encodeURIComponent(this.authRealm)}/sms/authentication-code`,
+        `${this.authBaseUrl}/`
+      );
+      url.searchParams.set('phoneNumber', phone);
+      url.searchParams.set('channel', this.authChannel);
+      url.searchParams.set('tenantKey', this.authTenantKey);
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: this.buildAbortSignal(this.authRequestTimeoutMs)
+      });
+      if (!response.ok) {
+        this.logger.warn(`Phone auth code request failed: ${response.status}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.logger.warn(`Phone auth code request failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private async verifyExternalPhoneCode(phone: string, code: string): Promise<boolean> {
+    try {
+      const body = new URLSearchParams();
+      body.set('grant_type', 'password');
+      body.set('phone_number', phone);
+      body.set('code', code);
+      body.set('client_id', this.authClientId);
+      body.set('tenant_key', this.authTenantKey);
+
+      const url = new URL(
+        `/realms/${encodeURIComponent(this.authRealm)}/protocol/openid-connect/token`,
+        `${this.authBaseUrl}/`
+      );
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: body.toString(),
+        signal: this.buildAbortSignal(this.authRequestTimeoutMs)
+      });
+      const payload = (await response.json().catch(() => null)) as PhoneAuthTokenResponse | null;
+      if (!response.ok || !payload?.access_token) {
+        this.logger.warn(
+          `Phone auth token request failed: ${response.status} ${payload?.error ?? ''}`
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.logger.warn(`Phone auth token request failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  private buildAbortSignal(timeoutMs: number): AbortSignal | undefined {
+    const timeout = (AbortSignal as typeof AbortSignal & {
+      timeout?: (delay: number) => AbortSignal;
+    }).timeout;
+    return typeof timeout === 'function' ? timeout(timeoutMs) : undefined;
   }
 
   private pickStringArray(value: unknown): string[] | undefined {
