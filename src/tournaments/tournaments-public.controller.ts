@@ -427,6 +427,32 @@ export class TournamentsPublicController {
       const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
       const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
+      const vivaAuthorizationHeader = this.tournamentsPublicSessionService
+        .resolveExternalAuthorizationHeader(request, client);
+      if (!submission.directTransactionId && !vivaAuthorizationHeader) {
+        const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
+          request,
+          response,
+          client,
+          client.phone ?? submission.phone
+        );
+        const nextFlow = {
+          ...flow,
+          code: 'PHONE_VERIFICATION_REQUIRED' as const,
+          ok: false,
+          message: codeResult.ok
+            ? 'Введите код подтверждения, отправленный на номер телефона.'
+            : codeResult.message,
+          phoneVerification: codeResult
+        };
+        if (this.wantsJson(request, submission.format)) {
+          response.json(nextFlow);
+          return;
+        }
+
+        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+        return;
+      }
       const outcome = submission.directTransactionId
         ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
           name: client.name ?? '',
@@ -445,6 +471,7 @@ export class TournamentsPublicController {
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: true,
         subscriptions: client.subscriptions,
+        vivaAuthorizationHeader,
         successUrl,
         failUrl
       });

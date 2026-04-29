@@ -63,6 +63,7 @@ interface RegistrationInput {
   selectedPurchaseOptionId?: string;
   purchaseConfirmed?: boolean;
   subscriptions?: TournamentClientSubscription[];
+  vivaAuthorizationHeader?: string;
 }
 
 interface JoinPurchaseTransactionInput extends RegistrationInput {
@@ -773,7 +774,8 @@ export class TournamentsService {
       tournament,
       phone: normalizedPhone,
       successUrl: input.successUrl,
-      failUrl: input.failUrl
+      failUrl: input.failUrl,
+      authorizationHeader: input.vivaAuthorizationHeader
     });
 
     if (transaction.transactionId) {
@@ -2005,6 +2007,7 @@ export class TournamentsService {
     phone: string;
     successUrl: string;
     failUrl: string;
+    authorizationHeader?: string;
   }): Promise<VivaJoinTransactionResponse> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     const exerciseId = this.pickString(input.booking.vivaExerciseId);
@@ -2052,6 +2055,7 @@ export class TournamentsService {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...(input.authorizationHeader ? { Authorization: input.authorizationHeader } : {}),
         Origin: 'https://padlhub.ru',
         Referer: 'https://padlhub.ru/'
       },

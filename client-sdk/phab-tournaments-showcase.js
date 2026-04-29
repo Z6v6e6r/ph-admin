@@ -4028,7 +4028,7 @@
         purchaseButton.addEventListener('click', function () {
           readDraftFromDialog(dialog, state);
           state.draft.selectedPurchaseOptionId = purchaseId;
-          startDirectVivaPurchase(mount, state, purchase);
+          submitJoin(mount, state, false);
         });
         purchaseList.appendChild(purchaseButton);
       });
