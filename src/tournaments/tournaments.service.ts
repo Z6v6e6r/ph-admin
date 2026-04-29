@@ -2844,7 +2844,10 @@ export class TournamentsService {
         trainerName: tournament.trainerName,
         trainerAvatarUrl: tournament.trainerAvatarUrl ?? null,
         maxPlayers: tournament.maxPlayers,
-        participantsCount: tournament.participants.length,
+        participantsCount: Math.max(
+          tournament.participants.length,
+          Number(tournament.participantsCount || 0) || 0
+        ),
         waitlistCount: tournament.waitlist.length,
         skin,
         publicTournament,
@@ -2903,6 +2906,11 @@ export class TournamentsService {
         ? (tournament.details.sourceTournamentSnapshot as Record<string, unknown> | undefined)
         : undefined;
     const publicName = this.pickString(tournament.skin?.title) ?? tournament.name;
+    const participantsCount = Math.max(
+      tournament.participants.length,
+      Number(tournament.participantsCount || 0) || 0,
+      this.pickNumber(sourceTournamentSnapshot?.participantsCount) ?? 0
+    );
 
     return {
       id: tournament.id,
@@ -2920,7 +2928,7 @@ export class TournamentsService {
       locationName: tournament.locationName,
       trainerName: tournament.trainerName,
       trainerAvatarUrl: tournament.trainerAvatarUrl ?? null,
-      participantsCount: tournament.participants.length,
+      participantsCount,
       paidParticipantsCount: tournament.participants.filter(
         (item) => item.paymentStatus === 'PAID'
       ).length,

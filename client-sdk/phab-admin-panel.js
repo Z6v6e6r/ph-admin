@@ -16210,6 +16210,72 @@
       return '';
     }
 
+    function getTournamentPendingJoinPayments(tournament) {
+      var details = normalizeObject(tournament && tournament.details);
+      var booking = normalizeObject(details.booking);
+      return normalizeArray(booking.pendingJoinPayments);
+    }
+
+    function normalizeTournamentPendingJoinPayment(entry, index) {
+      var record = normalizeObject(entry);
+      var phone = String(record.phone || '').trim();
+      var name = String(record.name || '').trim() || phone || 'Заявка ' + String(index + 1);
+      return {
+        id: String(record.transactionId || 'pending-' + index),
+        name: name,
+        phone: phone,
+        levelLabel: String(record.levelLabel || '').trim(),
+        paymentStatus: 'PENDING',
+        registeredAt: String(record.createdAt || '').trim(),
+        notes: 'Ожидает оплаты'
+      };
+    }
+
+    function buildTournamentEditorParticipants(tournament) {
+      var participants = normalizeArray(tournament && tournament.participants).map(function (entry) {
+        return normalizeObject(entry);
+      });
+      var seen = new Set();
+      participants.forEach(function (person) {
+        var phone = String(person.phone || '').replace(/\D/g, '');
+        var id = String(person.id || '').trim();
+        var name = String(person.name || '').trim().toLowerCase();
+        var key = phone ? 'phone:' + phone : id ? 'id:' + id : name ? 'name:' + name : '';
+        if (key) {
+          seen.add(key);
+        }
+      });
+
+      getTournamentPendingJoinPayments(tournament).forEach(function (entry, index) {
+        var person = normalizeTournamentPendingJoinPayment(entry, index);
+        var phone = String(person.phone || '').replace(/\D/g, '');
+        var key = phone ? 'phone:' + phone : person.id ? 'id:' + person.id : '';
+        if (key && seen.has(key)) {
+          return;
+        }
+        if (key) {
+          seen.add(key);
+        }
+        participants.push(person);
+      });
+
+      return participants;
+    }
+
+    function formatTournamentPaymentStatus(value) {
+      var normalized = String(value || '').trim().toUpperCase();
+      if (normalized === 'PAID') {
+        return 'Оплачено';
+      }
+      if (normalized === 'UNPAID') {
+        return 'Без оплаты';
+      }
+      if (normalized === 'PENDING') {
+        return 'Ожидает оплаты';
+      }
+      return '';
+    }
+
     function createTournamentPersonList(items, options) {
       var config = normalizeObject(options);
       var list = document.createElement('div');
@@ -16293,6 +16359,14 @@
             'phab-admin-tournament-person-chip phab-admin-tournament-person-chip-alert';
           reasonChip.textContent = waitlistReason;
           side.appendChild(reasonChip);
+        }
+
+        var paymentStatus = formatTournamentPaymentStatus(person.paymentStatus);
+        if (paymentStatus) {
+          var paymentChip = document.createElement('div');
+          paymentChip.className = 'phab-admin-tournament-person-chip';
+          paymentChip.textContent = paymentStatus;
+          side.appendChild(paymentChip);
         }
       });
 
@@ -16481,9 +16555,10 @@
       var publicationCommunityIdsInput = publicationControl.input;
       appendCommunityFormField(form, 'Публикация в сообщества', publicationControl.root, true);
 
-      var participantsList = createTournamentPersonList(normalizeArray(model && model.participants), {
+      var participantsList = createTournamentPersonList(buildTournamentEditorParticipants(model), {
         emptyText: 'Записанных участников пока нет.',
-        showRegisteredAt: true
+        showRegisteredAt: true,
+        showNotes: true
       });
       appendCommunityFormField(form, 'Участники', participantsList, true);
 
