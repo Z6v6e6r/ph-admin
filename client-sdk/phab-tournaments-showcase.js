@@ -4436,7 +4436,7 @@
           bookingRequests: [
             {
               exerciseId: options.exerciseId,
-              paymentType: options.productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE',
+              paymentType: options.productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'ONE_TIME',
               client: null,
               comment: null,
               marketingAttribution: {}

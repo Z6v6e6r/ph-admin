@@ -407,7 +407,7 @@ async function main(): Promise<void> {
     assert.equal(products[0]?.type, 'SERVICE');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
-    assert.equal(bookingRequests[0]?.paymentType, 'SERVICE');
+    assert.equal(bookingRequests[0]?.paymentType, 'ONE_TIME');
     assert.equal(
       transactionRequest?.body.successUrl,
       'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentsuccess=true'

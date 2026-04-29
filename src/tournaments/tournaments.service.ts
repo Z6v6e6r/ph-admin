@@ -2000,6 +2000,15 @@ export class TournamentsService {
     return 'SERVICE';
   }
 
+  private resolveVivaBookingPaymentType(
+    value: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined
+  ): 'SUBSCRIPTION' | 'ONE_TIME' {
+    if (value === 'SUBSCRIPTION') {
+      return 'SUBSCRIPTION';
+    }
+    return 'ONE_TIME';
+  }
+
   private async createVivaJoinTransaction(input: {
     booking: TournamentBookingConfig;
     purchaseOption: TournamentPurchaseOption;
@@ -2025,7 +2034,9 @@ export class TournamentsService {
       `/end-user/api/v2/${encodeURIComponent(widgetId)}/transactions`,
       `${this.vivaEndUserApiBaseUrl}/`
     );
-    const paymentType = productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
+    const paymentType = this.resolveVivaBookingPaymentType(
+      input.purchaseOption.productType
+    );
     const payload = {
       products: [
         {
