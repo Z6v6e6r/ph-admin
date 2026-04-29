@@ -364,17 +364,6 @@ async function main(): Promise<void> {
         json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
       } as Response;
     }
-    if (value.includes('/transactions/tx-1/status')) {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          payment: {
-            link: 'https://pay.tbank.ru/Yk04YJoQ'
-          }
-        })
-      } as Response;
-    }
     transactionRequest = {
       url: value,
       headers: init?.headers as Record<string, string>,
@@ -384,7 +373,12 @@ async function main(): Promise<void> {
       ok: true,
       status: 200,
       json: async () => ({
-        id: 'tx-1'
+        data: {
+          id: 'tx-1',
+          payment: {
+            formUrl: 'https://pay.tbank.ru/Yk04YJoQ'
+          }
+        }
       })
     } as Response;
   }) as typeof fetch;
@@ -403,7 +397,7 @@ async function main(): Promise<void> {
     assert.equal(purchaseStart.payment?.checkoutUrl, 'https://pay.tbank.ru/Yk04YJoQ');
     assert.equal(
       transactionRequest?.url,
-      'https://api.vivacrm.ru/end-user/api/v2/iSkq6G/transactions'
+      'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/transactions'
     );
     assert.equal(transactionRequest?.body.clientPhone, '79990001128');
     assert.equal(transactionRequest?.headers.Authorization, undefined);
@@ -412,7 +406,7 @@ async function main(): Promise<void> {
     assert.equal(products[0]?.type, 'SERVICE');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
-    assert.equal(bookingRequests[0]?.paymentType, 'ONE_TIME');
+    assert.equal(bookingRequests[0]?.paymentType, undefined);
     assert.equal(
       transactionRequest?.body.successUrl,
       'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentsuccess=true'

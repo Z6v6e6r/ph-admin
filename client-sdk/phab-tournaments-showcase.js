@@ -4430,7 +4430,7 @@
 
   function createVivaTransaction(options) {
     var url = new URL(
-      '/end-user/api/v2/' + encodeURIComponent(options.widgetId) + '/transactions',
+      '/end-user/api/v1/' + encodeURIComponent(options.widgetId) + '/transactions',
       VIVA_API_BASE_URL + '/'
     );
     var payload = {
@@ -4442,7 +4442,6 @@
           bookingRequests: [
             {
               exerciseId: options.exerciseId,
-              paymentType: options.productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'ONE_TIME',
               client: null,
               comment: null,
               marketingAttribution: {}
