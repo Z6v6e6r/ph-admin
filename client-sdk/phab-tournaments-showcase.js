@@ -4424,7 +4424,7 @@
 
   function createVivaTransaction(options) {
     var url = new URL(
-      '/end-user/api/v1/' + encodeURIComponent(options.widgetId) + '/transactions',
+      '/end-user/api/v2/' + encodeURIComponent(options.widgetId) + '/transactions',
       VIVA_API_BASE_URL + '/'
     );
     var payload = {
@@ -4436,6 +4436,7 @@
           bookingRequests: [
             {
               exerciseId: options.exerciseId,
+              paymentType: options.productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE',
               client: null,
               comment: null,
               marketingAttribution: {}
@@ -4472,7 +4473,7 @@
   }
 
   function normalizeVivaTransactionProductType(value) {
-    return String(value || '').toUpperCase() === 'SERVICE' ? 'SERVICE' : 'SUBSCRIPTION';
+    return String(value || '').toUpperCase() === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
   }
 
   function buildPaymentReturnUrl(exerciseId, flag) {

@@ -398,15 +398,16 @@ async function main(): Promise<void> {
     assert.equal(purchaseStart.payment?.checkoutUrl, 'https://pay.tbank.ru/Yk04YJoQ');
     assert.equal(
       transactionRequest?.url,
-      'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/transactions'
+      'https://api.vivacrm.ru/end-user/api/v2/iSkq6G/transactions'
     );
     assert.equal(transactionRequest?.body.clientPhone, '79990001128');
     assert.equal(transactionRequest?.headers.Authorization, undefined);
     const products = transactionRequest?.body.products as Array<Record<string, unknown>>;
     assert.equal(products[0]?.id, 'single-entry');
-    assert.equal(products[0]?.type, 'SUBSCRIPTION');
+    assert.equal(products[0]?.type, 'SERVICE');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
+    assert.equal(bookingRequests[0]?.paymentType, 'SERVICE');
     assert.equal(
       transactionRequest?.body.successUrl,
       'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentsuccess=true'

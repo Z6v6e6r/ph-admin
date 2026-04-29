@@ -427,6 +427,8 @@ export class TournamentsPublicController {
       const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
       const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
+      const vivaAuthorizationHeader = this.tournamentsPublicSessionService
+        .resolveExternalAuthorizationHeader(request, client);
       const outcome = submission.directTransactionId
         ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
           name: client.name ?? '',
@@ -445,6 +447,7 @@ export class TournamentsPublicController {
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: true,
         subscriptions: client.subscriptions,
+        vivaAuthorizationHeader,
         successUrl,
         failUrl
       });

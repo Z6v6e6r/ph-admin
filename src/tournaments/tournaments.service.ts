@@ -63,6 +63,7 @@ interface RegistrationInput {
   selectedPurchaseOptionId?: string;
   purchaseConfirmed?: boolean;
   subscriptions?: TournamentClientSubscription[];
+  vivaAuthorizationHeader?: string;
 }
 
 interface JoinPurchaseTransactionInput extends RegistrationInput {
@@ -773,7 +774,8 @@ export class TournamentsService {
       tournament,
       phone: normalizedPhone,
       successUrl: input.successUrl,
-      failUrl: input.failUrl
+      failUrl: input.failUrl,
+      authorizationHeader: input.vivaAuthorizationHeader
     });
 
     if (transaction.transactionId) {
@@ -1992,12 +1994,10 @@ export class TournamentsService {
   private resolveVivaTransactionProductType(
     value: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE' | undefined
   ): 'SUBSCRIPTION' | 'SERVICE' {
-    if (value === 'SERVICE') {
-      return 'SERVICE';
+    if (value === 'SUBSCRIPTION') {
+      return 'SUBSCRIPTION';
     }
-    // Viva's public widget sends both subscription catalog entries and one-time catalog entries
-    // to /transactions as SUBSCRIPTION products.
-    return 'SUBSCRIPTION';
+    return 'SERVICE';
   }
 
   private async createVivaJoinTransaction(input: {
@@ -2007,6 +2007,7 @@ export class TournamentsService {
     phone: string;
     successUrl: string;
     failUrl: string;
+    authorizationHeader?: string;
   }): Promise<VivaJoinTransactionResponse> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     const exerciseId = this.pickString(input.booking.vivaExerciseId);
@@ -2021,9 +2022,10 @@ export class TournamentsService {
       input.purchaseOption.productType
     );
     const url = new URL(
-      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions`,
+      `/end-user/api/v2/${encodeURIComponent(widgetId)}/transactions`,
       `${this.vivaEndUserApiBaseUrl}/`
     );
+    const paymentType = productType === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
     const payload = {
       products: [
         {
@@ -2033,6 +2035,7 @@ export class TournamentsService {
           bookingRequests: [
             {
               exerciseId,
+              paymentType,
               client: null,
               comment: null,
               marketingAttribution: {}
@@ -2054,6 +2057,7 @@ export class TournamentsService {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...(input.authorizationHeader ? { Authorization: input.authorizationHeader } : {}),
         Origin: 'https://padlhub.ru',
         Referer: 'https://padlhub.ru/'
       },
@@ -2083,11 +2087,45 @@ export class TournamentsService {
 
     const checkoutUrl = this.findVivaCheckoutUrl(responsePayload);
     const transactionId = this.findVivaTransactionId(responsePayload);
+    const statusPayload = transactionId && !checkoutUrl
+      ? await this.fetchVivaTransactionStatusPayload(widgetId, transactionId, input.authorizationHeader)
+      : null;
 
     return {
       transactionId,
-      checkoutUrl
+      checkoutUrl: checkoutUrl ?? this.findVivaCheckoutUrl(statusPayload)
     };
+  }
+
+  private async fetchVivaTransactionStatusPayload(
+    widgetId: string,
+    transactionId: string,
+    authorizationHeader?: string
+  ): Promise<unknown> {
+    const url = new URL(
+      `/end-user/api/v2/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(transactionId)}/status`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    );
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json',
+          ...(authorizationHeader ? { Authorization: authorizationHeader } : {})
+        },
+        signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+      });
+      if (!response.ok) {
+        continue;
+      }
+      const payload = (await response.json().catch(() => null)) as unknown;
+      if (this.findVivaCheckoutUrl(payload) || this.isVivaPaymentSuccessful(payload)) {
+        return payload;
+      }
+    }
+    return null;
   }
 
   private buildVivaWidgetPaymentReturnUrl(exerciseId: string, flag: string): string {
