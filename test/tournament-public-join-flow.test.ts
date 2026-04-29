@@ -364,6 +364,17 @@ async function main(): Promise<void> {
         json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
       } as Response;
     }
+    if (value.includes('/transactions/tx-1/status')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          payment: {
+            link: 'https://pay.tbank.ru/Yk04YJoQ'
+          }
+        })
+      } as Response;
+    }
     transactionRequest = {
       url: value,
       headers: init?.headers as Record<string, string>,
@@ -373,13 +384,7 @@ async function main(): Promise<void> {
       ok: true,
       status: 200,
       json: async () => ({
-        successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
-        data: {
-          id: 'tx-1',
-          payment: {
-            formUrl: 'https://pay.tbank.ru/Yk04YJoQ'
-          }
-        }
+        id: 'tx-1'
       })
     } as Response;
   }) as typeof fetch;

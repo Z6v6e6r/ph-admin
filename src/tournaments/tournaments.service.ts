@@ -601,7 +601,8 @@ export class TournamentsService {
           tournament,
           phone: normalizedPhone,
           successUrl: this.buildPublicJoinUrl(tournament.publicUrl),
-          failUrl: this.buildPublicJoinUrl(tournament.publicUrl)
+          failUrl: this.buildPublicJoinUrl(tournament.publicUrl),
+          pollStatusForCheckout: false
         });
         if (transaction.checkoutUrl) {
           return {
@@ -2017,6 +2018,7 @@ export class TournamentsService {
     successUrl: string;
     failUrl: string;
     authorizationHeader?: string;
+    pollStatusForCheckout?: boolean;
   }): Promise<VivaJoinTransactionResponse> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     const exerciseId = this.pickString(input.booking.vivaExerciseId);
@@ -2096,9 +2098,11 @@ export class TournamentsService {
       );
     }
 
-    const checkoutUrl = this.findVivaCheckoutUrl(responsePayload);
+    const checkoutUrl =
+      this.findVivaCheckoutUrl(responsePayload)
+      ?? this.findVivaCheckoutUrlInHeaders(response.headers);
     const transactionId = this.findVivaTransactionId(responsePayload);
-    const statusPayload = transactionId && !checkoutUrl
+    const statusPayload = input.pollStatusForCheckout !== false && transactionId && !checkoutUrl
       ? await this.fetchVivaTransactionStatusPayload(widgetId, transactionId, input.authorizationHeader)
       : null;
 
@@ -2117,9 +2121,10 @@ export class TournamentsService {
       `/end-user/api/v2/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(transactionId)}/status`,
       `${this.vivaEndUserApiBaseUrl}/`
     );
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    let lastPayload: unknown = null;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       if (attempt > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await new Promise((resolve) => setTimeout(resolve, 750));
       }
       const response = await fetch(url.toString(), {
         headers: {
@@ -2131,12 +2136,17 @@ export class TournamentsService {
       if (!response.ok) {
         continue;
       }
+      const headerCheckoutUrl = this.findVivaCheckoutUrlInHeaders(response.headers);
+      if (headerCheckoutUrl) {
+        return { checkoutUrl: headerCheckoutUrl };
+      }
       const payload = (await response.json().catch(() => null)) as unknown;
+      lastPayload = payload;
       if (this.findVivaCheckoutUrl(payload) || this.isVivaPaymentSuccessful(payload)) {
         return payload;
       }
     }
-    return null;
+    return lastPayload;
   }
 
   private buildVivaWidgetPaymentReturnUrl(exerciseId: string, flag: string): string {
@@ -2160,8 +2170,11 @@ export class TournamentsService {
       'confirmation_url',
       'formurl',
       'form_url',
+      'href',
+      'link',
       'payurl',
-      'pay_url'
+      'pay_url',
+      'url'
     ]);
     return this.findFirstMatchingString(payload, (key, value) => {
       const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
@@ -2171,10 +2184,26 @@ export class TournamentsService {
       if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
         return false;
       }
+      if (/[?&](?:paymentsuccess|paymentfailed|TorneosPADL_paymentsuccess|TorneosPADL_paymentfailed)=/i.test(value)) {
+        return false;
+      }
       return exactKeys.has(normalizedKey)
         || /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
         || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
     });
+  }
+
+  private findVivaCheckoutUrlInHeaders(headers?: Headers): string | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    for (const key of ['location', 'x-payment-url', 'x-checkout-url', 'x-redirect-url']) {
+      const value = this.pickString(headers.get(key));
+      if (value && this.isHttpUrl(value) && !/api\.vivacrm\.ru/i.test(value)) {
+        return value;
+      }
+    }
+    return undefined;
   }
 
   private findVivaTransactionId(payload: unknown): string | undefined {
