@@ -4028,7 +4028,7 @@
         purchaseButton.addEventListener('click', function () {
           readDraftFromDialog(dialog, state);
           state.draft.selectedPurchaseOptionId = purchaseId;
-          startDirectVivaPurchase(mount, state, purchase);
+          submitJoin(mount, state, false);
         });
         purchaseList.appendChild(purchaseButton);
       });
@@ -4347,7 +4347,13 @@
       authCode: state.draft.authCode,
       selectedSubscriptionId: state.draft.selectedSubscriptionId,
       selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
-      purchaseConfirmed: state.flow && state.flow.code === 'PURCHASE_REQUIRED' ? '1' : '0',
+      purchaseConfirmed:
+        state.flow && (
+          state.flow.code === 'PURCHASE_REQUIRED'
+          || (state.flow.code === 'PHONE_VERIFICATION_REQUIRED' && state.draft.selectedPurchaseOptionId)
+        )
+          ? '1'
+          : '0',
       waitlist: waitlist ? '1' : '0'
     })
       .then(function (payload) {

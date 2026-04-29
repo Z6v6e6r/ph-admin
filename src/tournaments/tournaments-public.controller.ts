@@ -429,6 +429,30 @@ export class TournamentsPublicController {
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
       const vivaAuthorizationHeader = this.tournamentsPublicSessionService
         .resolveExternalAuthorizationHeader(request, client);
+      if (!submission.directTransactionId && !vivaAuthorizationHeader) {
+        const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
+          request,
+          response,
+          client,
+          client.phone ?? submission.phone
+        );
+        const nextFlow = {
+          ...flow,
+          code: 'PHONE_VERIFICATION_REQUIRED' as const,
+          ok: false,
+          message: codeResult.ok
+            ? 'Введите код подтверждения, отправленный на номер телефона.'
+            : codeResult.message,
+          phoneVerification: codeResult
+        };
+        if (this.wantsJson(request, submission.format)) {
+          response.json(nextFlow);
+          return;
+        }
+
+        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+        return;
+      }
       const outcome = submission.directTransactionId
         ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
           name: client.name ?? '',
@@ -1868,6 +1892,10 @@ export class TournamentsPublicController {
     const showAuthCodeInput =
       flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED';
     const authCodeRequiredAttr = flow.code === 'PHONE_VERIFICATION_REQUIRED' ? ' required' : '';
+    const isPurchaseVerification =
+      flow.code === 'PHONE_VERIFICATION_REQUIRED'
+      && flow.payment.required
+      && flow.payment.code === 'PURCHASE_REQUIRED';
     const selectedPurchaseOptionId =
       this.escapeHtml(flow.payment.purchaseOptions[0]?.id || '');
     const cardFormHtml =
@@ -1924,7 +1952,7 @@ export class TournamentsPublicController {
                 : ''
             }
             ${
-              flow.code === 'PURCHASE_REQUIRED'
+              flow.code === 'PURCHASE_REQUIRED' || isPurchaseVerification
                 ? `<input type="hidden" name="purchaseConfirmed" value="1" />
             ${
               flow.payment.purchaseOptions.length > 0
