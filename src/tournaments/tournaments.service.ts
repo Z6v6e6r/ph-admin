@@ -1491,8 +1491,23 @@ export class TournamentsService {
     const sourceTournamentSnapshot = sourceTournament
       ? this.buildSourceTournamentSnapshot(sourceTournament)
       : this.getSourceTournamentSnapshot(tournament);
-    const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
+    const sourceParticipants = Array.isArray(sourceTournament?.participants)
+      ? sourceTournament.participants
+      : this.readSnapshotParticipants(sourceTournamentSnapshot);
+    const customParticipants = Array.isArray(tournament.participants)
+      ? tournament.participants
+      : [];
+    const participants = this.mergeTournamentParticipants(sourceParticipants, customParticipants);
     const paidParticipantsCount = participants.filter((item) => item.paymentStatus === 'PAID').length;
+    const sourceParticipantsCount =
+      this.pickNumber(sourceTournament?.participantsCount)
+      ?? this.pickNumber(sourceTournamentSnapshot.participantsCount);
+    const participantsCount = Math.max(
+      participants.length,
+      sourceParticipantsCount ?? 0,
+      Number(tournament.participantsCount || 0) || 0
+    );
+    const waitlist = Array.isArray(tournament.waitlist) ? tournament.waitlist : [];
 
     return {
       ...tournament,
@@ -1514,9 +1529,11 @@ export class TournamentsService {
           8
       }),
       participants,
-      participantsCount: participants.length,
+      participantsCount,
       paidParticipantsCount:
         paidParticipantsCount > 0 ? paidParticipantsCount : tournament.paidParticipantsCount,
+      waitlist,
+      waitlistCount: waitlist.length,
       details: {
         ...(tournament.details && typeof tournament.details === 'object' ? tournament.details : {}),
         sourceTournamentSnapshot

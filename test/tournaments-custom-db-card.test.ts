@@ -224,8 +224,10 @@ async function main(): Promise<void> {
   });
 
   const hydrated = await hydrationService.findCustomById(hydrationCustomTournament.id);
-  assert.equal(hydrated.participants.length, 1);
-  assert.equal(hydrated.participants[0]?.name, 'Игрок из БД');
+  assert.equal(hydrated.participants.length, 2);
+  assert.equal(hydrated.participants[0]?.name, 'Игрок из Viva');
+  assert.equal(hydrated.participants[1]?.name, 'Игрок из БД');
+  assert.equal(hydrated.participantsCount, 2);
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
 
