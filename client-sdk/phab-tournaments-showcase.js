@@ -2998,6 +2998,7 @@
     if (client.levelLabel) {
       state.draft.levelLabel = String(client.levelLabel);
     }
+    state.vivaAuthorizationHeader = String(flow.vivaAuthorizationHeader || '').trim();
     var phoneVerification = normalizeObject(flow.phoneVerification);
     if (phoneVerification.ok) {
       state.phoneVerificationMessage = String(phoneVerification.message || '').trim();
@@ -4028,7 +4029,7 @@
         purchaseButton.addEventListener('click', function () {
           readDraftFromDialog(dialog, state);
           state.draft.selectedPurchaseOptionId = purchaseId;
-          submitJoin(mount, state, false);
+          startDirectVivaPurchase(mount, state, purchase);
         });
         purchaseList.appendChild(purchaseButton);
       });
@@ -4293,6 +4294,20 @@
     }
 
     clearAuth(state);
+    if (
+      flow.code === 'PURCHASE_REQUIRED'
+      && state.vivaAuthorizationHeader
+      && state.draft.selectedPurchaseOptionId
+    ) {
+      var directPurchase = normalizeArray(normalizeObject(flow.payment).purchaseOptions).find(function (item) {
+        return String(normalizeObject(item).id || '').trim() === state.draft.selectedPurchaseOptionId;
+      });
+      if (directPurchase) {
+        state.flow = flow;
+        startDirectVivaPurchase(mount, state, directPurchase);
+        return;
+      }
+    }
     if (flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED') {
       state.flow = null;
       state.outcome = {
@@ -4347,6 +4362,7 @@
       authCode: state.draft.authCode,
       selectedSubscriptionId: state.draft.selectedSubscriptionId,
       selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
+      directViva: state.draft.selectedPurchaseOptionId ? '1' : '0',
       purchaseConfirmed:
         state.flow && (
           state.flow.code === 'PURCHASE_REQUIRED'
@@ -4394,6 +4410,7 @@
       productId: productId,
       productType: normalizeVivaTransactionProductType(purchase.productType),
       phone: state.draft.phone,
+      authorizationHeader: state.vivaAuthorizationHeader,
       successUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
       failUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed')
     })
@@ -4420,6 +4437,32 @@
         handleJoinResponse(mount, state, payload);
       })
       .catch(function (error) {
+        if (error && error.status === 401) {
+          state.vivaAuthorizationHeader = '';
+          formFetch(state.activeJoinUrl, {
+            format: 'json',
+            name: state.draft.name,
+            phone: state.draft.phone,
+            levelLabel: state.draft.levelLabel,
+            notes: state.draft.notes,
+            selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
+            directViva: '1',
+            forceAuthCode: '1',
+            purchaseConfirmed: '1',
+            waitlist: '0'
+          })
+            .then(function (payload) {
+              handleJoinResponse(mount, state, payload);
+            })
+            .catch(function (retryError) {
+              state.outcome = {
+                ok: false,
+                message: 'Не удалось запросить авторизацию Viva: ' + retryError.message
+              };
+              renderTournaments(mount, state.payload, state);
+            });
+          return;
+        }
         state.outcome = {
           ok: false,
           message: 'Не удалось создать оплату Viva: ' + error.message
@@ -4462,15 +4505,19 @@
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(options.authorizationHeader ? { Authorization: options.authorizationHeader } : {})
       },
+      credentials: 'include',
       body: JSON.stringify(payload)
     }).then(function (response) {
       return response.json().catch(function () {
         return {};
       }).then(function (payload) {
         if (!response.ok) {
-          throw new Error(String(payload.message || payload.error || 'status ' + response.status));
+          var error = new Error(String(payload.message || payload.error || 'status ' + response.status));
+          error.status = response.status;
+          throw error;
         }
         return payload;
       });
@@ -4611,6 +4658,7 @@
         selectedSubscriptionId: '',
         selectedPurchaseOptionId: ''
       },
+      vivaAuthorizationHeader: '',
       phoneVerificationMessage: '',
       smsResendAvailableAt: 0,
       activeJoinUrl: '',

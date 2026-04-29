@@ -373,4 +373,5 @@ export interface TournamentJoinFlowResponse {
   authCheckUrl?: string;
   authPollMs?: number;
   cabinetUrl?: string;
+  vivaAuthorizationHeader?: string;
 }

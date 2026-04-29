@@ -77,6 +77,8 @@ type JoinSubmission = {
   directTransactionId?: string;
   directCheckoutUrl?: string;
   authCode?: string;
+  directViva?: boolean;
+  forceAuthCode?: boolean;
   purchaseConfirmed: boolean;
   waitlist: boolean;
   format?: string;
@@ -429,7 +431,10 @@ export class TournamentsPublicController {
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
       const vivaAuthorizationHeader = this.tournamentsPublicSessionService
         .resolveExternalAuthorizationHeader(request, client);
-      if (!submission.directTransactionId && !vivaAuthorizationHeader) {
+      if (
+        !submission.directTransactionId
+        && (!vivaAuthorizationHeader || submission.forceAuthCode)
+      ) {
         const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
           request,
           response,
@@ -444,6 +449,19 @@ export class TournamentsPublicController {
             ? 'Введите код подтверждения, отправленный на номер телефона.'
             : codeResult.message,
           phoneVerification: codeResult
+        };
+        if (this.wantsJson(request, submission.format)) {
+          response.json(nextFlow);
+          return;
+        }
+
+        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+        return;
+      }
+      if (submission.directViva && !submission.directTransactionId) {
+        const nextFlow = {
+          ...flow,
+          vivaAuthorizationHeader
         };
         if (this.wantsJson(request, submission.format)) {
           response.json(nextFlow);
@@ -594,6 +612,8 @@ export class TournamentsPublicController {
     const authRequired = flow.code === 'AUTH_REQUIRED';
     const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
     const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
+    const vivaAuthorizationHeader = this.tournamentsPublicSessionService
+      .resolveExternalAuthorizationHeader(request, flow.client);
 
     return {
       ...flow,
@@ -601,7 +621,8 @@ export class TournamentsPublicController {
       authCheckUrl,
       authPollMs: authRequired ? this.lkPollMs : undefined,
       cabinetUrl: this.lkAuthUrl,
-      authUrl: authRequired ? this.buildLkAuthUrl(joinUrl) : undefined
+      authUrl: authRequired ? this.buildLkAuthUrl(joinUrl) : undefined,
+      vivaAuthorizationHeader
     };
   }
 
@@ -1735,6 +1756,8 @@ export class TournamentsPublicController {
       directTransactionId: this.pickString(record.directTransactionId) ?? undefined,
       directCheckoutUrl: this.pickString(record.directCheckoutUrl) ?? undefined,
       authCode: this.pickString(record.authCode) ?? undefined,
+      directViva: this.parseBoolean(record.directViva),
+      forceAuthCode: this.parseBoolean(record.forceAuthCode),
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
       format: this.pickString(record.format) ?? undefined
