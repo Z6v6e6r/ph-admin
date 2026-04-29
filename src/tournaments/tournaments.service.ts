@@ -2911,6 +2911,7 @@ export class TournamentsService {
       Number(tournament.participantsCount || 0) || 0,
       this.pickNumber(sourceTournamentSnapshot?.participantsCount) ?? 0
     );
+    const publicParticipants = this.buildDisplayTournamentParticipants(tournament);
 
     return {
       id: tournament.id,
@@ -2934,7 +2935,7 @@ export class TournamentsService {
       ).length,
       waitlistCount: tournament.waitlist.length,
       maxPlayers: tournament.maxPlayers,
-      participants: tournament.participants.map((participant) =>
+      participants: publicParticipants.map((participant) =>
         this.toPublicParticipantView(participant)
       ),
       waitlist: tournament.waitlist.map((participant) =>
@@ -2966,15 +2967,85 @@ export class TournamentsService {
 
   private toPublicParticipantView(
     participant: TournamentParticipant
-  ): Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'> {
+  ): Pick<TournamentParticipant, 'id' | 'name' | 'phone' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'> {
     return {
       id: participant.id,
       name: participant.name,
+      phone: participant.phone,
       levelLabel: participant.levelLabel,
       avatarUrl: participant.avatarUrl,
       gender: participant.gender,
       paymentStatus: participant.paymentStatus,
       status: participant.status
+    };
+  }
+
+  private buildDisplayTournamentParticipants(tournament: CustomTournament): TournamentParticipant[] {
+    const participants = [...tournament.participants];
+    const seen = new Set<string>();
+    participants.forEach((participant) => {
+      const key = this.buildParticipantKey(participant);
+      if (key) {
+        seen.add(key);
+      }
+    });
+
+    this.getPendingJoinPayments(tournament).forEach((payment, index) => {
+      const participant = this.pendingJoinPaymentToParticipant(payment, index);
+      const key = participant.id ? `pending:${participant.id}` : '';
+      if (key && seen.has(key)) {
+        return;
+      }
+      if (key) {
+        seen.add(key);
+      }
+      participants.push(participant);
+    });
+
+    return participants;
+  }
+
+  private getPendingJoinPayments(tournament: CustomTournament): PendingJoinPayment[] {
+    const details = this.toRecord(tournament.details) ?? {};
+    const booking = this.toRecord(details.booking) ?? {};
+    const pending = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
+    return pending
+      .map((item): PendingJoinPayment | null => {
+        const record = this.toRecord(item);
+        if (!record) {
+          return null;
+        }
+        const transactionId = this.pickString(record.transactionId);
+        const phone = this.normalizePhone(record.phone);
+        if (!transactionId || !phone) {
+          return null;
+        }
+        return {
+          transactionId,
+          phone,
+          name: this.pickString(record.name) ?? undefined,
+          levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
+          notes: this.pickString(record.notes) ?? undefined,
+          selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+          createdAt: this.pickString(record.createdAt) ?? new Date().toISOString()
+        };
+      })
+      .filter((item): item is PendingJoinPayment => Boolean(item));
+  }
+
+  private pendingJoinPaymentToParticipant(
+    payment: PendingJoinPayment,
+    index: number
+  ): TournamentParticipant {
+    return {
+      id: payment.transactionId,
+      name: payment.name ?? payment.phone ?? `Заявка ${index + 1}`,
+      phone: payment.phone,
+      levelLabel: payment.levelLabel,
+      paymentStatus: 'UNPAID',
+      status: 'REGISTERED',
+      registeredAt: payment.createdAt,
+      notes: 'Ожидает оплаты'
     };
   }
 

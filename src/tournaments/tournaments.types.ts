@@ -244,7 +244,7 @@ export interface TournamentPublicView {
   waitlistCount: number;
   maxPlayers: number;
   participants?: Array<
-    Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'>
+    Pick<TournamentParticipant, 'id' | 'name' | 'phone' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'>
   >;
   waitlist?: Array<
     Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'>

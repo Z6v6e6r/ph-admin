@@ -1794,6 +1794,13 @@
         flex-direction:column;
         gap:8px;
       }
+      .phab-admin-tournament-people-list{
+        gap:0;
+        border:1px solid rgba(51,0,32,.08);
+        border-radius:14px;
+        overflow:hidden;
+        background:rgba(255,255,255,.78);
+      }
       .phab-admin-tournament-person{
         display:flex;
         align-items:center;
@@ -1802,6 +1809,16 @@
         border-radius:16px;
         background:rgba(255,255,255,.88);
         border:1px solid rgba(51,0,32,.08);
+      }
+      .phab-admin-tournament-people-list .phab-admin-tournament-person{
+        border:0;
+        border-radius:0;
+        border-bottom:1px solid rgba(51,0,32,.08);
+        background:transparent;
+        padding:10px 12px;
+      }
+      .phab-admin-tournament-people-list .phab-admin-tournament-person:last-child{
+        border-bottom:0;
       }
       .phab-admin-tournament-person-avatar{
         width:48px;
@@ -1845,6 +1862,11 @@
         align-items:flex-end;
         gap:6px;
         flex-shrink:0;
+      }
+      .phab-admin-tournament-people-list .phab-admin-tournament-person-side{
+        flex-direction:row;
+        flex-wrap:wrap;
+        justify-content:flex-end;
       }
       .phab-admin-tournament-person-chip{
         display:inline-flex;
@@ -16248,8 +16270,7 @@
 
       getTournamentPendingJoinPayments(tournament).forEach(function (entry, index) {
         var person = normalizeTournamentPendingJoinPayment(entry, index);
-        var phone = String(person.phone || '').replace(/\D/g, '');
-        var key = phone ? 'phone:' + phone : person.id ? 'id:' + person.id : '';
+        var key = person.id ? 'pending:' + person.id : 'pending-index:' + String(index);
         if (key && seen.has(key)) {
           return;
         }
@@ -16280,6 +16301,9 @@
       var config = normalizeObject(options);
       var list = document.createElement('div');
       list.className = 'phab-admin-tournament-people';
+      if (config.compactList) {
+        list.classList.add('phab-admin-tournament-people-list');
+      }
 
       if (!Array.isArray(items) || items.length === 0) {
         var empty = document.createElement('div');
@@ -16306,7 +16330,9 @@
         } else {
           avatar.textContent = getTournamentPersonInitials(person.name);
         }
-        card.appendChild(avatar);
+        if (!config.compactList) {
+          card.appendChild(avatar);
+        }
 
         var main = document.createElement('div');
         main.className = 'phab-admin-tournament-person-main';
@@ -16558,7 +16584,8 @@
       var participantsList = createTournamentPersonList(buildTournamentEditorParticipants(model), {
         emptyText: 'Записанных участников пока нет.',
         showRegisteredAt: true,
-        showNotes: true
+        showNotes: true,
+        compactList: true
       });
       appendCommunityFormField(form, 'Участники', participantsList, true);
 
