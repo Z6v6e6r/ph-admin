@@ -1682,6 +1682,170 @@
         font-family: var(--ph-tournament-time-font);
       }
 
+      .phab-tournaments__detail {
+        width: min(100%, 760px);
+      }
+
+      .phab-tournaments__detail-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: start;
+        margin-bottom: 18px;
+      }
+
+      .phab-tournaments__detail-kicker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .phab-tournaments__detail-title {
+        margin: 0;
+        color: var(--ph-tournament-ink);
+        font-size: clamp(30px, 5vw, 52px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
+        font-family: var(--ph-tournament-display-font);
+        font-weight: 800;
+      }
+
+      .phab-tournaments__detail-date {
+        display: grid;
+        place-items: center;
+        min-width: 68px;
+        min-height: 68px;
+        padding: 10px;
+        border-radius: 18px;
+        background: #1a1a1a;
+        color: #ffffff;
+        text-align: center;
+        font-family: var(--ph-tournament-display-font);
+        font-weight: 800;
+      }
+
+      .phab-tournaments__detail-date-day {
+        font-size: 28px;
+        line-height: 1;
+      }
+
+      .phab-tournaments__detail-date-weekday {
+        margin-top: 5px;
+        font-family: var(--ph-tournament-time-font);
+        font-size: 11px;
+        line-height: 1;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      .phab-tournaments__detail-image {
+        width: 100%;
+        min-height: 180px;
+        max-height: 320px;
+        margin-bottom: 18px;
+        border-radius: 18px;
+        overflow: hidden;
+        background: linear-gradient(135deg, #f1edff 0%, #eef8f1 100%);
+      }
+
+      .phab-tournaments__detail-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .phab-tournaments__detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 18px 0;
+      }
+
+      .phab-tournaments__detail-metric {
+        display: grid;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 14px;
+        background: #f8f8fb;
+        border: 1px solid var(--ph-tournament-line);
+      }
+
+      .phab-tournaments__detail-metric-label {
+        color: var(--ph-tournament-ink-soft);
+        font-size: 11px;
+        line-height: 1;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-family: var(--ph-tournament-time-font);
+      }
+
+      .phab-tournaments__detail-metric-value {
+        color: var(--ph-tournament-ink);
+        font-size: 15px;
+        line-height: 1.25;
+        font-family: var(--ph-tournament-display-font);
+        font-weight: 800;
+      }
+
+      .phab-tournaments__detail-description {
+        margin: 0;
+        color: var(--ph-tournament-ink-soft);
+        font-size: 14px;
+        line-height: 1.6;
+        font-family: var(--ph-tournament-time-font);
+      }
+
+      .phab-tournaments__detail-roster {
+        display: grid;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .phab-tournaments__detail-roster-title {
+        margin: 0;
+        color: var(--ph-tournament-ink);
+        font-size: 15px;
+        line-height: 1;
+        font-family: var(--ph-tournament-display-font);
+        font-weight: 800;
+      }
+
+      .phab-tournaments__detail-roster-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .phab-tournaments__detail-player {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: var(--ph-tournament-purple-soft);
+        color: var(--ph-tournament-purple);
+        font-size: 12px;
+        line-height: 1;
+        font-family: var(--ph-tournament-time-font);
+        font-weight: 500;
+      }
+
+      .phab-tournaments__detail-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .phab-tournaments__detail-actions .phab-tournaments__button,
+      .phab-tournaments__detail-actions .phab-tournaments__button-secondary {
+        width: auto;
+        min-width: 180px;
+      }
+
       .phab-tournaments--screen .phab-tournaments__shell {
         gap: 18px;
       }
@@ -1789,6 +1953,23 @@
 
         .phab-tournaments__dialog-actions .phab-tournaments__button,
         .phab-tournaments__dialog-actions .phab-tournaments__button-secondary {
+          width: 100%;
+        }
+
+        .phab-tournaments__detail-head {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .phab-tournaments__detail-date {
+          display: none;
+        }
+
+        .phab-tournaments__detail-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .phab-tournaments__detail-actions .phab-tournaments__button,
+        .phab-tournaments__detail-actions .phab-tournaments__button-secondary {
           width: 100%;
         }
 
@@ -2883,6 +3064,149 @@
     return card;
   }
 
+  function createDetailMetric(label, value) {
+    return appendChildren(createElement('div', 'phab-tournaments__detail-metric'), [
+      createElement('span', 'phab-tournaments__detail-metric-label', label),
+      createElement('span', 'phab-tournaments__detail-metric-value', value)
+    ]);
+  }
+
+  function resolveDetailDescription(card) {
+    var skin = normalizeObject(card.skin);
+    var description = String(skin.description || skin.subtitle || '').trim();
+    if (description) {
+      return description;
+    }
+    return [
+      card.tournamentType || 'Турнир',
+      formatAccessLevels(card.accessLevels),
+      resolveLocationLabel(card)
+    ].filter(Boolean).join(' • ');
+  }
+
+  function createDetailRoster(card) {
+    var participants = normalizeArray(card.participants).slice(0, 10);
+    var roster = createElement('div', 'phab-tournaments__detail-roster');
+    var list = createElement('div', 'phab-tournaments__detail-roster-list');
+
+    roster.appendChild(createElement('h4', 'phab-tournaments__detail-roster-title', 'Участники'));
+
+    if (participants.length === 0) {
+      list.appendChild(createElement('span', 'phab-tournaments__detail-player', 'Пока никто не записался'));
+    } else {
+      participants.forEach(function (item) {
+        var participant = normalizeObject(item);
+        var name = String(participant.name || 'Игрок').trim();
+        var level = String(participant.levelLabel || '').trim();
+        list.appendChild(
+          createElement(
+            'span',
+            'phab-tournaments__detail-player',
+            level ? name + ' · ' + level : name
+          )
+        );
+      });
+    }
+
+    roster.appendChild(list);
+    return roster;
+  }
+
+  function createTournamentDetailDialog(mount, state, item) {
+    var card = normalizeObject(item);
+    var descriptor = resolveTournamentState(card);
+    var joinUrl = resolveUrl(card.joinUrl, state.config);
+    var publicUrl = resolveUrl(card.publicUrl, state.config);
+    var imageUrl = resolvePrimaryImage(card);
+    var dialog = createElement('div', 'phab-tournaments__dialog phab-tournaments__detail');
+    var head = createElement('div', 'phab-tournaments__detail-head');
+    var copy = createElement('div', 'phab-tournaments__detail-copy');
+    var kicker = createElement('div', 'phab-tournaments__detail-kicker');
+    var dateBadge = createElement('div', 'phab-tournaments__detail-date');
+    var grid = createElement('div', 'phab-tournaments__detail-grid');
+    var actions = createElement('div', 'phab-tournaments__detail-actions');
+    var joinButton = createElement(
+      'button',
+      'phab-tournaments__button',
+      descriptor.key === 'full' || descriptor.key === 'waitlist' ? 'В лист ожидания' : 'Присоединиться'
+    );
+    var closeButton = createElement('button', 'phab-tournaments__button-secondary', 'Назад к списку');
+
+    appendChildren(kicker, [
+      createChip(descriptor.label, 'phab-tournaments__chip--status-' + descriptor.key),
+      createChip(card.tournamentType || 'Турнир', 'phab-tournaments__chip--type'),
+      formatAccessLevelCompact(card.accessLevels)
+        ? createChip(formatAccessLevelCompact(card.accessLevels), 'phab-tournaments__chip--level')
+        : null,
+      formatGenderLabel(card.gender)
+        ? createChip(formatGenderLabel(card.gender), 'phab-tournaments__chip--gender')
+        : null
+    ]);
+
+    copy.appendChild(kicker);
+    copy.appendChild(createElement('h3', 'phab-tournaments__detail-title', resolveTitle(card)));
+    dateBadge.appendChild(createElement('span', 'phab-tournaments__detail-date-day', formatDateBadgeDay(card.startsAt)));
+    dateBadge.appendChild(createElement('span', 'phab-tournaments__detail-date-weekday', formatDateBadgeWeekday(card.startsAt)));
+    appendChildren(head, [copy, dateBadge]);
+    dialog.appendChild(head);
+
+    if (imageUrl) {
+      var image = createElement('div', 'phab-tournaments__detail-image');
+      var img = document.createElement('img');
+      img.src = imageUrl;
+      img.alt = resolveTitle(card);
+      image.appendChild(img);
+      dialog.appendChild(image);
+    }
+
+    appendChildren(grid, [
+      createDetailMetric('Дата и время', formatCardScheduleLabel(card)),
+      createDetailMetric('Площадка', resolveLocationLabel(card)),
+      createDetailMetric('Формат', card.tournamentType || 'Турнир'),
+      createDetailMetric('Места', formatParticipantsSummary(card)),
+      createDetailMetric('Уровень', formatAccessLevelRange(card.accessLevels)),
+      createDetailMetric('Организатор', resolveTrainerLabel(card))
+    ]);
+    dialog.appendChild(grid);
+    dialog.appendChild(createElement('p', 'phab-tournaments__detail-description', resolveDetailDescription(card)));
+    dialog.appendChild(createDetailRoster(card));
+
+    joinButton.type = 'button';
+    joinButton.disabled = !joinUrl || descriptor.key === 'completed' || descriptor.key === 'cancelled' || descriptor.key === 'closed';
+    if (joinButton.disabled) {
+      joinButton.textContent = descriptor.key === 'closed' ? 'Регистрация закрыта' : 'Запись недоступна';
+    }
+    joinButton.addEventListener('click', function () {
+      joinButton.disabled = true;
+      joinButton.textContent = 'Проверяем...';
+      state.detailItem = null;
+      openJoinFlow(mount, state, card, joinUrl);
+    });
+
+    closeButton.type = 'button';
+    closeButton.addEventListener('click', function () {
+      closeDialog(mount, state);
+    });
+
+    actions.appendChild(joinButton);
+    if (publicUrl) {
+      var publicButton = createElement('a', 'phab-tournaments__button-secondary', 'Открыть страницу');
+      publicButton.href = publicUrl;
+      actions.appendChild(publicButton);
+    }
+    actions.appendChild(closeButton);
+    dialog.appendChild(actions);
+    dialog.appendChild(
+      createElement(
+        'p',
+        'phab-tournaments__footnote',
+        'После нажатия «Присоединиться» проверим личный кабинет: если есть подходящая Энергия, предложим списание; если нет — покажем варианты оплаты участия.'
+      )
+    );
+
+    return dialog;
+  }
+
   function buildRequestUrl(config, options) {
     var requestOptions = options || {};
     var url = new URL(
@@ -3063,6 +3387,7 @@
 
   function closeDialog(mount, state) {
     clearAuth(state);
+    state.detailItem = null;
     state.flow = null;
     state.outcome = null;
     state.activeJoinUrl = '';
@@ -3466,17 +3791,11 @@
         : 'phab-tournaments__button';
     var control;
 
-    if (action.mode === 'public' && publicUrl) {
-      control = createElement('a', className, action.label);
-      control.href = publicUrl;
-      return control;
-    }
-
     control = createElement('button', className, action.label);
     control.type = 'button';
-    control.disabled = action.mode === 'disabled' || !joinUrl;
+    control.disabled = action.mode === 'disabled' && !joinUrl && !publicUrl;
     control.addEventListener('click', function () {
-      openJoinFlow(mount, state, card, joinUrl);
+      openTournamentDetails(mount, state, card);
     });
     return control;
   }
@@ -3789,10 +4108,10 @@
     var backdrop = createElement(
       'div',
       'phab-tournaments__backdrop'
-        + (state.flow || state.outcome || state.authPending ? ' is-open' : '')
+        + (state.detailItem || state.flow || state.outcome || state.authPending ? ' is-open' : '')
     );
 
-    if (!state.flow && !state.outcome && !state.authPending) {
+    if (!state.detailItem && !state.flow && !state.outcome && !state.authPending) {
       return backdrop;
     }
 
@@ -3806,6 +4125,11 @@
         closeDialog(mount, state);
       }
     });
+
+    if (state.detailItem && !state.flow && !state.outcome && !state.authPending) {
+      backdrop.appendChild(createTournamentDetailDialog(mount, state, state.detailItem));
+      return backdrop;
+    }
 
     if (state.authPending) {
       dialog.appendChild(
@@ -4287,6 +4611,7 @@
   function handleFlow(mount, state, flow) {
     syncDraft(state, flow);
     state.outcome = null;
+    state.detailItem = null;
 
     if (flow.code === 'AUTH_REQUIRED' && flow.authUrl) {
       startAuthPolling(mount, state, flow);
@@ -4322,11 +4647,26 @@
     renderTournaments(mount, state.payload, state);
   }
 
+  function openTournamentDetails(mount, state, item) {
+    state.detailItem = item;
+    state.activeItem = item;
+    state.activeJoinUrl = resolveUrl(item.joinUrl, state.config);
+    state.outcome = null;
+    state.flow = null;
+    state.draft.authCode = '';
+    state.draft.selectedSubscriptionId = '';
+    state.draft.selectedPurchaseOptionId = '';
+    state.vivaAuthorizationHeader = '';
+    clearAuth(state);
+    renderTournaments(mount, state.payload, state);
+  }
+
   function openJoinFlow(mount, state, item, joinUrl) {
     if (!joinUrl) {
       return;
     }
 
+    state.detailItem = null;
     state.activeJoinUrl = joinUrl;
     state.activeItem = item;
     state.outcome = null;
@@ -4667,6 +5007,7 @@
       smsResendAvailableAt: 0,
       activeJoinUrl: '',
       activeItem: null,
+      detailItem: null,
       flow: null,
       outcome: null,
       authPending: null,
