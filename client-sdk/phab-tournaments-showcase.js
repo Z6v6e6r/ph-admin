@@ -4393,6 +4393,8 @@
     var studioId = String(booking.vivaStudioId || '').trim();
     var purchase = normalizeObject(purchaseOption);
     var productId = String(purchase.id || state.draft.selectedPurchaseOptionId || '').trim();
+    var productType = normalizeVivaTransactionProductType(purchase.productType);
+    var productName = String(purchase.label || '').trim();
 
     if (!widgetId || !exerciseId || !studioId || !productId) {
       state.outcome = {
@@ -4408,7 +4410,8 @@
       exerciseId: exerciseId,
       studioId: studioId,
       productId: productId,
-      productType: normalizeVivaTransactionProductType(purchase.productType),
+      productName: productType === 'SERVICE' ? productName : '',
+      productType: productType,
       phone: state.draft.phone,
       authorizationHeader: state.vivaAuthorizationHeader,
       successUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
@@ -4480,6 +4483,7 @@
       products: [
         {
           id: options.productId,
+          ...(options.productName ? { name: options.productName } : {}),
           type: options.productType,
           count: 1,
           bookingRequests: [
@@ -4497,8 +4501,8 @@
       successUrl: options.successUrl,
       failUrl: options.failUrl,
       exerciseId: options.exerciseId,
-      promoCode: null,
-      studioId: options.studioId
+      studioId: options.studioId,
+      promoCode: null
     };
 
     return fetch(url.toString(), {

@@ -403,6 +403,7 @@ async function main(): Promise<void> {
     assert.equal(transactionRequest?.headers.Authorization, undefined);
     const products = transactionRequest?.body.products as Array<Record<string, unknown>>;
     assert.equal(products[0]?.id, 'single-entry');
+    assert.equal(products[0]?.name, 'Разовое участие');
     assert.equal(products[0]?.type, 'SERVICE');
     const bookingRequests = products[0]?.bookingRequests as Array<Record<string, unknown>>;
     assert.equal(bookingRequests[0]?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');

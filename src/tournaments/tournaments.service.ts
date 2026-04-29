@@ -2021,6 +2021,9 @@ export class TournamentsService {
     const productType = this.resolveVivaTransactionProductType(
       input.purchaseOption.productType
     );
+    const productName = productType === 'SERVICE'
+      ? this.pickString(input.purchaseOption.label)
+      : undefined;
     const url = new URL(
       `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions`,
       `${this.vivaEndUserApiBaseUrl}/`
@@ -2029,6 +2032,7 @@ export class TournamentsService {
       products: [
         {
           id: input.purchaseOption.id,
+          ...(productName ? { name: productName } : {}),
           type: productType,
           count: 1,
           bookingRequests: [
@@ -2046,8 +2050,8 @@ export class TournamentsService {
       successUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
       failUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed'),
       exerciseId,
-      promoCode: null,
-      studioId
+      studioId,
+      promoCode: null
     };
 
     const response = await fetch(url.toString(), {
