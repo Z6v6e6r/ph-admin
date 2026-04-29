@@ -54,6 +54,96 @@ export class VivaTournamentsService {
     }
   }
 
+  async findTournamentById(id: string): Promise<Tournament | null> {
+    const normalizedId = this.normalizeString(id);
+    if (!normalizedId || !this.widgetId) {
+      return null;
+    }
+
+    const detailed = await this.loadTournamentDetails(normalizedId);
+    if (detailed) {
+      return detailed;
+    }
+
+    const tournaments = await this.listTournaments();
+    const fallback = tournaments?.find((tournament) => tournament.id === normalizedId) ?? null;
+    if (!fallback) {
+      return null;
+    }
+
+    const related = await this.fetchRelatedParticipantRecords(normalizedId);
+    const participants = this.resolveParticipants({
+      clients: related,
+      participants: related,
+      registrations: related
+    });
+    if (participants.length === 0) {
+      return fallback;
+    }
+
+    return {
+      ...fallback,
+      participants,
+      participantsCount: participants.length
+    };
+  }
+
+  async createTournamentBooking(input: {
+    exerciseId?: string;
+    phone?: string;
+    name?: string;
+    comment?: string;
+    authorizationHeader?: string;
+  }): Promise<boolean> {
+    const exerciseId = this.normalizeString(input.exerciseId);
+    const phone = this.readPhone(input.phone);
+    if (!this.widgetId || !exerciseId || !phone) {
+      return false;
+    }
+
+    const payload = {
+      exerciseId,
+      clientPhone: phone,
+      phone,
+      clientName: this.normalizeString(input.name) ?? phone,
+      name: this.normalizeString(input.name) ?? phone,
+      comment: this.normalizeString(input.comment) ?? null,
+      marketingAttribution: {}
+    };
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(input.authorizationHeader ? { Authorization: input.authorizationHeader } : {}),
+      Origin: 'https://padlhub.ru',
+      Referer: 'https://padlhub.ru/'
+    };
+    const paths = [
+      `/end-user/api/v1/${encodeURIComponent(this.widgetId)}/exercises/${encodeURIComponent(exerciseId)}/bookings`,
+      `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`
+    ];
+
+    for (const path of paths) {
+      try {
+        const response = await fetch(new URL(path, `${this.apiBaseUrl}/`).toString(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: this.buildAbortSignal()
+        });
+        if (response.ok) {
+          return true;
+        }
+        this.logger.warn(
+          `Viva booking request failed for ${exerciseId}: ${response.status} ${response.statusText}`
+        );
+      } catch (error) {
+        this.logger.warn(`Viva booking request failed for ${exerciseId}: ${String(error)}`);
+      }
+    }
+
+    return false;
+  }
+
   private async loadTournaments(): Promise<Tournament[]> {
     const today = this.toDateKey(new Date());
     const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
@@ -110,6 +200,75 @@ export class VivaTournamentsService {
       }
       return String(left.name || '').localeCompare(String(right.name || ''), 'ru');
     });
+  }
+
+  private async loadTournamentDetails(id: string): Promise<Tournament | null> {
+    const detailRecord = await this.fetchFirstAvailableRecord([
+      `exercises/${encodeURIComponent(id)}`,
+      `exercises/${encodeURIComponent(id)}?include=clients,participants,bookings`
+    ]);
+    if (!detailRecord) {
+      return null;
+    }
+
+    const related = await this.fetchRelatedParticipantRecords(id);
+    const mergedRecord: VivaRawRecord = {
+      ...detailRecord,
+      clients: [
+        ...this.unwrapRecords(detailRecord.clients),
+        ...related
+      ],
+      participants: [
+        ...this.unwrapRecords(detailRecord.participants),
+        ...related
+      ],
+      registrations: [
+        ...this.unwrapRecords(detailRecord.registrations),
+        ...related
+      ]
+    };
+    const tournament = this.toTournament(mergedRecord, new Map(), new Map(), new Map());
+    if (!tournament) {
+      return null;
+    }
+
+    const participants = this.resolveParticipants(mergedRecord);
+    return {
+      ...tournament,
+      participants: participants.length > 0 ? participants : tournament.participants,
+      participantsCount:
+        participants.length > 0
+          ? participants.length
+          : tournament.participantsCount
+    };
+  }
+
+  private async fetchFirstAvailableRecord(paths: string[]): Promise<VivaRawRecord | null> {
+    for (const path of paths) {
+      try {
+        const payload = await this.fetchJson(path);
+        const record = this.unwrapFirstRecord(payload);
+        if (record) {
+          return record;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  private async fetchRelatedParticipantRecords(id: string): Promise<VivaRawRecord[]> {
+    const paths = [
+      `exercises/${encodeURIComponent(id)}/bookings`,
+      `exercises/${encodeURIComponent(id)}/clients`,
+      `exercises/${encodeURIComponent(id)}/participants`,
+      `bookings?exerciseId=${encodeURIComponent(id)}`
+    ];
+    const results = await Promise.allSettled(paths.map((path) => this.fetchJson(path)));
+    return results.flatMap((result) =>
+      result.status === 'fulfilled' ? this.unwrapRecords(result.value) : []
+    );
   }
 
   private async fetchEntitySummaries(path: string): Promise<VivaEntitySummary[]> {
@@ -793,6 +952,22 @@ export class VivaTournamentsService {
     }
 
     return [];
+  }
+
+  private unwrapFirstRecord(payload: unknown): VivaRawRecord | null {
+    const direct = this.readRecord(payload);
+    if (direct) {
+      for (const key of ['data', 'item', 'result', 'exercise']) {
+        const nested = this.readRecord(direct[key]);
+        if (nested) {
+          return nested;
+        }
+      }
+      return direct;
+    }
+
+    const records = this.unwrapRecords(payload);
+    return records[0] ?? null;
   }
 
   private collectDateKeys(payload: unknown): string[] {

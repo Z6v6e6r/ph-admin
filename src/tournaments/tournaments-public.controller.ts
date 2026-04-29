@@ -520,7 +520,9 @@ export class TournamentsPublicController {
         selectedSubscriptionId: submission.selectedSubscriptionId,
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: submission.purchaseConfirmed,
-        subscriptions: client.subscriptions
+        subscriptions: client.subscriptions,
+        vivaAuthorizationHeader: this.tournamentsPublicSessionService
+          .resolveExternalAuthorizationHeader(request, client)
       });
       if (this.wantsJson(request, submission.format)) {
         response.json(outcome);

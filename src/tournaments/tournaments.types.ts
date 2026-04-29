@@ -294,7 +294,8 @@ export interface TournamentRegistrationResponse {
     | 'ALREADY_REGISTERED'
     | 'ALREADY_WAITLISTED'
     | 'PURCHASE_REQUIRED'
-    | 'PURCHASE_STARTED';
+    | 'PURCHASE_STARTED'
+    | 'BOOKING_FAILED';
   message: string;
   tournamentId?: string;
   tournamentSlug?: string;

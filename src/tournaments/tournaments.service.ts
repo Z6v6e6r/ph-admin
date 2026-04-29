@@ -691,6 +691,23 @@ export class TournamentsService {
       };
     }
 
+    const vivaBookingCreated = await this.createSourceTournamentBooking(tournament, {
+      name: participant.name,
+      phone: normalizedPhone,
+      notes: participant.notes,
+      vivaAuthorizationHeader: input.vivaAuthorizationHeader
+    });
+    if (!vivaBookingCreated.ok) {
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: vivaBookingCreated.message,
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+
     const nextParticipants = [...tournament.participants, participant];
     await this.updateCustom(tournament.id, {
       participants: nextParticipants
@@ -1120,11 +1137,20 @@ export class TournamentsService {
 
     try {
       const sourceTournaments = await this.listSourceTournaments();
-      return new Map(
+      const sourceTournamentsById = new Map(
         sourceTournaments
           .filter((tournament) => sourceIds.has(tournament.id))
           .map((tournament) => [tournament.id, tournament])
       );
+      await Promise.all(
+        Array.from(sourceIds).map(async (sourceId) => {
+          const detailedTournament = await this.findSourceTournamentById(sourceId);
+          if (detailedTournament) {
+            sourceTournamentsById.set(sourceId, detailedTournament);
+          }
+        })
+      );
+      return sourceTournamentsById;
     } catch (error) {
       this.logger.warn(`Failed to load source tournaments for public list: ${String(error)}`);
       return new Map();
@@ -1168,6 +1194,13 @@ export class TournamentsService {
   }
 
   private async findSourceTournamentById(id: string): Promise<Tournament | null> {
+    if (typeof this.vivaTournamentsService.findTournamentById === 'function') {
+      const vivaTournament = await this.vivaTournamentsService.findTournamentById(id);
+      if (vivaTournament) {
+        return vivaTournament;
+      }
+    }
+
     const sourceTournaments = await this.listSourceTournaments();
     return sourceTournaments.find((item) => item.id === id) ?? null;
   }
@@ -1876,6 +1909,54 @@ export class TournamentsService {
         ?? this.pickString(this.getSourceTournamentSnapshot(tournament).studioId)
         ?? undefined
     };
+  }
+
+  private async createSourceTournamentBooking(
+    tournament: CustomTournament,
+    input: {
+      name: string;
+      phone: string;
+      notes?: string;
+      vivaAuthorizationHeader?: string;
+    }
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    if (!this.isVivaSourceTournament(tournament)) {
+      return { ok: true };
+    }
+
+    const booking = this.resolveBookingConfig(tournament);
+    const exerciseId =
+      this.pickString(booking.vivaExerciseId)
+      ?? this.pickString(tournament.sourceTournamentId);
+    if (!exerciseId) {
+      return {
+        ok: false,
+        message: 'Не найден идентификатор групповой записи Viva для записи участника.'
+      };
+    }
+
+    const created = await this.vivaTournamentsService.createTournamentBooking({
+      exerciseId,
+      phone: input.phone,
+      name: input.name,
+      comment: input.notes,
+      authorizationHeader: input.vivaAuthorizationHeader
+    });
+    if (created) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      message:
+        'Не удалось добавить участника в групповую запись Viva. Запись в локальную карточку не сохранена, чтобы счетчик не расходился с Viva.'
+    };
+  }
+
+  private isVivaSourceTournament(tournament: CustomTournament): boolean {
+    const snapshot = this.getSourceTournamentSnapshot(tournament);
+    const source = this.pickString(snapshot.source)?.toUpperCase();
+    return source === 'VIVA';
   }
 
   private normalizeAcceptedSubscriptions(value: unknown): TournamentAcceptedSubscriptionRule[] {
