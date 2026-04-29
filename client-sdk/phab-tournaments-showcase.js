@@ -421,6 +421,7 @@
 
       .phab-tournaments__collection--schedule {
         grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
       }
 
       .phab-tournaments__entry {
@@ -444,6 +445,118 @@
         display: grid;
         align-content: start;
         gap: 4px;
+      }
+
+      .phab-tournaments__schedule-header,
+      .phab-tournaments__entry--schedule {
+        display: grid;
+        grid-template-columns:
+          minmax(72px, 94px) minmax(44px, 54px) minmax(160px, 1.05fr)
+          minmax(210px, 1.12fr) minmax(128px, 0.74fr) minmax(128px, 0.74fr)
+          minmax(64px, 76px) minmax(128px, 148px);
+        align-items: center;
+        column-gap: 8px;
+      }
+
+      .phab-tournaments__schedule-header {
+        min-height: 38px;
+        padding: 8px 14px;
+        border-radius: 10px;
+        background: #f0f0f2;
+        color: #686871;
+        font-family: var(--ph-tournament-time-font);
+        font-size: 11px;
+        line-height: 1.2;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .phab-tournaments__entry--schedule {
+        min-height: 78px;
+        padding: 12px 14px;
+        gap: 0 8px;
+        border: none;
+        border-radius: 10px;
+        background: #fafafa;
+        box-shadow: none;
+      }
+
+      .phab-tournaments__collection--schedule .phab-tournaments__entry--schedule:nth-child(odd) {
+        background: #f2f2f4;
+      }
+
+      .phab-tournaments__collection--schedule .phab-tournaments__entry--schedule:nth-child(even) {
+        background: #ffffff;
+      }
+
+      .phab-tournaments__schedule-cell,
+      .phab-tournaments__schedule-header-cell {
+        min-width: 0;
+        padding: 0 4px;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+
+      .phab-tournaments__schedule-time {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        color: #18181a;
+        font-family: var(--ph-tournament-time-font);
+        font-size: 15px;
+        line-height: 1.15;
+        font-weight: 700;
+      }
+
+      .phab-tournaments__schedule-title {
+        margin: 0;
+        color: #18181a;
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 15px;
+        line-height: 1.25;
+        font-weight: 700;
+        text-align: left;
+      }
+
+      .phab-tournaments__schedule-meta-bundle {
+        display: grid;
+        grid-template-columns: minmax(68px, 96px) minmax(72px, 1fr) minmax(44px, 58px);
+        align-items: center;
+        gap: 6px;
+      }
+
+      .phab-tournaments__schedule-type,
+      .phab-tournaments__schedule-gender,
+      .phab-tournaments__schedule-level,
+      .phab-tournaments__schedule-trainer,
+      .phab-tournaments__schedule-location,
+      .phab-tournaments__schedule-spots {
+        color: #242428;
+        font-family: var(--ph-tournament-ui-font);
+        font-size: 13px;
+        line-height: 1.2;
+        font-weight: 700;
+      }
+
+      .phab-tournaments__schedule-level {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 28px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f1edff;
+        color: #6d4ee6;
+      }
+
+      .phab-tournaments__schedule-cta {
+        min-height: 38px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-size: 12px;
+        letter-spacing: 0;
       }
 
       .phab-tournaments__time-value {
@@ -1860,7 +1973,26 @@
 
       @media (max-width: 1180px) {
         .phab-tournaments__entry--schedule {
-          grid-template-columns: 82px minmax(0, 1fr) 144px;
+          grid-template-columns:
+            minmax(62px, 78px) minmax(40px, 48px) minmax(140px, 0.95fr)
+            minmax(178px, 1fr) minmax(104px, 0.68fr) minmax(104px, 0.68fr)
+            minmax(58px, 68px) minmax(112px, 128px);
+        }
+
+        .phab-tournaments__schedule-header {
+          grid-template-columns:
+            minmax(62px, 78px) minmax(40px, 48px) minmax(140px, 0.95fr)
+            minmax(178px, 1fr) minmax(104px, 0.68fr) minmax(104px, 0.68fr)
+            minmax(58px, 68px) minmax(112px, 128px);
+        }
+
+        .phab-tournaments__schedule-type,
+        .phab-tournaments__schedule-gender,
+        .phab-tournaments__schedule-level,
+        .phab-tournaments__schedule-trainer,
+        .phab-tournaments__schedule-location,
+        .phab-tournaments__schedule-spots {
+          font-size: 12px;
         }
       }
 
@@ -1938,6 +2070,10 @@
           grid-template-columns: minmax(0, 1fr) 58px;
           gap: 14px;
           padding: 18px;
+        }
+
+        .phab-tournaments__schedule-header {
+          display: none;
         }
 
         .phab-tournaments__entry-title,
@@ -3932,22 +4068,67 @@
     var descriptor = resolveTournamentState(card);
     var action = resolveAction(card, descriptor);
     var article = createElement('article', 'phab-tournaments__entry phab-tournaments__entry--schedule');
-    var asideBottom = createElement('div', 'phab-tournaments__aside-bottom');
-    asideBottom.appendChild(createActionControl(card, action, state, mount));
-    if (state.crossOriginApi) {
-      asideBottom.appendChild(
-        createElement(
-          'p',
-          'phab-tournaments__hint',
-          'Запись откроется внутри виджета.'
-        )
-      );
+    var metaBundle = createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-meta-bundle');
+    var actionControl = createActionControl(card, action, state, mount);
+
+    actionControl.className =
+      (action.kind === 'secondary'
+        ? 'phab-tournaments__button-secondary'
+        : 'phab-tournaments__button')
+      + ' phab-tournaments__schedule-cta';
+    actionControl.textContent = action.label;
+
+    appendChildren(metaBundle, [
+      createElement('div', 'phab-tournaments__schedule-level', formatAccessLevelCompact(card.accessLevels) || 'Все'),
+      createElement('div', 'phab-tournaments__schedule-type', card.tournamentType || 'Турнир'),
+      createElement('div', 'phab-tournaments__schedule-gender', formatGenderLabel(card.gender) || '—')
+    ]);
+
+    appendChildren(article, [
+      createScheduleTimeCell(card),
+      createAvatar(card),
+      createElement('h3', 'phab-tournaments__schedule-cell phab-tournaments__schedule-title', resolveTitle(card)),
+      metaBundle,
+      createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-trainer', resolveTrainerLabel(card)),
+      createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-location', resolveLocationLabel(card)),
+      createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-spots', formatSpots(card)),
+      appendChildren(createElement('div', 'phab-tournaments__schedule-cell'), [actionControl])
+    ]);
+    return article;
+  }
+
+  function createScheduleTimeCell(card) {
+    var cell = createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-time');
+    var start = parseDate(card.startsAt);
+    var end = parseDate(card.endsAt);
+
+    if (!start) {
+      cell.appendChild(createElement('span', null, 'Скоро'));
+      return cell;
     }
 
-    article.appendChild(createTournamentHeader(card));
-    article.appendChild(createTournamentCardBody(card, descriptor));
-    article.appendChild(asideBottom);
-    return article;
+    cell.appendChild(createElement('span', null, formatTime(start)));
+    if (end) {
+      cell.appendChild(createElement('span', null, formatTime(end)));
+    }
+    return cell;
+  }
+
+  function createScheduleHeaderRow() {
+    var row = createElement('div', 'phab-tournaments__schedule-header');
+    [
+      'Время',
+      '',
+      'Турнир',
+      'Уровень / тип / пол',
+      'Тренер',
+      'Площадка',
+      'Места',
+      ''
+    ].forEach(function (label) {
+      row.appendChild(createElement('div', 'phab-tournaments__schedule-header-cell', label));
+    });
+    return row;
   }
 
   function createCardModeCard(card, state, mount) {
@@ -4490,6 +4671,10 @@
         'div',
         'phab-tournaments__collection phab-tournaments__collection--' + state.viewMode
       );
+
+      if (state.viewMode === 'schedule') {
+        collection.appendChild(createScheduleHeaderRow());
+      }
 
       selectedGroup.items.forEach(function (card) {
         collection.appendChild(
