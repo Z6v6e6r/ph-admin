@@ -101,3 +101,10 @@ export type SplitPaymentPromoAdminSnapshot = Omit<
   SplitPaymentPromoSettingsRecord,
   'key'
 >;
+
+export interface SplitPaymentPromoMatchContext {
+  stationId?: string;
+  stationName?: string;
+  roomId?: string;
+  roomName?: string;
+}

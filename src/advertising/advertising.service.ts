@@ -21,6 +21,7 @@ import {
   CabinetHomeAdvertisingSettingsRecord,
   SplitPaymentPromoCampaignRecord,
   SplitPaymentPromoAdminSnapshot,
+  SplitPaymentPromoMatchContext,
   SplitPaymentPromoPublicSnapshot,
   SplitPaymentPromoSettingsRecord
 } from './advertising.types';
@@ -113,10 +114,11 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getSplitPaymentPromoPublicSnapshot(
-    forDate?: string
+    forDate?: string,
+    context?: SplitPaymentPromoMatchContext
   ): Promise<SplitPaymentPromoPublicSnapshot> {
     const settings = await this.ensureSplitPaymentPromoSettingsLoaded();
-    return this.toSplitPaymentPromoPublicSnapshot(settings, forDate);
+    return this.toSplitPaymentPromoPublicSnapshot(settings, forDate, context);
   }
 
   async updateCabinetHomeSettings(
@@ -362,13 +364,14 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
 
   private toSplitPaymentPromoPublicSnapshot(
     settings: SplitPaymentPromoSettingsRecord,
-    forDate?: string
+    forDate?: string,
+    context?: SplitPaymentPromoMatchContext
   ): SplitPaymentPromoPublicSnapshot {
     const promos = this.resolveSplitPaymentPromoCampaigns(settings).map((promo) => ({
       ...promo,
       enabled: this.isSplitPaymentPromoActive(promo, forDate)
     }));
-    const primaryPromo = promos[0];
+    const primaryPromo = this.selectSplitPaymentPromoCampaign(promos, context) ?? promos[0];
     return {
       ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
       promos,
@@ -392,6 +395,66 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     }
     const referenceMs = this.resolveReferenceTimeMs(forDate);
     return referenceMs <= expiresAtMs;
+  }
+
+  private selectSplitPaymentPromoCampaign(
+    promos: SplitPaymentPromoCampaignRecord[],
+    context?: SplitPaymentPromoMatchContext
+  ): SplitPaymentPromoCampaignRecord | undefined {
+    const normalizedContext = {
+      stationId: this.normalizeMatchValue(context?.stationId),
+      stationName: this.normalizeMatchValue(context?.stationName),
+      roomId: this.normalizeMatchValue(context?.roomId),
+      roomName: this.normalizeMatchValue(context?.roomName)
+    };
+    const hasContext = Object.values(normalizedContext).some(Boolean);
+    if (!hasContext) {
+      return undefined;
+    }
+
+    return promos.find((promo) =>
+      promo.enabled === true
+      && this.matchesSplitPaymentPromoStation(promo, normalizedContext)
+      && this.matchesSplitPaymentPromoRoom(promo, normalizedContext)
+    );
+  }
+
+  private matchesSplitPaymentPromoStation(
+    promo: SplitPaymentPromoCampaignRecord,
+    context: { stationId?: string; stationName?: string }
+  ): boolean {
+    const stationIds = this.normalizeMatchList(promo.stationIds);
+    const stationNameIncludes = this.normalizeMatchList(promo.stationNameIncludes);
+    if (stationIds.length === 0 && stationNameIncludes.length === 0) {
+      return true;
+    }
+
+    if (context.stationId && stationIds.includes(context.stationId)) {
+      return true;
+    }
+    if (context.stationName) {
+      return stationNameIncludes.some((candidate) => context.stationName?.includes(candidate));
+    }
+    return false;
+  }
+
+  private matchesSplitPaymentPromoRoom(
+    promo: SplitPaymentPromoCampaignRecord,
+    context: { roomId?: string; roomName?: string }
+  ): boolean {
+    const roomIds = this.normalizeMatchList(promo.roomIds);
+    const roomNameIncludes = this.normalizeMatchList(promo.roomNameIncludes);
+    if (roomIds.length === 0 && roomNameIncludes.length === 0) {
+      return true;
+    }
+
+    if (context.roomId && roomIds.includes(context.roomId)) {
+      return true;
+    }
+    if (context.roomName) {
+      return roomNameIncludes.some((candidate) => context.roomName?.includes(candidate));
+    }
+    return false;
   }
 
   private resolveReferenceTimeMs(forDate?: string): number {
@@ -746,6 +809,15 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   private normalizeOptional(value: string | undefined | null): string | undefined {
     const normalized = String(value ?? '').trim();
     return normalized ? normalized : undefined;
+  }
+
+  private normalizeMatchValue(value: unknown): string | undefined {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized ? normalized : undefined;
+  }
+
+  private normalizeMatchList(value: unknown): string[] {
+    return this.normalizeStringList(value).map((item) => item.toLowerCase());
   }
 
   private normalizeStringList(value: unknown, fallback: string[] = []): string[] {

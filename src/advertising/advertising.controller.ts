@@ -20,6 +20,7 @@ import { AdvertisingService } from './advertising.service';
 import {
   CabinetHomeAdvertisingAdminSnapshot,
   CabinetHomeAdvertisingPublicSnapshot,
+  SplitPaymentPromoMatchContext,
   SplitPaymentPromoAdminSnapshot,
   SplitPaymentPromoPublicSnapshot
 } from './advertising.types';
@@ -43,14 +44,37 @@ export class AdvertisingController {
     @Query('date') date?: string,
     @Query('gameDate') gameDate?: string,
     @Query('startAt') startAt?: string,
-    @Query('startsAt') startsAt?: string
+    @Query('startsAt') startsAt?: string,
+    @Query('stationId') stationId?: string,
+    @Query('station') station?: string,
+    @Query('stationName') stationName?: string,
+    @Query('studioId') studioId?: string,
+    @Query('studioName') studioName?: string,
+    @Query('roomId') roomId?: string,
+    @Query('room') room?: string,
+    @Query('roomName') roomName?: string,
+    @Query('courtId') courtId?: string,
+    @Query('courtName') courtName?: string
   ): Promise<SplitPaymentPromoPublicSnapshot> {
     const resolvedForDate = this.pickString(forDate)
       ?? this.pickString(date)
       ?? this.pickString(gameDate)
       ?? this.pickString(startAt)
       ?? this.pickString(startsAt);
-    return this.advertisingService.getSplitPaymentPromoPublicSnapshot(resolvedForDate);
+    const context: SplitPaymentPromoMatchContext = {
+      stationId: this.pickString(stationId) ?? this.pickString(studioId),
+      stationName: this.pickString(stationName)
+        ?? this.pickString(station)
+        ?? this.pickString(studioName),
+      roomId: this.pickString(roomId) ?? this.pickString(courtId),
+      roomName: this.pickString(roomName)
+        ?? this.pickString(room)
+        ?? this.pickString(courtName)
+    };
+    return this.advertisingService.getSplitPaymentPromoPublicSnapshot(
+      resolvedForDate,
+      context
+    );
   }
 
   @Get('cabinet-home/admin')
