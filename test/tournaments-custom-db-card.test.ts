@@ -45,6 +45,12 @@ function createHydrationCustomTournament(): CustomTournament {
         phone: '79990002222',
         levelLabel: 'D',
         status: 'REGISTERED'
+      },
+      {
+        name: 'Игрок',
+        phone: '79104303190',
+        levelLabel: 'D+',
+        status: 'REGISTERED'
       }
     ],
     participantsCount: 1,
@@ -92,6 +98,17 @@ function createHydrationCustomTournament(): CustomTournament {
       title: 'Карточка из БД'
     },
     details: {
+      booking: {
+        pendingJoinPayments: [
+          {
+            transactionId: 'pending-player-1',
+            phone: '79603075826',
+            name: '79603075826',
+            levelLabel: 'D',
+            createdAt: '2026-04-29T10:22:00.000Z'
+          }
+        ]
+      },
       sourceTournamentSnapshot: {
         id: 'source-viva-1',
         trainerName: 'Старый тренер',
@@ -184,6 +201,7 @@ function createService(options: {
   sourceTournaments?: Tournament[];
   customById?: CustomTournament;
   customBySlug?: CustomTournament;
+  vivaAdminService?: unknown;
 }): TournamentsService {
   const sourceTournaments = options.sourceTournaments ?? [];
   const customById = options.customById;
@@ -212,7 +230,8 @@ function createService(options: {
       }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
-    { simulateRating: () => { throw new Error('Not used in test'); } } as never
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    options.vivaAdminService as never
   );
 }
 
@@ -221,20 +240,40 @@ async function main(): Promise<void> {
   const hydrationService = createService({
     sourceTournaments: [createHydrationSourceTournament()],
     customById: hydrationCustomTournament,
-    customBySlug: hydrationCustomTournament
+    customBySlug: hydrationCustomTournament,
+    vivaAdminService: {
+      lookupClientCabinetByPhone: async (phone: string) => {
+        if (phone === '79104303190') {
+          return {
+            status: 'FOUND',
+            vivaClientId: 'viva-client-3190',
+            displayName: 'Алексей Смирнов',
+            avatarUrl: 'https://example.com/alexey.jpg'
+          };
+        }
+        return null;
+      }
+    }
   });
 
   const hydrated = await hydrationService.findCustomById(hydrationCustomTournament.id);
-  assert.equal(hydrated.participants.length, 2);
+  assert.equal(hydrated.participants.length, 3);
   assert.equal(hydrated.participants[0]?.name, 'Игрок из Viva');
   assert.equal(hydrated.participants[1]?.name, 'Игрок из БД');
-  assert.equal(hydrated.participantsCount, 2);
+  assert.equal(hydrated.participants[2]?.name, 'Алексей Смирнов');
+  assert.equal(hydrated.participants[2]?.avatarUrl, 'https://example.com/alexey.jpg');
+  assert.equal(hydrated.participantsCount, 3);
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
+  const pendingJoinPayments = (
+    hydrated.details?.booking as { pendingJoinPayments?: Array<{ name?: string }> } | undefined
+  )?.pendingJoinPayments ?? [];
+  assert.equal(pendingJoinPayments[0]?.name, 'Игрок 5826');
 
   const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
   assert.ok(publicView, 'Public view should be returned for custom tournament');
   assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
+  assert.equal(publicView.participants?.[2]?.name, 'Алексей Смирнов');
   assert.equal(
     Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
     false

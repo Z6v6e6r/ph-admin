@@ -16238,10 +16238,40 @@
       return normalizeArray(booking.pendingJoinPayments);
     }
 
+    function getTournamentPhoneDigits(value) {
+      return String(value || '').replace(/\D/g, '');
+    }
+
+    function isTournamentPhoneLikeName(value) {
+      return getTournamentPhoneDigits(value).length >= 10;
+    }
+
+    function isTournamentGenericPlayerName(value) {
+      return /^игрок$/i.test(String(value || '').trim());
+    }
+
+    function buildTournamentFallbackPlayerName(phone) {
+      var digits = getTournamentPhoneDigits(phone);
+      var suffix = digits.length >= 4 ? digits.slice(-4) : '';
+      return suffix ? 'Игрок ' + suffix : 'Игрок';
+    }
+
+    function resolveTournamentPersonDisplayName(name, phone, fallbackName) {
+      var normalizedName = String(name || '').trim();
+      if (!normalizedName || isTournamentPhoneLikeName(normalizedName) || isTournamentGenericPlayerName(normalizedName)) {
+        return buildTournamentFallbackPlayerName(phone) || String(fallbackName || 'Игрок');
+      }
+      return normalizedName;
+    }
+
     function normalizeTournamentPendingJoinPayment(entry, index) {
       var record = normalizeObject(entry);
       var phone = String(record.phone || '').trim();
-      var name = String(record.name || '').trim() || phone || 'Заявка ' + String(index + 1);
+      var name = resolveTournamentPersonDisplayName(
+        record.name,
+        phone,
+        'Заявка ' + String(index + 1)
+      );
       return {
         id: String(record.transactionId || 'pending-' + index),
         name: name,
@@ -16322,13 +16352,18 @@
         var avatar = document.createElement('div');
         avatar.className = 'phab-admin-tournament-person-avatar';
         var avatarUrl = String(person.avatarUrl || person.photo || '').trim();
+        var displayName = resolveTournamentPersonDisplayName(
+          person.name,
+          person.phone,
+          config.fallbackName || 'Без имени'
+        );
         if (avatarUrl) {
           var img = document.createElement('img');
           img.src = avatarUrl;
-          img.alt = String(person.name || 'Участник');
+          img.alt = displayName;
           avatar.appendChild(img);
         } else {
-          avatar.textContent = getTournamentPersonInitials(person.name);
+          avatar.textContent = getTournamentPersonInitials(displayName);
         }
         if (!config.compactList) {
           card.appendChild(avatar);
@@ -16340,7 +16375,7 @@
 
         var name = document.createElement('div');
         name.className = 'phab-admin-tournament-person-name';
-        name.textContent = String(person.name || config.fallbackName || 'Без имени');
+        name.textContent = displayName;
         main.appendChild(name);
 
         var metaParts = [];

@@ -284,7 +284,7 @@ export class TournamentsService {
 
   async getPublicBySlug(slug: string): Promise<TournamentPublicView> {
     this.ensurePersistenceEnabled();
-    const tournament = await this.requireCustomBySlug(slug);
+    const tournament = await this.enrichTournamentVivaProfiles(await this.requireCustomBySlug(slug));
     return this.toPublicView(tournament);
   }
 
@@ -321,7 +321,10 @@ export class TournamentsService {
         sourceTournamentsById
       ))
     );
-    const items = hydrated
+    const enriched = await Promise.all(
+      hydrated.map((tournament) => this.enrichTournamentVivaProfiles(tournament))
+    );
+    const items = enriched
       .map((tournament) => this.toPublicView(tournament));
 
     return {
@@ -339,7 +342,7 @@ export class TournamentsService {
     }
   ): Promise<TournamentJoinFlowResponse> {
     this.ensurePersistenceEnabled();
-    const tournament = await this.requireCustomBySlug(slug);
+    const tournament = await this.enrichTournamentVivaProfiles(await this.requireCustomBySlug(slug));
     const publicTournament = this.toPublicView(tournament);
     const normalizedPhone = this.normalizePhone(client.phone) ?? undefined;
     const normalizedLevel = this.normalizeLevel(client.levelLabel) ?? undefined;
@@ -2385,15 +2388,16 @@ export class TournamentsService {
     tournament: CustomTournament,
     pending: PendingJoinPayment
   ): Promise<void> {
+    const enrichedPending = await this.enrichPendingJoinPaymentWithViva(pending);
     const details = this.toRecord(tournament.details) ?? {};
     const booking = this.toRecord(details.booking) ?? {};
     const current = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
     const next = [
       ...current.filter((item) => {
         const record = this.toRecord(item);
-        return this.pickString(record?.transactionId) !== pending.transactionId;
+        return this.pickString(record?.transactionId) !== enrichedPending.transactionId;
       }),
-      pending
+      enrichedPending
     ];
     await this.updateCustom(tournament.id, {
       details: {
@@ -3091,23 +3095,21 @@ export class TournamentsService {
   private async enrichTournamentVivaProfiles(
     tournament: CustomTournament
   ): Promise<CustomTournament> {
-    if (!this.vivaAdminService) {
-      return tournament;
-    }
-
     const participants = await Promise.all(
-      tournament.participants.map((participant) =>
-        participant.avatarUrl ? Promise.resolve(participant) : this.enrichTournamentParticipantWithViva(participant)
-      )
+      tournament.participants.map((participant) => this.enrichTournamentParticipantWithViva(participant))
     );
     const waitlist = await Promise.all(
-      tournament.waitlist.map((participant) =>
-        participant.avatarUrl ? Promise.resolve(participant) : this.enrichTournamentParticipantWithViva(participant)
+      tournament.waitlist.map((participant) => this.enrichTournamentParticipantWithViva(participant))
+    );
+    const pendingJoinPayments = await Promise.all(
+      this.getPendingJoinPayments(tournament).map((payment) =>
+        this.enrichPendingJoinPaymentWithViva(payment)
       )
     );
 
     return {
       ...tournament,
+      details: this.mergePendingJoinPaymentsIntoDetails(tournament, pendingJoinPayments),
       trainerAvatarUrl:
         tournament.trainerAvatarUrl
         ?? this.pickNullableString(this.getSourceTournamentSnapshot(tournament).trainerAvatarUrl)
@@ -3120,28 +3122,64 @@ export class TournamentsService {
     };
   }
 
+  private mergePendingJoinPaymentsIntoDetails(
+    tournament: CustomTournament,
+    pendingJoinPayments: PendingJoinPayment[]
+  ): CustomTournament['details'] {
+    const details = this.toRecord(tournament.details) ?? {};
+    const booking = this.toRecord(details.booking) ?? {};
+    if (pendingJoinPayments.length === 0 && !Array.isArray(booking.pendingJoinPayments)) {
+      return tournament.details;
+    }
+    return {
+      ...details,
+      booking: {
+        ...booking,
+        pendingJoinPayments
+      }
+    };
+  }
+
   private async enrichTournamentParticipantWithViva(
     participant: TournamentParticipant
   ): Promise<TournamentParticipant> {
-    if (!this.vivaAdminService) {
-      return participant;
-    }
-
     const normalizedPhone = this.normalizePhone(participant.phone);
     if (!normalizedPhone) {
       return participant;
     }
 
+    const vivaAdminService = this.vivaAdminService;
+    const fallbackName = this.resolveTournamentParticipantName(participant.name, normalizedPhone);
+    const needsVivaLookup =
+      this.isGenericTournamentParticipantName(participant.name)
+      || this.isPhoneLikeValue(participant.name)
+      || !participant.avatarUrl;
+
+    if (!vivaAdminService || !needsVivaLookup) {
+      return {
+        ...participant,
+        name: fallbackName,
+        phone: normalizedPhone
+      };
+    }
+
     try {
-      const lookup = await this.vivaAdminService.lookupClientCabinetByPhone(normalizedPhone);
+      const lookup = await vivaAdminService.lookupClientCabinetByPhone(normalizedPhone);
       if (!lookup || lookup.status !== 'FOUND') {
-        return participant;
+        return {
+          ...participant,
+          name: fallbackName,
+          phone: normalizedPhone
+        };
       }
 
       return {
         ...participant,
         id: participant.id ?? lookup.vivaClientId ?? undefined,
-        name: lookup.displayName ?? participant.name,
+        name: this.resolveTournamentParticipantName(
+          lookup.displayName ?? participant.name,
+          normalizedPhone
+        ),
         phone: normalizedPhone,
         avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined
       };
@@ -3149,8 +3187,57 @@ export class TournamentsService {
       this.logger.warn(
         `Failed to enrich tournament participant ${normalizedPhone} from Viva: ${String(error)}`
       );
-      return participant;
+      return {
+        ...participant,
+        name: fallbackName,
+        phone: normalizedPhone
+      };
     }
+  }
+
+  private async enrichPendingJoinPaymentWithViva(
+    payment: PendingJoinPayment
+  ): Promise<PendingJoinPayment> {
+    const participant = await this.enrichTournamentParticipantWithViva({
+      id: payment.transactionId,
+      name: payment.name ?? payment.phone,
+      phone: payment.phone,
+      levelLabel: payment.levelLabel,
+      paymentStatus: 'UNPAID',
+      status: 'REGISTERED',
+      registeredAt: payment.createdAt,
+      notes: payment.notes
+    });
+
+    return {
+      ...payment,
+      phone: this.normalizePhone(payment.phone) ?? payment.phone,
+      name: participant.name,
+      levelLabel: participant.levelLabel
+    };
+  }
+
+  private resolveTournamentParticipantName(value: unknown, phone?: string): string {
+    const name = this.pickString(value);
+    if (!name || this.isPhoneLikeValue(name) || this.isGenericTournamentParticipantName(name)) {
+      return this.buildTournamentParticipantFallbackName(phone);
+    }
+    return name;
+  }
+
+  private buildTournamentParticipantFallbackName(phone?: string): string {
+    const digits = String(phone ?? '').replace(/\D+/g, '');
+    const suffix = digits.length >= 4 ? digits.slice(-4) : '';
+    return suffix ? `Игрок ${suffix}` : 'Игрок';
+  }
+
+  private isGenericTournamentParticipantName(value: unknown): boolean {
+    return /^игрок$/i.test(String(value ?? '').trim());
+  }
+
+  private isPhoneLikeValue(value: unknown): boolean {
+    const digits = String(value ?? '').replace(/\D+/g, '');
+    return digits.length >= 10;
   }
 
   private isLevelAllowedByList(levelLabel: string, allowedLevels: string[]): boolean {
