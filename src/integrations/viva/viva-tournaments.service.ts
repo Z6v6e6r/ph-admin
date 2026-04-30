@@ -714,6 +714,9 @@ export class VivaTournamentsService {
       'guests',
       'guestList',
       'guest_list',
+      'bookings',
+      'bookingList',
+      'booking_list',
       'registrations',
       'registrationList',
       'registration_list'
@@ -746,7 +749,23 @@ export class VivaTournamentsService {
       return;
     }
 
-    const nestedArrays = ['data', 'items', 'results', 'clients', 'participants', 'players', 'members'];
+    const nestedArrays = [
+      'data',
+      'items',
+      'results',
+      'content',
+      'records',
+      'list',
+      'bookings',
+      'clients',
+      'clientList',
+      'participants',
+      'players',
+      'members',
+      'visitors',
+      'guests',
+      'registrations'
+    ];
     for (const key of nestedArrays) {
       if (Array.isArray(record[key])) {
         this.collectParticipantsFromValue(record[key], participants, seen);
@@ -1022,9 +1041,20 @@ export class VivaTournamentsService {
 
     const keys = [
       'data',
+      'result',
       'items',
       'results',
       'content',
+      'records',
+      'list',
+      'bookings',
+      'clients',
+      'participants',
+      'players',
+      'members',
+      'visitors',
+      'guests',
+      'registrations',
       'studios',
       'trainers',
       'exercises',
@@ -1035,6 +1065,13 @@ export class VivaTournamentsService {
       const value = record[key];
       if (Array.isArray(value)) {
         return value.filter(this.isRecord);
+      }
+      const nested = this.readRecord(value);
+      if (nested) {
+        const nestedRecords = this.unwrapRecords(nested);
+        if (nestedRecords.length > 0) {
+          return nestedRecords;
+        }
       }
     }
 

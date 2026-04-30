@@ -4,6 +4,7 @@ import { TournamentParticipant } from '../src/tournaments/tournaments.types';
 
 interface VivaTournamentsServiceInternals {
   resolveParticipants(exercise: Record<string, unknown>): TournamentParticipant[];
+  unwrapRecords(payload: unknown): Record<string, unknown>[];
 }
 
 function main(): void {
@@ -65,6 +66,33 @@ function main(): void {
   assert.deepEqual(
     participants.map((participant) => participant.levelLabel),
     ['2.75', '2.5', '2.25']
+  );
+
+  const nestedRecords = service.unwrapRecords({
+    data: {
+      content: [
+        {
+          id: 'booking-4',
+          client: {
+            id: 'client-4',
+            name: 'Дворецкая Виктория',
+            phone: '+7 903 711 04 40'
+          }
+        }
+      ]
+    }
+  });
+  assert.equal(nestedRecords.length, 1);
+  assert.equal(nestedRecords[0]?.id, 'booking-4');
+
+  const nestedParticipants = service.resolveParticipants({
+    bookings: {
+      content: nestedRecords
+    }
+  });
+  assert.deepEqual(
+    nestedParticipants.map((participant) => participant.name),
+    ['Дворецкая Виктория']
   );
 
   console.log('Viva tournament participants test passed');

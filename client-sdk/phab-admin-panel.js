@@ -4855,6 +4855,9 @@
       getCustomTournament: function (tournamentId) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'GET');
       },
+      getTournament: function (tournamentId) {
+        return request('/tournaments/' + encodeURIComponent(tournamentId), 'GET');
+      },
       getTournamentResults: function (tournamentId) {
         return request('/tournaments/' + encodeURIComponent(tournamentId) + '/results', 'GET');
       },
@@ -16503,16 +16506,103 @@
       };
     }
 
-    function buildTournamentEditorParticipants(tournament) {
-      var participants = normalizeArray(tournament && tournament.participants).map(function (entry) {
-        return normalizeObject(entry);
+    function getTournamentParticipantKey(person) {
+      var record = normalizeObject(person);
+      var phone = String(record.phone || '').replace(/\D/g, '');
+      var id = String(record.id || '').trim();
+      var name = String(record.name || '').trim().toLowerCase();
+      return phone ? 'phone:' + phone : id ? 'id:' + id : name ? 'name:' + name : '';
+    }
+
+    function dedupeTournamentParticipants(items) {
+      var seen = new Set();
+      return normalizeArray(items)
+        .map(function (entry) {
+          return normalizeObject(entry);
+        })
+        .filter(function (person) {
+          var key = getTournamentParticipantKey(person);
+          if (key && seen.has(key)) {
+            return false;
+          }
+          if (key) {
+            seen.add(key);
+          }
+          return true;
+        });
+    }
+
+    function mergeTournamentEditorModelWithLiveSource(customTournament, sourceTournament) {
+      var custom = normalizeObject(customTournament);
+      var source = normalizeObject(sourceTournament);
+      if (!customTournament) {
+        return sourceTournament;
+      }
+
+      var sourceParticipants = dedupeTournamentParticipants(source.participants);
+      var sourceParticipantsCount = Number(source.participantsCount);
+      var sourceHasParticipantState =
+        String(source.source || '').toUpperCase() === 'VIVA' &&
+        (sourceParticipants.length > 0 || Number.isFinite(sourceParticipantsCount));
+      var sourceDetails = normalizeObject(source.details);
+      var sourceSnapshot = normalizeObject(sourceDetails.sourceTournamentSnapshot);
+      var customDetails = normalizeObject(custom.details);
+
+      return Object.assign({}, custom, {
+        startsAt: custom.startsAt || source.startsAt,
+        endsAt: custom.endsAt || source.endsAt,
+        studioId: custom.studioId || source.studioId,
+        studioName: custom.studioName || source.studioName,
+        courtName: custom.courtName || source.courtName,
+        locationName: custom.locationName || source.locationName,
+        trainerId: custom.trainerId || source.trainerId,
+        trainerName: custom.trainerName || source.trainerName,
+        trainerAvatarUrl: custom.trainerAvatarUrl || source.trainerAvatarUrl,
+        exerciseTypeId: custom.exerciseTypeId || source.exerciseTypeId,
+        maxPlayers: custom.maxPlayers || source.maxPlayers,
+        participants: sourceHasParticipantState
+          ? sourceParticipants
+          : dedupeTournamentParticipants(custom.participants),
+        participantsCount: sourceHasParticipantState
+          ? Math.max(sourceParticipants.length, Number.isFinite(sourceParticipantsCount) ? sourceParticipantsCount : 0)
+          : custom.participantsCount,
+        paidParticipantsCount: sourceHasParticipantState
+          ? sourceParticipants.filter(function (person) {
+              return String(person.paymentStatus || '').toUpperCase() === 'PAID';
+            }).length
+          : custom.paidParticipantsCount,
+        details: Object.assign({}, customDetails, {
+          sourceTournamentSnapshot: Object.keys(sourceSnapshot).length > 0
+            ? sourceSnapshot
+            : {
+                id: source.id,
+                source: source.source,
+                name: source.name,
+                status: source.status,
+                startsAt: source.startsAt,
+                endsAt: source.endsAt,
+                studioId: source.studioId,
+                studioName: source.studioName,
+                courtName: source.courtName,
+                locationName: source.locationName,
+                trainerId: source.trainerId,
+                trainerName: source.trainerName,
+                trainerAvatarUrl: source.trainerAvatarUrl,
+                exerciseTypeId: source.exerciseTypeId,
+                tournamentType: source.tournamentType,
+                maxPlayers: source.maxPlayers,
+                participants: sourceParticipants,
+                participantsCount: source.participantsCount
+              }
+        })
       });
+    }
+
+    function buildTournamentEditorParticipants(tournament) {
+      var participants = dedupeTournamentParticipants(tournament && tournament.participants);
       var seen = new Set();
       participants.forEach(function (person) {
-        var phone = String(person.phone || '').replace(/\D/g, '');
-        var id = String(person.id || '').trim();
-        var name = String(person.name || '').trim().toLowerCase();
-        var key = phone ? 'phone:' + phone : id ? 'id:' + id : name ? 'name:' + name : '';
+        var key = getTournamentParticipantKey(person);
         if (key) {
           seen.add(key);
         }
@@ -16677,14 +16767,24 @@
         String(tournament.source || '') === 'CUSTOM'
           ? String((customTournament && customTournament.sourceTournamentId) || '')
           : String(tournament.id || '');
-      var model = customTournament || tournament;
+      var liveSourceTournament = tournament;
+      if (sourceTournamentId && String(tournament.id || '') !== sourceTournamentId) {
+        try {
+          liveSourceTournament = await api.getTournament(sourceTournamentId);
+        } catch (_sourceError) {
+          liveSourceTournament = tournament;
+        }
+      }
+      var model = customTournament
+        ? mergeTournamentEditorModelWithLiveSource(customTournament, liveSourceTournament)
+        : tournament;
       var skin = normalizeObject(model && model.skin);
       var mechanics = normalizeTournamentMechanics(
         model && model.mechanics,
         model && model.tournamentType
       );
       var changeLogEntries = getTournamentChangeLogEntries(customTournament || model);
-      var liveSourceSnapshot = getTournamentSourceSnapshot(tournament);
+      var liveSourceSnapshot = getTournamentSourceSnapshot(liveSourceTournament);
       var storedSourceSnapshot = getTournamentSourceSnapshot(model);
       var sourceSnapshot =
         normalizeObject(storedSourceSnapshot).id
