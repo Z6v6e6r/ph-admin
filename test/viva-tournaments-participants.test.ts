@@ -95,6 +95,29 @@ function main(): void {
     ['Дворецкая Виктория']
   );
 
+  const adminParticipants = service.resolveParticipants({
+    bookings: [
+      {
+        id: 'admin-booking-1',
+        customer: {
+          id: 'admin-client-1',
+          firstName: 'Евгения',
+          lastName: 'Чабыкина',
+          phoneNumber: '+7 914 472 21 20',
+          level: {
+            value: '2,75'
+          }
+        },
+        paymentStatus: 'PAID'
+      }
+    ]
+  });
+  assert.equal(adminParticipants[0]?.id, 'admin-client-1');
+  assert.equal(adminParticipants[0]?.name, 'Евгения Чабыкина');
+  assert.equal(adminParticipants[0]?.phone, '79144722120');
+  assert.equal(adminParticipants[0]?.levelLabel, '2.75');
+  assert.equal(adminParticipants[0]?.paymentStatus, 'PAID');
+
   console.log('Viva tournament participants test passed');
 }
 

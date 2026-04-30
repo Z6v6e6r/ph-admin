@@ -3049,6 +3049,13 @@ export class TournamentsService {
 
     this.getPendingJoinPayments(tournament).forEach((payment, index) => {
       const participant = this.pendingJoinPaymentToParticipant(payment, index);
+      const participantKey = this.buildParticipantKey(participant);
+      if (participantKey && seen.has(participantKey)) {
+        return;
+      }
+      if (participantKey) {
+        seen.add(participantKey);
+      }
       const key = participant.id ? `pending:${participant.id}` : '';
       if (key && seen.has(key)) {
         return;

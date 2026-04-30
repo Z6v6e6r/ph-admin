@@ -106,6 +106,13 @@ function createHydrationCustomTournament(): CustomTournament {
             name: '79603075826',
             levelLabel: 'D',
             createdAt: '2026-04-29T10:22:00.000Z'
+          },
+          {
+            transactionId: 'pending-source-duplicate',
+            phone: '79990001111',
+            name: 'Игрок из Viva',
+            levelLabel: 'C',
+            createdAt: '2026-04-29T10:24:00.000Z'
           }
         ]
       },
@@ -280,6 +287,7 @@ async function main(): Promise<void> {
   assert.ok(publicView, 'Public view should be returned for custom tournament');
   assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
   assert.equal(publicView.participants?.[1]?.name, 'Анна Максимова');
+  assert.equal(publicView.participants?.length, 2);
   assert.equal(
     Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
     false

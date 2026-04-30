@@ -177,6 +177,48 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return request;
   }
 
+  async listExerciseBookings(exerciseId?: string): Promise<Record<string, unknown>[]> {
+    const normalizedExerciseId = this.normalizeOptional(exerciseId);
+    if (!normalizedExerciseId) {
+      return [];
+    }
+
+    const token = await this.resolveAccessToken();
+    if (!token) {
+      return [];
+    }
+
+    const resolved = await this.getResolvedSettings();
+    const encodedExerciseId = encodeURIComponent(normalizedExerciseId);
+    const paths = [
+      `/api/v1/exercises/${encodedExerciseId}/bookings?page=0&size=200`,
+      `/api/v1/exercises/${encodedExerciseId}/bookings`,
+      `/api/v1/group-exercises/${encodedExerciseId}/bookings?page=0&size=200`,
+      `/api/v1/group-exercises/${encodedExerciseId}/bookings`,
+      `/api/v1/bookings?exerciseId=${encodedExerciseId}&page=0&size=200`,
+      `/api/v1/bookings?exercise_id=${encodedExerciseId}&page=0&size=200`
+    ];
+
+    const results = await Promise.allSettled(
+      paths.map((path) => this.fetchAdminJson(path, token, resolved.config.baseUrl))
+    );
+    const bookings = results.flatMap((result) =>
+      result.status === 'fulfilled' ? this.unwrapRecords(result.value) : []
+    );
+    const seen = new Set<string>();
+    return bookings.filter((booking) => {
+      const key = this.buildRecordKey(booking);
+      if (!key) {
+        return true;
+      }
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
   async getSettings(): Promise<VivaAdminSettingsSnapshot> {
     const resolved = await this.getResolvedSettings();
     return this.toSettingsSnapshot(resolved.config, resolved.source);
@@ -270,6 +312,27 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       displayName: client ? this.extractClientName(client) : undefined,
       avatarUrl: client ? this.extractClientAvatarUrl(client) ?? null : null
     };
+  }
+
+  private async fetchAdminJson(
+    path: string,
+    token: string,
+    baseUrl: string
+  ): Promise<unknown> {
+    const cleanPath = String(path || '').replace(/^\/+/, '');
+    const response = await fetch(new URL(`/${cleanPath}`, `${baseUrl}/`).toString(), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      signal: this.buildAbortSignal()
+    });
+
+    if (!response.ok) {
+      throw new Error(`Viva CRM request ${path} failed with status ${response.status}`);
+    }
+
+    return response.json().catch(() => null);
   }
 
   private async resolveAccessToken(): Promise<string | null> {
@@ -491,6 +554,84 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private unwrapRecords(payload: unknown): Record<string, unknown>[] {
+    if (Array.isArray(payload)) {
+      return payload.filter(this.isRecord);
+    }
+
+    const record = this.isRecord(payload) ? payload : null;
+    if (!record) {
+      return [];
+    }
+
+    const keys = [
+      'data',
+      'result',
+      'items',
+      'results',
+      'content',
+      'records',
+      'list',
+      'bookings',
+      'clients',
+      'participants',
+      'players',
+      'members',
+      'visitors',
+      'guests',
+      'registrations'
+    ];
+
+    for (const key of keys) {
+      const value = record[key];
+      if (Array.isArray(value)) {
+        return value.filter(this.isRecord);
+      }
+      if (this.isRecord(value)) {
+        const nestedRecords = this.unwrapRecords(value);
+        if (nestedRecords.length > 0) {
+          return nestedRecords;
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private buildRecordKey(record: Record<string, unknown>): string | undefined {
+    const directId =
+      this.pickString(record.id) ??
+      this.pickString(record.uuid) ??
+      this.pickString(record.bookingId) ??
+      this.pickString(record.booking_id);
+    if (directId) {
+      return `id:${directId}`;
+    }
+
+    const client = this.isRecord(record.client) ? record.client : null;
+    const clientId =
+      this.pickString(record.clientId) ??
+      this.pickString(record.client_id) ??
+      (client
+        ? this.pickString(client.id) ??
+          this.pickString(client.uuid)
+        : undefined);
+    if (clientId) {
+      return `client:${clientId}`;
+    }
+
+    const phone =
+      this.normalizePhone(record.phone) ??
+      this.normalizePhone(record.clientPhone) ??
+      this.normalizePhone(record.client_phone) ??
+      (client
+        ? this.normalizePhone(client.phone) ??
+          this.normalizePhone(client.phoneNumber) ??
+          this.normalizePhone(client.phone_number)
+        : undefined);
+    return phone ? `phone:${phone}` : undefined;
+  }
+
   private buildAbortSignal(): AbortSignal | undefined {
     const abortSignalTimeout = (AbortSignal as typeof AbortSignal & {
       timeout?: (delay: number) => AbortSignal;
@@ -501,7 +642,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       : undefined;
   }
 
-  private normalizePhone(phone?: string): string | undefined {
+  private normalizePhone(phone?: unknown): string | undefined {
     const digits = String(phone ?? '').replace(/\D/g, '');
     if (!digits) {
       return undefined;
@@ -535,6 +676,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
   private pickString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
   }
 
   private readPositiveNumberEnv(name: string, fallback: number): number {

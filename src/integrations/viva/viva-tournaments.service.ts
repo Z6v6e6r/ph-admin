@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   Tournament,
   TournamentParticipant,
   TournamentPaymentStatus,
   TournamentStatus
 } from '../../tournaments/tournaments.types';
+import { VivaAdminService } from './viva-admin.service';
 
 interface VivaEntitySummary {
   id: string;
@@ -40,6 +41,8 @@ export class VivaTournamentsService {
     'VIVA_END_USER_TIMEOUT_MS',
     5000
   );
+
+  constructor(@Optional() private readonly vivaAdminService?: VivaAdminService) {}
 
   async listTournaments(): Promise<Tournament[] | null> {
     if (!this.widgetId) {
@@ -265,10 +268,29 @@ export class VivaTournamentsService {
       `exercises/${encodeURIComponent(id)}/participants`,
       `bookings?exerciseId=${encodeURIComponent(id)}`
     ];
-    const results = await Promise.allSettled(paths.map((path) => this.fetchJson(path)));
-    return results.flatMap((result) =>
-      result.status === 'fulfilled' ? this.unwrapRecords(result.value) : []
-    );
+    const [endUserResults, adminRecords] = await Promise.all([
+      Promise.allSettled(paths.map((path) => this.fetchJson(path))),
+      this.fetchAdminParticipantRecords(id)
+    ]);
+    return [
+      ...endUserResults.flatMap((result) =>
+        result.status === 'fulfilled' ? this.unwrapRecords(result.value) : []
+      ),
+      ...adminRecords
+    ];
+  }
+
+  private async fetchAdminParticipantRecords(id: string): Promise<VivaRawRecord[]> {
+    if (!this.vivaAdminService) {
+      return [];
+    }
+
+    try {
+      return await this.vivaAdminService.listExerciseBookings(id);
+    } catch (error) {
+      this.logger.warn(`Failed to load Viva admin bookings for ${id}: ${String(error)}`);
+      return [];
+    }
   }
 
   private async fetchEntitySummaries(path: string): Promise<VivaEntitySummary[]> {
@@ -759,6 +781,8 @@ export class VivaTournamentsService {
       'bookings',
       'clients',
       'clientList',
+      'customers',
+      'customerList',
       'participants',
       'players',
       'members',
@@ -873,9 +897,38 @@ export class VivaTournamentsService {
   }
 
   private readFirstLevelScore(record: VivaRawRecord | null): string | undefined {
-    if (!record) {
+    return this.readLevelScoreFromValue(record, new Set(), 0);
+  }
+
+  private readLevelScoreFromValue(
+    value: unknown,
+    visited: Set<VivaRawRecord>,
+    depth: number
+  ): string | undefined {
+    if (depth > 4) {
       return undefined;
     }
+
+    const directScore = this.readLevelScore(value);
+    if (directScore) {
+      return directScore;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const score = this.readLevelScoreFromValue(item, visited, depth + 1);
+        if (score) {
+          return score;
+        }
+      }
+      return undefined;
+    }
+
+    const record = this.readRecord(value);
+    if (!record || visited.has(record)) {
+      return undefined;
+    }
+    visited.add(record);
 
     const keys = [
       'levelScore',
@@ -888,6 +941,12 @@ export class VivaTournamentsService {
       'rating_value',
       'gameRating',
       'game_rating',
+      'numericValue',
+      'numeric_value',
+      'numberValue',
+      'number_value',
+      'score',
+      'value',
       'padelLevel',
       'padel_level',
       'rating',
@@ -898,6 +957,101 @@ export class VivaTournamentsService {
       const score = this.readLevelScore(record[key]);
       if (score) {
         return score;
+      }
+    }
+
+    const fieldArrayKeys = [
+      'fields',
+      'customFields',
+      'custom_fields',
+      'additionalFields',
+      'additional_fields',
+      'attributes',
+      'properties',
+      'parameters'
+    ];
+    for (const key of fieldArrayKeys) {
+      const score = this.readLevelScoreFromFieldArray(record[key], visited, depth + 1);
+      if (score) {
+        return score;
+      }
+    }
+
+    const nestedKeys = [
+      'clientLevel',
+      'client_level',
+      'sportLevel',
+      'sport_level',
+      'gameLevel',
+      'game_level',
+      'skillLevel',
+      'skill_level',
+      'padelLevel',
+      'padel_level',
+      'rating',
+      'level',
+      'profile',
+      'stats',
+      'metadata'
+    ];
+    for (const key of nestedKeys) {
+      const score = this.readLevelScoreFromValue(record[key], visited, depth + 1);
+      if (score) {
+        return score;
+      }
+    }
+
+    return undefined;
+  }
+
+  private readLevelScoreFromFieldArray(
+    value: unknown,
+    visited: Set<VivaRawRecord>,
+    depth: number
+  ): string | undefined {
+    if (!Array.isArray(value)) {
+      return undefined;
+    }
+
+    for (const item of value) {
+      const record = this.readRecord(item);
+      if (!record) {
+        continue;
+      }
+
+      const label = [
+        this.readString(record.key),
+        this.readString(record.code),
+        this.readString(record.name),
+        this.readString(record.title),
+        this.readString(record.label),
+        this.readString(record.fieldName),
+        this.readString(record.field_name)
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (label && !/(level|rating|skill|уров|рейтинг)/i.test(label)) {
+        continue;
+      }
+
+      const valueKeys = [
+        'value',
+        'numericValue',
+        'numeric_value',
+        'numberValue',
+        'number_value',
+        'score',
+        'rating',
+        'level',
+        'answer',
+        'content'
+      ];
+      for (const key of valueKeys) {
+        const score = this.readLevelScoreFromValue(record[key], visited, depth + 1);
+        if (score) {
+          return score;
+        }
       }
     }
 
@@ -931,11 +1085,16 @@ export class VivaTournamentsService {
   private resolveParticipantSubject(record: VivaRawRecord): VivaRawRecord | null {
     return (
       this.readRecord(record.client) ??
+      this.readRecord(record.customer) ??
       this.readRecord(record.user) ??
       this.readRecord(record.person) ??
       this.readRecord(record.member) ??
       this.readRecord(record.player) ??
-      this.readRecord(record.guest)
+      this.readRecord(record.visitor) ??
+      this.readRecord(record.guest) ??
+      this.readRecord(record.participant) ??
+      this.readRecord(record.bookingClient) ??
+      this.readRecord(record.booking_client)
     );
   }
 
