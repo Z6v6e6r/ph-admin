@@ -192,6 +192,8 @@
     { label: 'Спасибо!', text: 'Спасибо!' }
   ];
   var DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG = {
+    id: 'promo-1',
+    title: 'Акция 1',
     enabled: true,
     expiresAt: '',
     stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
@@ -204,7 +206,43 @@
     },
     baseShareAmount: 2000,
     vivaDirectionId: 4485,
-    vivaExerciseTypeId: 1208
+    vivaExerciseTypeId: 1208,
+    promos: [
+      {
+        id: 'promo-1',
+        title: 'Акция 1',
+        enabled: true,
+        expiresAt: '',
+        stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
+        stationNameIncludes: ['терехово', 'terekhovo'],
+        roomIds: [],
+        roomNameIncludes: ['new'],
+        shareAmounts: {
+          twoTeams: 500,
+          fourPlayers: 250
+        },
+        baseShareAmount: 2000,
+        vivaDirectionId: 4485,
+        vivaExerciseTypeId: 1208
+      },
+      {
+        id: 'promo-2',
+        title: 'Акция 2',
+        enabled: false,
+        expiresAt: '',
+        stationIds: [],
+        stationNameIncludes: [],
+        roomIds: [],
+        roomNameIncludes: [],
+        shareAmounts: {
+          twoTeams: 0,
+          fourPlayers: 0
+        },
+        baseShareAmount: 2000,
+        vivaDirectionId: 4485,
+        vivaExerciseTypeId: 1208
+      }
+    ]
   };
   var QUICK_REPLY_STATION_UNASSIGNED = 'UNASSIGNED';
   var QUICK_REPLY_TRIGGER_OPTIONS = [
@@ -6650,6 +6688,11 @@
     splitPromoForm.className = 'phab-admin-settings-form';
     splitPromoCard.appendChild(splitPromoForm);
 
+    var splitPromoFirstTitle = document.createElement('div');
+    splitPromoFirstTitle.className = 'phab-admin-settings-row-title';
+    splitPromoFirstTitle.textContent = 'Акция 1';
+    splitPromoForm.appendChild(splitPromoFirstTitle);
+
     var splitPromoEnabledWrap = document.createElement('label');
     splitPromoEnabledWrap.className = 'phab-admin-check';
     splitPromoForm.appendChild(splitPromoEnabledWrap);
@@ -6768,6 +6811,130 @@
     splitPromoExerciseTypeInput.min = '1';
     splitPromoExerciseTypeInput.step = '1';
     splitPromoExerciseTypeLabel.appendChild(splitPromoExerciseTypeInput);
+
+    var splitPromoSecondTitle = document.createElement('div');
+    splitPromoSecondTitle.className = 'phab-admin-settings-row-title';
+    splitPromoSecondTitle.textContent = 'Акция 2';
+    splitPromoForm.appendChild(splitPromoSecondTitle);
+
+    var splitPromoSecondEnabledWrap = document.createElement('label');
+    splitPromoSecondEnabledWrap.className = 'phab-admin-check';
+    splitPromoForm.appendChild(splitPromoSecondEnabledWrap);
+
+    var splitPromoSecondEnabledInput = document.createElement('input');
+    splitPromoSecondEnabledInput.type = 'checkbox';
+    splitPromoSecondEnabledWrap.appendChild(splitPromoSecondEnabledInput);
+    splitPromoSecondEnabledWrap.appendChild(document.createTextNode('Акция включена'));
+
+    var splitPromoSecondExpiresAtLabel = document.createElement('label');
+    splitPromoSecondExpiresAtLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondExpiresAtLabel.textContent = 'Действует на даты игр до (включительно)';
+    splitPromoForm.appendChild(splitPromoSecondExpiresAtLabel);
+
+    var splitPromoSecondExpiresAtInput = document.createElement('input');
+    splitPromoSecondExpiresAtInput.className = 'phab-admin-settings-input';
+    splitPromoSecondExpiresAtInput.type = 'date';
+    splitPromoSecondExpiresAtLabel.appendChild(splitPromoSecondExpiresAtInput);
+
+    var splitPromoSecondStationIdsLabel = document.createElement('label');
+    splitPromoSecondStationIdsLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondStationIdsLabel.textContent = 'Station IDs (CSV)';
+    splitPromoForm.appendChild(splitPromoSecondStationIdsLabel);
+
+    var splitPromoSecondStationIdsInput = document.createElement('input');
+    splitPromoSecondStationIdsInput.className = 'phab-admin-settings-input';
+    splitPromoSecondStationIdsInput.placeholder = 'station-id-1, station-id-2';
+    splitPromoSecondStationIdsLabel.appendChild(splitPromoSecondStationIdsInput);
+
+    var splitPromoSecondStationNamesLabel = document.createElement('label');
+    splitPromoSecondStationNamesLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondStationNamesLabel.textContent = 'Название станции содержит (CSV)';
+    splitPromoForm.appendChild(splitPromoSecondStationNamesLabel);
+
+    var splitPromoSecondStationNamesInput = document.createElement('input');
+    splitPromoSecondStationNamesInput.className = 'phab-admin-settings-input';
+    splitPromoSecondStationNamesInput.placeholder = 'station name';
+    splitPromoSecondStationNamesLabel.appendChild(splitPromoSecondStationNamesInput);
+
+    var splitPromoSecondRoomIdsLabel = document.createElement('label');
+    splitPromoSecondRoomIdsLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondRoomIdsLabel.textContent = 'Room IDs кортов (CSV, пусто = по имени)';
+    splitPromoForm.appendChild(splitPromoSecondRoomIdsLabel);
+
+    var splitPromoSecondRoomIdsInput = document.createElement('input');
+    splitPromoSecondRoomIdsInput.className = 'phab-admin-settings-input';
+    splitPromoSecondRoomIdsInput.placeholder = 'room-id-1, room-id-2';
+    splitPromoSecondRoomIdsLabel.appendChild(splitPromoSecondRoomIdsInput);
+
+    var splitPromoSecondRoomNamesLabel = document.createElement('label');
+    splitPromoSecondRoomNamesLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondRoomNamesLabel.textContent = 'Название корта содержит (CSV)';
+    splitPromoForm.appendChild(splitPromoSecondRoomNamesLabel);
+
+    var splitPromoSecondRoomNamesInput = document.createElement('input');
+    splitPromoSecondRoomNamesInput.className = 'phab-admin-settings-input';
+    splitPromoSecondRoomNamesInput.placeholder = 'court name';
+    splitPromoSecondRoomNamesLabel.appendChild(splitPromoSecondRoomNamesInput);
+
+    var splitPromoSecondTwoTeamsLabel = document.createElement('label');
+    splitPromoSecondTwoTeamsLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondTwoTeamsLabel.textContent = 'Цена при делении на 2 команды';
+    splitPromoForm.appendChild(splitPromoSecondTwoTeamsLabel);
+
+    var splitPromoSecondTwoTeamsInput = document.createElement('input');
+    splitPromoSecondTwoTeamsInput.className = 'phab-admin-settings-input';
+    splitPromoSecondTwoTeamsInput.type = 'number';
+    splitPromoSecondTwoTeamsInput.min = '0';
+    splitPromoSecondTwoTeamsInput.step = '1';
+    splitPromoSecondTwoTeamsLabel.appendChild(splitPromoSecondTwoTeamsInput);
+
+    var splitPromoSecondFourPlayersLabel = document.createElement('label');
+    splitPromoSecondFourPlayersLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondFourPlayersLabel.textContent = 'Цена при делении на 4 игроков';
+    splitPromoForm.appendChild(splitPromoSecondFourPlayersLabel);
+
+    var splitPromoSecondFourPlayersInput = document.createElement('input');
+    splitPromoSecondFourPlayersInput.className = 'phab-admin-settings-input';
+    splitPromoSecondFourPlayersInput.type = 'number';
+    splitPromoSecondFourPlayersInput.min = '0';
+    splitPromoSecondFourPlayersInput.step = '1';
+    splitPromoSecondFourPlayersLabel.appendChild(splitPromoSecondFourPlayersInput);
+
+    var splitPromoSecondBaseShareLabel = document.createElement('label');
+    splitPromoSecondBaseShareLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondBaseShareLabel.textContent = 'Базовая цена участника';
+    splitPromoForm.appendChild(splitPromoSecondBaseShareLabel);
+
+    var splitPromoSecondBaseShareInput = document.createElement('input');
+    splitPromoSecondBaseShareInput.className = 'phab-admin-settings-input';
+    splitPromoSecondBaseShareInput.type = 'number';
+    splitPromoSecondBaseShareInput.min = '0';
+    splitPromoSecondBaseShareInput.step = '1';
+    splitPromoSecondBaseShareLabel.appendChild(splitPromoSecondBaseShareInput);
+
+    var splitPromoSecondDirectionLabel = document.createElement('label');
+    splitPromoSecondDirectionLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondDirectionLabel.textContent = 'Viva direction ID';
+    splitPromoForm.appendChild(splitPromoSecondDirectionLabel);
+
+    var splitPromoSecondDirectionInput = document.createElement('input');
+    splitPromoSecondDirectionInput.className = 'phab-admin-settings-input';
+    splitPromoSecondDirectionInput.type = 'number';
+    splitPromoSecondDirectionInput.min = '1';
+    splitPromoSecondDirectionInput.step = '1';
+    splitPromoSecondDirectionLabel.appendChild(splitPromoSecondDirectionInput);
+
+    var splitPromoSecondExerciseTypeLabel = document.createElement('label');
+    splitPromoSecondExerciseTypeLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondExerciseTypeLabel.textContent = 'Viva exercise type ID';
+    splitPromoForm.appendChild(splitPromoSecondExerciseTypeLabel);
+
+    var splitPromoSecondExerciseTypeInput = document.createElement('input');
+    splitPromoSecondExerciseTypeInput.className = 'phab-admin-settings-input';
+    splitPromoSecondExerciseTypeInput.type = 'number';
+    splitPromoSecondExerciseTypeInput.min = '1';
+    splitPromoSecondExerciseTypeInput.step = '1';
+    splitPromoSecondExerciseTypeLabel.appendChild(splitPromoSecondExerciseTypeInput);
 
     var splitPromoSaveBtn = document.createElement('button');
     splitPromoSaveBtn.className = 'phab-admin-btn';
@@ -7681,6 +7848,17 @@
       splitPromoBaseShareInput: splitPromoBaseShareInput,
       splitPromoDirectionInput: splitPromoDirectionInput,
       splitPromoExerciseTypeInput: splitPromoExerciseTypeInput,
+      splitPromoSecondEnabledInput: splitPromoSecondEnabledInput,
+      splitPromoSecondExpiresAtInput: splitPromoSecondExpiresAtInput,
+      splitPromoSecondStationIdsInput: splitPromoSecondStationIdsInput,
+      splitPromoSecondStationNamesInput: splitPromoSecondStationNamesInput,
+      splitPromoSecondRoomIdsInput: splitPromoSecondRoomIdsInput,
+      splitPromoSecondRoomNamesInput: splitPromoSecondRoomNamesInput,
+      splitPromoSecondTwoTeamsInput: splitPromoSecondTwoTeamsInput,
+      splitPromoSecondFourPlayersInput: splitPromoSecondFourPlayersInput,
+      splitPromoSecondBaseShareInput: splitPromoSecondBaseShareInput,
+      splitPromoSecondDirectionInput: splitPromoSecondDirectionInput,
+      splitPromoSecondExerciseTypeInput: splitPromoSecondExerciseTypeInput,
       splitPromoSaveBtn: splitPromoSaveBtn,
       quickReplyCreateBtn: quickReplyCreateBtn,
       quickReplyTable: quickReplyTable,
@@ -7992,12 +8170,14 @@
     return normalized.length > 0 ? normalized : (fallback || []).slice();
   }
 
-  function normalizeSplitPaymentPromoSettings(value) {
+  function normalizeSplitPaymentPromoCampaign(value, fallback, index) {
     var source = normalizeObject(value);
-    var defaults = DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG;
+    var defaults = fallback || DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG.promos[0];
     var shareAmounts = normalizeObject(source.shareAmounts);
     return {
-      enabled: source.enabled !== false,
+      id: String(source.id || defaults.id || ('promo-' + (index + 1))).trim(),
+      title: String(source.title || defaults.title || ('Акция ' + (index + 1))).trim(),
+      enabled: source.enabled === true || (source.enabled === undefined && defaults.enabled === true),
       expiresAt: String(source.expiresAt || '').trim(),
       stationIds: normalizeStringListSetting(source.stationIds, defaults.stationIds),
       stationNameIncludes: normalizeStringListSetting(
@@ -8015,7 +8195,41 @@
       vivaExerciseTypeId: normalizeIntSetting(
         source.vivaExerciseTypeId,
         defaults.vivaExerciseTypeId
-      ),
+      )
+    };
+  }
+
+  function normalizeSplitPaymentPromoSettings(value) {
+    var source = normalizeObject(value);
+    var defaults = DEFAULT_SPLIT_PAYMENT_PROMO_CONFIG;
+    var rawPromos = Array.isArray(source.promos) && source.promos.length
+      ? source.promos.slice(0, 2)
+      : [source, defaults.promos[1]];
+    var promos = rawPromos.map(function (promo, index) {
+      return normalizeSplitPaymentPromoCampaign(
+        promo,
+        defaults.promos[index] || defaults.promos[0],
+        index
+      );
+    });
+    while (promos.length < 2) {
+      promos.push(normalizeSplitPaymentPromoCampaign({}, defaults.promos[promos.length], promos.length));
+    }
+    var primary = promos[0];
+    return {
+      id: primary.id,
+      title: primary.title,
+      enabled: primary.enabled,
+      expiresAt: primary.expiresAt,
+      stationIds: primary.stationIds,
+      stationNameIncludes: primary.stationNameIncludes,
+      roomIds: primary.roomIds,
+      roomNameIncludes: primary.roomNameIncludes,
+      shareAmounts: primary.shareAmounts,
+      baseShareAmount: primary.baseShareAmount,
+      vivaDirectionId: primary.vivaDirectionId,
+      vivaExerciseTypeId: primary.vivaExerciseTypeId,
+      promos: promos,
       updatedAt: String(source.updatedAt || '').trim(),
       updatedBy: String(source.updatedBy || '').trim()
     };
@@ -23280,49 +23494,64 @@
       var settings = normalizeSplitPaymentPromoSettings(
         state.settings && state.settings.splitPaymentPromo
       );
+      var firstPromo = settings.promos[0];
+      var secondPromo = settings.promos[1];
       var canManage = canManageAdvertisingSettings(cfg);
 
       clearNode(dom.splitPromoList);
-      var row = document.createElement('div');
-      row.className = 'phab-admin-settings-row';
-      dom.splitPromoList.appendChild(row);
+      [firstPromo, secondPromo].forEach(function (promo) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-settings-row';
+        dom.splitPromoList.appendChild(row);
 
-      var main = document.createElement('div');
-      main.className = 'phab-admin-settings-row-main';
-      row.appendChild(main);
+        var main = document.createElement('div');
+        main.className = 'phab-admin-settings-row-main';
+        row.appendChild(main);
 
-      var title = document.createElement('div');
-      title.className = 'phab-admin-settings-row-title';
-      title.textContent = settings.enabled ? 'Акция включена' : 'Акция выключена';
-      main.appendChild(title);
+        var title = document.createElement('div');
+        title.className = 'phab-admin-settings-row-title';
+        title.textContent = promo.title + ': ' + (promo.enabled ? 'включена' : 'выключена');
+        main.appendChild(title);
 
-      var meta = document.createElement('div');
-      meta.className = 'phab-admin-settings-row-meta';
-      meta.textContent =
-        'станции: ' +
-        (settings.stationIds.length ? settings.stationIds.join(', ') : settings.stationNameIncludes.join(', ')) +
-        (settings.expiresAt ? ' · действует на даты игр до: ' + formatDateInputValue(settings.expiresAt) : '') +
-        ' · корты: ' +
-        (settings.roomIds.length ? settings.roomIds.join(', ') : settings.roomNameIncludes.join(', ')) +
-        ' · 2 команды: ' +
-        formatMoney(settings.shareAmounts.twoTeams) +
-        ' · 4 игрока: ' +
-        formatMoney(settings.shareAmounts.fourPlayers) +
-        (settings.updatedAt ? ' · обновлено: ' + formatDateTimeFull(settings.updatedAt) : '') +
-        (settings.updatedBy ? ' · кем: ' + settings.updatedBy : '');
-      main.appendChild(meta);
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-settings-row-meta';
+        meta.textContent =
+          'станции: ' +
+          (promo.stationIds.length ? promo.stationIds.join(', ') : promo.stationNameIncludes.join(', ')) +
+          (promo.expiresAt ? ' · действует на даты игр до: ' + formatDateInputValue(promo.expiresAt) : '') +
+          ' · корты: ' +
+          (promo.roomIds.length ? promo.roomIds.join(', ') : promo.roomNameIncludes.join(', ')) +
+          ' · 2 команды: ' +
+          formatMoney(promo.shareAmounts.twoTeams) +
+          ' · 4 игрока: ' +
+          formatMoney(promo.shareAmounts.fourPlayers) +
+          (settings.updatedAt ? ' · обновлено: ' + formatDateTimeFull(settings.updatedAt) : '') +
+          (settings.updatedBy ? ' · кем: ' + settings.updatedBy : '');
+        main.appendChild(meta);
+      });
 
-      dom.splitPromoEnabledInput.checked = settings.enabled === true;
-      dom.splitPromoExpiresAtInput.value = formatDateInputValue(settings.expiresAt);
-      dom.splitPromoStationIdsInput.value = settings.stationIds.join(', ');
-      dom.splitPromoStationNamesInput.value = settings.stationNameIncludes.join(', ');
-      dom.splitPromoRoomIdsInput.value = settings.roomIds.join(', ');
-      dom.splitPromoRoomNamesInput.value = settings.roomNameIncludes.join(', ');
-      dom.splitPromoTwoTeamsInput.value = String(settings.shareAmounts.twoTeams);
-      dom.splitPromoFourPlayersInput.value = String(settings.shareAmounts.fourPlayers);
-      dom.splitPromoBaseShareInput.value = String(settings.baseShareAmount);
-      dom.splitPromoDirectionInput.value = String(settings.vivaDirectionId);
-      dom.splitPromoExerciseTypeInput.value = String(settings.vivaExerciseTypeId);
+      dom.splitPromoEnabledInput.checked = firstPromo.enabled === true;
+      dom.splitPromoExpiresAtInput.value = formatDateInputValue(firstPromo.expiresAt);
+      dom.splitPromoStationIdsInput.value = firstPromo.stationIds.join(', ');
+      dom.splitPromoStationNamesInput.value = firstPromo.stationNameIncludes.join(', ');
+      dom.splitPromoRoomIdsInput.value = firstPromo.roomIds.join(', ');
+      dom.splitPromoRoomNamesInput.value = firstPromo.roomNameIncludes.join(', ');
+      dom.splitPromoTwoTeamsInput.value = String(firstPromo.shareAmounts.twoTeams);
+      dom.splitPromoFourPlayersInput.value = String(firstPromo.shareAmounts.fourPlayers);
+      dom.splitPromoBaseShareInput.value = String(firstPromo.baseShareAmount);
+      dom.splitPromoDirectionInput.value = String(firstPromo.vivaDirectionId);
+      dom.splitPromoExerciseTypeInput.value = String(firstPromo.vivaExerciseTypeId);
+      dom.splitPromoSecondEnabledInput.checked = secondPromo.enabled === true;
+      dom.splitPromoSecondExpiresAtInput.value = formatDateInputValue(secondPromo.expiresAt);
+      dom.splitPromoSecondStationIdsInput.value = secondPromo.stationIds.join(', ');
+      dom.splitPromoSecondStationNamesInput.value = secondPromo.stationNameIncludes.join(', ');
+      dom.splitPromoSecondRoomIdsInput.value = secondPromo.roomIds.join(', ');
+      dom.splitPromoSecondRoomNamesInput.value = secondPromo.roomNameIncludes.join(', ');
+      dom.splitPromoSecondTwoTeamsInput.value = String(secondPromo.shareAmounts.twoTeams);
+      dom.splitPromoSecondFourPlayersInput.value = String(secondPromo.shareAmounts.fourPlayers);
+      dom.splitPromoSecondBaseShareInput.value = String(secondPromo.baseShareAmount);
+      dom.splitPromoSecondDirectionInput.value = String(secondPromo.vivaDirectionId);
+      dom.splitPromoSecondExerciseTypeInput.value = String(secondPromo.vivaExerciseTypeId);
 
       [
         dom.splitPromoEnabledInput,
@@ -23336,6 +23565,17 @@
         dom.splitPromoBaseShareInput,
         dom.splitPromoDirectionInput,
         dom.splitPromoExerciseTypeInput,
+        dom.splitPromoSecondEnabledInput,
+        dom.splitPromoSecondExpiresAtInput,
+        dom.splitPromoSecondStationIdsInput,
+        dom.splitPromoSecondStationNamesInput,
+        dom.splitPromoSecondRoomIdsInput,
+        dom.splitPromoSecondRoomNamesInput,
+        dom.splitPromoSecondTwoTeamsInput,
+        dom.splitPromoSecondFourPlayersInput,
+        dom.splitPromoSecondBaseShareInput,
+        dom.splitPromoSecondDirectionInput,
+        dom.splitPromoSecondExerciseTypeInput,
         dom.splitPromoSaveBtn
       ].forEach(function (input) {
         input.disabled = !canManage;
@@ -23359,27 +23599,73 @@
       );
     }
 
-    function readSplitPaymentPromoForm() {
-      var stationIds = parseCsvInput(dom.splitPromoStationIdsInput.value);
-      var stationNameIncludes = parseCsvInput(dom.splitPromoStationNamesInput.value);
-      if (stationIds.length === 0 && stationNameIncludes.length === 0) {
-        throw new Error('Укажите Терехово через Station ID или часть названия станции');
+    function readSplitPaymentPromoFormSection(section, index) {
+      var stationIds = parseCsvInput(section.stationIdsInput.value);
+      var stationNameIncludes = parseCsvInput(section.stationNamesInput.value);
+      var enabled = section.enabledInput.checked === true;
+      if (enabled && stationIds.length === 0 && stationNameIncludes.length === 0) {
+        throw new Error('Укажите станцию для акции ' + (index + 1) + ' через Station ID или часть названия');
       }
 
       return {
-        enabled: dom.splitPromoEnabledInput.checked === true,
-        expiresAt: buildEndOfDayIsoFromDateInput(dom.splitPromoExpiresAtInput.value),
+        id: 'promo-' + (index + 1),
+        title: 'Акция ' + (index + 1),
+        enabled: enabled,
+        expiresAt: buildEndOfDayIsoFromDateInput(section.expiresAtInput.value),
         stationIds: stationIds,
         stationNameIncludes: stationNameIncludes,
-        roomIds: parseCsvInput(dom.splitPromoRoomIdsInput.value),
-        roomNameIncludes: parseCsvInput(dom.splitPromoRoomNamesInput.value),
+        roomIds: parseCsvInput(section.roomIdsInput.value),
+        roomNameIncludes: parseCsvInput(section.roomNamesInput.value),
         shareAmounts: {
-          twoTeams: normalizeMoneySetting(dom.splitPromoTwoTeamsInput.value, 500),
-          fourPlayers: normalizeMoneySetting(dom.splitPromoFourPlayersInput.value, 250)
+          twoTeams: normalizeMoneySetting(section.twoTeamsInput.value, index === 0 ? 500 : 0),
+          fourPlayers: normalizeMoneySetting(section.fourPlayersInput.value, index === 0 ? 250 : 0)
         },
-        baseShareAmount: normalizeMoneySetting(dom.splitPromoBaseShareInput.value, 2000),
-        vivaDirectionId: normalizeIntSetting(dom.splitPromoDirectionInput.value, 4485),
-        vivaExerciseTypeId: normalizeIntSetting(dom.splitPromoExerciseTypeInput.value, 1208)
+        baseShareAmount: normalizeMoneySetting(section.baseShareInput.value, 2000),
+        vivaDirectionId: normalizeIntSetting(section.directionInput.value, 4485),
+        vivaExerciseTypeId: normalizeIntSetting(section.exerciseTypeInput.value, 1208)
+      };
+    }
+
+    function readSplitPaymentPromoForm() {
+      var firstPromo = readSplitPaymentPromoFormSection({
+        enabledInput: dom.splitPromoEnabledInput,
+        expiresAtInput: dom.splitPromoExpiresAtInput,
+        stationIdsInput: dom.splitPromoStationIdsInput,
+        stationNamesInput: dom.splitPromoStationNamesInput,
+        roomIdsInput: dom.splitPromoRoomIdsInput,
+        roomNamesInput: dom.splitPromoRoomNamesInput,
+        twoTeamsInput: dom.splitPromoTwoTeamsInput,
+        fourPlayersInput: dom.splitPromoFourPlayersInput,
+        baseShareInput: dom.splitPromoBaseShareInput,
+        directionInput: dom.splitPromoDirectionInput,
+        exerciseTypeInput: dom.splitPromoExerciseTypeInput
+      }, 0);
+      var secondPromo = readSplitPaymentPromoFormSection({
+        enabledInput: dom.splitPromoSecondEnabledInput,
+        expiresAtInput: dom.splitPromoSecondExpiresAtInput,
+        stationIdsInput: dom.splitPromoSecondStationIdsInput,
+        stationNamesInput: dom.splitPromoSecondStationNamesInput,
+        roomIdsInput: dom.splitPromoSecondRoomIdsInput,
+        roomNamesInput: dom.splitPromoSecondRoomNamesInput,
+        twoTeamsInput: dom.splitPromoSecondTwoTeamsInput,
+        fourPlayersInput: dom.splitPromoSecondFourPlayersInput,
+        baseShareInput: dom.splitPromoSecondBaseShareInput,
+        directionInput: dom.splitPromoSecondDirectionInput,
+        exerciseTypeInput: dom.splitPromoSecondExerciseTypeInput
+      }, 1);
+
+      return {
+        enabled: firstPromo.enabled,
+        expiresAt: firstPromo.expiresAt,
+        stationIds: firstPromo.stationIds,
+        stationNameIncludes: firstPromo.stationNameIncludes,
+        roomIds: firstPromo.roomIds,
+        roomNameIncludes: firstPromo.roomNameIncludes,
+        shareAmounts: firstPromo.shareAmounts,
+        baseShareAmount: firstPromo.baseShareAmount,
+        vivaDirectionId: firstPromo.vivaDirectionId,
+        vivaExerciseTypeId: firstPromo.vivaExerciseTypeId,
+        promos: [firstPromo, secondPromo]
       };
     }
 

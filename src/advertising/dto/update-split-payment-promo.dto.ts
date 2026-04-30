@@ -10,8 +10,10 @@ import {
   IsString,
   Max,
   MaxLength,
-  Min
+  Min,
+  ValidateNested
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateSplitPaymentPromoShareAmountsDto {
   @IsNumber()
@@ -25,7 +27,17 @@ export class UpdateSplitPaymentPromoShareAmountsDto {
   fourPlayers!: number;
 }
 
-export class UpdateSplitPaymentPromoDto {
+export class UpdateSplitPaymentPromoCampaignDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  id?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  title?: string;
+
   @IsBoolean()
   enabled!: boolean;
 
@@ -79,4 +91,13 @@ export class UpdateSplitPaymentPromoDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+}
+
+export class UpdateSplitPaymentPromoDto extends UpdateSplitPaymentPromoCampaignDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @ValidateNested({ each: true })
+  @Type(() => UpdateSplitPaymentPromoCampaignDto)
+  promos?: UpdateSplitPaymentPromoCampaignDto[];
 }

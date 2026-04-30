@@ -9,13 +9,17 @@ import { randomUUID } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { UpdateCabinetHomeAdvertisingDto } from './dto/update-cabinet-home-advertising.dto';
-import { UpdateSplitPaymentPromoDto } from './dto/update-split-payment-promo.dto';
+import {
+  UpdateSplitPaymentPromoCampaignDto,
+  UpdateSplitPaymentPromoDto
+} from './dto/update-split-payment-promo.dto';
 import {
   AdvertisingAssetRecord,
   CabinetHomeAdvertisingAdRecord,
   CabinetHomeAdvertisingAdminSnapshot,
   CabinetHomeAdvertisingPublicSnapshot,
   CabinetHomeAdvertisingSettingsRecord,
+  SplitPaymentPromoCampaignRecord,
   SplitPaymentPromoAdminSnapshot,
   SplitPaymentPromoPublicSnapshot,
   SplitPaymentPromoSettingsRecord
@@ -185,31 +189,36 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SplitPaymentPromoAdminSnapshot> {
     const current = await this.ensureSplitPaymentPromoSettingsLoaded();
     const now = new Date().toISOString();
+    const inputPromos = Array.isArray(input.promos) && input.promos.length > 0
+      ? input.promos.slice(0, 2)
+      : [input];
+    const currentPromos = this.resolveSplitPaymentPromoCampaigns(current);
+    const promos = inputPromos.map((promo, index) =>
+      this.normalizeSplitPaymentPromoCampaignInput(
+        promo,
+        currentPromos[index] ?? currentPromos[0],
+        index
+      )
+    );
+
+    for (const promo of promos) {
+      if (promo.stationIds.length === 0 && promo.stationNameIncludes.length === 0) {
+        if (promo.enabled === true) {
+          throw new BadRequestException(
+            `Station restriction is required for ${promo.title.toLowerCase()}`
+          );
+        }
+      }
+    }
+
+    const primaryPromo = promos[0] ?? currentPromos[0];
     const nextSettings: SplitPaymentPromoSettingsRecord = {
       key: this.splitPaymentPromoKey,
-      enabled: input.enabled === true,
-      expiresAt: this.normalizeOptionalDateTime(input.expiresAt),
-      stationIds: this.normalizeStringList(input.stationIds),
-      stationNameIncludes: this.normalizeStringList(input.stationNameIncludes),
-      roomIds: this.normalizeStringList(input.roomIds),
-      roomNameIncludes: this.normalizeStringList(input.roomNameIncludes),
-      shareAmounts: {
-        twoTeams: this.normalizeMoney(input.shareAmounts?.twoTeams, current.shareAmounts.twoTeams),
-        fourPlayers: this.normalizeMoney(input.shareAmounts?.fourPlayers, current.shareAmounts.fourPlayers)
-      },
-      baseShareAmount: this.normalizeMoney(input.baseShareAmount, current.baseShareAmount),
-      vivaDirectionId: this.normalizePositiveInteger(input.vivaDirectionId, current.vivaDirectionId),
-      vivaExerciseTypeId: this.normalizePositiveInteger(
-        input.vivaExerciseTypeId,
-        current.vivaExerciseTypeId
-      ),
+      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      promos,
       updatedAt: now,
       updatedBy: this.normalizeOptional(updatedBy) ?? current.updatedBy
     };
-
-    if (nextSettings.stationIds.length === 0 && nextSettings.stationNameIncludes.length === 0) {
-      throw new BadRequestException('Station restriction is required for split-payment promo');
-    }
 
     this.splitPaymentPromoSettings = nextSettings;
     this.splitPaymentPromoLoaded = true;
@@ -341,17 +350,11 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   private toSplitPaymentPromoAdminSnapshot(
     settings: SplitPaymentPromoSettingsRecord
   ): SplitPaymentPromoAdminSnapshot {
+    const promos = this.resolveSplitPaymentPromoCampaigns(settings);
+    const primaryPromo = promos[0];
     return {
-      enabled: settings.enabled === true,
-      expiresAt: settings.expiresAt,
-      stationIds: settings.stationIds,
-      stationNameIncludes: settings.stationNameIncludes,
-      roomIds: settings.roomIds,
-      roomNameIncludes: settings.roomNameIncludes,
-      shareAmounts: settings.shareAmounts,
-      baseShareAmount: settings.baseShareAmount,
-      vivaDirectionId: settings.vivaDirectionId,
-      vivaExerciseTypeId: settings.vivaExerciseTypeId,
+      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      promos,
       updatedAt: settings.updatedAt,
       updatedBy: settings.updatedBy
     };
@@ -361,23 +364,20 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     settings: SplitPaymentPromoSettingsRecord,
     forDate?: string
   ): SplitPaymentPromoPublicSnapshot {
+    const promos = this.resolveSplitPaymentPromoCampaigns(settings).map((promo) => ({
+      ...promo,
+      enabled: this.isSplitPaymentPromoActive(promo, forDate)
+    }));
+    const primaryPromo = promos[0];
     return {
-      enabled: this.isSplitPaymentPromoActive(settings, forDate),
-      expiresAt: settings.expiresAt,
-      stationIds: settings.stationIds,
-      stationNameIncludes: settings.stationNameIncludes,
-      roomIds: settings.roomIds,
-      roomNameIncludes: settings.roomNameIncludes,
-      shareAmounts: settings.shareAmounts,
-      baseShareAmount: settings.baseShareAmount,
-      vivaDirectionId: settings.vivaDirectionId,
-      vivaExerciseTypeId: settings.vivaExerciseTypeId,
+      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      promos,
       updatedAt: settings.updatedAt
     };
   }
 
   private isSplitPaymentPromoActive(
-    settings: SplitPaymentPromoSettingsRecord,
+    settings: SplitPaymentPromoCampaignRecord | SplitPaymentPromoSettingsRecord,
     forDate?: string
   ): boolean {
     if (settings.enabled !== true) {
@@ -448,8 +448,39 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   }
 
   private createDefaultSplitPaymentPromoSettings(): SplitPaymentPromoSettingsRecord {
+    const primaryPromo = this.createDefaultSplitPaymentPromoCampaign(0);
+    const secondaryPromo = this.createDefaultSplitPaymentPromoCampaign(1);
     return {
       key: this.splitPaymentPromoKey,
+      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      promos: [primaryPromo, secondaryPromo]
+    };
+  }
+
+  private createDefaultSplitPaymentPromoCampaign(index: number): SplitPaymentPromoCampaignRecord {
+    if (index === 1) {
+      return {
+        id: 'promo-2',
+        title: 'Акция 2',
+        enabled: false,
+        expiresAt: undefined,
+        stationIds: [],
+        stationNameIncludes: [],
+        roomIds: [],
+        roomNameIncludes: [],
+        shareAmounts: {
+          twoTeams: 0,
+          fourPlayers: 0
+        },
+        baseShareAmount: 2000,
+        vivaDirectionId: 4485,
+        vivaExerciseTypeId: 1208
+      };
+    }
+
+    return {
+      id: 'promo-1',
+      title: 'Акция 1',
       enabled: true,
       expiresAt: undefined,
       stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
@@ -474,38 +505,168 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       return defaults;
     }
 
+    const promos = Array.isArray(record.promos) && record.promos.length > 0
+      ? record.promos.slice(0, 2).map((promo, index) =>
+          this.normalizeSplitPaymentPromoCampaignRecord(
+            promo,
+            defaults.promos[index] ?? defaults.promos[0],
+            index
+          )
+        )
+      : [
+          this.normalizeSplitPaymentPromoCampaignRecord(
+            {
+              id: 'promo-1',
+              title: 'Акция 1',
+              enabled: record.enabled,
+              expiresAt: record.expiresAt,
+              stationIds: record.stationIds,
+              stationNameIncludes: record.stationNameIncludes,
+              roomIds: record.roomIds,
+              roomNameIncludes: record.roomNameIncludes,
+              shareAmounts: record.shareAmounts,
+              baseShareAmount: record.baseShareAmount,
+              vivaDirectionId: record.vivaDirectionId,
+              vivaExerciseTypeId: record.vivaExerciseTypeId
+            },
+            defaults.promos[0],
+            0
+          ),
+          defaults.promos[1]
+        ];
+    while (promos.length < 2) {
+      promos.push(defaults.promos[promos.length] ?? defaults.promos[0]);
+    }
+    const primaryPromo = promos[0] ?? defaults.promos[0];
+
     return {
       key: this.splitPaymentPromoKey,
-      enabled: record.enabled !== false,
+      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      promos,
+      updatedAt: this.normalizeOptional(record.updatedAt),
+      updatedBy: this.normalizeOptional(record.updatedBy)
+    };
+  }
+
+  private normalizeSplitPaymentPromoCampaignRecord(
+    record: Partial<SplitPaymentPromoCampaignRecord>,
+    fallback: SplitPaymentPromoCampaignRecord,
+    index: number
+  ): SplitPaymentPromoCampaignRecord {
+    const shareAmounts = record.shareAmounts ?? fallback.shareAmounts;
+    return {
+      id: this.normalizeOptional(record.id) ?? fallback.id ?? `promo-${index + 1}`,
+      title: this.normalizeOptional(record.title) ?? fallback.title ?? `Акция ${index + 1}`,
+      enabled: record.enabled === true || (record.enabled === undefined && fallback.enabled === true),
       expiresAt: this.normalizeOptionalDateTime(record.expiresAt),
-      stationIds: this.normalizeStringList(record.stationIds, defaults.stationIds),
+      stationIds: this.normalizeStringList(record.stationIds, fallback.stationIds),
       stationNameIncludes: this.normalizeStringList(
         record.stationNameIncludes,
-        defaults.stationNameIncludes
+        fallback.stationNameIncludes
       ),
-      roomIds: this.normalizeStringList(record.roomIds),
+      roomIds: this.normalizeStringList(record.roomIds, fallback.roomIds),
       roomNameIncludes: this.normalizeStringList(
         record.roomNameIncludes,
-        defaults.roomNameIncludes
+        fallback.roomNameIncludes
       ),
       shareAmounts: {
-        twoTeams: this.normalizeMoney(record.shareAmounts?.twoTeams, defaults.shareAmounts.twoTeams),
+        twoTeams: this.normalizeMoney(shareAmounts.twoTeams, fallback.shareAmounts.twoTeams),
         fourPlayers: this.normalizeMoney(
-          record.shareAmounts?.fourPlayers,
-          defaults.shareAmounts.fourPlayers
+          shareAmounts.fourPlayers,
+          fallback.shareAmounts.fourPlayers
         )
       },
-      baseShareAmount: this.normalizeMoney(record.baseShareAmount, defaults.baseShareAmount),
+      baseShareAmount: this.normalizeMoney(record.baseShareAmount, fallback.baseShareAmount),
       vivaDirectionId: this.normalizePositiveInteger(
         record.vivaDirectionId,
-        defaults.vivaDirectionId
+        fallback.vivaDirectionId
       ),
       vivaExerciseTypeId: this.normalizePositiveInteger(
         record.vivaExerciseTypeId,
-        defaults.vivaExerciseTypeId
+        fallback.vivaExerciseTypeId
+      )
+    };
+  }
+
+  private normalizeSplitPaymentPromoCampaignInput(
+    input: UpdateSplitPaymentPromoCampaignDto,
+    fallback: SplitPaymentPromoCampaignRecord,
+    index: number
+  ): SplitPaymentPromoCampaignRecord {
+    return {
+      id: this.normalizeOptional(input.id) ?? fallback.id ?? `promo-${index + 1}`,
+      title: this.normalizeOptional(input.title) ?? fallback.title ?? `Акция ${index + 1}`,
+      enabled: input.enabled === true,
+      expiresAt: this.normalizeOptionalDateTime(input.expiresAt),
+      stationIds: this.normalizeStringList(input.stationIds),
+      stationNameIncludes: this.normalizeStringList(input.stationNameIncludes),
+      roomIds: this.normalizeStringList(input.roomIds),
+      roomNameIncludes: this.normalizeStringList(input.roomNameIncludes),
+      shareAmounts: {
+        twoTeams: this.normalizeMoney(input.shareAmounts?.twoTeams, fallback.shareAmounts.twoTeams),
+        fourPlayers: this.normalizeMoney(
+          input.shareAmounts?.fourPlayers,
+          fallback.shareAmounts.fourPlayers
+        )
+      },
+      baseShareAmount: this.normalizeMoney(input.baseShareAmount, fallback.baseShareAmount),
+      vivaDirectionId: this.normalizePositiveInteger(input.vivaDirectionId, fallback.vivaDirectionId),
+      vivaExerciseTypeId: this.normalizePositiveInteger(
+        input.vivaExerciseTypeId,
+        fallback.vivaExerciseTypeId
+      )
+    };
+  }
+
+  private resolveSplitPaymentPromoCampaigns(
+    settings: SplitPaymentPromoSettingsRecord
+  ): SplitPaymentPromoCampaignRecord[] {
+    if (Array.isArray(settings.promos) && settings.promos.length > 0) {
+      const defaults = this.createDefaultSplitPaymentPromoSettings();
+      const promos = settings.promos.slice(0, 2);
+      while (promos.length < 2) {
+        promos.push(defaults.promos[promos.length] ?? defaults.promos[0]);
+      }
+      return promos;
+    }
+    const defaults = this.createDefaultSplitPaymentPromoSettings();
+    return [
+      this.normalizeSplitPaymentPromoCampaignRecord(
+        {
+          id: 'promo-1',
+          title: 'Акция 1',
+          enabled: settings.enabled,
+          expiresAt: settings.expiresAt,
+          stationIds: settings.stationIds,
+          stationNameIncludes: settings.stationNameIncludes,
+          roomIds: settings.roomIds,
+          roomNameIncludes: settings.roomNameIncludes,
+          shareAmounts: settings.shareAmounts,
+          baseShareAmount: settings.baseShareAmount,
+          vivaDirectionId: settings.vivaDirectionId,
+          vivaExerciseTypeId: settings.vivaExerciseTypeId
+        },
+        defaults.promos[0],
+        0
       ),
-      updatedAt: this.normalizeOptional(record.updatedAt),
-      updatedBy: this.normalizeOptional(record.updatedBy)
+      defaults.promos[1]
+    ];
+  }
+
+  private toSplitPaymentPromoLegacyFields(
+    promo: SplitPaymentPromoCampaignRecord
+  ): Omit<SplitPaymentPromoCampaignRecord, 'id' | 'title'> {
+    return {
+      enabled: promo.enabled === true,
+      expiresAt: promo.expiresAt,
+      stationIds: promo.stationIds,
+      stationNameIncludes: promo.stationNameIncludes,
+      roomIds: promo.roomIds,
+      roomNameIncludes: promo.roomNameIncludes,
+      shareAmounts: promo.shareAmounts,
+      baseShareAmount: promo.baseShareAmount,
+      vivaDirectionId: promo.vivaDirectionId,
+      vivaExerciseTypeId: promo.vivaExerciseTypeId
     };
   }
 

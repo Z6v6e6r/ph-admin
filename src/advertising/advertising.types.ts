@@ -67,8 +67,9 @@ export interface SplitPaymentPromoShareAmounts {
   fourPlayers: number;
 }
 
-export interface SplitPaymentPromoSettingsRecord {
-  key: string;
+export interface SplitPaymentPromoCampaignRecord {
+  id: string;
+  title: string;
   enabled: boolean;
   expiresAt?: string;
   stationIds: string[];
@@ -79,6 +80,14 @@ export interface SplitPaymentPromoSettingsRecord {
   baseShareAmount: number;
   vivaDirectionId: number;
   vivaExerciseTypeId: number;
+}
+
+export interface SplitPaymentPromoSettingsRecord extends Omit<
+  SplitPaymentPromoCampaignRecord,
+  'id' | 'title'
+> {
+  key: string;
+  promos: SplitPaymentPromoCampaignRecord[];
   updatedAt?: string;
   updatedBy?: string;
 }
