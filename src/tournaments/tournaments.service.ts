@@ -2967,11 +2967,10 @@ export class TournamentsService {
 
   private toPublicParticipantView(
     participant: TournamentParticipant
-  ): Pick<TournamentParticipant, 'id' | 'name' | 'phone' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'> {
+  ): Pick<TournamentParticipant, 'id' | 'name' | 'levelLabel' | 'avatarUrl' | 'gender' | 'paymentStatus' | 'status'> {
     return {
       id: participant.id,
       name: participant.name,
-      phone: participant.phone,
       levelLabel: participant.levelLabel,
       avatarUrl: participant.avatarUrl,
       gender: participant.gender,

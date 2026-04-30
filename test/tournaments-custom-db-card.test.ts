@@ -220,7 +220,8 @@ async function main(): Promise<void> {
   const hydrationCustomTournament = createHydrationCustomTournament();
   const hydrationService = createService({
     sourceTournaments: [createHydrationSourceTournament()],
-    customById: hydrationCustomTournament
+    customById: hydrationCustomTournament,
+    customBySlug: hydrationCustomTournament
   });
 
   const hydrated = await hydrationService.findCustomById(hydrationCustomTournament.id);
@@ -230,6 +231,14 @@ async function main(): Promise<void> {
   assert.equal(hydrated.participantsCount, 2);
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
+
+  const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
+  assert.ok(publicView, 'Public view should be returned for custom tournament');
+  assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
+    false
+  );
 
   const waitlistTournament = createWaitlistTournament();
   const waitlistService = createService({ customBySlug: waitlistTournament });

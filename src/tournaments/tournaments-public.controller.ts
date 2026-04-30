@@ -670,9 +670,9 @@ export class TournamentsPublicController {
         ? participants
             .slice(0, maxPlayers)
             .map((participant) => {
-              const name = this.pickString(participant.name) ?? 'Игрок';
+              const name = this.resolveParticipantDisplayName(participant.name);
               const level = this.pickString(participant.levelLabel) ?? '';
-              const avatarUrl = this.pickString(participant.avatarUrl);
+              const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
               return `<article class="participant">
                 <div class="avatar">
                   ${
@@ -692,8 +692,8 @@ export class TournamentsPublicController {
         ? participants
             .slice(0, 4)
             .map((participant) => {
-              const name = this.pickString(participant.name) ?? 'Игрок';
-              const avatarUrl = this.pickString(participant.avatarUrl);
+              const name = this.resolveParticipantDisplayName(participant.name);
+              const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
               const level = this.pickString(participant.levelLabel) ?? '';
               return `<span class="teaser-avatar">
                 ${
@@ -1120,7 +1120,7 @@ export class TournamentsPublicController {
   <body>
     <main class="page">
       <section class="poster">
-        <a class="back" href="${this.escapeHtml(this.toAbsoluteUrl(this.directoryUrl, request, user))}" aria-label="Назад">‹</a>
+        <a class="back" data-back-link href="${this.escapeHtml(this.toAbsoluteUrl(this.directoryUrl, request, user))}" aria-label="Назад">‹</a>
         <div class="date-badge">
           <span>${this.escapeHtml(this.formatDateBadgeWeekday(tournament.startsAt).toUpperCase() || 'ДАТА')}</span>
           <span>${this.escapeHtml(this.formatDateBadgeDay(tournament.startsAt))}</span>
@@ -1193,6 +1193,20 @@ export class TournamentsPublicController {
         ${actionHtml}
       </section>
     </main>
+    <script>
+      (function () {
+        var backLink = document.querySelector('[data-back-link]');
+        if (!backLink) {
+          return;
+        }
+        backLink.addEventListener('click', function (event) {
+          if (window.history.length > 1 && document.referrer) {
+            event.preventDefault();
+            window.history.back();
+          }
+        });
+      })();
+    </script>
     ${actionScript}
   </body>
 </html>`;
@@ -3168,6 +3182,23 @@ export class TournamentsPublicController {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
+  private resolveParticipantDisplayName(value: unknown): string {
+    const name = this.pickString(value);
+    if (!name || this.isPhoneLikeValue(name)) {
+      return 'Игрок';
+    }
+    return name;
+  }
+
+  private resolveParticipantAvatarUrl(
+    value: unknown,
+    request: Request,
+    user?: RequestUser
+  ): string {
+    const avatarUrl = this.pickString(value);
+    return avatarUrl ? this.toAbsoluteUrl(avatarUrl, request, user) : '';
+  }
+
   private resolveInitials(value: string): string {
     const words = String(value || '')
       .trim()
@@ -3180,6 +3211,11 @@ export class TournamentsPublicController {
       return words[0].slice(0, 2).toUpperCase();
     }
     return `${words[0][0] ?? ''}${words[1][0] ?? ''}`.toUpperCase();
+  }
+
+  private isPhoneLikeValue(value: string): boolean {
+    const digits = String(value ?? '').replace(/\D+/g, '');
+    return digits.length >= 10;
   }
 
   private buildMapUrl(location: string): string {

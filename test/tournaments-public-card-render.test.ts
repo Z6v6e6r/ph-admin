@@ -43,6 +43,15 @@ function createTournament(): TournamentPublicView {
         gender: 'MIXED',
         paymentStatus: 'PAID',
         status: 'REGISTERED'
+      },
+      {
+        id: 'player-phone',
+        name: '79104303190',
+        levelLabel: 'D',
+        avatarUrl: '/uploads/player-phone.jpg',
+        gender: 'MIXED',
+        paymentStatus: 'PAID',
+        status: 'REGISTERED'
       }
     ],
     waitlist: [],
@@ -167,6 +176,14 @@ function createFlow(
   };
 }
 
+function createSessionServiceMock(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    requiresRealAuth: () => true,
+    resolveExternalAuthorizationHeader: () => undefined,
+    ...overrides
+  };
+}
+
 async function main(): Promise<void> {
   const tournament = createTournament();
   const controller = new TournamentsPublicController(
@@ -197,6 +214,10 @@ async function main(): Promise<void> {
     assert.match(html ?? '', /Вы в турнире!/);
     assert.match(html ?? '', /Участники турнира/);
     assert.match(html ?? '', /Елена Полкова/);
+    assert.doesNotMatch(html ?? '', /79104303190/);
+    assert.doesNotMatch(html ?? '', />79</);
+    assert.match(html ?? '', /https:\/\/padlhub\.ru\/uploads\/player-phone\.jpg/);
+    assert.match(html ?? '', /data-back-link/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
   }
@@ -207,16 +228,15 @@ async function main(): Promise<void> {
         getPublicBySlug: async () => tournament,
         getPublicJoinFlow: async () => createFlow(tournament, 'PROFILE_REQUIRED')
       } as never,
-      {
+      createSessionServiceMock({
         ensureAuthorizedClient: () => ({
           id: 'guest-1',
           authorized: false,
           authSource: 'cookie',
           onboardingCompleted: false,
           subscriptions: []
-        }),
-        requiresRealAuth: () => true
-      } as never
+        })
+      }) as never
     );
     const capture = createResponseCapture();
     await controllerWithFlow.findPublicBySlug(
@@ -238,7 +258,7 @@ async function main(): Promise<void> {
         getPublicBySlug: async () => tournament,
         getPublicJoinFlow: async () => createFlow(tournament, 'READY_TO_JOIN')
       } as never,
-      {
+      createSessionServiceMock({
         ensureAuthorizedClient: () => ({
           id: 'client-1',
           authorized: true,
@@ -247,9 +267,8 @@ async function main(): Promise<void> {
           phoneVerified: true,
           onboardingCompleted: true,
           subscriptions: []
-        }),
-        requiresRealAuth: () => true
-      } as never
+        })
+      }) as never
     );
     const capture = createResponseCapture();
     await controllerWithFlow.findPublicBySlug(
@@ -277,7 +296,7 @@ async function main(): Promise<void> {
             accessMessage: 'Уровень игрока не подходит под условия этого турнира.'
           })
       } as never,
-      {
+      createSessionServiceMock({
         ensureAuthorizedClient: () => ({
           id: 'client-1',
           authorized: true,
@@ -287,9 +306,8 @@ async function main(): Promise<void> {
           onboardingCompleted: true,
           levelLabel: 'A',
           subscriptions: []
-        }),
-        requiresRealAuth: () => true
-      } as never
+        })
+      }) as never
     );
     const capture = createResponseCapture();
     await controllerWithFlow.renderJoinPage(
