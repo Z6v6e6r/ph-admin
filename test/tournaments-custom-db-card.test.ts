@@ -286,8 +286,7 @@ async function main(): Promise<void> {
   const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
   assert.ok(publicView, 'Public view should be returned for custom tournament');
   assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
-  assert.equal(publicView.participants?.[1]?.name, 'Анна Максимова');
-  assert.equal(publicView.participants?.length, 2);
+  assert.equal(publicView.participants?.length, 1);
   assert.equal(
     Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
     false

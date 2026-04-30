@@ -3039,6 +3039,9 @@ export class TournamentsService {
 
   private buildDisplayTournamentParticipants(tournament: CustomTournament): TournamentParticipant[] {
     const participants = [...tournament.participants];
+    if (participants.length > 0) {
+      return participants;
+    }
     const seen = new Set<string>();
     participants.forEach((participant) => {
       const key = this.buildParticipantKey(participant);

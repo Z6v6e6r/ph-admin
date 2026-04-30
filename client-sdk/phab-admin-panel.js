@@ -16539,11 +16539,15 @@
         return sourceTournament;
       }
 
+      var customParticipants = dedupeTournamentParticipants(custom.participants);
       var sourceParticipants = dedupeTournamentParticipants(source.participants);
       var sourceParticipantsCount = Number(source.participantsCount);
       var sourceHasParticipantState =
         String(source.source || '').toUpperCase() === 'VIVA' &&
         (sourceParticipants.length > 0 || Number.isFinite(sourceParticipantsCount));
+      var mergedParticipants = sourceParticipants.length > 0
+        ? sourceParticipants
+        : customParticipants;
       var sourceDetails = normalizeObject(source.details);
       var sourceSnapshot = normalizeObject(sourceDetails.sourceTournamentSnapshot);
       var customDetails = normalizeObject(custom.details);
@@ -16561,13 +16565,17 @@
         exerciseTypeId: custom.exerciseTypeId || source.exerciseTypeId,
         maxPlayers: custom.maxPlayers || source.maxPlayers,
         participants: sourceHasParticipantState
-          ? sourceParticipants
-          : dedupeTournamentParticipants(custom.participants),
+          ? mergedParticipants
+          : customParticipants,
         participantsCount: sourceHasParticipantState
-          ? Math.max(sourceParticipants.length, Number.isFinite(sourceParticipantsCount) ? sourceParticipantsCount : 0)
+          ? Math.max(
+              mergedParticipants.length,
+              Number.isFinite(sourceParticipantsCount) ? sourceParticipantsCount : 0,
+              Number(custom.participantsCount) || 0
+            )
           : custom.participantsCount,
         paidParticipantsCount: sourceHasParticipantState
-          ? sourceParticipants.filter(function (person) {
+          ? mergedParticipants.filter(function (person) {
               return String(person.paymentStatus || '').toUpperCase() === 'PAID';
             }).length
           : custom.paidParticipantsCount,
@@ -16600,6 +16608,9 @@
 
     function buildTournamentEditorParticipants(tournament) {
       var participants = dedupeTournamentParticipants(tournament && tournament.participants);
+      if (participants.length > 0) {
+        return participants;
+      }
       var seen = new Set();
       participants.forEach(function (person) {
         var key = getTournamentParticipantKey(person);
@@ -16610,6 +16621,13 @@
 
       getTournamentPendingJoinPayments(tournament).forEach(function (entry, index) {
         var person = normalizeTournamentPendingJoinPayment(entry, index);
+        var personKey = getTournamentParticipantKey(person);
+        if (personKey && seen.has(personKey)) {
+          return;
+        }
+        if (personKey) {
+          seen.add(personKey);
+        }
         var key = person.id ? 'pending:' + person.id : 'pending-index:' + String(index);
         if (key && seen.has(key)) {
           return;
