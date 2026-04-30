@@ -50,11 +50,21 @@ function createTournament(): TournamentPublicView {
         levelLabel: 'D',
         avatarUrl: '/uploads/player-phone.jpg',
         gender: 'MIXED',
-        paymentStatus: 'PAID',
+        paymentStatus: 'UNPAID',
         status: 'REGISTERED'
       }
     ],
-    waitlist: [],
+    waitlist: [
+      {
+        id: 'waitlist-1',
+        name: 'Ольга Листова',
+        levelLabel: '2.75',
+        avatarUrl: null,
+        gender: 'MIXED',
+        paymentStatus: 'UNPAID',
+        status: 'WAITLIST'
+      }
+    ],
     registrationOpen: true,
     allowedManagerPhonesCount: 0,
     skin: {
@@ -211,18 +221,53 @@ async function main(): Promise<void> {
     assert.equal(capture.getHeader('content-type'), 'text/html; charset=utf-8');
     assert.match(html ?? '', /Девичник/);
     assert.match(html ?? '', /ТестMiniApp/);
-    assert.match(html ?? '', /Вы в турнире!/);
+    assert.doesNotMatch(html ?? '', /Вы в турнире!/);
+    assert.match(html ?? '', /ИДЕТ ЗАПИСЬ/);
     assert.match(html ?? '', /Участники турнира/);
     assert.match(html ?? '', /Елена Полкова/);
+    assert.match(html ?? '', /Ольга Листова/);
     assert.doesNotMatch(html ?? '', /79104303190/);
     assert.doesNotMatch(html ?? '', />79</);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/uploads\/player-phone\.jpg/);
+    assert.match(html ?? '', /tournament-sleeve\.png/);
+    assert.match(html ?? '', /D\+\/C/);
+    assert.match(html ?? '', /participant is-muted/);
     assert.match(html ?? '', /data-back-link/);
     assert.match(html ?? '', /<button class="back"[^>]*data-back-link/);
     assert.match(html ?? '', /data-fallback-url="https:\/\/padlhub\.ru\/tournaments"/);
     assert.match(html ?? '', /clip-path: circle\(50%\)/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
+  }
+
+  {
+    const controllerWithRegisteredFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () => createFlow(tournament, 'ALREADY_REGISTERED')
+      } as never,
+      createSessionServiceMock({
+        ensureAuthorizedClient: () => ({
+          id: 'client-1',
+          authorized: true,
+          authSource: 'headers',
+          phone: '79990001122',
+          phoneVerified: true,
+          onboardingCompleted: true,
+          subscriptions: []
+        })
+      }) as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithRegisteredFlow.findPublicBySlug(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined
+    );
+
+    assert.match(capture.getHtml() ?? '', /Вы в турнире!/);
   }
 
   assert.equal(

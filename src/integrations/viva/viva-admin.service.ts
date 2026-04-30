@@ -17,6 +17,7 @@ export interface VivaClientCabinetLookup {
   vivaCabinetUrl?: string;
   displayName?: string;
   avatarUrl?: string | null;
+  levelLabel?: string;
 }
 
 export interface VivaAdminSettingsSnapshot {
@@ -310,7 +311,8 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       vivaClientId,
       vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`,
       displayName: client ? this.extractClientName(client) : undefined,
-      avatarUrl: client ? this.extractClientAvatarUrl(client) ?? null : null
+      avatarUrl: client ? this.extractClientAvatarUrl(client) ?? null : null,
+      levelLabel: client ? this.extractClientLevelLabel(client) : undefined
     };
   }
 
@@ -551,6 +553,20 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       this.pickString(candidate.image_url) ??
       this.pickString(candidate.photoUrl) ??
       this.pickString(candidate.photo_url)
+    );
+  }
+
+  private extractClientLevelLabel(candidate: Record<string, unknown>): string | undefined {
+    return (
+      this.pickString(candidate.levelLabel) ??
+      this.pickString(candidate.level_label) ??
+      this.pickString(candidate.level) ??
+      this.pickString(candidate.grade) ??
+      this.pickString(candidate.ratingLabel) ??
+      this.pickString(candidate.rating_label) ??
+      this.pickString(candidate.rating) ??
+      this.pickString(candidate.gameRating) ??
+      this.pickString(candidate.game_rating)
     );
   }
 

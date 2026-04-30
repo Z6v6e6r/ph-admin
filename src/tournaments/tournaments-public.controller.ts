@@ -95,6 +95,8 @@ type JoinSubmission = {
   format?: string;
 };
 
+type TournamentPublicParticipantCard = NonNullable<TournamentPublicView['participants']>[number];
+
 @Controller('tournaments/public')
 export class TournamentsPublicController {
   private readonly directoryUrl =
@@ -650,14 +652,21 @@ export class TournamentsPublicController {
     const subtitle = this.pickString(tournament.skin.subtitle) ?? 'от PadlxAB';
     const imageUrl = this.pickString(tournament.skin.imageUrl);
     const absoluteImageUrl = imageUrl ? this.toAbsoluteUrl(imageUrl, request, user) : '';
+    const posterImageUrl =
+      absoluteImageUrl || this.toAbsoluteUrl('/api/ui/tournament-sleeve.png', request, user);
     const trainerAvatarUrl = this.pickString(tournament.trainerAvatarUrl);
     const absoluteTrainerAvatarUrl = trainerAvatarUrl
       ? this.toAbsoluteUrl(trainerAvatarUrl, request, user)
       : '';
     const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
     const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
+    const waitlist = Array.isArray(tournament.waitlist) ? tournament.waitlist : [];
     const maxPlayers = Math.max(1, Number(tournament.maxPlayers) || 1);
     const participantsCount = Math.max(0, Number(tournament.participantsCount) || participants.length);
+    const displayParticipants: TournamentPublicParticipantCard[] = [
+      ...participants.slice(0, maxPlayers),
+      ...waitlist
+    ];
     const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
     const genderLabel = this.formatGenderLabel(tournament.gender).toUpperCase();
     const capacityLabel = `${participantsCount} / ${maxPlayers}`;
@@ -670,6 +679,8 @@ export class TournamentsPublicController {
     const defaultActionLabel = tournament.registrationOpen
       ? this.pickString(tournament.skin.ctaLabel) ?? 'Записаться'
       : 'Посмотреть статус';
+    const clientInTournament =
+      flow?.code === 'ALREADY_REGISTERED' || flow?.code === 'ALREADY_WAITLISTED';
     const actionHtml = this.renderPublicTournamentActionHtml(
       tournament,
       absoluteJoinUrl,
@@ -678,19 +689,19 @@ export class TournamentsPublicController {
     );
     const actionScript = this.renderPublicTournamentActionScript(absoluteJoinUrl);
     const participantCards =
-      participants.length > 0
-        ? participants
-            .slice(0, maxPlayers)
+      displayParticipants.length > 0
+        ? displayParticipants
             .map((participant) => {
               const name = this.resolveParticipantDisplayName(participant.name);
-              const level = this.pickString(participant.levelLabel) ?? '';
+              const level = this.formatPublicLevelLabel(participant.levelLabel);
               const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
-              return `<article class="participant">
+              const stateClass = this.isMutedPublicParticipant(participant) ? ' is-muted' : '';
+              return `<article class="participant${stateClass}">
                 <div class="avatar">
                   ${
                     avatarUrl
                       ? `<img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(name)}" />`
-                      : this.escapeHtml(this.resolveInitials(name))
+                      : `<span class="avatar-initials">${this.escapeHtml(this.resolveInitials(name))}</span>`
                   }
                   ${level ? `<span class="level">${this.escapeHtml(level)}</span>` : ''}
                 </div>
@@ -700,18 +711,19 @@ export class TournamentsPublicController {
             .join('')
         : `<div class="empty">Участники появятся после первых записей.</div>`;
     const teaserAvatars =
-      participants.length > 0
-        ? participants
+      displayParticipants.length > 0
+        ? displayParticipants
             .slice(0, 4)
             .map((participant) => {
               const name = this.resolveParticipantDisplayName(participant.name);
               const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
-              const level = this.pickString(participant.levelLabel) ?? '';
-              return `<span class="teaser-avatar">
+              const level = this.formatPublicLevelLabel(participant.levelLabel);
+              const stateClass = this.isMutedPublicParticipant(participant) ? ' is-muted' : '';
+              return `<span class="teaser-avatar${stateClass}">
                 ${
                   avatarUrl
                     ? `<img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(name)}" />`
-                    : this.escapeHtml(this.resolveInitials(name))
+                    : `<span class="avatar-initials">${this.escapeHtml(this.resolveInitials(name))}</span>`
                 }
                 ${level ? `<b>${this.escapeHtml(level)}</b>` : ''}
               </span>`;
@@ -747,12 +759,9 @@ export class TournamentsPublicController {
         overflow: hidden;
         border-radius: 0 0 2px 2px;
         background:
-          linear-gradient(90deg, rgba(98, 54, 219, 0.86), rgba(154, 87, 255, 0.72)),
-          ${
-            absoluteImageUrl
-              ? `url("${this.escapeHtml(absoluteImageUrl)}") center/cover no-repeat`
-              : 'radial-gradient(circle at 24% 34%, rgba(231, 240, 153, 0.88), transparent 10%), linear-gradient(135deg, #5d40d7, #b65dff 58%, #5148c8)'
-          };
+          linear-gradient(90deg, rgba(76, 43, 196, 0.74), rgba(132, 74, 234, 0.42)),
+          url("${this.escapeHtml(posterImageUrl)}") center/cover no-repeat;
+        background-color: #100818;
       }
       .poster::after {
         content: "";
@@ -785,7 +794,7 @@ export class TournamentsPublicController {
         position: relative;
         z-index: 1;
         min-height: 230px;
-        padding: 42px 28px 28px 260px;
+        padding: 42px 140px 28px 260px;
         display: grid;
         align-content: center;
         color: #fff;
@@ -793,9 +802,11 @@ export class TournamentsPublicController {
       }
       .poster-title {
         margin: 0;
-        font-size: clamp(38px, 9vw, 64px);
+        max-width: 100%;
+        font-size: 56px;
         line-height: 0.96;
         font-weight: 900;
+        overflow-wrap: break-word;
       }
       .poster-subtitle {
         margin: 14px 0 0;
@@ -945,18 +956,30 @@ export class TournamentsPublicController {
         background: #e9e2f3;
         color: #2a2142;
         font-weight: 900;
+        isolation: isolate;
       }
       .teaser-avatar:first-child { margin-left: 0; }
       .teaser-avatar img {
         width: 100%;
         height: 100%;
-        border-radius: 999px;
+        border-radius: 50%;
         clip-path: circle(50%);
+        -webkit-mask-image: radial-gradient(circle, #000 67%, transparent 68%);
+        mask-image: radial-gradient(circle, #000 67%, transparent 68%);
         object-fit: cover;
+        display: block;
+      }
+      .avatar-initials {
+        width: 100%;
+        height: 100%;
+        border-radius: inherit;
+        display: grid;
+        place-items: center;
       }
       .teaser-avatar b,
       .level {
         position: absolute;
+        z-index: 2;
         right: -8px;
         bottom: -4px;
         min-width: 34px;
@@ -999,13 +1022,17 @@ export class TournamentsPublicController {
         background: #eee9f7;
         color: #33294d;
         font-weight: 900;
+        isolation: isolate;
       }
       .avatar img {
         width: 100%;
         height: 100%;
-        border-radius: 999px;
+        border-radius: 50%;
         clip-path: circle(50%);
+        -webkit-mask-image: radial-gradient(circle, #000 67%, transparent 68%);
+        mask-image: radial-gradient(circle, #000 67%, transparent 68%);
         object-fit: cover;
+        display: block;
       }
       .participant p {
         margin: 0;
@@ -1013,6 +1040,23 @@ export class TournamentsPublicController {
         font-size: 16px;
         line-height: 1.15;
         overflow-wrap: anywhere;
+      }
+      .participant.is-muted .avatar,
+      .teaser-avatar.is-muted {
+        background: #edf0f5;
+        color: #868391;
+      }
+      .participant.is-muted .avatar img,
+      .teaser-avatar.is-muted img {
+        filter: grayscale(1);
+        opacity: 0.52;
+      }
+      .participant.is-muted p {
+        color: #8d8799;
+      }
+      .participant.is-muted .level,
+      .teaser-avatar.is-muted b {
+        background: #8c8798;
       }
       .empty {
         padding: 26px;
@@ -1120,9 +1164,9 @@ export class TournamentsPublicController {
         .poster { min-height: 176px; }
         .poster-copy {
           min-height: 176px;
-          padding: 54px 20px 22px 112px;
+          padding: 52px 92px 22px 104px;
         }
-        .poster-title { font-size: 38px; }
+        .poster-title { font-size: 34px; }
         .poster-subtitle { font-size: 16px; }
         .date-badge {
           min-width: 70px;
@@ -1154,7 +1198,7 @@ export class TournamentsPublicController {
       <section class="content">
         <div class="headline">
           <h1>${this.escapeHtml(
-            participantsCount > 0 ? 'Вы в турнире!' : statusLabel
+            clientInTournament ? 'Вы в турнире!' : statusLabel
           )}</h1>
           <span class="pill">${this.escapeHtml(accessLabel)}</span>
         </div>
@@ -3074,14 +3118,50 @@ export class TournamentsPublicController {
 
   private formatAccessLevelRange(levels: string[]): string {
     const list = this.normalizeAccessLevelTokens(levels);
+    const labels = this.normalizePublicLevelLabels(list);
 
-    if (list.length === 0) {
+    if (labels.length === 0) {
       return 'без ограничений';
     }
-    if (list.length === 1) {
-      return list[0];
+    if (labels.length === 1) {
+      return labels[0];
     }
-    return `от ${list[0]} до ${list[list.length - 1]}`;
+    return labels.join('/');
+  }
+
+  private normalizePublicLevelLabels(tokens: string[]): string[] {
+    const labels: string[] = [];
+    const seen = new Set<string>();
+
+    tokens.forEach((token) => {
+      const label = this.formatPublicLevelLabel(token);
+      if (!label || seen.has(label)) {
+        return;
+      }
+      seen.add(label);
+      labels.push(label);
+    });
+
+    return labels;
+  }
+
+  private formatPublicLevelLabel(value?: string): string {
+    const normalized = normalizeTournamentLevelOptionToken(value);
+    if (!normalized) {
+      return '';
+    }
+    if (TOURNAMENT_BASE_LEVEL_OPTIONS.includes(
+      normalized as (typeof TOURNAMENT_BASE_LEVEL_OPTIONS)[number]
+    )) {
+      return normalized;
+    }
+
+    const matched = TOURNAMENT_LEVEL_OPTIONS.find((item) => item.value === normalized);
+    return matched ? matched.base : normalized;
+  }
+
+  private isMutedPublicParticipant(participant: TournamentPublicParticipantCard): boolean {
+    return participant.status === 'WAITLIST' || participant.paymentStatus === 'UNPAID';
   }
 
   private normalizeAccessLevelTokens(levels: string[]): string[] {

@@ -92,6 +92,13 @@ export class UiController {
     response.sendFile(this.resolveBrandingAssetPath('apple-touch-icon.png'));
   }
 
+  @Get('tournament-sleeve.png')
+  tournamentSleeve(@Res() response: Response): void {
+    response.setHeader('Content-Type', 'image/png');
+    response.setHeader('Cache-Control', 'public, max-age=86400');
+    response.sendFile(this.resolveBrandingAssetPath('tournament-sleeve.png'));
+  }
+
   @Get('site.webmanifest')
   siteManifest(@Res() response: Response): void {
     response.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');

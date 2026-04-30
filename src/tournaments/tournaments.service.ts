@@ -3251,7 +3251,8 @@ export class TournamentsService {
           normalizedPhone
         ),
         phone: normalizedPhone,
-        avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined
+        avatarUrl: participant.avatarUrl ?? lookup.avatarUrl ?? undefined,
+        levelLabel: participant.levelLabel ?? lookup.levelLabel ?? undefined
       };
     } catch (error) {
       this.logger.warn(
