@@ -1834,6 +1834,11 @@
         overflow:hidden;
         flex-shrink:0;
       }
+      .phab-admin-tournament-people-list .phab-admin-tournament-person-avatar{
+        width:36px;
+        height:36px;
+        font-size:12px;
+      }
       .phab-admin-tournament-person-avatar img{
         width:100%;
         height:100%;
@@ -16276,6 +16281,7 @@
         id: String(record.transactionId || 'pending-' + index),
         name: name,
         phone: phone,
+        avatarUrl: String(record.avatarUrl || record.photo || '').trim(),
         levelLabel: String(record.levelLabel || '').trim(),
         paymentStatus: 'PENDING',
         registeredAt: String(record.createdAt || '').trim(),
@@ -16365,9 +16371,7 @@
         } else {
           avatar.textContent = getTournamentPersonInitials(displayName);
         }
-        if (!config.compactList) {
-          card.appendChild(avatar);
-        }
+        card.appendChild(avatar);
 
         var main = document.createElement('div');
         main.className = 'phab-admin-tournament-person-main';

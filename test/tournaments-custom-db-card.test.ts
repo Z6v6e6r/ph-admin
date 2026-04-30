@@ -251,6 +251,14 @@ async function main(): Promise<void> {
             avatarUrl: 'https://example.com/alexey.jpg'
           };
         }
+        if (phone === '79603075826') {
+          return {
+            status: 'FOUND',
+            vivaClientId: 'viva-client-5826',
+            displayName: 'Анна Максимова',
+            avatarUrl: 'https://example.com/anna.jpg'
+          };
+        }
         return null;
       }
     }
@@ -266,9 +274,10 @@ async function main(): Promise<void> {
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
   const pendingJoinPayments = (
-    hydrated.details?.booking as { pendingJoinPayments?: Array<{ name?: string }> } | undefined
+    hydrated.details?.booking as { pendingJoinPayments?: Array<{ name?: string; avatarUrl?: string | null }> } | undefined
   )?.pendingJoinPayments ?? [];
-  assert.equal(pendingJoinPayments[0]?.name, 'Игрок 5826');
+  assert.equal(pendingJoinPayments[0]?.name, 'Анна Максимова');
+  assert.equal(pendingJoinPayments[0]?.avatarUrl, 'https://example.com/anna.jpg');
 
   const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
   assert.ok(publicView, 'Public view should be returned for custom tournament');

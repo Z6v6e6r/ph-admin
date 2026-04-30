@@ -80,6 +80,7 @@ interface PendingJoinPayment {
   transactionId: string;
   phone: string;
   name?: string;
+  avatarUrl?: string | null;
   levelLabel?: string;
   notes?: string;
   selectedPurchaseOptionId?: string;
@@ -2375,6 +2376,7 @@ export class TournamentsService {
         transactionId,
         phone: itemPhone,
         name: this.pickString(record.name) ?? undefined,
+        avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo),
         levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
         notes: this.pickString(record.notes) ?? undefined,
         selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
@@ -3027,6 +3029,7 @@ export class TournamentsService {
           transactionId,
           phone,
           name: this.pickString(record.name) ?? undefined,
+          avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo),
           levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
           notes: this.pickString(record.notes) ?? undefined,
           selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
@@ -3044,6 +3047,7 @@ export class TournamentsService {
       id: payment.transactionId,
       name: payment.name ?? payment.phone ?? `Заявка ${index + 1}`,
       phone: payment.phone,
+      avatarUrl: payment.avatarUrl,
       levelLabel: payment.levelLabel,
       paymentStatus: 'UNPAID',
       status: 'REGISTERED',
@@ -3202,6 +3206,7 @@ export class TournamentsService {
       id: payment.transactionId,
       name: payment.name ?? payment.phone,
       phone: payment.phone,
+      avatarUrl: payment.avatarUrl,
       levelLabel: payment.levelLabel,
       paymentStatus: 'UNPAID',
       status: 'REGISTERED',
@@ -3213,6 +3218,7 @@ export class TournamentsService {
       ...payment,
       phone: this.normalizePhone(payment.phone) ?? payment.phone,
       name: participant.name,
+      avatarUrl: participant.avatarUrl,
       levelLabel: participant.levelLabel
     };
   }
