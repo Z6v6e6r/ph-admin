@@ -1728,13 +1728,28 @@ export class TournamentsService {
         return;
       }
 
-      merged[existingIndex] = {
-        ...merged[existingIndex],
-        ...participant
-      };
+      merged[existingIndex] = this.mergeSourceAndCustomParticipant(
+        merged[existingIndex],
+        participant
+      );
     });
 
     return merged;
+  }
+
+  private mergeSourceAndCustomParticipant(
+    sourceParticipant: TournamentParticipant,
+    customParticipant: TournamentParticipant
+  ): TournamentParticipant {
+    return {
+      ...sourceParticipant,
+      ...customParticipant,
+      id: sourceParticipant.id ?? customParticipant.id,
+      name: sourceParticipant.name || customParticipant.name,
+      phone: customParticipant.phone ?? sourceParticipant.phone,
+      avatarUrl: sourceParticipant.avatarUrl ?? customParticipant.avatarUrl,
+      levelLabel: customParticipant.levelLabel ?? sourceParticipant.levelLabel
+    };
   }
 
   private buildParticipantKey(participant: TournamentParticipant): string {

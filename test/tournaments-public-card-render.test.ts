@@ -218,9 +218,18 @@ async function main(): Promise<void> {
     assert.doesNotMatch(html ?? '', />79</);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/uploads\/player-phone\.jpg/);
     assert.match(html ?? '', /data-back-link/);
+    assert.match(html ?? '', /<button class="back"[^>]*data-back-link/);
+    assert.match(html ?? '', /data-fallback-url="https:\/\/padlhub\.ru\/tournaments"/);
+    assert.match(html ?? '', /clip-path: circle\(50%\)/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
   }
+
+  assert.equal(
+    (controller as unknown as { formatGenderLabel(value: TournamentPublicView['gender']): string })
+      .formatGenderLabel('FEMALE'),
+    'Женский'
+  );
 
   {
     const controllerWithFlow = new TournamentsPublicController(

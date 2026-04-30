@@ -781,15 +781,11 @@ export class VivaTournamentsService {
       return null;
     }
 
+    const subject = this.resolveParticipantSubject(record);
     const name =
+      this.readDisplayName(subject) ??
       this.readString(record.clientName) ??
       this.readString(record.client_name) ??
-      this.readDisplayName(record.client) ??
-      this.readDisplayName(record.user) ??
-      this.readDisplayName(record.person) ??
-      this.readDisplayName(record.member) ??
-      this.readDisplayName(record.player) ??
-      this.readDisplayName(record.guest) ??
       this.readDisplayName(record);
     if (!name) {
       return null;
@@ -798,13 +794,18 @@ export class VivaTournamentsService {
     const paymentStatus = this.resolveParticipantPaymentStatus(record);
     return {
       id:
-        this.readString(record.id) ??
         this.readString(record.clientId) ??
         this.readString(record.client_id) ??
-        this.readNestedId(record.client) ??
+        this.readNestedId(subject) ??
+        this.readString(record.id) ??
         undefined,
       name,
       phone:
+        this.readPhone(subject?.phone) ??
+        this.readPhone(subject?.phoneNumber) ??
+        this.readPhone(subject?.phone_number) ??
+        this.readPhone(subject?.mobilePhone) ??
+        this.readPhone(subject?.mobile_phone) ??
         this.readPhone(record.phone) ??
         this.readPhone(record.phoneNumber) ??
         this.readPhone(record.phone_number) ??
@@ -812,10 +813,13 @@ export class VivaTournamentsService {
         this.readPhone(record.mobile_phone) ??
         this.readPhone(record.clientPhone) ??
         this.readPhone(record.client_phone) ??
-        this.readPhone(this.readRecord(record.client)?.phone) ??
-        this.readPhone(this.readRecord(record.client)?.phoneNumber) ??
         undefined,
       levelLabel:
+        this.readString(subject?.levelLabel) ??
+        this.readString(subject?.level_label) ??
+        this.readString(subject?.level) ??
+        this.readString(subject?.grade) ??
+        this.readString(subject?.rating) ??
         this.readString(record.levelLabel) ??
         this.readString(record.level_label) ??
         this.readString(record.level) ??
@@ -823,14 +827,23 @@ export class VivaTournamentsService {
         this.readString(record.rating) ??
         undefined,
       avatarUrl:
+        this.readAvatarUrl(subject) ??
         this.readAvatarUrl(record) ??
-        this.readAvatarUrl(record.client) ??
-        this.readAvatarUrl(record.user) ??
-        this.readAvatarUrl(record.person) ??
         undefined,
       paymentStatus: paymentStatus ?? undefined,
       status: 'REGISTERED'
     };
+  }
+
+  private resolveParticipantSubject(record: VivaRawRecord): VivaRawRecord | null {
+    return (
+      this.readRecord(record.client) ??
+      this.readRecord(record.user) ??
+      this.readRecord(record.person) ??
+      this.readRecord(record.member) ??
+      this.readRecord(record.player) ??
+      this.readRecord(record.guest)
+    );
   }
 
   private resolveParticipantPaymentStatus(

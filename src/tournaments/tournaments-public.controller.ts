@@ -749,6 +749,9 @@ export class TournamentsPublicController {
         background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(25,18,74,0.28));
       }
       .back {
+        appearance: none;
+        border: 0;
+        padding: 0;
         position: absolute;
         z-index: 1;
         top: 28px;
@@ -758,9 +761,12 @@ export class TournamentsPublicController {
         border-radius: 999px;
         display: grid;
         place-items: center;
+        background: transparent;
         color: #fff;
+        cursor: pointer;
         text-decoration: none;
         font-size: 42px;
+        font-family: inherit;
         line-height: 1;
       }
       .poster-copy {
@@ -932,7 +938,8 @@ export class TournamentsPublicController {
       .teaser-avatar img {
         width: 100%;
         height: 100%;
-        border-radius: inherit;
+        border-radius: 999px;
+        clip-path: circle(50%);
         object-fit: cover;
       }
       .teaser-avatar b,
@@ -984,7 +991,8 @@ export class TournamentsPublicController {
       .avatar img {
         width: 100%;
         height: 100%;
-        border-radius: inherit;
+        border-radius: 999px;
+        clip-path: circle(50%);
         object-fit: cover;
       }
       .participant p {
@@ -1120,7 +1128,7 @@ export class TournamentsPublicController {
   <body>
     <main class="page">
       <section class="poster">
-        <a class="back" data-back-link href="${this.escapeHtml(this.toAbsoluteUrl(this.directoryUrl, request, user))}" aria-label="Назад">‹</a>
+        <button class="back" data-back-link data-fallback-url="${this.escapeHtml(this.toAbsoluteUrl(this.directoryUrl, request, user))}" type="button" aria-label="Назад">‹</button>
         <div class="date-badge">
           <span>${this.escapeHtml(this.formatDateBadgeWeekday(tournament.startsAt).toUpperCase() || 'ДАТА')}</span>
           <span>${this.escapeHtml(this.formatDateBadgeDay(tournament.startsAt))}</span>
@@ -1200,9 +1208,14 @@ export class TournamentsPublicController {
           return;
         }
         backLink.addEventListener('click', function (event) {
+          event.preventDefault();
           if (window.history.length > 1 && document.referrer) {
-            event.preventDefault();
             window.history.back();
+            return;
+          }
+          var fallbackUrl = backLink.getAttribute('data-fallback-url');
+          if (fallbackUrl) {
+            window.location.href = fallbackUrl;
           }
         });
       })();
@@ -3027,12 +3040,12 @@ export class TournamentsPublicController {
 
   private formatGenderLabel(value: TournamentPublicView['gender']): string {
     if (value === 'MALE') {
-      return 'Мужчины';
+      return 'Мужской';
     }
     if (value === 'FEMALE') {
-      return 'Женщины';
+      return 'Женский';
     }
-    return 'М/Ж';
+    return 'Микст';
   }
 
   private formatGenderCardLabel(value: TournamentPublicView['gender']): string {

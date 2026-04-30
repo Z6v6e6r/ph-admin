@@ -288,6 +288,43 @@ async function main(): Promise<void> {
     false
   );
 
+  const staleCustomTournament = createHydrationCustomTournament();
+  staleCustomTournament.details = {};
+  staleCustomTournament.participants = [
+    {
+      id: 'booking-1',
+      name: 'Евгения Чабыкина',
+      phone: '79253332314',
+      levelLabel: 'D',
+      avatarUrl: 'https://example.com/wrong-booking-avatar.jpg',
+      status: 'REGISTERED'
+    }
+  ];
+  staleCustomTournament.participantsCount = 1;
+  const staleSourceTournament: Tournament = {
+    ...createHydrationSourceTournament(),
+    participants: [
+      {
+        id: 'client-atemasova',
+        name: 'Атемасова Татьяна',
+        phone: '79253332314',
+        levelLabel: 'D+',
+        avatarUrl: 'https://example.com/atemasova.jpg',
+        status: 'REGISTERED'
+      }
+    ],
+    participantsCount: 1
+  };
+  const staleService = createService({
+    sourceTournaments: [staleSourceTournament],
+    customById: staleCustomTournament
+  });
+  const staleHydrated = await staleService.findCustomById(staleCustomTournament.id);
+  assert.equal(staleHydrated.participants[0]?.id, 'client-atemasova');
+  assert.equal(staleHydrated.participants[0]?.name, 'Атемасова Татьяна');
+  assert.equal(staleHydrated.participants[0]?.avatarUrl, 'https://example.com/atemasova.jpg');
+  assert.equal(staleHydrated.participants[0]?.levelLabel, 'D');
+
   const waitlistTournament = createWaitlistTournament();
   const waitlistService = createService({ customBySlug: waitlistTournament });
 
