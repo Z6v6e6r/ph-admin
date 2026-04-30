@@ -19,7 +19,8 @@ function main(): void {
           id: 'client-1',
           name: 'Атемасова Татьяна',
           phone: '+7 925 333 23 14',
-          avatarUrl: 'https://example.com/atemasova.jpg'
+          avatarUrl: 'https://example.com/atemasova.jpg',
+          rating: 2.75
         }
       },
       {
@@ -30,14 +31,17 @@ function main(): void {
           id: 'client-2',
           name: 'Вишневская Анна',
           phone: '+7 915 021 11 35',
-          avatarUrl: 'https://example.com/vishnevskaya.jpg'
+          avatarUrl: 'https://example.com/vishnevskaya.jpg',
+          levelScore: '2.5'
         }
       },
       {
         id: 'client-3',
         name: 'Евгения Чабыкина',
         phone: '+7 914 472 21 20',
-        avatarUrl: 'https://example.com/chabykina.jpg'
+        avatarUrl: 'https://example.com/chabykina.jpg',
+        levelLabel: 'D+',
+        rating: '2.25'
       }
     ]
   });
@@ -57,6 +61,10 @@ function main(): void {
       'https://example.com/vishnevskaya.jpg',
       'https://example.com/chabykina.jpg'
     ]
+  );
+  assert.deepEqual(
+    participants.map((participant) => participant.levelLabel),
+    ['2.75', '2.5', '2.25']
   );
 
   console.log('Viva tournament participants test passed');

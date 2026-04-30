@@ -1534,15 +1534,23 @@ export class TournamentsService {
     const customParticipants = Array.isArray(tournament.participants)
       ? tournament.participants
       : [];
-    const participants = this.mergeTournamentParticipants(sourceParticipants, customParticipants);
-    const paidParticipantsCount = participants.filter((item) => item.paymentStatus === 'PAID').length;
     const sourceParticipantsCount =
       this.pickNumber(sourceTournament?.participantsCount)
       ?? this.pickNumber(sourceTournamentSnapshot.participantsCount);
+    const sourceProvidesParticipantState =
+      this.isLiveVivaParticipantState(sourceTournament, sourceTournamentSnapshot);
+    const participants = this.mergeTournamentParticipants(
+      sourceParticipants,
+      customParticipants,
+      {
+        includeCustomOnly: !sourceProvidesParticipantState
+      }
+    );
+    const paidParticipantsCount = participants.filter((item) => item.paymentStatus === 'PAID').length;
     const participantsCount = Math.max(
       participants.length,
       sourceParticipantsCount ?? 0,
-      Number(tournament.participantsCount || 0) || 0
+      sourceProvidesParticipantState ? 0 : Number(tournament.participantsCount || 0) || 0
     );
     const waitlist = Array.isArray(tournament.waitlist) ? tournament.waitlist : [];
 
@@ -1708,10 +1716,14 @@ export class TournamentsService {
 
   private mergeTournamentParticipants(
     sourceParticipants: TournamentParticipant[],
-    customParticipants: TournamentParticipant[]
+    customParticipants: TournamentParticipant[],
+    options?: {
+      includeCustomOnly?: boolean;
+    }
   ): TournamentParticipant[] {
     const merged: TournamentParticipant[] = [];
     const indexes = new Map<string, number>();
+    const includeCustomOnly = options?.includeCustomOnly !== false;
 
     sourceParticipants.forEach((participant) => {
       const key = this.buildParticipantKey(participant);
@@ -1723,6 +1735,9 @@ export class TournamentsService {
       const key = this.buildParticipantKey(participant);
       const existingIndex = indexes.get(key);
       if (existingIndex === undefined) {
+        if (!includeCustomOnly) {
+          return;
+        }
         indexes.set(key, merged.length);
         merged.push({ ...participant });
         return;
@@ -1742,14 +1757,36 @@ export class TournamentsService {
     customParticipant: TournamentParticipant
   ): TournamentParticipant {
     return {
-      ...sourceParticipant,
       ...customParticipant,
+      ...sourceParticipant,
       id: sourceParticipant.id ?? customParticipant.id,
       name: sourceParticipant.name || customParticipant.name,
-      phone: customParticipant.phone ?? sourceParticipant.phone,
+      phone: sourceParticipant.phone ?? customParticipant.phone,
       avatarUrl: sourceParticipant.avatarUrl ?? customParticipant.avatarUrl,
-      levelLabel: customParticipant.levelLabel ?? sourceParticipant.levelLabel
+      levelLabel: sourceParticipant.levelLabel ?? customParticipant.levelLabel,
+      gender: sourceParticipant.gender ?? customParticipant.gender,
+      paymentStatus: sourceParticipant.paymentStatus ?? customParticipant.paymentStatus,
+      status: sourceParticipant.status ?? customParticipant.status,
+      registeredAt: sourceParticipant.registeredAt ?? customParticipant.registeredAt,
+      paidAt: sourceParticipant.paidAt ?? customParticipant.paidAt,
+      notes: sourceParticipant.notes ?? customParticipant.notes
     };
+  }
+
+  private isLiveVivaParticipantState(
+    sourceTournament: Tournament | undefined,
+    sourceTournamentSnapshot: Record<string, unknown>
+  ): boolean {
+    const source = this.pickString(sourceTournament?.source ?? sourceTournamentSnapshot.source)
+      ?.toUpperCase();
+    if (source !== 'VIVA' || !sourceTournament) {
+      return false;
+    }
+
+    return (
+      Array.isArray(sourceTournament.participants)
+      || this.pickNumber(sourceTournament.participantsCount) !== undefined
+    );
   }
 
   private buildParticipantKey(participant: TournamentParticipant): string {
@@ -3134,7 +3171,11 @@ export class TournamentsService {
         ?? this.pickNullableString(this.getSourceTournamentSnapshot(tournament).trainerAvatarUrl)
         ?? undefined,
       participants,
-      participantsCount: participants.length,
+      participantsCount: Math.max(
+        participants.length,
+        Number(tournament.participantsCount || 0) || 0,
+        this.pickNumber(this.getSourceTournamentSnapshot(tournament).participantsCount) ?? 0
+      ),
       paidParticipantsCount: participants.filter((item) => item.paymentStatus === 'PAID').length,
       waitlist,
       waitlistCount: waitlist.length

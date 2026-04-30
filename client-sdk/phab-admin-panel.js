@@ -14758,7 +14758,7 @@
             token: token,
             base: band.base,
             numericValue: score,
-            label: band.base,
+            label: token,
             rangeLabel: band.display,
             rank: TOURNAMENT_LEVEL_OPTIONS.length
           });

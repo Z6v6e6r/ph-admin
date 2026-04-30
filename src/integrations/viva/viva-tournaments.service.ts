@@ -814,18 +814,7 @@ export class VivaTournamentsService {
         this.readPhone(record.clientPhone) ??
         this.readPhone(record.client_phone) ??
         undefined,
-      levelLabel:
-        this.readString(subject?.levelLabel) ??
-        this.readString(subject?.level_label) ??
-        this.readString(subject?.level) ??
-        this.readString(subject?.grade) ??
-        this.readString(subject?.rating) ??
-        this.readString(record.levelLabel) ??
-        this.readString(record.level_label) ??
-        this.readString(record.level) ??
-        this.readString(record.grade) ??
-        this.readString(record.rating) ??
-        undefined,
+      levelLabel: this.readParticipantLevelLabel(subject, record) ?? undefined,
       avatarUrl:
         this.readAvatarUrl(subject) ??
         this.readAvatarUrl(record) ??
@@ -833,6 +822,91 @@ export class VivaTournamentsService {
       paymentStatus: paymentStatus ?? undefined,
       status: 'REGISTERED'
     };
+  }
+
+  private readParticipantLevelLabel(
+    subject: VivaRawRecord | null,
+    record: VivaRawRecord
+  ): string | undefined {
+    const numericLevel =
+      this.readFirstLevelScore(subject) ??
+      this.readFirstLevelScore(record);
+    if (numericLevel) {
+      return numericLevel;
+    }
+
+    return (
+      this.readString(subject?.levelLabel) ??
+      this.readString(subject?.level_label) ??
+      this.readString(subject?.level) ??
+      this.readString(subject?.grade) ??
+      this.readString(subject?.ratingLabel) ??
+      this.readString(subject?.rating_label) ??
+      this.readString(subject?.rating) ??
+      this.readString(record.levelLabel) ??
+      this.readString(record.level_label) ??
+      this.readString(record.level) ??
+      this.readString(record.grade) ??
+      this.readString(record.ratingLabel) ??
+      this.readString(record.rating_label) ??
+      this.readString(record.rating)
+    );
+  }
+
+  private readFirstLevelScore(record: VivaRawRecord | null): string | undefined {
+    if (!record) {
+      return undefined;
+    }
+
+    const keys = [
+      'levelScore',
+      'level_score',
+      'levelNumeric',
+      'level_numeric',
+      'ratingNumeric',
+      'rating_numeric',
+      'ratingValue',
+      'rating_value',
+      'gameRating',
+      'game_rating',
+      'padelLevel',
+      'padel_level',
+      'rating',
+      'level'
+    ];
+
+    for (const key of keys) {
+      const score = this.readLevelScore(record[key]);
+      if (score) {
+        return score;
+      }
+    }
+
+    return undefined;
+  }
+
+  private readLevelScore(value: unknown): string | undefined {
+    if (typeof value === 'number') {
+      return this.formatLevelScore(value);
+    }
+
+    const normalized = this.readString(value)?.replace(',', '.');
+    if (!normalized || !/^\d+(?:\.\d+)?$/.test(normalized)) {
+      return undefined;
+    }
+
+    return this.formatLevelScore(Number(normalized));
+  }
+
+  private formatLevelScore(value: number): string | undefined {
+    if (!Number.isFinite(value) || value <= 0 || value > 10) {
+      return undefined;
+    }
+
+    return value
+      .toFixed(3)
+      .replace(/0+$/, '')
+      .replace(/\.$/, '');
   }
 
   private resolveParticipantSubject(record: VivaRawRecord): VivaRawRecord | null {

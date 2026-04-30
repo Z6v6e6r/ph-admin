@@ -265,12 +265,9 @@ async function main(): Promise<void> {
   });
 
   const hydrated = await hydrationService.findCustomById(hydrationCustomTournament.id);
-  assert.equal(hydrated.participants.length, 3);
+  assert.equal(hydrated.participants.length, 1);
   assert.equal(hydrated.participants[0]?.name, 'Игрок из Viva');
-  assert.equal(hydrated.participants[1]?.name, 'Игрок из БД');
-  assert.equal(hydrated.participants[2]?.name, 'Алексей Смирнов');
-  assert.equal(hydrated.participants[2]?.avatarUrl, 'https://example.com/alexey.jpg');
-  assert.equal(hydrated.participantsCount, 3);
+  assert.equal(hydrated.participantsCount, 1);
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
   const pendingJoinPayments = (
@@ -282,7 +279,7 @@ async function main(): Promise<void> {
   const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
   assert.ok(publicView, 'Public view should be returned for custom tournament');
   assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
-  assert.equal(publicView.participants?.[2]?.name, 'Алексей Смирнов');
+  assert.equal(publicView.participants?.[1]?.name, 'Анна Максимова');
   assert.equal(
     Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
     false
@@ -323,7 +320,7 @@ async function main(): Promise<void> {
   assert.equal(staleHydrated.participants[0]?.id, 'client-atemasova');
   assert.equal(staleHydrated.participants[0]?.name, 'Атемасова Татьяна');
   assert.equal(staleHydrated.participants[0]?.avatarUrl, 'https://example.com/atemasova.jpg');
-  assert.equal(staleHydrated.participants[0]?.levelLabel, 'D');
+  assert.equal(staleHydrated.participants[0]?.levelLabel, 'D+');
 
   const waitlistTournament = createWaitlistTournament();
   const waitlistService = createService({ customBySlug: waitlistTournament });

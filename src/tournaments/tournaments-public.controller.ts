@@ -18,15 +18,44 @@ import {
 import { TournamentsService } from './tournaments.service';
 
 const TOURNAMENT_BASE_LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
-const TOURNAMENT_LEVEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'D', label: 'D · 1.0-2.0' },
-  { value: 'D+', label: 'D+ · 2.0-3.0' },
-  { value: 'C', label: 'C · 3.0-3.5' },
-  { value: 'C+', label: 'C+ · 3.5-4.0' },
-  { value: 'B', label: 'B · 4.0-4.7' },
-  { value: 'B+', label: 'B+ · 4.7-5.5' },
-  { value: 'A', label: 'A · 5.5+' }
-];
+const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+const TOURNAMENT_LEVEL_BANDS = [
+  { base: 'D', min: 1, max: 2, display: '1.0-2.0' },
+  { base: 'D+', min: 2, max: 3, display: '2.0-3.0' },
+  { base: 'C', min: 3, max: 3.5, display: '3.0-3.5' },
+  { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
+  { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
+  { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
+  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+] as const;
+const TOURNAMENT_LEVEL_OPTIONS = buildTournamentLevelOptions();
+
+function formatTournamentLevelScoreToken(value: number): string {
+  return Number(value ?? 0)
+    .toFixed(3)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '');
+}
+
+function buildTournamentLevelOptions(): Array<{ value: string; label: string; base: string; rank: number }> {
+  const options: Array<{ value: string; label: string; base: string; rank: number }> = [];
+  TOURNAMENT_LEVEL_BANDS.forEach((band, bandIndex) => {
+    for (let step = 0; step <= TOURNAMENT_LEVEL_DIVISION_COUNT; step += 1) {
+      if (bandIndex > 0 && step === 0) {
+        continue;
+      }
+      const score = band.min + (band.max - band.min) * (step / TOURNAMENT_LEVEL_DIVISION_COUNT);
+      const value = formatTournamentLevelScoreToken(score);
+      options.push({
+        value,
+        label: `${band.base} · ${value}`,
+        base: band.base,
+        rank: options.length
+      });
+    }
+  });
+  return options;
+}
 
 function normalizeTournamentLevelOptionToken(value: unknown): string {
   const normalized = String(value ?? '')
@@ -43,28 +72,10 @@ function normalizeTournamentLevelOptionToken(value: unknown): string {
   if (!Number.isFinite(numeric)) {
     return normalized;
   }
-  if (numeric >= 5.5) {
-    return 'A';
-  }
-  if (numeric >= 4.7) {
-    return 'B+';
-  }
-  if (numeric >= 4) {
-    return 'B';
-  }
-  if (numeric >= 3.5) {
-    return 'C+';
-  }
-  if (numeric >= 3) {
-    return 'C';
-  }
-  if (numeric >= 2) {
-    return 'D+';
-  }
-  if (numeric >= 1) {
-    return 'D';
-  }
-  return normalized;
+  const token = formatTournamentLevelScoreToken(numeric);
+  return TOURNAMENT_LEVEL_OPTIONS.some((option) => option.value === token)
+    ? token
+    : normalized;
 }
 
 type JoinSubmission = {
@@ -552,6 +563,7 @@ export class TournamentsPublicController {
     const tournament = await this.tournamentsService.getPublicBySlug(slug);
 
     if (this.wantsJson(request, format)) {
+      response.setHeader('Cache-Control', 'no-store, max-age=0');
       response.json(tournament);
       return;
     }
@@ -3019,7 +3031,9 @@ export class TournamentsPublicController {
     if (normalizedSelected && !options.some((level) => level.value === normalizedSelected)) {
       options.unshift({
         value: normalizedSelected,
-        label: this.formatLevelLabel(normalizedSelected)
+        label: this.formatLevelLabel(normalizedSelected),
+        base: normalizedSelected,
+        rank: -1
       });
     }
     return options.map((level) => {
@@ -3035,7 +3049,7 @@ export class TournamentsPublicController {
     }
 
     const matched = TOURNAMENT_LEVEL_OPTIONS.find((item) => item.value === normalized);
-    return matched ? matched.label : normalized;
+    return matched ? matched.value : normalized;
   }
 
   private formatGenderLabel(value: TournamentPublicView['gender']): string {
@@ -3059,19 +3073,7 @@ export class TournamentsPublicController {
   }
 
   private formatAccessLevelRange(levels: string[]): string {
-    const order = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
-    const list = Array.isArray(levels)
-      ? levels
-          .map((item) => this.resolveAccessLevelBase(item))
-          .filter(Boolean)
-          .filter((item, index, items) => items.indexOf(item) === index)
-          .sort((left, right) => {
-            const leftIndex = order.indexOf(left);
-            const rightIndex = order.indexOf(right);
-            return (leftIndex === -1 ? order.length : leftIndex)
-              - (rightIndex === -1 ? order.length : rightIndex);
-          })
-      : [];
+    const list = this.normalizeAccessLevelTokens(levels);
 
     if (list.length === 0) {
       return 'без ограничений';
@@ -3082,36 +3084,38 @@ export class TournamentsPublicController {
     return `от ${list[0]} до ${list[list.length - 1]}`;
   }
 
-  private resolveAccessLevelBase(value: unknown): string {
-    const normalized = String(value ?? '').trim().toUpperCase().replace(',', '.');
-    const direct = TOURNAMENT_BASE_LEVEL_OPTIONS.find((item) => item === normalized);
-    if (direct) {
-      return direct;
-    }
+  private normalizeAccessLevelTokens(levels: string[]): string[] {
+    const seen = new Set<string>();
+    const tokens: string[] = [];
 
-    const score = Number(normalized);
-    if (!Number.isFinite(score)) {
-      return '';
-    }
-    if (score < 2) {
-      return 'D';
-    }
-    if (score < 3) {
-      return 'D+';
-    }
-    if (score < 3.5) {
-      return 'C';
-    }
-    if (score < 4) {
-      return 'C+';
-    }
-    if (score < 4.7) {
-      return 'B';
-    }
-    if (score < 5.5) {
-      return 'B+';
-    }
-    return 'A';
+    (Array.isArray(levels) ? levels : []).forEach((item) => {
+      const normalized = normalizeTournamentLevelOptionToken(item);
+      if (!normalized) {
+        return;
+      }
+
+      const expanded = TOURNAMENT_BASE_LEVEL_OPTIONS.includes(
+        normalized as (typeof TOURNAMENT_BASE_LEVEL_OPTIONS)[number]
+      )
+        ? TOURNAMENT_LEVEL_OPTIONS
+            .filter((option) => option.base === normalized)
+            .map((option) => option.value)
+        : [normalized];
+
+      expanded.forEach((token) => {
+        if (!TOURNAMENT_LEVEL_OPTIONS.some((option) => option.value === token) || seen.has(token)) {
+          return;
+        }
+        seen.add(token);
+        tokens.push(token);
+      });
+    });
+
+    return tokens.sort((left, right) => {
+      const leftRank = TOURNAMENT_LEVEL_OPTIONS.find((option) => option.value === left)?.rank ?? 0;
+      const rightRank = TOURNAMENT_LEVEL_OPTIONS.find((option) => option.value === right)?.rank ?? 0;
+      return leftRank - rightRank;
+    });
   }
 
   private formatCardScheduleLabel(startsAt?: string, endsAt?: string): string {

@@ -1,7 +1,18 @@
 (function () {
   var STYLE_ID = 'phab-tournaments-showcase-style';
   var DEFAULT_API_BASE_URL = inferApiBaseUrl(document.currentScript && document.currentScript.src);
-  var LEVEL_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+  var LEVEL_BASE_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+  var LEVEL_DIVISION_COUNT = 4;
+  var LEVEL_BANDS = [
+    { base: 'D', min: 1, max: 2 },
+    { base: 'D+', min: 2, max: 3 },
+    { base: 'C', min: 3, max: 3.5 },
+    { base: 'C+', min: 3.5, max: 4 },
+    { base: 'B', min: 4, max: 4.7 },
+    { base: 'B+', min: 4.7, max: 5.5 },
+    { base: 'A', min: 5.5, max: 6.3 }
+  ];
+  var LEVEL_OPTIONS = buildLevelOptions();
   var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULT_INITIAL_FORWARD_DAYS = 1;
   var SMS_RESEND_COOLDOWN_MS = 30000;
@@ -2528,8 +2539,37 @@
     });
   }
 
+  function formatLevelScoreToken(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+    return String(numeric.toFixed(3)).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function buildLevelOptions() {
+    var options = [];
+    LEVEL_BANDS.forEach(function (band, bandIndex) {
+      for (var step = 0; step <= LEVEL_DIVISION_COUNT; step += 1) {
+        if (bandIndex > 0 && step === 0) {
+          continue;
+        }
+        var score = band.min + (band.max - band.min) * (step / LEVEL_DIVISION_COUNT);
+        var token = formatLevelScoreToken(score);
+        if (token) {
+          options.push({
+            token: token,
+            base: band.base,
+            rank: options.length
+          });
+        }
+      }
+    });
+    return options;
+  }
+
   function formatAccessLevels(levels) {
-    var list = normalizeArray(levels).filter(Boolean);
+    var list = sortLevels(levels);
     if (list.length === 0) {
       return 'Без ограничений';
     }
@@ -2537,7 +2577,7 @@
   }
 
   function formatAccessLevelCompact(levels) {
-    var list = normalizeArray(levels).filter(Boolean);
+    var list = sortLevels(levels);
     if (list.length === 0) {
       return '';
     }
@@ -2545,19 +2585,85 @@
   }
 
   function normalizeLevelLabel(value) {
-    return String(value || '').trim().toUpperCase();
+    return normalizeLevelToken(value);
+  }
+
+  function findLevelOption(token) {
+    var normalized = String(token || '').trim();
+    return LEVEL_OPTIONS.find(function (item) {
+      return item.token === normalized;
+    }) || null;
+  }
+
+  function normalizeLevelScoreToken(value) {
+    var normalized = String(value || '').trim().replace(',', '.');
+    if (!normalized) {
+      return '';
+    }
+    var numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) {
+      return '';
+    }
+    var token = formatLevelScoreToken(numeric);
+    return findLevelOption(token) ? token : '';
+  }
+
+  function normalizeLevelToken(value) {
+    var normalized = String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/,/g, '.')
+      .replace(/[·•]/g, ' ')
+      .replace(/\s+/g, ' ');
+    if (!normalized) {
+      return '';
+    }
+
+    var numericToken = normalizeLevelScoreToken(normalized);
+    if (numericToken) {
+      return numericToken;
+    }
+
+    if (LEVEL_BASE_OPTIONS.indexOf(normalized) >= 0) {
+      return normalized;
+    }
+
+    return normalized;
+  }
+
+  function expandLevelValue(value) {
+    var normalized = normalizeLevelToken(value);
+    if (!normalized) {
+      return [];
+    }
+    if (LEVEL_BASE_OPTIONS.indexOf(normalized) >= 0) {
+      return LEVEL_OPTIONS.filter(function (item) {
+        return item.base === normalized;
+      }).map(function (item) {
+        return item.token;
+      });
+    }
+    return findLevelOption(normalized) ? [normalized] : [];
   }
 
   function rankLevel(level) {
     var normalized = normalizeLevelLabel(level);
-    var index = LEVEL_OPTIONS.indexOf(normalized);
-    return index === -1 ? LEVEL_OPTIONS.length : index;
+    var option = findLevelOption(normalized);
+    return option ? option.rank : LEVEL_OPTIONS.length;
   }
 
   function sortLevels(levels) {
+    var seen = {};
     return normalizeArray(levels)
-      .map(normalizeLevelLabel)
-      .filter(Boolean)
+      .reduce(function (result, item) {
+        expandLevelValue(item).forEach(function (token) {
+          if (!seen[token]) {
+            seen[token] = true;
+            result.push(token);
+          }
+        });
+        return result;
+      }, [])
       .sort(function (left, right) {
         return rankLevel(left) - rankLevel(right);
       });
@@ -3316,6 +3422,7 @@
       joinButton.disabled = true;
       joinButton.textContent = 'Проверяем...';
       state.detailItem = null;
+      state.detailRequestKey = '';
       openJoinFlow(mount, state, card, joinUrl);
     });
 
@@ -3367,6 +3474,28 @@
       url.searchParams.set('forwardDays', String(days));
     }
 
+    return url.toString();
+  }
+
+  function buildTournamentDetailUrl(config, item) {
+    var card = normalizeObject(item);
+    var publicUrl = resolveUrl(card.publicUrl, config);
+    var slug = String(card.slug || '').trim();
+    var url;
+
+    if (publicUrl) {
+      url = new URL(publicUrl, window.location.href);
+    } else if (slug) {
+      url = new URL(
+        normalizeApiBaseUrl(config.apiBaseUrl) + '/tournaments/public/' + encodeURIComponent(slug),
+        window.location.href
+      );
+    } else {
+      return '';
+    }
+
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('_ts', String(Date.now()));
     return url.toString();
   }
 
@@ -3524,6 +3653,7 @@
   function closeDialog(mount, state) {
     clearAuth(state);
     state.detailItem = null;
+    state.detailRequestKey = '';
     state.flow = null;
     state.outcome = null;
     state.activeJoinUrl = '';
@@ -4474,11 +4604,12 @@
       placeholderOption.value = '';
       placeholderOption.textContent = 'Выберите уровень';
       levelSelect.appendChild(placeholderOption);
+      var selectedLevelToken = normalizeLevelToken(state.draft.levelLabel);
       LEVEL_OPTIONS.forEach(function (level) {
         var option = document.createElement('option');
-        option.value = level;
-        option.textContent = level;
-        if (state.draft.levelLabel === level) {
+        option.value = level.token;
+        option.textContent = level.base + ' · ' + level.token;
+        if (selectedLevelToken === level.token) {
           option.selected = true;
         }
         levelSelect.appendChild(option);
@@ -4833,9 +4964,14 @@
   }
 
   function openTournamentDetails(mount, state, item) {
+    var requestKey = String(
+      (item && (item.slug || item.id || item.publicUrl || item.joinUrl)) || Date.now()
+    );
+    var detailUrl = buildTournamentDetailUrl(state.config, item);
     state.detailItem = item;
     state.activeItem = item;
     state.activeJoinUrl = resolveUrl(item.joinUrl, state.config);
+    state.detailRequestKey = requestKey;
     state.outcome = null;
     state.flow = null;
     state.draft.authCode = '';
@@ -4844,6 +4980,34 @@
     state.vivaAuthorizationHeader = '';
     clearAuth(state);
     renderTournaments(mount, state.payload, state);
+
+    if (!detailUrl) {
+      return;
+    }
+
+    jsonFetch(detailUrl, {
+      cache: 'no-store',
+      credentials: state.crossOriginApi ? 'omit' : 'include'
+    })
+      .then(function (freshItem) {
+        if (
+          !state.detailItem ||
+          state.detailRequestKey !== requestKey ||
+          state.flow ||
+          state.outcome ||
+          state.authPending
+        ) {
+          return;
+        }
+        state.detailItem = freshItem;
+        state.activeItem = freshItem;
+        state.activeJoinUrl = resolveUrl(freshItem.joinUrl || item.joinUrl, state.config);
+        state.payload = mergeTournamentPayload(state.payload, { items: [freshItem] });
+        renderTournaments(mount, state.payload, state);
+      })
+      .catch(function () {
+        // Keep the already opened card if a fresh Viva-backed read is temporarily unavailable.
+      });
   }
 
   function openJoinFlow(mount, state, item, joinUrl) {
@@ -4852,6 +5016,7 @@
     }
 
     state.detailItem = null;
+    state.detailRequestKey = '';
     state.activeJoinUrl = joinUrl;
     state.activeItem = item;
     state.outcome = null;
@@ -5193,6 +5358,7 @@
       activeJoinUrl: '',
       activeItem: null,
       detailItem: null,
+      detailRequestKey: '',
       flow: null,
       outcome: null,
       authPending: null,

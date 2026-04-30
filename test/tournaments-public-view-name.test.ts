@@ -22,7 +22,7 @@ function createCustomTournament(): CustomTournament {
     allowedManagerPhones: [],
     studioName: 'TestMiniApp',
     trainerName: 'Тренер Сергеев',
-    startsAt: '2026-04-18T12:00:00.000Z',
+    startsAt: '2026-05-18T12:00:00.000Z',
     mechanics: {
       enabled: true,
       config: {
