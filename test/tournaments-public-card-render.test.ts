@@ -235,7 +235,10 @@ async function main(): Promise<void> {
     assert.match(html ?? '', /data-back-link/);
     assert.match(html ?? '', /<button class="back"[^>]*data-back-link/);
     assert.match(html ?? '', /data-fallback-url="https:\/\/padlhub\.ru\/tournaments"/);
-    assert.match(html ?? '', /clip-path: circle\(50%\)/);
+    assert.match(html ?? '', /clip-path: inset\(0 round 999px\)/);
+    assert.match(html ?? '', /<span class="level">D\+<\/span>/);
+    assert.match(html ?? '', /<span class="level">D<\/span>/);
+    assert.match(html ?? '', /<span class="level">2.75<\/span>/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
   }

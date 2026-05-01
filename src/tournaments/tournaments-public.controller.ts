@@ -670,6 +670,7 @@ export class TournamentsPublicController {
     const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
     const genderLabel = this.formatGenderLabel(tournament.gender).toUpperCase();
     const capacityLabel = `${participantsCount} / ${maxPlayers}`;
+    const fallbackAvatarLevel = accessLabel === 'без ограничений' ? '' : accessLabel;
     const statusLabel =
       participantsCount >= maxPlayers
         ? 'СОСТАВ НАБРАН'
@@ -693,7 +694,7 @@ export class TournamentsPublicController {
         ? displayParticipants
             .map((participant) => {
               const name = this.resolveParticipantDisplayName(participant.name);
-              const level = this.formatPublicLevelLabel(participant.levelLabel);
+              const level = this.formatPublicAvatarLevelLabel(participant.levelLabel, fallbackAvatarLevel);
               const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
               const stateClass = this.isMutedPublicParticipant(participant) ? ' is-muted' : '';
               return `<article class="participant${stateClass}">
@@ -717,7 +718,7 @@ export class TournamentsPublicController {
             .map((participant) => {
               const name = this.resolveParticipantDisplayName(participant.name);
               const avatarUrl = this.resolveParticipantAvatarUrl(participant.avatarUrl, request, user);
-              const level = this.formatPublicLevelLabel(participant.levelLabel);
+              const level = this.formatPublicAvatarLevelLabel(participant.levelLabel, fallbackAvatarLevel);
               const stateClass = this.isMutedPublicParticipant(participant) ? ' is-muted' : '';
               return `<span class="teaser-avatar${stateClass}">
                 ${
@@ -760,8 +761,8 @@ export class TournamentsPublicController {
         border-radius: 0 0 2px 2px;
         background:
           linear-gradient(90deg, rgba(76, 43, 196, 0.74), rgba(132, 74, 234, 0.42)),
-          url("${this.escapeHtml(posterImageUrl)}") center/cover no-repeat;
-        background-color: #100818;
+          url("${this.escapeHtml(posterImageUrl)}") center/cover no-repeat,
+          #fff;
       }
       .poster::after {
         content: "";
@@ -963,9 +964,9 @@ export class TournamentsPublicController {
         width: 100%;
         height: 100%;
         border-radius: 50%;
-        clip-path: circle(50%);
-        -webkit-mask-image: radial-gradient(circle, #000 67%, transparent 68%);
-        mask-image: radial-gradient(circle, #000 67%, transparent 68%);
+        clip-path: inset(0 round 999px);
+        -webkit-mask-image: radial-gradient(circle at center, #000 69%, transparent 70%);
+        mask-image: radial-gradient(circle at center, #000 69%, transparent 70%);
         object-fit: cover;
         display: block;
       }
@@ -983,13 +984,17 @@ export class TournamentsPublicController {
         right: -8px;
         bottom: -4px;
         min-width: 34px;
-        padding: 4px 8px;
+        max-width: 54px;
+        padding: 4px 7px;
         border-radius: 999px;
         background: #211b48;
         color: #fff;
-        font-size: 14px;
+        font-size: 12px;
         line-height: 1;
         text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .players {
         padding: 14px 14px 18px;
@@ -1028,9 +1033,9 @@ export class TournamentsPublicController {
         width: 100%;
         height: 100%;
         border-radius: 50%;
-        clip-path: circle(50%);
-        -webkit-mask-image: radial-gradient(circle, #000 67%, transparent 68%);
-        mask-image: radial-gradient(circle, #000 67%, transparent 68%);
+        clip-path: inset(0 round 999px);
+        -webkit-mask-image: radial-gradient(circle at center, #000 69%, transparent 70%);
+        mask-image: radial-gradient(circle at center, #000 69%, transparent 70%);
         object-fit: cover;
         display: block;
       }
@@ -3158,6 +3163,15 @@ export class TournamentsPublicController {
 
     const matched = TOURNAMENT_LEVEL_OPTIONS.find((item) => item.value === normalized);
     return matched ? matched.base : normalized;
+  }
+
+  private formatPublicAvatarLevelLabel(value?: string, fallback = ''): string {
+    const normalized = normalizeTournamentLevelOptionToken(value);
+    if (!normalized) {
+      return fallback;
+    }
+
+    return normalized;
   }
 
   private isMutedPublicParticipant(participant: TournamentPublicParticipantCard): boolean {
