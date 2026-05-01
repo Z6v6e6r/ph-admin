@@ -3223,7 +3223,8 @@ export class TournamentsService {
     const needsVivaLookup =
       this.isGenericTournamentParticipantName(participant.name)
       || this.isPhoneLikeValue(participant.name)
-      || !participant.avatarUrl;
+      || !participant.avatarUrl
+      || !participant.levelLabel;
 
     if (!vivaAdminService || !needsVivaLookup) {
       return {

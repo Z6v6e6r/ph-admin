@@ -52,6 +52,14 @@ function createTournament(): TournamentPublicView {
         gender: 'MIXED',
         paymentStatus: 'UNPAID',
         status: 'REGISTERED'
+      },
+      {
+        id: 'player-no-level',
+        name: 'Игрок без уровня',
+        avatarUrl: null,
+        gender: 'MIXED',
+        paymentStatus: 'PAID',
+        status: 'REGISTERED'
       }
     ],
     waitlist: [
@@ -235,7 +243,11 @@ async function main(): Promise<void> {
     assert.match(html ?? '', /data-back-link/);
     assert.match(html ?? '', /<button class="back"[^>]*data-back-link/);
     assert.match(html ?? '', /data-fallback-url="https:\/\/padlhub\.ru\/tournaments"/);
-    assert.match(html ?? '', /clip-path: inset\(0 round 999px\)/);
+    assert.match(html ?? '', /\.poster::before/);
+    assert.match(html ?? '', /background: url\("https:\/\/padlhub\.ru\/api\/ui\/tournament-sleeve\.png"\) center \/ cover no-repeat/);
+    assert.match(html ?? '', /<div class="avatar-wrap">/);
+    assert.match(html ?? '', /\.avatar \{[\s\S]*?overflow: hidden;/);
+    assert.doesNotMatch(html ?? '', /<span class="level">D\+\/C<\/span>/);
     assert.match(html ?? '', /<span class="level">D\+<\/span>/);
     assert.match(html ?? '', /<span class="level">D<\/span>/);
     assert.match(html ?? '', /<span class="level">2.75<\/span>/);

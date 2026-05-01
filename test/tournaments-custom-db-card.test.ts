@@ -16,7 +16,6 @@ function createHydrationSourceTournament(): Tournament {
       {
         name: 'Игрок из Viva',
         phone: '79990001111',
-        levelLabel: 'C',
         avatarUrl: 'https://example.com/source-player.jpg',
         status: 'REGISTERED'
       }
@@ -250,6 +249,15 @@ async function main(): Promise<void> {
     customBySlug: hydrationCustomTournament,
     vivaAdminService: {
       lookupClientCabinetByPhone: async (phone: string) => {
+        if (phone === '79990001111') {
+          return {
+            status: 'FOUND',
+            vivaClientId: 'viva-client-1111',
+            displayName: 'Игрок из Viva',
+            avatarUrl: 'https://example.com/source-player-fresh.jpg',
+            levelLabel: '2.904'
+          };
+        }
         if (phone === '79104303190') {
           return {
             status: 'FOUND',
@@ -274,6 +282,7 @@ async function main(): Promise<void> {
   const hydrated = await hydrationService.findCustomById(hydrationCustomTournament.id);
   assert.equal(hydrated.participants.length, 1);
   assert.equal(hydrated.participants[0]?.name, 'Игрок из Viva');
+  assert.equal(hydrated.participants[0]?.levelLabel, '2.904');
   assert.equal(hydrated.participantsCount, 1);
   assert.equal(hydrated.trainerName, 'Тренер из БД');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
@@ -286,6 +295,7 @@ async function main(): Promise<void> {
   const publicView = await hydrationService.getPublicBySlug(hydrationCustomTournament.slug);
   assert.ok(publicView, 'Public view should be returned for custom tournament');
   assert.equal(publicView.participants?.[0]?.name, 'Игрок из Viva');
+  assert.equal(publicView.participants?.[0]?.levelLabel, '2.904');
   assert.equal(publicView.participants?.length, 1);
   assert.equal(
     Object.prototype.hasOwnProperty.call(publicView.participants?.[0] ?? {}, 'phone'),
