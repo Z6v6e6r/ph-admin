@@ -87,6 +87,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     String(process.env.VIVA_ADMIN_MONGODB_COLLECTION ?? '').trim() || 'integration_settings';
   private readonly configKey = 'viva_admin';
   private readonly envBaseUrlRaw = String(process.env.VIVA_ADMIN_API_BASE_URL ?? '').trim();
+  private readonly envEndUserBaseUrlRaw =
+    String(process.env.VIVA_END_USER_API_BASE_URL ?? '').trim();
+  private readonly envEndUserWidgetId =
+    String(process.env.VIVA_END_USER_WIDGET_ID ?? '').trim() || 'iSkq6G';
   private readonly envStaticToken = String(process.env.VIVA_ADMIN_API_TOKEN ?? '').trim();
   private readonly envTokenUrlRaw = String(process.env.VIVA_ADMIN_TOKEN_URL ?? '').trim();
   private readonly envClientId =
@@ -305,15 +309,73 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       return { phone, status: 'NOT_FOUND' };
     }
 
+    const displayName = client ? this.extractClientName(client) : undefined;
+    const avatarUrl = client ? this.extractClientAvatarUrl(client) ?? null : null;
+    const adminLevelLabel = client ? this.extractClientLevelLabel(client) : undefined;
+    const profileLevelLabel =
+      adminLevelLabel ??
+      (await this.fetchEndUserProfileLevelLabel({
+        phone,
+        vivaClientId,
+        displayName,
+        token
+      }));
+
     return {
       phone,
       status: 'FOUND',
       vivaClientId,
       vivaCabinetUrl: `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(vivaClientId)}`,
-      displayName: client ? this.extractClientName(client) : undefined,
-      avatarUrl: client ? this.extractClientAvatarUrl(client) ?? null : null,
-      levelLabel: client ? this.extractClientLevelLabel(client) : undefined
+      displayName,
+      avatarUrl,
+      levelLabel: profileLevelLabel
     };
+  }
+
+  private async fetchEndUserProfileLevelLabel(input: {
+    phone: string;
+    vivaClientId: string;
+    displayName?: string;
+    token: string;
+  }): Promise<string | undefined> {
+    const baseUrl =
+      this.normalizeBaseUrl(this.envEndUserBaseUrlRaw) ||
+      this.normalizeBaseUrl(this.envBaseUrlRaw) ||
+      'https://api.vivacrm.ru';
+    const widgetId = this.normalizeString(this.envEndUserWidgetId) || 'iSkq6G';
+    const url = new URL(
+      `/end-user/api/v1/${encodeURIComponent(widgetId)}/profile`,
+      `${baseUrl}/`
+    );
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${input.token}`,
+      'x-user-id': input.vivaClientId,
+      'x-user-phone': input.phone
+    };
+    if (input.displayName) {
+      headers['x-user-name'] = input.displayName;
+    }
+
+    try {
+      const response = await fetch(url.toString(), {
+        headers,
+        signal: this.buildAbortSignal()
+      });
+      if (!response.ok) {
+        this.logger.warn(
+          `Viva end-user profile lookup failed for ${input.phone}: ${response.status} ${response.statusText}`
+        );
+        return undefined;
+      }
+      const payload = await response.json().catch(() => null);
+      return this.extractProfileLevelLabel(payload);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva end-user profile for ${input.phone}: ${String(error)}`
+      );
+      return undefined;
+    }
   }
 
   private async fetchAdminJson(
@@ -558,6 +620,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
   private extractClientLevelLabel(candidate: Record<string, unknown>): string | undefined {
     return (
+      this.extractProfileLevelLabel(candidate) ??
       this.pickString(candidate.levelLabel) ??
       this.pickString(candidate.level_label) ??
       this.pickString(candidate.level) ??
@@ -568,6 +631,118 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       this.pickString(candidate.gameRating) ??
       this.pickString(candidate.game_rating)
     );
+  }
+
+  private extractProfileLevelLabel(payload: unknown): string | undefined {
+    return this.extractNamedLevelField(payload, new Set(), 0) ?? this.extractDirectLevelValue(payload);
+  }
+
+  private extractNamedLevelField(
+    value: unknown,
+    visited: Set<Record<string, unknown>>,
+    depth: number
+  ): string | undefined {
+    if (depth > 5) {
+      return undefined;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const level = this.extractNamedLevelField(item, visited, depth + 1);
+        if (level) {
+          return level;
+        }
+      }
+      return undefined;
+    }
+
+    if (!this.isRecord(value) || visited.has(value)) {
+      return undefined;
+    }
+    visited.add(value);
+
+    const fieldName = [
+      this.pickString(value.name),
+      this.pickString(value.title),
+      this.pickString(value.label),
+      this.pickString(value.key),
+      this.pickString(value.code),
+      this.pickString(value.fieldName),
+      this.pickString(value.field_name)
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (fieldName && /(уровень\s*падел\s*числовой|padel\s*level|level|rating|рейтинг)/i.test(fieldName)) {
+      const direct = this.extractDirectLevelValue(value.value)
+        ?? this.extractDirectLevelValue(value.values)
+        ?? this.extractDirectLevelValue(value.answer)
+        ?? this.extractDirectLevelValue(value.content);
+      if (direct) {
+        return direct;
+      }
+    }
+
+    const nestedKeys = [
+      'fields',
+      'customFields',
+      'custom_fields',
+      'additionalFields',
+      'additional_fields',
+      'attributes',
+      'properties',
+      'parameters',
+      'profile',
+      'client',
+      'data',
+      'result',
+      'content'
+    ];
+    for (const key of nestedKeys) {
+      const level = this.extractNamedLevelField(value[key], visited, depth + 1);
+      if (level) {
+        return level;
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractDirectLevelValue(value: unknown): string | undefined {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const level = this.extractDirectLevelValue(item);
+        if (level) {
+          return level;
+        }
+      }
+      return undefined;
+    }
+
+    if (typeof value === 'number') {
+      return this.formatLevelScore(value);
+    }
+
+    const raw = this.pickString(value);
+    if (!raw) {
+      return undefined;
+    }
+
+    const normalized = raw.replace(',', '.');
+    if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+      return raw;
+    }
+    return this.formatLevelScore(Number(normalized));
+  }
+
+  private formatLevelScore(value: number): string | undefined {
+    if (!Number.isFinite(value) || value <= 0 || value > 10) {
+      return undefined;
+    }
+    return value
+      .toFixed(5)
+      .replace(/0+$/, '')
+      .replace(/\.$/, '');
   }
 
   private unwrapRecords(payload: unknown): Record<string, unknown>[] {

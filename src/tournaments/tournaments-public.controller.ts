@@ -1403,7 +1403,56 @@ export class TournamentsPublicController {
         }
 
         function pickLevel(profile) {
-          return pick(profile, ['levelLabel', 'level', 'ratingLabel', 'rating']);
+          var direct = pick(profile, ['levelLabel', 'level', 'ratingLabel', 'rating']);
+          if (direct) return direct;
+          return pickNamedLevel(profile);
+        }
+
+        function normalizeLevelValue(value) {
+          if (Array.isArray(value)) {
+            for (var index = 0; index < value.length; index += 1) {
+              var item = normalizeLevelValue(value[index]);
+              if (item) return item;
+            }
+            return '';
+          }
+          return value !== null && value !== undefined && String(value).trim()
+            ? String(value).trim().replace(',', '.')
+            : '';
+        }
+
+        function pickNamedLevel(value, depth) {
+          depth = depth || 0;
+          if (!value || depth > 5) return '';
+          if (Array.isArray(value)) {
+            for (var index = 0; index < value.length; index += 1) {
+              var nested = pickNamedLevel(value[index], depth + 1);
+              if (nested) return nested;
+            }
+            return '';
+          }
+          if (typeof value !== 'object') return '';
+          var name = [
+            pick(value, ['name']),
+            pick(value, ['title']),
+            pick(value, ['label']),
+            pick(value, ['key']),
+            pick(value, ['code']),
+            pick(value, ['fieldName', 'field_name'])
+          ].filter(Boolean).join(' ').toLowerCase();
+          if (name && /(уровень\\s*падел\\s*числовой|padel\\s*level|level|rating|рейтинг)/i.test(name)) {
+            var level = normalizeLevelValue(value.value)
+              || normalizeLevelValue(value.values)
+              || normalizeLevelValue(value.answer)
+              || normalizeLevelValue(value.content);
+            if (level) return level;
+          }
+          var keys = ['fields', 'customFields', 'custom_fields', 'additionalFields', 'additional_fields', 'attributes', 'properties', 'parameters', 'profile', 'client', 'data', 'result', 'content'];
+          for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+            var result = pickNamedLevel(value[keys[keyIndex]], depth + 1);
+            if (result) return result;
+          }
+          return '';
         }
 
         function normalizeSubscriptions(value) {
