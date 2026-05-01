@@ -2783,6 +2783,26 @@
     return node;
   }
 
+  function createAccessLevelTextNode(levels) {
+    var list = sortLevels(levels);
+    var node = createElement('span', 'phab-tournaments__card-compact-meta-text');
+    if (list.length === 0) {
+      node.textContent = 'без ограничений';
+      return node;
+    }
+
+    if (list.length === 1) {
+      node.appendChild(createLevelMark(list[0]));
+      return node;
+    }
+
+    node.appendChild(document.createTextNode('от '));
+    node.appendChild(createLevelMark(list[0]));
+    node.appendChild(document.createTextNode(' до '));
+    node.appendChild(createLevelMark(list[list.length - 1]));
+    return node;
+  }
+
   function pluralizeSpots(count) {
     var numeric = Math.max(0, Number(count) || 0);
     var mod10 = numeric % 10;
@@ -3907,6 +3927,19 @@
     return row;
   }
 
+  function createCompactMetaNodeRow(kind, content, trailing) {
+    var row = createElement(
+      'div',
+      'phab-tournaments__card-compact-meta phab-tournaments__card-compact-meta--' + kind
+    );
+    appendChildren(row, [
+      createCompactMetaIcon(kind),
+      content || null,
+      trailing || null
+    ]);
+    return row;
+  }
+
   function createCompactLocationMetaRow(card) {
     var row = createElement(
       'div',
@@ -4387,7 +4420,7 @@
     appendChildren(info, [
       createCompactMetaRow('calendar', formatCardScheduleLabel(card)),
       createCompactLocationMetaRow(card),
-      createCompactMetaRow('level', formatAccessLevelRange(card.accessLevels)),
+      createCompactMetaNodeRow('level', createAccessLevelTextNode(card.accessLevels)),
       genderLabel ? createCompactMetaRow('gender', genderLabel, price) : null
     ]);
 
