@@ -13,6 +13,12 @@
     { base: 'A', min: 5.5, max: 6.3 }
   ];
   var LEVEL_OPTIONS = buildLevelOptions();
+  var LEVEL_SUPERSCRIPTS = {
+    1: '¹',
+    2: '²',
+    3: '³',
+    4: '⁴'
+  };
   var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULT_INITIAL_FORWARD_DAYS = 1;
   var SMS_RESEND_COOLDOWN_MS = 30000;
@@ -555,11 +561,25 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 3px;
         min-height: 28px;
         padding: 6px 10px;
         border-radius: 999px;
         background: #f1edff;
         color: #6d4ee6;
+      }
+
+      .phab-tournaments__level-mark {
+        display: inline-flex;
+        align-items: flex-start;
+        line-height: 1;
+      }
+
+      .phab-tournaments__level-mark sup {
+        margin-left: 1px;
+        font-size: 0.72em;
+        line-height: 1;
+        transform: translateY(-0.22em);
       }
 
       .phab-tournaments__schedule-cta {
@@ -2560,6 +2580,7 @@
           options.push({
             token: token,
             base: band.base,
+            step: step,
             rank: options.length
           });
         }
@@ -2581,7 +2602,7 @@
     if (list.length === 0) {
       return '';
     }
-    return list.join('/');
+    return formatLevelRangeText(list);
   }
 
   function normalizeLevelLabel(value) {
@@ -2677,10 +2698,89 @@
     }
 
     if (list.length === 1) {
-      return list[0];
+      return formatLevelStepText(list[0]);
     }
 
-    return 'от ' + list[0] + ' до ' + list[list.length - 1];
+    return 'от ' + formatLevelStepText(list[0]) + ' до ' + formatLevelStepText(list[list.length - 1]);
+  }
+
+  function resolveLevelStep(token) {
+    var numeric = Number(String(token || '').replace(',', '.'));
+    if (!Number.isFinite(numeric)) {
+      var fallback = findLevelOption(token);
+      return fallback
+        ? { base: fallback.base, step: Math.max(1, Math.min(LEVEL_DIVISION_COUNT, Number(fallback.step) + 1 || 1)) }
+        : null;
+    }
+
+    for (var index = 0; index < LEVEL_BANDS.length; index += 1) {
+      var band = LEVEL_BANDS[index];
+      var isLast = index === LEVEL_BANDS.length - 1;
+      var inBand = numeric >= band.min && (isLast ? numeric <= band.max : numeric < band.max);
+      if (!inBand) {
+        continue;
+      }
+
+      var ratio = (numeric - band.min) / (band.max - band.min);
+      var step = Math.floor(ratio * LEVEL_DIVISION_COUNT) + 1;
+      return {
+        base: band.base,
+        step: Math.max(1, Math.min(LEVEL_DIVISION_COUNT, step))
+      };
+    }
+
+    return null;
+  }
+
+  function formatLevelStepText(token) {
+    var step = resolveLevelStep(token);
+    if (!step) {
+      return String(token || '').trim();
+    }
+    var hasPlus = /\+$/.test(step.base);
+    var base = hasPlus ? step.base.slice(0, -1) : step.base;
+    return base + (LEVEL_SUPERSCRIPTS[step.step] || String(step.step)) + (hasPlus ? '+' : '');
+  }
+
+  function formatLevelRangeText(tokens) {
+    if (!tokens || tokens.length === 0) {
+      return '';
+    }
+    var first = formatLevelStepText(tokens[0]);
+    var last = formatLevelStepText(tokens[tokens.length - 1]);
+    return first === last ? first : first + '-' + last;
+  }
+
+  function createLevelMark(token) {
+    var step = resolveLevelStep(token);
+    if (!step) {
+      return createElement('span', '', token);
+    }
+    var hasPlus = /\+$/.test(step.base);
+    var base = hasPlus ? step.base.slice(0, -1) : step.base;
+    var mark = createElement('span', 'phab-tournaments__level-mark');
+    mark.appendChild(document.createTextNode(base));
+    mark.appendChild(createElement('sup', '', String(step.step)));
+    if (hasPlus) {
+      mark.appendChild(document.createTextNode('+'));
+    }
+    return mark;
+  }
+
+  function createAccessLevelCompactNode(levels) {
+    var list = sortLevels(levels);
+    var node = createElement('div', 'phab-tournaments__schedule-level');
+    if (list.length === 0) {
+      node.textContent = 'Все';
+      return node;
+    }
+
+    node.appendChild(createLevelMark(list[0]));
+    if (list.length > 1 && formatLevelStepText(list[0]) !== formatLevelStepText(list[list.length - 1])) {
+      node.appendChild(createElement('span', '', '-'));
+      node.appendChild(createLevelMark(list[list.length - 1]));
+    }
+    return node;
   }
 
   function pluralizeSpots(count) {
@@ -4209,7 +4309,7 @@
     actionControl.textContent = action.label;
 
     appendChildren(metaBundle, [
-      createElement('div', 'phab-tournaments__schedule-level', formatAccessLevelCompact(card.accessLevels) || 'Все'),
+      createAccessLevelCompactNode(card.accessLevels),
       createElement('div', 'phab-tournaments__schedule-type', card.tournamentType || 'Турнир'),
       createElement('div', 'phab-tournaments__schedule-gender', formatGenderLabel(card.gender) || '—')
     ]);
