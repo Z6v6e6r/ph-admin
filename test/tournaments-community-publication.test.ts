@@ -120,6 +120,35 @@ async function main(): Promise<void> {
   assert.equal((details.publicTournament as Record<string, unknown>).id, tournament.id);
   assert.equal((details.publicTournament as Record<string, unknown>).joinUrl, `${tournament.publicUrl}/join`);
 
+  const canceledTournament = {
+    ...createTournament(),
+    id: 'custom-tournament-canceled',
+    status: TournamentStatus.CANCELED,
+    publicationCommunityIds: ['community-a']
+  };
+  const canceledService = new TournamentsService(
+    { listTournaments: async () => [] } as never,
+    { listTournaments: async () => [] } as never,
+    { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+    {
+      isEnabled: () => true,
+      updateCustomTournament: async () => canceledTournament
+    } as never,
+    { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    undefined,
+    {
+      listFeedItems: async () => [],
+      createFeedItem: async () => {
+        throw new Error('Canceled tournament should not be published');
+      }
+    } as never
+  );
+  await canceledService.updateCustom(canceledTournament.id, {
+    status: TournamentStatus.CANCELED,
+    publicationCommunityIds: canceledTournament.publicationCommunityIds
+  });
+
   console.log('Tournament community publication test passed');
 }
 

@@ -95,6 +95,19 @@ async function main(): Promise<void> {
   assert.equal(directory.items[0]?.name, customTournament.skin.title);
   assert.equal(directory.items[0]?.skin.title, customTournament.skin.title);
 
+  const canceledTournament = {
+    ...createCustomTournament(),
+    id: 'custom-public-canceled',
+    slug: 'public-title-canceled',
+    publicUrl: '/api/tournaments/public/public-title-canceled',
+    status: TournamentStatus.CANCELED
+  };
+  const canceledDirectory = await createService(canceledTournament).listPublicDirectory({
+    includePast: true
+  });
+  assert.equal(canceledDirectory.count, 0);
+  assert.equal(canceledDirectory.items.length, 0);
+
   console.log('Public tournament display name test passed');
 }
 

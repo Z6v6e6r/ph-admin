@@ -326,6 +326,7 @@ export class TournamentsService {
       hydrated.map((tournament) => this.enrichTournamentVivaProfiles(tournament))
     );
     const items = enriched
+      .filter((tournament) => !this.isCanceledTournamentStatus(tournament.status))
       .map((tournament) => this.toPublicView(tournament));
 
     return {
@@ -1218,11 +1219,11 @@ export class TournamentsService {
       date?: string;
     }
   ): boolean {
-    if (
-      !options.includePast &&
-      (tournament.status === TournamentStatus.FINISHED
-        || tournament.status === TournamentStatus.CANCELED)
-    ) {
+    if (this.isCanceledTournamentStatus(tournament.status)) {
+      return false;
+    }
+
+    if (!options.includePast && tournament.status === TournamentStatus.FINISHED) {
       return false;
     }
 
@@ -2781,6 +2782,10 @@ export class TournamentsService {
       return;
     }
 
+    if (this.isCanceledTournamentStatus(tournament.status)) {
+      return;
+    }
+
     const communityIds = this.normalizePublicationCommunityIds(tournament.publicationCommunityIds);
     if (communityIds.length === 0) {
       return;
@@ -3128,8 +3133,13 @@ export class TournamentsService {
   private isTournamentRegistrationOpen(tournament: CustomTournament): boolean {
     return (
       tournament.status !== TournamentStatus.FINISHED
-      && tournament.status !== TournamentStatus.CANCELED
+      && !this.isCanceledTournamentStatus(tournament.status)
     );
+  }
+
+  private isCanceledTournamentStatus(status: unknown): boolean {
+    const normalized = String(status ?? '').trim().toUpperCase();
+    return normalized === TournamentStatus.CANCELED || normalized === 'CANCELLED';
   }
 
   private findParticipantByPhone(
