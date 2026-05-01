@@ -2793,42 +2793,47 @@ export class TournamentsService {
 
     for (const communityId of communityIds) {
       try {
-        const alreadyPublished = await this.isTournamentPublishedInCommunity(
+        const existingFeedItem = await this.findTournamentFeedItemInCommunity(
           communityId,
           tournament
         );
-        if (alreadyPublished) {
+        const payload = this.buildTournamentCommunityFeedPayload(tournament);
+        if (existingFeedItem) {
+          await this.communitiesService.updateFeedItem(communityId, existingFeedItem.id, {
+            ...payload,
+            actor: this.toCommunityActor(actor)
+          });
           continue;
         }
 
         await this.communitiesService.createFeedItem(communityId, {
-          ...this.buildTournamentCommunityFeedPayload(tournament),
+          ...payload,
           actor: this.toCommunityActor(actor)
         });
       } catch (error) {
         this.logger.warn(
-          `Failed to publish tournament ${tournament.id} to community ${communityId}: ${String(error)}`
+          `Failed to sync tournament ${tournament.id} to community ${communityId}: ${String(error)}`
         );
       }
     }
   }
 
-  private async isTournamentPublishedInCommunity(
+  private async findTournamentFeedItemInCommunity(
     communityId: string,
     tournament: CustomTournament
-  ): Promise<boolean> {
+  ): Promise<CommunityFeedItem | null> {
     if (!this.communitiesService) {
-      return false;
+      return null;
     }
 
     try {
       const items = await this.communitiesService.listFeedItems(communityId);
-      return items.some((item) => this.isTournamentFeedItem(item, tournament));
+      return items.find((item) => this.isTournamentFeedItem(item, tournament)) ?? null;
     } catch (error) {
       this.logger.warn(
         `Failed to check tournament ${tournament.id} feed item in community ${communityId}: ${String(error)}`
       );
-      return false;
+      return null;
     }
   }
 

@@ -68,12 +68,17 @@ function createTournament(): CustomTournament {
 async function main(): Promise<void> {
   const tournament = createTournament();
   const createdFeedItems: Array<{ communityId: string; payload: Record<string, unknown> }> = [];
+  const updatedFeedItems: Array<{
+    communityId: string;
+    feedItemId: string;
+    payload: Record<string, unknown>;
+  }> = [];
   const existingFeedItem = {
     id: 'feed-existing',
     communityId: 'community-b',
     kind: 'TOURNAMENT',
     status: 'PUBLISHED',
-    title: 'Падел турнир',
+    title: 'Старое название',
     details: {
       tournamentId: tournament.id
     }
@@ -102,6 +107,18 @@ async function main(): Promise<void> {
           status: 'PUBLISHED',
           title: String(payload.title)
         } satisfies CommunityFeedItem;
+      },
+      updateFeedItem: async (
+        communityId: string,
+        feedItemId: string,
+        payload: Record<string, unknown>
+      ) => {
+        updatedFeedItems.push({ communityId, feedItemId, payload });
+        return {
+          ...existingFeedItem,
+          title: String(payload.title),
+          details: payload.details as Record<string, unknown>
+        } satisfies CommunityFeedItem;
       }
     } as never
   );
@@ -119,6 +136,13 @@ async function main(): Promise<void> {
   assert.equal(details.cardVariant, 'TOURNAMENTS_SHOWCASE_COMPACT');
   assert.equal((details.publicTournament as Record<string, unknown>).id, tournament.id);
   assert.equal((details.publicTournament as Record<string, unknown>).joinUrl, `${tournament.publicUrl}/join`);
+  assert.equal(updatedFeedItems.length, 1);
+  assert.equal(updatedFeedItems[0]?.communityId, 'community-b');
+  assert.equal(updatedFeedItems[0]?.feedItemId, 'feed-existing');
+  assert.equal(updatedFeedItems[0]?.payload.title, 'Падел турнир от ПадлхАБ');
+  const updatedDetails = updatedFeedItems[0]?.payload.details as Record<string, unknown>;
+  assert.equal(updatedDetails.tournamentId, tournament.id);
+  assert.equal((updatedDetails.publicTournament as Record<string, unknown>).joinUrl, `${tournament.publicUrl}/join`);
 
   const canceledTournament = {
     ...createTournament(),
