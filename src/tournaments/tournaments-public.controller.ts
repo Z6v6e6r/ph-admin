@@ -29,6 +29,7 @@ const TOURNAMENT_LEVEL_BANDS = [
   { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
 ] as const;
 const TOURNAMENT_LEVEL_OPTIONS = buildTournamentLevelOptions();
+const TOURNAMENT_LEVEL_SUPERSCRIPTS = ['¹', '²', '³', '⁴'] as const;
 
 function formatTournamentLevelScoreToken(value: number): string {
   return Number(value ?? 0)
@@ -3232,7 +3233,29 @@ export class TournamentsPublicController {
       return fallback;
     }
 
-    return normalized;
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric)) {
+      return normalized;
+    }
+
+    const band = TOURNAMENT_LEVEL_BANDS.find((item, index) => {
+      if (index === TOURNAMENT_LEVEL_BANDS.length - 1) {
+        return numeric >= item.min - 0.0001 && numeric <= item.max + 0.0001;
+      }
+      return numeric >= item.min - 0.0001 && numeric < item.max - 0.0001;
+    });
+    if (!band) {
+      return normalized;
+    }
+
+    const span = Math.max(band.max - band.min, 0.0001);
+    const ratio = Math.min(1, Math.max(0, (numeric - band.min) / span));
+    const stepIndex = Math.min(
+      TOURNAMENT_LEVEL_SUPERSCRIPTS.length - 1,
+      Math.max(0, Math.ceil(ratio * TOURNAMENT_LEVEL_SUPERSCRIPTS.length) - 1)
+    );
+
+    return `${band.base}${TOURNAMENT_LEVEL_SUPERSCRIPTS[stepIndex]}`;
   }
 
   private isMutedPublicParticipant(participant: TournamentPublicParticipantCard): boolean {

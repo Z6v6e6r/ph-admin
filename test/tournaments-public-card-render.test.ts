@@ -29,7 +29,7 @@ function createTournament(): TournamentPublicView {
       {
         id: 'player-1',
         name: 'Игорь Махнов',
-        levelLabel: 'D+',
+        levelLabel: '2.75',
         avatarUrl: null,
         gender: 'MIXED',
         paymentStatus: 'PAID',
@@ -38,7 +38,7 @@ function createTournament(): TournamentPublicView {
       {
         id: 'player-2',
         name: 'Елена Полкова',
-        levelLabel: 'C+',
+        levelLabel: '3.50926',
         avatarUrl: null,
         gender: 'MIXED',
         paymentStatus: 'PAID',
@@ -47,7 +47,7 @@ function createTournament(): TournamentPublicView {
       {
         id: 'player-phone',
         name: '79104303190',
-        levelLabel: 'D',
+        levelLabel: '1.2',
         avatarUrl: '/uploads/player-phone.jpg',
         gender: 'MIXED',
         paymentStatus: 'UNPAID',
@@ -248,9 +248,9 @@ async function main(): Promise<void> {
     assert.match(html ?? '', /<div class="avatar-wrap">/);
     assert.match(html ?? '', /\.avatar \{[\s\S]*?overflow: hidden;/);
     assert.doesNotMatch(html ?? '', /<span class="level">D\+\/C<\/span>/);
-    assert.match(html ?? '', /<span class="level">D\+<\/span>/);
-    assert.match(html ?? '', /<span class="level">D<\/span>/);
-    assert.match(html ?? '', /<span class="level">2.75<\/span>/);
+    assert.match(html ?? '', /<span class="level">D\+³<\/span>/);
+    assert.match(html ?? '', /<span class="level">D¹<\/span>/);
+    assert.match(html ?? '', /<span class="level">C\+¹<\/span>/);
     assert.match(html ?? '', /Сетка скоро появится/);
     assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
   }

@@ -93,7 +93,7 @@ function main(): void {
   );
   assert.deepEqual(
     participants.map((participant) => participant.levelLabel),
-    ['2.75', '2.5', 'D+', '2.904', 'C+']
+    ['2.75', '2.5', '2.25', '2.904', '3.509']
   );
 
   const nestedRecords = service.unwrapRecords({
