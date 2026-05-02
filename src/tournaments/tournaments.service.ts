@@ -97,6 +97,11 @@ interface TournamentLevelDescriptor {
   maxScore: number;
 }
 
+interface PublicDirectoryCacheEntry {
+  expiresAt: number;
+  payload: TournamentPublicDirectoryResponse;
+}
+
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 48;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 96;
 const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
@@ -138,6 +143,11 @@ export class TournamentsService {
     this.pickString(process.env.VIVA_END_USER_WIDGET_ID) ?? 'iSkq6G';
   private readonly vivaEndUserRequestTimeoutMs =
     this.readPositiveNumberEnv('VIVA_END_USER_TIMEOUT_MS', 5000);
+  private readonly publicDirectoryCacheTtlMs = this.readPositiveNumberEnv(
+    'TOURNAMENTS_PUBLIC_DIRECTORY_CACHE_TTL_MS',
+    30000
+  );
+  private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
 
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
@@ -265,6 +275,7 @@ export class TournamentsService {
 
     const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
     const hydrated = await this.hydrateCustomTournament(created);
+    this.invalidatePublicDirectoryCache();
     await this.publishTournamentToSelectedCommunities(hydrated, normalizedMutation.actor);
     return hydrated;
   }
@@ -279,6 +290,7 @@ export class TournamentsService {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
     const hydrated = await this.hydrateCustomTournament(updated);
+    this.invalidatePublicDirectoryCache();
     await this.publishTournamentToSelectedCommunities(hydrated, mutation.actor);
     return hydrated;
   }
@@ -302,6 +314,17 @@ export class TournamentsService {
     const includePast = options?.includePast === true;
     const forwardDays = this.normalizePublicForwardDays(options?.forwardDays);
     const date = this.normalizePublicDate(options?.date);
+    const cacheKey = this.buildPublicDirectoryCacheKey({
+      limit,
+      stationIds,
+      includePast,
+      forwardDays,
+      date
+    });
+    const cached = this.getCachedPublicDirectory(cacheKey);
+    if (cached) {
+      return cached;
+    }
     const tournaments = await this.listCustomTournamentsSafe();
 
     const candidates = tournaments
@@ -315,25 +338,26 @@ export class TournamentsService {
       )
       .sort((left, right) => this.comparePublicTournaments(left, right))
       .slice(0, limit);
-    const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(candidates);
+    const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(candidates, {
+      includeDetailedSource: false
+    });
     const hydrated = await Promise.all(
       candidates.map((tournament) => this.hydrateCustomTournamentFromSourceMap(
         tournament,
         sourceTournamentsById
       ))
     );
-    const enriched = await Promise.all(
-      hydrated.map((tournament) => this.enrichTournamentVivaProfiles(tournament))
-    );
-    const items = enriched
+    const items = hydrated
       .filter((tournament) => !this.isCanceledTournamentStatus(tournament.status))
       .map((tournament) => this.toPublicView(tournament));
 
-    return {
+    const response: TournamentPublicDirectoryResponse = {
       generatedAt: new Date().toISOString(),
       count: items.length,
       items
     };
+    this.setCachedPublicDirectory(cacheKey, response);
+    return response;
   }
 
   async getPublicJoinFlow(
@@ -1129,7 +1153,10 @@ export class TournamentsService {
   }
 
   private async buildSourceTournamentMapForCustomTournaments(
-    tournaments: CustomTournament[]
+    tournaments: CustomTournament[],
+    options?: {
+      includeDetailedSource?: boolean;
+    }
   ): Promise<Map<string, Tournament>> {
     const sourceIds = new Set(
       tournaments
@@ -1147,6 +1174,9 @@ export class TournamentsService {
           .filter((tournament) => sourceIds.has(tournament.id))
           .map((tournament) => [tournament.id, tournament])
       );
+      if (options?.includeDetailedSource === false) {
+        return sourceTournamentsById;
+      }
       await Promise.all(
         Array.from(sourceIds).map(async (sourceId) => {
           const detailedTournament = await this.findSourceTournamentById(sourceId);
@@ -3580,6 +3610,56 @@ export class TournamentsService {
     return typeof abortSignalTimeout === 'function'
       ? abortSignalTimeout(timeoutMs)
       : undefined;
+  }
+
+  private buildPublicDirectoryCacheKey(input: {
+    limit: number;
+    stationIds: string[];
+    includePast: boolean;
+    forwardDays: number;
+    date?: string;
+  }): string {
+    return JSON.stringify({
+      limit: input.limit,
+      stationIds: [...input.stationIds].sort(),
+      includePast: input.includePast,
+      forwardDays: input.forwardDays,
+      date: input.date ?? null
+    });
+  }
+
+  private getCachedPublicDirectory(
+    cacheKey: string
+  ): TournamentPublicDirectoryResponse | undefined {
+    if (this.publicDirectoryCacheTtlMs <= 0) {
+      return undefined;
+    }
+    const cached = this.publicDirectoryCache.get(cacheKey);
+    if (!cached) {
+      return undefined;
+    }
+    if (cached.expiresAt <= Date.now()) {
+      this.publicDirectoryCache.delete(cacheKey);
+      return undefined;
+    }
+    return cached.payload;
+  }
+
+  private setCachedPublicDirectory(
+    cacheKey: string,
+    payload: TournamentPublicDirectoryResponse
+  ): void {
+    if (this.publicDirectoryCacheTtlMs <= 0) {
+      return;
+    }
+    this.publicDirectoryCache.set(cacheKey, {
+      payload,
+      expiresAt: Date.now() + this.publicDirectoryCacheTtlMs
+    });
+  }
+
+  private invalidatePublicDirectoryCache(): void {
+    this.publicDirectoryCache.clear();
   }
 
   private normalizeFilterValues(values?: string[]): string[] {
