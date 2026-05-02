@@ -3515,6 +3515,7 @@
     if (imageUrl) {
       var image = createElement('div', 'phab-tournaments__detail-image');
       var img = document.createElement('img');
+      configureLazyImage(img);
       img.src = imageUrl;
       img.alt = resolveTitle(card);
       image.appendChild(img);
@@ -3583,7 +3584,7 @@
       url.searchParams.set('stationId', config.stationIds.join(','));
     }
     if (config.limit > 0) {
-      url.searchParams.set('limit', String(Math.max(config.limit, DEFAULTS.limit)));
+      url.searchParams.set('limit', String(config.limit));
     }
     if (config.includePast) {
       url.searchParams.set('includePast', 'true');
@@ -3595,6 +3596,15 @@
     }
 
     return url.toString();
+  }
+
+  function configureLazyImage(img) {
+    if (!img) {
+      return img;
+    }
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    return img;
   }
 
   function buildTournamentDetailUrl(config, item) {
@@ -3854,6 +3864,7 @@
 
     if (imageUrl) {
       var img = document.createElement('img');
+      configureLazyImage(img);
       img.src = imageUrl;
       img.alt = organizerName;
       avatar.appendChild(img);
@@ -4057,6 +4068,7 @@
 
     if (imageUrl) {
       var img = document.createElement('img');
+      configureLazyImage(img);
       img.src = imageUrl;
       img.alt = resolveTrainerLabel(card);
       avatar.appendChild(img);
@@ -5422,7 +5434,7 @@
       renderLoading(mount);
     }
 
-    return jsonFetch(buildRequestUrl(state.config, forwardDays), {
+    return jsonFetch(buildRequestUrl(state.config, { forwardDays: forwardDays }), {
       credentials: state.crossOriginApi ? 'omit' : 'include'
     })
       .then(function (payload) {
@@ -5510,6 +5522,7 @@
         if (
           !config.includePast
           && config.forwardDays > config.initialForwardDays
+          && normalizeArray(state.payload.items).length < config.limit
           && !mount.__phabTournamentsDestroyed
         ) {
           window.setTimeout(function () {
