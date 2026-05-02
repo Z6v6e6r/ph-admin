@@ -2442,6 +2442,15 @@
     ].join('-');
   }
 
+  function isValidDayKey(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+  }
+
+  function resolveItemDayKey(item) {
+    var parsed = parseDate(normalizeObject(item).startsAt);
+    return parsed ? formatDateKey(parsed) : 'unknown';
+  }
+
   function formatTime(value) {
     var parsed = parseDate(value);
     if (!parsed) {
@@ -3697,6 +3706,41 @@
     });
   }
 
+  function mergeTournamentPayloadForDay(currentPayload, nextPayload, dayKey) {
+    var current = normalizeObject(currentPayload);
+    var next = normalizeObject(nextPayload);
+    var targetDayKey = String(dayKey || '').trim();
+    var preserved = normalizeArray(current.items).filter(function (item) {
+      return resolveItemDayKey(item) !== targetDayKey;
+    });
+    var nextItems = normalizeArray(next.items).map(function (item) {
+      return normalizeObject(item);
+    });
+    var items = preserved.concat(nextItems);
+
+    return Object.assign({}, current, next, {
+      count: items.length,
+      items: items
+    });
+  }
+
+  function markLoadedDaysFromPayload(state, payload) {
+    normalizeArray(normalizeObject(payload).items).forEach(function (item) {
+      var key = resolveItemDayKey(item);
+      if (key !== 'unknown') {
+        state.loadedDayKeys[key] = true;
+      }
+    });
+  }
+
+  function shouldLoadDayOnDemand(state, dayKey) {
+    var key = String(dayKey || '').trim();
+    if (state.config.includePast || !isValidDayKey(key)) {
+      return false;
+    }
+    return !state.loadedDayKeys[key];
+  }
+
   function isCrossOriginApi(config) {
     try {
       var apiOrigin = new URL(normalizeApiBaseUrl(config.apiBaseUrl) + '/', window.location.href).origin;
@@ -3791,7 +3835,11 @@
 
     if (state.reloadOnClose) {
       state.reloadOnClose = false;
-      loadTournaments(mount, state);
+      if (shouldLoadDayOnDemand(state, state.selectedDayKey) || isValidDayKey(state.selectedDayKey)) {
+        loadTournaments(mount, state, { dateKey: state.selectedDayKey });
+      } else {
+        loadTournaments(mount, state, { forwardDays: state.config.initialForwardDays });
+      }
       return;
     }
 
@@ -4452,6 +4500,23 @@
     return article;
   }
 
+  function selectDay(mount, state, dayKey, dayGroups) {
+    var nextDayKey = String(dayKey || '').trim();
+    if (!nextDayKey) {
+      return;
+    }
+
+    scheduleDayRailShift(mount, state, dayGroups || state.dayGroups || [], nextDayKey);
+    state.selectedDayKey = nextDayKey;
+
+    if (shouldLoadDayOnDemand(state, nextDayKey)) {
+      loadTournaments(mount, state, { dateKey: nextDayKey });
+      return;
+    }
+
+    renderTournaments(mount, state.payload, state);
+  }
+
   function createDayButton(group, state, mount) {
     var button = createElement('button', 'phab-tournaments__day', null);
     var isActive = group.key === state.selectedDayKey;
@@ -4467,9 +4532,7 @@
     ]);
 
     button.addEventListener('click', function () {
-      scheduleDayRailShift(mount, state, state.dayGroups || [], group.key);
-      state.selectedDayKey = group.key;
-      renderTournaments(mount, state.payload, state);
+      selectDay(mount, state, group.key, state.dayGroups || []);
     });
 
     return button;
@@ -4485,9 +4548,7 @@
       });
       var nextIndex = Math.max(0, Math.min(dayGroups.length - 1, currentIndex + delta));
       if (dayGroups[nextIndex]) {
-        scheduleDayRailShift(mount, state, dayGroups, dayGroups[nextIndex].key);
-        state.selectedDayKey = dayGroups[nextIndex].key;
-        renderTournaments(mount, state.payload, state);
+        selectDay(mount, state, dayGroups[nextIndex].key, dayGroups);
       }
     });
     return button;
@@ -5430,19 +5491,41 @@
   function loadTournaments(mount, state, options) {
     var loadOptions = options || {};
     var forwardDays = normalizePositiveInteger(loadOptions.forwardDays, state.config.forwardDays);
+    var dateKey = String(loadOptions.dateKey || '').trim();
+    var requestOptions = { forwardDays: forwardDays };
+    var isDayRequest = isValidDayKey(dateKey);
+    if (isDayRequest) {
+      requestOptions.dateKey = dateKey;
+      if (state.loadingDayKeys[dateKey]) {
+        return Promise.resolve(state.payload);
+      }
+      state.loadingDayKeys[dateKey] = true;
+    }
     if (!loadOptions.background) {
       renderLoading(mount);
     }
 
-    return jsonFetch(buildRequestUrl(state.config, { forwardDays: forwardDays }), {
+    return jsonFetch(buildRequestUrl(state.config, requestOptions), {
       credentials: state.crossOriginApi ? 'omit' : 'include'
     })
       .then(function (payload) {
+        if (isDayRequest) {
+          state.loadingDayKeys[dateKey] = false;
+          state.loadedDayKeys[dateKey] = true;
+          state.payload = mergeTournamentPayloadForDay(state.payload, payload, dateKey);
+          renderTournaments(mount, state.payload, state);
+          return;
+        }
         state.loadedForwardDays = forwardDays;
         state.payload = payload;
+        state.loadedDayKeys = {};
+        markLoadedDaysFromPayload(state, payload);
         renderTournaments(mount, payload, state);
       })
       .catch(function (error) {
+        if (isDayRequest) {
+          state.loadingDayKeys[dateKey] = false;
+        }
         if (!loadOptions.background) {
           renderError(mount, 'Проверьте доступность каталога турниров: ' + error.message);
         }
@@ -5510,6 +5593,8 @@
       authTimer: 0,
       reloadOnClose: false,
       loadedForwardDays: config.initialForwardDays,
+      loadedDayKeys: {},
+      loadingDayKeys: {},
       dayRailScrollLeft: 0,
       dayRailShiftDirection: 0,
       dayRailShiftPending: false
@@ -5517,26 +5602,21 @@
 
     mount.__phabTournamentsInitialized = true;
     mount.__phabTournamentsState = state;
-    loadTournaments(mount, state, { forwardDays: config.initialForwardDays })
-      .then(function () {
-        if (
-          !config.includePast
-          && config.forwardDays > config.initialForwardDays
-          && normalizeArray(state.payload.items).length < config.limit
-          && !mount.__phabTournamentsDestroyed
-        ) {
-          window.setTimeout(function () {
-            loadTournaments(mount, state, {
-              forwardDays: config.forwardDays,
-              background: true
-            });
-          }, 0);
-        }
-      });
+    loadTournaments(mount, state, { forwardDays: config.initialForwardDays });
 
     if (config.refreshMs > 0) {
       mount.__phabTournamentsRefreshTimer = window.setInterval(function () {
-        loadTournaments(mount, state, { forwardDays: config.forwardDays });
+        if (!mount.__phabTournamentsDestroyed && isValidDayKey(state.selectedDayKey)) {
+          loadTournaments(mount, state, {
+            dateKey: state.selectedDayKey,
+            background: true
+          });
+          return;
+        }
+        loadTournaments(mount, state, {
+          forwardDays: config.initialForwardDays,
+          background: true
+        });
       }, config.refreshMs);
     }
   }
