@@ -21,6 +21,8 @@
   };
   var DEFAULT_FORWARD_DAYS = 30;
   var DEFAULT_INITIAL_FORWARD_DAYS = 1;
+  var DIRECTORY_REQUEST_TIMEOUT_MS = 12000;
+  var DIRECTORY_REQUEST_RETRY_COUNT = 2;
   var SMS_RESEND_COOLDOWN_MS = 30000;
   var VIVA_API_BASE_URL = 'https://api.vivacrm.ru';
   var DEFAULTS = {
@@ -62,38 +64,6 @@
     var style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      @font-face {
-        font-family: "RF Dewi UltraBold";
-        src: url("https://padlhub.su/lk/fonts/rf-dewi-ultrabold.ttf") format("truetype");
-        font-weight: 800;
-        font-style: normal;
-        font-display: swap;
-      }
-
-      @font-face {
-        font-family: "RF Dewi Expanded UltraBold Italic";
-        src: url("https://padlhub.su/lk/fonts/rf-dewi-expanded-ultrabold-italic.ttf") format("truetype");
-        font-weight: 800;
-        font-style: italic;
-        font-display: swap;
-      }
-
-      @font-face {
-        font-family: "Source Code Pro";
-        src: url("https://padlhub.su/lk/fonts/SourceCodePro-Medium.ttf") format("truetype");
-        font-weight: 500;
-        font-style: normal;
-        font-display: swap;
-      }
-
-      @font-face {
-        font-family: "Source Code Pro Regular";
-        src: url("https://padlhub.su/lk/fonts/SourceCodePro-Regular.ttf") format("truetype");
-        font-weight: 400;
-        font-style: normal;
-        font-display: swap;
-      }
-
       :root {
         --ph-tournament-bg: #f5f5f7;
         --ph-tournament-white: #ffffff;
@@ -124,11 +94,11 @@
         --ph-tournament-card-accent-soft: rgba(47, 157, 212, 0.08);
         --ph-tournament-card-accent-ink: #2f9dd4;
         --ph-tournament-card-map: #8766eb;
-        --ph-tournament-display-font: "RF Dewi UltraBold", "Source Code Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        --ph-tournament-button-font: "RF Dewi Expanded UltraBold Italic", "RF Dewi UltraBold", "Source Code Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        --ph-tournament-time-font: "Source Code Pro Regular", "Source Code Pro", "Roboto", "Roboto Flex", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-display-font: "Source Code Pro", "Roboto Mono", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-button-font: "Source Code Pro", "Roboto Mono", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-time-font: "Source Code Pro", "Roboto Mono", "Roboto", "Roboto Flex", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --ph-tournament-ui-font: "Inter Display", "Inter", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        --ph-tournament-card-title-font: "RF Dewi UltraBold", "Inter Display", "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ph-tournament-card-title-font: "Source Code Pro", "Inter Display", "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
 
       .phab-tournaments {
@@ -3669,6 +3639,30 @@
     });
   }
 
+  function jsonFetchWithTimeout(url, options, timeoutMs) {
+    if (typeof AbortController !== 'function' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return jsonFetch(url, options);
+    }
+
+    var controller = new AbortController();
+    var requestOptions = Object.assign({}, options || {}, {
+      signal: controller.signal
+    });
+    var timerId = setTimeout(function () {
+      controller.abort();
+    }, timeoutMs);
+
+    return jsonFetch(url, requestOptions)
+      .finally(function () {
+        clearTimeout(timerId);
+      });
+  }
+
+  function shouldRetryDirectoryRequest(error) {
+    var message = String((error && error.message) || '').toLowerCase();
+    return message.indexOf('request failed with status') !== 0;
+  }
+
   function formFetch(url, payload) {
     return jsonFetch(url, {
       method: 'POST',
@@ -5494,6 +5488,7 @@
     var dateKey = String(loadOptions.dateKey || '').trim();
     var requestOptions = { forwardDays: forwardDays };
     var isDayRequest = isValidDayKey(dateKey);
+    var retriesLeft = DIRECTORY_REQUEST_RETRY_COUNT;
     if (isDayRequest) {
       requestOptions.dateKey = dateKey;
       if (state.loadingDayKeys[dateKey]) {
@@ -5505,31 +5500,49 @@
       renderLoading(mount);
     }
 
-    return jsonFetch(buildRequestUrl(state.config, requestOptions), {
-      credentials: state.crossOriginApi ? 'omit' : 'include'
-    })
-      .then(function (payload) {
-        if (isDayRequest) {
-          state.loadingDayKeys[dateKey] = false;
-          state.loadedDayKeys[dateKey] = true;
-          state.payload = mergeTournamentPayloadForDay(state.payload, payload, dateKey);
-          renderTournaments(mount, state.payload, state);
-          return;
-        }
-        state.loadedForwardDays = forwardDays;
-        state.payload = payload;
-        state.loadedDayKeys = {};
-        markLoadedDaysFromPayload(state, payload);
-        renderTournaments(mount, payload, state);
-      })
-      .catch(function (error) {
-        if (isDayRequest) {
-          state.loadingDayKeys[dateKey] = false;
-        }
-        if (!loadOptions.background) {
-          renderError(mount, 'Проверьте доступность каталога турниров: ' + error.message);
-        }
-      });
+    function applyPayload(payload) {
+      if (isDayRequest) {
+        state.loadingDayKeys[dateKey] = false;
+        state.loadedDayKeys[dateKey] = true;
+        state.payload = mergeTournamentPayloadForDay(state.payload, payload, dateKey);
+        renderTournaments(mount, state.payload, state);
+        return;
+      }
+      state.loadedForwardDays = forwardDays;
+      state.payload = payload;
+      state.loadedDayKeys = {};
+      markLoadedDaysFromPayload(state, payload);
+      renderTournaments(mount, payload, state);
+    }
+
+    function finalizeWithError(error) {
+      if (isDayRequest) {
+        state.loadingDayKeys[dateKey] = false;
+      }
+      if (!loadOptions.background) {
+        renderError(mount, 'Проверьте доступность каталога турниров: ' + error.message);
+      }
+    }
+
+    function attemptLoad() {
+      return jsonFetchWithTimeout(
+        buildRequestUrl(state.config, requestOptions),
+        {
+          credentials: state.crossOriginApi ? 'omit' : 'include'
+        },
+        DIRECTORY_REQUEST_TIMEOUT_MS
+      )
+        .then(applyPayload)
+        .catch(function (error) {
+          if (retriesLeft > 0 && shouldRetryDirectoryRequest(error)) {
+            retriesLeft -= 1;
+            return attemptLoad();
+          }
+          finalizeWithError(error);
+        });
+    }
+
+    return attemptLoad();
   }
 
   function readConfig(mount) {
