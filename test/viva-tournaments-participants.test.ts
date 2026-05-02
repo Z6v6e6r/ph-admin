@@ -54,17 +54,32 @@ function main(): void {
             value: '2.90400'
           }
         ]
+      },
+      {
+        id: 'client-5',
+        name: 'Игрок со смешанным уровнем',
+        phone: '+7 900 000 00 05',
+        level: {
+          label: 'C+',
+          value: '3.50926'
+        }
       }
     ]
   });
 
   assert.deepEqual(
     participants.map((participant) => participant.name),
-    ['Атемасова Татьяна', 'Вишневская Анна', 'Евгения Чабыкина', 'Игрок с русским полем']
+    [
+      'Атемасова Татьяна',
+      'Вишневская Анна',
+      'Евгения Чабыкина',
+      'Игрок с русским полем',
+      'Игрок со смешанным уровнем'
+    ]
   );
   assert.deepEqual(
     participants.map((participant) => participant.id),
-    ['client-1', 'client-2', 'client-3', 'client-4']
+    ['client-1', 'client-2', 'client-3', 'client-4', 'client-5']
   );
   assert.deepEqual(
     participants.map((participant) => participant.avatarUrl),
@@ -72,12 +87,13 @@ function main(): void {
       'https://example.com/atemasova.jpg',
       'https://example.com/vishnevskaya.jpg',
       'https://example.com/chabykina.jpg',
+      undefined,
       undefined
     ]
   );
   assert.deepEqual(
     participants.map((participant) => participant.levelLabel),
-    ['2.75', '2.5', '2.25', '2.904']
+    ['2.75', '2.5', 'D+', '2.904', 'C+']
   );
 
   const nestedRecords = service.unwrapRecords({
