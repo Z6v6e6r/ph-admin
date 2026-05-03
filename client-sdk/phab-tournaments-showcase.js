@@ -417,6 +417,15 @@
         border-radius: 20px;
       }
 
+      .phab-tournaments__entry--interactive {
+        cursor: pointer;
+      }
+
+      .phab-tournaments__entry--interactive:focus-visible {
+        outline: 2px solid rgba(111, 71, 255, 0.7);
+        outline-offset: 2px;
+      }
+
       .phab-tournaments__entry::before {
         content: none;
       }
@@ -3363,14 +3372,13 @@
   }
 
   function resolveAction(card, descriptor) {
-    var skin = normalizeObject(card.skin);
     var publicUrl = String(card.publicUrl || '').trim();
     var joinUrl = String(card.joinUrl || '').trim();
 
     if (descriptor.key === 'completed' || descriptor.key === 'cancelled') {
       return {
         kind: 'secondary',
-        label: 'Просмотр',
+        label: 'Открыть',
         mode: publicUrl ? 'public' : 'disabled'
       };
     }
@@ -3378,7 +3386,7 @@
     if (descriptor.key === 'closed') {
       return {
         kind: 'secondary',
-        label: publicUrl ? 'Подробнее' : 'Регистрация закрыта',
+        label: 'Открыть',
         mode: publicUrl ? 'public' : 'disabled'
       };
     }
@@ -3386,14 +3394,14 @@
     if (descriptor.key === 'full' || descriptor.key === 'waitlist') {
       return {
         kind: 'secondary',
-        label: 'В лист ожидания',
+        label: 'Открыть',
         mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
       };
     }
 
     return {
       kind: 'primary',
-      label: String(skin.ctaLabel || '').trim() || 'Принять участие',
+      label: 'Открыть',
       mode: joinUrl ? 'join' : publicUrl ? 'public' : 'disabled'
     };
   }
@@ -4236,8 +4244,7 @@
   }
 
   function createActionControl(card, action, state, mount) {
-    var joinUrl = resolveUrl(card.joinUrl, state.config);
-    var publicUrl = resolveUrl(card.publicUrl, state.config);
+    var detailUrl = buildTournamentDetailUrl(state.config, card);
     var className =
       action.kind === 'secondary'
         ? 'phab-tournaments__button-secondary'
@@ -4246,11 +4253,48 @@
 
     control = createElement('button', className, action.label);
     control.type = 'button';
-    control.disabled = action.mode === 'disabled' && !joinUrl && !publicUrl;
+    control.disabled = !detailUrl;
     control.addEventListener('click', function () {
       openTournamentDetails(mount, state, card);
     });
     return control;
+  }
+
+  function isInteractiveTarget(target, scope) {
+    if (!target || typeof target.closest !== 'function') {
+      return false;
+    }
+
+    var interactive = target.closest('a, button, input, select, textarea, label, summary, [role="button"]');
+    return Boolean(interactive && (!scope || scope.contains(interactive)));
+  }
+
+  function bindTournamentPreviewTrigger(node, mount, state, card) {
+    if (!node) {
+      return node;
+    }
+
+    node.className += ' phab-tournaments__entry--interactive';
+    if (!node.hasAttribute('tabindex')) {
+      node.tabIndex = 0;
+    }
+    node.addEventListener('click', function (event) {
+      if (isInteractiveTarget(event.target, node)) {
+        return;
+      }
+      openTournamentDetails(mount, state, card);
+    });
+    node.addEventListener('keydown', function (event) {
+      if (event.defaultPrevented || isInteractiveTarget(event.target, node)) {
+        return;
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openTournamentDetails(mount, state, card);
+      }
+    });
+
+    return node;
   }
 
   function createCardModeActionControl(card, action, state, mount) {
@@ -4378,7 +4422,7 @@
     cta.textContent = ctaLabel + ctaSuffix;
     article.appendChild(cta);
 
-    return article;
+    return bindTournamentPreviewTrigger(article, mount, state, card);
   }
 
   function createScheduleCard(card, state, mount) {
@@ -4411,7 +4455,7 @@
       createElement('div', 'phab-tournaments__schedule-cell phab-tournaments__schedule-spots', formatSpots(card)),
       appendChildren(createElement('div', 'phab-tournaments__schedule-cell'), [actionControl])
     ]);
-    return article;
+    return bindTournamentPreviewTrigger(article, mount, state, card);
   }
 
   function createScheduleTimeCell(card) {
@@ -4491,7 +4535,7 @@
       createCompactFooter(card)
     ]);
 
-    return article;
+    return bindTournamentPreviewTrigger(article, mount, state, card);
   }
 
   function selectDay(mount, state, dayKey, dayGroups) {
