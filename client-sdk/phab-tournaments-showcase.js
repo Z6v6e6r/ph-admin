@@ -4244,6 +4244,7 @@
   }
 
   function createActionControl(card, action, state, mount) {
+    var publicUrl = resolveUrl(card.publicUrl, state.config);
     var detailUrl = buildTournamentDetailUrl(state.config, card);
     var className =
       action.kind === 'secondary'
@@ -4253,8 +4254,14 @@
 
     control = createElement('button', className, action.label);
     control.type = 'button';
-    control.disabled = !detailUrl;
-    control.addEventListener('click', function () {
+    control.disabled = !publicUrl && !detailUrl;
+    control.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (publicUrl) {
+        window.location.href = publicUrl;
+        return;
+      }
       openTournamentDetails(mount, state, card);
     });
     return control;
