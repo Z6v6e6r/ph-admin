@@ -292,10 +292,14 @@ async function main(): Promise<void> {
   );
 
   {
+    const tournamentWithCrossHostJoinUrl: TournamentPublicView = {
+      ...tournament,
+      joinUrl: 'https://padlhub.ru/api/tournaments/public/weekend-cup/join'
+    };
     const controllerWithFlow = new TournamentsPublicController(
       {
-        getPublicBySlug: async () => tournament,
-        getPublicJoinFlow: async () => createFlow(tournament, 'PROFILE_REQUIRED')
+        getPublicBySlug: async () => tournamentWithCrossHostJoinUrl,
+        getPublicJoinFlow: async () => createFlow(tournamentWithCrossHostJoinUrl, 'PROFILE_REQUIRED')
       } as never,
       createSessionServiceMock({
         ensureAuthorizedClient: () => ({
@@ -308,9 +312,11 @@ async function main(): Promise<void> {
       }) as never
     );
     const capture = createResponseCapture();
+    const request = createRequest('text/html,application/xhtml+xml');
+    request.headers.host = 'padlhub.su';
     await controllerWithFlow.findPublicBySlug(
       tournament.slug,
-      createRequest('text/html,application/xhtml+xml'),
+      request,
       capture.response,
       undefined,
       undefined
@@ -318,6 +324,10 @@ async function main(): Promise<void> {
 
     const html = capture.getHtml();
     assert.match(html ?? '', /Введите номер телефона, чтобы записаться/);
+    assert.match(
+      html ?? '',
+      /action="https:\/\/padlhub\.su\/api\/tournaments\/public\/weekend-cup\/join"/
+    );
     assert.match(html ?? '', /name="phone"/);
   }
 
@@ -355,6 +365,7 @@ async function main(): Promise<void> {
 
   {
     const purchaseFlow = createFlow(tournament, 'PURCHASE_REQUIRED');
+    purchaseFlow.client.levelLabel = 'D';
     purchaseFlow.payment = {
       required: true,
       code: 'PURCHASE_REQUIRED',
@@ -405,6 +416,8 @@ async function main(): Promise<void> {
     );
 
     const html = capture.getHtml();
+    assert.doesNotMatch(html ?? '', /<select name="levelLabel" required>/);
+    assert.match(html ?? '', /<input type="hidden" name="levelLabel" value="D" \/>/);
     assert.match(html ?? '', /<option value="energy-5" selected>Энергия 5 🎾 · 3 990 ₽<\/option>/);
     assert.match(html ?? '', /<option value="energy-flex">Энергия 🎾<\/option>/);
     assert.doesNotMatch(html ?? '', /Энергия 🎾 · —/);

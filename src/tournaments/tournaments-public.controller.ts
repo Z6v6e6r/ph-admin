@@ -2017,13 +2017,22 @@ export class TournamentsPublicController {
 
   private toAbsoluteUrl(value: string, request: Request, user?: RequestUser): string {
     const normalized = String(value ?? '').trim();
+    const requestBaseUrl = this.getRequestBaseUrl(request, user);
     if (!normalized) {
-      return this.getRequestBaseUrl(request, user);
+      return requestBaseUrl;
     }
     if (/^https?:\/\//i.test(normalized)) {
+      try {
+        const parsed = new URL(normalized);
+        if (parsed.pathname.startsWith('/api/tournaments/public/')) {
+          return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, requestBaseUrl).toString();
+        }
+      } catch (_error) {
+        return normalized;
+      }
       return normalized;
     }
-    return new URL(normalized, this.getRequestBaseUrl(request, user)).toString();
+    return new URL(normalized, requestBaseUrl).toString();
   }
 
   private getRequestBaseUrl(request: Request, user?: RequestUser): string {
@@ -2057,7 +2066,14 @@ export class TournamentsPublicController {
     const needsLevel = tournament.accessLevels.length > 0;
     const phoneValue = this.escapeHtml(this.formatPhone(client.phone));
     const nameValue = this.escapeHtml(String(client.name ?? ''));
-    const levelValue = String(client.levelLabel ?? '').trim().toUpperCase();
+    const rawLevelValue = String(client.levelLabel ?? '').trim();
+    const levelValue = rawLevelValue.toUpperCase();
+    const showLevelInput =
+      needsLevel
+      && (
+        flow.missingFields.includes('levelLabel')
+        || !rawLevelValue
+      );
     const actionLabel =
       flow.code === 'SUBSCRIPTION_AVAILABLE'
         ? 'Списать абонемент и записаться'
@@ -2120,7 +2136,7 @@ export class TournamentsPublicController {
                 : ''
             }
             ${
-              needsLevel
+              showLevelInput
                 ? `<label class="phab-tournament-join-card__field">
               <span>Уровень игрока</span>
               <select name="levelLabel" required>
@@ -2128,7 +2144,9 @@ export class TournamentsPublicController {
                 ${this.renderLevelOptions(levelValue)}
               </select>
             </label>`
-                : ''
+                : needsLevel && rawLevelValue
+                  ? `<input type="hidden" name="levelLabel" value="${this.escapeHtml(rawLevelValue)}" />`
+                  : ''
             }
             <input type="hidden" name="notes" value="" />
             ${
