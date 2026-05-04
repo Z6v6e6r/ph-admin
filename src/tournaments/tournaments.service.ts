@@ -3018,6 +3018,7 @@ export class TournamentsService {
       joinUrl: this.buildPublicJoinUrl(tournament.publicUrl),
       name: publicName,
       tournamentType: tournament.tournamentType,
+      tournamentTypeBadgeLabel: this.formatTournamentTypeBadgeLabel(tournament),
       gender: tournament.gender,
       accessLevels: tournament.accessLevels,
       startsAt: tournament.startsAt,
@@ -3061,6 +3062,22 @@ export class TournamentsService {
           }
         : undefined
     };
+  }
+
+  private formatTournamentTypeBadgeLabel(tournament: CustomTournament): string {
+    const typeText = this.pickString(tournament.tournamentType) ?? '';
+    const mode = this.pickString(tournament.mechanics?.config?.mode) ?? '';
+    const haystack = `${typeText} ${mode}`.toLowerCase();
+    const isMexicano = /мексикано|mexicano/.test(haystack);
+    const isTeam = /парн|team_/.test(haystack);
+    const isSpicy = /спайси|spicy/.test(haystack);
+    const baseLabel = isMexicano ? 'Мексикано' : 'Американо';
+    const modifiers = [
+      isTeam ? 'парный' : '',
+      isSpicy ? 'спайси' : ''
+    ].filter(Boolean);
+
+    return [baseLabel, ...modifiers].join(' · ');
   }
 
   private toPublicParticipantView(

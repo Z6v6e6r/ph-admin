@@ -669,6 +669,7 @@ export class TournamentsPublicController {
       ...waitlist
     ];
     const accessLabel = this.formatAccessLevelRange(tournament.accessLevels);
+    const tournamentTypeBadgeLabel = this.formatTournamentTypeBadgeLabel(tournament);
     const genderLabel = this.formatGenderLabel(tournament.gender).toUpperCase();
     const capacityLabel = `${participantsCount} / ${maxPlayers}`;
     const statusLabel =
@@ -894,6 +895,12 @@ export class TournamentsPublicController {
         background: #f0e7ff;
         color: #6540c8;
         font-weight: 800;
+      }
+      .headline-badges {
+        display: grid;
+        justify-items: end;
+        gap: 8px;
+        flex: 0 0 auto;
       }
       .tabs {
         display: grid;
@@ -1218,7 +1225,10 @@ export class TournamentsPublicController {
           <h1>${this.escapeHtml(
             clientInTournament ? 'Вы в турнире!' : statusLabel
           )}</h1>
-          <span class="pill">${this.escapeHtml(accessLabel)}</span>
+          <div class="headline-badges">
+            <span class="pill">${this.escapeHtml(accessLabel)}</span>
+            <span class="pill">${this.escapeHtml(tournamentTypeBadgeLabel)}</span>
+          </div>
         </div>
 
         <div class="organizer">
@@ -3181,6 +3191,19 @@ export class TournamentsPublicController {
       return 'Женщины';
     }
     return 'Микст';
+  }
+
+  private formatTournamentTypeBadgeLabel(tournament: TournamentPublicView): string {
+    const provided = this.pickString(tournament.tournamentTypeBadgeLabel);
+    if (provided) {
+      return provided;
+    }
+
+    const normalized = String(tournament.tournamentType ?? '').trim().toLowerCase();
+    if (/мексикано|mexicano/.test(normalized)) {
+      return 'Мексикано';
+    }
+    return 'Американо';
   }
 
   private formatAccessLevelRange(levels: string[]): string {

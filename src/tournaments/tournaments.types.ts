@@ -230,6 +230,7 @@ export interface TournamentPublicView {
   joinUrl: string;
   name: string;
   tournamentType: string;
+  tournamentTypeBadgeLabel?: string;
   gender: TournamentGender;
   accessLevels: string[];
   startsAt?: string;
