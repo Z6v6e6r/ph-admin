@@ -318,7 +318,13 @@ async function main(): Promise<void> {
       tournament.slug,
       request,
       capture.response,
-      undefined,
+      {
+        id: 'anonymous',
+        maxPublicUrl: 'https://padlhub.ru',
+        roles: [],
+        stationIds: [],
+        connectorRoutes: []
+      },
       undefined
     );
 

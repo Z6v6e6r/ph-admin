@@ -2025,7 +2025,10 @@ export class TournamentsPublicController {
       try {
         const parsed = new URL(normalized);
         if (parsed.pathname.startsWith('/api/tournaments/public/')) {
-          return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, requestBaseUrl).toString();
+          return new URL(
+            `${parsed.pathname}${parsed.search}${parsed.hash}`,
+            this.getRequestBaseUrl(request)
+          ).toString();
         }
       } catch (_error) {
         return normalized;
