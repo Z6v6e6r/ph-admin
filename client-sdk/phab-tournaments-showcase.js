@@ -3596,7 +3596,7 @@
 
   function buildTournamentDetailUrl(config, item) {
     var card = normalizeObject(item);
-    var publicUrl = resolveUrl(card.publicUrl, config);
+    var publicUrl = buildTournamentPublicUrl(config, card);
     var slug = String(card.slug || '').trim();
     var url;
 
@@ -3614,6 +3614,28 @@
     url.searchParams.set('format', 'json');
     url.searchParams.set('_ts', String(Date.now()));
     return url.toString();
+  }
+
+  function buildTournamentPublicUrl(config, item) {
+    var card = normalizeObject(item);
+    var publicUrl = resolveUrl(card.publicUrl, config);
+    var slug = String(card.slug || '').trim();
+
+    if (publicUrl) {
+      return publicUrl;
+    }
+    if (!slug) {
+      return '';
+    }
+
+    try {
+      return new URL(
+        normalizeApiBaseUrl(config.apiBaseUrl) + '/tournaments/public/' + encodeURIComponent(slug),
+        window.location.href
+      ).toString();
+    } catch (_error) {
+      return '';
+    }
   }
 
   function resolveUrl(value, config) {
@@ -4244,7 +4266,7 @@
   }
 
   function createActionControl(card, action, state, mount) {
-    var publicUrl = resolveUrl(card.publicUrl, state.config);
+    var publicUrl = buildTournamentPublicUrl(state.config, card);
     var detailUrl = buildTournamentDetailUrl(state.config, card);
     var className =
       action.kind === 'secondary'

@@ -2149,7 +2149,7 @@ export class TournamentsPublicController {
                     (item) =>
                       `<option value="${this.escapeHtml(item.id)}"${
                         this.escapeHtml(item.id) === selectedPurchaseOptionId ? ' selected' : ''
-                      }>${this.escapeHtml(item.label)} · ${this.escapeHtml(item.priceLabel)}</option>`
+                      }>${this.escapeHtml(this.formatPurchaseOptionLabel(item))}</option>`
                   )
                   .join('')}
               </select>
@@ -3161,6 +3161,17 @@ export class TournamentsPublicController {
       const selected = level.value === normalizedSelected ? ' selected' : '';
       return `<option value="${this.escapeHtml(level.value)}"${selected}>${this.escapeHtml(level.label)}</option>`;
     }).join('');
+  }
+
+  private formatPurchaseOptionLabel(item: { label?: string; priceLabel?: string }): string {
+    const label = this.pickString(item.label) ?? 'Покупка';
+    const priceLabel = this.pickString(item.priceLabel);
+
+    if (!priceLabel || priceLabel === '—') {
+      return label;
+    }
+
+    return `${label} · ${priceLabel}`;
   }
 
   private formatLevelLabel(value?: string): string {

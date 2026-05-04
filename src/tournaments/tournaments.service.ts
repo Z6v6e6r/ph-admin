@@ -1591,9 +1591,14 @@ export class TournamentsService {
         Number(tournament.maxPlayers || 0) ||
         this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
         8,
+      trainerName:
+        this.pickString(sourceTournament?.trainerName)
+        ?? this.pickString(sourceTournamentSnapshot.trainerName)
+        ?? tournament.trainerName,
       trainerAvatarUrl:
-        tournament.trainerAvatarUrl
-        ?? this.pickString(sourceTournamentSnapshot.trainerAvatarUrl)
+        this.pickNullableString(sourceTournament?.trainerAvatarUrl)
+        ?? this.pickNullableString(sourceTournamentSnapshot.trainerAvatarUrl)
+        ?? tournament.trainerAvatarUrl
         ?? undefined,
       mechanics: this.buildDefaultTournamentMechanics({
         existing: tournament.mechanics,

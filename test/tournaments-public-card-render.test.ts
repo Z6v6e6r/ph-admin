@@ -354,6 +354,63 @@ async function main(): Promise<void> {
   }
 
   {
+    const purchaseFlow = createFlow(tournament, 'PURCHASE_REQUIRED');
+    purchaseFlow.payment = {
+      required: true,
+      code: 'PURCHASE_REQUIRED',
+      message: 'Подходящий абонемент не найден. Сначала нужно купить участие.',
+      availableSubscriptions: [],
+      purchaseOptions: [
+        {
+          id: 'energy-5',
+          label: 'Энергия 5 🎾',
+          priceLabel: '3 990 ₽',
+          productType: 'SUBSCRIPTION'
+        },
+        {
+          id: 'energy-flex',
+          label: 'Энергия 🎾',
+          priceLabel: '—',
+          productType: 'ONE_TIME'
+        }
+      ]
+    };
+    const controllerWithFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () => purchaseFlow
+      } as never,
+      createSessionServiceMock({
+        ensureAuthorizedClient: () => ({
+          id: 'client-1',
+          authorized: true,
+          authSource: 'headers',
+          phone: '79990001122',
+          phoneVerified: true,
+          onboardingCompleted: true,
+          subscriptions: []
+        })
+      }) as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithFlow.renderJoinPage(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    const html = capture.getHtml();
+    assert.match(html ?? '', /<option value="energy-5" selected>Энергия 5 🎾 · 3 990 ₽<\/option>/);
+    assert.match(html ?? '', /<option value="energy-flex">Энергия 🎾<\/option>/);
+    assert.doesNotMatch(html ?? '', /Энергия 🎾 · —/);
+  }
+
+  {
     const controllerWithFlow = new TournamentsPublicController(
       {
         getPublicBySlug: async () => tournament,

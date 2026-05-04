@@ -284,7 +284,7 @@ async function main(): Promise<void> {
   assert.equal(hydrated.participants[0]?.name, 'Игрок из Viva');
   assert.equal(hydrated.participants[0]?.levelLabel, '2.904');
   assert.equal(hydrated.participantsCount, 1);
-  assert.equal(hydrated.trainerName, 'Тренер из БД');
+  assert.equal(hydrated.trainerName, 'Тренер из Viva');
   assert.equal(hydrated.trainerAvatarUrl, 'https://example.com/trainer-viva.jpg');
   const pendingJoinPayments = (
     hydrated.details?.booking as { pendingJoinPayments?: Array<{ name?: string; avatarUrl?: string | null }> } | undefined
