@@ -19172,17 +19172,17 @@
           var leftState = normalizeObject(left.moderation);
           var rightState = normalizeObject(right.moderation);
           var leftWeight =
-            (Number(left.priority || 0) * 24) +
-            (leftState.pinned ? 1000 : 0) +
+            (leftState.pinned ? 10000 : 0) +
+            (Number(leftState.rank || 0) * 1200) +
             (leftState.promoted ? 240 : 0) +
-            (Number(leftState.rank || 0) * 12) -
+            (Number(left.priority || 0) * 24) -
             (leftState.hidden ? 2000 : 0) -
             (leftState.removed ? 4000 : 0);
           var rightWeight =
-            (Number(right.priority || 0) * 24) +
-            (rightState.pinned ? 1000 : 0) +
+            (rightState.pinned ? 10000 : 0) +
+            (Number(rightState.rank || 0) * 1200) +
             (rightState.promoted ? 240 : 0) +
-            (Number(rightState.rank || 0) * 12) -
+            (Number(right.priority || 0) * 24) -
             (rightState.hidden ? 2000 : 0) -
             (rightState.removed ? 4000 : 0);
           if (rightWeight !== leftWeight) {
