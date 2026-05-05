@@ -19159,6 +19159,34 @@
       }
     }
 
+    async function updateCommunityFeedPriority(community, post, nextPriority, patch, statusText) {
+      if (!community || !community.id || !post || !post.id) {
+        setCommunityFeedModerationState(
+          community && community.id,
+          post && post.id,
+          patch,
+          statusText
+        );
+        return;
+      }
+      var communityId = String(community.id);
+      var postId = String(post.id);
+      var normalizedPriority = Math.max(0, Math.round(Number(nextPriority || 0)));
+      setCommunityFeedModerationState(communityId, postId, patch, statusText);
+      try {
+        await api.updateCommunityFeedItem(communityId, postId, { priority: normalizedPriority });
+        await refreshCommunityManagedFeed(community);
+        setStatus(statusText + ' и сохранена для публичной ленты', false);
+      } catch (error) {
+        setStatus(
+          error && error.message
+            ? String(error.message)
+            : 'Не удалось сохранить порядок публикации.',
+          true
+        );
+      }
+    }
+
     function applyCommunityFeedModeration(communityId, posts) {
       return normalizeArray(posts)
         .map(function (post) {
@@ -21070,10 +21098,13 @@
           className: 'phab-admin-community-preview-action',
           onClick: function () {
             var current = Number(getCommunityFeedModerationState(community.id, post.id).rank || 0);
-            setCommunityFeedModerationState(
-              community.id,
-              post.id,
-              { rank: current > 0 ? current - 1 : current + 1 },
+            var currentPriority = Math.max(0, Number(post && post.priority || 0));
+            var nextRank = current > 0 ? current - 1 : current + 1;
+            updateCommunityFeedPriority(
+              community,
+              post,
+              current > 0 ? Math.max(0, currentPriority - 1200) : currentPriority + 1200,
+              { rank: nextRank },
               current > 0 ? 'Карточка опущена ниже' : 'Карточка поднята выше'
             );
           }
@@ -21082,11 +21113,14 @@
           label: moderation.pinned ? 'Открепить' : 'Закрепить',
           className: 'phab-admin-community-preview-action',
           onClick: function () {
-            setCommunityFeedModerationState(
-              community.id,
-              post.id,
-              { pinned: !moderation.pinned },
-              moderation.pinned ? 'Карточка откреплена' : 'Карточка закреплена'
+            var isPinned = Boolean(moderation.pinned);
+            var currentPriority = Math.max(0, Number(post && post.priority || 0));
+            updateCommunityFeedPriority(
+              community,
+              post,
+              isPinned ? Math.max(0, currentPriority - 10000) : Math.max(currentPriority, 10000),
+              { pinned: !isPinned },
+              isPinned ? 'Карточка откреплена' : 'Карточка закреплена'
             );
           }
         }
