@@ -2,13 +2,14 @@ import * as assert from 'node:assert/strict';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { CustomTournament, Tournament, TournamentStatus } from '../src/tournaments/tournaments.types';
 
-function createSourceTournament(id: string, startsAt: string): Tournament {
+function createSourceTournament(id: string, startsAt: string, endsAt?: string): Tournament {
   return {
     id,
     source: 'VIVA',
     name: `Source ${id}`,
     status: TournamentStatus.REGISTRATION,
     startsAt,
+    endsAt,
     studioName: 'TestMiniApp'
   };
 }
@@ -16,7 +17,8 @@ function createSourceTournament(id: string, startsAt: string): Tournament {
 function createCustomTournament(
   id: string,
   startsAt: string,
-  sourceTournamentId?: string
+  sourceTournamentId?: string,
+  endsAt?: string
 ): CustomTournament {
   return {
     id,
@@ -27,6 +29,7 @@ function createCustomTournament(
     name: `Custom ${id}`,
     status: TournamentStatus.REGISTRATION,
     startsAt,
+    endsAt,
     tournamentType: 'Американо',
     accessLevels: ['D', 'D+'],
     gender: 'MIXED',
@@ -94,7 +97,8 @@ function createService(sourceTournaments: Tournament[], customTournaments: Custo
 async function main(): Promise<void> {
   const sourceOnRequestedDate = createSourceTournament(
     'source-on-date',
-    '2026-05-05T19:00:00+03:00'
+    '2026-05-05T19:00:00+03:00',
+    '2026-05-05T21:00:00+03:00'
   );
   const sourceOnOtherDate = createSourceTournament(
     'source-other-date',
@@ -112,7 +116,15 @@ async function main(): Promise<void> {
   );
   const standaloneSkinOnRequestedDate = createCustomTournament(
     'custom-standalone-on-date',
-    '2026-05-05T21:00:00+03:00'
+    '2026-05-05T21:00:00+03:00',
+    undefined,
+    '2026-05-05T23:00:00+03:00'
+  );
+  const standalonePastToday = createCustomTournament(
+    'custom-standalone-past-today',
+    '2026-05-05T12:00:00+03:00',
+    undefined,
+    '2026-05-05T14:00:00+03:00'
   );
   const standaloneSkinOnOtherDate = createCustomTournament(
     'custom-standalone-other-date',
@@ -125,11 +137,15 @@ async function main(): Promise<void> {
       linkedSkinOnRequestedDate,
       linkedSkinOnOtherDate,
       standaloneSkinOnRequestedDate,
+      standalonePastToday,
       standaloneSkinOnOtherDate
     ]
   );
 
-  const filtered = await service.findAll({ date: '2026-05-05' });
+  const filtered = await service.findAll({
+    date: '2026-05-05',
+    now: new Date('2026-05-05T18:00:00+03:00')
+  });
   assert.deepEqual(
     filtered.map((tournament) => tournament.linkedCustomTournamentId ?? tournament.id),
     ['custom-linked-on-date', 'custom-standalone-on-date']
@@ -140,7 +156,7 @@ async function main(): Promise<void> {
   );
 
   const unfiltered = await service.findAll();
-  assert.equal(unfiltered.length, 4);
+  assert.equal(unfiltered.length, 5);
 
   console.log('Tournament list date filter test passed');
 }

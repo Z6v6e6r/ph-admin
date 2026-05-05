@@ -172,7 +172,7 @@ export class TournamentsService {
     return this.americanoRatingSimulationService.simulateRating(input);
   }
 
-  async findAll(options?: { date?: string }): Promise<Tournament[]> {
+  async findAll(options?: { date?: string; now?: Date }): Promise<Tournament[]> {
     const sourceTournaments = await this.listSourceTournaments();
     const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
@@ -754,6 +754,123 @@ export class TournamentsService {
     };
   }
 
+  async getPublicRegistrationByTournamentRef(
+    tournamentRef: string,
+    phone?: string
+  ): Promise<{
+    status: 'NONE' | 'REGISTERED' | 'WAITLIST';
+    placeNumber?: number;
+    waitlistNumber?: number;
+    canRegister: boolean;
+    canCancel: boolean;
+    message: string;
+  }> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const normalizedPhone = this.normalizePhone(phone);
+    if (!normalizedPhone) {
+      return {
+        status: 'NONE',
+        canRegister: false,
+        canCancel: false,
+        message: 'Не удалось определить номер телефона для проверки записи.'
+      };
+    }
+
+    const participantIndex = tournament.participants.findIndex(
+      (item) => this.normalizePhone(item.phone) === normalizedPhone
+    );
+    if (participantIndex >= 0) {
+      return {
+        status: 'REGISTERED',
+        placeNumber: participantIndex + 1,
+        canRegister: false,
+        canCancel: true,
+        message: 'Игрок уже записан в турнир.'
+      };
+    }
+
+    const waitlistIndex = tournament.waitlist.findIndex(
+      (item) => this.normalizePhone(item.phone) === normalizedPhone
+    );
+    if (waitlistIndex >= 0) {
+      return {
+        status: 'WAITLIST',
+        waitlistNumber: waitlistIndex + 1,
+        canRegister: false,
+        canCancel: true,
+        message: 'Игрок находится в листе ожидания.'
+      };
+    }
+
+    return {
+      status: 'NONE',
+      canRegister: true,
+      canCancel: false,
+      message: 'Игрок пока не записан в турнир.'
+    };
+  }
+
+  async registerPublicParticipantByTournamentRef(
+    tournamentRef: string,
+    input: RegistrationInput
+  ): Promise<TournamentRegistrationResponse> {
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    return this.registerPublicParticipant(tournament.slug, input);
+  }
+
+  async cancelPublicRegistrationByTournamentRef(
+    tournamentRef: string,
+    phone?: string
+  ): Promise<{
+    status: 'NONE';
+    canRegister: boolean;
+    canCancel: false;
+    message: string;
+  }> {
+    this.ensurePersistenceEnabled();
+    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const normalizedPhone = this.normalizePhone(phone);
+    if (!normalizedPhone) {
+      return {
+        status: 'NONE',
+        canRegister: false,
+        canCancel: false,
+        message: 'Не удалось определить номер телефона для отмены записи.'
+      };
+    }
+
+    const nextParticipants = tournament.participants.filter(
+      (item) => this.normalizePhone(item.phone) !== normalizedPhone
+    );
+    const nextWaitlist = tournament.waitlist.filter(
+      (item) => this.normalizePhone(item.phone) !== normalizedPhone
+    );
+    if (
+      nextParticipants.length === tournament.participants.length
+      && nextWaitlist.length === tournament.waitlist.length
+    ) {
+      return {
+        status: 'NONE',
+        canRegister: true,
+        canCancel: false,
+        message: 'Активная запись на турнир не найдена.'
+      };
+    }
+
+    await this.updateCustom(tournament.id, {
+      participants: nextParticipants,
+      waitlist: nextWaitlist
+    });
+
+    return {
+      status: 'NONE',
+      canRegister: true,
+      canCancel: false,
+      message: 'Запись на турнир отменена.'
+    };
+  }
+
   async createPublicJoinPurchaseTransaction(
     slug: string,
     input: JoinPurchaseTransactionInput
@@ -1244,7 +1361,7 @@ export class TournamentsService {
 
   private matchesTournamentListFilters(
     tournament: Tournament,
-    options?: { date?: string }
+    options?: { date?: string; now?: Date }
   ): boolean {
     const date = this.normalizePublicDate(options?.date);
     if (!date) {
@@ -1256,7 +1373,16 @@ export class TournamentsService {
       return false;
     }
 
-    return this.formatPublicDateKey(new Date(startsAt)) === date;
+    if (this.formatPublicDateKey(new Date(startsAt)) !== date) {
+      return false;
+    }
+
+    const now = options?.now ?? new Date();
+    if (date === this.formatPublicDateKey(now) && this.isTournamentPastForSchedule(tournament, now)) {
+      return false;
+    }
+
+    return true;
   }
 
   private matchesPublicTournamentFilters(
@@ -1328,6 +1454,16 @@ export class TournamentsService {
       return false;
     }
     return this.formatPublicDateKey(new Date(startsAt)) === date;
+  }
+
+  private isTournamentPastForSchedule(tournament: Tournament, now: Date): boolean {
+    const endsAt = Date.parse(tournament.endsAt ?? '');
+    if (Number.isFinite(endsAt)) {
+      return endsAt <= now.getTime();
+    }
+
+    const startsAt = Date.parse(tournament.startsAt ?? '');
+    return Number.isFinite(startsAt) && startsAt <= now.getTime();
   }
 
   private comparePublicTournaments(left: CustomTournament, right: CustomTournament): number {
@@ -1540,6 +1676,25 @@ export class TournamentsService {
       throw new NotFoundException(`Public tournament with slug ${slug} not found`);
     }
     return this.hydrateCustomTournament(tournament);
+  }
+
+  private async requireCustomByPublicRef(ref: string): Promise<CustomTournament> {
+    const normalizedRef = this.pickString(ref);
+    if (!normalizedRef) {
+      throw new BadRequestException('Tournament id is required');
+    }
+
+    const byId = await this.findCustomTournamentByIdSafe(normalizedRef);
+    if (byId) {
+      return byId;
+    }
+
+    const bySourceId = await this.findCustomTournamentBySourceIdSafe(normalizedRef);
+    if (bySourceId) {
+      return bySourceId;
+    }
+
+    return this.requireCustomBySlug(normalizedRef);
   }
 
   private async hydrateCustomTournament(tournament: CustomTournament): Promise<CustomTournament> {

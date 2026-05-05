@@ -94,8 +94,12 @@ function createService(tournament: CustomTournament): TournamentsService {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      findCustomTournamentById: async (id: string) =>
+        id === tournament.id ? tournament : null,
       findCustomTournamentBySlug: async (slug: string) =>
         slug === tournament.slug ? tournament : null,
+      findCustomTournamentBySourceTournamentId: async (sourceTournamentId: string) =>
+        sourceTournamentId === tournament.sourceTournamentId ? tournament : null,
       updateCustomTournament: async (_id: string, mutation: { participants?: unknown; waitlist?: unknown }) => {
         if (Array.isArray(mutation.participants)) {
           tournament.participants = mutation.participants as typeof tournament.participants;
@@ -329,6 +333,28 @@ async function main(): Promise<void> {
   assert.equal(subscriptionRegistration.code, 'REGISTERED');
   assert.equal(subscriptionRegistration.participant?.paymentStatus, 'PAID');
   assert.match(subscriptionRegistration.participant?.notes ?? '', /Абонемент списан/);
+
+  const lkWidgetRegistration = await service.registerPublicParticipantByTournamentRef(tournament.id, {
+    name: 'LK Игрок',
+    phone: '+7 999 000-11-28',
+    levelLabel: 'C',
+    purchaseConfirmed: true,
+    selectedPurchaseOptionId: 'single-entry',
+    subscriptions: []
+  });
+  assert.equal(lkWidgetRegistration.code, 'REGISTERED');
+
+  const lkWidgetRegistrationStatus = await service.getPublicRegistrationByTournamentRef(
+    tournament.id,
+    '+7 999 000-11-28'
+  );
+  assert.equal(lkWidgetRegistrationStatus.status, 'REGISTERED');
+
+  const lkWidgetCancelStatus = await service.cancelPublicRegistrationByTournamentRef(
+    tournament.id,
+    '+7 999 000-11-28'
+  );
+  assert.equal(lkWidgetCancelStatus.status, 'NONE');
 
   const blockedPurchaseRegistration = await service.registerPublicParticipant(tournament.slug, {
     name: 'Игрок без оплаты',
