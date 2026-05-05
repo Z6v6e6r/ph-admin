@@ -172,7 +172,7 @@ export class TournamentsService {
     return this.americanoRatingSimulationService.simulateRating(input);
   }
 
-  async findAll(): Promise<Tournament[]> {
+  async findAll(options?: { date?: string }): Promise<Tournament[]> {
     const sourceTournaments = await this.listSourceTournaments();
     const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
@@ -193,18 +193,20 @@ export class TournamentsService {
       )
       .map((tournament) => this.toTournamentListItem(tournament));
 
-    return [...mergedSource, ...standaloneCustom].sort((left, right) => {
-      const leftStartsAt = Date.parse(left.startsAt ?? '');
-      const rightStartsAt = Date.parse(right.startsAt ?? '');
-      const leftRank = Number.isFinite(leftStartsAt) ? leftStartsAt : Number.MAX_SAFE_INTEGER;
-      const rightRank = Number.isFinite(rightStartsAt)
-        ? rightStartsAt
-        : Number.MAX_SAFE_INTEGER;
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
-    });
+    return [...mergedSource, ...standaloneCustom]
+      .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
+      .sort((left, right) => {
+        const leftStartsAt = Date.parse(left.startsAt ?? '');
+        const rightStartsAt = Date.parse(right.startsAt ?? '');
+        const leftRank = Number.isFinite(leftStartsAt) ? leftStartsAt : Number.MAX_SAFE_INTEGER;
+        const rightRank = Number.isFinite(rightStartsAt)
+          ? rightStartsAt
+          : Number.MAX_SAFE_INTEGER;
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
+      });
   }
 
   async findById(id: string): Promise<Tournament> {
@@ -1238,6 +1240,23 @@ export class TournamentsService {
 
     const sourceTournaments = await this.listSourceTournaments();
     return sourceTournaments.find((item) => item.id === id) ?? null;
+  }
+
+  private matchesTournamentListFilters(
+    tournament: Tournament,
+    options?: { date?: string }
+  ): boolean {
+    const date = this.normalizePublicDate(options?.date);
+    if (!date) {
+      return true;
+    }
+
+    const startsAt = Date.parse(tournament.startsAt ?? '');
+    if (!Number.isFinite(startsAt)) {
+      return false;
+    }
+
+    return this.formatPublicDateKey(new Date(startsAt)) === date;
   }
 
   private matchesPublicTournamentFilters(

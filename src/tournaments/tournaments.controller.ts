@@ -4,7 +4,8 @@ import {
   Get,
   Param,
   Patch,
-  Post
+  Post,
+  Query
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -32,8 +33,8 @@ export class TournamentsController {
 
   @Get()
   @Roles()
-  findAll(): Promise<Tournament[]> {
-    return this.tournamentsService.findAll();
+  findAll(@Query('date') date?: string): Promise<Tournament[]> {
+    return this.tournamentsService.findAll({ date });
   }
 
   @Post('custom/from-source/:sourceTournamentId')
