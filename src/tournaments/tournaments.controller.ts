@@ -31,6 +31,7 @@ export class TournamentsController {
   constructor(private readonly tournamentsService: TournamentsService) {}
 
   @Get()
+  @Roles()
   findAll(): Promise<Tournament[]> {
     return this.tournamentsService.findAll();
   }
@@ -87,6 +88,7 @@ export class TournamentsController {
   }
 
   @Get(':id')
+  @Roles()
   findById(@Param('id') id: string): Promise<Tournament> {
     return this.tournamentsService.findById(id);
   }
