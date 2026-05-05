@@ -151,8 +151,10 @@ export class VivaTournamentsService {
     const today = this.toDateKey(new Date());
     const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
 
-    const studios = await this.fetchEntitySummaries('studios');
-    const trainers = await this.fetchEntitySummaries('trainers');
+    const [studios, trainers] = await Promise.all([
+      this.fetchEntitySummariesSafe('studios'),
+      this.fetchEntitySummariesSafe('trainers')
+    ]);
     await this.fetchProfile();
 
     const todayExercises = await this.fetchExercisesByDate(today);
@@ -317,6 +319,15 @@ export class VivaTournamentsService {
     }
 
     return summaries;
+  }
+
+  private async fetchEntitySummariesSafe(path: string): Promise<VivaEntitySummary[]> {
+    try {
+      return await this.fetchEntitySummaries(path);
+    } catch (error) {
+      this.logger.warn(`Failed to load Viva ${path}: ${String(error)}`);
+      return [];
+    }
   }
 
   private async fetchProfile(): Promise<void> {
@@ -615,6 +626,9 @@ export class VivaTournamentsService {
     }
     if (/кубок|cup/.test(haystack)) {
       return 'Кубок';
+    }
+    if (/турнир|tournament/.test(haystack)) {
+      return 'Турнир';
     }
     if (/сетк|grid|playoff|knockout/.test(haystack)) {
       return 'Сетка';

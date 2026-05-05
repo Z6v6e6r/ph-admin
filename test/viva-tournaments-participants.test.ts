@@ -4,6 +4,25 @@ import { TournamentParticipant } from '../src/tournaments/tournaments.types';
 
 interface VivaTournamentsServiceInternals {
   resolveParticipants(exercise: Record<string, unknown>): TournamentParticipant[];
+  toTournament(
+    exercise: Record<string, unknown>,
+    studioNames: Map<string, string | undefined>,
+    trainerNames: Map<string, string | undefined>,
+    trainerAvatars: Map<string, string | null | undefined>
+  ): {
+    id: string;
+    name: string;
+    exerciseTypeId?: string;
+    maxPlayers?: number;
+    participantsCount?: number;
+    startsAt?: string;
+    endsAt?: string;
+    studioName?: string;
+    courtName?: string;
+    trainerName?: string;
+    trainerAvatarUrl?: string | null;
+    tournamentType?: string;
+  } | null;
   unwrapRecords(payload: unknown): Record<string, unknown>[];
 }
 
@@ -145,6 +164,63 @@ function main(): void {
   assert.equal(adminParticipants[0]?.phone, '79144722120');
   assert.equal(adminParticipants[0]?.levelLabel, '2.75');
   assert.equal(adminParticipants[0]?.paymentStatus, 'PAID');
+
+  const liveShapeTournament = service.toTournament(
+    {
+      id: 'bf25c965-55a6-4d85-9b82-fe4695db85a0',
+      direction: {
+        id: 2617,
+        name: 'Падел турнир от ПадлхАБ',
+        description: 'Классический турнир по игре в падл'
+      },
+      type: {
+        id: 839,
+        name: 'Падел Турнир',
+        color: 'yellow',
+        format: 'GROUP'
+      },
+      timeFrom: '2026-05-08T17:00:00+03:00',
+      timeTo: '2026-05-08T19:00:00+03:00',
+      clientsCount: 0,
+      maxClientsCount: 12,
+      girlsOnly: false,
+      studio: {
+        id: '42c6d4df-833d-480a-bdc8-986716569884',
+        name: 'Нагатинская Премиум'
+      },
+      room: {
+        id: '12f432af-d90a-4013-9871-c0a312259e72',
+        name: 'Корт №1 панорамик'
+      },
+      trainers: [
+        {
+          id: '5e9c259d-39e3-4275-8847-705ce38da9ce',
+          firstName: 'Турниры',
+          lastName: 'Екатерина-Ян',
+          photo: 'https://example.com/trainer.jpg'
+        }
+      ],
+      availableClientSubscriptions: [],
+      availableClientOneTimes: [],
+      customFields: [],
+      requirements: []
+    },
+    new Map(),
+    new Map(),
+    new Map()
+  );
+  assert.equal(liveShapeTournament?.id, 'bf25c965-55a6-4d85-9b82-fe4695db85a0');
+  assert.equal(liveShapeTournament?.name, 'Падел турнир от ПадлхАБ');
+  assert.equal(liveShapeTournament?.exerciseTypeId, '839');
+  assert.equal(liveShapeTournament?.tournamentType, 'Турнир');
+  assert.equal(liveShapeTournament?.maxPlayers, 12);
+  assert.equal(liveShapeTournament?.participantsCount, 0);
+  assert.equal(liveShapeTournament?.startsAt, '2026-05-08T17:00:00+03:00');
+  assert.equal(liveShapeTournament?.endsAt, '2026-05-08T19:00:00+03:00');
+  assert.equal(liveShapeTournament?.studioName, 'Нагатинская Премиум');
+  assert.equal(liveShapeTournament?.courtName, 'Корт №1 панорамик');
+  assert.equal(liveShapeTournament?.trainerName, 'Турниры Екатерина-Ян');
+  assert.equal(liveShapeTournament?.trainerAvatarUrl, 'https://example.com/trainer.jpg');
 
   console.log('Viva tournament participants test passed');
 }
