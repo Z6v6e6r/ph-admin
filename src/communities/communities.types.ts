@@ -66,6 +66,8 @@ export interface CommunityFeedItem {
   commentsCount?: number;
   isAdvertisement?: boolean;
   priority?: number;
+  pinned?: boolean;
+  pinnedAt?: string;
   placement?: string;
   tags?: string[];
   authorName?: string;
@@ -174,6 +176,9 @@ export interface CommunityPublicFeedItem {
   courtName?: string;
   levelLabel?: string;
   isAdvertisement?: boolean;
+  priority?: number;
+  pinned?: boolean;
+  pinnedAt?: string;
   tags?: string[];
   authorName?: string;
   participants?: CommunityFeedParticipant[];

@@ -19159,7 +19159,7 @@
       }
     }
 
-    async function updateCommunityFeedPriority(community, post, nextPriority, patch, statusText) {
+    async function updateCommunityFeedPriority(community, post, nextPriority, pinned, patch, statusText) {
       if (!community || !community.id || !post || !post.id) {
         setCommunityFeedModerationState(
           community && community.id,
@@ -19174,7 +19174,11 @@
       var normalizedPriority = Math.max(0, Math.round(Number(nextPriority || 0)));
       setCommunityFeedModerationState(communityId, postId, patch, statusText);
       try {
-        await api.updateCommunityFeedItem(communityId, postId, { priority: normalizedPriority });
+        var payload = { priority: normalizedPriority };
+        if (pinned !== undefined) {
+          payload.pinned = pinned === true;
+        }
+        await api.updateCommunityFeedItem(communityId, postId, payload);
         await refreshCommunityManagedFeed(community);
         setStatus(statusText + ' и сохранена для публичной ленты', false);
       } catch (error) {
@@ -21104,6 +21108,7 @@
               community,
               post,
               current > 0 ? Math.max(0, currentPriority - 1200) : currentPriority + 1200,
+              undefined,
               { rank: nextRank },
               current > 0 ? 'Карточка опущена ниже' : 'Карточка поднята выше'
             );
@@ -21119,6 +21124,7 @@
               community,
               post,
               isPinned ? Math.max(0, currentPriority - 10000) : Math.max(currentPriority, 10000),
+              !isPinned,
               { pinned: !isPinned },
               isPinned ? 'Карточка откреплена' : 'Карточка закреплена'
             );

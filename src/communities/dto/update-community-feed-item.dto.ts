@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsISO8601,
@@ -101,6 +102,10 @@ export class UpdateCommunityFeedItemDto {
   @IsOptional()
   @IsInt()
   priority?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  pinned?: boolean;
 
   @IsOptional()
   @IsString()

@@ -68,6 +68,7 @@ export interface CommunitiesCreateFeedItemMutation {
   likesCount?: number;
   commentsCount?: number;
   priority?: number;
+  pinned?: boolean;
   placement?: string;
   authorName?: string;
   participants?: CommunityFeedParticipantInput[];
@@ -91,6 +92,7 @@ export interface CommunitiesUpdateFeedItemMutation {
   likesCount?: number;
   commentsCount?: number;
   priority?: number;
+  pinned?: boolean;
   placement?: string;
   authorName?: string;
   participants?: CommunityFeedParticipantInput[];
@@ -472,6 +474,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
 
     return this.dedupeFeedItems(items).sort((left, right) => {
+      if (Boolean(right.pinned) !== Boolean(left.pinned)) {
+        return Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+      }
       const rightPriority = right.priority ?? 0;
       const leftPriority = left.priority ?? 0;
       if (rightPriority !== leftPriority) {
@@ -504,6 +509,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const storedKind = this.resolveStoredFeedDocumentKind(kind);
     const normalizedTags = this.dedupeStrings(mutation.tags ?? []);
     const imageUrl = this.pickNullableString(mutation.imageUrl);
+    const priority = this.pickNumeric(mutation.priority) ?? 0;
+    const pinned = this.pickBoolean(mutation.pinned) === true;
 
     const payload: MongoCommunityFeedDocument = {
       id: itemId,
@@ -540,7 +547,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       isAdvertisement: kind === 'AD',
       ad: kind === 'AD',
       placement: this.pickString(mutation.placement) ?? 'feed',
-      priority: this.pickNumeric(mutation.priority) ?? 0,
+      priority,
+      sortOrder: priority,
+      weight: priority,
+      pinned,
+      isPinned: pinned,
+      is_pinned: pinned,
+      pinnedAt: pinned ? now : null,
+      pinned_at: pinned ? now : null,
       tags: normalizedTags,
       participants: participants,
       authorName:
@@ -626,7 +640,18 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       setPayload.commentsCount = this.pickCountNumber(mutation.commentsCount) ?? 0;
     }
     if (mutation.priority !== undefined) {
-      setPayload.priority = this.pickNumeric(mutation.priority) ?? 0;
+      const priority = this.pickNumeric(mutation.priority) ?? 0;
+      setPayload.priority = priority;
+      setPayload.sortOrder = priority;
+      setPayload.weight = priority;
+    }
+    if (mutation.pinned !== undefined) {
+      const pinned = this.pickBoolean(mutation.pinned) === true;
+      setPayload.pinned = pinned;
+      setPayload.isPinned = pinned;
+      setPayload.is_pinned = pinned;
+      setPayload.pinnedAt = pinned ? now : null;
+      setPayload.pinned_at = pinned ? now : null;
     }
     if (mutation.placement !== undefined) {
       setPayload.placement = this.pickString(mutation.placement) ?? null;
@@ -1195,7 +1220,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       isAdvertisement:
         this.pickBoolean(document.isAdvertisement ?? document.ad)
         ?? kind === 'AD',
-      priority: this.pickNumeric(document.priority),
+      priority: this.pickNumeric(document.priority ?? document.sortOrder ?? document.weight),
+      pinned: this.pickBoolean(document.pinned ?? document.isPinned ?? document.is_pinned) ?? undefined,
+      pinnedAt:
+        this.pickString(document.pinnedAt)
+        ?? this.pickString(document.pinned_at)
+        ?? undefined,
       placement: this.pickString(document.placement) ?? undefined,
       tags: this.toStringArray(document.tags),
       authorName:
@@ -1312,7 +1342,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       isAdvertisement:
         this.pickBoolean(document.isAdvertisement ?? document.ad)
         ?? kind === 'AD',
-      priority: this.pickNumeric(document.priority),
+      priority: this.pickNumeric(document.priority ?? document.sortOrder ?? document.weight),
+      pinned: this.pickBoolean(document.pinned ?? document.isPinned ?? document.is_pinned) ?? undefined,
+      pinnedAt:
+        this.pickString(document.pinnedAt)
+        ?? this.pickString(document.pinned_at)
+        ?? undefined,
       placement: this.pickString(document.placement) ?? undefined,
       tags: this.toStringArray(document.tags),
       authorName:
@@ -1778,6 +1813,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     const now = new Date().toISOString();
     const actor = this.toActorRecord(mutation.actor, now);
     const kind = mutation.kind ?? 'NEWS';
+    const priority = this.pickNumeric(mutation.priority) ?? 0;
+    const pinned = this.pickBoolean(mutation.pinned) === true;
     const participants = (mutation.participants ?? [])
       .map((entry) => this.normalizeFeedParticipantInput(entry))
       .filter((entry): entry is CommunityFeedParticipant => entry !== null);
@@ -1818,7 +1855,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       isAdvertisement: kind === 'AD',
       ad: kind === 'AD',
       placement: this.pickString(mutation.placement) ?? 'feed',
-      priority: this.pickNumeric(mutation.priority) ?? 0,
+      priority,
+      sortOrder: priority,
+      weight: priority,
+      pinned,
+      isPinned: pinned,
+      is_pinned: pinned,
+      pinnedAt: pinned ? now : null,
+      pinned_at: pinned ? now : null,
       tags: this.dedupeStrings(mutation.tags ?? []),
       participants,
       authorName: this.pickString(mutation.authorName) ?? 'Админка',
