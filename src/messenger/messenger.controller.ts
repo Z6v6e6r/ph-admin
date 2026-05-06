@@ -1046,6 +1046,11 @@ export class MessengerController {
   }
 
   private resolveDialogRankTimestamp(dialog: StationDialogSummary): number {
+    const explicitRankingTs = Date.parse(dialog.lastRankingMessageAt || '') || 0;
+    if (explicitRankingTs > 0) {
+      return explicitRankingTs;
+    }
+
     const senderRoleRaw = String(
       dialog.lastMessageSenderRoleRaw ?? dialog.lastMessageSenderRole ?? ''
     )
@@ -1058,11 +1063,6 @@ export class MessengerController {
 
     if (!senderRoleRaw) {
       return 0;
-    }
-
-    const explicitRankingTs = Date.parse(dialog.lastRankingMessageAt || '') || 0;
-    if (explicitRankingTs > 0) {
-      return explicitRankingTs;
     }
 
     return Date.parse(dialog.lastMessageAt || '') || 0;

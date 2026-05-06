@@ -9557,6 +9557,10 @@
       return state.activeTab === 'messages' && isMobileChatViewport();
     }
 
+    function shouldDeferSelectedDialogMessages() {
+      return isMobileChatMode() && !state.mobileConversationOpen;
+    }
+
     function toggleMobileFiltersSheet(nextOpen) {
       var shouldOpen = isMobileChatMode() && nextOpen === true;
       state.mobileFiltersSheetOpen = shouldOpen;
@@ -12452,11 +12456,11 @@
         (dialogsResult && dialogsResult.selectionChanged) ||
         (fillResult && fillResult.selectionChanged)
       ) {
-        if (isMobileChatMode() && !state.mobileConversationOpen) {
-          await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
-        } else {
-          await openSelectedDialog();
+        if (shouldDeferSelectedDialogMessages()) {
+          applyMessages([], { forceRender: true, forceScrollBottom: true });
+          return;
         }
+        await openSelectedDialog();
       }
     }
 
@@ -12487,11 +12491,11 @@
         (dialogsResult && dialogsResult.selectionChanged) ||
         (fillResult && fillResult.selectionChanged)
       ) {
-        if (isMobileChatMode() && !state.mobileConversationOpen) {
-          await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
-        } else {
-          await openSelectedDialog();
+        if (shouldDeferSelectedDialogMessages()) {
+          applyMessages([], { forceRender: true, forceScrollBottom: true });
+          return;
         }
+        await openSelectedDialog();
       }
     }
 
@@ -12515,11 +12519,16 @@
       }
 
       if (dialogsResult && dialogsResult.selectionChanged) {
-        if (isMobileChatMode() && !state.mobileConversationOpen) {
-          await loadMessages({ forceRender: true, forceScrollBottom: true, forceRefresh: true });
+        if (shouldDeferSelectedDialogMessages()) {
+          applyMessages([], { forceRender: true, forceScrollBottom: true });
           return;
         }
         await openSelectedDialog();
+        return;
+      }
+
+      if (shouldDeferSelectedDialogMessages()) {
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
 
@@ -24283,6 +24292,12 @@
         applyMessages([], { forceRender: true, forceScrollBottom: true });
         return;
       }
+
+      if (shouldDeferSelectedDialogMessages()) {
+        applyMessages([], { forceRender: true, forceScrollBottom: true });
+        return;
+      }
+
       await loadMessages(
         selectionChanged
           ? { forceRender: true, forceScrollBottom: true, forceRefresh: true }

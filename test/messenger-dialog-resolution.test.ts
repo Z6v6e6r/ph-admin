@@ -265,9 +265,6 @@ async function main(): Promise<void> {
     const createdAt = `2026-05-01T10:${String(number).padStart(2, '0')}:00.000Z`;
     return createDatedThread(id, createdAt);
   });
-  const datedMessages = datedThreads.map((thread) =>
-    createClientMessage(thread.id, `${thread.id}-message`, thread.lastMessageAt as string)
-  );
   const noisyOldThread = createDatedThread('old-unread-thread', '2026-05-01T09:00:00.000Z');
   const noisyOldMessages = Array.from({ length: 6 }, (_, index) =>
     createClientMessage(
@@ -278,7 +275,7 @@ async function main(): Promise<void> {
   );
   const listingPersistence = new InMemoryMessengerPersistence({
     threads: [...datedThreads, noisyOldThread, createSystemOnlyThread()],
-    messages: [...datedMessages, ...noisyOldMessages, createSystemMessage()],
+    messages: [...noisyOldMessages, createSystemMessage()],
     stations: [],
     connectors: [],
     accessRules: [],

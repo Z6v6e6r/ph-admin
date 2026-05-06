@@ -1036,6 +1036,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     const insight = this.aiInsights.get(thread.id);
     const lastRankingMessage = this.getLatestDialogRankingMessage(thread.id);
     const lastMessage = lastRankingMessage ?? this.getLatestDialogPreviewMessage(thread.id);
+    const lastRankingMessageAt = thread.lastRankingMessageAt ?? lastRankingMessage?.createdAt;
 
     return {
       threadId: thread.id,
@@ -1049,7 +1050,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       resolvedAt: thread.isResolved === true ? thread.resolvedAt : undefined,
       resolvedByUserId: thread.isResolved === true ? thread.resolvedByUserId : undefined,
       lastMessageAt: thread.lastMessageAt,
-      lastRankingMessageAt: lastRankingMessage?.createdAt,
+      lastRankingMessageAt,
       unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
       pendingClientMessagesCount: this.countPendingClientMessages(thread.id),
       lastMessageText: this.formatMessagePreview(lastMessage),
