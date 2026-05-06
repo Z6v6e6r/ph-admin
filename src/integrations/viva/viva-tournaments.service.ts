@@ -44,13 +44,13 @@ export class VivaTournamentsService {
 
   constructor(@Optional() private readonly vivaAdminService?: VivaAdminService) {}
 
-  async listTournaments(): Promise<Tournament[] | null> {
+  async listTournaments(options?: { date?: string }): Promise<Tournament[] | null> {
     if (!this.widgetId) {
       return null;
     }
 
     try {
-      return await this.loadTournaments();
+      return await this.loadTournaments(options);
     } catch (error) {
       this.logger.warn(`Failed to load Viva tournaments: ${String(error)}`);
       return null;
@@ -147,7 +147,8 @@ export class VivaTournamentsService {
     return false;
   }
 
-  private async loadTournaments(): Promise<Tournament[]> {
+  private async loadTournaments(options?: { date?: string }): Promise<Tournament[]> {
+    const requestedDate = this.normalizeDateKey(options?.date);
     const today = this.toDateKey(new Date());
     const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
 
@@ -157,23 +158,11 @@ export class VivaTournamentsService {
     ]);
     await this.fetchProfile();
 
-    const todayExercises = await this.fetchExercisesByDate(today);
-    const tournamentDates = await this.fetchTournamentDates(
-      today,
-      dateTo,
-      studios.map((studio) => studio.id)
-    );
-
-    const dates = Array.from(
-      new Set(
-        [today, ...tournamentDates].filter(
-          (dateKey) => dateKey >= today && dateKey <= dateTo
-        )
-      )
-    ).sort();
-    const otherDates = dates.filter((dateKey) => dateKey !== today);
-    const otherExercises = await Promise.all(
-      otherDates.map((dateKey) => this.fetchExercisesByDate(dateKey))
+    const dates = requestedDate
+      ? [requestedDate]
+      : await this.resolveTournamentDateKeys(today, dateTo, studios.map((studio) => studio.id));
+    const exercises = await Promise.all(
+      dates.map((dateKey) => this.fetchExercisesByDate(dateKey))
     );
 
     const studioNames = new Map(studios.map((studio) => [studio.id, studio.name]));
@@ -181,7 +170,7 @@ export class VivaTournamentsService {
     const trainerAvatars = new Map(trainers.map((trainer) => [trainer.id, trainer.avatarUrl]));
     const deduplicated = new Map<string, Tournament>();
 
-    for (const exercise of [todayExercises, ...otherExercises].flat()) {
+    for (const exercise of exercises.flat()) {
       const tournament = this.toTournament(
         exercise,
         studioNames,
@@ -356,6 +345,22 @@ export class VivaTournamentsService {
 
     const payload = await this.fetchJson(`exercises/dates?${query.toString()}`);
     return this.collectDateKeys(payload);
+  }
+
+  private async resolveTournamentDateKeys(
+    today: string,
+    dateTo: string,
+    studioIds: string[]
+  ): Promise<string[]> {
+    const tournamentDates = await this.fetchTournamentDates(today, dateTo, studioIds);
+
+    return Array.from(
+      new Set(
+        [today, ...tournamentDates].filter(
+          (dateKey) => dateKey >= today && dateKey <= dateTo
+        )
+      )
+    ).sort();
   }
 
   private async fetchJson(path: string, query?: Record<string, string>): Promise<unknown> {
@@ -1558,6 +1563,16 @@ export class VivaTournamentsService {
     const month = String(dateValue.getMonth() + 1).padStart(2, '0');
     const day = String(dateValue.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  }
+
+  private normalizeDateKey(value?: string): string | undefined {
+    const normalized = this.normalizeString(value);
+    if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return undefined;
+    }
+
+    const parsed = new Date(`${normalized}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? undefined : normalized;
   }
 
   private addDays(dateValue: Date, days: number): Date {

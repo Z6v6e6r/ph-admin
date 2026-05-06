@@ -173,7 +173,7 @@ export class TournamentsService {
   }
 
   async findAll(options?: { date?: string; now?: Date }): Promise<Tournament[]> {
-    const sourceTournaments = await this.listSourceTournaments();
+    const sourceTournaments = await this.listSourceTournaments({ date: options?.date });
     const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
     customTournaments.forEach((tournament) => {
@@ -191,6 +191,9 @@ export class TournamentsService {
         .filter(
           (tournament) =>
             !tournament.sourceTournamentId || !sourceIds.has(tournament.sourceTournamentId)
+        )
+        .filter((tournament) =>
+          this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
         )
         .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
     );
@@ -1240,8 +1243,8 @@ export class TournamentsService {
     };
   }
 
-  private async listSourceTournaments(): Promise<Tournament[]> {
-    const vivaTournaments = await this.vivaTournamentsService.listTournaments();
+  private async listSourceTournaments(options?: { date?: string }): Promise<Tournament[]> {
+    const vivaTournaments = await this.vivaTournamentsService.listTournaments(options);
     if (vivaTournaments) {
       return vivaTournaments;
     }
