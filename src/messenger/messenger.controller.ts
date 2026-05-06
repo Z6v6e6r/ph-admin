@@ -777,7 +777,11 @@ export class MessengerController {
         });
 
     if (supportDialogs.length === 0) {
-      await this.supportService.hydrateFromPersistence();
+      try {
+        await this.supportService.hydrateFromPersistence();
+      } catch {
+        // Keep serving the in-memory snapshot when persistence is temporarily unavailable.
+      }
       supportDialogs = hasPhoneSearch
         ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
             connector: supportConnectorFilter,

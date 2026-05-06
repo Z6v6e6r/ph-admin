@@ -330,7 +330,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.lastPersistenceSyncError = undefined;
     } catch (error) {
       this.lastPersistenceSyncError = String(error);
-      throw error;
+      this.logger.error(`Support persistence sync failed: ${String(error)}`);
     } finally {
       this.isPersistenceSyncInProgress = false;
     }
@@ -743,15 +743,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     let dialogs: SupportDialog[] = [];
     if (this.persistence.isEnabled()) {
-      const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
-        connector: filters.connector,
-        stationId: filters.stationId,
-        limit: 200
-      });
-      dialogs = candidateIds
-        .map((dialogId) => this.dialogs.get(dialogId))
-        .filter((dialog): dialog is SupportDialog => Boolean(dialog))
-        .filter((dialog) => this.canAccessDialog(dialog, user));
+      try {
+        const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
+          connector: filters.connector,
+          stationId: filters.stationId,
+          limit: 200
+        });
+        dialogs = candidateIds
+          .map((dialogId) => this.dialogs.get(dialogId))
+          .filter((dialog): dialog is SupportDialog => Boolean(dialog))
+          .filter((dialog) => this.canAccessDialog(dialog, user));
+      } catch (error) {
+        this.logger.error(`Support dialog phone lookup failed: ${String(error)}`);
+      }
     }
 
     if (dialogs.length === 0) {
@@ -822,17 +826,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const limit = this.resolveMessagesLimit(options.limit);
     if (this.persistence.isEnabled()) {
-      const persisted = await this.persistence.findServiceMessages(dialog.id, {
-        limit,
-        before: options.before
-      });
-      if (persisted.length > 0) {
-        const filteredPersisted = persisted.filter((message) =>
-          this.isConnectorAllowedForUser(user, message.connector)
-        );
-        return filteredPersisted.length <= limit
-          ? filteredPersisted
-          : filteredPersisted.slice(filteredPersisted.length - limit);
+      try {
+        const persisted = await this.persistence.findServiceMessages(dialog.id, {
+          limit,
+          before: options.before
+        });
+        if (persisted.length > 0) {
+          const filteredPersisted = persisted.filter((message) =>
+            this.isConnectorAllowedForUser(user, message.connector)
+          );
+          return filteredPersisted.length <= limit
+            ? filteredPersisted
+            : filteredPersisted.slice(filteredPersisted.length - limit);
+        }
+      } catch (error) {
+        this.logger.error(`Support service messages lookup failed: ${String(error)}`);
       }
     }
 
