@@ -141,6 +141,64 @@ function createResolvedRegularMessage(): ChatMessage {
   };
 }
 
+function createDatedThread(id: string, createdAt: string): ChatThread {
+  return {
+    id,
+    connector: ConnectorRoute.MAX_BOT,
+    stationId: 'Yasenevo',
+    stationName: 'Ясенево',
+    clientId: `${id}-client`,
+    subject: id,
+    status: ThreadStatus.OPEN,
+    lastMessageAt: createdAt,
+    lastRankingMessageAt: createdAt,
+    createdAt,
+    updatedAt: createdAt
+  };
+}
+
+function createClientMessage(threadId: string, id: string, createdAt: string): ChatMessage {
+  return {
+    id,
+    threadId,
+    senderId: `${threadId}-client`,
+    senderRole: Role.CLIENT,
+    origin: MessageOrigin.HUMAN,
+    text: `Сообщение ${id}`,
+    createdAt
+  };
+}
+
+function createSystemOnlyThread(): ChatThread {
+  const createdAt = '2026-05-01T11:00:00.000Z';
+  return {
+    id: 'system-only-thread',
+    connector: ConnectorRoute.MAX_BOT,
+    stationId: 'Yasenevo',
+    stationName: 'Ясенево',
+    clientId: 'system-only-client',
+    subject: 'Только системные события',
+    status: ThreadStatus.OPEN,
+    lastMessageAt: createdAt,
+    createdAt,
+    updatedAt: createdAt
+  };
+}
+
+function createSystemMessage(): ChatMessage {
+  return {
+    id: 'system-only-message',
+    threadId: 'system-only-thread',
+    senderId: 'system',
+    senderRole: Role.SUPPORT,
+    senderRoleRaw: 'SYSTEM',
+    origin: MessageOrigin.HUMAN,
+    direction: 'SYSTEM',
+    text: 'Техническое событие',
+    createdAt: '2026-05-01T11:00:00.000Z'
+  };
+}
+
 function createService(
   persistence: InMemoryMessengerPersistence
 ): MessengerService {
@@ -199,6 +257,65 @@ async function main(): Promise<void> {
   assert.deepEqual(
     visible.map((item) => item.threadId),
     ['regular-thread-1']
+  );
+
+  const datedThreads = Array.from({ length: 16 }, (_, index) => {
+    const number = index + 1;
+    const id = `real-thread-${String(number).padStart(2, '0')}`;
+    const createdAt = `2026-05-01T10:${String(number).padStart(2, '0')}:00.000Z`;
+    return createDatedThread(id, createdAt);
+  });
+  const datedMessages = datedThreads.map((thread) =>
+    createClientMessage(thread.id, `${thread.id}-message`, thread.lastMessageAt as string)
+  );
+  const noisyOldThread = createDatedThread('old-unread-thread', '2026-05-01T09:00:00.000Z');
+  const noisyOldMessages = Array.from({ length: 6 }, (_, index) =>
+    createClientMessage(
+      noisyOldThread.id,
+      `old-unread-message-${index + 1}`,
+      `2026-05-01T09:0${index}:00.000Z`
+    )
+  );
+  const listingPersistence = new InMemoryMessengerPersistence({
+    threads: [...datedThreads, noisyOldThread, createSystemOnlyThread()],
+    messages: [...datedMessages, ...noisyOldMessages, createSystemMessage()],
+    stations: [],
+    connectors: [],
+    accessRules: [],
+    metrics: [],
+    aiConfigs: [],
+    aiInsights: [],
+    aiSuggestions: []
+  });
+  const listingService = createService(listingPersistence);
+  await (listingService as any).hydrateFromPersistence();
+  const listingController = new MessengerController(
+    listingService,
+    createSupportServiceStub() as never,
+    {} as never,
+    {} as never
+  );
+  const firstPage = await listingController.listDialogs(user, {});
+
+  assert.deepEqual(
+    firstPage.map((item) => item.threadId),
+    [
+      'real-thread-16',
+      'real-thread-15',
+      'real-thread-14',
+      'real-thread-13',
+      'real-thread-12',
+      'real-thread-11',
+      'real-thread-10',
+      'real-thread-09',
+      'real-thread-08',
+      'real-thread-07',
+      'real-thread-06',
+      'real-thread-05',
+      'real-thread-04',
+      'real-thread-03',
+      'real-thread-02'
+    ]
   );
 
   console.log('Messenger promo dialog visibility test passed');

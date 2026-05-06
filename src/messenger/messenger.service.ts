@@ -1034,7 +1034,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   ): StationDialogSummary {
     const responseStats = this.getThreadResponseStats(thread.id);
     const insight = this.aiInsights.get(thread.id);
-    const lastMessage = this.getLatestDialogPreviewMessage(thread.id);
+    const lastRankingMessage = this.getLatestDialogRankingMessage(thread.id);
+    const lastMessage = lastRankingMessage ?? this.getLatestDialogPreviewMessage(thread.id);
 
     return {
       threadId: thread.id,
@@ -1048,11 +1049,12 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       resolvedAt: thread.isResolved === true ? thread.resolvedAt : undefined,
       resolvedByUserId: thread.isResolved === true ? thread.resolvedByUserId : undefined,
       lastMessageAt: thread.lastMessageAt,
-      lastRankingMessageAt: thread.lastRankingMessageAt,
+      lastRankingMessageAt: lastRankingMessage?.createdAt,
       unreadMessagesCount: this.countUnreadMessagesForUser(thread, user),
       pendingClientMessagesCount: this.countPendingClientMessages(thread.id),
       lastMessageText: this.formatMessagePreview(lastMessage),
       lastMessageSenderRole: lastMessage?.senderRole,
+      lastMessageSenderRoleRaw: lastMessage?.senderRoleRaw,
       averageStaffResponseTimeMs: responseStats.averageResponseTimeMs,
       lastStaffResponseTimeMs: responseStats.lastResponseTimeMs,
       aiTopic: insight?.topic,
@@ -2132,6 +2134,17 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       }
     }
     return threadMessages[threadMessages.length - 1];
+  }
+
+  private getLatestDialogRankingMessage(threadId: string): ChatMessage | undefined {
+    const threadMessages = this.messages.get(threadId) ?? [];
+    for (let index = threadMessages.length - 1; index >= 0; index -= 1) {
+      const candidate = threadMessages[index];
+      if (!this.isSystemThreadMessage(candidate)) {
+        return candidate;
+      }
+    }
+    return undefined;
   }
 
   private ensureMessageHasBody(text?: string, attachments: MessageAttachment[] = []): void {

@@ -890,11 +890,7 @@ export class MessengerController {
   }
 
   private resolveDialogUpdateTimestamp(dialog: StationDialogSummary): number {
-    const rankingTs = Date.parse(dialog.lastRankingMessageAt || '');
-    const lastMessageTs = Date.parse(dialog.lastMessageAt || '');
-    const normalizedRankingTs = Number.isFinite(rankingTs) ? rankingTs : 0;
-    const normalizedLastMessageTs = Number.isFinite(lastMessageTs) ? lastMessageTs : 0;
-    return Math.max(normalizedRankingTs, normalizedLastMessageTs);
+    return this.resolveDialogRankTimestamp(dialog);
   }
 
   private async getSupportThread(threadId: string, user: RequestUser): Promise<ChatThread> {
@@ -1040,39 +1036,16 @@ export class MessengerController {
     left: StationDialogSummary,
     right: StationDialogSummary
   ): number {
-    const leftUnread = Number(left.unreadMessagesCount ?? 0);
-    const rightUnread = Number(right.unreadMessagesCount ?? 0);
-    if (leftUnread !== rightUnread) {
-      return rightUnread - leftUnread;
-    }
-
-    const leftPending = Number(left.pendingClientMessagesCount ?? 0);
-    const rightPending = Number(right.pendingClientMessagesCount ?? 0);
-    if (leftPending !== rightPending) {
-      return rightPending - leftPending;
-    }
-
     const leftRankTs = this.resolveDialogRankTimestamp(left);
     const rightRankTs = this.resolveDialogRankTimestamp(right);
     if (leftRankTs !== rightRankTs) {
       return rightRankTs - leftRankTs;
     }
 
-    const leftTs = Date.parse(left.lastMessageAt || '') || 0;
-    const rightTs = Date.parse(right.lastMessageAt || '') || 0;
-    if (leftTs !== rightTs) {
-      return rightTs - leftTs;
-    }
-
     return left.threadId.localeCompare(right.threadId);
   }
 
   private resolveDialogRankTimestamp(dialog: StationDialogSummary): number {
-    const explicitRankingTs = Date.parse(dialog.lastRankingMessageAt || '') || 0;
-    if (explicitRankingTs > 0) {
-      return explicitRankingTs;
-    }
-
     const senderRoleRaw = String(
       dialog.lastMessageSenderRoleRaw ?? dialog.lastMessageSenderRole ?? ''
     )
@@ -1081,6 +1054,15 @@ export class MessengerController {
 
     if (senderRoleRaw === 'SYSTEM') {
       return 0;
+    }
+
+    if (!senderRoleRaw) {
+      return 0;
+    }
+
+    const explicitRankingTs = Date.parse(dialog.lastRankingMessageAt || '') || 0;
+    if (explicitRankingTs > 0) {
+      return explicitRankingTs;
     }
 
     return Date.parse(dialog.lastMessageAt || '') || 0;
@@ -1147,7 +1129,7 @@ export class MessengerController {
   }
 
   private resolveDialogsPaging(query: ListThreadsDto): { limit: number; offset: number } {
-    const fallbackLimit = 30;
+    const fallbackLimit = 15;
     const maxLimit = 200;
     const limit =
       Number.isFinite(query.limit) && Number(query.limit) > 0
@@ -1258,6 +1240,9 @@ export class MessengerController {
   }
 
   private mapSupportSenderRole(role?: SupportMessage['senderRole']): Role | undefined {
+    if (!role || role === 'SYSTEM') {
+      return undefined;
+    }
     if (role === Role.CLIENT) {
       return Role.CLIENT;
     }

@@ -8452,7 +8452,7 @@
     var documentKeydownHandler = null;
     var windowResizeHandler = null;
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
-    var DIALOGS_PAGE_SIZE = 30;
+    var DIALOGS_PAGE_SIZE = 15;
     var DIALOGS_SCROLL_THRESHOLD_PX = 140;
     var MESSAGES_PAGE_SIZE = 120;
 
