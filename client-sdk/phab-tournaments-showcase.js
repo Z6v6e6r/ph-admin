@@ -5057,12 +5057,17 @@
 
     if (!selectedGroup || selectedGroup.items.length === 0) {
       board.appendChild(
-        createStatusCard(
-          'Пока нет доступных турниров',
-          selectedGroup
-            ? 'ищем подходящие турниры на выбранную дату'
-            : 'Проверьте фильтры stationId/includePast или убедитесь, что у турниров есть public URL.'
-        )
+        state.loadingDayKeys[selectedGroup && selectedGroup.key]
+          ? createStatusCard(
+              'Загружаем турниры',
+              'ищем подходящие турниры на выбранную дату'
+            )
+          : createStatusCard(
+              'Пока нет доступных турниров',
+              selectedGroup
+                ? 'ищем подходящие турниры на выбранную дату'
+                : 'Проверьте фильтры stationId/includePast или убедитесь, что у турниров есть public URL.'
+            )
       );
     } else {
       var heading = createElement('div', 'phab-tournaments__day-heading');
@@ -5570,7 +5575,12 @@
       state.loadingDayKeys[dateKey] = true;
     }
     if (!loadOptions.background) {
-      renderLoading(mount);
+      if (isDayRequest) {
+        state.payload = mergeTournamentPayloadForDay(state.payload, { items: [] }, dateKey);
+        renderTournaments(mount, state.payload, state);
+      } else {
+        renderLoading(mount);
+      }
     }
 
     function applyPayload(payload) {

@@ -151,12 +151,15 @@ export class VivaTournamentsService {
     const requestedDate = this.normalizeDateKey(options?.date);
     const today = this.toDateKey(new Date());
     const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
-
-    const [studios, trainers] = await Promise.all([
-      this.fetchEntitySummariesSafe('studios'),
-      this.fetchEntitySummariesSafe('trainers')
-    ]);
-    await this.fetchProfile();
+    const [studios, trainers] = requestedDate
+      ? [[], []]
+      : await Promise.all([
+          this.fetchEntitySummariesSafe('studios'),
+          this.fetchEntitySummariesSafe('trainers')
+        ]);
+    if (!requestedDate) {
+      await this.fetchProfile();
+    }
 
     const dates = requestedDate
       ? [requestedDate]
