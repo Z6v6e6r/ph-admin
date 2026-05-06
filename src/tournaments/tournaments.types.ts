@@ -29,7 +29,12 @@ export interface TournamentParticipant {
   name: string;
   phone?: string;
   levelLabel?: string;
+  level?: string;
+  ratingLabel?: string;
+  rating?: string;
   avatarUrl?: string | null;
+  avatar?: string | null;
+  photo?: string | null;
   gender?: TournamentGender;
   paymentStatus?: TournamentPaymentStatus;
   status?: TournamentParticipantStatus;
@@ -161,6 +166,7 @@ export interface Tournament {
   slug?: string;
   publicUrl?: string;
   tournamentType?: string;
+  format?: string;
   accessLevels?: string[];
   gender?: TournamentGender;
   maxPlayers?: number;

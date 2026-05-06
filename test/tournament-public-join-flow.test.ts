@@ -344,6 +344,11 @@ async function main(): Promise<void> {
   });
   assert.equal(lkWidgetRegistration.code, 'REGISTERED');
 
+  const lkWidgetTournamentDetail = await service.findById(tournament.id);
+  assert.equal(lkWidgetTournamentDetail.format, 'Американо');
+  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.level, 'C');
+  assert.equal(lkWidgetTournamentDetail.participants?.at(-1)?.ratingLabel, 'C');
+
   const lkWidgetRegistrationStatus = await service.getPublicRegistrationByTournamentRef(
     tournament.id,
     '+7 999 000-11-28'

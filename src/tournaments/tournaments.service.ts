@@ -186,12 +186,14 @@ export class TournamentsService {
     const mergedSource = sourceTournaments.map((tournament) =>
       this.enrichSourceTournament(tournament, customBySourceId.get(tournament.id))
     );
-    const standaloneCustom = customTournaments
-      .filter(
-        (tournament) =>
-          !tournament.sourceTournamentId || !sourceIds.has(tournament.sourceTournamentId)
-      )
-      .map((tournament) => this.toTournamentListItem(tournament));
+    const standaloneCustom = await Promise.all(
+      customTournaments
+        .filter(
+          (tournament) =>
+            !tournament.sourceTournamentId || !sourceIds.has(tournament.sourceTournamentId)
+        )
+        .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
+    );
 
     return [...mergedSource, ...standaloneCustom]
       .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
@@ -206,13 +208,16 @@ export class TournamentsService {
           return leftRank - rightRank;
         }
         return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
-      });
+      })
+      .map((tournament) => this.toLkCompatibleTournament(tournament));
   }
 
   async findById(id: string): Promise<Tournament> {
     const customTournament = await this.findCustomTournamentByIdSafe(id);
     if (customTournament) {
-      return this.toTournamentListItem(customTournament);
+      return this.toLkCompatibleTournament(
+        this.toTournamentListItem(await this.enrichTournamentVivaProfiles(customTournament))
+      );
     }
 
     const tournament = await this.findSourceTournamentById(id);
@@ -221,7 +226,12 @@ export class TournamentsService {
     }
 
     const linkedCustom = await this.findCustomTournamentBySourceIdSafe(tournament.id);
-    return this.enrichSourceTournament(tournament, linkedCustom ?? undefined);
+    const enrichedLinkedCustom = linkedCustom
+      ? await this.enrichTournamentVivaProfiles(linkedCustom)
+      : undefined;
+    return this.enrichTournamentParticipantsForLk(
+      this.enrichSourceTournament(tournament, enrichedLinkedCustom)
+    );
   }
 
   async findCustomById(id: string): Promise<CustomTournament> {
@@ -1327,6 +1337,15 @@ export class TournamentsService {
     }
   }
 
+  private async findSourceTournamentByIdSafe(id: string): Promise<Tournament | null> {
+    try {
+      return await this.findSourceTournamentById(id);
+    } catch (error) {
+      this.logger.warn(`Failed to lookup source tournament by id ${id}: ${String(error)}`);
+      return null;
+    }
+  }
+
   private async findCustomTournamentBySourceIdSafe(
     sourceTournamentId: string
   ): Promise<CustomTournament | null> {
@@ -1546,6 +1565,92 @@ export class TournamentsService {
       linkedCustomTournamentId: tournament.id,
       sourceTournamentId: tournament.sourceTournamentId
     };
+  }
+
+  private async toTournamentListItemWithLiveSourceStatus(
+    tournament: CustomTournament
+  ): Promise<Tournament> {
+    const base = this.toTournamentListItem(tournament);
+    if (!tournament.sourceTournamentId) {
+      return base;
+    }
+
+    const sourceTournament = await this.findSourceTournamentByIdSafe(tournament.sourceTournamentId);
+    if (!sourceTournament) {
+      return base;
+    }
+
+    return {
+      ...base,
+      status: sourceTournament.status,
+      rawStatus: sourceTournament.rawStatus ?? base.rawStatus,
+      startsAt: sourceTournament.startsAt ?? base.startsAt,
+      endsAt: sourceTournament.endsAt ?? base.endsAt,
+      participants: sourceTournament.participants ?? base.participants,
+      participantsCount: sourceTournament.participantsCount ?? base.participantsCount,
+      trainerAvatarUrl: sourceTournament.trainerAvatarUrl ?? base.trainerAvatarUrl,
+      details: {
+        ...(base.details ?? {}),
+        sourceTournamentSnapshot: this.buildSourceTournamentSnapshot(sourceTournament)
+      }
+    };
+  }
+
+  private toLkCompatibleTournament(tournament: Tournament): Tournament {
+    return {
+      ...tournament,
+      format: this.pickString(tournament.format) ?? this.pickString(tournament.tournamentType) ?? undefined,
+      participants: Array.isArray(tournament.participants)
+        ? tournament.participants.map((participant) => this.toLkCompatibleParticipant(participant))
+        : tournament.participants,
+      waitlist: Array.isArray(tournament.waitlist)
+        ? tournament.waitlist.map((participant) => this.toLkCompatibleParticipant(participant))
+        : tournament.waitlist
+    };
+  }
+
+  private toLkCompatibleParticipant(participant: TournamentParticipant): TournamentParticipant {
+    const levelLabel = this.pickString(participant.levelLabel)
+      ?? this.pickString(participant.level)
+      ?? this.pickString(participant.ratingLabel)
+      ?? this.pickString(participant.rating);
+    const avatarUrl = this.pickNullableString(participant.avatarUrl)
+      ?? this.pickNullableString(participant.avatar)
+      ?? this.pickNullableString(participant.photo);
+
+    return {
+      ...participant,
+      levelLabel: levelLabel ?? undefined,
+      level: levelLabel ?? undefined,
+      ratingLabel: levelLabel ?? undefined,
+      rating: levelLabel ?? undefined,
+      avatarUrl: avatarUrl ?? undefined,
+      avatar: avatarUrl ?? undefined,
+      photo: avatarUrl ?? undefined
+    };
+  }
+
+  private async enrichTournamentParticipantsForLk(tournament: Tournament): Promise<Tournament> {
+    const participants = Array.isArray(tournament.participants)
+      ? await Promise.all(
+          tournament.participants.map((participant) =>
+            this.enrichTournamentParticipantWithViva(participant)
+          )
+        )
+      : tournament.participants;
+    const waitlist = Array.isArray(tournament.waitlist)
+      ? await Promise.all(
+          tournament.waitlist.map((participant) =>
+            this.enrichTournamentParticipantWithViva(participant)
+          )
+        )
+      : tournament.waitlist;
+
+    return this.toLkCompatibleTournament({
+      ...tournament,
+      participants,
+      waitlist
+    });
   }
 
   private buildCreateMutation(

@@ -80,10 +80,18 @@ function createCustomTournament(
   };
 }
 
-function createService(sourceTournaments: Tournament[], customTournaments: CustomTournament[]): TournamentsService {
+function createService(
+  sourceTournaments: Tournament[],
+  customTournaments: CustomTournament[],
+  sourceTournamentDetails: Tournament[] = []
+): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
-    { listTournaments: async () => sourceTournaments } as never,
+    {
+      listTournaments: async () => sourceTournaments,
+      findTournamentById: async (id: string) =>
+        sourceTournamentDetails.find((tournament) => tournament.id === id) ?? null
+    } as never,
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
@@ -130,6 +138,19 @@ async function main(): Promise<void> {
     'custom-standalone-other-date',
     '2026-05-07T21:00:00+03:00'
   );
+  const linkedSkinMissingFromSourceList = createCustomTournament(
+    'custom-linked-canceled-source',
+    '2026-05-05T12:00:00+03:00',
+    'source-canceled-in-viva',
+    '2026-05-05T14:00:00+03:00'
+  );
+  const canceledSourceDetail = createSourceTournament(
+    'source-canceled-in-viva',
+    '2026-05-05T12:00:00+03:00',
+    '2026-05-05T14:00:00+03:00'
+  );
+  canceledSourceDetail.status = TournamentStatus.CANCELED;
+  canceledSourceDetail.rawStatus = 'canceled';
 
   const service = createService(
     [sourceOnRequestedDate, sourceOnOtherDate],
@@ -138,8 +159,10 @@ async function main(): Promise<void> {
       linkedSkinOnOtherDate,
       standaloneSkinOnRequestedDate,
       standalonePastToday,
-      standaloneSkinOnOtherDate
-    ]
+      standaloneSkinOnOtherDate,
+      linkedSkinMissingFromSourceList
+    ],
+    [canceledSourceDetail]
   );
 
   const filtered = await service.findAll({
@@ -156,7 +179,12 @@ async function main(): Promise<void> {
   );
 
   const unfiltered = await service.findAll();
-  assert.equal(unfiltered.length, 5);
+  assert.equal(unfiltered.length, 6);
+  const canceledSkin = unfiltered.find(
+    (tournament) => tournament.linkedCustomTournamentId === 'custom-linked-canceled-source'
+  );
+  assert.equal(canceledSkin?.status, TournamentStatus.CANCELED);
+  assert.equal(canceledSkin?.rawStatus, 'canceled');
 
   console.log('Tournament list date filter test passed');
 }
