@@ -83,7 +83,8 @@ function createCustomTournament(
 function createService(
   sourceTournaments: Tournament[],
   customTournaments: CustomTournament[],
-  sourceTournamentDetails: Tournament[] = []
+  sourceTournamentDetails: Tournament[] = [],
+  statusUpdates: Array<{ id: string; status?: TournamentStatus }> = []
 ): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
@@ -95,7 +96,11 @@ function createService(
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
-      listCustomTournaments: async () => customTournaments
+      listCustomTournaments: async () => customTournaments,
+      updateCustomTournament: async (id: string, mutation: { status?: TournamentStatus }) => {
+        statusUpdates.push({ id, status: mutation.status });
+        return customTournaments.find((tournament) => tournament.id === id) ?? null;
+      }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
     { simulateRating: () => { throw new Error('Not used in test'); } } as never
@@ -179,12 +184,28 @@ async function main(): Promise<void> {
   );
 
   const unfiltered = await service.findAll();
-  assert.equal(unfiltered.length, 6);
+  assert.equal(unfiltered.length, 5);
   const canceledSkin = unfiltered.find(
     (tournament) => tournament.linkedCustomTournamentId === 'custom-linked-canceled-source'
   );
-  assert.equal(canceledSkin?.status, TournamentStatus.CANCELED);
-  assert.equal(canceledSkin?.rawStatus, 'canceled');
+  assert.equal(canceledSkin, undefined);
+
+  const statusUpdates: Array<{ id: string; status?: TournamentStatus }> = [];
+  const syncService = createService(
+    [],
+    [linkedSkinMissingFromSourceList],
+    [],
+    statusUpdates
+  );
+  const syncedList = await syncService.findAll({
+    date: '2026-05-05',
+    now: new Date('2026-05-05T10:00:00+03:00')
+  });
+  assert.deepEqual(syncedList, []);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(statusUpdates, [
+    { id: 'custom-linked-canceled-source', status: TournamentStatus.CANCELED }
+  ]);
 
   console.log('Tournament list date filter test passed');
 }

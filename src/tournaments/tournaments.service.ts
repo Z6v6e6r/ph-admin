@@ -148,6 +148,7 @@ export class TournamentsService {
     30000
   );
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
+  private readonly missingSourceSkinStatusSyncInFlight = new Set<string>();
 
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
@@ -183,6 +184,7 @@ export class TournamentsService {
     });
 
     const sourceIds = new Set(sourceTournaments.map((item) => item.id));
+    this.scheduleMissingSourceSkinStatusSync(customTournaments, sourceIds, options);
     const mergedSource = sourceTournaments.map((tournament) =>
       this.enrichSourceTournament(tournament, customBySourceId.get(tournament.id))
     );
@@ -190,7 +192,7 @@ export class TournamentsService {
       customTournaments
         .filter(
           (tournament) =>
-            !tournament.sourceTournamentId || !sourceIds.has(tournament.sourceTournamentId)
+            !tournament.sourceTournamentId
         )
         .filter((tournament) =>
           this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
@@ -1349,6 +1351,76 @@ export class TournamentsService {
     }
   }
 
+  private scheduleMissingSourceSkinStatusSync(
+    customTournaments: CustomTournament[],
+    sourceIds: Set<string>,
+    options?: { date?: string; now?: Date }
+  ): void {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return;
+    }
+
+    const missingLinkedTournaments = customTournaments.filter((tournament) => {
+      const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+      return (
+        sourceTournamentId !== undefined
+        && !sourceIds.has(sourceTournamentId)
+        && !this.isCanceledTournamentStatus(tournament.status)
+        && this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
+      );
+    });
+    if (missingLinkedTournaments.length === 0) {
+      return;
+    }
+
+    const syncKey = [
+      this.normalizePublicDate(options?.date) ?? 'all',
+      missingLinkedTournaments.map((tournament) => tournament.id).sort().join(',')
+    ].join(':');
+    if (this.missingSourceSkinStatusSyncInFlight.has(syncKey)) {
+      return;
+    }
+    this.missingSourceSkinStatusSyncInFlight.add(syncKey);
+
+    setTimeout(() => {
+      void this.syncMissingSourceSkinStatuses(missingLinkedTournaments, syncKey);
+    }, 0);
+  }
+
+  private async syncMissingSourceSkinStatuses(
+    tournaments: CustomTournament[],
+    syncKey: string
+  ): Promise<void> {
+    try {
+      await Promise.all(
+        tournaments.map(async (tournament) => {
+          const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+          if (!sourceTournamentId) {
+            return;
+          }
+
+          const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
+          if (sourceTournament && !this.isCanceledTournamentStatus(sourceTournament.status)) {
+            return;
+          }
+
+          await this.tournamentsPersistence.updateCustomTournament(tournament.id, {
+            status: TournamentStatus.CANCELED,
+            actor: {
+              id: 'system:viva-sync',
+              name: 'Viva sync'
+            }
+          });
+          this.invalidatePublicDirectoryCache();
+        })
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to sync missing Viva tournament skins: ${String(error)}`);
+    } finally {
+      this.missingSourceSkinStatusSyncInFlight.delete(syncKey);
+    }
+  }
+
   private async findCustomTournamentBySourceIdSafe(
     sourceTournamentId: string
   ): Promise<CustomTournament | null> {
@@ -1385,6 +1457,10 @@ export class TournamentsService {
     tournament: Tournament,
     options?: { date?: string; now?: Date }
   ): boolean {
+    if (this.isCanceledTournamentStatus(tournament.status)) {
+      return false;
+    }
+
     const date = this.normalizePublicDate(options?.date);
     if (!date) {
       return true;
