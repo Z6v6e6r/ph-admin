@@ -137,6 +137,16 @@ function createPayload(overrides?: Record<string, unknown>): Record<string, unkn
   };
 }
 
+type CapturedVivaInput = {
+  clientPhone?: string;
+  clientId?: string;
+  studioId?: string;
+  baseAmountMinor?: number;
+  discountAmountMinor?: number;
+  discountReason?: string;
+  successUrl?: string;
+};
+
 function createService(tournament: CustomTournament, vivaAdmin: Record<string, unknown>): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
@@ -182,10 +192,10 @@ async function main(): Promise<void> {
     } as Response;
   }) as typeof fetch;
 
-  let vivaInput: Record<string, unknown> | undefined;
+  let vivaInput: CapturedVivaInput | undefined;
   const service = createService(createTournament(), {
     createTournamentEnergyCheckout: async (input: Record<string, unknown>) => {
-      vivaInput = input;
+      vivaInput = input as CapturedVivaInput;
       return {
         clientId: 'client-1',
         productId: 'energy-product',
@@ -216,6 +226,29 @@ async function main(): Promise<void> {
   assert.equal(vivaInput?.discountReason, 'Участие в турнире «Название турнира» 09.05.2026');
   assert.equal(vivaInput?.successUrl, 'https://padlhub.ru/tournaments?paymentsuccess=true');
 
+  vivaInput = undefined;
+  const responseWithPayloadTitle = await service.createCustomEnergyCheckout('exercise-energy-1', {
+    body: createPayload({
+      pricing: {
+        ...(createPayload().pricing as Record<string, unknown>),
+        discountReason: 'Участие в турнире «Тестовый турнир» 09.05.2026'
+      },
+      tournament: {
+        ...(createPayload().tournament as Record<string, unknown>),
+        title: 'Тестовый турнир'
+      }
+    }),
+    authorizationHeader: `Bearer ${token}`,
+    authSourceHeader: 'lk-keycloak',
+    tenantKeyHeader: 'iSkq6G'
+  });
+  assert.equal(responseWithPayloadTitle.ok, true);
+  const payloadTitleDiscountReason = (vivaInput as CapturedVivaInput | undefined)?.discountReason;
+  assert.equal(
+    payloadTitleDiscountReason,
+    'Участие в турнире «Тестовый турнир» 09.05.2026'
+  );
+
   await assert.rejects(
     () => service.createCustomEnergyCheckout('exercise-energy-1', {
       body: createPayload({
@@ -230,6 +263,21 @@ async function main(): Promise<void> {
       tenantKeyHeader: 'iSkq6G'
     }),
     /pricing\.amountMinor does not match tournament custom price/
+  );
+
+  await assert.rejects(
+    () => service.createCustomEnergyCheckout('exercise-energy-1', {
+      body: createPayload({
+        pricing: {
+          ...(createPayload().pricing as Record<string, unknown>),
+          discountReason: 'Участие в турнире «Чужой турнир» 09.05.2026'
+        }
+      }),
+      authorizationHeader: `Bearer ${token}`,
+      authSourceHeader: 'lk-keycloak',
+      tenantKeyHeader: 'iSkq6G'
+    }),
+    /Discount reason does not match tournament title\/date/
   );
 
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });

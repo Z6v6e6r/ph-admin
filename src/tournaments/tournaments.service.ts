@@ -1009,11 +1009,14 @@ export class TournamentsService {
     }
 
     this.assertCustomEnergyPricingMatchesTournament(tournament, pricing);
-    const discountReason = this.buildTournamentEnergyDiscountReason(tournament);
+    const discountReason = this.buildTournamentEnergyDiscountReason(
+      tournament,
+      tournamentPayload
+    );
     const providedDiscountReason = this.pickString(pricing.discountReason);
     if (
       providedDiscountReason &&
-      this.normalizeWhitespace(providedDiscountReason) !== this.normalizeWhitespace(discountReason)
+      !this.matchesTournamentEnergyDiscountReason(providedDiscountReason, tournament, tournamentPayload)
     ) {
       throw new BadRequestException('Discount reason does not match tournament title/date');
     }
@@ -1585,12 +1588,84 @@ export class TournamentsService {
     }
   }
 
-  private buildTournamentEnergyDiscountReason(tournament: CustomTournament): string {
-    const title =
-      this.pickString(tournament.skin?.title)
+  private buildTournamentEnergyDiscountReason(
+    tournament: CustomTournament,
+    tournamentPayload?: Record<string, unknown>
+  ): string {
+    const title = this.pickString(tournamentPayload?.title)
+      ?? this.pickString(tournamentPayload?.name)
+      ?? this.pickString(tournamentPayload?.tournamentTitle)
+      ?? this.pickString(tournamentPayload?.label)
+      ?? this.pickString(tournament.skin?.title)
       ?? this.pickString(tournament.name)
       ?? tournament.id;
-    return `Участие в турнире «${title}» ${this.formatTournamentDateLabel(tournament)}`;
+    const dateLabel = this.resolveTournamentEnergyDateLabel(tournament, tournamentPayload);
+    return `Участие в турнире «${title}» ${dateLabel}`;
+  }
+
+  private matchesTournamentEnergyDiscountReason(
+    value: string,
+    tournament: CustomTournament,
+    tournamentPayload?: Record<string, unknown>
+  ): boolean {
+    const normalized = this.normalizeWhitespace(value);
+    const expectedDateLabel = this.resolveTournamentEnergyDateLabel(tournament, tournamentPayload);
+    const pattern = /^Участие в турнире «(.+)» (\d{2}\.\d{2}\.\d{4})$/;
+    const match = normalized.match(pattern);
+    if (!match) {
+      return false;
+    }
+    if (match[2] !== expectedDateLabel) {
+      return false;
+    }
+
+    const allowedTitles = new Set(
+      [
+        this.pickString(tournamentPayload?.title),
+        this.pickString(tournamentPayload?.name),
+        this.pickString(tournamentPayload?.tournamentTitle),
+        this.pickString(tournament.skin?.title),
+        this.pickString(tournament.name)
+      ]
+        .filter((item): item is string => Boolean(item))
+        .map((item) => this.normalizeWhitespace(item))
+    );
+    return allowedTitles.size === 0 || allowedTitles.has(this.normalizeWhitespace(match[1]));
+  }
+
+  private resolveTournamentEnergyDateLabel(
+    tournament: CustomTournament,
+    tournamentPayload?: Record<string, unknown>
+  ): string {
+    const payloadDateLabel = this.pickString(tournamentPayload?.dateLabel);
+    if (payloadDateLabel && /^\d{2}\.\d{2}\.\d{4}$/.test(payloadDateLabel)) {
+      return payloadDateLabel;
+    }
+
+    const payloadDate = this.pickString(tournamentPayload?.date);
+    if (payloadDate && /^\d{4}-\d{2}-\d{2}$/.test(payloadDate)) {
+      const parsed = new Date(`${payloadDate}T00:00:00+03:00`);
+      if (Number.isFinite(parsed.getTime())) {
+        return new Intl.DateTimeFormat('ru-RU', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          timeZone: 'Europe/Moscow'
+        }).format(parsed);
+      }
+    }
+
+    const payloadStartsAt = this.pickString(tournamentPayload?.startsAt);
+    if (payloadStartsAt && Number.isFinite(Date.parse(payloadStartsAt))) {
+      return new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'Europe/Moscow'
+      }).format(new Date(payloadStartsAt));
+    }
+
+    return this.formatTournamentDateLabel(tournament);
   }
 
   private toCustomEnergyCheckoutResponse(input: {
@@ -2714,6 +2789,28 @@ export class TournamentsService {
     }
 
     const normalizedType = String(tournamentType ?? '').trim().toLowerCase();
+    if (
+      normalizedType === 'team_americano' ||
+      (normalizedType.includes('американо') && normalizedType.includes('парн'))
+    ) {
+      return 'team_americano';
+    }
+    if (
+      normalizedType === 'team_mexicano' ||
+      (normalizedType.includes('мексикано') && normalizedType.includes('парн'))
+    ) {
+      return 'team_mexicano';
+    }
+    if (normalizedType === 'flex_americano' || normalizedType.includes('flex')) {
+      return 'flex_americano';
+    }
+    if (
+      normalizedType === 'round_robin' ||
+      normalizedType.includes('round robin') ||
+      normalizedType.includes('робин')
+    ) {
+      return 'round_robin';
+    }
     if (normalizedType.includes('compet')) {
       return 'competitive_americano';
     }
