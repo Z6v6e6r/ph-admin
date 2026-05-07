@@ -432,28 +432,33 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
 
     const resolved = await this.getResolvedSettings();
-    const url = new URL('/api/v1/clients', `${resolved.config.baseUrl}/`);
-    url.searchParams.set('phone', phone);
-    url.searchParams.set('page', '0');
-    url.searchParams.set('size', '1');
+    let client: Record<string, unknown> | undefined;
+    const lookupPhones = this.buildClientSearchPhoneQueries(phone);
+    for (const lookupPhone of lookupPhones) {
+      const url = new URL('/api/v1/clients', `${resolved.config.baseUrl}/`);
+      url.searchParams.set('phone', lookupPhone);
+      url.searchParams.set('page', '0');
+      url.searchParams.set('size', '1');
 
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      signal: this.buildAbortSignal()
-    });
-
-    if (!response.ok) {
-      this.logger.warn(
-        `Viva CRM lookup failed for ${phone}: ${response.status} ${response.statusText}`
-      );
-      return { phone, status: 'NOT_FOUND' };
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        signal: this.buildAbortSignal()
+      });
+      if (!response.ok) {
+        this.logger.warn(
+          `Viva CRM lookup failed for ${lookupPhone}: ${response.status} ${response.statusText}`
+        );
+        continue;
+      }
+      const payload = (await response.json().catch(() => null)) as VivaClientsSearchResponse | null;
+      client = this.extractClientRecord(payload);
+      if (client) {
+        break;
+      }
     }
-
-    const payload = (await response.json().catch(() => null)) as VivaClientsSearchResponse | null;
-    const client = this.extractClientRecord(payload);
     const vivaClientId = client ? this.extractClientId(client) : undefined;
     if (!vivaClientId) {
       return { phone, status: 'NOT_FOUND' };
@@ -1480,6 +1485,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     if (normalizedPhone.length > 1) {
       candidates.add(`+${normalizedPhone}`);
       candidates.add(normalizedPhone);
+      if (normalizedPhone.startsWith('7') && normalizedPhone.length === 11) {
+        candidates.add(`8${normalizedPhone.slice(1)}`);
+        candidates.add(`+8${normalizedPhone.slice(1)}`);
+      }
       candidates.add(normalizedPhone.slice(1));
     } else if (normalizedPhone) {
       candidates.add(normalizedPhone);

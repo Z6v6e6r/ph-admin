@@ -299,6 +299,86 @@ async function main(): Promise<void> {
     assert.equal(byTenDigitsResult.clientId, 'client-by-10');
     assert.equal(byTenDigitsResult.transactionId, 'transaction-by-10');
     assert.equal(byTenDigitsResult.paymentUrl, 'https://pay.example/by-10');
+
+    transactionBodies.length = 0;
+    globalThis.fetch = (async (requestUrl: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(requestUrl));
+      const method = init?.method ?? 'GET';
+      const headers = init?.headers as Record<string, string> | undefined;
+      assert.equal(headers?.Authorization, 'Bearer admin-token');
+
+      if (method === 'GET' && url.pathname === '/api/v2/search/clients') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/clients') {
+        const qRaw = String(url.searchParams.get('phone'));
+        const qDigits = qRaw.replace(/\D/g, '');
+        if (qDigits === '79123456789') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ content: [{ id: 'client-by-v1-plus', phone: '+79123456789' }] })
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [{ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 }] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products/subscriptions/energy-product') {
+        assert.equal(url.searchParams.get('clientId'), 'client-by-v1-plus');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/contracts/clients/client-by-v1-plus') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/transactions') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'transaction-by-v1-plus',
+            cardPaymentInfo: { paymentUrl: 'https://pay.example/by-v1-plus' },
+            toPay: 250000
+          })
+        } as Response;
+      }
+      throw new Error(`Unexpected /api/v1 clients plus fallback request: ${method} ${url.toString()}`);
+    }) as typeof fetch;
+
+    const freshService = new VivaAdminService();
+    const byV1PlusLookupResult = await freshService.createTournamentEnergyCheckout({
+      clientPhone: '79123456789',
+      studioId: 'studio-1',
+      paymentMethod: 'SMS',
+      baseAmountMinor: 2000000,
+      discountAmountMinor: 1750000,
+      discountReason: 'Участие в турнире «Название турнира» 09.05.2026',
+      productName: 'Энергия турниры'
+    });
+    assert.equal(byV1PlusLookupResult.clientId, 'client-by-v1-plus');
+    assert.equal(byV1PlusLookupResult.transactionId, 'transaction-by-v1-plus');
+    assert.equal(byV1PlusLookupResult.paymentUrl, 'https://pay.example/by-v1-plus');
   } finally {
     globalThis.fetch = originalFetch;
   }
