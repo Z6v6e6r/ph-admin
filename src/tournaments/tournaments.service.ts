@@ -1,17 +1,22 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
-  Optional
+  Optional,
+  UnauthorizedException
 } from '@nestjs/common';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
-import { VivaAdminService } from '../integrations/viva/viva-admin.service';
+import {
+  VivaAdminService,
+  VivaAdminTournamentEnergyCheckoutResult
+} from '../integrations/viva/viva-admin.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
   AmericanoRatingSimulationResult,
@@ -47,6 +52,7 @@ import {
   TournamentPurchaseOption,
   TournamentPublicClientProfile,
   TournamentPublicDirectoryResponse,
+  TournamentCustomEnergyCheckoutResponse,
   TournamentResultsView,
   TournamentPublicView,
   TournamentRegistrationResponse,
@@ -69,6 +75,20 @@ interface RegistrationInput {
 interface JoinPurchaseTransactionInput extends RegistrationInput {
   successUrl: string;
   failUrl: string;
+}
+
+interface CustomEnergyCheckoutInput {
+  body?: Record<string, unknown>;
+  authorizationHeader?: string;
+  authSourceHeader?: string;
+  tenantKeyHeader?: string;
+}
+
+interface LkCheckoutAuthProfile {
+  clientId?: string;
+  phone: string;
+  name?: string;
+  tenantKey?: string;
 }
 
 interface VivaJoinTransactionResponse {
@@ -142,8 +162,22 @@ export class TournamentsService {
     || 'https://api.vivacrm.ru';
   private readonly vivaEndUserWidgetId =
     this.pickString(process.env.VIVA_END_USER_WIDGET_ID) ?? 'iSkq6G';
+  private readonly publicTenantKey =
+    this.pickString(process.env.TOURNAMENTS_PUBLIC_TENANT_KEY)
+    ?? this.vivaEndUserWidgetId
+    ?? 'iSkq6G';
+  private readonly lkKeycloakBaseUrl =
+    this.normalizeBaseUrl(
+      process.env.TOURNAMENTS_PUBLIC_KEYCLOAK_BASE_URL
+      ?? process.env.KEYCLOAK_BASE_URL
+      ?? process.env.VIVA_KEYCLOAK_BASE_URL
+    ) ?? 'https://kc.vivacrm.ru';
+  private readonly lkKeycloakRealm =
+    this.pickString(process.env.TOURNAMENTS_PUBLIC_KEYCLOAK_REALM) ?? 'prod';
   private readonly vivaEndUserRequestTimeoutMs =
     this.readPositiveNumberEnv('VIVA_END_USER_TIMEOUT_MS', 5000);
+  private readonly lkAuthRequestTimeoutMs =
+    this.readPositiveNumberEnv('TOURNAMENTS_PUBLIC_AUTH_TIMEOUT_MS', 5000);
   private readonly publicDirectoryCacheTtlMs = this.readPositiveNumberEnv(
     'TOURNAMENTS_PUBLIC_DIRECTORY_CACHE_TTL_MS',
     30000
@@ -887,6 +921,110 @@ export class TournamentsService {
     };
   }
 
+  async createCustomEnergyCheckout(
+    exerciseId: string,
+    input: CustomEnergyCheckoutInput
+  ): Promise<TournamentCustomEnergyCheckoutResponse> {
+    const routeExerciseId = this.pickString(exerciseId);
+    const body = this.toRecord(input.body) ?? {};
+    if (!routeExerciseId) {
+      throw new BadRequestException('Exercise id is required');
+    }
+
+    const tenantKey =
+      this.pickString(input.tenantKeyHeader)
+      ?? this.pickString(body.tenantKey);
+    this.assertCheckoutTenant(tenantKey);
+
+    const authSource =
+      this.pickString(input.authSourceHeader)
+      ?? this.pickString(body.authProvider);
+    if (authSource !== 'lk-keycloak') {
+      throw new UnauthorizedException('LK Keycloak auth source is required');
+    }
+
+    const payloadExerciseId = this.pickString(body.exerciseId);
+    if (payloadExerciseId && payloadExerciseId !== routeExerciseId) {
+      throw new BadRequestException('Payload exerciseId does not match route exerciseId');
+    }
+
+    const clientRecord = this.toRecord(body.client) ?? {};
+    const clientPhone = this.normalizePhone(clientRecord.phone);
+    if (!clientPhone) {
+      throw new BadRequestException('Client phone is required');
+    }
+
+    const authProfile = await this.verifyLkCheckoutAuth({
+      authorizationHeader: input.authorizationHeader,
+      expectedPhone: clientPhone,
+      tenantKey
+    });
+
+    const pricing = this.readCustomEnergyPricing(body);
+    const productRecord = this.toRecord(body.product) ?? {};
+    this.assertCustomEnergyProduct(productRecord);
+
+    const tournamentPayload = this.toRecord(body.tournament) ?? {};
+    this.assertCheckoutExercisePayload(routeExerciseId, tournamentPayload);
+    const tournament = await this.resolveCustomTournamentForEnergyCheckout(
+      routeExerciseId,
+      tournamentPayload
+    );
+    const booking = this.resolveBookingConfig(tournament);
+    const bookingExerciseId =
+      this.pickString(booking.vivaExerciseId)
+      ?? this.pickString(tournament.sourceTournamentId);
+    if (bookingExerciseId && bookingExerciseId !== routeExerciseId) {
+      throw new BadRequestException('Tournament booking exerciseId does not match route exerciseId');
+    }
+
+    const studioId =
+      this.pickString(body.studioId)
+      ?? this.pickString(tournamentPayload.studioId)
+      ?? this.pickString(booking.vivaStudioId)
+      ?? this.pickString(tournament.studioId);
+    if (!studioId) {
+      throw new BadRequestException('studioId is required for Viva checkout');
+    }
+    if (booking.vivaStudioId && booking.vivaStudioId !== studioId) {
+      throw new BadRequestException('Payload studioId does not match tournament booking');
+    }
+
+    this.assertCustomEnergyPricingMatchesTournament(tournament, pricing);
+    const discountReason = this.buildTournamentEnergyDiscountReason(tournament);
+    const providedDiscountReason = this.pickString(pricing.discountReason);
+    if (
+      providedDiscountReason &&
+      this.normalizeWhitespace(providedDiscountReason) !== this.normalizeWhitespace(discountReason)
+    ) {
+      throw new BadRequestException('Discount reason does not match tournament title/date');
+    }
+
+    if (!this.vivaAdminService) {
+      throw new InternalServerErrorException('Viva admin service is not configured');
+    }
+
+    const returnUrls = this.toRecord(body.returnUrls) ?? {};
+    const vivaCheckout = await this.vivaAdminService.createTournamentEnergyCheckout({
+      clientPhone,
+      clientId: this.pickString(clientRecord.id) ?? authProfile.clientId,
+      studioId,
+      paymentMethod: 'SMS',
+      baseAmountMinor: pricing.baseAmountMinor,
+      discountAmountMinor: pricing.discountAmountMinor,
+      discountReason,
+      productName: this.pickString(productRecord.name) ?? 'Энергия турниры',
+      successUrl: this.pickHttpUrl(returnUrls.successUrl),
+      failUrl: this.pickHttpUrl(returnUrls.failUrl)
+    });
+
+    return this.toCustomEnergyCheckoutResponse({
+      exerciseId: routeExerciseId,
+      amountMinor: pricing.amountMinor,
+      vivaCheckout
+    });
+  }
+
   async createPublicJoinPurchaseTransaction(
     slug: string,
     input: JoinPurchaseTransactionInput
@@ -1244,6 +1382,358 @@ export class TournamentsService {
       message: 'Этот номер телефона не допущен к управлению турниром.',
       tournamentSlug: tournament.slug
     };
+  }
+
+  private assertCheckoutTenant(tenantKey?: string): void {
+    if (!tenantKey) {
+      throw new BadRequestException('Tenant key is required');
+    }
+    if (tenantKey !== this.publicTenantKey) {
+      throw new ForbiddenException('Tenant key is not allowed');
+    }
+  }
+
+  private async verifyLkCheckoutAuth(input: {
+    authorizationHeader?: string;
+    expectedPhone: string;
+    tenantKey?: string;
+  }): Promise<LkCheckoutAuthProfile> {
+    const token = this.extractBearerToken(input.authorizationHeader);
+    if (!token) {
+      throw new UnauthorizedException('Bearer token is required');
+    }
+
+    const claims = this.decodeBearerClaimsToken(token);
+    this.assertBearerNotExpired(claims);
+    const userInfo = await this.fetchLkUserInfo(token);
+    const merged = {
+      ...(claims ?? {}),
+      ...(userInfo ?? {})
+    };
+    const phone = this.extractLkAuthPhone(merged);
+    if (!phone) {
+      throw new UnauthorizedException('LK auth token does not contain a phone');
+    }
+    if (phone !== input.expectedPhone) {
+      throw new ForbiddenException('LK auth phone does not match checkout client');
+    }
+
+    const tokenTenant = this.extractLkAuthTenantKey(merged);
+    if (tokenTenant && input.tenantKey && tokenTenant !== input.tenantKey) {
+      throw new ForbiddenException('LK auth tenant does not match checkout tenant');
+    }
+
+    return {
+      clientId: this.extractLkAuthClientId(merged),
+      phone,
+      name: this.extractLkAuthName(merged),
+      tenantKey: tokenTenant
+    };
+  }
+
+  private readCustomEnergyPricing(body: Record<string, unknown>): {
+    amountMinor: number;
+    baseAmountMinor: number;
+    discountAmountMinor: number;
+    discountReason?: string;
+  } {
+    const pricing = this.toRecord(body.pricing) ?? {};
+    const amountMinor = this.readMinorUnitInteger(pricing.amountMinor);
+    const baseAmountMinor = this.readMinorUnitInteger(pricing.baseAmountMinor);
+    const discountAmountMinor = this.readMinorUnitInteger(pricing.discountAmountMinor);
+    if (amountMinor === undefined) {
+      throw new BadRequestException('pricing.amountMinor is required');
+    }
+    if (baseAmountMinor === undefined || baseAmountMinor <= 0) {
+      throw new BadRequestException('pricing.baseAmountMinor is required');
+    }
+    if (discountAmountMinor === undefined) {
+      throw new BadRequestException('pricing.discountAmountMinor is required');
+    }
+    if (baseAmountMinor - discountAmountMinor !== amountMinor) {
+      throw new BadRequestException('pricing.amountMinor must equal baseAmountMinor minus discountAmountMinor');
+    }
+
+    return {
+      amountMinor,
+      baseAmountMinor,
+      discountAmountMinor,
+      discountReason: this.pickString(pricing.discountReason) ?? undefined
+    };
+  }
+
+  private assertCustomEnergyProduct(product: Record<string, unknown>): void {
+    const type = this.pickString(product.type)?.toUpperCase();
+    const kind = this.pickString(product.kind)?.toUpperCase();
+    const name = this.pickString(product.name) ?? '';
+    if (type && type !== 'SUBSCRIPTION') {
+      throw new BadRequestException('Custom energy product must be a subscription');
+    }
+    if (kind && kind !== 'TOURNAMENT_CUSTOM_ENERGY') {
+      throw new BadRequestException('Unsupported custom energy product kind');
+    }
+    if (name && !(/энерг/i.test(name) && /турнир/i.test(name))) {
+      throw new BadRequestException('Unsupported custom energy product name');
+    }
+  }
+
+  private assertCheckoutExercisePayload(
+    routeExerciseId: string,
+    tournamentPayload: Record<string, unknown>
+  ): void {
+    const payloadTournamentExerciseId = this.pickString(tournamentPayload.exerciseId);
+    if (payloadTournamentExerciseId && payloadTournamentExerciseId !== routeExerciseId) {
+      throw new BadRequestException('tournament.exerciseId does not match route exerciseId');
+    }
+  }
+
+  private async resolveCustomTournamentForEnergyCheckout(
+    exerciseId: string,
+    tournamentPayload: Record<string, unknown>
+  ): Promise<CustomTournament> {
+    this.ensurePersistenceEnabled();
+    const refs = [
+      this.pickString(tournamentPayload.linkedCustomTournamentId),
+      this.pickString(tournamentPayload.id),
+      this.pickString(tournamentPayload.sourceTournamentId),
+      exerciseId
+    ].filter((item): item is string => Boolean(item));
+
+    for (const ref of refs) {
+      try {
+        const tournament = await this.requireCustomByPublicRef(ref);
+        const booking = this.resolveBookingConfig(tournament);
+        const bookingExerciseId =
+          this.pickString(booking.vivaExerciseId)
+          ?? this.pickString(tournament.sourceTournamentId);
+        if (!bookingExerciseId || bookingExerciseId === exerciseId) {
+          return tournament;
+        }
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
+    }
+
+    const tournaments = await this.listHydratedCustomTournamentsSafe();
+    const matched = tournaments.find((tournament) => {
+      const booking = this.resolveBookingConfig(tournament);
+      return (
+        this.pickString(booking.vivaExerciseId) === exerciseId ||
+        this.pickString(tournament.sourceTournamentId) === exerciseId
+      );
+    });
+    if (!matched) {
+      throw new NotFoundException(`Custom tournament for exercise ${exerciseId} not found`);
+    }
+    return matched;
+  }
+
+  private assertCustomEnergyPricingMatchesTournament(
+    tournament: CustomTournament,
+    pricing: {
+      amountMinor: number;
+      baseAmountMinor: number;
+      discountAmountMinor: number;
+    }
+  ): void {
+    const skinAmount = this.parseMoneyAmount(tournament.skin?.priceLabel);
+    if (!skinAmount) {
+      throw new BadRequestException('Tournament does not have a custom energy price');
+    }
+
+    const expectedAmountMinor = skinAmount * 100;
+    const expectedBaseAmountMinor =
+      this.readPositiveNumberEnv(
+        'TOURNAMENT_ENERGY_BASE_AMOUNT',
+        TOURNAMENT_ENERGY_BASE_AMOUNT
+      ) * 100;
+    const expectedDiscountAmountMinor = Math.max(
+      0,
+      expectedBaseAmountMinor - expectedAmountMinor
+    );
+    if (pricing.amountMinor !== expectedAmountMinor) {
+      throw new BadRequestException('pricing.amountMinor does not match tournament custom price');
+    }
+    if (pricing.baseAmountMinor !== expectedBaseAmountMinor) {
+      throw new BadRequestException('pricing.baseAmountMinor does not match tournament base price');
+    }
+    if (pricing.discountAmountMinor !== expectedDiscountAmountMinor) {
+      throw new BadRequestException('pricing.discountAmountMinor does not match tournament discount');
+    }
+  }
+
+  private buildTournamentEnergyDiscountReason(tournament: CustomTournament): string {
+    const title =
+      this.pickString(tournament.skin?.title)
+      ?? this.pickString(tournament.name)
+      ?? tournament.id;
+    return `Участие в турнире «${title}» ${this.formatTournamentDateLabel(tournament)}`;
+  }
+
+  private toCustomEnergyCheckoutResponse(input: {
+    exerciseId: string;
+    amountMinor: number;
+    vivaCheckout: VivaAdminTournamentEnergyCheckoutResult;
+  }): TournamentCustomEnergyCheckoutResponse {
+    const toPayMinor = input.vivaCheckout.toPayMinor ?? input.amountMinor;
+    if (
+      toPayMinor > 0 &&
+      !input.vivaCheckout.paymentUrl &&
+      input.vivaCheckout.paid !== true
+    ) {
+      throw new BadRequestException('Viva created a payable transaction without payment URL');
+    }
+    if (toPayMinor > 0 && toPayMinor !== input.amountMinor) {
+      throw new BadRequestException('Viva transaction amount does not match checkout amount');
+    }
+
+    return {
+      ok: true,
+      exerciseId: input.exerciseId,
+      clientId: input.vivaCheckout.clientId,
+      subscriptionId: input.vivaCheckout.subscriptionId,
+      transactionId: input.vivaCheckout.transactionId,
+      paymentUrl: input.vivaCheckout.paymentUrl,
+      toPayMinor: input.vivaCheckout.paid === true ? 0 : toPayMinor,
+      paymentExpiresAt: input.vivaCheckout.paymentExpiresAt,
+      paid: input.vivaCheckout.paid === true ? true : undefined
+    };
+  }
+
+  private extractBearerToken(authorizationHeader?: string): string | null {
+    const value = this.pickString(authorizationHeader);
+    const match = value?.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() || null;
+  }
+
+  private async fetchLkUserInfo(token: string): Promise<Record<string, unknown>> {
+    const url = new URL(
+      `/realms/${encodeURIComponent(this.lkKeycloakRealm)}/protocol/openid-connect/userinfo`,
+      `${this.lkKeycloakBaseUrl}/`
+    );
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      signal: this.buildAbortSignal(this.lkAuthRequestTimeoutMs)
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new UnauthorizedException('LK auth token is invalid');
+    }
+    const record = this.toRecord(payload);
+    if (!record) {
+      throw new UnauthorizedException('LK auth token profile is invalid');
+    }
+    return record;
+  }
+
+  private decodeBearerClaimsToken(token: string): Record<string, unknown> | null {
+    const parts = token.split('.');
+    if (parts.length < 2) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+      return this.toRecord(parsed);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private assertBearerNotExpired(claims: Record<string, unknown> | null): void {
+    const exp = this.pickNumber(claims?.exp);
+    if (exp !== undefined && exp <= Math.floor(Date.now() / 1000)) {
+      throw new UnauthorizedException('LK auth token is expired');
+    }
+  }
+
+  private extractLkAuthPhone(profile: Record<string, unknown>): string | undefined {
+    const client = this.toRecord(profile.client) ?? {};
+    return (
+      this.normalizePhone(profile.phone_number)
+      ?? this.normalizePhone(profile.phone)
+      ?? this.normalizePhone(profile.mobile)
+      ?? this.normalizePhone(profile.preferred_username)
+      ?? this.normalizePhone(client.phone_number)
+      ?? this.normalizePhone(client.phone)
+      ?? this.normalizePhone(client.mobile)
+    ) ?? undefined;
+  }
+
+  private extractLkAuthClientId(profile: Record<string, unknown>): string | undefined {
+    const client = this.toRecord(profile.client) ?? {};
+    return (
+      this.pickString(profile.clientId)
+      ?? this.pickString(profile.client_id)
+      ?? this.pickString(profile.userId)
+      ?? this.pickString(profile.user_id)
+      ?? this.pickString(profile.sub)
+      ?? this.pickString(profile.id)
+      ?? this.pickString(client.id)
+      ?? this.pickString(client.clientId)
+      ?? undefined
+    );
+  }
+
+  private extractLkAuthTenantKey(profile: Record<string, unknown>): string | undefined {
+    return (
+      this.pickString(profile.tenantKey)
+      ?? this.pickString(profile.tenant_key)
+      ?? this.pickString(profile.tenant)
+      ?? undefined
+    );
+  }
+
+  private extractLkAuthName(profile: Record<string, unknown>): string | undefined {
+    const client = this.toRecord(profile.client) ?? {};
+    const compositeName = [this.pickString(profile.given_name), this.pickString(profile.family_name)]
+      .filter(Boolean)
+      .join(' ');
+    return (
+      this.pickString(profile.name)
+      ?? this.pickString(profile.displayName)
+      ?? this.pickString(profile.display_name)
+      ?? this.pickString(compositeName)
+      ?? this.pickString(client.name)
+      ?? undefined
+    );
+  }
+
+  private readMinorUnitInteger(value: unknown): number | undefined {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : Number.NaN;
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return undefined;
+    }
+    return Math.trunc(numeric);
+  }
+
+  private formatTournamentDateLabel(tournament: CustomTournament): string {
+    const source = this.pickString(tournament.startsAt) ?? this.pickString(tournament.createdAt);
+    const date = source && Number.isFinite(Date.parse(source)) ? new Date(source) : new Date();
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Europe/Moscow'
+    }).format(date);
+  }
+
+  private pickHttpUrl(value: unknown): string | undefined {
+    const url = this.pickString(value);
+    return url && /^https?:\/\//i.test(url) ? url : undefined;
+  }
+
+  private normalizeWhitespace(value: string): string {
+    return value.replace(/\s+/g, ' ').trim();
   }
 
   private async listSourceTournaments(options?: { date?: string }): Promise<Tournament[]> {

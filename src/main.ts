@@ -35,6 +35,8 @@ async function bootstrap(): Promise<void> {
       'x-user-level-label',
       'x-user-subscriptions',
       'x-user-max-public-url',
+      'x-padlhub-auth-source',
+      'x-padlhub-tenant-key',
       'x-connector-route',
       'x-connector-routes',
       'x-station-id',

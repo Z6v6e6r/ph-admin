@@ -312,6 +312,18 @@ export interface TournamentRegistrationResponse {
   payment?: TournamentJoinPaymentState;
 }
 
+export interface TournamentCustomEnergyCheckoutResponse {
+  ok: true;
+  exerciseId: string;
+  clientId: string;
+  subscriptionId?: string;
+  transactionId?: string;
+  paymentUrl?: string;
+  toPayMinor: number;
+  paymentExpiresAt?: string;
+  paid?: boolean;
+}
+
 export interface TournamentMechanicsAccessResponse {
   ok: boolean;
   code: 'OK' | 'PHONE_REQUIRED' | 'ACCESS_DENIED';

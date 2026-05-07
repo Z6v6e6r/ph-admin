@@ -20,7 +20,12 @@ import { CreateCustomTournamentFromSourceDto } from './dto/create-custom-tournam
 import { GenerateTournamentScheduleDto } from './dto/generate-tournament-schedule.dto';
 import { SimulateTournamentRatingDto } from './dto/simulate-tournament-rating.dto';
 import { UpdateCustomTournamentDto } from './dto/update-custom-tournament.dto';
-import { CustomTournament, Tournament, TournamentResultsView } from './tournaments.types';
+import {
+  CustomTournament,
+  Tournament,
+  TournamentCustomEnergyCheckoutResponse,
+  TournamentResultsView
+} from './tournaments.types';
 import { TournamentsService } from './tournaments.service';
 
 @Controller('tournaments')
@@ -158,6 +163,21 @@ export class TournamentsController {
   }> {
     const client = this.resolveLkClient(request, user);
     return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
+  }
+
+  @Post(':exerciseId/custom-energy-checkout')
+  @Roles()
+  createCustomEnergyCheckout(
+    @Param('exerciseId') exerciseId: string,
+    @Req() request: Request,
+    @Body() body?: Record<string, unknown>
+  ): Promise<TournamentCustomEnergyCheckoutResponse> {
+    return this.tournamentsService.createCustomEnergyCheckout(exerciseId, {
+      body: body && typeof body === 'object' && !Array.isArray(body) ? body : {},
+      authorizationHeader: this.pickString(request.headers.authorization),
+      authSourceHeader: this.pickString(request.headers['x-padlhub-auth-source']),
+      tenantKeyHeader: this.pickString(request.headers['x-padlhub-tenant-key'])
+    });
   }
 
   @Get(':id')

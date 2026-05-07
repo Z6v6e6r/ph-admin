@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -42,6 +43,31 @@ export interface UpdateVivaAdminSettingsInput {
   updatedBy?: string;
 }
 
+export interface VivaAdminTournamentEnergyCheckoutInput {
+  clientPhone: string;
+  clientId?: string;
+  studioId: string;
+  paymentMethod: 'SMS';
+  baseAmountMinor: number;
+  discountAmountMinor: number;
+  discountReason: string;
+  successUrl?: string;
+  failUrl?: string;
+  productName?: string;
+}
+
+export interface VivaAdminTournamentEnergyCheckoutResult {
+  clientId: string;
+  productId: string;
+  subscriptionId?: string;
+  transactionId?: string;
+  paymentUrl?: string;
+  toPayMinor?: number;
+  paymentExpiresAt?: string;
+  paid?: boolean;
+  raw?: unknown;
+}
+
 interface VivaClientsSearchResponse {
   content?: Array<Record<string, unknown>>;
 }
@@ -59,6 +85,21 @@ interface VivaLookupCacheEntry {
 interface VivaAccessTokenCacheEntry {
   value: string;
   expiresAt: number;
+}
+
+interface VivaAdminClientResolution {
+  id: string;
+  phone?: string;
+  displayName?: string;
+  raw?: Record<string, unknown>;
+}
+
+interface VivaAdminProductResolution {
+  id: string;
+  name?: string;
+  type?: string;
+  costMinor?: number;
+  raw?: Record<string, unknown>;
 }
 
 interface VivaAdminSettingsRecord {
@@ -224,6 +265,115 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async createTournamentEnergyCheckout(
+    input: VivaAdminTournamentEnergyCheckoutInput
+  ): Promise<VivaAdminTournamentEnergyCheckoutResult> {
+    const clientPhone = this.normalizePhone(input.clientPhone);
+    const studioId = this.normalizeOptional(input.studioId);
+    const discountReason = this.normalizeOptional(input.discountReason);
+    if (!clientPhone || !studioId || !discountReason) {
+      throw new BadRequestException('Client phone, studioId and discount reason are required');
+    }
+    if (!Number.isFinite(input.baseAmountMinor) || input.baseAmountMinor <= 0) {
+      throw new BadRequestException('Base amount must be a positive minor-unit integer');
+    }
+    if (!Number.isFinite(input.discountAmountMinor) || input.discountAmountMinor < 0) {
+      throw new BadRequestException('Discount amount must be a non-negative minor-unit integer');
+    }
+
+    const token = await this.resolveAccessToken();
+    if (!token) {
+      throw new InternalServerErrorException('Viva admin API token is not configured');
+    }
+
+    const resolved = await this.getResolvedSettings();
+    const client = await this.resolveAdminClient({
+      token,
+      baseUrl: resolved.config.baseUrl,
+      phone: clientPhone,
+      clientId: this.normalizeOptional(input.clientId)
+    });
+    if (!client) {
+      throw new BadRequestException('Viva client was not found by checkout phone');
+    }
+
+    const product = await this.resolveTournamentEnergyProduct({
+      token,
+      baseUrl: resolved.config.baseUrl,
+      studioId,
+      clientPhone,
+      productName: input.productName
+    });
+    if (!product) {
+      throw new BadRequestException('Viva product "Энергия турниры" was not found');
+    }
+
+    const detailedProduct =
+      await this.resolveSubscriptionProductCard({
+        token,
+        baseUrl: resolved.config.baseUrl,
+        productId: product.id,
+        clientId: client.id,
+        studioId
+      }) ?? product;
+    const productCostMinor = detailedProduct.costMinor ?? product.costMinor;
+    if (
+      productCostMinor !== undefined &&
+      productCostMinor !== Math.trunc(input.baseAmountMinor)
+    ) {
+      throw new BadRequestException('Viva product cost does not match checkout base amount');
+    }
+
+    try {
+      await this.fetchAdminJson(
+        `/api/v1/contracts/clients/${encodeURIComponent(client.id)}?productIds=${encodeURIComponent(product.id)}`,
+        token,
+        resolved.config.baseUrl
+      );
+    } catch (error) {
+      throw new BadRequestException(`Viva contract check failed: ${String(error)}`);
+    }
+
+    const basePayload = {
+      clientPhone: this.formatPhoneForViva(clientPhone),
+      paymentMethod: input.paymentMethod,
+      products: [
+        {
+          id: product.id,
+          count: 1,
+          customAmount: null,
+          type: 'SUBSCRIPTION',
+          discount: Math.trunc(input.discountAmountMinor)
+        }
+      ],
+      studioId,
+      discountReason,
+      offlineTillId: null,
+      deposit: 0
+    };
+    const payload = {
+      ...basePayload,
+      ...(input.successUrl ? { successUrl: input.successUrl } : {}),
+      ...(input.failUrl ? { failUrl: input.failUrl } : {})
+    };
+
+    const responsePayload = await this.createAdminTransactionWithReturnUrlFallback({
+      token,
+      baseUrl: resolved.config.baseUrl,
+      payload,
+      fallbackPayload: basePayload,
+      hasReturnUrls: Boolean(input.successUrl || input.failUrl)
+    });
+
+    const parsed = this.parseTournamentEnergyTransactionResponse(responsePayload);
+    return {
+      clientId: client.id,
+      productId: product.id,
+      ...parsed,
+      raw: responsePayload
+    };
+  }
+
   async getSettings(): Promise<VivaAdminSettingsSnapshot> {
     const resolved = await this.getResolvedSettings();
     return this.toSettingsSnapshot(resolved.config, resolved.source);
@@ -378,6 +528,254 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async resolveAdminClient(input: {
+    token: string;
+    baseUrl: string;
+    phone: string;
+    clientId?: string;
+  }): Promise<VivaAdminClientResolution | null> {
+    const expectedPhone = this.normalizePhone(input.phone);
+    if (!expectedPhone) {
+      return null;
+    }
+
+    const payload = await this.fetchAdminJson(
+      `/api/v2/search/clients?q=${encodeURIComponent(this.formatPhoneForViva(expectedPhone))}`,
+      input.token,
+      input.baseUrl
+    );
+    const records = this.unwrapRecords(payload);
+    const expectedId = this.normalizeOptional(input.clientId);
+    const selected =
+      (expectedId
+        ? records.find((record) => this.extractClientId(record) === expectedId)
+        : undefined)
+      ?? records.find((record) => this.extractClientPhone(record) === expectedPhone)
+      ?? records[0];
+
+    if (selected) {
+      const id = this.extractClientId(selected);
+      if (!id) {
+        return null;
+      }
+      if (expectedId && id !== expectedId) {
+        throw new BadRequestException('Viva client id does not match checkout phone');
+      }
+      return {
+        id,
+        phone: this.extractClientPhone(selected),
+        displayName: this.extractClientName(selected),
+        raw: selected
+      };
+    }
+
+    const lookup = await this.lookupClientCabinetByPhone(expectedPhone);
+    if (!lookup || lookup.status !== 'FOUND' || !lookup.vivaClientId) {
+      return null;
+    }
+    if (expectedId && lookup.vivaClientId !== expectedId) {
+      throw new BadRequestException('Viva client id does not match checkout phone');
+    }
+    return {
+      id: lookup.vivaClientId,
+      phone: expectedPhone,
+      displayName: lookup.displayName
+    };
+  }
+
+  private async resolveTournamentEnergyProduct(input: {
+    token: string;
+    baseUrl: string;
+    studioId: string;
+    clientPhone: string;
+    productName?: string;
+  }): Promise<VivaAdminProductResolution | null> {
+    const searchName =
+      this.normalizeOptional(process.env.TOURNAMENT_ENERGY_PRODUCT_SEARCH_NAME)
+      ?? 'Энергия т';
+    const query = new URLSearchParams();
+    query.set('size', '5');
+    query.set('sort', 'name,asc');
+    query.set('name', searchName);
+    query.set('studioId', input.studioId);
+    query.set('clientPhone', this.formatPhoneForViva(input.clientPhone));
+
+    const payload = await this.fetchAdminJson(
+      `/api/v1/products?${query.toString()}`,
+      input.token,
+      input.baseUrl
+    );
+    const records = this.unwrapRecords(payload);
+    const configuredIds = this.parseCsvList(process.env.TOURNAMENT_ENERGY_SUBSCRIPTION_IDS);
+    const expectedName = this.normalizeOptional(input.productName) ?? 'Энергия турниры';
+    const selected =
+      (configuredIds.length > 0
+        ? records.find((record) => {
+            const id = this.pickString(record.id);
+            return id ? configuredIds.includes(id) : false;
+          })
+        : undefined)
+      ?? records.find((record) => this.isTournamentEnergyProduct(record, expectedName));
+
+    return selected ? this.toAdminProductResolution(selected) : null;
+  }
+
+  private async resolveSubscriptionProductCard(input: {
+    token: string;
+    baseUrl: string;
+    productId: string;
+    clientId: string;
+    studioId: string;
+  }): Promise<VivaAdminProductResolution | null> {
+    const query = new URLSearchParams();
+    query.set('clientId', input.clientId);
+    query.set('studioId', input.studioId);
+    const payload = await this.fetchAdminJson(
+      `/api/v1/products/subscriptions/${encodeURIComponent(input.productId)}?${query.toString()}`,
+      input.token,
+      input.baseUrl
+    );
+    const record = this.unwrapRecord(payload);
+    return record ? this.toAdminProductResolution(record) : null;
+  }
+
+  private parseTournamentEnergyTransactionResponse(
+    payload: unknown
+  ): Omit<VivaAdminTournamentEnergyCheckoutResult, 'clientId' | 'productId' | 'raw'> {
+    const toPayMinor = this.findFirstMatchingNumber(payload, (key) => {
+      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+      return [
+        'topay',
+        'to_pay',
+        'to_pay_minor',
+        'topayminor',
+        'payment_due',
+        'payment_due_minor',
+        'amount_to_pay',
+        'amount_to_pay_minor'
+      ].includes(normalizedKey);
+    });
+    const paymentUrl = this.findVivaCheckoutUrl(payload);
+    const paid =
+      (toPayMinor !== undefined && toPayMinor <= 0) ||
+      this.isVivaTransactionPaid(payload);
+
+    return {
+      subscriptionId: this.findFirstMatchingString(payload, (key, value) => {
+        const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+        return Boolean(value) && [
+          'clientsubscriptionid',
+          'client_subscription_id',
+          'subscriptionid',
+          'subscription_id'
+        ].includes(normalizedKey);
+      }),
+      transactionId: this.findFirstMatchingString(payload, (key, value) => {
+        const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+        return Boolean(value) && ['id', 'transactionid', 'transaction_id'].includes(normalizedKey);
+      }),
+      paymentUrl,
+      toPayMinor,
+      paymentExpiresAt: this.findFirstMatchingString(payload, (key, value) => {
+        const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+        if (![
+          'paymentduedate',
+          'payment_due_date',
+          'paymentexpiresat',
+          'payment_expires_at',
+          'expiresat',
+          'expires_at',
+          'duedate',
+          'due_date'
+        ].includes(normalizedKey)) {
+          return false;
+        }
+        return Number.isFinite(Date.parse(value));
+      }),
+      paid
+    };
+  }
+
+  private toAdminProductResolution(record: Record<string, unknown>): VivaAdminProductResolution | null {
+    const id =
+      this.pickString(record.id) ??
+      this.pickString(record.productId) ??
+      this.pickString(record.subscriptionId);
+    if (!id) {
+      return null;
+    }
+    return {
+      id,
+      name: this.pickString(record.name) ?? this.pickString(record.title),
+      type: this.pickString(record.type),
+      costMinor: this.readMinorAmount(
+        record.cost ??
+        record.costMinor ??
+        record.cost_minor ??
+        record.amountMinor ??
+        record.amount_minor
+      ),
+      raw: record
+    };
+  }
+
+  private isTournamentEnergyProduct(
+    record: Record<string, unknown>,
+    expectedName: string
+  ): boolean {
+    const id = this.pickString(record.id);
+    const configuredIds = this.parseCsvList(process.env.TOURNAMENT_ENERGY_SUBSCRIPTION_IDS);
+    if (id && configuredIds.includes(id)) {
+      return true;
+    }
+
+    const normalizedName = String(
+      this.pickString(record.name) ??
+      this.pickString(record.title) ??
+      ''
+    ).trim().toLowerCase();
+    const normalizedExpectedName = expectedName.trim().toLowerCase();
+    return normalizedName === normalizedExpectedName || (
+      /энерг/.test(normalizedName) && /турнир/.test(normalizedName)
+    );
+  }
+
+  private extractClientPhone(candidate: Record<string, unknown>): string | undefined {
+    const client = this.isRecord(candidate.client) ? candidate.client : null;
+    return (
+      this.normalizePhone(candidate.phone) ??
+      this.normalizePhone(candidate.phoneNumber) ??
+      this.normalizePhone(candidate.phone_number) ??
+      this.normalizePhone(candidate.mobile) ??
+      this.normalizePhone(candidate.clientPhone) ??
+      this.normalizePhone(candidate.client_phone) ??
+      (client
+        ? this.normalizePhone(client.phone) ??
+          this.normalizePhone(client.phoneNumber) ??
+          this.normalizePhone(client.phone_number) ??
+          this.normalizePhone(client.mobile)
+        : undefined)
+    );
+  }
+
+  private formatPhoneForViva(phone: unknown): string {
+    const normalized = this.normalizePhone(phone) ?? String(phone ?? '').trim();
+    return normalized.startsWith('+') ? normalized : `+${normalized}`;
+  }
+
+  private readMinorAmount(value: unknown): number | undefined {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string'
+          ? Number(value.trim())
+          : Number.NaN;
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return undefined;
+    }
+    return Math.trunc(numeric);
+  }
+
   private async fetchAdminJson(
     path: string,
     token: string,
@@ -397,6 +795,77 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
 
     return response.json().catch(() => null);
+  }
+
+  private async fetchAdminJsonWithBody(
+    path: string,
+    token: string,
+    baseUrl: string,
+    payload: unknown
+  ): Promise<unknown> {
+    const cleanPath = String(path || '').replace(/^\/+/, '');
+    const response = await fetch(new URL(`/${cleanPath}`, `${baseUrl}/`).toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(payload),
+      signal: this.buildAbortSignal()
+    });
+    const responsePayload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const responseRecord = this.unwrapRecord(responsePayload);
+      const details = this.pickString(
+        responseRecord
+          ? (
+            responseRecord.message ??
+            responseRecord.error ??
+            responseRecord.description ??
+            responseRecord.detail
+          )
+          : undefined
+      );
+      throw new BadRequestException(
+        details
+          ? `Viva CRM request ${path} failed with status ${response.status}: ${details}`
+          : `Viva CRM request ${path} failed with status ${response.status}`
+      );
+    }
+
+    return responsePayload;
+  }
+
+  private async createAdminTransactionWithReturnUrlFallback(input: {
+    token: string;
+    baseUrl: string;
+    payload: unknown;
+    fallbackPayload: unknown;
+    hasReturnUrls: boolean;
+  }): Promise<unknown> {
+    try {
+      return await this.fetchAdminJsonWithBody(
+        '/api/v1/transactions',
+        input.token,
+        input.baseUrl,
+        input.payload
+      );
+    } catch (error) {
+      if (!input.hasReturnUrls || !(error instanceof BadRequestException)) {
+        throw error;
+      }
+      this.logger.warn(
+        `Viva admin transaction rejected return URLs, retrying without them: ${String(error)}`
+      );
+      return this.fetchAdminJsonWithBody(
+        '/api/v1/transactions',
+        input.token,
+        input.baseUrl,
+        input.fallbackPayload
+      );
+    }
   }
 
   private async resolveAccessToken(): Promise<string | null> {
@@ -745,6 +1214,131 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       .replace(/\.$/, '');
   }
 
+  private findVivaCheckoutUrl(payload: unknown): string | undefined {
+    const exactKeys = new Set([
+      'paymenturl',
+      'payment_url',
+      'paymentlink',
+      'payment_link',
+      'checkouturl',
+      'checkout_url',
+      'redirecturl',
+      'redirect_url',
+      'confirmationurl',
+      'confirmation_url',
+      'formurl',
+      'form_url',
+      'payurl',
+      'pay_url',
+      'url'
+    ]);
+    return this.findFirstMatchingString(payload, (key, value) => {
+      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
+      if (!/^https?:\/\//i.test(value)) {
+        return false;
+      }
+      if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
+        return false;
+      }
+      return exactKeys.has(normalizedKey)
+        || /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
+        || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
+    });
+  }
+
+  private isVivaTransactionPaid(payload: unknown): boolean {
+    const normalized = JSON.stringify(payload ?? {}).toUpperCase();
+    return normalized.includes('"PAID"') ||
+      normalized.includes('"SUCCEEDED"') ||
+      normalized.includes('"SUCCESS"') ||
+      normalized.includes('"COMPLETED"');
+  }
+
+  private findFirstMatchingString(
+    value: unknown,
+    matches: (key: string, value: string) => boolean,
+    key = '',
+    seen = new Set<unknown>()
+  ): string | undefined {
+    const direct = this.pickString(value);
+    if (direct && matches(key, direct)) {
+      return direct;
+    }
+
+    if (!value || typeof value !== 'object' || seen.has(value)) {
+      return undefined;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = this.findFirstMatchingString(item, matches, key, seen);
+        if (found) {
+          return found;
+        }
+      }
+      return undefined;
+    }
+
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      const found = this.findFirstMatchingString(childValue, matches, childKey, seen);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  private findFirstMatchingNumber(
+    value: unknown,
+    matches: (key: string) => boolean,
+    key = '',
+    seen = new Set<unknown>()
+  ): number | undefined {
+    const direct = this.readMinorAmount(value);
+    if (direct !== undefined && matches(key)) {
+      return direct;
+    }
+
+    if (!value || typeof value !== 'object' || seen.has(value)) {
+      return undefined;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = this.findFirstMatchingNumber(item, matches, key, seen);
+        if (found !== undefined) {
+          return found;
+        }
+      }
+      return undefined;
+    }
+
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      const found = this.findFirstMatchingNumber(childValue, matches, childKey, seen);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+
+  private unwrapRecord(payload: unknown): Record<string, unknown> | null {
+    if (!this.isRecord(payload)) {
+      return null;
+    }
+
+    for (const key of ['data', 'result', 'item', 'product', 'transaction']) {
+      const nested = payload[key];
+      if (this.isRecord(nested)) {
+        return nested;
+      }
+    }
+
+    return payload;
+  }
+
   private unwrapRecords(payload: unknown): Record<string, unknown>[] {
     if (Array.isArray(payload)) {
       return payload.filter(this.isRecord);
@@ -867,6 +1461,17 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
   private pickString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private parseCsvList(value: unknown): string[] {
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return [];
+    }
+    return normalized
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {
