@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     assert.equal(headers?.Authorization, 'Bearer admin-token');
 
     if (method === 'GET' && url.pathname === '/api/v2/search/clients') {
-      assert.equal(url.searchParams.get('q'), '+79123456789');
+      assert.ok(['+79123456789', '79123456789', '9123456789'].includes(String(url.searchParams.get('q'))));
       return {
         ok: true,
         status: 200,
@@ -142,6 +142,7 @@ async function main(): Promise<void> {
     assert.equal(result.paymentExpiresAt, '2026-05-09T07:20:00+03:00');
 
     transactionBodies.length = 0;
+    const observedSearchQueries = new Set<string>();
     globalThis.fetch = (async (requestUrl: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(requestUrl));
       const method = init?.method ?? 'GET';
@@ -149,6 +150,7 @@ async function main(): Promise<void> {
       assert.equal(headers?.Authorization, 'Bearer admin-token');
 
       if (method === 'GET' && url.pathname === '/api/v2/search/clients') {
+        observedSearchQueries.add(String(url.searchParams.get('q')));
         return {
           ok: true,
           status: 200,
@@ -215,6 +217,88 @@ async function main(): Promise<void> {
     assert.equal(fallbackResult.clientId, 'client-fallback');
     assert.equal(fallbackResult.transactionId, 'transaction-fallback');
     assert.equal(fallbackResult.paymentUrl, 'https://pay.example/fallback');
+    assert.ok(observedSearchQueries.has('+79123456789'));
+    assert.ok(observedSearchQueries.has('79123456789'));
+    assert.ok(observedSearchQueries.has('9123456789'));
+
+    transactionBodies.length = 0;
+    globalThis.fetch = (async (requestUrl: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(requestUrl));
+      const method = init?.method ?? 'GET';
+      const headers = init?.headers as Record<string, string> | undefined;
+      assert.equal(headers?.Authorization, 'Bearer admin-token');
+
+      if (method === 'GET' && url.pathname === '/api/v2/search/clients') {
+        const q = String(url.searchParams.get('q'));
+        if (q === '9123456789') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              content: [{ id: 'client-by-10', phone: '+79123456789', name: 'Игрок 10' }]
+            })
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [{ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 }] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products/subscriptions/energy-product') {
+        assert.equal(url.searchParams.get('clientId'), 'client-by-10');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/contracts/clients/client-by-10') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/transactions') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        transactionBodies.push(body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'transaction-by-10',
+            cardPaymentInfo: { paymentUrl: 'https://pay.example/by-10' },
+            toPay: 250000
+          })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/clients') {
+        throw new Error('Unexpected /api/v1/clients lookup when search by 10 digits succeeded');
+      }
+
+      throw new Error(`Unexpected 10-digit search request: ${method} ${url.toString()}`);
+    }) as typeof fetch;
+
+    const byTenDigitsResult = await service.createTournamentEnergyCheckout({
+      clientPhone: '79123456789',
+      studioId: 'studio-1',
+      paymentMethod: 'SMS',
+      baseAmountMinor: 2000000,
+      discountAmountMinor: 1750000,
+      discountReason: 'Участие в турнире «Название турнира» 09.05.2026',
+      productName: 'Энергия турниры'
+    });
+    assert.equal(byTenDigitsResult.clientId, 'client-by-10');
+    assert.equal(byTenDigitsResult.transactionId, 'transaction-by-10');
+    assert.equal(byTenDigitsResult.paymentUrl, 'https://pay.example/by-10');
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -541,17 +541,24 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
     const expectedId = this.normalizeOptional(input.clientId);
     let records: Record<string, unknown>[] = [];
-    try {
-      const payload = await this.fetchAdminJson(
-        `/api/v2/search/clients?q=${encodeURIComponent(this.formatPhoneForViva(expectedPhone))}`,
-        input.token,
-        input.baseUrl
-      );
-      records = this.unwrapRecords(payload);
-    } catch (error) {
-      this.logger.warn(
-        `Viva admin client search failed for ${expectedPhone}, fallback will be used: ${String(error)}`
-      );
+    const phoneQueries = this.buildClientSearchPhoneQueries(expectedPhone);
+    for (const queryPhone of phoneQueries) {
+      try {
+        const payload = await this.fetchAdminJson(
+          `/api/v2/search/clients?q=${encodeURIComponent(queryPhone)}`,
+          input.token,
+          input.baseUrl
+        );
+        records = this.unwrapRecords(payload);
+      } catch (error) {
+        this.logger.warn(
+          `Viva admin client search failed for ${queryPhone}: ${String(error)}`
+        );
+        continue;
+      }
+      if (records.length > 0) {
+        break;
+      }
     }
     const selected =
       (expectedId
@@ -1466,6 +1473,18 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       return `7${digits.slice(1)}`;
     }
     return digits;
+  }
+
+  private buildClientSearchPhoneQueries(normalizedPhone: string): string[] {
+    const candidates = new Set<string>();
+    if (normalizedPhone.length > 1) {
+      candidates.add(`+${normalizedPhone}`);
+      candidates.add(normalizedPhone);
+      candidates.add(normalizedPhone.slice(1));
+    } else if (normalizedPhone) {
+      candidates.add(normalizedPhone);
+    }
+    return Array.from(candidates).filter(Boolean);
   }
 
   private normalizeBaseUrl(value?: string): string | undefined {
