@@ -199,6 +199,8 @@ export interface TournamentPurchaseOption {
   priceLabel: string;
   description?: string;
   productType?: 'SUBSCRIPTION' | 'ONE_TIME' | 'SERVICE';
+  discountAmount?: number;
+  baseAmount?: number;
 }
 
 export interface TournamentBookingConfig {

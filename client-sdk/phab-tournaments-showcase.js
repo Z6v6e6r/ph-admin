@@ -4374,7 +4374,8 @@
 
     return [
       { title: 'Энергия 1', price: '5500 ₽' },
-      { title: 'Энергия 5', price: '3960 ₽' }
+      { title: 'Энергия 5', price: '19800 ₽' },
+      { title: 'Энергия 25', price: '97000 ₽' }
     ];
   }
 
@@ -5380,6 +5381,7 @@
       productId: productId,
       productName: productType === 'SERVICE' ? productName : '',
       productType: productType,
+      discountAmount: Number(purchase.discountAmount || 0) || 0,
       phone: state.draft.phone,
       authorizationHeader: state.vivaAuthorizationHeader,
       successUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
@@ -5454,6 +5456,7 @@
           ...(options.productName ? { name: options.productName } : {}),
           type: options.productType,
           count: 1,
+          ...(options.discountAmount ? { discountAmount: options.discountAmount } : {}),
           bookingRequests: [
             {
               exerciseId: options.exerciseId,

@@ -246,6 +246,94 @@ async function main(): Promise<void> {
   assert.equal(purchaseFlow.code, 'PURCHASE_REQUIRED');
   assert.equal(purchaseFlow.payment.purchaseOptions.length, 2);
 
+  tournament.skin.priceLabel = '2 500 ₽';
+  let energyTransactionRequest:
+    | { url: string; headers: Record<string, string>; body: Record<string, unknown> }
+    | undefined;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const value = String(url);
+    if (value.includes('/products/subscriptions')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          items: [
+            {
+              id: 'energy-tournaments',
+              name: 'Энергия турниры',
+              priceLabel: '20 000 ₽'
+            }
+          ]
+        })
+      } as Response;
+    }
+    if (value.includes('/products/one-times')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [] })
+      } as Response;
+    }
+    if (value.includes('/bookings/payment-types')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
+      } as Response;
+    }
+    energyTransactionRequest = {
+      url: value,
+      headers: init?.headers as Record<string, string>,
+      body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+    };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          id: 'tx-energy',
+          payment: {
+            formUrl: 'https://pay.tbank.ru/energy'
+          }
+        }
+      })
+    } as Response;
+  }) as typeof fetch;
+
+  const energyFlow = await service.getPublicJoinFlow(tournament.slug, {
+    id: 'user-energy',
+    authorized: true,
+    authSource: 'headers',
+    name: 'Игрок',
+    phone: '+7 999 000-11-21',
+    levelLabel: 'C',
+    onboardingCompleted: true,
+    subscriptions: []
+  });
+  assert.equal(energyFlow.code, 'PURCHASE_REQUIRED');
+  const energyOption = energyFlow.payment.purchaseOptions[0];
+  assert.equal(energyOption?.id, 'energy-tournaments');
+  assert.equal(energyOption?.priceLabel, '2 500 ₽');
+  assert.equal(energyOption?.baseAmount, 20000);
+  assert.equal(energyOption?.discountAmount, 17500);
+
+  const energyPurchaseStart = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    name: 'Игрок Энергия',
+    phone: '+7 999 000-11-21',
+    levelLabel: 'C',
+    selectedPurchaseOptionId: 'energy-tournaments',
+    subscriptions: [],
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+  });
+  assert.equal(energyPurchaseStart.code, 'PURCHASE_STARTED');
+  const energyProducts = energyTransactionRequest?.body.products as Array<Record<string, unknown>>;
+  assert.equal(energyProducts[0]?.id, 'energy-tournaments');
+  assert.equal(energyProducts[0]?.type, 'SUBSCRIPTION');
+  assert.equal(energyProducts[0]?.discountAmount, 17500);
+  tournament.skin.priceLabel = undefined;
+  globalThis.fetch = defaultVivaFetch;
+
   globalThis.fetch = (async (url: RequestInfo | URL) => {
     const value = String(url);
     if (value.includes('/products/subscriptions')) {

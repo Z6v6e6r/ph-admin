@@ -346,9 +346,9 @@
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-name, .phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-handle { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-name { color: var(--ph-tournament-card-ink); font-family: var(--ph-tournament-card-title-font); font-size: 14px; line-height: 1; font-weight: 700; letter-spacing: 0.01em; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-organizer-handle { color: var(--ph-tournament-card-ink-soft); font-family: var(--ph-tournament-ui-font); font-size: 11px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; }',
-      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-surface { box-sizing: border-box; position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; width: 100%; min-height: 263px; padding: 14px 12px; gap: 20px; background: var(--ph-tournament-card-bg); border-radius: 12px; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-surface { box-sizing: border-box; position: relative; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; width: 100%; min-height: 263px; padding: 14px 12px; gap: 16px; background: var(--ph-tournament-card-bg); border-radius: 12px; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; width: 100%; isolation: isolate; }',
-      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; flex: 1 1 auto; padding-right: 58px; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; flex: 1 1 auto; padding-right: 58px; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-height: 18px; max-width: 100%; padding: 5px 6px; border-radius: 24px; background: var(--ph-tournament-card-accent-soft); color: var(--ph-tournament-card-accent-ink); font-family: var(--ph-tournament-ui-font); font-size: 10px; line-height: 1; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge-text { overflow: hidden; text-overflow: ellipsis; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-badge-icon { width: 8px; height: 8px; flex: 0 0 8px; display: inline-flex; }',
@@ -364,6 +364,19 @@
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta-icon { width: 12px; height: 12px; flex: 0 0 12px; display: inline-flex; color: var(--ph-tournament-card-icon); }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-meta-icon svg { width: 100%; height: 100%; display: block; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-capacity { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-price-row { display: flex; justify-content: flex-end; width: 100%; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-price-badge { appearance: none; box-sizing: border-box; display: inline-flex; flex-direction: row; justify-content: center; align-items: center; width: 74px; height: 33px; padding: 8px 12px; gap: 4px; border: 1.5px dashed #2e2e2f; border-radius: 6px; background: transparent; color: #fafafa; font-family: "RF Dewi", var(--ph-tournament-ui-font); font-size: 14px; line-height: 1.24; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }',
+      '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-price-badge:hover { opacity: 0.9; }',
+      '.phab-community-feed__energy-modal-backdrop { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 18, 0.42); }',
+      '.phab-community-feed__energy-modal { width: min(320px, 100%); border-radius: 16px; background: #ffffff; box-shadow: 0 24px 70px rgba(16, 16, 18, 0.28); color: #1f1e20; font-family: "Inter Display", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }',
+      '.phab-community-feed__energy-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 18px 10px; }',
+      '.phab-community-feed__energy-modal-title { margin: 0; font-size: 18px; line-height: 1.15; font-weight: 800; }',
+      '.phab-community-feed__energy-modal-close { appearance: none; width: 32px; height: 32px; border: 0; border-radius: 999px; background: #f1f1f3; color: #303034; font-size: 20px; line-height: 1; cursor: pointer; }',
+      '.phab-community-feed__energy-modal-list { display: grid; gap: 0; padding: 6px 18px 18px; }',
+      '.phab-community-feed__energy-modal-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 46px; border-top: 1px solid #ededee; font-size: 15px; line-height: 1.2; }',
+      '.phab-community-feed__energy-modal-row:first-child { border-top: 0; }',
+      '.phab-community-feed__energy-modal-name { font-weight: 700; }',
+      '.phab-community-feed__energy-modal-price { font-weight: 800; white-space: nowrap; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress { display: flex; gap: 2px; width: 100%; }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment { height: 3px; flex: 1 1 0; background: var(--ph-tournament-card-line-soft); }',
       '.phab-community-feed__card--tournament-showcase .phab-tournaments__card-compact-progress-segment:first-child { border-radius: 24px 0 0 24px; }',
@@ -729,6 +742,7 @@
       gender: normalizeString(publicTournament.gender || details.gender),
       levelLabel: normalizeString(item.levelLabel || details.levelLabel) || formatAccessLevelRange(publicTournament.accessLevels || details.accessLevels),
       stationName: normalizeString(publicTournament.studioName || details.studioName || item.stationName || item.courtName),
+      priceLabel: normalizeString(skin.priceLabel || skin.price || skin.costLabel || details.priceLabel || item.priceLabel),
       startsAt: startsAt,
       endsAt: endsAt,
       maxPlayers: maxPlayers,
@@ -833,10 +847,7 @@
     var svgByKind = {
       badge:
         '<svg viewBox="0 0 8 8" fill="none" aria-hidden="true">' +
-        '<circle cx="2.35" cy="5.6" r="1.2" fill="#2F9DD4"></circle>' +
-        '<circle cx="5.8" cy="2.2" r="1.15" fill="#2F9DD4"></circle>' +
-        '<path d="M2.95 5L5.1 2.9" stroke="#2F9DD4" stroke-width="1.05" stroke-linecap="round"></path>' +
-        '<circle cx="2.1" cy="2.1" r="1.25" fill="#2F9DD4"></circle>' +
+        '<path d="M5.23438 0C5.88459 0 6.44442 0.368244 6.71191 0.900391H6.94238C7.53498 0.900391 8 1.35255 8 1.92871C7.99995 2.50479 7.74889 2.99711 7.36621 3.40918C7.17696 3.59313 6.93847 3.75743 6.66699 3.85742C6.27576 4.79351 5.38208 5.47261 4.30762 5.58301V6.49902H5.2334C5.68595 6.49918 6.05664 6.85978 6.05664 7.2998V7.39941H6.46777C6.6363 7.39946 6.77609 7.53542 6.77637 7.69922C6.77637 7.86324 6.63646 7.99995 6.46777 8H1.5293C1.36059 7.99997 1.2207 7.86325 1.2207 7.69922C1.22098 7.53541 1.36076 7.39944 1.5293 7.39941H1.94043V7.2998C1.94043 6.85977 2.31111 6.49916 2.76367 6.49902H3.68945V5.58301C2.61632 5.47165 1.72387 4.79265 1.33301 3.85742C1.06154 3.75741 0.823027 3.59313 0.633789 3.40918C0.251107 2.99711 5.17542e-05 2.50479 0 1.92871C0 1.35256 0.465021 0.900396 1.05762 0.900391H1.28809C1.55558 0.368244 2.11541 0 2.76562 0H5.23438ZM4.24316 1.58398C4.10738 1.38014 3.89261 1.38011 3.75684 1.58398L3.53906 1.91211C3.50614 1.96412 3.43185 2.02013 3.37012 2.03613L2.97949 2.13281C2.74083 2.19284 2.67056 2.39701 2.83105 2.58105L3.08691 2.88477C3.12796 2.92885 3.15645 3.01723 3.15234 3.07715L3.12793 3.46875C3.11147 3.7088 3.28812 3.83311 3.51855 3.74512L3.89258 3.60059C3.95019 3.58058 4.04981 3.58058 4.10742 3.60059L4.48145 3.74512C4.7119 3.83314 4.88853 3.70882 4.87207 3.46875L4.84766 3.07715C4.84354 3.01713 4.87291 2.92878 4.91406 2.88477L5.16895 2.58105C5.32944 2.397 5.25919 2.19283 5.02051 2.13281L4.62988 2.03613C4.56815 2.02013 4.49386 1.96412 4.46094 1.91211L4.24316 1.58398Z" fill="#5FC0F0"></path>' +
         '</svg>',
       calendar:
         '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true">' +
@@ -902,6 +913,7 @@
   function createTournamentCompactProgress(card) {
     var block = createElement('div', 'phab-tournaments__card-compact-capacity');
     var progress = createElement('div', 'phab-tournaments__card-compact-progress');
+    var priceRow = createElement('div', 'phab-tournaments__card-compact-price-row');
     var total = Math.max(1, Math.min(16, card.maxPlayers || 8));
     var filled = Math.max(0, Math.min(total, card.maxPlayers ? card.participantsCount : 0));
     var index;
@@ -913,6 +925,8 @@
         )
       );
     }
+    priceRow.appendChild(createTournamentEnergyButton(card));
+    block.appendChild(priceRow);
     block.appendChild(progress);
     block.appendChild(
       appendChildren(createElement('div', 'phab-tournaments__card-compact-capacity-texts'), [
@@ -925,6 +939,84 @@
       ])
     );
     return block;
+  }
+
+  function createTournamentEnergyButton(card) {
+    var button = createElement(
+      'button',
+      'phab-tournaments__card-compact-price-badge',
+      card.priceLabel || 'Энергия'
+    );
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      openTournamentEnergyPopup();
+    });
+    return button;
+  }
+
+  function openTournamentEnergyPopup() {
+    var existing = document.querySelector('.phab-community-feed__energy-modal-backdrop');
+    if (existing) {
+      existing.remove();
+    }
+
+    var tariffs = [
+      { name: 'Энергия 1', price: '5500' },
+      { name: 'Энергия 5', price: '19800' },
+      { name: 'Энергия 25', price: '97000' }
+    ];
+    var backdrop = createElement('div', 'phab-community-feed__energy-modal-backdrop');
+    var dialog = createElement('div', 'phab-community-feed__energy-modal');
+    var closeButton = createElement('button', 'phab-community-feed__energy-modal-close', '×');
+    var list = createElement('div', 'phab-community-feed__energy-modal-list');
+
+    backdrop.setAttribute('role', 'presentation');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('aria-label', 'Тарифы Энергии');
+    closeButton.type = 'button';
+
+    tariffs.forEach(function (tariff) {
+      list.appendChild(
+        appendChildren(createElement('div', 'phab-community-feed__energy-modal-row'), [
+          createElement('span', 'phab-community-feed__energy-modal-name', tariff.name),
+          createElement('span', 'phab-community-feed__energy-modal-price', tariff.price)
+        ])
+      );
+    });
+
+    function close() {
+      backdrop.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    }
+
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        close();
+      }
+    }
+
+    closeButton.addEventListener('click', close);
+    backdrop.addEventListener('click', function (event) {
+      if (event.target === backdrop) {
+        close();
+      }
+    });
+    document.addEventListener('keydown', onKeyDown);
+
+    appendChildren(dialog, [
+      appendChildren(createElement('div', 'phab-community-feed__energy-modal-head'), [
+        createElement('h3', 'phab-community-feed__energy-modal-title', 'Энергия'),
+        closeButton
+      ]),
+      list
+    ]);
+    backdrop.appendChild(dialog);
+    document.body.appendChild(backdrop);
+    closeButton.focus();
   }
 
   function createTournamentFeedCard(item, participants, tournamentSkin) {

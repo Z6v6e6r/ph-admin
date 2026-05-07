@@ -107,6 +107,7 @@ const PUBLIC_TOURNAMENTS_LIMIT_MAX = 96;
 const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
+const TOURNAMENT_ENERGY_BASE_AMOUNT = 20000;
 const TOURNAMENT_LEVEL_BANDS = [
   { base: 'D', min: 1, max: 2, display: '1.0-2.0' },
   { base: 'D+', min: 2, max: 3, display: '2.0-3.0' },
@@ -2279,14 +2280,18 @@ export class TournamentsService {
       Array.isArray(vivaPurchaseOptions) && vivaPurchaseOptions.length > 0
         ? vivaPurchaseOptions
         : booking.purchaseOptions;
-    const requiresPurchase = booking.required || purchaseOptions.length > 0;
+    const pricedPurchaseOptions = this.applyTournamentEnergyPurchasePricing(
+      tournament,
+      purchaseOptions
+    );
+    const requiresPurchase = booking.required || pricedPurchaseOptions.length > 0;
     if (!requiresPurchase) {
       return {
         required: false,
         code: 'NOT_REQUIRED',
         message: 'Дополнительная оплата для участия в турнире не требуется.',
         availableSubscriptions: [],
-        purchaseOptions,
+        purchaseOptions: pricedPurchaseOptions,
         purchaseFlowUrl: booking.purchaseFlowUrl
       };
     }
@@ -2303,7 +2308,7 @@ export class TournamentsService {
         message: `Можно списать абонемент «${availableSubscriptions[0].label}» для подтверждения участия.`,
         availableSubscriptions,
         selectedSubscription: availableSubscriptions[0],
-        purchaseOptions,
+        purchaseOptions: pricedPurchaseOptions,
         purchaseFlowUrl: booking.purchaseFlowUrl
       };
     }
@@ -2313,7 +2318,7 @@ export class TournamentsService {
       code: 'PURCHASE_REQUIRED',
       message: 'Подходящий абонемент не найден. Сначала нужно купить участие.',
       availableSubscriptions: [],
-      purchaseOptions,
+      purchaseOptions: pricedPurchaseOptions,
       purchaseFlowUrl: booking.purchaseFlowUrl
     };
   }
@@ -2517,6 +2522,60 @@ export class TournamentsService {
     return items;
   }
 
+  private applyTournamentEnergyPurchasePricing(
+    tournament: CustomTournament,
+    purchaseOptions: TournamentPurchaseOption[]
+  ): TournamentPurchaseOption[] {
+    const skinAmount = this.parseMoneyAmount(tournament.skin?.priceLabel);
+    if (!skinAmount) {
+      return purchaseOptions;
+    }
+
+    const baseAmount = this.readPositiveNumberEnv(
+      'TOURNAMENT_ENERGY_BASE_AMOUNT',
+      TOURNAMENT_ENERGY_BASE_AMOUNT
+    );
+    if (skinAmount === baseAmount) {
+      return purchaseOptions;
+    }
+
+    const discountAmount = Math.max(0, Math.round(baseAmount - skinAmount));
+    if (discountAmount <= 0) {
+      return purchaseOptions;
+    }
+
+    const priceLabel = this.formatMoneyAmount(skinAmount);
+    return purchaseOptions.map((option) => {
+      if (!this.isTournamentEnergyPurchaseOption(option)) {
+        return option;
+      }
+      return {
+        ...option,
+        priceLabel,
+        discountAmount,
+        baseAmount
+      };
+    });
+  }
+
+  private isTournamentEnergyPurchaseOption(option: TournamentPurchaseOption): boolean {
+    if (option.productType !== 'SUBSCRIPTION') {
+      return false;
+    }
+
+    const configuredIds = this.parseCsvList(process.env.TOURNAMENT_ENERGY_SUBSCRIPTION_IDS);
+    if (configuredIds.length > 0) {
+      return configuredIds.includes(option.id);
+    }
+
+    const normalizedLabel = option.label.trim().toLowerCase();
+    return (
+      /энерг/.test(normalizedLabel) && /турнир/.test(normalizedLabel)
+    ) || (
+      /energy/.test(normalizedLabel) && /tournament/.test(normalizedLabel)
+    );
+  }
+
   private resolveSelectedPurchaseOption(
     purchaseOptions: TournamentPurchaseOption[],
     selectedPurchaseOptionId?: string
@@ -2583,6 +2642,9 @@ export class TournamentsService {
           ...(productName ? { name: productName } : {}),
           type: productType,
           count: 1,
+          ...(input.purchaseOption.discountAmount
+            ? { discountAmount: input.purchaseOption.discountAmount }
+            : {}),
           bookingRequests: [
             {
               exerciseId,
@@ -4112,6 +4174,36 @@ export class TournamentsService {
 
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+  }
+
+  private parseMoneyAmount(value: unknown): number | undefined {
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    const digits = normalized.replace(/[^\d.,]+/g, '').replace(',', '.');
+    const parsed = Number(digits);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+    return Math.round(parsed);
+  }
+
+  private formatMoneyAmount(value: number): string {
+    const normalized = Math.max(0, Math.round(value));
+    return `${new Intl.NumberFormat('ru-RU').format(normalized).replace(/\u00a0/g, ' ')} ₽`;
+  }
+
+  private parseCsvList(value: unknown): string[] {
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return [];
+    }
+    return normalized
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   private pickStringArray(value: unknown): string[] | undefined {
