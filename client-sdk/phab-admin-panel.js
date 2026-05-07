@@ -3126,6 +3126,17 @@
       .phab-admin-games-table tbody tr.phab-admin-tournament-row--custom-skin td:first-child{
         box-shadow:inset 4px 0 0 #6f4df6;
       }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled,
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled:nth-child(even),
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled:hover{
+        background:linear-gradient(90deg, rgba(255,232,232,.98) 0%, rgba(255,214,214,.94) 52%, rgba(224,54,54,.18) 100%) !important;
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled td{
+        border-bottom-color:rgba(184,30,30,.18);
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled td:first-child{
+        box-shadow:inset 4px 0 0 #d93636;
+      }
       .phab-admin-tournament-source-chip{
         display:inline-flex;
         align-items:center;
@@ -3138,6 +3149,7 @@
         font-size:11px;
         font-weight:800;
         letter-spacing:.02em;
+        text-decoration:none;
         white-space:nowrap;
       }
       .phab-admin-tournament-source-chip--custom-skin{
@@ -14485,7 +14497,6 @@
       clearNode(dom.tournamentsTable);
 
       var columns = [
-        { key: 'id', label: 'ID', minWidth: 130 },
         { key: 'name', label: 'Название', minWidth: 180 },
         { key: 'status', label: 'Статус', minWidth: 130 },
         { key: 'studioName', label: 'Клуб', minWidth: 160 },
@@ -14547,12 +14558,17 @@
       pageTournaments.forEach(function (tournament) {
         var tr = document.createElement('tr');
         var hasCustomSkin = isTournamentCustomSkinned(tournament);
+        var isCanceled = isCanceledTournament(tournament);
+        var rowClasses = [];
         if (hasCustomSkin) {
-          tr.className = 'phab-admin-tournament-row--custom-skin';
+          rowClasses.push('phab-admin-tournament-row--custom-skin');
         }
+        if (isCanceled) {
+          rowClasses.push('phab-admin-tournament-row--canceled');
+        }
+        tr.className = rowClasses.join(' ');
 
         [
-          tournament.id,
           tournament.name,
           formatTournamentStatusLabel(tournament.rawStatus || tournament.status),
           tournament.studioName || tournament.studioId || '-',
@@ -14587,11 +14603,18 @@
         if (tournament.linkedCustomTournamentId) {
           sourceLabel.push('custom');
         }
-        var sourceChip = document.createElement('span');
+        var sourceUrl = buildTournamentVivaCabinetUrl(tournament);
+        var sourceChip = document.createElement(sourceUrl ? 'a' : 'span');
         sourceChip.className =
           'phab-admin-tournament-source-chip' +
           (hasCustomSkin ? ' phab-admin-tournament-source-chip--custom-skin' : '');
         sourceChip.textContent = sourceLabel.join(' · ');
+        if (sourceUrl) {
+          sourceChip.href = sourceUrl;
+          sourceChip.target = '_blank';
+          sourceChip.rel = 'noopener noreferrer';
+          sourceChip.title = 'Открыть турнир в Viva';
+        }
         sourceCell.appendChild(sourceChip);
         tr.appendChild(sourceCell);
 
@@ -14619,6 +14642,64 @@
       return Boolean(
         String((tournament && tournament.source) || '') === 'CUSTOM' ||
         String((tournament && tournament.linkedCustomTournamentId) || '').trim()
+      );
+    }
+
+    function isCanceledTournament(tournament) {
+      var values = [
+        tournament && tournament.status,
+        tournament && tournament.rawStatus,
+        getTournamentSourceSnapshot(tournament).status,
+        getTournamentSourceSnapshot(tournament).rawStatus
+      ];
+      return values.some(function (value) {
+        var normalized = String(value || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[\s-]+/g, '_');
+        return (
+          normalized === 'CANCELED' ||
+          normalized === 'CANCELLED' ||
+          normalized === 'DELETED' ||
+          /ОТМЕН[ЕЁ]Н|ОТМЕНА|ОТМЕНЕН|ОТМЕНЁН/.test(normalized)
+        );
+      });
+    }
+
+    function buildTournamentVivaCabinetUrl(tournament) {
+      var snapshot = getTournamentSourceSnapshot(tournament);
+      var source = String(
+        (tournament && tournament.source) ||
+        snapshot.source ||
+        ''
+      ).toUpperCase();
+      var exerciseId = String(
+        source === 'CUSTOM'
+          ? (tournament && tournament.sourceTournamentId) || snapshot.id || ''
+          : (tournament && tournament.id) || snapshot.id || ''
+      ).trim();
+      var studioId = String(
+        (tournament && tournament.studioId) ||
+        snapshot.studioId ||
+        ''
+      ).trim();
+      var date = formatTournamentDateKey(
+        (tournament && tournament.startsAt) ||
+        snapshot.startsAt ||
+        ''
+      );
+
+      if (!exerciseId || !studioId || !date) {
+        return '';
+      }
+
+      return (
+        'https://cabinet.vivacrm.ru/schedule/' +
+        encodeURIComponent(studioId) +
+        '/exercise/' +
+        encodeURIComponent(exerciseId) +
+        '?date=' +
+        encodeURIComponent(date)
       );
     }
 
@@ -14663,6 +14744,20 @@
       var mo = String(d.getMonth() + 1).padStart(2, '0');
       var year = String(d.getFullYear());
       return dd + '.' + mo + '.' + year;
+    }
+
+    function formatTournamentDateKey(value) {
+      if (!value) {
+        return '';
+      }
+      var d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        return '';
+      }
+      var year = String(d.getFullYear());
+      var mo = String(d.getMonth() + 1).padStart(2, '0');
+      var dd = String(d.getDate()).padStart(2, '0');
+      return year + '-' + mo + '-' + dd;
     }
 
     function formatTournamentClock(value) {
