@@ -539,13 +539,20 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    const payload = await this.fetchAdminJson(
-      `/api/v2/search/clients?q=${encodeURIComponent(this.formatPhoneForViva(expectedPhone))}`,
-      input.token,
-      input.baseUrl
-    );
-    const records = this.unwrapRecords(payload);
     const expectedId = this.normalizeOptional(input.clientId);
+    let records: Record<string, unknown>[] = [];
+    try {
+      const payload = await this.fetchAdminJson(
+        `/api/v2/search/clients?q=${encodeURIComponent(this.formatPhoneForViva(expectedPhone))}`,
+        input.token,
+        input.baseUrl
+      );
+      records = this.unwrapRecords(payload);
+    } catch (error) {
+      this.logger.warn(
+        `Viva admin client search failed for ${expectedPhone}, fallback will be used: ${String(error)}`
+      );
+    }
     const selected =
       (expectedId
         ? records.find((record) => this.extractClientId(record) === expectedId)
@@ -571,7 +578,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
     const lookup = await this.lookupClientCabinetByPhone(expectedPhone);
     if (!lookup || lookup.status !== 'FOUND' || !lookup.vivaClientId) {
-      return null;
+      return this.resolveAdminClientFromProvidedIdFallback({
+        expectedId,
+        expectedPhone
+      });
     }
     if (expectedId && lookup.vivaClientId !== expectedId) {
       throw new BadRequestException('Viva client id does not match checkout phone');
@@ -580,6 +590,23 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       id: lookup.vivaClientId,
       phone: expectedPhone,
       displayName: lookup.displayName
+    };
+  }
+
+  private resolveAdminClientFromProvidedIdFallback(input: {
+    expectedId?: string;
+    expectedPhone: string;
+  }): VivaAdminClientResolution | null {
+    const expectedId = this.normalizeOptional(input.expectedId);
+    if (!expectedId) {
+      return null;
+    }
+    this.logger.warn(
+      `Viva client search by phone returned no records, using provided clientId=${expectedId}`
+    );
+    return {
+      id: expectedId,
+      phone: input.expectedPhone
     };
   }
 

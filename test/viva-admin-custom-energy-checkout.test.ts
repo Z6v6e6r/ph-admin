@@ -140,6 +140,81 @@ async function main(): Promise<void> {
     assert.equal(result.paymentUrl, 'https://pay.example/admin-energy');
     assert.equal(result.toPayMinor, 250000);
     assert.equal(result.paymentExpiresAt, '2026-05-09T07:20:00+03:00');
+
+    transactionBodies.length = 0;
+    globalThis.fetch = (async (requestUrl: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(requestUrl));
+      const method = init?.method ?? 'GET';
+      const headers = init?.headers as Record<string, string> | undefined;
+      assert.equal(headers?.Authorization, 'Bearer admin-token');
+
+      if (method === 'GET' && url.pathname === '/api/v2/search/clients') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/clients') {
+        return {
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          json: async () => ({})
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [{ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 }] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/products/subscriptions/energy-product') {
+        assert.equal(url.searchParams.get('clientId'), 'client-fallback');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'energy-product', name: 'Энергия турниры', cost: 2000000 })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/contracts/clients/client-fallback') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'POST' && url.pathname === '/api/v1/transactions') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        transactionBodies.push(body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'transaction-fallback',
+            cardPaymentInfo: { paymentUrl: 'https://pay.example/fallback' },
+            toPay: 250000
+          })
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fallback request: ${method} ${url.toString()}`);
+    }) as typeof fetch;
+
+    const fallbackResult = await service.createTournamentEnergyCheckout({
+      clientPhone: '79123456789',
+      clientId: 'client-fallback',
+      studioId: 'studio-1',
+      paymentMethod: 'SMS',
+      baseAmountMinor: 2000000,
+      discountAmountMinor: 1750000,
+      discountReason: 'Участие в турнире «Название турнира» 09.05.2026',
+      productName: 'Энергия турниры'
+    });
+    assert.equal(fallbackResult.clientId, 'client-fallback');
+    assert.equal(fallbackResult.transactionId, 'transaction-fallback');
+    assert.equal(fallbackResult.paymentUrl, 'https://pay.example/fallback');
   } finally {
     globalThis.fetch = originalFetch;
   }
