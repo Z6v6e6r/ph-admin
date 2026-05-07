@@ -8,6 +8,8 @@ import {
   Optional,
   UnauthorizedException
 } from '@nestjs/common';
+import { createPublicKey, verify as verifySignature } from 'crypto';
+import type { JsonWebKey } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
@@ -90,6 +92,19 @@ interface LkCheckoutAuthProfile {
   name?: string;
   tenantKey?: string;
 }
+
+interface LkJwtParts {
+  header: Record<string, unknown>;
+  claims: Record<string, unknown>;
+  signingInput: string;
+  signature: Buffer;
+}
+
+type LkJwksKey = JsonWebKey & {
+  kid?: string;
+  alg?: string;
+  use?: string;
+};
 
 interface VivaJoinTransactionResponse {
   transactionId?: string;
@@ -178,12 +193,15 @@ export class TournamentsService {
     this.readPositiveNumberEnv('VIVA_END_USER_TIMEOUT_MS', 5000);
   private readonly lkAuthRequestTimeoutMs =
     this.readPositiveNumberEnv('TOURNAMENTS_PUBLIC_AUTH_TIMEOUT_MS', 5000);
+  private readonly lkJwksCacheTtlMs =
+    this.readPositiveNumberEnv('TOURNAMENTS_PUBLIC_JWKS_CACHE_TTL_MS', 10 * 60 * 1000);
   private readonly publicDirectoryCacheTtlMs = this.readPositiveNumberEnv(
     'TOURNAMENTS_PUBLIC_DIRECTORY_CACHE_TTL_MS',
     30000
   );
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
   private readonly missingSourceSkinStatusSyncInFlight = new Set<string>();
+  private lkJwksCache: { expiresAt: number; keys: LkJwksKey[] } | null = null;
 
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
@@ -1403,9 +1421,12 @@ export class TournamentsService {
       throw new UnauthorizedException('Bearer token is required');
     }
 
-    const claims = this.decodeBearerClaimsToken(token);
+    const verifiedClaims = await this.verifyLkJwtToken(token);
+    const claims = verifiedClaims ?? this.decodeBearerClaimsToken(token);
     this.assertBearerNotExpired(claims);
-    const userInfo = await this.fetchLkUserInfo(token);
+    const userInfo = verifiedClaims
+      ? await this.fetchLkUserInfoSafe(token)
+      : await this.fetchLkUserInfo(token);
     const merged = {
       ...(claims ?? {}),
       ...(userInfo ?? {})
@@ -1608,6 +1629,40 @@ export class TournamentsService {
     return match?.[1]?.trim() || null;
   }
 
+  private async verifyLkJwtToken(token: string): Promise<Record<string, unknown> | null> {
+    const parts = this.decodeBearerJwtParts(token);
+    if (!parts) {
+      return null;
+    }
+
+    const algorithm = this.pickString(parts.header.alg);
+    if (algorithm !== 'RS256') {
+      return null;
+    }
+
+    const key = await this.resolveLkJwksKey(parts.header);
+    if (!key) {
+      return null;
+    }
+
+    const keyObject = createPublicKey({
+      key: key as unknown as JsonWebKey,
+      format: 'jwk'
+    });
+    const isValid = verifySignature(
+      'RSA-SHA256',
+      Buffer.from(parts.signingInput),
+      keyObject,
+      parts.signature
+    );
+    if (!isValid) {
+      return null;
+    }
+
+    this.assertBearerIssuer(parts.claims);
+    return parts.claims;
+  }
+
   private async fetchLkUserInfo(token: string): Promise<Record<string, unknown>> {
     const url = new URL(
       `/realms/${encodeURIComponent(this.lkKeycloakRealm)}/protocol/openid-connect/userinfo`,
@@ -1631,23 +1686,119 @@ export class TournamentsService {
     return record;
   }
 
-  private decodeBearerClaimsToken(token: string): Record<string, unknown> | null {
-    const parts = token.split('.');
-    if (parts.length < 2) {
-      return null;
-    }
+  private async fetchLkUserInfoSafe(token: string): Promise<Record<string, unknown> | null> {
     try {
-      const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-      return this.toRecord(parsed);
+      return await this.fetchLkUserInfo(token);
     } catch (_error) {
       return null;
     }
+  }
+
+  private decodeBearerClaimsToken(token: string): Record<string, unknown> | null {
+    return this.decodeBearerJwtParts(token)?.claims ?? null;
+  }
+
+  private decodeBearerJwtParts(token: string): LkJwtParts | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+    try {
+      const header = this.toRecord(
+        JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'))
+      );
+      const claims = this.toRecord(
+        JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+      );
+      if (!header || !claims) {
+        return null;
+      }
+      return {
+        header,
+        claims,
+        signingInput: `${parts[0]}.${parts[1]}`,
+        signature: Buffer.from(parts[2], 'base64url')
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private async resolveLkJwksKey(header: Record<string, unknown>): Promise<LkJwksKey | null> {
+    const keys = await this.fetchLkJwksKeys();
+    if (keys.length === 0) {
+      return null;
+    }
+
+    const kid = this.pickString(header.kid);
+    const alg = this.pickString(header.alg);
+    if (kid) {
+      return keys.find((key) => key.kid === kid && (!alg || !key.alg || key.alg === alg)) ?? null;
+    }
+    return keys.find((key) => !alg || !key.alg || key.alg === alg) ?? null;
+  }
+
+  private async fetchLkJwksKeys(): Promise<LkJwksKey[]> {
+    if (this.lkJwksCache && this.lkJwksCache.expiresAt > Date.now()) {
+      return this.lkJwksCache.keys;
+    }
+
+    const url = new URL(
+      `/realms/${encodeURIComponent(this.lkKeycloakRealm)}/protocol/openid-connect/certs`,
+      `${this.lkKeycloakBaseUrl}/`
+    );
+    try {
+      const response = await fetch(url.toString(), {
+        headers: { Accept: 'application/json' },
+        signal: this.buildAbortSignal(this.lkAuthRequestTimeoutMs)
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        return [];
+      }
+      const record = this.toRecord(payload);
+      const keys = Array.isArray(record?.keys)
+        ? record.keys.filter((item): item is LkJwksKey => this.isJwksKey(item))
+        : [];
+      this.lkJwksCache = {
+        keys,
+        expiresAt: Date.now() + this.lkJwksCacheTtlMs
+      };
+      return keys;
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  private isJwksKey(value: unknown): value is LkJwksKey {
+    const record = this.toRecord(value);
+    return Boolean(
+      record &&
+      this.pickString(record.kty) &&
+      this.pickString(record.n) &&
+      this.pickString(record.e)
+    );
   }
 
   private assertBearerNotExpired(claims: Record<string, unknown> | null): void {
     const exp = this.pickNumber(claims?.exp);
     if (exp !== undefined && exp <= Math.floor(Date.now() / 1000)) {
       throw new UnauthorizedException('LK auth token is expired');
+    }
+  }
+
+  private assertBearerIssuer(claims: Record<string, unknown>): void {
+    const issuer = this.pickString(claims.iss);
+    if (!issuer) {
+      return;
+    }
+
+    const expectedIssuer = new URL(
+      `/realms/${encodeURIComponent(this.lkKeycloakRealm)}`,
+      `${this.lkKeycloakBaseUrl}/`
+    ).toString();
+    if (issuer.replace(/\/+$/, '') !== expectedIssuer.replace(/\/+$/, '')) {
+      throw new UnauthorizedException('LK auth token issuer is invalid');
     }
   }
 

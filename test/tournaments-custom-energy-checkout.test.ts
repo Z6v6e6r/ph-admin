@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { createSign, generateKeyPairSync, KeyObject } from 'node:crypto';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { CustomTournament, TournamentStatus } from '../src/tournaments/tournaments.types';
 
@@ -77,6 +78,17 @@ function buildJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${header}.${body}.signature`;
+}
+
+function buildSignedJwt(payload: Record<string, unknown>, privateKey: KeyObject, kid: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${header}.${body}`;
+  const signature = createSign('RSA-SHA256')
+    .update(signingInput)
+    .sign(privateKey)
+    .toString('base64url');
+  return `${signingInput}.${signature}`;
 }
 
 function createPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
@@ -219,6 +231,71 @@ async function main(): Promise<void> {
     }),
     /pricing\.amountMinor does not match tournament custom price/
   );
+
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const publicJwk = publicKey.export({ format: 'jwk' }) as JsonWebKey & {
+    kid?: string;
+    alg?: string;
+    use?: string;
+  };
+  publicJwk.kid = 'lk-test-key';
+  publicJwk.alg = 'RS256';
+  publicJwk.use = 'sig';
+  const signedToken = buildSignedJwt(
+    {
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iss: 'https://kc.vivacrm.ru/realms/prod',
+      phone_number: '79123456789',
+      tenantKey: 'iSkq6G',
+      sub: 'client-1'
+    },
+    privateKey,
+    'lk-test-key'
+  );
+  let jwksRequested = false;
+  let userInfoRejected = false;
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const value = String(url);
+    if (value.endsWith('/protocol/openid-connect/certs')) {
+      jwksRequested = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ keys: [publicJwk] })
+      } as Response;
+    }
+    if (value.endsWith('/protocol/openid-connect/userinfo')) {
+      userInfoRejected = true;
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'invalid_token' })
+      } as Response;
+    }
+    throw new Error(`Unexpected fetch in signed token test: ${value}`);
+  }) as typeof fetch;
+
+  const signedTokenService = createService(createTournament(), {
+    createTournamentEnergyCheckout: async () => ({
+      clientId: 'client-1',
+      productId: 'energy-product',
+      transactionId: 'transaction-signed',
+      paymentUrl: 'https://pay.example/signed-energy',
+      toPayMinor: 250000
+    })
+  });
+  const signedTokenResponse = await signedTokenService.createCustomEnergyCheckout(
+    'exercise-energy-1',
+    {
+      body: createPayload(),
+      authorizationHeader: `Bearer ${signedToken}`,
+      authSourceHeader: 'lk-keycloak',
+      tenantKeyHeader: 'iSkq6G'
+    }
+  );
+  assert.equal(signedTokenResponse.transactionId, 'transaction-signed');
+  assert.equal(jwksRequested, true);
+  assert.equal(userInfoRejected, true);
 
   globalThis.fetch = originalFetch;
   console.log('Tournament custom energy checkout test passed');
