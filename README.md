@@ -589,7 +589,7 @@ Webhook endpoint:
 Важно:
 
 - для станций используется mapping `callback_key -> stationId -> groupChatId`
-- по умолчанию в коде зашиты ключи из текущего flow (`yas`, `nagat`, `nagat_p`, `tereh`, `kuncev`, `sochi`, `seleger`, `t-sbora`)
+- по умолчанию в коде зашиты ключи из текущего flow (`yas`, `nagat`, `nagat_p`, `tereh`, `kuncev`, `festival`, `sochi`, `seleger`, `t-sbora`)
 - при необходимости mapping можно полностью переопределить через `TELEGRAM_STATION_MAPPINGS` (JSON-массив)
 - при `TELEGRAM_DELIVERY_MODE=outbox` исходящие сообщения не отправляются напрямую в Telegram API, а складываются в outbox для доставки через Node-RED
 

@@ -94,6 +94,21 @@
   },
   {
     "_id": {
+      "$oid": "67e10a10aa55cc77dd001109"
+    },
+    "id": "festival-admin",
+    "login": "festival_admin",
+    "password": "StrongFestival123!",
+    "title": "Администратор станции Фестивальный парк",
+    "roles": [
+      "STATION_ADMIN"
+    ],
+    "stationIds": [
+      "FestivalPark"
+    ]
+  },
+  {
+    "_id": {
       "$oid": "67e10a10aa55cc77dd001108"
     },
     "id": "t-sbora-admin",

@@ -14880,16 +14880,26 @@
       { value: 'CANCELED', label: 'Отменён' },
       { value: 'UNKNOWN', label: 'Неизвестно' }
     ];
-    var TOURNAMENT_TYPE_OPTIONS = ['Американо', 'Мексикано', 'Кубок', 'Лига', 'Сетка'];
+    var TOURNAMENT_TYPE_OPTIONS = [
+      'Американо',
+      'Мексикано',
+      'Американо Парный',
+      'Американо Flex',
+      'Мексикано Парный',
+      'Round robin',
+      'Кубок',
+      'Лига',
+      'Сетка'
+    ];
     var TOURNAMENT_MECHANICS_MODE_OPTIONS = [
       { value: 'short_americano', label: 'Short Americano' },
       { value: 'full_americano', label: 'Full Americano' },
       { value: 'competitive_americano', label: 'Competitive Americano' },
       { value: 'dynamic_americano', label: 'Dynamic Americano' },
-      { value: 'flex_americano', label: 'Americano Flex' },
-      { value: 'team_americano', label: 'Парный Американо' },
-      { value: 'team_mexicano', label: 'Парный Мексикано' },
-      { value: 'round_robin', label: 'Робин Раунд' }
+      { value: 'flex_americano', label: 'Американо Flex' },
+      { value: 'team_americano', label: 'Американо Парный' },
+      { value: 'team_mexicano', label: 'Мексикано Парный' },
+      { value: 'round_robin', label: 'Round robin' }
     ];
     var TOURNAMENT_MECHANICS_SEEDING_OPTIONS = [
       { value: 'auto', label: 'Auto' },
@@ -15631,10 +15641,7 @@
       var source = normalizeObject(value);
       var config = normalizeObject(source.config);
       var weights = normalizeObject(config.weights);
-      var normalizedType = String(tournamentTypeValue || '').trim().toLowerCase();
-      var defaultMode = normalizedType.indexOf('compet') >= 0
-        ? 'competitive_americano'
-        : 'short_americano';
+      var defaultMode = resolveTournamentMechanicsModeFromType(tournamentTypeValue);
 
       return {
         enabled: source.enabled !== false,
@@ -15763,6 +15770,23 @@
         'АМЕРИКАНО': 'Американо',
         MEXICANO: 'Мексикано',
         'МЕКСИКАНО': 'Мексикано',
+        FLEX_AMERICANO: 'Американо Flex',
+        'FLEX AMERICANO': 'Американо Flex',
+        AMERICANO_FLEX: 'Американо Flex',
+        'AMERICANO FLEX': 'Американо Flex',
+        'АМЕРИКАНО FLEX': 'Американо Flex',
+        TEAM_AMERICANO: 'Американо Парный',
+        'TEAM AMERICANO': 'Американо Парный',
+        'ПАРНЫЙ АМЕРИКАНО': 'Американо Парный',
+        'АМЕРИКАНО ПАРНЫЙ': 'Американо Парный',
+        TEAM_MEXICANO: 'Мексикано Парный',
+        'TEAM MEXICANO': 'Мексикано Парный',
+        'ПАРНЫЙ МЕКСИКАНО': 'Мексикано Парный',
+        'МЕКСИКАНО ПАРНЫЙ': 'Мексикано Парный',
+        ROUND_ROBIN: 'Round robin',
+        'ROUND ROBIN': 'Round robin',
+        'РОБИН РАУНД': 'Round robin',
+        'РАУНД РОБИН': 'Round robin',
         CUP: 'Кубок',
         'КУБОК': 'Кубок',
         LEAGUE: 'Лига',
@@ -15774,6 +15798,29 @@
       };
 
       return map[normalized] || raw;
+    }
+
+    function resolveTournamentMechanicsModeFromType(tournamentTypeValue) {
+      var raw = String(tournamentTypeValue || '').trim().toLowerCase();
+      var label = normalizeTournamentTypeLabel(tournamentTypeValue).toLowerCase();
+      var value = label || raw;
+
+      if (raw === 'team_americano' || (value.indexOf('американо') >= 0 && value.indexOf('парн') >= 0)) {
+        return 'team_americano';
+      }
+      if (raw === 'team_mexicano' || (value.indexOf('мексикано') >= 0 && value.indexOf('парн') >= 0)) {
+        return 'team_mexicano';
+      }
+      if (raw === 'flex_americano' || value.indexOf('flex') >= 0) {
+        return 'flex_americano';
+      }
+      if (raw === 'round_robin' || value.indexOf('round robin') >= 0 || raw.indexOf('робин') >= 0) {
+        return 'round_robin';
+      }
+      if (value.indexOf('compet') >= 0) {
+        return 'competitive_americano';
+      }
+      return 'short_americano';
     }
 
     function getTournamentLevelBand(base) {
@@ -17160,6 +17207,18 @@
         mechanics.config.mode
       );
       appendCommunityFormField(mechanicsForm, 'Режим', mechanicsModeInput);
+      var mechanicsModeFollowsType =
+        String(mechanics.config.mode || '') ===
+        resolveTournamentMechanicsModeFromType(tournamentTypeValue);
+      typeInput.addEventListener('change', function () {
+        if (!mechanicsModeFollowsType) {
+          return;
+        }
+        mechanicsModeInput.value = resolveTournamentMechanicsModeFromType(typeInput.value);
+      });
+      mechanicsModeInput.addEventListener('change', function () {
+        mechanicsModeFollowsType = false;
+      });
 
       var mechanicsRoundsInput = document.createElement('input');
       mechanicsRoundsInput.type = 'number';

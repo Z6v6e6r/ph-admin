@@ -15,6 +15,7 @@ export const DEFAULT_SUPPORT_STATION_MAPPINGS: SupportStationMapping[] = [
   },
   { key: 'tereh', stationId: 'Terehovo', stationName: 'Терехово' },
   { key: 'kuncev', stationId: 'Skolkovo', stationName: 'Сколково' },
+  { key: 'festival', stationId: 'FestivalPark', stationName: 'Фестивальный парк' },
   { key: 'sochi', stationId: 'Sochi', stationName: 'Сочи' },
   { key: 'seleger', stationId: 'seleger', stationName: 'Селигерская' },
   { key: 't-sbora', stationId: 'care_service', stationName: 'Точка сбора' }

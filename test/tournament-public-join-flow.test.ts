@@ -247,7 +247,7 @@ async function main(): Promise<void> {
   assert.equal(purchaseFlow.payment.purchaseOptions.length, 2);
 
   tournament.skin.priceLabel = '2 500 ₽';
-  let energyTransactionRequest:
+  let energyBookingRequest:
     | { url: string; headers: Record<string, string>; body: Record<string, unknown> }
     | undefined;
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -281,21 +281,16 @@ async function main(): Promise<void> {
         json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
       } as Response;
     }
-    energyTransactionRequest = {
+    energyBookingRequest = {
       url: value,
       headers: init?.headers as Record<string, string>,
       body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
     };
     return {
       ok: true,
-      status: 200,
+      status: 202,
       json: async () => ({
-        data: {
-          id: 'tx-energy',
-          payment: {
-            formUrl: 'https://pay.tbank.ru/energy'
-          }
-        }
+        correlationId: 'corr-energy-1'
       })
     } as Response;
   }) as typeof fetch;
@@ -326,11 +321,15 @@ async function main(): Promise<void> {
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
     failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
   });
-  assert.equal(energyPurchaseStart.code, 'PURCHASE_STARTED');
-  const energyProducts = energyTransactionRequest?.body.products as Array<Record<string, unknown>>;
-  assert.equal(energyProducts[0]?.id, 'energy-tournaments');
-  assert.equal(energyProducts[0]?.type, 'SUBSCRIPTION');
-  assert.equal(energyProducts[0]?.discountAmount, 17500);
+  assert.equal(energyPurchaseStart.code, 'REGISTERED');
+  assert.equal(energyPurchaseStart.participant?.paymentStatus, 'PAID');
+  assert.equal(
+    energyBookingRequest?.url,
+    'https://api.vivacrm.ru/end-user/api/v2/iSkq6G/bookings'
+  );
+  assert.equal(energyBookingRequest?.body.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
+  assert.equal(energyBookingRequest?.body.paymentType, 'SUBSCRIPTION');
+  assert.equal(energyBookingRequest?.headers.Authorization, undefined);
   tournament.skin.priceLabel = undefined;
   globalThis.fetch = defaultVivaFetch;
 

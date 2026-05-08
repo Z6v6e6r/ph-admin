@@ -111,6 +111,10 @@ interface VivaJoinTransactionResponse {
   checkoutUrl?: string;
 }
 
+interface VivaJoinBookingResponse {
+  correlationId?: string;
+}
+
 interface PendingJoinPayment {
   transactionId: string;
   phone: string;
@@ -1106,6 +1110,21 @@ export class TournamentsService {
         tournamentSlug: tournament.slug,
         payment
       };
+    }
+
+    if (this.resolveVivaTransactionProductType(purchaseOption.productType) === 'SUBSCRIPTION') {
+      await this.createVivaJoinBookingWithSubscription({
+        booking,
+        phone: normalizedPhone,
+        authorizationHeader: input.vivaAuthorizationHeader
+      });
+      return this.registerPublicParticipant(slug, {
+        ...input,
+        phone: normalizedPhone,
+        levelLabel: normalizedLevel,
+        purchaseConfirmed: true,
+        selectedPurchaseOptionId: purchaseOption.id
+      });
     }
 
     const transaction = await this.createVivaJoinTransaction({
@@ -3444,6 +3463,70 @@ export class TournamentsService {
       transactionId,
       checkoutUrl
     };
+  }
+
+  private async createVivaJoinBookingWithSubscription(input: {
+    booking: TournamentBookingConfig;
+    phone: string;
+    authorizationHeader?: string;
+  }): Promise<VivaJoinBookingResponse> {
+    const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    const exerciseId = this.pickString(input.booking.vivaExerciseId);
+    if (!widgetId || !exerciseId) {
+      throw new BadRequestException(
+        'Для записи через Viva нужны widgetId и exerciseId в details.booking'
+      );
+    }
+
+    const url = new URL(
+      `/end-user/api/v2/${encodeURIComponent(widgetId)}/bookings`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    );
+    const payload = {
+      exerciseId,
+      paymentType: 'SUBSCRIPTION',
+      comment: null,
+      marketingAttribution: {}
+    };
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(input.authorizationHeader ? { Authorization: input.authorizationHeader } : {}),
+        Origin: 'https://padlhub.ru',
+        Referer: 'https://padlhub.ru/'
+      },
+      body: JSON.stringify(payload),
+      signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+    });
+
+    const responsePayload = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) {
+      const responseRecord = this.toRecord(responsePayload);
+      const responseDetails = this.pickString(
+        responseRecord
+          ? (
+            responseRecord.message
+            ?? responseRecord.error
+            ?? responseRecord.description
+            ?? responseRecord.detail
+          )
+          : undefined
+      );
+      throw new BadRequestException(
+        responseDetails
+          ? `Viva booking failed with status ${response.status}: ${responseDetails}`
+          : `Viva booking failed with status ${response.status}`
+      );
+    }
+
+    const correlationId =
+      this.pickString(this.toRecord(responsePayload)?.correlationId)
+      ?? this.pickString(this.toRecord(responsePayload)?.id)
+      ?? this.pickString(response.headers.get('x-correlation-id'));
+
+    return { correlationId };
   }
 
   private buildVivaWidgetPaymentReturnUrl(exerciseId: string, flag: string): string {
