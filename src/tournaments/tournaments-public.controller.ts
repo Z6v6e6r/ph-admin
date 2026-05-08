@@ -102,6 +102,9 @@ type TournamentPublicParticipantCard = NonNullable<TournamentPublicView['partici
 export class TournamentsPublicController {
   private readonly directoryUrl =
     String(process.env.TOURNAMENTS_PUBLIC_DIRECTORY_URL ?? '').trim() || '/tournaments';
+  private readonly publicCardRedirectUrl =
+    String(process.env.TOURNAMENTS_PUBLIC_CARD_REDIRECT_URL ?? '').trim()
+    || 'https://padlhub.ru/tournaments';
   private readonly lkAuthUrl =
     String(process.env.TOURNAMENTS_PUBLIC_LK_AUTH_URL ?? '').trim() || 'https://padlhub.ru/lk_new';
   private readonly lkPollMs = this.parsePositiveInteger(
@@ -563,34 +566,16 @@ export class TournamentsPublicController {
     @CurrentUser() user?: RequestUser,
     @Query('format') format?: string
   ): Promise<void> {
+    if (this.wantsHtml(request, format)) {
+      response.redirect(301, this.publicCardRedirectUrl);
+      return;
+    }
+
     const tournament = await this.tournamentsService.getPublicBySlug(slug);
 
     if (this.wantsJson(request, format)) {
       response.setHeader('Cache-Control', 'no-store, max-age=0');
       response.json(tournament);
-      return;
-    }
-
-    if (this.wantsHtml(request, format)) {
-      let flow: TournamentJoinFlowResponse | undefined;
-      if (
-        typeof this.tournamentsPublicSessionService.ensureAuthorizedClient === 'function'
-        && typeof this.tournamentsPublicSessionService.requiresRealAuth === 'function'
-      ) {
-        const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
-          request,
-          response,
-          user
-        );
-        flow = this.enrichJoinFlow(
-          await this.tournamentsService.getPublicJoinFlow(slug, client, {
-            requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
-          }),
-          request,
-          user
-        );
-      }
-      this.sendHtml(response, this.renderPublicTournamentHtml(tournament, request, user, flow));
       return;
     }
 

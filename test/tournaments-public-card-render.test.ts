@@ -119,9 +119,11 @@ function createResponseCapture(): {
   getHtml: () => string | null;
   getJson: () => unknown;
   getHeader: (name: string) => string | undefined;
+  getRedirect: () => { status: number; url: string } | null;
 } {
   let htmlPayload: string | null = null;
   let jsonPayload: unknown = null;
+  let redirectPayload: { status: number; url: string } | null = null;
   const headers = new Map<string, string>();
 
   const response = {
@@ -136,6 +138,14 @@ function createResponseCapture(): {
     send(payload: string) {
       htmlPayload = payload;
       return this;
+    },
+    redirect(statusOrUrl: number | string, maybeUrl?: string) {
+      if (typeof statusOrUrl === 'number') {
+        redirectPayload = { status: statusOrUrl, url: String(maybeUrl ?? '') };
+      } else {
+        redirectPayload = { status: 302, url: statusOrUrl };
+      }
+      return this;
     }
   } as unknown as Response;
 
@@ -143,7 +153,8 @@ function createResponseCapture(): {
     response,
     getHtml: () => htmlPayload,
     getJson: () => jsonPayload,
-    getHeader: (name: string) => headers.get(name.toLowerCase())
+    getHeader: (name: string) => headers.get(name.toLowerCase()),
+    getRedirect: () => redirectPayload
   };
 }
 
@@ -224,65 +235,11 @@ async function main(): Promise<void> {
       undefined
     );
 
-    const html = capture.getHtml();
-    assert.ok(html, 'HTML should be returned for browser requests');
-    assert.equal(capture.getHeader('content-type'), 'text/html; charset=utf-8');
-    assert.match(html ?? '', /Девичник/);
-    assert.match(html ?? '', /ТестMiniApp/);
-    assert.doesNotMatch(html ?? '', /Вы в турнире!/);
-    assert.match(html ?? '', /ИДЕТ ЗАПИСЬ/);
-    assert.match(html ?? '', /Участники турнира/);
-    assert.match(html ?? '', /Елена Полкова/);
-    assert.match(html ?? '', /Ольга Листова/);
-    assert.doesNotMatch(html ?? '', /79104303190/);
-    assert.doesNotMatch(html ?? '', />79</);
-    assert.match(html ?? '', /https:\/\/padlhub\.ru\/uploads\/player-phone\.jpg/);
-    assert.match(html ?? '', /tournament-sleeve\.png/);
-    assert.match(html ?? '', /D\+\/C/);
-    assert.match(html ?? '', /participant is-muted/);
-    assert.match(html ?? '', /data-back-link/);
-    assert.match(html ?? '', /<button class="back"[^>]*data-back-link/);
-    assert.match(html ?? '', /data-fallback-url="https:\/\/padlhub\.ru\/tournaments"/);
-    assert.match(html ?? '', /\.poster::before/);
-    assert.match(html ?? '', /background: url\("https:\/\/padlhub\.ru\/api\/ui\/tournament-sleeve\.png"\) center \/ cover no-repeat/);
-    assert.match(html ?? '', /<div class="avatar-wrap">/);
-    assert.match(html ?? '', /\.avatar \{[\s\S]*?overflow: hidden;/);
-    assert.doesNotMatch(html ?? '', /<span class="level">D\+\/C<\/span>/);
-    assert.match(html ?? '', /<span class="level">D\+³<\/span>/);
-    assert.match(html ?? '', /<span class="level">D¹<\/span>/);
-    assert.match(html ?? '', /<span class="level">C\+¹<\/span>/);
-    assert.match(html ?? '', /Сетка скоро появится/);
-    assert.match(html ?? '', /https:\/\/padlhub\.ru\/api\/tournaments\/public\/weekend-cup\/join/);
-  }
-
-  {
-    const controllerWithRegisteredFlow = new TournamentsPublicController(
-      {
-        getPublicBySlug: async () => tournament,
-        getPublicJoinFlow: async () => createFlow(tournament, 'ALREADY_REGISTERED')
-      } as never,
-      createSessionServiceMock({
-        ensureAuthorizedClient: () => ({
-          id: 'client-1',
-          authorized: true,
-          authSource: 'headers',
-          phone: '79990001122',
-          phoneVerified: true,
-          onboardingCompleted: true,
-          subscriptions: []
-        })
-      }) as never
-    );
-    const capture = createResponseCapture();
-    await controllerWithRegisteredFlow.findPublicBySlug(
-      tournament.slug,
-      createRequest('text/html,application/xhtml+xml'),
-      capture.response,
-      undefined,
-      undefined
-    );
-
-    assert.match(capture.getHtml() ?? '', /Вы в турнире!/);
+    assert.equal(capture.getHtml(), null);
+    assert.deepEqual(capture.getRedirect(), {
+      status: 301,
+      url: 'https://padlhub.ru/tournaments'
+    });
   }
 
   assert.equal(
@@ -290,84 +247,6 @@ async function main(): Promise<void> {
       .formatGenderLabel('FEMALE'),
     'Женский'
   );
-
-  {
-    const tournamentWithCrossHostJoinUrl: TournamentPublicView = {
-      ...tournament,
-      joinUrl: 'https://padlhub.ru/api/tournaments/public/weekend-cup/join'
-    };
-    const controllerWithFlow = new TournamentsPublicController(
-      {
-        getPublicBySlug: async () => tournamentWithCrossHostJoinUrl,
-        getPublicJoinFlow: async () => createFlow(tournamentWithCrossHostJoinUrl, 'PROFILE_REQUIRED')
-      } as never,
-      createSessionServiceMock({
-        ensureAuthorizedClient: () => ({
-          id: 'guest-1',
-          authorized: false,
-          authSource: 'cookie',
-          onboardingCompleted: false,
-          subscriptions: []
-        })
-      }) as never
-    );
-    const capture = createResponseCapture();
-    const request = createRequest('text/html,application/xhtml+xml');
-    request.headers.host = 'padlhub.su';
-    await controllerWithFlow.findPublicBySlug(
-      tournament.slug,
-      request,
-      capture.response,
-      {
-        id: 'anonymous',
-        maxPublicUrl: 'https://padlhub.ru',
-        roles: [],
-        stationIds: [],
-        connectorRoutes: []
-      },
-      undefined
-    );
-
-    const html = capture.getHtml();
-    assert.match(html ?? '', /Введите номер телефона, чтобы записаться/);
-    assert.match(
-      html ?? '',
-      /action="https:\/\/padlhub\.su\/api\/tournaments\/public\/weekend-cup\/join"/
-    );
-    assert.match(html ?? '', /name="phone"/);
-  }
-
-  {
-    const controllerWithFlow = new TournamentsPublicController(
-      {
-        getPublicBySlug: async () => tournament,
-        getPublicJoinFlow: async () => createFlow(tournament, 'READY_TO_JOIN')
-      } as never,
-      createSessionServiceMock({
-        ensureAuthorizedClient: () => ({
-          id: 'client-1',
-          authorized: true,
-          authSource: 'headers',
-          phone: '79990001122',
-          phoneVerified: true,
-          onboardingCompleted: true,
-          subscriptions: []
-        })
-      }) as never
-    );
-    const capture = createResponseCapture();
-    await controllerWithFlow.findPublicBySlug(
-      tournament.slug,
-      createRequest('text/html,application/xhtml+xml'),
-      capture.response,
-      undefined,
-      undefined
-    );
-
-    const html = capture.getHtml();
-    assert.doesNotMatch(html ?? '', /Записаться на занятие/);
-    assert.match(html ?? '', /(Девки жгем|Записаться на турнир)/);
-  }
 
   {
     const purchaseFlow = createFlow(tournament, 'PURCHASE_REQUIRED');
