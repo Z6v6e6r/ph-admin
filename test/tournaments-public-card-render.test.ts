@@ -238,7 +238,7 @@ async function main(): Promise<void> {
     assert.equal(capture.getHtml(), null);
     assert.deepEqual(capture.getRedirect(), {
       status: 301,
-      url: 'https://padlhub.ru/tournaments'
+      url: 'https://padlhub.ru/tournaments?slug=weekend-cup'
     });
   }
 

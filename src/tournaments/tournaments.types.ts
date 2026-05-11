@@ -165,6 +165,7 @@ export interface Tournament {
   sourceTournamentId?: string;
   slug?: string;
   publicUrl?: string;
+  isPublic?: boolean;
   tournamentType?: string;
   format?: string;
   accessLevels?: string[];
@@ -218,6 +219,7 @@ export interface CustomTournament extends Tournament {
   source: 'CUSTOM';
   slug: string;
   publicUrl: string;
+  isPublic?: boolean;
   tournamentType: string;
   accessLevels: string[];
   gender: TournamentGender;

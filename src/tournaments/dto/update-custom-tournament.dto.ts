@@ -1,5 +1,6 @@
 import {
   ArrayMaxSize,
+  IsBoolean,
   IsArray,
   IsIn,
   IsInt,
@@ -35,6 +36,10 @@ export class UpdateCustomTournamentDto {
   @IsString()
   @MaxLength(80)
   tournamentType?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isPublic?: boolean;
 
   @IsOptional()
   @IsArray()

@@ -567,7 +567,7 @@ export class TournamentsPublicController {
     @Query('format') format?: string
   ): Promise<void> {
     if (this.wantsHtml(request, format)) {
-      response.redirect(301, this.publicCardRedirectUrl);
+      response.redirect(301, this.buildPublicCardRedirectUrl(slug));
       return;
     }
 
@@ -1292,6 +1292,24 @@ export class TournamentsPublicController {
     ${actionScript}
   </body>
 </html>`;
+  }
+
+  private buildPublicCardRedirectUrl(slug: string): string {
+    const normalizedSlug = String(slug ?? '').trim();
+    const baseUrl = String(this.publicCardRedirectUrl ?? '').trim() || 'https://padlhub.ru/tournaments';
+    if (!normalizedSlug) {
+      return baseUrl;
+    }
+
+    try {
+      const parsed = new URL(baseUrl);
+      parsed.searchParams.set('slug', normalizedSlug);
+      return parsed.toString();
+    } catch {
+      const [withoutHash, hash = ''] = baseUrl.split('#', 2);
+      const separator = withoutHash.includes('?') ? '&' : '?';
+      return `${withoutHash}${separator}slug=${encodeURIComponent(normalizedSlug)}${hash ? `#${hash}` : ''}`;
+    }
   }
 
   private renderPublicTournamentActionHtml(

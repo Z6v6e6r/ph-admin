@@ -14958,6 +14958,41 @@
       };
     }
 
+    function createTournamentVisibilitySwitch(isPublic) {
+      var root = document.createElement('div');
+      root.className = 'phab-admin-dialog-option';
+
+      var toggleLabel = document.createElement('label');
+      toggleLabel.className = 'phab-admin-switch';
+      root.appendChild(toggleLabel);
+
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'phab-admin-switch-input';
+      input.checked = isPublic !== false;
+      toggleLabel.appendChild(input);
+
+      var track = document.createElement('span');
+      track.className = 'phab-admin-switch-track';
+      toggleLabel.appendChild(track);
+
+      var text = document.createElement('span');
+      text.className = 'phab-admin-switch-text';
+      root.appendChild(text);
+
+      function syncText() {
+        text.textContent = input.checked ? 'Публичный' : 'Закрытый';
+      }
+
+      input.addEventListener('change', syncText);
+      syncText();
+
+      return {
+        root: root,
+        input: input
+      };
+    }
+
     function createTournamentSelect(options, value) {
       var select = document.createElement('select');
       select.className = 'phab-admin-input';
@@ -16239,6 +16274,7 @@
       return {
         name: String(form.name.value || '').trim(),
         tournamentType: String(form.tournamentType.value || '').trim(),
+        isPublic: Boolean(form.isPublic.checked),
         accessLevels: String(form.accessLevels.value || '')
           .split(',')
           .map(function (item) {
@@ -17036,6 +17072,9 @@
 
       var typeInput = createTournamentTypeSelect(tournamentTypeValue);
       appendCommunityFormField(form, 'Тип турнира', typeInput);
+
+      var isPublicSwitch = createTournamentVisibilitySwitch(model && model.isPublic !== false);
+      appendCommunityFormField(form, 'Видимость турнира', isPublicSwitch.root, true);
 
       var accessLevelsControl = createTournamentAccessLevelsControl(model && model.accessLevels);
       var accessLevelsInput = accessLevelsControl.input;
@@ -17862,6 +17901,7 @@
           status: statusSelect,
           startsAt: startsAtInput,
           tournamentType: typeInput,
+          isPublic: isPublicSwitch.input,
           accessLevels: accessLevelsInput,
           gender: genderSelect,
           maxPlayers: maxPlayersInput,

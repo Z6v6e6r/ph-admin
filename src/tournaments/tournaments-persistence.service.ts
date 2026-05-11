@@ -50,6 +50,7 @@ export interface CreateCustomTournamentMutation {
   startsAt?: string;
   endsAt?: string;
   tournamentType: string;
+  isPublic?: boolean;
   accessLevels: string[];
   gender: TournamentGender;
   maxPlayers: number;
@@ -78,6 +79,7 @@ export interface UpdateCustomTournamentMutation {
   startsAt?: string;
   endsAt?: string;
   tournamentType?: string;
+  isPublic?: boolean;
   accessLevels?: string[];
   gender?: TournamentGender;
   maxPlayers?: number;
@@ -110,7 +112,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   private readonly collectionName =
     this.readEnv('TOURNAMENTS_MONGODB_COLLECTION') ?? 'custom_tournaments';
   private readonly publicBaseUrl =
-    this.readEnv('TOURNAMENTS_PUBLIC_BASE_URL') ?? '/api/tournaments/public/';
+    this.readEnv('TOURNAMENTS_PUBLIC_CARD_BASE_URL')
+    ?? this.readEnv('TOURNAMENTS_PUBLIC_BASE_URL')
+    ?? 'https://padlhub.ru/tournaments';
   private client?: MongoClient;
   private db?: Db;
   private indexesEnsured = false;
@@ -233,6 +237,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }
     if (mutation.tournamentType !== undefined) {
       setPayload.tournamentType = this.pickString(mutation.tournamentType) ?? null;
+    }
+    if (mutation.isPublic !== undefined) {
+      setPayload.isPublic = this.normalizeIsPublic(mutation.isPublic);
     }
     if (mutation.accessLevels !== undefined) {
       setPayload.accessLevels = this.normalizeLevels(mutation.accessLevels);
@@ -398,6 +405,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       publicUrl: this.buildPublicUrl(slug),
       sourceTournamentId: this.pickString(document.sourceTournamentId) ?? undefined,
       tournamentType: this.pickString(document.tournamentType) ?? 'AMERICANO',
+      isPublic: this.normalizeIsPublic(document.isPublic),
       accessLevels: this.normalizeLevels(document.accessLevels),
       gender: this.normalizeGender(document.gender),
       maxPlayers: this.pickPositiveInteger(document.maxPlayers) ?? 8,
@@ -467,6 +475,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       startsAt: this.pickString(mutation.startsAt) ?? null,
       endsAt: this.pickString(mutation.endsAt) ?? null,
       tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
+      isPublic: this.normalizeIsPublic(mutation.isPublic),
       accessLevels: this.normalizeLevels(mutation.accessLevels),
       gender: this.normalizeGender(mutation.gender),
       maxPlayers: this.pickPositiveInteger(mutation.maxPlayers) ?? 8,
@@ -1005,6 +1014,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       afterTournament.tournamentType
     );
     pushChange(
+      'isPublic',
+      'Видимость в расписании',
+      beforeTournament.isPublic === false ? 'Закрытый' : 'Публичный',
+      afterTournament.isPublic === false ? 'Закрытый' : 'Публичный'
+    );
+    pushChange(
       'accessLevels',
       'Уровни участников',
       this.formatAuditList(beforeTournament.accessLevels),
@@ -1324,6 +1339,29 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return 'MIXED';
   }
 
+  private normalizeIsPublic(value: unknown): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+    if (!normalized) {
+      return true;
+    }
+    if (
+      normalized === 'false' ||
+      normalized === '0' ||
+      normalized === 'no' ||
+      normalized === 'off' ||
+      normalized === 'closed' ||
+      normalized === 'private'
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   private normalizePaymentStatus(value: unknown): TournamentPaymentStatus {
     const normalized = String(value ?? '')
       .trim()
@@ -1454,10 +1492,26 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   }
 
   private buildPublicUrl(slug: string): string {
-    const normalizedBase = String(this.publicBaseUrl || '/api/tournaments/public/')
-      .trim()
-      .replace(/\/+$/, '');
-    return `${normalizedBase}/${encodeURIComponent(slug)}`;
+    const normalizedSlug = encodeURIComponent(this.slugify(slug) || String(slug ?? '').trim());
+    const normalizedBase = String(this.publicBaseUrl || 'https://padlhub.ru/tournaments').trim();
+    if (!normalizedBase) {
+      return `https://padlhub.ru/tournaments?slug=${normalizedSlug}`;
+    }
+
+    const legacyApiPattern = /\/api\/tournaments\/public\/?$/i;
+    if (legacyApiPattern.test(normalizedBase)) {
+      return `${normalizedBase.replace(/\/+$/, '')}/${normalizedSlug}`;
+    }
+
+    try {
+      const parsed = new URL(normalizedBase);
+      parsed.searchParams.set('slug', decodeURIComponent(normalizedSlug));
+      return parsed.toString();
+    } catch {
+      const [withoutHash, hash = ''] = normalizedBase.split('#', 2);
+      const separator = withoutHash.includes('?') ? '&' : '?';
+      return `${withoutHash}${separator}slug=${normalizedSlug}${hash ? `#${hash}` : ''}`;
+    }
   }
 
   private readEnv(name: string): string | undefined {

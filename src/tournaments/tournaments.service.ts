@@ -2228,6 +2228,10 @@ export class TournamentsService {
       date?: string;
     }
   ): boolean {
+    if (tournament.isPublic === false) {
+      return false;
+    }
+
     if (this.isCanceledTournamentStatus(tournament.status)) {
       return false;
     }
@@ -2359,6 +2363,7 @@ export class TournamentsService {
       sourceTournamentId: mergedCustomTournament.sourceTournamentId,
       slug: mergedCustomTournament.slug,
       publicUrl: mergedCustomTournament.publicUrl,
+      isPublic: mergedCustomTournament.isPublic,
       tournamentType: mergedCustomTournament.tournamentType,
       accessLevels: mergedCustomTournament.accessLevels,
       gender: mergedCustomTournament.gender,
@@ -2481,6 +2486,7 @@ export class TournamentsService {
       endsAt: this.pickString(mutation.endsAt) ?? sourceTournament.endsAt,
       tournamentType:
         this.pickString(mutation.tournamentType) ?? sourceTournament.tournamentType ?? 'AMERICANO',
+      isPublic: mutation.isPublic !== undefined ? mutation.isPublic : sourceTournament.isPublic !== false,
       accessLevels: Array.isArray(mutation.accessLevels) ? mutation.accessLevels : [],
       gender: mutation.gender ?? 'MIXED',
       maxPlayers: Number(mutation.maxPlayers || 0) || Number(sourceTournament.maxPlayers || 0) || 8,
@@ -2535,6 +2541,7 @@ export class TournamentsService {
       startsAt: mutation.startsAt,
       endsAt: mutation.endsAt,
       tournamentType: mutation.tournamentType,
+      isPublic: mutation.isPublic,
       accessLevels: mutation.accessLevels,
       gender: mutation.gender,
       maxPlayers: mutation.maxPlayers,

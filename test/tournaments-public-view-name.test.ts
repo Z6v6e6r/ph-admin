@@ -108,6 +108,19 @@ async function main(): Promise<void> {
   assert.equal(canceledDirectory.count, 0);
   assert.equal(canceledDirectory.items.length, 0);
 
+  const closedTournament = {
+    ...createCustomTournament(),
+    id: 'custom-public-closed',
+    slug: 'public-title-closed',
+    publicUrl: '/api/tournaments/public/public-title-closed',
+    isPublic: false
+  };
+  const closedDirectory = await createService(closedTournament).listPublicDirectory({
+    includePast: true
+  });
+  assert.equal(closedDirectory.count, 0);
+  assert.equal(closedDirectory.items.length, 0);
+
   console.log('Public tournament display name test passed');
 }
 
