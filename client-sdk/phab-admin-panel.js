@@ -14585,10 +14585,11 @@
         });
 
         var publicUrlCell = document.createElement('td');
-        if (tournament.publicUrl) {
+        var tournamentCardUrl = buildTournamentCardUrl(tournament);
+        if (tournamentCardUrl) {
           var publicLink = document.createElement('a');
           publicLink.className = 'phab-admin-dialog-link';
-          publicLink.href = String(tournament.publicUrl);
+          publicLink.href = tournamentCardUrl;
           publicLink.target = '_blank';
           publicLink.rel = 'noopener noreferrer';
           publicLink.textContent = 'Открыть';
@@ -16379,6 +16380,25 @@
       return button;
     }
 
+    function buildTournamentCardUrl(tournament) {
+      var slug = String((tournament && tournament.slug) || '').trim();
+      var publicUrl = String((tournament && tournament.publicUrl) || '').trim();
+      if (!slug) {
+        return publicUrl;
+      }
+
+      try {
+        var base = new URL(publicUrl || 'https://padlhub.ru/tournaments', window.location.href);
+        base.pathname = '/tournaments';
+        base.search = '';
+        base.hash = '';
+        base.searchParams.set('slug', slug);
+        return base.toString();
+      } catch (_error) {
+        return 'https://padlhub.ru/tournaments?slug=' + encodeURIComponent(slug);
+      }
+    }
+
     function normalizeTournamentPublicationCommunityIds(values) {
       var seen = {};
       return normalizeArray(values)
@@ -17019,11 +17039,12 @@
       form.className = 'phab-admin-community-form-grid';
       dom.tournamentEditorBody.appendChild(form);
 
-      if (customTournament && customTournament.publicUrl) {
+      var cardUrlForCopy = buildTournamentCardUrl(customTournament || model);
+      if (cardUrlForCopy) {
         appendCommunityFormField(
           form,
           'Публичная ссылка',
-          createTournamentCopyButton(String(customTournament.publicUrl)),
+          createTournamentCopyButton(cardUrlForCopy),
           true
         );
       }
