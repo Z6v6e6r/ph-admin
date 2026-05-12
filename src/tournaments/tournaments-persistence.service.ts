@@ -402,7 +402,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       status,
       rawStatus: this.pickString(document.status) ?? undefined,
       slug,
-      publicUrl: this.buildPublicUrl(slug),
+      publicUrl: this.buildPublicUrl(slug, id, startsAt),
       sourceTournamentId: this.pickString(document.sourceTournamentId) ?? undefined,
       tournamentType: this.pickString(document.tournamentType) ?? 'AMERICANO',
       isPublic: this.normalizeIsPublic(document.isPublic),
@@ -1491,11 +1491,21 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       .replace(/-+/g, '-');
   }
 
-  private buildPublicUrl(slug: string): string {
+  private buildPublicUrl(slug: string, tournamentId?: string, startsAt?: string): string {
     const normalizedSlug = encodeURIComponent(this.slugify(slug) || String(slug ?? '').trim());
+    const normalizedTournamentId = this.pickString(tournamentId);
+    const normalizedDate = this.resolveTournamentDateParam(startsAt);
     const normalizedBase = String(this.publicBaseUrl || 'https://padlhub.ru/tournaments').trim();
     if (!normalizedBase) {
-      return `https://padlhub.ru/tournaments?slug=${normalizedSlug}`;
+      const params: string[] = [];
+      if (normalizedTournamentId) {
+        params.push(`tournamentId=${encodeURIComponent(normalizedTournamentId)}`);
+      }
+      if (normalizedDate) {
+        params.push(`date=${encodeURIComponent(normalizedDate)}`);
+      }
+      params.push(`slug=${normalizedSlug}`);
+      return `https://padlhub.ru/tournaments?${params.join('&')}`;
     }
 
     const legacyApiPattern = /\/api\/tournaments\/public\/?$/i;
@@ -1505,13 +1515,42 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
 
     try {
       const parsed = new URL(normalizedBase);
+      if (normalizedTournamentId) {
+        parsed.searchParams.set('tournamentId', normalizedTournamentId);
+      }
+      if (normalizedDate) {
+        parsed.searchParams.set('date', normalizedDate);
+      }
       parsed.searchParams.set('slug', decodeURIComponent(normalizedSlug));
       return parsed.toString();
     } catch {
       const [withoutHash, hash = ''] = normalizedBase.split('#', 2);
+      const params: string[] = [];
+      if (normalizedTournamentId) {
+        params.push(`tournamentId=${encodeURIComponent(normalizedTournamentId)}`);
+      }
+      if (normalizedDate) {
+        params.push(`date=${encodeURIComponent(normalizedDate)}`);
+      }
+      params.push(`slug=${normalizedSlug}`);
       const separator = withoutHash.includes('?') ? '&' : '?';
-      return `${withoutHash}${separator}slug=${normalizedSlug}${hash ? `#${hash}` : ''}`;
+      return `${withoutHash}${separator}${params.join('&')}${hash ? `#${hash}` : ''}`;
     }
+  }
+
+  private resolveTournamentDateParam(value?: string): string | undefined {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const match = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match?.[1]) {
+      return match[1];
+    }
+
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
   }
 
   private readEnv(name: string): string | undefined {

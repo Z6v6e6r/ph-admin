@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
@@ -566,12 +566,23 @@ export class TournamentsPublicController {
     @CurrentUser() user?: RequestUser,
     @Query('format') format?: string
   ): Promise<void> {
+    const normalizedSlug = this.pickString(slug) ?? '';
     if (this.wantsHtml(request, format)) {
-      response.redirect(301, this.buildPublicCardRedirectUrl(slug));
+      let redirectTournament: TournamentPublicView | undefined;
+      if (normalizedSlug) {
+        try {
+          redirectTournament = await this.tournamentsService.getPublicBySlug(normalizedSlug);
+        } catch (error) {
+          if (!(error instanceof NotFoundException)) {
+            throw error;
+          }
+        }
+      }
+      response.redirect(301, this.buildPublicCardRedirectUrl(normalizedSlug, redirectTournament));
       return;
     }
 
-    const tournament = await this.tournamentsService.getPublicBySlug(slug);
+    const tournament = await this.tournamentsService.getPublicBySlug(normalizedSlug);
 
     if (this.wantsJson(request, format)) {
       response.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -1294,22 +1305,65 @@ export class TournamentsPublicController {
 </html>`;
   }
 
-  private buildPublicCardRedirectUrl(slug: string): string {
+  private buildPublicCardRedirectUrl(
+    slug: string,
+    tournament?: Pick<TournamentPublicView, 'id' | 'startsAt'>
+  ): string {
     const normalizedSlug = String(slug ?? '').trim();
     const baseUrl = String(this.publicCardRedirectUrl ?? '').trim() || 'https://padlhub.ru/tournaments';
-    if (!normalizedSlug) {
+    const tournamentId = this.pickString(tournament?.id);
+    const date = this.resolveTournamentDateParam(tournament?.startsAt);
+    if (!normalizedSlug && !tournamentId && !date) {
       return baseUrl;
     }
 
     try {
       const parsed = new URL(baseUrl);
-      parsed.searchParams.set('slug', normalizedSlug);
+      if (tournamentId) {
+        parsed.searchParams.set('tournamentId', tournamentId);
+      }
+      if (date) {
+        parsed.searchParams.set('date', date);
+      }
+      if (normalizedSlug) {
+        parsed.searchParams.set('slug', normalizedSlug);
+      }
       return parsed.toString();
     } catch {
       const [withoutHash, hash = ''] = baseUrl.split('#', 2);
+      const params: string[] = [];
+      if (tournamentId) {
+        params.push(`tournamentId=${encodeURIComponent(tournamentId)}`);
+      }
+      if (date) {
+        params.push(`date=${encodeURIComponent(date)}`);
+      }
+      if (normalizedSlug) {
+        params.push(`slug=${encodeURIComponent(normalizedSlug)}`);
+      }
+
+      if (params.length === 0) {
+        return `${withoutHash}${hash ? `#${hash}` : ''}`;
+      }
+
       const separator = withoutHash.includes('?') ? '&' : '?';
-      return `${withoutHash}${separator}slug=${encodeURIComponent(normalizedSlug)}${hash ? `#${hash}` : ''}`;
+      return `${withoutHash}${separator}${params.join('&')}${hash ? `#${hash}` : ''}`;
     }
+  }
+
+  private resolveTournamentDateParam(value?: string): string | undefined {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const match = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match?.[1]) {
+      return match[1];
+    }
+
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
   }
 
   private renderPublicTournamentActionHtml(

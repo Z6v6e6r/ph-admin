@@ -129,7 +129,7 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
-- `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.su/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир; если `padlhub.ru/api` занят Tilda, используйте отдельный API-host)
+- `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.su/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир; для директории `/tournaments` ссылка теперь включает `tournamentId`, `date` и `slug`, для legacy API-базы сохраняется формат `/api/tournaments/public/:slug`)
 - `TOURNAMENTS_PUBLIC_DIRECTORY_URL=https://padlhub.ru/tournaments` (опционально; куда вести пользователя после успешной заявки или из join-flow)
 - `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; по умолчанию `true`. Если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_URL=https://padlhub.ru/lk_new` (опционально; куда вести пользователя для реальной авторизации LK; на 9 апреля 2026 актуальная точка входа именно `padlhub.ru/lk_new`)
@@ -148,7 +148,7 @@ API работает на `http://localhost:3000/api`.
 
 - `GET /api/tournaments/public`
 - `GET /api/tournaments/public/list`
-- `GET /api/tournaments/public/:slug` - browser-friendly публичная карточка турнира для запросов с `Accept: text/html` (или `format=html`); при `Accept: application/json` или `format=json` вернет JSON
+- `GET /api/tournaments/public/:slug` - browser-friendly публичная карточка турнира для запросов с `Accept: text/html` (или `format=html`): редиректит на deeplink вида `/tournaments?tournamentId=<id>&date=YYYY-MM-DD&slug=<slug>`; при `Accept: application/json` или `format=json` вернет JSON
 - `GET /api/tournaments/public/:slug/join` - browser-friendly join flow для ссылки с Tilda; при `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` сначала проверяет реальную авторизацию в LK, затем телефон/уровень и ведет до записи или waitlist
 - `POST /api/tournaments/public/:slug/join` - submit join-flow (поддерживает HTML form и JSON; при `Accept: application/json` или `format=json` вернет JSON)
 - `POST /api/tournaments/public/:slug/access-check` - проверка допуска по уровню (`levelLabel`); если уровень не передан, сервис вернет статус онбординга
