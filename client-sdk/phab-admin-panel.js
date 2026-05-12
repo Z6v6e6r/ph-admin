@@ -16380,11 +16380,32 @@
       return button;
     }
 
+    function resolveTournamentDateParam(value) {
+      var normalized = String(value || '').trim();
+      if (!normalized) {
+        return '';
+      }
+
+      var match = normalized.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (match && match[1]) {
+        return match[1];
+      }
+
+      var parsed = new Date(normalized);
+      if (Number.isNaN(parsed.getTime())) {
+        return '';
+      }
+
+      return parsed.toISOString().slice(0, 10);
+    }
+
     function buildTournamentCardUrl(tournament) {
       var slug = String((tournament && tournament.slug) || '').trim();
       var publicUrl = String((tournament && tournament.publicUrl) || '').trim();
-      if (!slug) {
-        return publicUrl;
+      var tournamentId = String((tournament && tournament.id) || '').trim();
+      var tournamentDate = resolveTournamentDateParam(tournament && tournament.startsAt);
+      if (!slug && !publicUrl && !tournamentId && !tournamentDate) {
+        return '';
       }
 
       try {
@@ -16392,10 +16413,30 @@
         base.pathname = '/tournaments';
         base.search = '';
         base.hash = '';
-        base.searchParams.set('slug', slug);
+        if (tournamentId) {
+          base.searchParams.set('tournamentId', tournamentId);
+        }
+        if (tournamentDate) {
+          base.searchParams.set('date', tournamentDate);
+        }
+        if (slug) {
+          base.searchParams.set('slug', slug);
+        }
         return base.toString();
       } catch (_error) {
-        return 'https://padlhub.ru/tournaments?slug=' + encodeURIComponent(slug);
+        var params = [];
+        if (tournamentId) {
+          params.push('tournamentId=' + encodeURIComponent(tournamentId));
+        }
+        if (tournamentDate) {
+          params.push('date=' + encodeURIComponent(tournamentDate));
+        }
+        if (slug) {
+          params.push('slug=' + encodeURIComponent(slug));
+        }
+        return params.length > 0
+          ? 'https://padlhub.ru/tournaments?' + params.join('&')
+          : publicUrl;
       }
     }
 
