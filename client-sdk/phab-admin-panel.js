@@ -3137,6 +3137,24 @@
       .phab-admin-games-table tbody tr.phab-admin-tournament-row--canceled td:first-child{
         box-shadow:inset 4px 0 0 #d93636;
       }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--closed,
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--closed:nth-child(even),
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--closed:hover{
+        background:
+          linear-gradient(
+            90deg,
+            rgba(36,35,45,.98) 0%,
+            rgba(24,24,32,.97) 52%,
+            rgba(8,8,12,.98) 100%
+          ) !important;
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--closed td{
+        color:rgba(245,241,255,.96);
+        border-bottom-color:rgba(210,200,255,.2);
+      }
+      .phab-admin-games-table tbody tr.phab-admin-tournament-row--closed td:first-child{
+        box-shadow:inset 4px 0 0 #12101d;
+      }
       .phab-admin-tournament-source-chip{
         display:inline-flex;
         align-items:center;
@@ -14559,12 +14577,15 @@
         var tr = document.createElement('tr');
         var hasCustomSkin = isTournamentCustomSkinned(tournament);
         var isCanceled = isCanceledTournament(tournament);
+        var isClosed = isClosedTournament(tournament);
         var rowClasses = [];
         if (hasCustomSkin) {
           rowClasses.push('phab-admin-tournament-row--custom-skin');
         }
         if (isCanceled) {
           rowClasses.push('phab-admin-tournament-row--canceled');
+        } else if (isClosed) {
+          rowClasses.push('phab-admin-tournament-row--closed');
         }
         tr.className = rowClasses.join(' ');
 
@@ -14664,6 +14685,33 @@
           normalized === 'DELETED' ||
           /ОТМЕН[ЕЁ]Н|ОТМЕНА|ОТМЕНЕН|ОТМЕНЁН/.test(normalized)
         );
+      });
+    }
+
+    function isClosedTournament(tournament) {
+      var details = normalizeObject(tournament && tournament.details);
+      var snapshot = getTournamentSourceSnapshot(tournament);
+      var isExplicitlyClosedByVisibility = [
+        tournament && tournament.visibility,
+        details.visibility,
+        snapshot.visibility
+      ].some(function (value) {
+        var normalized = String(value || '').trim().toUpperCase();
+        return normalized === 'CLOSED' || normalized === 'PRIVATE';
+      });
+      if (isExplicitlyClosedByVisibility) {
+        return true;
+      }
+
+      return [
+        tournament && tournament.isPublic,
+        details.isPublic,
+        snapshot.isPublic
+      ].some(function (value) {
+        if (value === false) {
+          return true;
+        }
+        return String(value || '').trim().toLowerCase() === 'false';
       });
     }
 
