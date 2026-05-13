@@ -2193,10 +2193,6 @@ export class TournamentsService {
     tournament: Tournament,
     options?: { date?: string; now?: Date }
   ): boolean {
-    if (this.isCanceledTournamentStatus(tournament.status)) {
-      return false;
-    }
-
     const date = this.normalizePublicDate(options?.date);
     if (!date) {
       return true;

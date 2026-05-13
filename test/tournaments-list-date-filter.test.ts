@@ -188,19 +188,23 @@ async function main(): Promise<void> {
   });
   assert.deepEqual(
     filtered.map((tournament) => tournament.linkedCustomTournamentId ?? tournament.id),
-    ['custom-linked-on-date', 'custom-standalone-on-date']
+    ['custom-linked-on-date', 'custom-linked-canceled-by-custom', 'custom-standalone-on-date']
   );
   assert.deepEqual(
     filtered.map((tournament) => tournament.skin?.title),
-    ['Skin custom-linked-on-date', 'Skin custom-standalone-on-date']
+    [
+      'Skin custom-linked-on-date',
+      'Skin custom-linked-canceled-by-custom',
+      'Skin custom-standalone-on-date'
+    ]
   );
 
   const unfiltered = await service.findAll();
-  assert.equal(unfiltered.length, 5);
+  assert.equal(unfiltered.length, 6);
   const canceledSkin = unfiltered.find(
-    (tournament) => tournament.linkedCustomTournamentId === 'custom-linked-canceled-source'
+    (tournament) => tournament.linkedCustomTournamentId === 'custom-linked-canceled-by-custom'
   );
-  assert.equal(canceledSkin, undefined);
+  assert.equal(canceledSkin?.status, TournamentStatus.CANCELED);
 
   const statusUpdates: Array<{ id: string; status?: TournamentStatus }> = [];
   const syncService = createService(
