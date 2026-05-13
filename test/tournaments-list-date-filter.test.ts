@@ -117,6 +117,10 @@ async function main(): Promise<void> {
     'source-other-date',
     '2026-05-06T19:00:00+03:00'
   );
+  const sourceOnRequestedDateCanceledByCustom = createSourceTournament(
+    'source-on-date-canceled-by-custom',
+    '2026-05-05T20:00:00+03:00'
+  );
   const linkedSkinOnRequestedDate = createCustomTournament(
     'custom-linked-on-date',
     '2026-05-05T19:00:00+03:00',
@@ -127,6 +131,13 @@ async function main(): Promise<void> {
     '2026-05-06T19:00:00+03:00',
     sourceOnOtherDate.id
   );
+  const linkedSkinCanceledByCustom = createCustomTournament(
+    'custom-linked-canceled-by-custom',
+    '2026-05-05T20:00:00+03:00',
+    sourceOnRequestedDateCanceledByCustom.id
+  );
+  linkedSkinCanceledByCustom.status = TournamentStatus.CANCELED;
+  linkedSkinCanceledByCustom.rawStatus = TournamentStatus.CANCELED;
   const standaloneSkinOnRequestedDate = createCustomTournament(
     'custom-standalone-on-date',
     '2026-05-05T21:00:00+03:00',
@@ -158,10 +169,11 @@ async function main(): Promise<void> {
   canceledSourceDetail.rawStatus = 'canceled';
 
   const service = createService(
-    [sourceOnRequestedDate, sourceOnOtherDate],
+    [sourceOnRequestedDate, sourceOnOtherDate, sourceOnRequestedDateCanceledByCustom],
     [
       linkedSkinOnRequestedDate,
       linkedSkinOnOtherDate,
+      linkedSkinCanceledByCustom,
       standaloneSkinOnRequestedDate,
       standalonePastToday,
       standaloneSkinOnOtherDate,

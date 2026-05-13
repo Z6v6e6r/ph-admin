@@ -75,6 +75,7 @@ async function main() {
   assert.equal(result.games.length, 2);
   assert.equal(result.matches.length, 2);
   assert.equal(result.standings.length, 4);
+  assert.deepEqual(result.standings.map((entry) => entry.player), ['Bob', 'Alice', 'Dave', 'Carol']);
 
   const standingsByPlayer = new Map(
     result.standings.map((entry) => [entry.player, entry])
@@ -85,6 +86,9 @@ async function main() {
     playedGames: 2,
     wins: 1,
     losses: 1,
+    scoredPoints: 19,
+    concededPoints: 19,
+    pointsDiff: 0,
     totalDelta: 2
   });
   assert.deepEqual(standingsByPlayer.get('Bob'), {
@@ -92,6 +96,9 @@ async function main() {
     playedGames: 2,
     wins: 2,
     losses: 0,
+    scoredPoints: 24,
+    concededPoints: 14,
+    pointsDiff: 10,
     totalDelta: 8
   });
   assert.deepEqual(standingsByPlayer.get('Carol'), {
@@ -99,6 +106,9 @@ async function main() {
     playedGames: 2,
     wins: 0,
     losses: 2,
+    scoredPoints: 14,
+    concededPoints: 24,
+    pointsDiff: -10,
     totalDelta: -8
   });
   assert.deepEqual(standingsByPlayer.get('Dave'), {
@@ -106,6 +116,9 @@ async function main() {
     playedGames: 2,
     wins: 1,
     losses: 1,
+    scoredPoints: 19,
+    concededPoints: 19,
+    pointsDiff: 0,
     totalDelta: -2
   });
 

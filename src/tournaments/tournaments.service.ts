@@ -2356,6 +2356,8 @@ export class TournamentsService {
     return {
       ...tournament,
       name: mergedCustomTournament.name,
+      status: mergedCustomTournament.status,
+      rawStatus: mergedCustomTournament.rawStatus ?? mergedCustomTournament.status,
       details: {
         sourceTournamentSnapshot
       },

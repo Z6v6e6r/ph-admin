@@ -131,6 +131,22 @@ interface MongoGameEventDoc {
   device?: Record<string, unknown>;
 }
 
+interface TournamentStandingRow {
+  player: string;
+  playedGames: number;
+  wins: number;
+  losses: number;
+  scoredPoints: number;
+  concededPoints: number;
+  pointsDiff: number;
+  totalDelta: number;
+}
+
+interface TournamentHeadToHeadStats {
+  leftWins: number;
+  rightWins: number;
+}
+
 @Injectable()
 export class GamesService implements OnModuleDestroy {
   private static readonly GAME_LIST_DEFAULT_PAGE_SIZE = 15;
@@ -301,16 +317,8 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const games = await this.findGamesByTournamentId(resolvedTournamentId, user);
-    const standings = new Map<
-      string,
-      {
-        player: string;
-        playedGames: number;
-        wins: number;
-        losses: number;
-        totalDelta: number;
-      }
-    >();
+    const standings = new Map<string, TournamentStandingRow>();
+    const headToHead = new Map<string, TournamentHeadToHeadStats>();
     const uniquePlayers = new Set<string>();
     let lastGameAt: string | undefined;
 
@@ -328,7 +336,7 @@ export class GamesService implements OnModuleDestroy {
         row.totalDelta += entry.delta;
       });
 
-      this.applyTournamentWinLoss(standings, game);
+      this.applyTournamentScoreStandings(standings, headToHead, game);
 
       const timestampValue =
         this.readString(game.startsAt) ??
@@ -375,14 +383,27 @@ export class GamesService implements OnModuleDestroy {
         playedGames: entry.playedGames,
         wins: entry.wins,
         losses: entry.losses,
+        scoredPoints: this.roundTournamentDelta(entry.scoredPoints),
+        concededPoints: this.roundTournamentDelta(entry.concededPoints),
+        pointsDiff: this.roundTournamentDelta(entry.pointsDiff),
         totalDelta: this.roundTournamentDelta(entry.totalDelta)
       }))
       .sort((left, right) => {
+        if (right.scoredPoints !== left.scoredPoints) {
+          return right.scoredPoints - left.scoredPoints;
+        }
+        if (right.pointsDiff !== left.pointsDiff) {
+          return right.pointsDiff - left.pointsDiff;
+        }
         if (right.wins !== left.wins) {
           return right.wins - left.wins;
         }
-        if (right.totalDelta !== left.totalDelta) {
-          return right.totalDelta - left.totalDelta;
+        const headToHeadResult = this.compareTournamentHeadToHead(left.player, right.player, headToHead);
+        if (headToHeadResult !== 0) {
+          return headToHeadResult;
+        }
+        if (left.concededPoints !== right.concededPoints) {
+          return left.concededPoints - right.concededPoints;
         }
         if (right.playedGames !== left.playedGames) {
           return right.playedGames - left.playedGames;
@@ -890,25 +911,10 @@ export class GamesService implements OnModuleDestroy {
   }
 
   private ensureTournamentStandingRow(
-    standings: Map<
-      string,
-      {
-        player: string;
-        playedGames: number;
-        wins: number;
-        losses: number;
-        totalDelta: number;
-      }
-    >,
+    standings: Map<string, TournamentStandingRow>,
     player: string
-  ): {
-    player: string;
-    playedGames: number;
-    wins: number;
-    losses: number;
-    totalDelta: number;
-  } {
-    const key = String(player || '').trim().toLocaleLowerCase('ru');
+  ): TournamentStandingRow {
+    const key = this.normalizeTournamentPlayerKey(player);
     const existing = standings.get(key);
     if (existing) {
       return existing;
@@ -919,6 +925,9 @@ export class GamesService implements OnModuleDestroy {
       playedGames: 0,
       wins: 0,
       losses: 0,
+      scoredPoints: 0,
+      concededPoints: 0,
+      pointsDiff: 0,
       totalDelta: 0
     };
     standings.set(key, created);
@@ -981,17 +990,9 @@ export class GamesService implements OnModuleDestroy {
       .filter((entry): entry is { player: string; delta: number } => Boolean(entry));
   }
 
-  private applyTournamentWinLoss(
-    standings: Map<
-      string,
-      {
-        player: string;
-        playedGames: number;
-        wins: number;
-        losses: number;
-        totalDelta: number;
-      }
-    >,
+  private applyTournamentScoreStandings(
+    standings: Map<string, TournamentStandingRow>,
+    headToHead: Map<string, TournamentHeadToHeadStats>,
     game: Game
   ): void {
     const teams = this.extractTournamentMatchTeams(game);
@@ -999,24 +1000,117 @@ export class GamesService implements OnModuleDestroy {
       return;
     }
 
-    const winnerIndex = this.resolveTournamentWinnerIndex(game.resultLines);
-    if (winnerIndex === null || winnerIndex > 1) {
+    const scoreTotals = this.resolveTournamentScoreTotals(game.resultLines);
+    if (!scoreTotals) {
+      return;
+    }
+    const [leftTotal, rightTotal] = scoreTotals;
+    const leftTeamPlayers = teams[0]?.players ?? [];
+    const rightTeamPlayers = teams[1]?.players ?? [];
+
+    this.applyTournamentTeamPoints(standings, leftTeamPlayers, leftTotal, rightTotal);
+    this.applyTournamentTeamPoints(standings, rightTeamPlayers, rightTotal, leftTotal);
+
+    if (leftTotal === rightTotal) {
       return;
     }
 
-    teams.forEach((team, index) => {
-      team.players.forEach((player) => {
-        const row = this.ensureTournamentStandingRow(standings, player);
-        if (index === winnerIndex) {
-          row.wins += 1;
-        } else if (index === (winnerIndex === 0 ? 1 : 0)) {
-          row.losses += 1;
+    const winnerPlayers = leftTotal > rightTotal ? leftTeamPlayers : rightTeamPlayers;
+    const loserPlayers = leftTotal > rightTotal ? rightTeamPlayers : leftTeamPlayers;
+
+    this.applyTournamentTeamResult(standings, winnerPlayers, true);
+    this.applyTournamentTeamResult(standings, loserPlayers, false);
+    this.registerTournamentHeadToHeadResult(headToHead, winnerPlayers, loserPlayers);
+  }
+
+  private applyTournamentTeamPoints(
+    standings: Map<string, TournamentStandingRow>,
+    teamPlayers: string[],
+    scored: number,
+    conceded: number
+  ): void {
+    teamPlayers.forEach((player) => {
+      const row = this.ensureTournamentStandingRow(standings, player);
+      row.scoredPoints += scored;
+      row.concededPoints += conceded;
+      row.pointsDiff += scored - conceded;
+    });
+  }
+
+  private applyTournamentTeamResult(
+    standings: Map<string, TournamentStandingRow>,
+    teamPlayers: string[],
+    isWinner: boolean
+  ): void {
+    teamPlayers.forEach((player) => {
+      const row = this.ensureTournamentStandingRow(standings, player);
+      if (isWinner) {
+        row.wins += 1;
+        return;
+      }
+      row.losses += 1;
+    });
+  }
+
+  private registerTournamentHeadToHeadResult(
+    headToHead: Map<string, TournamentHeadToHeadStats>,
+    winnerPlayers: string[],
+    loserPlayers: string[]
+  ): void {
+    winnerPlayers.forEach((winnerPlayer) => {
+      loserPlayers.forEach((loserPlayer) => {
+        const pair = this.resolveTournamentHeadToHeadPair(winnerPlayer, loserPlayer);
+        if (!pair) {
+          return;
         }
+        const record = headToHead.get(pair.key) ?? { leftWins: 0, rightWins: 0 };
+        if (pair.firstIsLeft) {
+          record.leftWins += 1;
+        } else {
+          record.rightWins += 1;
+        }
+        headToHead.set(pair.key, record);
       });
     });
   }
 
-  private resolveTournamentWinnerIndex(resultLines: string[] | undefined): number | null {
+  private compareTournamentHeadToHead(
+    leftPlayer: string,
+    rightPlayer: string,
+    headToHead: Map<string, TournamentHeadToHeadStats>
+  ): number {
+    const pair = this.resolveTournamentHeadToHeadPair(leftPlayer, rightPlayer);
+    if (!pair) {
+      return 0;
+    }
+    const record = headToHead.get(pair.key);
+    if (!record) {
+      return 0;
+    }
+    const leftWins = pair.firstIsLeft ? record.leftWins : record.rightWins;
+    const rightWins = pair.firstIsLeft ? record.rightWins : record.leftWins;
+    if (leftWins === rightWins) {
+      return 0;
+    }
+    return leftWins > rightWins ? -1 : 1;
+  }
+
+  private resolveTournamentHeadToHeadPair(
+    firstPlayer: string,
+    secondPlayer: string
+  ): { key: string; firstIsLeft: boolean } | null {
+    const firstKey = this.normalizeTournamentPlayerKey(firstPlayer);
+    const secondKey = this.normalizeTournamentPlayerKey(secondPlayer);
+    if (!firstKey || !secondKey || firstKey === secondKey) {
+      return null;
+    }
+    if (firstKey < secondKey) {
+      return { key: `${firstKey}::${secondKey}`, firstIsLeft: true };
+    }
+    return { key: `${secondKey}::${firstKey}`, firstIsLeft: false };
+  }
+
+  private resolveTournamentScoreTotals(resultLines: string[] | undefined): [number, number] | null {
     const scores = (Array.isArray(resultLines) ? resultLines : [])
       .map((line) => this.extractTournamentScorePair(line))
       .filter((entry): entry is [number, number] => Boolean(entry));
@@ -1032,10 +1126,11 @@ export class GamesService implements OnModuleDestroy {
       },
       [0, 0]
     );
-    if (totals[0] === totals[1]) {
-      return null;
-    }
-    return totals[0] > totals[1] ? 0 : 1;
+    return [totals[0], totals[1]];
+  }
+
+  private normalizeTournamentPlayerKey(player: string): string {
+    return String(player || '').trim().toLocaleLowerCase('ru');
   }
 
   private extractTournamentScorePair(line: string): [number, number] | null {

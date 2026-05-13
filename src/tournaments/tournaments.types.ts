@@ -129,6 +129,9 @@ export interface TournamentResultStandingEntry {
   playedGames: number;
   wins: number;
   losses: number;
+  scoredPoints: number;
+  concededPoints: number;
+  pointsDiff: number;
   totalDelta: number;
 }
 
