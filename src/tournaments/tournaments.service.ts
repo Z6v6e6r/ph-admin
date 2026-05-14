@@ -2136,7 +2136,10 @@ export class TournamentsService {
           }
 
           const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
-          if (sourceTournament && !this.isCanceledTournamentStatus(sourceTournament.status)) {
+          if (!sourceTournament) {
+            return;
+          }
+          if (!this.isCanceledTournamentStatus(sourceTournament.status)) {
             return;
           }
 
