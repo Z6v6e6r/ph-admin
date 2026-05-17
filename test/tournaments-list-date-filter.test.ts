@@ -84,7 +84,13 @@ function createService(
   sourceTournaments: Tournament[],
   customTournaments: CustomTournament[],
   sourceTournamentDetails: Tournament[] = [],
-  statusUpdates: Array<{ id: string; status?: TournamentStatus }> = []
+  statusUpdates: Array<{
+    id: string;
+    status?: TournamentStatus;
+    statusReason?: string;
+    statusSource?: string;
+    autoStatusChange?: boolean;
+  }> = []
 ): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
@@ -97,8 +103,22 @@ function createService(
     {
       isEnabled: () => true,
       listCustomTournaments: async () => customTournaments,
-      updateCustomTournament: async (id: string, mutation: { status?: TournamentStatus }) => {
-        statusUpdates.push({ id, status: mutation.status });
+      updateCustomTournament: async (
+        id: string,
+        mutation: {
+          status?: TournamentStatus;
+          statusReason?: string;
+          statusSource?: string;
+          autoStatusChange?: boolean;
+        }
+      ) => {
+        statusUpdates.push({
+          id,
+          status: mutation.status,
+          statusReason: mutation.statusReason,
+          statusSource: mutation.statusSource,
+          autoStatusChange: mutation.autoStatusChange
+        });
         return customTournaments.find((tournament) => tournament.id === id) ?? null;
       }
     } as never,
@@ -206,7 +226,13 @@ async function main(): Promise<void> {
   );
   assert.equal(canceledSkin?.status, TournamentStatus.CANCELED);
 
-  const statusUpdatesForUnavailableSource: Array<{ id: string; status?: TournamentStatus }> = [];
+  const statusUpdatesForUnavailableSource: Array<{
+    id: string;
+    status?: TournamentStatus;
+    statusReason?: string;
+    statusSource?: string;
+    autoStatusChange?: boolean;
+  }> = [];
   const syncServiceWithUnavailableSource = createService(
     [],
     [linkedSkinMissingFromSourceList],
@@ -221,7 +247,13 @@ async function main(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(statusUpdatesForUnavailableSource, []);
 
-  const statusUpdatesForCanceledSource: Array<{ id: string; status?: TournamentStatus }> = [];
+  const statusUpdatesForCanceledSource: Array<{
+    id: string;
+    status?: TournamentStatus;
+    statusReason?: string;
+    statusSource?: string;
+    autoStatusChange?: boolean;
+  }> = [];
   const syncServiceWithCanceledSource = createService(
     [],
     [linkedSkinMissingFromSourceList],
@@ -234,7 +266,14 @@ async function main(): Promise<void> {
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(statusUpdatesForCanceledSource, [
-    { id: 'custom-linked-canceled-source', status: TournamentStatus.CANCELED }
+    {
+      id: 'custom-linked-canceled-source',
+      status: TournamentStatus.CANCELED,
+      statusReason:
+        'Автоотмена Viva sync: связанный турнир в источнике Viva имеет статус CANCELED.',
+      statusSource: 'VIVA_SYNC',
+      autoStatusChange: true
+    }
   ]);
 
   console.log('Tournament list date filter test passed');

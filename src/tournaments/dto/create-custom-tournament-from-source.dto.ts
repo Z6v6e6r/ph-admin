@@ -107,6 +107,11 @@ export class CreateCustomTournamentFromSourceDto {
   status?: TournamentStatus;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  statusReason?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(128)
   @ValidateNested({ each: true })

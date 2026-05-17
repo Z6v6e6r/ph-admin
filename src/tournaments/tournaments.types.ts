@@ -86,6 +86,27 @@ export interface TournamentChangeLogEntry {
   changes: TournamentChangeLogField[];
 }
 
+export interface TournamentStatusAuditEntry {
+  at: string;
+  fromStatus?: TournamentStatus;
+  toStatus: TournamentStatus;
+  reason?: string;
+  actor?: TournamentActor;
+  source?: string;
+  auto?: boolean;
+}
+
+export interface TournamentStatusAudit {
+  lastChange?: TournamentStatusAuditEntry;
+  history?: TournamentStatusAuditEntry[];
+  canceledAt?: string;
+  canceledBy?: TournamentActor;
+  cancelReason?: string;
+  autoCanceledAt?: string;
+  autoCancelReason?: string;
+  autoCancelSource?: string;
+}
+
 export interface TournamentResultsSummary {
   totalGames: number;
   gamesWithResult: number;
@@ -184,6 +205,7 @@ export interface Tournament {
   skin?: TournamentSkin;
   mechanics?: TournamentMechanics;
   changeLog?: TournamentChangeLogEntry[];
+  statusAudit?: TournamentStatusAudit;
   createdBy?: TournamentActor;
   updatedBy?: TournamentActor;
 }

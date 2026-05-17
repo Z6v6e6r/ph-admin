@@ -2145,6 +2145,10 @@ export class TournamentsService {
 
           await this.tournamentsPersistence.updateCustomTournament(tournament.id, {
             status: TournamentStatus.CANCELED,
+            statusReason:
+              'Автоотмена Viva sync: связанный турнир в источнике Viva имеет статус CANCELED.',
+            statusSource: 'VIVA_SYNC',
+            autoStatusChange: true,
             actor: {
               id: 'system:viva-sync',
               name: 'Viva sync'

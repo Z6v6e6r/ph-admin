@@ -22,7 +22,9 @@ import {
   TournamentParticipant,
   TournamentPaymentStatus,
   TournamentSkin,
-  TournamentStatus
+  TournamentStatus,
+  TournamentStatusAudit,
+  TournamentStatusAuditEntry
 } from './tournaments.types';
 
 type MongoCustomTournamentDocument = Document & {
@@ -47,6 +49,9 @@ export interface CreateCustomTournamentMutation {
   sourceTournamentSnapshot?: Record<string, unknown>;
   name: string;
   status?: TournamentStatus;
+  statusReason?: string;
+  statusSource?: string;
+  autoStatusChange?: boolean;
   startsAt?: string;
   endsAt?: string;
   tournamentType: string;
@@ -76,6 +81,9 @@ export interface CreateCustomTournamentMutation {
 export interface UpdateCustomTournamentMutation {
   name?: string;
   status?: TournamentStatus;
+  statusReason?: string;
+  statusSource?: string;
+  autoStatusChange?: boolean;
   startsAt?: string;
   endsAt?: string;
   tournamentType?: string;
@@ -297,12 +305,65 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     if (mutation.mechanics !== undefined) {
       setPayload.mechanics = this.normalizeMechanics(mutation.mechanics);
     }
-    if (mutation.details !== undefined) {
-      const detailsRecord = this.toRecord(mutation.details);
-      setPayload.details = detailsRecord ?? null;
+    const mutationDetails = mutation.details !== undefined
+      ? this.toRecord(mutation.details)
+      : undefined;
+    const statusReason = this.pickString(mutation.statusReason) ?? undefined;
+    const statusSource = this.pickString(mutation.statusSource) ?? undefined;
+    const autoStatusChange = mutation.autoStatusChange === true;
+    const beforeStartsAt = this.pickString(existing.startsAt) ?? undefined;
+    const beforeEndsAt = this.pickString(existing.endsAt) ?? undefined;
+    const beforeStatus = this.normalizeStatus(
+      this.pickString(existing.status) ?? undefined,
+      beforeStartsAt,
+      beforeEndsAt
+    );
+    const afterStatus = mutation.status ?? beforeStatus;
+    const hasStatusTransition = mutation.status !== undefined && mutation.status !== beforeStatus;
+    const shouldTrackStatusAudit = hasStatusTransition || Boolean(statusReason);
+    let nextDetails: Record<string, unknown> | null | undefined =
+      mutation.details !== undefined ? (mutationDetails ?? null) : undefined;
+    const existingDetails = this.toRecord(existing.details);
+
+    if (shouldTrackStatusAudit) {
+      const detailsBase =
+        nextDetails === null
+          ? {}
+          : nextDetails && typeof nextDetails === 'object'
+          ? { ...nextDetails }
+          : existingDetails
+            ? { ...existingDetails }
+            : {};
+      const statusAudit = this.buildStatusAuditTrail({
+        previous: this.normalizeStatusAudit(detailsBase.statusAudit),
+        at: now,
+        fromStatus: hasStatusTransition ? beforeStatus : undefined,
+        toStatus: afterStatus,
+        reason: statusReason,
+        actor: this.normalizeActor(mutation.actor),
+        source: statusSource,
+        auto: autoStatusChange
+      });
+      detailsBase.statusAudit = statusAudit;
+      nextDetails = detailsBase;
     }
 
-    const actor = this.toActorRecord(mutation.actor, now);
+    if (nextDetails !== undefined) {
+      setPayload.details = nextDetails;
+    }
+
+    const actor = this.toActorRecord(mutation.actor, now)
+      ?? (
+        shouldTrackStatusAudit
+          ? this.toActorRecord(
+            {
+              id: 'system:status-audit',
+              name: 'System status audit'
+            },
+            now
+          )
+          : undefined
+      );
     const nextDocument: MongoCustomTournamentDocument = {
       ...existing,
       ...setPayload
@@ -394,6 +455,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       startsAt,
       endsAt
     );
+    const statusAudit = this.normalizeStatusAudit(this.toRecord(document.details)?.statusAudit);
 
     return {
       id,
@@ -431,6 +493,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       skin,
       mechanics,
       changeLog: this.normalizeChangeLog(document.changeLog),
+      statusAudit,
       createdBy: this.normalizeActor(document.createdBy),
       updatedBy: this.normalizeActor(document.updatedBy),
       details: this.normalizeDetailsRecord(document)
@@ -452,6 +515,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       id
     );
     const actor = this.toActorRecord(mutation.actor, now);
+    const normalizedActor = this.normalizeActor(actor);
     const createdLog = actor
       ? this.buildCreateChangeLogEntry(
           id,
@@ -460,6 +524,21 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           mutation.mechanics
         )
       : undefined;
+    const status = mutation.status ?? TournamentStatus.REGISTRATION;
+    const detailsPayload = this.toRecord(mutation.details) ?? {};
+    const statusReason = this.pickString(mutation.statusReason) ?? undefined;
+    const statusSource = this.pickString(mutation.statusSource) ?? undefined;
+    if (status === TournamentStatus.CANCELED || statusReason) {
+      detailsPayload.statusAudit = this.buildStatusAuditTrail({
+        previous: this.normalizeStatusAudit(detailsPayload.statusAudit),
+        at: now,
+        toStatus: status,
+        reason: statusReason,
+        actor: normalizedActor,
+        source: statusSource,
+        auto: mutation.autoStatusChange === true
+      });
+    }
 
     return {
       id,
@@ -469,9 +548,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       sourceTournamentSnapshot: this.isRecord(mutation.sourceTournamentSnapshot)
         ? mutation.sourceTournamentSnapshot
         : null,
-      details: this.toRecord(mutation.details) ?? null,
+      details: Object.keys(detailsPayload).length > 0 ? detailsPayload : null,
       name: this.pickString(mutation.name) ?? `Турнир ${id}`,
-      status: mutation.status ?? TournamentStatus.REGISTRATION,
+      status,
       startsAt: this.pickString(mutation.startsAt) ?? null,
       endsAt: this.pickString(mutation.endsAt) ?? null,
       tournamentType: this.pickString(mutation.tournamentType) ?? 'AMERICANO',
@@ -494,8 +573,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       skin: this.normalizeSkin(mutation.skin),
       mechanics: this.normalizeMechanics(mutation.mechanics),
       changeLog: createdLog ? [createdLog] : [],
-      createdBy: actor ?? null,
-      updatedBy: actor ?? null,
+      createdBy: normalizedActor ?? null,
+      updatedBy: normalizedActor ?? null,
       createdAt: this.pickString(options?.createdAt) ?? now,
       updatedAt: now,
       archived: false
@@ -842,6 +921,137 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     };
   }
 
+  private normalizeStatusAudit(value: unknown): TournamentStatusAudit | undefined {
+    const record = this.toRecord(value);
+    if (!record) {
+      return undefined;
+    }
+
+    const history = Array.isArray(record.history)
+      ? record.history
+          .map((entry) => this.normalizeStatusAuditEntry(entry))
+          .filter((entry): entry is TournamentStatusAuditEntry => entry !== undefined)
+      : [];
+    const normalized: TournamentStatusAudit = {
+      lastChange: this.normalizeStatusAuditEntry(record.lastChange),
+      history: history.length > 0 ? history.slice(0, 60) : undefined,
+      canceledAt: this.pickString(record.canceledAt) ?? undefined,
+      canceledBy: this.normalizeActor(record.canceledBy),
+      cancelReason: this.pickString(record.cancelReason) ?? undefined,
+      autoCanceledAt: this.pickString(record.autoCanceledAt) ?? undefined,
+      autoCancelReason: this.pickString(record.autoCancelReason) ?? undefined,
+      autoCancelSource: this.pickString(record.autoCancelSource) ?? undefined
+    };
+    if (!normalized.lastChange && history.length > 0) {
+      normalized.lastChange = history[0];
+    }
+
+    if (
+      !normalized.lastChange &&
+      !normalized.history &&
+      !normalized.canceledAt &&
+      !normalized.canceledBy &&
+      !normalized.cancelReason &&
+      !normalized.autoCanceledAt &&
+      !normalized.autoCancelReason &&
+      !normalized.autoCancelSource
+    ) {
+      return undefined;
+    }
+
+    return normalized;
+  }
+
+  private normalizeStatusAuditEntry(value: unknown): TournamentStatusAuditEntry | undefined {
+    const record = this.toRecord(value);
+    if (!record) {
+      return undefined;
+    }
+
+    const at = this.pickString(record.at);
+    const toStatus = this.normalizeStatusToken(record.toStatus);
+    if (!at || !toStatus) {
+      return undefined;
+    }
+
+    const fromStatus = this.normalizeStatusToken(record.fromStatus) ?? undefined;
+    return {
+      at,
+      ...(fromStatus ? { fromStatus } : {}),
+      toStatus,
+      reason: this.pickString(record.reason) ?? undefined,
+      actor: this.normalizeActor(record.actor),
+      source: this.pickString(record.source) ?? undefined,
+      ...(record.auto === true ? { auto: true } : {})
+    };
+  }
+
+  private buildStatusAuditTrail(input: {
+    previous?: TournamentStatusAudit;
+    at: string;
+    fromStatus?: TournamentStatus;
+    toStatus: TournamentStatus;
+    reason?: string;
+    actor?: TournamentActor;
+    source?: string;
+    auto?: boolean;
+  }): TournamentStatusAudit {
+    const previous = input.previous;
+    const entry: TournamentStatusAuditEntry = {
+      at: input.at,
+      ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
+      toStatus: input.toStatus,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.actor ? { actor: this.normalizeActor(input.actor) } : {}),
+      ...(input.source ? { source: input.source } : {}),
+      ...(input.auto === true ? { auto: true } : {})
+    };
+    const history = [entry, ...(previous?.history ?? [])].slice(0, 60);
+    const next: TournamentStatusAudit = {
+      ...(previous ?? {}),
+      lastChange: entry,
+      history
+    };
+
+    if (input.toStatus === TournamentStatus.CANCELED) {
+      next.canceledAt = input.at;
+      if (input.actor) {
+        next.canceledBy = this.normalizeActor(input.actor);
+      }
+      if (input.reason) {
+        next.cancelReason = input.reason;
+      }
+      if (input.auto === true) {
+        next.autoCanceledAt = input.at;
+        if (input.reason) {
+          next.autoCancelReason = input.reason;
+        }
+        if (input.source) {
+          next.autoCancelSource = input.source;
+        }
+      }
+    }
+
+    return next;
+  }
+
+  private normalizeStatusToken(value: unknown): TournamentStatus | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase();
+    if (
+      normalized === TournamentStatus.PLANNED ||
+      normalized === TournamentStatus.REGISTRATION ||
+      normalized === TournamentStatus.RUNNING ||
+      normalized === TournamentStatus.FINISHED ||
+      normalized === TournamentStatus.CANCELED ||
+      normalized === TournamentStatus.UNKNOWN
+    ) {
+      return normalized;
+    }
+    return null;
+  }
+
   private normalizeChangeLog(value: unknown): TournamentChangeLogEntry[] {
     if (!Array.isArray(value)) {
       return [];
@@ -1059,6 +1269,66 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       this.formatAuditNumber(beforeTournament.waitlist?.length),
       this.formatAuditNumber(afterTournament.waitlist?.length)
     );
+    const beforeStatusAudit = this.normalizeStatusAudit(
+      this.toRecord(beforeTournament.details)?.statusAudit
+    );
+    const afterStatusAudit = this.normalizeStatusAudit(
+      this.toRecord(afterTournament.details)?.statusAudit
+    );
+    pushChange(
+      'statusAudit.lastChange.at',
+      'Статус изменён',
+      this.formatAuditDate(beforeStatusAudit?.lastChange?.at),
+      this.formatAuditDate(afterStatusAudit?.lastChange?.at)
+    );
+    pushChange(
+      'statusAudit.lastChange.actor',
+      'Кто изменил статус',
+      this.formatAuditActor(beforeStatusAudit?.lastChange?.actor),
+      this.formatAuditActor(afterStatusAudit?.lastChange?.actor)
+    );
+    pushChange(
+      'statusAudit.lastChange.reason',
+      'Причина смены статуса',
+      beforeStatusAudit?.lastChange?.reason,
+      afterStatusAudit?.lastChange?.reason
+    );
+    pushChange(
+      'statusAudit.canceledAt',
+      'Отменён: дата и время',
+      this.formatAuditDate(beforeStatusAudit?.canceledAt),
+      this.formatAuditDate(afterStatusAudit?.canceledAt)
+    );
+    pushChange(
+      'statusAudit.canceledBy',
+      'Отменён: кем',
+      this.formatAuditActor(beforeStatusAudit?.canceledBy),
+      this.formatAuditActor(afterStatusAudit?.canceledBy)
+    );
+    pushChange(
+      'statusAudit.cancelReason',
+      'Отменён: причина',
+      beforeStatusAudit?.cancelReason,
+      afterStatusAudit?.cancelReason
+    );
+    pushChange(
+      'statusAudit.autoCanceledAt',
+      'Автоотмена: дата и время',
+      this.formatAuditDate(beforeStatusAudit?.autoCanceledAt),
+      this.formatAuditDate(afterStatusAudit?.autoCanceledAt)
+    );
+    pushChange(
+      'statusAudit.autoCancelReason',
+      'Автоотмена: причина',
+      beforeStatusAudit?.autoCancelReason,
+      afterStatusAudit?.autoCancelReason
+    );
+    pushChange(
+      'statusAudit.autoCancelSource',
+      'Автоотмена: источник',
+      beforeStatusAudit?.autoCancelSource,
+      afterStatusAudit?.autoCancelSource
+    );
     pushChange(
       'skin.title',
       'Skin: заголовок',
@@ -1214,6 +1484,20 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       return normalized.length > 0 ? normalized.join(', ') : undefined;
     }
     return this.pickString(value);
+  }
+
+  private formatAuditActor(actor?: TournamentActor): string | undefined {
+    const normalized = this.normalizeActor(actor);
+    if (!normalized) {
+      return undefined;
+    }
+
+    return (
+      normalized.name
+      ?? normalized.login
+      ?? normalized.id
+      ?? undefined
+    );
   }
 
   private normalizeChangeAction(value: unknown): 'CREATE' | 'UPDATE' {
