@@ -68,6 +68,32 @@ export interface VivaAdminTournamentEnergyCheckoutResult {
   raw?: unknown;
 }
 
+export interface VivaAdminBookingPaymentCheckoutInput {
+  clientPhone: string;
+  clientId?: string;
+  studioId: string;
+  bookingIds: string[];
+  paymentMethod: 'SMS';
+  amountMinor: number;
+  baseAmountMinor: number;
+  discountAmountMinor: number;
+  discountReason: string;
+  productId?: string;
+  productName?: string;
+}
+
+export interface VivaAdminBookingPaymentCheckoutResult {
+  clientId: string;
+  productId: string;
+  bookingIds: string[];
+  transactionId?: string;
+  paymentUrl?: string;
+  toPayMinor?: number;
+  paymentExpiresAt?: string;
+  paid?: boolean;
+  raw?: unknown;
+}
+
 interface VivaClientsSearchResponse {
   content?: Array<Record<string, unknown>>;
 }
@@ -100,6 +126,15 @@ interface VivaAdminProductResolution {
   type?: string;
   costMinor?: number;
   raw?: Record<string, unknown>;
+}
+
+interface VivaAdminTransactionResponseParseResult {
+  subscriptionId?: string;
+  transactionId?: string;
+  paymentUrl?: string;
+  toPayMinor?: number;
+  paymentExpiresAt?: string;
+  paid?: boolean;
 }
 
 interface VivaAdminSettingsRecord {
@@ -365,11 +400,143 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       hasReturnUrls: Boolean(input.successUrl || input.failUrl)
     });
 
-    const parsed = this.parseTournamentEnergyTransactionResponse(responsePayload);
+    const parsed = this.parseAdminTransactionResponse(responsePayload);
     return {
       clientId: client.id,
       productId: product.id,
       ...parsed,
+      raw: responsePayload
+    };
+  }
+
+  async createBookingPaymentCheckout(
+    input: VivaAdminBookingPaymentCheckoutInput
+  ): Promise<VivaAdminBookingPaymentCheckoutResult> {
+    const clientPhone = this.normalizePhone(input.clientPhone);
+    const studioId = this.normalizeOptional(input.studioId);
+    const discountReason = this.normalizeOptional(input.discountReason);
+    const bookingIds = Array.from(
+      new Set(
+        (Array.isArray(input.bookingIds) ? input.bookingIds : [])
+          .map((bookingId) => this.normalizeOptional(bookingId))
+          .filter((bookingId): bookingId is string => Boolean(bookingId))
+      )
+    );
+    if (!clientPhone || !studioId || !discountReason || bookingIds.length === 0) {
+      throw new BadRequestException(
+        'Client phone, studioId, bookingIds and discount reason are required'
+      );
+    }
+
+    const amountMinor = Math.trunc(input.amountMinor);
+    const baseAmountMinor = Math.trunc(input.baseAmountMinor);
+    const discountAmountMinor = Math.trunc(input.discountAmountMinor);
+    if (!Number.isFinite(amountMinor) || amountMinor < 0) {
+      throw new BadRequestException('Amount must be a non-negative minor-unit integer');
+    }
+    if (!Number.isFinite(baseAmountMinor) || baseAmountMinor <= 0) {
+      throw new BadRequestException('Base amount must be a positive minor-unit integer');
+    }
+    if (!Number.isFinite(discountAmountMinor) || discountAmountMinor < 0) {
+      throw new BadRequestException('Discount amount must be a non-negative minor-unit integer');
+    }
+    if (baseAmountMinor - discountAmountMinor !== amountMinor) {
+      throw new BadRequestException('Booking payment discount does not match checkout amount');
+    }
+
+    const token = await this.resolveAccessToken();
+    if (!token) {
+      throw new InternalServerErrorException('Viva admin API token is not configured');
+    }
+
+    const resolved = await this.getResolvedSettings();
+    const client = await this.resolveAdminClient({
+      token,
+      baseUrl: resolved.config.baseUrl,
+      phone: clientPhone,
+      clientId: this.normalizeOptional(input.clientId)
+    });
+    if (!client) {
+      throw new BadRequestException('Viva client was not found by checkout phone');
+    }
+
+    const product = await this.resolveAvailableBookingProduct({
+      token,
+      baseUrl: resolved.config.baseUrl,
+      studioId,
+      clientId: client.id,
+      bookingIds,
+      productId: input.productId,
+      productName: input.productName
+    });
+    if (!product) {
+      throw new BadRequestException('Viva booking payment product was not found');
+    }
+    if (
+      product.costMinor !== undefined &&
+      product.costMinor !== baseAmountMinor
+    ) {
+      throw new BadRequestException('Viva booking product cost does not match checkout base amount');
+    }
+
+    const productType = (product.type ?? 'SERVICE').toUpperCase();
+    if (productType !== 'SERVICE') {
+      throw new BadRequestException('Viva booking payment product must be SERVICE');
+    }
+
+    try {
+      await this.fetchAdminJson(
+        `/api/v1/contracts/clients/${encodeURIComponent(client.id)}?productIds=${encodeURIComponent(product.id)}`,
+        token,
+        resolved.config.baseUrl
+      );
+    } catch (error) {
+      throw new BadRequestException(`Viva contract check failed: ${String(error)}`);
+    }
+
+    const payload = {
+      clientPhone: this.formatPhoneForViva(clientPhone),
+      paymentMethod: input.paymentMethod,
+      products: [
+        {
+          id: product.id,
+          count: 1,
+          customAmount: null,
+          type: 'SERVICE',
+          discount: discountAmountMinor,
+          bookingIds
+        }
+      ],
+      studioId,
+      discountReason,
+      offlineTillId: null,
+      deposit: 0
+    };
+
+    const responsePayload = await this.fetchAdminJsonWithBody(
+      '/api/v1/transactions',
+      token,
+      resolved.config.baseUrl,
+      payload
+    );
+    const parsed = this.parseAdminTransactionResponse(responsePayload);
+    const toPayMinor = parsed.paid === true ? 0 : parsed.toPayMinor ?? amountMinor;
+    if (toPayMinor > 0 && !parsed.paymentUrl && parsed.paid !== true) {
+      throw new BadRequestException('Viva created a payable transaction without payment URL');
+    }
+    if (toPayMinor > 0 && toPayMinor !== amountMinor) {
+      throw new BadRequestException('Viva transaction amount does not match checkout amount');
+    }
+
+    return {
+      clientId: client.id,
+      productId: product.id,
+      bookingIds,
+      transactionId: parsed.transactionId,
+      paymentUrl: parsed.paymentUrl,
+      toPayMinor,
+      paymentExpiresAt: parsed.paymentExpiresAt,
+      paid: parsed.paid,
       raw: responsePayload
     };
   }
@@ -678,9 +845,57 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return record ? this.toAdminProductResolution(record) : null;
   }
 
-  private parseTournamentEnergyTransactionResponse(
+  private async resolveAvailableBookingProduct(input: {
+    token: string;
+    baseUrl: string;
+    studioId: string;
+    clientId: string;
+    bookingIds: string[];
+    productId?: string;
+    productName?: string;
+  }): Promise<VivaAdminProductResolution | null> {
+    const payload = await this.fetchAdminJsonWithBody(
+      '/api/v1/products/available/by-booking',
+      input.token,
+      input.baseUrl,
+      {
+        bookingIds: input.bookingIds,
+        clientId: input.clientId,
+        studioId: input.studioId
+      }
+    );
+    const records = this.unwrapRecords(payload);
+    const expectedProductId = this.normalizeOptional(input.productId);
+    const configuredIds = this.parseCsvList(process.env.VIVA_BOOKING_PAYMENT_PRODUCT_IDS);
+    const expectedName =
+      this.normalizeOptional(input.productName) ??
+      this.normalizeOptional(process.env.VIVA_BOOKING_PAYMENT_PRODUCT_NAME) ??
+      '1/4 игры';
+    const bookingIdSet = new Set(input.bookingIds);
+
+    const selected =
+      (expectedProductId
+        ? records.find((record) => this.pickString(record.id) === expectedProductId)
+        : undefined)
+      ?? (configuredIds.length > 0
+        ? records.find((record) => {
+            const id = this.pickString(record.id);
+            return id ? configuredIds.includes(id) : false;
+          })
+        : undefined)
+      ?? records.find((record) =>
+        this.isBookingPaymentProduct(record, expectedName, bookingIdSet)
+      )
+      ?? records.find((record) =>
+        this.isVivaServiceProduct(record) && this.recordReferencesAnyBooking(record, bookingIdSet)
+      );
+
+    return selected ? this.toAdminProductResolution(selected) : null;
+  }
+
+  private parseAdminTransactionResponse(
     payload: unknown
-  ): Omit<VivaAdminTournamentEnergyCheckoutResult, 'clientId' | 'productId' | 'raw'> {
+  ): VivaAdminTransactionResponseParseResult {
     const toPayMinor = this.findFirstMatchingNumber(payload, (key) => {
       const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
       return [
@@ -746,7 +961,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return {
       id,
       name: this.pickString(record.name) ?? this.pickString(record.title),
-      type: this.pickString(record.type),
+      type: this.pickString(record.type) ?? this.pickString(record.productType),
       costMinor: this.readMinorAmount(
         record.cost ??
         record.costMinor ??
@@ -756,6 +971,63 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       ),
       raw: record
     };
+  }
+
+  private isBookingPaymentProduct(
+    record: Record<string, unknown>,
+    expectedName: string,
+    bookingIds: Set<string>
+  ): boolean {
+    if (!this.isVivaServiceProduct(record)) {
+      return false;
+    }
+    const normalizedName = String(
+      this.pickString(record.name) ??
+      this.pickString(record.title) ??
+      ''
+    ).trim().toLowerCase();
+    const normalizedExpectedName = expectedName.trim().toLowerCase();
+    if (
+      normalizedName &&
+      (normalizedName === normalizedExpectedName || normalizedName.includes(normalizedExpectedName))
+    ) {
+      return true;
+    }
+
+    return Boolean(normalizedName) && this.recordReferencesAnyBooking(record, bookingIds);
+  }
+
+  private isVivaServiceProduct(record: Record<string, unknown>): boolean {
+    const type = (
+      this.pickString(record.productType) ??
+      this.pickString(record.type) ??
+      ''
+    ).toUpperCase();
+    return !type || type === 'SERVICE';
+  }
+
+  private recordReferencesAnyBooking(
+    value: unknown,
+    bookingIds: Set<string>,
+    seen = new Set<unknown>()
+  ): boolean {
+    if (bookingIds.size === 0) {
+      return false;
+    }
+    const direct = this.pickString(value);
+    if (direct && bookingIds.has(direct)) {
+      return true;
+    }
+    if (!value || typeof value !== 'object' || seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      return value.some((item) => this.recordReferencesAnyBooking(item, bookingIds, seen));
+    }
+    return Object.values(value as Record<string, unknown>).some((item) =>
+      this.recordReferencesAnyBooking(item, bookingIds, seen)
+    );
   }
 
   private isTournamentEnergyProduct(
