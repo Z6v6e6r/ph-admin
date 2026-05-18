@@ -3198,6 +3198,15 @@
         transform:translateY(-1px);
         box-shadow:0 12px 22px rgba(111,77,246,.18);
       }
+      .phab-admin-tournament-actions{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-tournament-actions .phab-admin-btn-secondary{
+        min-width:92px;
+      }
       .phab-admin-games-row{
         cursor:pointer;
         transition:background .18s ease;
@@ -14641,6 +14650,8 @@
         tr.appendChild(sourceCell);
 
         var actionsCell = document.createElement('td');
+        var actionsWrap = document.createElement('div');
+        actionsWrap.className = 'phab-admin-tournament-actions';
         var manageBtn = document.createElement('button');
         manageBtn.type = 'button';
         manageBtn.className =
@@ -14653,7 +14664,18 @@
         manageBtn.addEventListener('click', function () {
           openTournamentEditor(tournament).catch(handleError);
         });
-        actionsCell.appendChild(manageBtn);
+        actionsWrap.appendChild(manageBtn);
+
+        var logsBtn = document.createElement('button');
+        logsBtn.type = 'button';
+        logsBtn.className = 'phab-admin-btn-secondary';
+        logsBtn.textContent = 'Логи';
+        logsBtn.addEventListener('click', function () {
+          openTournamentEditor(tournament, { showLogs: true }).catch(handleError);
+        });
+        actionsWrap.appendChild(logsBtn);
+
+        actionsCell.appendChild(actionsWrap);
         tr.appendChild(actionsCell);
 
         tbody.appendChild(tr);
@@ -15768,8 +15790,108 @@
       };
     }
 
+    function getTournamentStatusAuditRecord(tournament) {
+      var directAudit = normalizeObject(tournament && tournament.statusAudit);
+      if (Object.keys(directAudit).length > 0) {
+        return directAudit;
+      }
+      var details = normalizeObject(tournament && tournament.details);
+      return normalizeObject(details.statusAudit);
+    }
+
+    function formatTournamentStatusAuditSource(value) {
+      var normalized = String(value || '').trim();
+      if (!normalized) {
+        return '';
+      }
+      var upper = normalized.toUpperCase();
+      if (upper === 'VIVA_SYNC') {
+        return 'Viva sync';
+      }
+      return normalized;
+    }
+
+    function getTournamentStatusAuditEntries(tournament) {
+      var audit = getTournamentStatusAuditRecord(tournament);
+      var history = normalizeArray(audit.history);
+      if (history.length === 0) {
+        var lastChange = normalizeObject(audit.lastChange);
+        if (Object.keys(lastChange).length > 0) {
+          history = [lastChange];
+        }
+      }
+
+      var entries = history
+        .map(function (item, index) {
+          var source = normalizeObject(item);
+          var atRaw = String(source.at || '').trim();
+          var atTimestamp = Date.parse(atRaw);
+          var actor = normalizeObject(source.actor);
+          var actorLabel = String(actor.name || actor.login || actor.id || '').trim();
+          var toStatus = formatTournamentStatusLabel(source.toStatus);
+          var fromStatus = formatTournamentStatusLabel(source.fromStatus);
+          var sourceLabel = formatTournamentStatusAuditSource(source.source);
+          var summary = fromStatus && toStatus && fromStatus !== toStatus
+            ? 'Статус: ' + fromStatus + ' → ' + toStatus
+            : toStatus
+              ? 'Статус: ' + toStatus
+              : 'Смена статуса';
+          var changes = [];
+          if (String(source.reason || '').trim()) {
+            changes.push('Причина: ' + String(source.reason).trim());
+          }
+
+          return {
+            id: String(source.id || 'tournament-status-audit-' + index),
+            summary: summary,
+            meta: [
+              actorLabel,
+              atRaw ? formatDateTimeFull(atRaw) : '',
+              sourceLabel,
+              source.auto === true ? 'авто' : ''
+            ]
+              .filter(Boolean)
+              .join(' · '),
+            changes: changes,
+            atTimestamp: Number.isFinite(atTimestamp) ? atTimestamp : 0
+          };
+        })
+        .filter(function (item) {
+          return item.summary;
+        });
+
+      if (entries.length > 0) {
+        return entries;
+      }
+
+      if (audit.canceledAt || audit.cancelReason || audit.autoCanceledAt || audit.autoCancelReason) {
+        var canceledAt = String(audit.autoCanceledAt || audit.canceledAt || '').trim();
+        var canceledAtTimestamp = Date.parse(canceledAt);
+        var canceledBy = normalizeObject(audit.canceledBy);
+        var canceledByLabel = String(canceledBy.name || canceledBy.login || canceledBy.id || '').trim();
+        var canceledReason = String(audit.autoCancelReason || audit.cancelReason || '').trim();
+        var canceledSource = formatTournamentStatusAuditSource(audit.autoCancelSource);
+        return [{
+          id: String((tournament && tournament.id) || 'tournament') + ':status-audit-fallback',
+          summary: 'Статус: ' + formatTournamentStatusLabel('CANCELED'),
+          meta: [
+            canceledByLabel,
+            canceledAt ? formatDateTimeFull(canceledAt) : '',
+            canceledSource,
+            audit.autoCanceledAt ? 'авто' : ''
+          ]
+            .filter(Boolean)
+            .join(' · '),
+          changes: canceledReason ? ['Причина: ' + canceledReason] : [],
+          atTimestamp: Number.isFinite(canceledAtTimestamp) ? canceledAtTimestamp : 0
+        }];
+      }
+
+      return [];
+    }
+
     function getTournamentChangeLogEntries(tournament) {
-      var entries = normalizeArray(tournament && tournament.changeLog)
+      var changeLogEntries = normalizeArray(tournament && tournament.changeLog)
         .map(function (item, index) {
           var source = normalizeObject(item);
           var changes = normalizeArray(source.changes)
@@ -15794,27 +15916,41 @@
             })
             .filter(Boolean);
           var actor = normalizeObject(source.actor);
+          var atRaw = String(source.at || '').trim();
+          var atTimestamp = Date.parse(atRaw);
           return {
             id: String(source.id || 'tournament-history-' + index),
             summary: String(source.summary || source.title || 'Изменение'),
             meta: [
               String(actor.name || actor.login || actor.id || '').trim(),
-              formatDateTimeFull(source.at),
+              atRaw ? formatDateTimeFull(atRaw) : '',
               String(source.scope || '').trim().toUpperCase() === 'MECHANICS'
                 ? 'турнирная механика'
                 : 'карточка турнира'
             ]
               .filter(Boolean)
               .join(' · '),
-            changes: changes
+            changes: changes,
+            atTimestamp: Number.isFinite(atTimestamp) ? atTimestamp : 0
           };
         })
         .filter(function (item) {
           return item.summary;
         });
+      var statusAuditEntries = getTournamentStatusAuditEntries(tournament);
+      var entries = changeLogEntries.concat(statusAuditEntries).sort(function (left, right) {
+        return (right.atTimestamp || 0) - (left.atTimestamp || 0);
+      });
 
       if (entries.length > 0) {
-        return entries;
+        return entries.map(function (entry) {
+          return {
+            id: entry.id,
+            summary: entry.summary,
+            meta: entry.meta,
+            changes: entry.changes
+          };
+        });
       }
 
       var fallback = [];
@@ -16334,6 +16470,7 @@
         maxPlayers: Math.max(2, Number(form.maxPlayers.value || 0) || 8),
         slug: String(form.slug.value || '').trim() || undefined,
         status: String(form.status.value || 'REGISTRATION').trim().toUpperCase(),
+        statusReason: String(form.statusReason.value || '').trim() || undefined,
         studioName: String(form.studioName.value || '').trim() || undefined,
         allowedManagerPhones: parseTournamentPhoneList(form.allowedManagerPhones.value),
         publicationCommunityIds: normalizeTournamentPublicationCommunityIds(
@@ -17065,10 +17202,11 @@
       dom.tournamentEditorModal.classList.add('phab-admin-hidden');
     }
 
-    async function openTournamentEditor(tournament) {
+    async function openTournamentEditor(tournament, options) {
       if (!tournament || !tournament.id) {
         return;
       }
+      var viewOptions = normalizeObject(options);
 
       var customTournament = null;
       if (String(tournament.source || '') === 'CUSTOM') {
@@ -17098,6 +17236,13 @@
         model && model.tournamentType
       );
       var changeLogEntries = getTournamentChangeLogEntries(customTournament || model);
+      var statusAudit = getTournamentStatusAuditRecord(customTournament || model);
+      var initialStatusReason = String(
+        statusAudit.lastChange && statusAudit.lastChange.reason ||
+          statusAudit.cancelReason ||
+          statusAudit.autoCancelReason ||
+          ''
+      ).trim();
       var liveSourceSnapshot = getTournamentSourceSnapshot(liveSourceTournament);
       var storedSourceSnapshot = getTournamentSourceSnapshot(model);
       var sourceSnapshot =
@@ -17168,6 +17313,13 @@
         statusSelect.value = 'REGISTRATION';
       }
       appendCommunityFormField(form, 'Статус', statusSelect);
+
+      var statusReasonInput = document.createElement('textarea');
+      statusReasonInput.className = 'phab-admin-input';
+      statusReasonInput.rows = 2;
+      statusReasonInput.value = initialStatusReason;
+      statusReasonInput.placeholder = 'Причина смены статуса (необязательно)';
+      appendCommunityFormField(form, 'Причина смены статуса', statusReasonInput, true);
 
       var startsAtInput = document.createElement('input');
       startsAtInput.type = 'text';
@@ -17315,6 +17467,7 @@
       dom.tournamentEditorBody.appendChild(help);
 
       var editorViewKey = String((customTournament && customTournament.id) || (tournament && tournament.id) || '');
+      var showLogsInitially = viewOptions.showLogs === true;
       var mechanicsSectionToggleCard = createCommunitySectionCard(
         'Служебные блоки',
         'Дополнительные секции карточки раскрываются и подгружаются по переключателю.'
@@ -17334,9 +17487,16 @@
       var resultsSectionToggle = createTournamentBlockSwitch('Показать результат', false);
       sectionToggles.appendChild(resultsSectionToggle.root);
 
+      var logsSectionToggle = createTournamentBlockSwitch('Показать логи', showLogsInitially);
+      sectionToggles.appendChild(logsSectionToggle.root);
+
       var mechanicsSectionHost = document.createElement('div');
       mechanicsSectionHost.className = 'phab-admin-hidden';
       dom.tournamentEditorBody.appendChild(mechanicsSectionHost);
+
+      var logsSectionHost = document.createElement('div');
+      logsSectionHost.className = 'phab-admin-hidden';
+      dom.tournamentEditorBody.appendChild(logsSectionHost);
 
       var mechanicsCard = createCommunitySectionCard(
         'Турнирная механика',
@@ -17560,10 +17720,10 @@
       });
 
       var historyCard = createCommunitySectionCard(
-        'История изменений',
-        'Кто, когда и что поменял в карточке и турнирной механике.'
+        'Логи турнира',
+        'Журнал событий карточки: смена статуса, автоотмены и изменения параметров.'
       );
-      mechanicsSectionHost.appendChild(historyCard.card);
+      logsSectionHost.appendChild(historyCard.card);
 
       var historyList = document.createElement('div');
       historyList.className = 'phab-admin-community-history-list';
@@ -17984,6 +18144,10 @@
           'phab-admin-hidden',
           resultsSectionToggle.input.checked !== true
         );
+        logsSectionHost.classList.toggle(
+          'phab-admin-hidden',
+          logsSectionToggle.input.checked !== true
+        );
         if (resultsSectionToggle.input.checked === true) {
           ensureTournamentResultsLoaded().catch(function (error) {
             setStatus(
@@ -17998,6 +18162,7 @@
 
       mechanicsSectionToggle.input.addEventListener('change', syncTournamentOptionalSections);
       resultsSectionToggle.input.addEventListener('change', syncTournamentOptionalSections);
+      logsSectionToggle.input.addEventListener('change', syncTournamentOptionalSections);
 
       state.tournamentEditor = {
         viewKey: editorViewKey,
@@ -18009,6 +18174,7 @@
         form: {
           name: nameInput,
           status: statusSelect,
+          statusReason: statusReasonInput,
           startsAt: startsAtInput,
           tournamentType: typeInput,
           isPublic: isPublicSwitch.input,
@@ -18062,6 +18228,10 @@
 
       dom.tournamentEditorModal.classList.remove('phab-admin-hidden');
       window.setTimeout(function () {
+        if (showLogsInitially) {
+          logsSectionHost.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
         nameInput.focus();
         nameInput.select();
       }, 0);
