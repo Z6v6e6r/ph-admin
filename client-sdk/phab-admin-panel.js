@@ -22125,6 +22125,16 @@
       setStatus(label + ': для синхронизации с боевым ЛК нужен отдельный moderation API.', false);
     }
 
+    function openCommunitySettingsFromModeration(communityId) {
+      var normalizedCommunityId = String(communityId || '').trim();
+      if (!normalizedCommunityId) {
+        return;
+      }
+      state.selectedCommunityId = normalizedCommunityId;
+      state.communityCenterTab = 'settings';
+      renderCommunities();
+    }
+
     function createCommunityStatusBadge(descriptor) {
       var badge = document.createElement('span');
       badge.className =
@@ -23346,6 +23356,15 @@
 
       dom.communityActions.appendChild(
         createCommunityActionButton(
+          'Редактировать',
+          'phab-admin-community-main-action',
+          function () {
+            openCommunitySettingsFromModeration(community.id);
+          }
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
           model.status.key === 'HIDDEN' ? 'Показать' : 'Скрыть',
           'phab-admin-community-main-action phab-admin-community-main-action-danger',
           function () {
@@ -23620,6 +23639,11 @@
             state.selectedCommunityId = community.id;
             state.communityCenterTab = 'overview';
             renderCommunities();
+          })
+        );
+        actions.appendChild(
+          createCommunityActionButton('Редактировать', 'phab-admin-community-card-action', function () {
+            openCommunitySettingsFromModeration(community.id);
           })
         );
         actions.appendChild(
