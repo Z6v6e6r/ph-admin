@@ -53,7 +53,7 @@ export class UpdateCommunityFeedItemDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(500_000)
+  @MaxLength(6_000_000)
   imageUrl?: string | null;
 
   @IsOptional()
