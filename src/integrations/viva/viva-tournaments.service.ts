@@ -27,8 +27,7 @@ export class VivaTournamentsService {
     this.normalizeBaseUrl(process.env.VIVA_END_USER_API_BASE_URL) ||
     this.normalizeBaseUrl(process.env.VIVA_ADMIN_API_BASE_URL) ||
     'https://api.vivacrm.ru';
-  private readonly widgetId =
-    this.normalizeString(process.env.VIVA_END_USER_WIDGET_ID) || 'iSkq6G';
+  private readonly widgetIds = this.resolveWidgetIds();
   private readonly exerciseTypeIds = this.readStringListEnv(
     'VIVA_TOURNAMENT_EXERCISE_TYPE_IDS',
     ['839', '1013']
@@ -45,27 +44,45 @@ export class VivaTournamentsService {
   constructor(@Optional() private readonly vivaAdminService?: VivaAdminService) {}
 
   async listTournaments(options?: { date?: string }): Promise<Tournament[] | null> {
-    if (!this.widgetId) {
+    if (this.widgetIds.length === 0) {
       return null;
     }
 
-    try {
-      return await this.loadTournaments(options);
-    } catch (error) {
-      this.logger.warn(`Failed to load Viva tournaments: ${String(error)}`);
+    const deduplicated = new Map<string, Tournament>();
+    let loadedAtLeastOneWidget = false;
+
+    for (const widgetId of this.widgetIds) {
+      try {
+        const tournaments = await this.loadTournaments(widgetId, options);
+        loadedAtLeastOneWidget = true;
+        tournaments.forEach((tournament) => {
+          deduplicated.set(tournament.id, tournament);
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Failed to load Viva tournaments for widget ${widgetId}: ${String(error)}`
+        );
+      }
+    }
+
+    if (!loadedAtLeastOneWidget) {
       return null;
     }
+
+    return this.sortTournaments(Array.from(deduplicated.values()));
   }
 
   async findTournamentById(id: string): Promise<Tournament | null> {
     const normalizedId = this.normalizeString(id);
-    if (!normalizedId || !this.widgetId) {
+    if (!normalizedId || this.widgetIds.length === 0) {
       return null;
     }
 
-    const detailed = await this.loadTournamentDetails(normalizedId);
-    if (detailed) {
-      return detailed;
+    for (const widgetId of this.widgetIds) {
+      const detailed = await this.loadTournamentDetails(normalizedId, widgetId);
+      if (detailed) {
+        return detailed;
+      }
     }
 
     const tournaments = await this.listTournaments();
@@ -74,7 +91,10 @@ export class VivaTournamentsService {
       return null;
     }
 
-    const related = await this.fetchRelatedParticipantRecords(normalizedId);
+    const relatedByWidget = await Promise.all(
+      this.widgetIds.map((widgetId) => this.fetchRelatedParticipantRecords(normalizedId, widgetId))
+    );
+    const related = relatedByWidget.flat();
     const participants = this.resolveParticipants({
       clients: related,
       participants: related,
@@ -100,7 +120,7 @@ export class VivaTournamentsService {
   }): Promise<boolean> {
     const exerciseId = this.normalizeString(input.exerciseId);
     const phone = this.readPhone(input.phone);
-    if (!this.widgetId || !exerciseId || !phone) {
+    if (this.widgetIds.length === 0 || !exerciseId || !phone) {
       return false;
     }
 
@@ -120,52 +140,56 @@ export class VivaTournamentsService {
       Origin: 'https://padlhub.ru',
       Referer: 'https://padlhub.ru/'
     };
-    const paths = [
-      `/end-user/api/v1/${encodeURIComponent(this.widgetId)}/exercises/${encodeURIComponent(exerciseId)}/bookings`,
-      `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`
-    ];
-
-    for (const path of paths) {
-      try {
-        const response = await fetch(new URL(path, `${this.apiBaseUrl}/`).toString(), {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-          signal: this.buildAbortSignal()
-        });
-        if (response.ok) {
-          return true;
+    for (const widgetId of this.widgetIds) {
+      const paths = [
+        `/end-user/api/v1/${encodeURIComponent(widgetId)}/exercises/${encodeURIComponent(exerciseId)}/bookings`,
+        `/api/v1/exercises/${encodeURIComponent(exerciseId)}/bookings`
+      ];
+      for (const path of paths) {
+        try {
+          const response = await fetch(new URL(path, `${this.apiBaseUrl}/`).toString(), {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: this.buildAbortSignal()
+          });
+          if (response.ok) {
+            return true;
+          }
+          this.logger.warn(
+            `Viva booking request failed for ${exerciseId}: ${response.status} ${response.statusText}`
+          );
+        } catch (error) {
+          this.logger.warn(`Viva booking request failed for ${exerciseId}: ${String(error)}`);
         }
-        this.logger.warn(
-          `Viva booking request failed for ${exerciseId}: ${response.status} ${response.statusText}`
-        );
-      } catch (error) {
-        this.logger.warn(`Viva booking request failed for ${exerciseId}: ${String(error)}`);
       }
     }
 
     return false;
   }
 
-  private async loadTournaments(options?: { date?: string }): Promise<Tournament[]> {
+  private async loadTournaments(
+    widgetId: string,
+    options?: { date?: string }
+  ): Promise<Tournament[]> {
     const requestedDate = this.normalizeDateKey(options?.date);
     const today = this.toDateKey(new Date());
     const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
     const [studios, trainers] = requestedDate
       ? [[], []]
       : await Promise.all([
-          this.fetchEntitySummariesSafe('studios'),
-          this.fetchEntitySummariesSafe('trainers')
+          this.fetchEntitySummariesSafe('studios', widgetId),
+          this.fetchEntitySummariesSafe('trainers', widgetId)
         ]);
     if (!requestedDate) {
-      await this.fetchProfile();
+      await this.fetchProfile(widgetId);
     }
 
     const dates = requestedDate
       ? [requestedDate]
-      : await this.resolveTournamentDateKeys(today, dateTo, studios.map((studio) => studio.id));
+      : await this.resolveTournamentDateKeys(today, dateTo, studios.map((studio) => studio.id), widgetId);
     const exercises = await Promise.all(
-      dates.map((dateKey) => this.fetchExercisesByDate(dateKey))
+      dates.map((dateKey) => this.fetchExercisesByDate(dateKey, widgetId))
     );
 
     const studioNames = new Map(studios.map((studio) => [studio.id, studio.name]));
@@ -185,7 +209,11 @@ export class VivaTournamentsService {
       }
     }
 
-    return Array.from(deduplicated.values()).sort((left, right) => {
+    return this.sortTournaments(Array.from(deduplicated.values()));
+  }
+
+  private sortTournaments(tournaments: Tournament[]): Tournament[] {
+    return tournaments.sort((left, right) => {
       const leftStartsAt = Date.parse(left.startsAt || '');
       const rightStartsAt = Date.parse(right.startsAt || '');
       const leftRank = Number.isFinite(leftStartsAt) ? leftStartsAt : Number.MAX_SAFE_INTEGER;
@@ -199,16 +227,16 @@ export class VivaTournamentsService {
     });
   }
 
-  private async loadTournamentDetails(id: string): Promise<Tournament | null> {
+  private async loadTournamentDetails(id: string, widgetId: string): Promise<Tournament | null> {
     const detailRecord = await this.fetchFirstAvailableRecord([
       `exercises/${encodeURIComponent(id)}`,
       `exercises/${encodeURIComponent(id)}?include=clients,participants,bookings`
-    ]);
+    ], widgetId);
     if (!detailRecord) {
       return null;
     }
 
-    const related = await this.fetchRelatedParticipantRecords(id);
+    const related = await this.fetchRelatedParticipantRecords(id, widgetId);
     const mergedRecord: VivaRawRecord = {
       ...detailRecord,
       clients: [
@@ -240,10 +268,13 @@ export class VivaTournamentsService {
     };
   }
 
-  private async fetchFirstAvailableRecord(paths: string[]): Promise<VivaRawRecord | null> {
+  private async fetchFirstAvailableRecord(
+    paths: string[],
+    widgetId: string
+  ): Promise<VivaRawRecord | null> {
     for (const path of paths) {
       try {
-        const payload = await this.fetchJson(path);
+        const payload = await this.fetchJson(path, undefined, widgetId);
         const record = this.unwrapFirstRecord(payload);
         if (record) {
           return record;
@@ -255,7 +286,10 @@ export class VivaTournamentsService {
     return null;
   }
 
-  private async fetchRelatedParticipantRecords(id: string): Promise<VivaRawRecord[]> {
+  private async fetchRelatedParticipantRecords(
+    id: string,
+    widgetId: string
+  ): Promise<VivaRawRecord[]> {
     const paths = [
       `exercises/${encodeURIComponent(id)}/bookings`,
       `exercises/${encodeURIComponent(id)}/clients`,
@@ -263,7 +297,7 @@ export class VivaTournamentsService {
       `bookings?exerciseId=${encodeURIComponent(id)}`
     ];
     const [endUserResults, adminRecords] = await Promise.all([
-      Promise.allSettled(paths.map((path) => this.fetchJson(path))),
+      Promise.allSettled(paths.map((path) => this.fetchJson(path, undefined, widgetId))),
       this.fetchAdminParticipantRecords(id)
     ]);
     return [
@@ -287,8 +321,8 @@ export class VivaTournamentsService {
     }
   }
 
-  private async fetchEntitySummaries(path: string): Promise<VivaEntitySummary[]> {
-    const payload = await this.fetchJson(path);
+  private async fetchEntitySummaries(path: string, widgetId: string): Promise<VivaEntitySummary[]> {
+    const payload = await this.fetchJson(path, undefined, widgetId);
     const summaries: VivaEntitySummary[] = [];
 
     for (const record of this.unwrapRecords(payload)) {
@@ -313,42 +347,47 @@ export class VivaTournamentsService {
     return summaries;
   }
 
-  private async fetchEntitySummariesSafe(path: string): Promise<VivaEntitySummary[]> {
+  private async fetchEntitySummariesSafe(
+    path: string,
+    widgetId: string
+  ): Promise<VivaEntitySummary[]> {
     try {
-      return await this.fetchEntitySummaries(path);
+      return await this.fetchEntitySummaries(path, widgetId);
     } catch (error) {
       this.logger.warn(`Failed to load Viva ${path}: ${String(error)}`);
       return [];
     }
   }
 
-  private async fetchProfile(): Promise<void> {
+  private async fetchProfile(widgetId: string): Promise<void> {
     try {
-      await this.fetchJson('profile');
+      await this.fetchJson('profile', undefined, widgetId);
     } catch (error) {
       this.logger.warn(`Failed to preload Viva schedule profile: ${String(error)}`);
     }
   }
 
-  private async fetchExercisesByDate(dateKey: string): Promise<VivaRawRecord[]> {
-    const payload = await this.fetchJson('exercises', { date: dateKey });
+  private async fetchExercisesByDate(dateKey: string, widgetId: string): Promise<VivaRawRecord[]> {
+    const payload = await this.fetchJson('exercises', { date: dateKey }, widgetId);
     return this.unwrapRecords(payload);
   }
 
   private async fetchTournamentDates(
     dateFrom: string,
     dateTo: string,
-    studioIds: string[]
+    studioIds: string[],
+    widgetId: string
   ): Promise<string[]> {
     const withExerciseTypeIdsByStudio = await this.fetchTournamentDatesByQuery(
       dateFrom,
       dateTo,
       studioIds,
-      true
+      true,
+      widgetId
     );
     const withExerciseTypeIdsAllStudios =
       studioIds.length > 0
-        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], true)
+        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], true, widgetId)
         : [];
     const withExerciseTypeIds = Array.from(
       new Set([...withExerciseTypeIdsByStudio, ...withExerciseTypeIdsAllStudios])
@@ -364,11 +403,12 @@ export class VivaTournamentsService {
       dateFrom,
       dateTo,
       studioIds,
-      false
+      false,
+      widgetId
     );
     const withoutExerciseTypeIdsAllStudios =
       studioIds.length > 0
-        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], false)
+        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], false, widgetId)
         : [];
 
     return Array.from(
@@ -380,7 +420,8 @@ export class VivaTournamentsService {
     dateFrom: string,
     dateTo: string,
     studioIds: string[],
-    includeExerciseTypeIds: boolean
+    includeExerciseTypeIds: boolean,
+    widgetId: string
   ): Promise<string[]> {
     const query = new URLSearchParams();
     query.set('dateFrom', dateFrom);
@@ -390,16 +431,17 @@ export class VivaTournamentsService {
       this.exerciseTypeIds.forEach((typeId) => query.append('exerciseTypeIds', typeId));
     }
 
-    const payload = await this.fetchJson(`exercises/dates?${query.toString()}`);
+    const payload = await this.fetchJson(`exercises/dates?${query.toString()}`, undefined, widgetId);
     return this.collectDateKeys(payload);
   }
 
   private async resolveTournamentDateKeys(
     today: string,
     dateTo: string,
-    studioIds: string[]
+    studioIds: string[],
+    widgetId: string
   ): Promise<string[]> {
-    const tournamentDates = await this.fetchTournamentDates(today, dateTo, studioIds);
+    const tournamentDates = await this.fetchTournamentDates(today, dateTo, studioIds, widgetId);
 
     return Array.from(
       new Set(
@@ -410,8 +452,12 @@ export class VivaTournamentsService {
     ).sort();
   }
 
-  private async fetchJson(path: string, query?: Record<string, string>): Promise<unknown> {
-    const url = this.buildUrl(path, query);
+  private async fetchJson(
+    path: string,
+    query?: Record<string, string>,
+    widgetId?: string
+  ): Promise<unknown> {
+    const url = this.buildUrl(path, query, widgetId);
     const response = await fetch(url, {
       headers: {
         Accept: 'application/json'
@@ -426,10 +472,14 @@ export class VivaTournamentsService {
     return response.json();
   }
 
-  private buildUrl(path: string, query?: Record<string, string>): string {
+  private buildUrl(path: string, query?: Record<string, string>, widgetId?: string): string {
+    const resolvedWidgetId = widgetId ?? this.widgetIds[0];
+    if (!resolvedWidgetId) {
+      throw new Error('Viva widget id is not configured');
+    }
     const cleanPath = String(path || '').replace(/^\/+/, '');
     const url = new URL(
-      `/end-user/api/v1/${encodeURIComponent(this.widgetId)}/${cleanPath}`,
+      `/end-user/api/v1/${encodeURIComponent(resolvedWidgetId)}/${cleanPath}`,
       `${this.apiBaseUrl}/`
     );
     Object.entries(query || {}).forEach(([key, value]) => {
@@ -1641,6 +1691,18 @@ export class VivaTournamentsService {
     return typeof abortSignalTimeout === 'function'
       ? abortSignalTimeout(this.requestTimeoutMs)
       : undefined;
+  }
+
+  private resolveWidgetIds(): string[] {
+    const widgetIds = this.readStringListEnv('VIVA_END_USER_WIDGET_IDS', []);
+    const singleWidgetId = this.normalizeString(process.env.VIVA_END_USER_WIDGET_ID);
+    if (singleWidgetId && !widgetIds.includes(singleWidgetId)) {
+      widgetIds.push(singleWidgetId);
+    }
+    if (widgetIds.length === 0) {
+      widgetIds.push('iSkq6G');
+    }
+    return widgetIds;
   }
 
   private normalizeBaseUrl(value?: string): string | undefined {

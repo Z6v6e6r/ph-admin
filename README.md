@@ -123,6 +123,7 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
 - `VIVA_END_USER_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva End-User API для вкладки «Турниры»)
 - `VIVA_END_USER_WIDGET_ID=iSkq6G` (опционально; идентификатор end-user виджета расписания)
+- `VIVA_END_USER_WIDGET_IDS=iSkq6G,anotherWidgetKey` (опционально; список widget key через запятую; если задан — турниры агрегируются по всем указанным виджетам)
 - `VIVA_TOURNAMENT_EXERCISE_TYPE_IDS=839,1013` (опционально; какие `exerciseTypeIds` считать турнирами)
 - `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
 - `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
