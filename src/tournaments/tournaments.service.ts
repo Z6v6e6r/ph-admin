@@ -256,8 +256,19 @@ export class TournamentsService {
         )
         .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
     );
+    const missingLinkedCustom = await Promise.all(
+      customTournaments
+        .filter((tournament) => {
+          const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+          return sourceTournamentId !== undefined && !sourceIds.has(sourceTournamentId);
+        })
+        .filter((tournament) =>
+          this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
+        )
+        .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
+    );
 
-    return [...mergedSource, ...standaloneCustom]
+    return [...mergedSource, ...standaloneCustom, ...missingLinkedCustom]
       .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
       .sort((left, right) => {
         const leftStartsAt = Date.parse(left.startsAt ?? '');

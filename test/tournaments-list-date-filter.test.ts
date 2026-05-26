@@ -220,7 +220,7 @@ async function main(): Promise<void> {
   );
 
   const unfiltered = await service.findAll();
-  assert.equal(unfiltered.length, 6);
+  assert.equal(unfiltered.length, 7);
   const canceledSkin = unfiltered.find(
     (tournament) => tournament.linkedCustomTournamentId === 'custom-linked-canceled-by-custom'
   );
@@ -243,7 +243,11 @@ async function main(): Promise<void> {
     date: '2026-05-05',
     now: new Date('2026-05-05T10:00:00+03:00')
   });
-  assert.deepEqual(syncedList, []);
+  assert.deepEqual(
+    syncedList.map((tournament) => tournament.linkedCustomTournamentId ?? tournament.id),
+    ['custom-linked-canceled-source']
+  );
+  assert.equal(syncedList[0]?.status, TournamentStatus.REGISTRATION);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(statusUpdatesForUnavailableSource, []);
 
@@ -260,10 +264,11 @@ async function main(): Promise<void> {
     [canceledSourceDetail],
     statusUpdatesForCanceledSource
   );
-  await syncServiceWithCanceledSource.findAll({
+  const syncedListWithCanceledSource = await syncServiceWithCanceledSource.findAll({
     date: '2026-05-05',
     now: new Date('2026-05-05T10:00:00+03:00')
   });
+  assert.equal(syncedListWithCanceledSource[0]?.status, TournamentStatus.CANCELED);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(statusUpdatesForCanceledSource, [
     {

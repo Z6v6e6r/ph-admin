@@ -21,26 +21,33 @@ async function main(): Promise<void> {
       return jsonResponse({});
     }
     if (url.pathname.endsWith('/studios')) {
-      return jsonResponse([{ id: 'studio-sochi', name: 'Сочи' }]);
+      return jsonResponse([{ id: 'studio-moscow', name: 'Сколково' }]);
     }
     if (url.pathname.endsWith('/trainers')) {
       return jsonResponse([]);
     }
     if (url.pathname.endsWith('/exercises/dates')) {
-      const hasExerciseTypeFilter = url.searchParams.getAll('exerciseTypeIds').length > 0;
-      return jsonResponse(hasExerciseTypeFilter ? [] : ['2026-06-07']);
+      const studioIds = url.searchParams.getAll('studioIds');
+      if (studioIds.length > 0) {
+        return jsonResponse(['2026-06-08']);
+      }
+      return jsonResponse(['2026-06-07', '2026-06-08']);
     }
     if (url.pathname.endsWith('/exercises')) {
       const date = url.searchParams.get('date');
       if (date === '2026-06-07') {
         return jsonResponse([
           {
-            id: 'sochi-unknown-type',
-            name: 'Падел турнир от ПадлхАБ',
-            exerciseTypeId: '7777',
-            startsAt: '2026-06-07T10:00:00+03:00',
-            endsAt: '2026-06-07T11:00:00+03:00',
-            studioId: 'studio-sochi'
+            id: 'sochi-visible',
+            direction: { id: 2617, name: 'Падел турнир от ПадлхАБ' },
+            type: { id: 839, name: 'Падел Турнир' },
+            timeFrom: '2026-06-07T10:00:00+03:00',
+            timeTo: '2026-06-07T11:00:00+03:00',
+            studio: { id: 'studio-sochi', name: 'Сочи' },
+            room: { name: 'Корт №4' },
+            maxClientsCount: 8,
+            clientsCount: 0,
+            canceled: false
           }
         ]);
       }
@@ -55,23 +62,21 @@ async function main(): Promise<void> {
     const tournaments = await service.listTournaments();
 
     assert.ok(Array.isArray(tournaments), 'tournaments should be an array');
-    assert.equal(tournaments?.length, 1);
-    assert.equal(tournaments?.[0]?.id, 'sochi-unknown-type');
-    assert.equal(tournaments?.[0]?.studioName, 'Сочи');
+    assert.equal(tournaments?.some((tournament) => tournament.id === 'sochi-visible'), true);
+    assert.equal(
+      tournaments?.find((tournament) => tournament.id === 'sochi-visible')?.studioName,
+      'Сочи'
+    );
+
+    assert.ok(
+      requestedUrls.some((url) => url.includes('/exercises?date=2026-06-07')),
+      'should fetch exercises for date available only in all-studios dates query'
+    );
 
     const datesRequests = requestedUrls.filter((url) => url.includes('/exercises/dates?'));
-    assert.equal(
-      datesRequests.length,
-      4,
-      'dates endpoint should be called with and without type filter for both scoped and all-studios queries'
-    );
-    assert.ok(
-      datesRequests.some((url) => url.includes('exerciseTypeIds=839') && url.includes('exerciseTypeIds=1013'))
-    );
-    assert.ok(
-      datesRequests.some((url) => !url.includes('exerciseTypeIds=')),
-      'second dates call should fallback without exerciseTypeIds'
-    );
+    assert.equal(datesRequests.length, 2);
+    assert.ok(datesRequests.some((url) => url.includes('studioIds=studio-moscow')));
+    assert.ok(datesRequests.some((url) => !url.includes('studioIds=')));
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);
@@ -79,7 +84,7 @@ async function main(): Promise<void> {
     restoreEnv('VIVA_TOURNAMENT_EXERCISE_TYPE_IDS', originalExerciseTypeIds);
   }
 
-  console.log('Viva tournaments type-filter fallback test passed');
+  console.log('Viva tournaments studio-filter fallback test passed');
 }
 
 function jsonResponse(payload: unknown): Response {

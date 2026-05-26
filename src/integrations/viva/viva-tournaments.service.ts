@@ -340,11 +340,18 @@ export class VivaTournamentsService {
     dateTo: string,
     studioIds: string[]
   ): Promise<string[]> {
-    const withExerciseTypeIds = await this.fetchTournamentDatesByQuery(
+    const withExerciseTypeIdsByStudio = await this.fetchTournamentDatesByQuery(
       dateFrom,
       dateTo,
       studioIds,
       true
+    );
+    const withExerciseTypeIdsAllStudios =
+      studioIds.length > 0
+        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], true)
+        : [];
+    const withExerciseTypeIds = Array.from(
+      new Set([...withExerciseTypeIdsByStudio, ...withExerciseTypeIdsAllStudios])
     );
     if (withExerciseTypeIds.length > 0 || this.exerciseTypeIds.length === 0) {
       return withExerciseTypeIds;
@@ -353,7 +360,20 @@ export class VivaTournamentsService {
     this.logger.warn(
       'Viva tournament dates returned empty with configured exerciseTypeIds; retrying without exerciseTypeIds filter'
     );
-    return this.fetchTournamentDatesByQuery(dateFrom, dateTo, studioIds, false);
+    const withoutExerciseTypeIdsByStudio = await this.fetchTournamentDatesByQuery(
+      dateFrom,
+      dateTo,
+      studioIds,
+      false
+    );
+    const withoutExerciseTypeIdsAllStudios =
+      studioIds.length > 0
+        ? await this.fetchTournamentDatesByQuery(dateFrom, dateTo, [], false)
+        : [];
+
+    return Array.from(
+      new Set([...withoutExerciseTypeIdsByStudio, ...withoutExerciseTypeIdsAllStudios])
+    );
   }
 
   private async fetchTournamentDatesByQuery(
