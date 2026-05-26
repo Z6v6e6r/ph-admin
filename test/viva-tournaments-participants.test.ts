@@ -222,6 +222,25 @@ function main(): void {
   assert.equal(liveShapeTournament?.trainerName, 'Турниры Екатерина-Ян');
   assert.equal(liveShapeTournament?.trainerAvatarUrl, 'https://example.com/trainer.jpg');
 
+  const fallbackByNameTournament = service.toTournament(
+    {
+      id: 'fallback-by-name-1',
+      name: 'Падел турнир от ПадлхАБ',
+      exerciseTypeId: '7777',
+      startsAt: '2026-05-10T10:00:00+03:00',
+      endsAt: '2026-05-10T12:00:00+03:00',
+      studio: { name: 'Сочи' }
+    },
+    new Map(),
+    new Map(),
+    new Map()
+  );
+  assert.equal(
+    fallbackByNameTournament?.id,
+    'fallback-by-name-1',
+    'unknown exerciseTypeId should still be accepted when exercise name clearly indicates a tournament'
+  );
+
   console.log('Viva tournament participants test passed');
 }
 

@@ -340,11 +340,35 @@ export class VivaTournamentsService {
     dateTo: string,
     studioIds: string[]
   ): Promise<string[]> {
+    const withExerciseTypeIds = await this.fetchTournamentDatesByQuery(
+      dateFrom,
+      dateTo,
+      studioIds,
+      true
+    );
+    if (withExerciseTypeIds.length > 0 || this.exerciseTypeIds.length === 0) {
+      return withExerciseTypeIds;
+    }
+
+    this.logger.warn(
+      'Viva tournament dates returned empty with configured exerciseTypeIds; retrying without exerciseTypeIds filter'
+    );
+    return this.fetchTournamentDatesByQuery(dateFrom, dateTo, studioIds, false);
+  }
+
+  private async fetchTournamentDatesByQuery(
+    dateFrom: string,
+    dateTo: string,
+    studioIds: string[],
+    includeExerciseTypeIds: boolean
+  ): Promise<string[]> {
     const query = new URLSearchParams();
     query.set('dateFrom', dateFrom);
     query.set('dateTo', dateTo);
     studioIds.forEach((studioId) => query.append('studioIds', studioId));
-    this.exerciseTypeIds.forEach((typeId) => query.append('exerciseTypeIds', typeId));
+    if (includeExerciseTypeIds) {
+      this.exerciseTypeIds.forEach((typeId) => query.append('exerciseTypeIds', typeId));
+    }
 
     const payload = await this.fetchJson(`exercises/dates?${query.toString()}`);
     return this.collectDateKeys(payload);
@@ -598,7 +622,14 @@ export class VivaTournamentsService {
     exerciseName: string | undefined,
     exerciseType: VivaExerciseTypeResolution
   ): boolean {
+    const looksLikeTournament = /турнир|лига|tournament|cup/i.test(
+      [exerciseName, exerciseType.name].filter(Boolean).join(' ')
+    );
     if (exerciseType.id && this.exerciseTypeIds.includes(exerciseType.id)) {
+      return true;
+    }
+
+    if (looksLikeTournament) {
       return true;
     }
 
@@ -606,9 +637,7 @@ export class VivaTournamentsService {
       return false;
     }
 
-    return /турнир|лига|tournament|cup/i.test(
-      [exerciseName, exerciseType.name].filter(Boolean).join(' ')
-    );
+    return looksLikeTournament;
   }
 
   private resolveTournamentType(
