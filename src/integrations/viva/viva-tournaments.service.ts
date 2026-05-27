@@ -605,6 +605,7 @@ export class VivaTournamentsService {
       this.readString(exercise.state) ??
       this.readString(exercise.bookingStatus) ??
       this.readString(exercise.booking_status);
+    const canceledFlag = this.resolveCanceledFlag(exercise);
     const tournamentType = this.resolveTournamentType(name, exerciseType);
     const maxPlayers = this.resolveMaxPlayers(exercise);
     const participants = this.resolveParticipants(exercise);
@@ -641,7 +642,7 @@ export class VivaTournamentsService {
           .filter(Boolean)
           .join(' · ') ||
         `Турнир ${startsAt || id}`,
-      status: this.normalizeTournamentStatus(rawStatus, startsAt, endsAt),
+      status: this.normalizeTournamentStatus(rawStatus, startsAt, endsAt, canceledFlag),
       rawStatus: rawStatus ?? undefined,
       gameId:
         this.readString(exercise.gameId) ??
@@ -1288,8 +1289,12 @@ export class VivaTournamentsService {
   private normalizeTournamentStatus(
     rawStatus?: string,
     startsAt?: string,
-    endsAt?: string
+    endsAt?: string,
+    canceledFlag?: boolean
   ): TournamentStatus {
+    if (canceledFlag === true) {
+      return TournamentStatus.CANCELED;
+    }
     const normalized = this.normalizeStatus(rawStatus);
     if (['CANCELED', 'CANCELLED', 'DELETED'].includes(normalized)) {
       return TournamentStatus.CANCELED;
@@ -1334,6 +1339,51 @@ export class VivaTournamentsService {
     }
 
     return TournamentStatus.UNKNOWN;
+  }
+
+  private resolveCanceledFlag(exercise: VivaRawRecord): boolean {
+    const sources = [
+      exercise,
+      this.readRecord(exercise.booking),
+      this.readRecord(exercise.settings),
+      this.readRecord(exercise.metadata)
+    ].filter((source): source is VivaRawRecord => Boolean(source));
+    const keys = [
+      'canceled',
+      'cancelled',
+      'isCanceled',
+      'isCancelled',
+      'deleted',
+      'isDeleted',
+      'cancelledFlag',
+      'canceledFlag'
+    ];
+
+    let hasExplicitFalse = false;
+    for (const source of sources) {
+      for (const key of keys) {
+        const parsed = this.readBooleanFlag(source[key]);
+        if (parsed === true) {
+          return true;
+        }
+        if (parsed === false) {
+          hasExplicitFalse = true;
+        }
+      }
+    }
+
+    if (hasExplicitFalse) {
+      return false;
+    }
+
+    return sources.some((source) =>
+      [
+        source.canceledAt,
+        source.cancelledAt,
+        source.cancellationDate,
+        source.cancellationTime
+      ].some((value) => Boolean(this.readString(value)))
+    );
   }
 
   private unwrapRecords(payload: unknown): VivaRawRecord[] {
@@ -1597,6 +1647,34 @@ export class VivaTournamentsService {
       .trim()
       .toUpperCase()
       .replace(/[\s-]+/g, '_');
+  }
+
+  private readBooleanFlag(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      if (value === 1) {
+        return true;
+      }
+      if (value === 0) {
+        return false;
+      }
+      return undefined;
+    }
+
+    const normalized = this.readString(value);
+    if (!normalized) {
+      return undefined;
+    }
+    const lower = normalized.toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on', 'да'].includes(lower)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off', 'нет'].includes(lower)) {
+      return false;
+    }
+    return undefined;
   }
 
   private readString(value: unknown): string | undefined {
