@@ -141,6 +141,13 @@ interface PublicDirectoryCacheEntry {
   payload: TournamentPublicDirectoryResponse;
 }
 
+interface TournamentListOptions {
+  date?: string;
+  from?: string;
+  to?: string;
+  now?: Date;
+}
+
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 48;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 96;
 const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
@@ -230,8 +237,12 @@ export class TournamentsService {
     return this.americanoRatingSimulationService.simulateRating(input);
   }
 
-  async findAll(options?: { date?: string; now?: Date }): Promise<Tournament[]> {
-    const sourceTournaments = await this.listSourceTournaments({ date: options?.date });
+  async findAll(options?: TournamentListOptions): Promise<Tournament[]> {
+    const sourceTournaments = await this.listSourceTournaments({
+      date: options?.date,
+      from: options?.from,
+      to: options?.to
+    });
     const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
     customTournaments.forEach((tournament) => {
@@ -1992,7 +2003,11 @@ export class TournamentsService {
     return value.replace(/\s+/g, ' ').trim();
   }
 
-  private async listSourceTournaments(options?: { date?: string }): Promise<Tournament[]> {
+  private async listSourceTournaments(options?: {
+    date?: string;
+    from?: string;
+    to?: string;
+  }): Promise<Tournament[]> {
     const vivaTournaments = await this.vivaTournamentsService.listTournaments(options);
     if (vivaTournaments) {
       return vivaTournaments;
@@ -2101,7 +2116,7 @@ export class TournamentsService {
   private scheduleMissingSourceSkinStatusSync(
     customTournaments: CustomTournament[],
     sourceIds: Set<string>,
-    options?: { date?: string; now?: Date }
+    options?: TournamentListOptions
   ): void {
     if (!this.tournamentsPersistence.isEnabled()) {
       return;
@@ -2122,6 +2137,8 @@ export class TournamentsService {
 
     const syncKey = [
       this.normalizePublicDate(options?.date) ?? 'all',
+      this.normalizeTournamentListDateTime(options?.from) ?? 'none',
+      this.normalizeTournamentListDateTime(options?.to) ?? 'none',
       missingLinkedTournaments.map((tournament) => tournament.id).sort().join(',')
     ].join(':');
     if (this.missingSourceSkinStatusSyncInFlight.has(syncKey)) {
@@ -2209,10 +2226,14 @@ export class TournamentsService {
 
   private matchesTournamentListFilters(
     tournament: Tournament,
-    options?: { date?: string; now?: Date }
+    options?: TournamentListOptions
   ): boolean {
     const date = this.normalizePublicDate(options?.date);
-    if (!date) {
+    const fromTs = this.parseTournamentListBoundary(options?.from, 'start');
+    const toTs = this.parseTournamentListBoundary(options?.to, 'end');
+    const hasRangeFilter = Number.isFinite(fromTs) || Number.isFinite(toTs);
+
+    if (!date && !hasRangeFilter) {
       return true;
     }
 
@@ -2221,15 +2242,31 @@ export class TournamentsService {
       return false;
     }
 
-    if (this.formatPublicDateKey(new Date(startsAt)) !== date) {
-      return false;
+    if (date) {
+      if (this.formatPublicDateKey(new Date(startsAt)) !== date) {
+        return false;
+      }
+
+      const now = options?.now ?? new Date();
+      if (
+        date === this.formatPublicDateKey(now)
+        && this.isTournamentPastForSchedule(tournament, now)
+      ) {
+        return false;
+      }
+
+      return true;
     }
 
-    const now = options?.now ?? new Date();
-    if (date === this.formatPublicDateKey(now) && this.isTournamentPastForSchedule(tournament, now)) {
+    if (typeof fromTs === 'number' && startsAt < fromTs) {
       return false;
     }
-
+    if (typeof toTs === 'number' && startsAt > toTs) {
+      return false;
+    }
+    if (typeof fromTs === 'number' && typeof toTs === 'number' && fromTs > toTs) {
+      return false;
+    }
     return true;
   }
 
@@ -4996,6 +5033,41 @@ export class TournamentsService {
       return undefined;
     }
     return text;
+  }
+
+  private normalizeTournamentListDateTime(value?: string): string | undefined {
+    const text = this.pickString(value);
+    if (!text) {
+      return undefined;
+    }
+    const dateOnly = this.normalizePublicDate(text);
+    if (dateOnly) {
+      return dateOnly;
+    }
+    const parsed = Date.parse(text);
+    if (!Number.isFinite(parsed)) {
+      return undefined;
+    }
+    return new Date(parsed).toISOString();
+  }
+
+  private parseTournamentListBoundary(
+    value: string | undefined,
+    mode: 'start' | 'end'
+  ): number | undefined {
+    const text = this.pickString(value);
+    if (!text) {
+      return undefined;
+    }
+    const dateOnly = this.normalizePublicDate(text);
+    if (dateOnly) {
+      const parsed = Date.parse(
+        `${dateOnly}${mode === 'start' ? 'T00:00:00' : 'T23:59:59.999'}`
+      );
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
 
   private formatPublicDateKey(date: Date): string {

@@ -43,7 +43,11 @@ export class VivaTournamentsService {
 
   constructor(@Optional() private readonly vivaAdminService?: VivaAdminService) {}
 
-  async listTournaments(options?: { date?: string }): Promise<Tournament[] | null> {
+  async listTournaments(options?: {
+    date?: string;
+    from?: string;
+    to?: string;
+  }): Promise<Tournament[] | null> {
     if (this.widgetIds.length === 0) {
       return null;
     }
@@ -170,11 +174,29 @@ export class VivaTournamentsService {
 
   private async loadTournaments(
     widgetId: string,
-    options?: { date?: string }
+    options?: {
+      date?: string;
+      from?: string;
+      to?: string;
+    }
   ): Promise<Tournament[]> {
     const requestedDate = this.normalizeDateKey(options?.date);
     const today = this.toDateKey(new Date());
-    const dateTo = this.toDateKey(this.addDays(new Date(), this.lookaheadDays - 1));
+    const requestedFrom = this.normalizeDateKeyLoose(options?.from);
+    const requestedTo = this.normalizeDateKeyLoose(options?.to);
+    const rangeFrom = requestedFrom ?? today;
+    const resolvedRangeTo =
+      requestedTo
+      ?? this.toDateKey(
+        this.addDays(
+          this.dateFromKey(rangeFrom),
+          this.lookaheadDays - 1
+        )
+      );
+    const rangeTo =
+      resolvedRangeTo < rangeFrom
+        ? rangeFrom
+        : resolvedRangeTo;
     const [studios, trainers] = requestedDate
       ? [[], []]
       : await Promise.all([
@@ -187,7 +209,12 @@ export class VivaTournamentsService {
 
     const dates = requestedDate
       ? [requestedDate]
-      : await this.resolveTournamentDateKeys(today, dateTo, studios.map((studio) => studio.id), widgetId);
+      : await this.resolveTournamentDateKeys(
+          rangeFrom,
+          rangeTo,
+          studios.map((studio) => studio.id),
+          widgetId
+        );
     const exercises = await Promise.all(
       dates.map((dateKey) => this.fetchExercisesByDate(dateKey, widgetId))
     );
@@ -1675,6 +1702,26 @@ export class VivaTournamentsService {
 
     const parsed = new Date(`${normalized}T00:00:00`);
     return Number.isNaN(parsed.getTime()) ? undefined : normalized;
+  }
+
+  private normalizeDateKeyLoose(value?: string): string | undefined {
+    const strict = this.normalizeDateKey(value);
+    if (strict) {
+      return strict;
+    }
+    const normalized = this.normalizeString(value);
+    if (!normalized) {
+      return undefined;
+    }
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      return undefined;
+    }
+    return this.toDateKey(parsed);
+  }
+
+  private dateFromKey(value: string): Date {
+    return new Date(`${value}T00:00:00`);
   }
 
   private addDays(dateValue: Date, days: number): Date {

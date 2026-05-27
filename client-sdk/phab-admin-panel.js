@@ -4889,7 +4889,19 @@
         return request('/games/events/' + encodeURIComponent(eventId), 'DELETE');
       },
       getTournaments: function () {
-        return request('/tournaments', 'GET');
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        if (query.date) {
+          params.set('date', String(query.date));
+        }
+        if (query.from) {
+          params.set('from', String(query.from));
+        }
+        if (query.to) {
+          params.set('to', String(query.to));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/tournaments' + suffix, 'GET');
       },
       getCustomTournament: function (tournamentId) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'GET');
@@ -5142,6 +5154,28 @@
 
   function getTodayDateInputValue() {
     return formatDateInputValue(new Date());
+  }
+
+  function formatDateTimeInputValue(value) {
+    if (!value) {
+      return '';
+    }
+    var d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      return '';
+    }
+    var year = String(d.getFullYear());
+    var month = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    var hours = String(d.getHours()).padStart(2, '0');
+    var minutes = String(d.getMinutes()).padStart(2, '0');
+    return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+  }
+
+  function getTodayStartDateTimeInputValue() {
+    var d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return formatDateTimeInputValue(d);
   }
 
   function getDaysAgoDateInputValue(days) {
@@ -8555,7 +8589,7 @@
       tournamentsPageSize: 30,
       tournamentsPage: 1,
       tournamentsFilterStation: 'ALL',
-      tournamentsFilterFrom: '',
+      tournamentsFilterFrom: getTodayStartDateTimeInputValue(),
       tournamentsFilterTo: '',
       tournamentEditor: null,
       communities: [],
@@ -14478,7 +14512,7 @@
       dom.tournamentsSummary.textContent = 'Всего турниров: ' + String(totalCount);
     }
 
-    function applyTournamentFilters() {
+    async function applyTournamentFilters() {
       var nextStation = String(dom.tournamentsStationInput.value || 'ALL');
       var nextFrom = String(dom.tournamentsFromInput.value || '').trim();
       var nextTo = String(dom.tournamentsToInput.value || '').trim();
@@ -14498,18 +14532,18 @@
       state.tournamentsFilterFrom = nextFrom;
       state.tournamentsFilterTo = nextTo;
       state.tournamentsPage = 1;
-      renderTournaments();
+      await loadTournaments();
     }
 
-    function resetTournamentFilters() {
+    async function resetTournamentFilters() {
       state.tournamentsFilterStation = 'ALL';
-      state.tournamentsFilterFrom = '';
+      state.tournamentsFilterFrom = getTodayStartDateTimeInputValue();
       state.tournamentsFilterTo = '';
       state.tournamentsPage = 1;
       dom.tournamentsStationInput.value = 'ALL';
-      dom.tournamentsFromInput.value = '';
+      dom.tournamentsFromInput.value = state.tournamentsFilterFrom;
       dom.tournamentsToInput.value = '';
-      renderTournaments();
+      await loadTournaments();
     }
 
     function renderTournaments() {
@@ -24956,7 +24990,11 @@
     }
 
     async function loadTournaments() {
-      state.tournaments = (await api.getTournaments()) || [];
+      state.tournaments =
+        (await api.getTournaments({
+          from: state.tournamentsFilterFrom || undefined,
+          to: state.tournamentsFilterTo || undefined
+        })) || [];
       state.tournamentsPage = 1;
       renderTournaments();
     }
@@ -25680,10 +25718,10 @@
         exportDialogsAnalytics().catch(handleError);
       });
       dom.tournamentsApplyBtn.addEventListener('click', function () {
-        applyTournamentFilters();
+        applyTournamentFilters().catch(handleError);
       });
       dom.tournamentsResetBtn.addEventListener('click', function () {
-        resetTournamentFilters();
+        resetTournamentFilters().catch(handleError);
       });
       dom.tournamentsPrevPageBtn.addEventListener('click', function () {
         if (state.tournamentsPage <= 1) {
@@ -25701,17 +25739,17 @@
         renderTournaments();
       });
       dom.tournamentsStationInput.addEventListener('change', function () {
-        applyTournamentFilters();
+        applyTournamentFilters().catch(handleError);
       });
       [dom.tournamentsFromInput, dom.tournamentsToInput].forEach(function (input) {
         input.addEventListener('keydown', function (event) {
           if (event.key === 'Enter') {
             event.preventDefault();
-            applyTournamentFilters();
+            applyTournamentFilters().catch(handleError);
           }
         });
         input.addEventListener('change', function () {
-          applyTournamentFilters();
+          applyTournamentFilters().catch(handleError);
         });
       });
       dom.analyticsDialogsFormatInput.addEventListener('change', function () {

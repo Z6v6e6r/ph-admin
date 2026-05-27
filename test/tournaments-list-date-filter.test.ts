@@ -219,6 +219,15 @@ async function main(): Promise<void> {
     ]
   );
 
+  const rangeFiltered = await service.findAll({
+    from: '2026-05-06',
+    to: '2026-05-07'
+  });
+  assert.deepEqual(
+    rangeFiltered.map((tournament) => tournament.linkedCustomTournamentId ?? tournament.id),
+    ['custom-linked-other-date', 'custom-standalone-other-date']
+  );
+
   const unfiltered = await service.findAll();
   assert.equal(unfiltered.length, 7);
   const canceledSkin = unfiltered.find(

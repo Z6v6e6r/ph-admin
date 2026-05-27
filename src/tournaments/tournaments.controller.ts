@@ -41,8 +41,12 @@ export class TournamentsController {
 
   @Get()
   @Roles()
-  findAll(@Query('date') date?: string): Promise<Tournament[]> {
-    return this.tournamentsService.findAll({ date });
+  findAll(
+    @Query('date') date?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string
+  ): Promise<Tournament[]> {
+    return this.tournamentsService.findAll({ date, from, to });
   }
 
   @Post('custom/from-source/:sourceTournamentId')
