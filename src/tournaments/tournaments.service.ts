@@ -296,6 +296,96 @@ export class TournamentsService {
       .map((tournament) => this.toLkCompatibleTournament(tournament));
   }
 
+  async syncCanceledCustomTournamentsFromViva(options?: {
+    now?: Date;
+    forwardDays?: number;
+  }): Promise<{
+    windowStart: string;
+    windowEnd: string;
+    candidatesCount: number;
+    checkedCount: number;
+    updatedCount: number;
+    sourceNotFoundCount: number;
+    sourceNotCanceledCount: number;
+  }> {
+    const now = options?.now ?? new Date();
+    const forwardDays = this.normalizeVivaCancelSyncForwardDays(options?.forwardDays);
+    const windowStart = new Date(now.getTime());
+    windowStart.setHours(0, 0, 0, 0);
+    const windowEnd = new Date(windowStart.getTime());
+    windowEnd.setDate(windowEnd.getDate() + forwardDays - 1);
+    windowEnd.setHours(23, 59, 59, 999);
+
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return {
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        candidatesCount: 0,
+        checkedCount: 0,
+        updatedCount: 0,
+        sourceNotFoundCount: 0,
+        sourceNotCanceledCount: 0
+      };
+    }
+
+    const customTournaments = await this.listCustomTournamentsSafe();
+    const candidates = customTournaments.filter((tournament) =>
+      this.isCandidateForVivaCancelSync(tournament, windowStart, windowEnd)
+    );
+
+    let checkedCount = 0;
+    let updatedCount = 0;
+    let sourceNotFoundCount = 0;
+    let sourceNotCanceledCount = 0;
+
+    for (const tournament of candidates) {
+      const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+      if (!sourceTournamentId) {
+        continue;
+      }
+
+      checkedCount += 1;
+      const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
+      if (!sourceTournament) {
+        sourceNotFoundCount += 1;
+        continue;
+      }
+      if (!this.isCanceledTournamentStatus(sourceTournament.status)) {
+        sourceNotCanceledCount += 1;
+        continue;
+      }
+
+      const updatedTournament = await this.tournamentsPersistence.updateCustomTournament(tournament.id, {
+        status: TournamentStatus.CANCELED,
+        statusReason:
+          'Автоотмена Viva sync (hourly): связанный турнир в Viva подтверждённо отменён.',
+        statusSource: 'VIVA_SYNC',
+        autoStatusChange: true,
+        actor: {
+          id: 'system:viva-sync-hourly',
+          name: 'Viva sync (hourly)'
+        }
+      });
+      if (updatedTournament) {
+        updatedCount += 1;
+      }
+    }
+
+    if (updatedCount > 0) {
+      this.invalidatePublicDirectoryCache();
+    }
+
+    return {
+      windowStart: windowStart.toISOString(),
+      windowEnd: windowEnd.toISOString(),
+      candidatesCount: candidates.length,
+      checkedCount,
+      updatedCount,
+      sourceNotFoundCount,
+      sourceNotCanceledCount
+    };
+  }
+
   async findById(id: string): Promise<Tournament> {
     const customTournament = await this.findCustomTournamentByIdSafe(id);
     if (customTournament) {
@@ -4500,6 +4590,27 @@ export class TournamentsService {
     return normalized === TournamentStatus.CANCELED || normalized === 'CANCELLED';
   }
 
+  private isCandidateForVivaCancelSync(
+    tournament: CustomTournament,
+    windowStart: Date,
+    windowEnd: Date
+  ): boolean {
+    const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+    if (!sourceTournamentId) {
+      return false;
+    }
+    if (this.isCanceledTournamentStatus(tournament.status)) {
+      return false;
+    }
+
+    const startsAtTs = Date.parse(this.pickString(tournament.startsAt) ?? '');
+    if (!Number.isFinite(startsAtTs)) {
+      return false;
+    }
+
+    return startsAtTs >= windowStart.getTime() && startsAtTs <= windowEnd.getTime();
+  }
+
   private findParticipantByPhone(
     participants: TournamentParticipant[],
     normalizedPhone: string
@@ -5025,6 +5136,14 @@ export class TournamentsService {
     }
 
     return Math.min(120, Math.max(1, Math.floor(numericForwardDays)));
+  }
+
+  private normalizeVivaCancelSyncForwardDays(forwardDays?: number): number {
+    const numericForwardDays = Number(forwardDays);
+    if (!Number.isFinite(numericForwardDays) || numericForwardDays <= 0) {
+      return 3;
+    }
+    return Math.min(14, Math.max(1, Math.floor(numericForwardDays)));
   }
 
   private normalizePublicDate(value?: string): string | undefined {

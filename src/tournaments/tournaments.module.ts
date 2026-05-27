@@ -11,6 +11,7 @@ import { TournamentsPersistenceService } from './tournaments-persistence.service
 import { TournamentsController } from './tournaments.controller';
 import { TournamentsPublicController } from './tournaments-public.controller';
 import { TournamentsService } from './tournaments.service';
+import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
 @Module({
   imports: [LkPadelHubModule, GamesModule, CommunitiesModule],
@@ -19,6 +20,7 @@ import { TournamentsService } from './tournaments.service';
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
     TournamentsService,
+    TournamentsVivaStatusSyncService,
     TournamentsPersistenceService,
     TournamentsPublicSessionService,
     VivaTournamentsService,

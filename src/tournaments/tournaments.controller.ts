@@ -26,6 +26,7 @@ import {
   TournamentCustomEnergyCheckoutResponse,
   TournamentResultsView
 } from './tournaments.types';
+import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
 
 @Controller('tournaments')
@@ -37,7 +38,10 @@ import { TournamentsService } from './tournaments.service';
   Role.GAME_MANAGER
 )
 export class TournamentsController {
-  constructor(private readonly tournamentsService: TournamentsService) {}
+  constructor(
+    private readonly tournamentsService: TournamentsService,
+    private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService
+  ) {}
 
   @Get()
   @Roles()
@@ -182,6 +186,51 @@ export class TournamentsController {
       authSourceHeader: this.pickString(request.headers['x-padlhub-auth-source']),
       tenantKeyHeader: this.pickString(request.headers['x-padlhub-tenant-key'])
     });
+  }
+
+  @Get('debug/viva-status-sync')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaStatusSyncDiagnostics(): {
+    enabled: boolean;
+    intervalMs: number;
+    forwardDays: number;
+    runOnStartup: boolean;
+    inProgress: boolean;
+    lastStartedAt?: string;
+    lastCompletedAt?: string;
+    lastDurationMs?: number;
+    lastError?: string;
+    lastRunStatus?: 'SUCCESS' | 'ERROR' | 'SKIPPED';
+    lastRunMessage?: string;
+    lastResult?: {
+      windowStart: string;
+      windowEnd: string;
+      candidatesCount: number;
+      checkedCount: number;
+      updatedCount: number;
+      sourceNotFoundCount: number;
+      sourceNotCanceledCount: number;
+    };
+    recentRuns: Array<{
+      trigger: 'startup' | 'interval';
+      status: 'SUCCESS' | 'ERROR' | 'SKIPPED';
+      startedAt: string;
+      completedAt?: string;
+      durationMs?: number;
+      message?: string;
+      error?: string;
+      result?: {
+        windowStart: string;
+        windowEnd: string;
+        candidatesCount: number;
+        checkedCount: number;
+        updatedCount: number;
+        sourceNotFoundCount: number;
+        sourceNotCanceledCount: number;
+      };
+    }>;
+  } {
+    return this.vivaStatusSyncService.getRuntimeDiagnostics();
   }
 
   @Get(':id')
