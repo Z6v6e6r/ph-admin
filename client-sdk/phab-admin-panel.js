@@ -3040,6 +3040,135 @@
         flex-direction:column;
         gap:4px;
       }
+      .phab-admin-monitoring-card{
+        margin:0 0 12px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:14px;
+        background:rgba(255,255,255,.92);
+        overflow:hidden;
+      }
+      .phab-admin-monitoring-head{
+        padding:9px 12px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        background:linear-gradient(90deg,rgba(182,253,255,.62) 0%,rgba(255,232,145,.58) 100%);
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-monitoring-title{
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:var(--cup-wine);
+      }
+      .phab-admin-monitoring-updated{
+        font-size:11px;
+        color:rgba(51,0,32,.64);
+      }
+      .phab-admin-monitoring-body{
+        padding:10px 12px 12px;
+        display:grid;
+        gap:10px;
+      }
+      .phab-admin-monitoring-statuses{
+        display:flex;
+        align-items:center;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-monitoring-pill{
+        display:inline-flex;
+        align-items:center;
+        min-height:24px;
+        padding:3px 9px;
+        border-radius:999px;
+        border:1px solid rgba(51,0,32,.15);
+        background:rgba(255,255,255,.86);
+        color:var(--cup-wine);
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:.03em;
+      }
+      .phab-admin-monitoring-pill-success{
+        background:rgba(184,255,214,.7);
+        border-color:rgba(0,120,55,.28);
+        color:#0f6b41;
+      }
+      .phab-admin-monitoring-pill-warn{
+        background:rgba(255,232,145,.58);
+        border-color:rgba(174,124,0,.34);
+        color:#7c5200;
+      }
+      .phab-admin-monitoring-pill-error{
+        background:rgba(255,190,193,.56);
+        border-color:rgba(153,14,47,.32);
+        color:#8f1733;
+      }
+      .phab-admin-monitoring-pill-muted{
+        background:rgba(255,255,255,.8);
+        color:rgba(51,0,32,.74);
+      }
+      .phab-admin-monitoring-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+        gap:8px;
+      }
+      .phab-admin-monitoring-item{
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:10px;
+        background:rgba(255,255,255,.86);
+        padding:8px 9px;
+      }
+      .phab-admin-monitoring-item-label{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.64);
+      }
+      .phab-admin-monitoring-item-value{
+        margin-top:3px;
+        font-size:12px;
+        color:var(--cup-wine);
+      }
+      .phab-admin-monitoring-message{
+        font-size:12px;
+        color:var(--cup-wine);
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:10px;
+        background:rgba(255,255,255,.86);
+        padding:8px 9px;
+      }
+      .phab-admin-monitoring-runs{
+        display:grid;
+        gap:7px;
+      }
+      .phab-admin-monitoring-run{
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:10px;
+        background:rgba(255,255,255,.88);
+        padding:8px 9px;
+        display:grid;
+        gap:4px;
+      }
+      .phab-admin-monitoring-run-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-monitoring-run-meta{
+        font-size:11px;
+        color:rgba(51,0,32,.7);
+      }
+      .phab-admin-monitoring-run-body{
+        font-size:12px;
+        color:var(--cup-wine);
+      }
       .phab-admin-games-pagesize{
         display:flex;
         align-items:center;
@@ -4903,6 +5032,9 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/tournaments' + suffix, 'GET');
       },
+      getTournamentVivaStatusSyncDiagnostics: function () {
+        return request('/tournaments/debug/viva-status-sync', 'GET');
+      },
       getCustomTournament: function (tournamentId) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'GET');
       },
@@ -5926,6 +6058,28 @@
     logsNextPageBtn.type = 'button';
     logsNextPageBtn.textContent = '→';
     logsPagination.appendChild(logsNextPageBtn);
+
+    var logsMonitoringCard = document.createElement('div');
+    logsMonitoringCard.className = 'phab-admin-monitoring-card';
+    logsSection.appendChild(logsMonitoringCard);
+
+    var logsMonitoringHead = document.createElement('div');
+    logsMonitoringHead.className = 'phab-admin-monitoring-head';
+    logsMonitoringCard.appendChild(logsMonitoringHead);
+
+    var logsMonitoringTitle = document.createElement('div');
+    logsMonitoringTitle.className = 'phab-admin-monitoring-title';
+    logsMonitoringTitle.textContent = 'Мониторинг Viva Status Sync';
+    logsMonitoringHead.appendChild(logsMonitoringTitle);
+
+    var logsMonitoringUpdated = document.createElement('div');
+    logsMonitoringUpdated.className = 'phab-admin-monitoring-updated';
+    logsMonitoringUpdated.textContent = 'Обновление: -';
+    logsMonitoringHead.appendChild(logsMonitoringUpdated);
+
+    var logsMonitoringBody = document.createElement('div');
+    logsMonitoringBody.className = 'phab-admin-monitoring-body';
+    logsMonitoringCard.appendChild(logsMonitoringBody);
 
     logsSection.appendChild(logsTableWrap);
 
@@ -7855,6 +8009,8 @@
       logsPrevPageBtn: logsPrevPageBtn,
       logsNextPageBtn: logsNextPageBtn,
       logsPageInfo: logsPageInfo,
+      logsMonitoringUpdated: logsMonitoringUpdated,
+      logsMonitoringBody: logsMonitoringBody,
       logsTable: logsTable,
       analyticsGamesTabBtn: analyticsGamesTabBtn,
       analyticsDialogsTabBtn: analyticsDialogsTabBtn,
@@ -8579,6 +8735,10 @@
       gameEventsFilterPhone: '',
       gameEventsFilterFrom: '',
       gameEventsFilterTo: '',
+      vivaStatusSyncMonitoring: null,
+      vivaStatusSyncMonitoringLoading: false,
+      vivaStatusSyncMonitoringError: '',
+      vivaStatusSyncMonitoringUpdatedAt: '',
       analyticsSubtab: 'games',
       analyticsFilterFrom: getGameAnalyticsStartDateInputValue(),
       analyticsFilterTo: getTodayDateInputValue(),
@@ -8698,6 +8858,7 @@
     dom.analyticsDialogsFormatInput.value = state.analyticsDialogsExportFormat;
     dom.communitySearchInput.value = state.communitiesSearchQuery;
     dom.advertisingRotationInput.checked = state.advertising.cabinetHome.rotationEnabled === true;
+    renderLogsMonitoring();
 
     function getStatusIconMarkup(isError) {
       if (isError) {
@@ -13973,6 +14134,233 @@
       });
 
       updateGameEventsPaginationControls(state.gameEventsTotal, state.gameEventsTotalPages);
+    }
+
+    function createLogsMonitoringPill(label, toneClassName) {
+      var pill = document.createElement('span');
+      pill.className =
+        'phab-admin-monitoring-pill' + (toneClassName ? ' ' + toneClassName : '');
+      pill.textContent = String(label || '-');
+      return pill;
+    }
+
+    function appendLogsMonitoringItem(container, label, value) {
+      var item = document.createElement('div');
+      item.className = 'phab-admin-monitoring-item';
+      container.appendChild(item);
+
+      var labelNode = document.createElement('div');
+      labelNode.className = 'phab-admin-monitoring-item-label';
+      labelNode.textContent = String(label || '-');
+      item.appendChild(labelNode);
+
+      var valueNode = document.createElement('div');
+      valueNode.className = 'phab-admin-monitoring-item-value';
+      valueNode.textContent = value == null || value === '' ? '-' : String(value);
+      item.appendChild(valueNode);
+    }
+
+    function getLogsMonitoringStatusMeta(status) {
+      var normalized = String(status || '').trim().toUpperCase();
+      if (normalized === 'SUCCESS') {
+        return { label: 'Успешно', toneClassName: 'phab-admin-monitoring-pill-success' };
+      }
+      if (normalized === 'ERROR') {
+        return { label: 'Ошибка', toneClassName: 'phab-admin-monitoring-pill-error' };
+      }
+      if (normalized === 'SKIPPED') {
+        return { label: 'Пропуск', toneClassName: 'phab-admin-monitoring-pill-warn' };
+      }
+      return { label: 'Нет данных', toneClassName: 'phab-admin-monitoring-pill-muted' };
+    }
+
+    function getLogsMonitoringTriggerLabel(trigger) {
+      var normalized = String(trigger || '').trim().toLowerCase();
+      return normalized === 'startup' ? 'Запуск сервиса' : 'Плановый запуск';
+    }
+
+    function formatLogsMonitoringWindow(result) {
+      if (!isObject(result)) {
+        return '-';
+      }
+      if (!result.windowStart || !result.windowEnd) {
+        return '-';
+      }
+      return formatDateTimeFull(result.windowStart) + ' - ' + formatDateTimeFull(result.windowEnd);
+    }
+
+    function buildLogsMonitoringRunResultSummary(result) {
+      if (!isObject(result)) {
+        return '';
+      }
+      var parts = [
+        'обновлено ' + String(Number(result.updatedCount || 0)),
+        'проверено ' + String(Number(result.checkedCount || 0)),
+        'кандидатов ' + String(Number(result.candidatesCount || 0))
+      ];
+      var notFoundCount = Number(result.sourceNotFoundCount || 0);
+      if (notFoundCount > 0) {
+        parts.push('не найдено в Viva ' + String(notFoundCount));
+      }
+      var notCanceledCount = Number(result.sourceNotCanceledCount || 0);
+      if (notCanceledCount > 0) {
+        parts.push('в Viva не отменены ' + String(notCanceledCount));
+      }
+      return parts.join(' · ');
+    }
+
+    function renderLogsMonitoring() {
+      clearNode(dom.logsMonitoringBody);
+      if (state.vivaStatusSyncMonitoringLoading) {
+        dom.logsMonitoringUpdated.textContent = 'Обновление: загружаем...';
+      } else if (state.vivaStatusSyncMonitoringUpdatedAt) {
+        dom.logsMonitoringUpdated.textContent =
+          'Обновление: ' + formatDateTimeFull(state.vivaStatusSyncMonitoringUpdatedAt);
+      } else {
+        dom.logsMonitoringUpdated.textContent = 'Обновление: -';
+      }
+
+      var diagnostics = isObject(state.vivaStatusSyncMonitoring)
+        ? state.vivaStatusSyncMonitoring
+        : null;
+      if (!diagnostics) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = state.vivaStatusSyncMonitoringError
+          ? 'Не удалось загрузить мониторинг: ' + state.vivaStatusSyncMonitoringError
+          : state.vivaStatusSyncMonitoringLoading
+            ? 'Загрузка статуса сервиса...'
+            : 'Данные мониторинга пока не загружены.';
+        dom.logsMonitoringBody.appendChild(empty);
+        return;
+      }
+
+      var statuses = document.createElement('div');
+      statuses.className = 'phab-admin-monitoring-statuses';
+      statuses.appendChild(
+        createLogsMonitoringPill(
+          diagnostics.enabled ? 'Сервис включен' : 'Сервис выключен',
+          diagnostics.enabled
+            ? 'phab-admin-monitoring-pill-success'
+            : 'phab-admin-monitoring-pill-muted'
+        )
+      );
+
+      var runStatusMeta = getLogsMonitoringStatusMeta(diagnostics.lastRunStatus);
+      statuses.appendChild(
+        createLogsMonitoringPill('Последний прогон: ' + runStatusMeta.label, runStatusMeta.toneClassName)
+      );
+      statuses.appendChild(
+        createLogsMonitoringPill(
+          diagnostics.inProgress ? 'Сейчас выполняется' : 'Сейчас не выполняется',
+          diagnostics.inProgress
+            ? 'phab-admin-monitoring-pill-warn'
+            : 'phab-admin-monitoring-pill-muted'
+        )
+      );
+      dom.logsMonitoringBody.appendChild(statuses);
+
+      var metrics = document.createElement('div');
+      metrics.className = 'phab-admin-monitoring-grid';
+      appendLogsMonitoringItem(metrics, 'Интервал запуска', formatDurationMs(diagnostics.intervalMs));
+      appendLogsMonitoringItem(
+        metrics,
+        'Окно проверки',
+        String(Number(diagnostics.forwardDays || 0)) + ' дн.'
+      );
+      appendLogsMonitoringItem(
+        metrics,
+        'Запуск при старте',
+        diagnostics.runOnStartup ? 'Да' : 'Нет'
+      );
+      appendLogsMonitoringItem(metrics, 'Последний старт', formatDateTimeFull(diagnostics.lastStartedAt));
+      appendLogsMonitoringItem(
+        metrics,
+        'Последнее завершение',
+        formatDateTimeFull(diagnostics.lastCompletedAt)
+      );
+      appendLogsMonitoringItem(
+        metrics,
+        'Длительность',
+        diagnostics.lastDurationMs != null ? formatDurationMs(diagnostics.lastDurationMs) : '-'
+      );
+      appendLogsMonitoringItem(
+        metrics,
+        'Обновлено скинов',
+        isObject(diagnostics.lastResult)
+          ? String(Number(diagnostics.lastResult.updatedCount || 0))
+          : '-'
+      );
+      appendLogsMonitoringItem(
+        metrics,
+        'Последнее окно',
+        formatLogsMonitoringWindow(diagnostics.lastResult)
+      );
+      dom.logsMonitoringBody.appendChild(metrics);
+
+      if (diagnostics.lastRunMessage || diagnostics.lastError) {
+        var message = document.createElement('div');
+        message.className = 'phab-admin-monitoring-message';
+        message.textContent =
+          diagnostics.lastError
+            ? 'Ошибка: ' + String(diagnostics.lastError)
+            : String(diagnostics.lastRunMessage);
+        dom.logsMonitoringBody.appendChild(message);
+      }
+
+      var recentRunsTitle = document.createElement('div');
+      recentRunsTitle.className = 'phab-admin-monitoring-item-label';
+      recentRunsTitle.textContent = 'Последние действия';
+      dom.logsMonitoringBody.appendChild(recentRunsTitle);
+
+      var recentRuns = Array.isArray(diagnostics.recentRuns) ? diagnostics.recentRuns.slice(0, 6) : [];
+      if (recentRuns.length === 0) {
+        var emptyRecentRuns = document.createElement('div');
+        emptyRecentRuns.className = 'phab-admin-empty';
+        emptyRecentRuns.textContent = 'Запусков еще не было.';
+        dom.logsMonitoringBody.appendChild(emptyRecentRuns);
+        return;
+      }
+
+      var runsList = document.createElement('div');
+      runsList.className = 'phab-admin-monitoring-runs';
+      recentRuns.forEach(function (run) {
+        var entry = document.createElement('div');
+        entry.className = 'phab-admin-monitoring-run';
+        runsList.appendChild(entry);
+
+        var entryHead = document.createElement('div');
+        entryHead.className = 'phab-admin-monitoring-run-head';
+        entry.appendChild(entryHead);
+
+        var runMeta = getLogsMonitoringStatusMeta(run && run.status);
+        entryHead.appendChild(createLogsMonitoringPill(runMeta.label, runMeta.toneClassName));
+
+        var metaLine = document.createElement('span');
+        metaLine.className = 'phab-admin-monitoring-run-meta';
+        metaLine.textContent =
+          getLogsMonitoringTriggerLabel(run && run.trigger) +
+          ' · ' +
+          formatDateTimeFull(run && run.startedAt) +
+          (run && run.durationMs != null ? ' · ' + formatDurationMs(run.durationMs) : '');
+        entryHead.appendChild(metaLine);
+
+        var details = document.createElement('div');
+        details.className = 'phab-admin-monitoring-run-body';
+        var detailsParts = [];
+        if (run && run.error) {
+          detailsParts.push('Ошибка: ' + String(run.error));
+        } else if (run && run.message) {
+          detailsParts.push(String(run.message));
+        }
+        var resultSummary = buildLogsMonitoringRunResultSummary(run && run.result);
+        if (resultSummary) {
+          detailsParts.push(resultSummary);
+        }
+        details.textContent = detailsParts.join(' · ') || '-';
+        entry.appendChild(details);
+      });
+      dom.logsMonitoringBody.appendChild(runsList);
     }
 
     function renderAnalytics() {
@@ -24927,7 +25315,26 @@
       renderGames();
     }
 
+    async function loadVivaStatusSyncMonitoring() {
+      state.vivaStatusSyncMonitoringLoading = true;
+      state.vivaStatusSyncMonitoringError = '';
+      renderLogsMonitoring();
+
+      try {
+        var response = await api.getTournamentVivaStatusSyncDiagnostics();
+        state.vivaStatusSyncMonitoring = isObject(response) ? response : null;
+        state.vivaStatusSyncMonitoringUpdatedAt = new Date().toISOString();
+      } catch (error) {
+        state.vivaStatusSyncMonitoringError =
+          error && error.message ? String(error.message) : 'Неизвестная ошибка';
+      } finally {
+        state.vivaStatusSyncMonitoringLoading = false;
+        renderLogsMonitoring();
+      }
+    }
+
     async function loadGameEvents() {
+      var monitoringPromise = loadVivaStatusSyncMonitoring();
       var response =
         (await api.getGameEvents({
           event: state.gameEventsFilterEvent || undefined,
@@ -24962,6 +25369,7 @@
       dom.logsFromInput.value = state.gameEventsFilterFrom;
       dom.logsToInput.value = state.gameEventsFilterTo;
       renderGameEvents();
+      await monitoringPromise;
     }
 
     async function loadGameAnalytics() {
