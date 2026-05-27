@@ -346,11 +346,16 @@ export class TournamentsService {
 
       checkedCount += 1;
       const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
-      if (!sourceTournament) {
-        sourceNotFoundCount += 1;
-        continue;
-      }
-      if (!this.isCanceledTournamentStatus(sourceTournament.status)) {
+      const adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(sourceTournamentId);
+      const shouldCancel =
+        (sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status))
+        || adminCanceledState === 'CANCELED';
+
+      if (!shouldCancel) {
+        if (!sourceTournament && adminCanceledState === 'UNKNOWN') {
+          sourceNotFoundCount += 1;
+          continue;
+        }
         sourceNotCanceledCount += 1;
         continue;
       }
@@ -2254,10 +2259,11 @@ export class TournamentsService {
           }
 
           const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
-          if (!sourceTournament) {
-            return;
-          }
-          if (!this.isCanceledTournamentStatus(sourceTournament.status)) {
+          const adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(sourceTournamentId);
+          const shouldCancel =
+            (sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status))
+            || adminCanceledState === 'CANCELED';
+          if (!shouldCancel) {
             return;
           }
 
@@ -2312,6 +2318,27 @@ export class TournamentsService {
 
     const sourceTournaments = await this.listSourceTournaments();
     return sourceTournaments.find((item) => item.id === id) ?? null;
+  }
+
+  private async resolveSourceCanceledStateFromVivaAdmin(
+    sourceTournamentId: string
+  ): Promise<'CANCELED' | 'NOT_CANCELED' | 'UNKNOWN'> {
+    if (!this.vivaAdminService) {
+      return 'UNKNOWN';
+    }
+
+    try {
+      const snapshot = await this.vivaAdminService.getExerciseStatus(sourceTournamentId);
+      if (!snapshot) {
+        return 'UNKNOWN';
+      }
+      return snapshot.canceled ? 'CANCELED' : 'NOT_CANCELED';
+    } catch (error) {
+      this.logger.warn(
+        `Failed to resolve Viva admin canceled status for ${sourceTournamentId}: ${String(error)}`
+      );
+      return 'UNKNOWN';
+    }
   }
 
   private matchesTournamentListFilters(

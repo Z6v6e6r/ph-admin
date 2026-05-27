@@ -94,6 +94,14 @@ export interface VivaAdminBookingPaymentCheckoutResult {
   raw?: unknown;
 }
 
+export interface VivaExerciseStatusSnapshot {
+  id: string;
+  rawStatus?: string;
+  canceled: boolean;
+  timeFrom?: string;
+  timeTo?: string;
+}
+
 interface VivaClientsSearchResponse {
   content?: Array<Record<string, unknown>>;
 }
@@ -298,6 +306,51 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       seen.add(key);
       return true;
     });
+  }
+
+  async getExerciseStatus(exerciseId?: string): Promise<VivaExerciseStatusSnapshot | null> {
+    const normalizedExerciseId = this.normalizeOptional(exerciseId);
+    if (!normalizedExerciseId) {
+      return null;
+    }
+
+    const token = await this.resolveAccessToken();
+    if (!token) {
+      return null;
+    }
+
+    const resolved = await this.getResolvedSettings();
+    const encodedExerciseId = encodeURIComponent(normalizedExerciseId);
+    const paths = [
+      `/api/v1/exercises/${encodedExerciseId}`,
+      `/api/v1/group-exercises/${encodedExerciseId}`
+    ];
+
+    for (const path of paths) {
+      try {
+        const payload = await this.fetchAdminJson(path, token, resolved.config.baseUrl);
+        const record = this.unwrapRecord(payload);
+        if (!record) {
+          continue;
+        }
+        const rawStatus =
+          this.pickString(record.status) ??
+          this.pickString(record.state) ??
+          this.pickString(record.bookingStatus) ??
+          this.pickString(record.booking_status);
+        return {
+          id: normalizedExerciseId,
+          rawStatus,
+          canceled: this.resolveExerciseCanceledFlag(record, rawStatus),
+          timeFrom: this.pickString(record.timeFrom) ?? this.pickString(record.startsAt),
+          timeTo: this.pickString(record.timeTo) ?? this.pickString(record.endsAt)
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
   }
 
   async createTournamentEnergyCheckout(
@@ -1799,6 +1852,78 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  private resolveExerciseCanceledFlag(
+    record: Record<string, unknown>,
+    rawStatus?: string
+  ): boolean {
+    if (
+      [
+        'CANCELED',
+        'CANCELLED',
+        'DELETED'
+      ].includes(this.normalizeStatus(rawStatus))
+    ) {
+      return true;
+    }
+
+    const keys = [
+      'canceled',
+      'cancelled',
+      'isCanceled',
+      'isCancelled',
+      'deleted',
+      'isDeleted'
+    ];
+    for (const key of keys) {
+      const parsed = this.readBooleanFlag(record[key]);
+      if (parsed === true) {
+        return true;
+      }
+    }
+
+    return Boolean(
+      this.pickString(record.canceledAt) ??
+      this.pickString(record.cancelledAt) ??
+      this.pickString(record.cancellationDate) ??
+      this.pickString(record.cancellationTime)
+    );
+  }
+
+  private readBooleanFlag(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      if (value === 1) {
+        return true;
+      }
+      if (value === 0) {
+        return false;
+      }
+      return undefined;
+    }
+
+    const normalized = this.pickString(value);
+    if (!normalized) {
+      return undefined;
+    }
+    const lower = normalized.toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on', 'да'].includes(lower)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off', 'нет'].includes(lower)) {
+      return false;
+    }
+    return undefined;
+  }
+
+  private normalizeStatus(value?: string): string {
+    return String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, '_');
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {
