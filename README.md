@@ -159,6 +159,7 @@ API работает на `http://localhost:3000/api`.
 Админские endpoint'ы кастомных турниров:
 
 - `POST /api/tournaments/custom/from-source/:sourceTournamentId` - создать кастомный турнир на основе турнира из Viva
+- `POST /api/tournaments/custom/from-viva-link` - создать/обновить кастомный турнир по ссылке вида `https://cabinet.vivacrm.ru/schedule/{studioId}/exercise/{exerciseId}?date=YYYY-MM-DD`
 - `GET /api/tournaments/custom/:id` - получить кастомный турнир целиком для редактирования
 - `PATCH /api/tournaments/custom/:id` - обновить кастомный турнир, skin, участников, waitlist и телефоны доступа
 

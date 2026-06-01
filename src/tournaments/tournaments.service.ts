@@ -17,7 +17,8 @@ import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import {
   VivaAdminService,
-  VivaAdminTournamentEnergyCheckoutResult
+  VivaAdminTournamentEnergyCheckoutResult,
+  VivaExerciseStatusSnapshot
 } from '../integrations/viva/viva-admin.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
@@ -51,6 +52,7 @@ import {
   TournamentMechanics,
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
+  TournamentPaymentStatus,
   TournamentPurchaseOption,
   TournamentPublicClientProfile,
   TournamentPublicDirectoryResponse,
@@ -146,6 +148,13 @@ interface TournamentListOptions {
   from?: string;
   to?: string;
   now?: Date;
+}
+
+interface ParsedVivaTournamentLink {
+  originalUrl: string;
+  studioId: string;
+  exerciseId: string;
+  date?: string;
 }
 
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 48;
@@ -454,21 +463,21 @@ export class TournamentsService {
     if (!sourceTournament) {
       throw new NotFoundException(`Source tournament with id ${sourceTournamentId} not found`);
     }
+    return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
+  }
 
-    const existing = await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
-      sourceTournamentId
-    );
-    const normalizedMutation = this.buildCreateMutation(sourceTournament, mutation);
+  async createCustomFromVivaLink(
+    vivaUrl: string,
+    mutation: Partial<CreateCustomTournamentMutation>
+  ): Promise<CustomTournament> {
+    this.ensurePersistenceEnabled();
+    const parsedLink = this.parseVivaTournamentLink(vivaUrl);
+    const sourceTournamentFromFeed = await this.findSourceTournamentById(parsedLink.exerciseId);
+    const sourceTournament = sourceTournamentFromFeed
+      ? this.applyVivaLinkFallbackToSourceTournament(sourceTournamentFromFeed, parsedLink)
+      : await this.buildFallbackSourceTournamentFromVivaLink(parsedLink);
 
-    if (existing) {
-      return this.updateExistingFromCreate(existing.id, normalizedMutation);
-    }
-
-    const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
-    const hydrated = await this.hydrateCustomTournament(created);
-    this.invalidatePublicDirectoryCache();
-    await this.publishTournamentToSelectedCommunities(hydrated, normalizedMutation.actor);
-    return hydrated;
+    return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
   }
 
   async updateCustom(
@@ -2641,6 +2650,361 @@ export class TournamentsService {
       participants,
       waitlist
     });
+  }
+
+  private async createOrUpdateCustomTournamentFromSource(
+    sourceTournament: Tournament,
+    mutation: Partial<CreateCustomTournamentMutation>
+  ): Promise<CustomTournament> {
+    const existing = await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
+      sourceTournament.id
+    );
+    const normalizedMutation = this.buildCreateMutation(sourceTournament, mutation);
+
+    if (existing) {
+      return this.updateExistingFromCreate(existing.id, normalizedMutation);
+    }
+
+    const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
+    const hydrated = await this.hydrateCustomTournament(created);
+    this.invalidatePublicDirectoryCache();
+    await this.publishTournamentToSelectedCommunities(hydrated, normalizedMutation.actor);
+    return hydrated;
+  }
+
+  private parseVivaTournamentLink(rawUrl: string): ParsedVivaTournamentLink {
+    const normalized = this.pickString(rawUrl);
+    if (!normalized) {
+      throw new BadRequestException('Ссылка Viva не указана.');
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(normalized);
+    } catch {
+      throw new BadRequestException(
+        'Некорректная ссылка Viva. Ожидается формат https://cabinet.vivacrm.ru/schedule/{studioId}/exercise/{exerciseId}?date=YYYY-MM-DD'
+      );
+    }
+
+    if (!/(\.|^)vivacrm\.ru$/i.test(parsed.hostname)) {
+      throw new BadRequestException(
+        'Ссылка должна вести на cabinet.vivacrm.ru с маршрутом schedule/.../exercise/...'
+      );
+    }
+
+    const pathParts = parsed.pathname
+      .split('/')
+      .map((part) => String(part || '').trim())
+      .filter(Boolean);
+    const scheduleIndex = pathParts.findIndex((part) => part.toLowerCase() === 'schedule');
+    const exerciseIndex = pathParts.findIndex(
+      (part, index) => index > scheduleIndex && part.toLowerCase() === 'exercise'
+    );
+
+    const studioId = scheduleIndex >= 0 ? this.pickString(pathParts[scheduleIndex + 1]) : undefined;
+    const exerciseId = exerciseIndex >= 0 ? this.pickString(pathParts[exerciseIndex + 1]) : undefined;
+    if (!studioId || !exerciseId) {
+      throw new BadRequestException(
+        'Не удалось извлечь studioId/exerciseId из ссылки Viva. Ожидается /schedule/{studioId}/exercise/{exerciseId}'
+      );
+    }
+
+    return {
+      originalUrl: parsed.toString(),
+      studioId,
+      exerciseId,
+      date: this.normalizePublicDate(parsed.searchParams.get('date') ?? undefined)
+    };
+  }
+
+  private applyVivaLinkFallbackToSourceTournament(
+    sourceTournament: Tournament,
+    parsedLink: ParsedVivaTournamentLink
+  ): Tournament {
+    const startsAt =
+      sourceTournament.startsAt
+      ?? this.resolveVivaLinkDateTime(parsedLink.date, undefined, 'start');
+    const endsAt =
+      sourceTournament.endsAt
+      ?? this.resolveVivaLinkDateTime(parsedLink.date, undefined, 'end');
+    return {
+      ...sourceTournament,
+      studioId: this.pickString(sourceTournament.studioId) ?? parsedLink.studioId,
+      startsAt: startsAt ?? undefined,
+      endsAt: endsAt ?? undefined
+    };
+  }
+
+  private async buildFallbackSourceTournamentFromVivaLink(
+    parsedLink: ParsedVivaTournamentLink
+  ): Promise<Tournament> {
+    const adminSnapshot = await this.resolveVivaExerciseStatusFromAdmin(parsedLink.exerciseId);
+    const participants = await this.resolveVivaExerciseParticipantsFromAdmin(parsedLink.exerciseId);
+    const startsAt = this.resolveVivaLinkDateTime(parsedLink.date, adminSnapshot?.timeFrom, 'start');
+    const endsAt = this.resolveVivaLinkDateTime(parsedLink.date, adminSnapshot?.timeTo, 'end');
+    const status = this.resolveFallbackVivaTournamentStatus({
+      adminSnapshot,
+      startsAt,
+      endsAt,
+      date: parsedLink.date
+    });
+    const fallbackNameSuffix = parsedLink.date ?? parsedLink.exerciseId.slice(0, 8);
+
+    return {
+      id: parsedLink.exerciseId,
+      source: 'VIVA',
+      name: `Турнир Viva ${fallbackNameSuffix}`,
+      status,
+      rawStatus: this.pickString(adminSnapshot?.rawStatus) ?? undefined,
+      studioId: parsedLink.studioId,
+      startsAt: startsAt ?? undefined,
+      endsAt: endsAt ?? undefined,
+      maxPlayers: Math.max(8, participants.length || 0),
+      participants: participants.length > 0 ? participants : undefined,
+      participantsCount: participants.length > 0 ? participants.length : undefined
+    };
+  }
+
+  private async resolveVivaExerciseStatusFromAdmin(
+    exerciseId: string
+  ): Promise<VivaExerciseStatusSnapshot | null> {
+    if (!this.vivaAdminService) {
+      return null;
+    }
+
+    try {
+      return await this.vivaAdminService.getExerciseStatus(exerciseId);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva admin exercise status for ${exerciseId}: ${String(error)}`
+      );
+      return null;
+    }
+  }
+
+  private async resolveVivaExerciseParticipantsFromAdmin(
+    exerciseId: string
+  ): Promise<TournamentParticipant[]> {
+    if (!this.vivaAdminService) {
+      return [];
+    }
+
+    try {
+      const records = await this.vivaAdminService.listExerciseBookings(exerciseId);
+      return this.normalizeVivaAdminBookingParticipants(records);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva admin exercise participants for ${exerciseId}: ${String(error)}`
+      );
+      return [];
+    }
+  }
+
+  private normalizeVivaAdminBookingParticipants(
+    records: Record<string, unknown>[]
+  ): TournamentParticipant[] {
+    const seen = new Set<string>();
+    return (Array.isArray(records) ? records : [])
+      .map((item, index) => {
+        const record = this.toRecord(item) ?? {};
+        const client =
+          this.toRecord(record.client)
+          ?? this.toRecord(record.participant)
+          ?? this.toRecord(record.visitor)
+          ?? this.toRecord(record.guest)
+          ?? {};
+        const phone = this.normalizePhone(
+          record.clientPhone
+          ?? record.phone
+          ?? record.phoneNumber
+          ?? record.client_phone
+          ?? record.phone_number
+          ?? client.phone
+          ?? client.phoneNumber
+          ?? client.clientPhone
+          ?? client.phone_number
+          ?? client.mobile
+        ) ?? undefined;
+        const name =
+          this.pickString(
+            record.clientName
+            ?? record.name
+            ?? record.fullName
+            ?? record.client_name
+            ?? client.name
+            ?? client.fullName
+            ?? client.full_name
+            ?? client.displayName
+          )
+          ?? phone
+          ?? `Участник ${index + 1}`;
+        const levelLabel = this.pickString(
+          record.levelLabel
+          ?? record.level
+          ?? client.levelLabel
+          ?? client.level
+          ?? client.ratingLabel
+          ?? client.rating
+        );
+        const avatarUrl = this.pickNullableString(
+          record.avatarUrl
+          ?? record.avatar_url
+          ?? record.photo
+          ?? client.avatarUrl
+          ?? client.avatar_url
+          ?? client.photo
+        );
+        const participant: TournamentParticipant = {
+          name,
+          phone,
+          levelLabel: levelLabel ?? undefined,
+          avatarUrl: avatarUrl ?? undefined,
+          status: 'REGISTERED',
+          paymentStatus: this.resolveVivaAdminPaymentStatus(record, client)
+        };
+
+        const key = this.buildParticipantKey(participant);
+        if (seen.has(key)) {
+          return null;
+        }
+        seen.add(key);
+        return participant;
+      })
+      .filter((item): item is TournamentParticipant => Boolean(item));
+  }
+
+  private resolveVivaAdminPaymentStatus(
+    record: Record<string, unknown>,
+    client: Record<string, unknown>
+  ): TournamentPaymentStatus | undefined {
+    const paidFlagCandidates = [
+      record.paid,
+      record.isPaid,
+      record.paymentConfirmed,
+      client.paid,
+      client.isPaid
+    ];
+    if (paidFlagCandidates.some((value) => value === true || String(value).trim() === '1')) {
+      return 'PAID';
+    }
+
+    const statusText = [
+      this.pickString(record.paymentStatus),
+      this.pickString(record.payment_status),
+      this.pickString(record.status),
+      this.pickString(record.bookingStatus),
+      this.pickString(record.booking_status)
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' ')
+      .toUpperCase();
+    if (!statusText) {
+      return undefined;
+    }
+    if (
+      /PAID|PAYED|SUCCESS|SOLD|ОПЛАЧ/.test(statusText)
+      && !/UNPAID|НЕОПЛАЧ|NOT_PAID/.test(statusText)
+    ) {
+      return 'PAID';
+    }
+    if (/UNPAID|НЕОПЛАЧ|NOT_PAID|AWAIT/.test(statusText)) {
+      return 'UNPAID';
+    }
+    return undefined;
+  }
+
+  private resolveFallbackVivaTournamentStatus(input: {
+    adminSnapshot: VivaExerciseStatusSnapshot | null;
+    startsAt?: string;
+    endsAt?: string;
+    date?: string;
+  }): TournamentStatus {
+    if (input.adminSnapshot?.canceled) {
+      return TournamentStatus.CANCELED;
+    }
+
+    const nowTs = Date.now();
+    const startsAtTs = Date.parse(input.startsAt ?? '');
+    const endsAtTs = Date.parse(input.endsAt ?? '');
+
+    if (Number.isFinite(startsAtTs) && Number.isFinite(endsAtTs) && endsAtTs < nowTs) {
+      return TournamentStatus.FINISHED;
+    }
+    if (Number.isFinite(startsAtTs) && startsAtTs <= nowTs) {
+      return TournamentStatus.RUNNING;
+    }
+
+    if (input.date && input.date < this.formatPublicDateKey(new Date())) {
+      return TournamentStatus.FINISHED;
+    }
+    return TournamentStatus.REGISTRATION;
+  }
+
+  private resolveVivaLinkDateTime(
+    dateKey: string | undefined,
+    rawDateTime: unknown,
+    mode: 'start' | 'end'
+  ): string | undefined {
+    const text = this.pickString(rawDateTime);
+    const fallbackTime = mode === 'start' ? '00:00:00' : '23:59:59';
+    if (!text) {
+      return dateKey ? `${dateKey}T${fallbackTime}` : undefined;
+    }
+
+    const normalized = this.normalizeTournamentListDateTime(text);
+    if (normalized) {
+      const normalizedDate = this.normalizePublicDate(normalized);
+      if (normalizedDate) {
+        return `${normalizedDate}T${fallbackTime}`;
+      }
+      return normalized;
+    }
+
+    const composed = this.composeDateTimeFromDateAndClock(dateKey, text);
+    if (composed) {
+      return composed;
+    }
+
+    return dateKey ? `${dateKey}T${fallbackTime}` : undefined;
+  }
+
+  private composeDateTimeFromDateAndClock(
+    dateKey: string | undefined,
+    clockValue: string
+  ): string | undefined {
+    if (!dateKey) {
+      return undefined;
+    }
+    const match = clockValue.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) {
+      return undefined;
+    }
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3] ?? '0');
+    if (
+      !Number.isFinite(hours)
+      || !Number.isFinite(minutes)
+      || !Number.isFinite(seconds)
+      || hours < 0
+      || hours > 23
+      || minutes < 0
+      || minutes > 59
+      || seconds < 0
+      || seconds > 59
+    ) {
+      return undefined;
+    }
+    return [
+      dateKey,
+      'T',
+      String(hours).padStart(2, '0'),
+      ':',
+      String(minutes).padStart(2, '0'),
+      ':',
+      String(seconds).padStart(2, '0')
+    ].join('');
   }
 
   private buildCreateMutation(

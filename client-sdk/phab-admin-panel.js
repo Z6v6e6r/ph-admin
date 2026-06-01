@@ -5051,6 +5051,12 @@
           payload
         );
       },
+      createCustomTournamentFromVivaLink: function (vivaUrl, payload) {
+        var body = Object.assign({}, payload || {}, {
+          vivaUrl: String(vivaUrl || '').trim()
+        });
+        return request('/tournaments/custom/from-viva-link', 'POST', body);
+      },
       updateCustomTournament: function (tournamentId, payload) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'PATCH', payload);
       },
@@ -6304,6 +6310,12 @@
     tournamentsResetBtn.type = 'button';
     tournamentsResetBtn.textContent = 'Сбросить';
     tournamentsFilters.appendChild(tournamentsResetBtn);
+
+    var tournamentsAddByVivaBtn = document.createElement('button');
+    tournamentsAddByVivaBtn.className = 'phab-admin-btn-secondary';
+    tournamentsAddByVivaBtn.type = 'button';
+    tournamentsAddByVivaBtn.textContent = 'Добавить по ссылке VIVA';
+    tournamentsFilters.appendChild(tournamentsAddByVivaBtn);
 
     var tournamentsSummary = document.createElement('div');
     tournamentsSummary.className = 'phab-admin-games-page-info';
@@ -8031,6 +8043,7 @@
       tournamentsToInput: tournamentsToInput,
       tournamentsApplyBtn: tournamentsApplyBtn,
       tournamentsResetBtn: tournamentsResetBtn,
+      tournamentsAddByVivaBtn: tournamentsAddByVivaBtn,
       tournamentsSummary: tournamentsSummary,
       tournamentsPrevPageBtn: tournamentsPrevPageBtn,
       tournamentsPageInfo: tournamentsPageInfo,
@@ -14932,6 +14945,41 @@
       dom.tournamentsFromInput.value = state.tournamentsFilterFrom;
       dom.tournamentsToInput.value = '';
       await loadTournaments();
+    }
+
+    async function createTournamentFromVivaLink() {
+      var vivaUrl = window.prompt(
+        'Вставьте ссылку Viva: https://cabinet.vivacrm.ru/schedule/{studioId}/exercise/{exerciseId}?date=YYYY-MM-DD',
+        ''
+      );
+      if (vivaUrl === null) {
+        return;
+      }
+
+      var normalizedVivaUrl = String(vivaUrl || '').trim();
+      if (!normalizedVivaUrl) {
+        setStatus('Ссылка Viva не указана.', true);
+        return;
+      }
+
+      var buttonLabel = String(dom.tournamentsAddByVivaBtn.textContent || 'Добавить по ссылке VIVA');
+      dom.tournamentsAddByVivaBtn.disabled = true;
+      dom.tournamentsAddByVivaBtn.textContent = 'Добавляем...';
+      try {
+        var createdTournament = await api.createCustomTournamentFromVivaLink(
+          normalizedVivaUrl,
+          {}
+        );
+        await loadTournaments();
+        setStatus('Турнир добавлен по ссылке Viva.', false);
+
+        if (createdTournament && createdTournament.id) {
+          await openTournamentEditor(createdTournament);
+        }
+      } finally {
+        dom.tournamentsAddByVivaBtn.disabled = false;
+        dom.tournamentsAddByVivaBtn.textContent = buttonLabel;
+      }
     }
 
     function renderTournaments() {
@@ -26130,6 +26178,9 @@
       });
       dom.tournamentsResetBtn.addEventListener('click', function () {
         resetTournamentFilters().catch(handleError);
+      });
+      dom.tournamentsAddByVivaBtn.addEventListener('click', function () {
+        createTournamentFromVivaLink().catch(handleError);
       });
       dom.tournamentsPrevPageBtn.addEventListener('click', function () {
         if (state.tournamentsPage <= 1) {

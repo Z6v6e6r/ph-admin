@@ -16,6 +16,7 @@ import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { AmericanoRatingSimulationResult } from './americano-rating.types';
 import { AmericanoScheduleResult } from './americano-schedule.types';
+import { CreateCustomTournamentFromVivaLinkDto } from './dto/create-custom-tournament-from-viva-link.dto';
 import { CreateCustomTournamentFromSourceDto } from './dto/create-custom-tournament-from-source.dto';
 import { GenerateTournamentScheduleDto } from './dto/generate-tournament-schedule.dto';
 import { SimulateTournamentRatingDto } from './dto/simulate-tournament-rating.dto';
@@ -60,6 +61,17 @@ export class TournamentsController {
     @CurrentUser() user?: RequestUser
   ): Promise<CustomTournament> {
     return this.tournamentsService.createCustomFromSource(sourceTournamentId, {
+      ...dto,
+      ...(user ? { actor: this.toActor(user) } : {})
+    });
+  }
+
+  @Post('custom/from-viva-link')
+  createCustomFromVivaLink(
+    @Body() dto: CreateCustomTournamentFromVivaLinkDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<CustomTournament> {
+    return this.tournamentsService.createCustomFromVivaLink(dto.vivaUrl, {
       ...dto,
       ...(user ? { actor: this.toActor(user) } : {})
     });
