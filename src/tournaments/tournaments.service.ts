@@ -53,11 +53,14 @@ import {
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
   TournamentPaymentStatus,
+  TournamentPricePopover,
+  TournamentPricingSnapshotStatus,
   TournamentPurchaseOption,
   TournamentPublicClientProfile,
   TournamentPublicDirectoryResponse,
   TournamentCustomEnergyCheckoutResponse,
   TournamentResultsView,
+  TournamentSummerSubscriptionOffer,
   TournamentPublicView,
   TournamentRegistrationResponse,
   TournamentStatus
@@ -163,6 +166,8 @@ const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
 const TOURNAMENT_ENERGY_BASE_AMOUNT = 20000;
+const TOURNAMENT_PRICING_SNAPSHOT_VERSION = 1;
+const TOURNAMENT_SUMMER_PROMO_LABEL = 'Лето.Падел.Спорт';
 const TOURNAMENT_LEVEL_BANDS = [
   { base: 'D', min: 1, max: 2, display: '1.0-2.0' },
   { base: 'D+', min: 2, max: 3, display: '2.0-3.0' },
@@ -288,7 +293,7 @@ export class TournamentsService {
         .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
     );
 
-    return [...mergedSource, ...standaloneCustom, ...missingLinkedCustom]
+    const tournaments = [...mergedSource, ...standaloneCustom, ...missingLinkedCustom]
       .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
       .sort((left, right) => {
         const leftStartsAt = Date.parse(left.startsAt ?? '');
@@ -303,6 +308,8 @@ export class TournamentsService {
         return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
       })
       .map((tournament) => this.toLkCompatibleTournament(tournament));
+    this.recordPricingSnapshotMissingOnList(tournaments);
+    return tournaments;
   }
 
   async syncCanceledCustomTournamentsFromViva(options?: {
@@ -482,17 +489,83 @@ export class TournamentsService {
 
   async updateCustom(
     id: string,
-    mutation: UpdateCustomTournamentMutation
+    mutation: UpdateCustomTournamentMutation,
+    options?: {
+      rebuildPricingSnapshot?: boolean;
+    }
   ): Promise<CustomTournament> {
     this.ensurePersistenceEnabled();
     const updated = await this.tournamentsPersistence.updateCustomTournament(id, mutation);
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    const hydrated = await this.hydrateCustomTournament(updated);
+    const snapshotReadyTournament = options?.rebuildPricingSnapshot === true
+      ? await this.rebuildPersistedPricingSnapshot(updated)
+      : updated;
+    const hydrated = await this.hydrateCustomTournament(snapshotReadyTournament);
     this.invalidatePublicDirectoryCache();
     await this.publishTournamentToSelectedCommunities(hydrated, mutation.actor);
     return hydrated;
+  }
+
+  async backfillPricingSnapshots(options?: {
+    now?: Date;
+  }): Promise<{
+    windowStart: string;
+    candidatesCount: number;
+    readyCount: number;
+    staleCount: number;
+    missingCount: number;
+  }> {
+    this.ensurePersistenceEnabled();
+
+    const now = options?.now ?? new Date();
+    const windowStart = new Date(now.getTime());
+    windowStart.setHours(0, 0, 0, 0);
+
+    const tournaments = await this.listCustomTournamentsSafe();
+    const candidates = tournaments.filter((tournament) => {
+      if (this.isCanceledTournamentStatus(tournament.status)) {
+        return false;
+      }
+      const startsAtTs = Date.parse(tournament.startsAt ?? '');
+      return Number.isFinite(startsAtTs) && startsAtTs >= windowStart.getTime();
+    });
+    const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(candidates, {
+      includeDetailedSource: false
+    });
+
+    let readyCount = 0;
+    let staleCount = 0;
+    let missingCount = 0;
+
+    for (const tournament of candidates) {
+      const refreshed = await this.rebuildPersistedPricingSnapshot(tournament, {
+        sourceTournament: this.pickString(tournament.sourceTournamentId)
+          ? sourceTournamentsById.get(String(tournament.sourceTournamentId))
+          : undefined
+      });
+      const snapshotStatus = this.normalizePricingSnapshotStatus(refreshed.pricingSnapshotStatus);
+      if (snapshotStatus === 'READY') {
+        readyCount += 1;
+      } else if (snapshotStatus === 'STALE') {
+        staleCount += 1;
+      } else {
+        missingCount += 1;
+      }
+    }
+
+    if (candidates.length > 0) {
+      this.invalidatePublicDirectoryCache();
+    }
+
+    return {
+      windowStart: windowStart.toISOString(),
+      candidatesCount: candidates.length,
+      readyCount,
+      staleCount,
+      missingCount
+    };
   }
 
   async getPublicBySlug(slug: string): Promise<TournamentPublicView> {
@@ -1121,6 +1194,7 @@ export class TournamentsService {
     const booking = this.resolveBookingConfig(tournament);
     const bookingExerciseId =
       this.pickString(booking.vivaExerciseId)
+      ?? this.pickString(tournament.exerciseId)
       ?? this.pickString(tournament.sourceTournamentId);
     if (bookingExerciseId && bookingExerciseId !== routeExerciseId) {
       throw new BadRequestException('Tournament booking exerciseId does not match route exerciseId');
@@ -1674,6 +1748,7 @@ export class TournamentsService {
         const booking = this.resolveBookingConfig(tournament);
         const bookingExerciseId =
           this.pickString(booking.vivaExerciseId)
+          ?? this.pickString(tournament.exerciseId)
           ?? this.pickString(tournament.sourceTournamentId);
         if (!bookingExerciseId || bookingExerciseId === exerciseId) {
           return tournament;
@@ -1690,6 +1765,7 @@ export class TournamentsService {
       const booking = this.resolveBookingConfig(tournament);
       return (
         this.pickString(booking.vivaExerciseId) === exerciseId ||
+        this.pickString(tournament.exerciseId) === exerciseId ||
         this.pickString(tournament.sourceTournamentId) === exerciseId
       );
     });
@@ -2326,7 +2402,7 @@ export class TournamentsService {
     }
 
     const sourceTournaments = await this.listSourceTournaments();
-    return sourceTournaments.find((item) => item.id === id) ?? null;
+    return sourceTournaments.find((item) => item.id === id || item.exerciseId === id) ?? null;
   }
 
   private async resolveSourceCanceledStateFromVivaAdmin(
@@ -2506,6 +2582,7 @@ export class TournamentsService {
         details: {
           sourceTournamentSnapshot
         },
+        exerciseId: this.resolveTournamentExerciseId(tournament),
         linkedCustomTournamentId: undefined,
         publicUrl: undefined,
         slug: undefined,
@@ -2535,6 +2612,7 @@ export class TournamentsService {
       name: mergedCustomTournament.name,
       status: mergedCustomTournament.status,
       rawStatus: mergedCustomTournament.rawStatus ?? mergedCustomTournament.status,
+      exerciseId: mergedCustomTournament.exerciseId ?? this.resolveTournamentExerciseId(tournament),
       details: {
         sourceTournamentSnapshot
       },
@@ -2554,7 +2632,13 @@ export class TournamentsService {
       waitlistCount: mergedCustomTournament.waitlistCount,
       allowedManagerPhones: mergedCustomTournament.allowedManagerPhones,
       publicationCommunityIds: mergedCustomTournament.publicationCommunityIds,
-      skin: mergedCustomTournament.skin
+      skin: mergedCustomTournament.skin,
+      pricePopover: mergedCustomTournament.pricePopover,
+      hasFriendlySubscriptionTag: mergedCustomTournament.hasFriendlySubscriptionTag,
+      summerSubscriptionOffer: mergedCustomTournament.summerSubscriptionOffer,
+      pricingSnapshotStatus: mergedCustomTournament.pricingSnapshotStatus,
+      pricingSnapshotUpdatedAt: mergedCustomTournament.pricingSnapshotUpdatedAt,
+      pricingSnapshotVersion: mergedCustomTournament.pricingSnapshotVersion
     };
   }
 
@@ -2581,6 +2665,10 @@ export class TournamentsService {
 
     return {
       ...base,
+      exerciseId:
+        sourceTournament.exerciseId
+        ?? base.exerciseId
+        ?? this.resolveTournamentExerciseId(sourceTournament),
       status: sourceTournament.status,
       rawStatus: sourceTournament.rawStatus ?? base.rawStatus,
       startsAt: sourceTournament.startsAt ?? base.startsAt,
@@ -2666,7 +2754,10 @@ export class TournamentsService {
     }
 
     const created = await this.tournamentsPersistence.createCustomTournament(normalizedMutation);
-    const hydrated = await this.hydrateCustomTournament(created);
+    const withSnapshot = await this.rebuildPersistedPricingSnapshot(created, {
+      sourceTournament
+    });
+    const hydrated = this.mergeCustomWithSourceTournament(withSnapshot, sourceTournament);
     this.invalidatePublicDirectoryCache();
     await this.publishTournamentToSelectedCommunities(hydrated, normalizedMutation.actor);
     return hydrated;
@@ -2754,6 +2845,7 @@ export class TournamentsService {
     return {
       id: parsedLink.exerciseId,
       source: 'VIVA',
+      exerciseId: parsedLink.exerciseId,
       name: `Турнир Viva ${fallbackNameSuffix}`,
       status,
       rawStatus: this.pickString(adminSnapshot?.rawStatus) ?? undefined,
@@ -3014,6 +3106,7 @@ export class TournamentsService {
     return {
       sourceTournamentId: sourceTournament.id,
       sourceTournamentSnapshot: this.buildSourceTournamentSnapshot(sourceTournament),
+      exerciseId: this.resolveTournamentExerciseId(sourceTournament),
       name: this.pickString(mutation.name) ?? sourceTournament.name,
       status: mutation.status ?? TournamentStatus.REGISTRATION,
       startsAt: this.pickString(mutation.startsAt) ?? sourceTournament.startsAt,
@@ -3070,6 +3163,7 @@ export class TournamentsService {
     mutation: CreateCustomTournamentMutation
   ): Promise<CustomTournament> {
     return this.updateCustom(id, {
+      exerciseId: mutation.exerciseId,
       name: mutation.name,
       status: mutation.status,
       startsAt: mutation.startsAt,
@@ -3095,6 +3189,8 @@ export class TournamentsService {
       skin: mutation.skin,
       mechanics: mutation.mechanics,
       actor: mutation.actor
+    }, {
+      rebuildPricingSnapshot: true
     });
   }
 
@@ -3103,6 +3199,7 @@ export class TournamentsService {
   ): Record<string, unknown> {
     return {
       id: sourceTournament.id,
+      exerciseId: sourceTournament.exerciseId,
       source: sourceTournament.source,
       name: sourceTournament.name,
       status: sourceTournament.status,
@@ -3121,6 +3218,400 @@ export class TournamentsService {
       participants: sourceTournament.participants,
       participantsCount: sourceTournament.participantsCount
     };
+  }
+
+  private async rebuildPersistedPricingSnapshot(
+    tournament: CustomTournament,
+    options?: {
+      sourceTournament?: Tournament;
+    }
+  ): Promise<CustomTournament> {
+    let sourceTournament = options?.sourceTournament;
+    let workingTournament = sourceTournament
+      ? this.mergeCustomWithSourceTournament(tournament, sourceTournament)
+      : tournament;
+
+    if (!this.resolveTournamentExerciseId(workingTournament) && workingTournament.sourceTournamentId) {
+      sourceTournament =
+        sourceTournament
+        ?? (await this.findSourceTournamentByIdSafe(workingTournament.sourceTournamentId)) ?? undefined;
+      if (sourceTournament) {
+        workingTournament = this.mergeCustomWithSourceTournament(tournament, sourceTournament);
+      }
+    }
+
+    const mutation = await this.buildPricingSnapshotMutation(workingTournament);
+    const persisted = await this.tournamentsPersistence.updateCustomTournament(
+      tournament.id,
+      mutation
+    );
+    if (!persisted) {
+      return workingTournament;
+    }
+
+    return sourceTournament
+      ? this.mergeCustomWithSourceTournament(persisted, sourceTournament)
+      : persisted;
+  }
+
+  private async buildPricingSnapshotMutation(
+    tournament: CustomTournament
+  ): Promise<UpdateCustomTournamentMutation> {
+    const exerciseId = this.resolveTournamentExerciseId(tournament);
+    const hadPersistedSnapshot = this.hasPersistedPricingSnapshot(tournament);
+
+    try {
+      const snapshot = await this.buildTournamentPricingSnapshot(tournament, exerciseId);
+      const pricingSnapshotUpdatedAt = new Date().toISOString();
+      this.logPricingSnapshotBuildSuccess({
+        tournamentId: tournament.id,
+        exerciseId,
+        source: snapshot.source,
+        ordinaryProductsCount: snapshot.ordinaryProductsCount,
+        hasSummerOffer: snapshot.hasFriendlySubscriptionTag
+      });
+      return {
+        ...(exerciseId ? { exerciseId } : {}),
+        pricePopover: snapshot.pricePopover ?? null,
+        hasFriendlySubscriptionTag: snapshot.hasFriendlySubscriptionTag,
+        summerSubscriptionOffer: snapshot.summerSubscriptionOffer ?? null,
+        pricingSnapshotStatus: 'READY',
+        pricingSnapshotUpdatedAt,
+        pricingSnapshotVersion: TOURNAMENT_PRICING_SNAPSHOT_VERSION
+      };
+    } catch (error) {
+      const pricingSnapshotStatus: TournamentPricingSnapshotStatus =
+        hadPersistedSnapshot ? 'STALE' : 'MISSING';
+      this.logPricingSnapshotBuildFailed({
+        tournamentId: tournament.id,
+        exerciseId,
+        status: pricingSnapshotStatus,
+        error: String(error)
+      });
+      return {
+        ...(exerciseId ? { exerciseId } : {}),
+        ...(
+          hadPersistedSnapshot
+            ? {}
+            : {
+                pricePopover: null,
+                hasFriendlySubscriptionTag: false,
+                summerSubscriptionOffer: null
+              }
+        ),
+        pricingSnapshotStatus
+      };
+    }
+  }
+
+  private async buildTournamentPricingSnapshot(
+    tournament: CustomTournament,
+    exerciseId?: string
+  ): Promise<{
+    source: 'BOOKING' | 'VIVA' | 'CUSTOM_PRICE_FALLBACK';
+    ordinaryProductsCount: number;
+    pricePopover?: TournamentPricePopover;
+    hasFriendlySubscriptionTag: boolean;
+    summerSubscriptionOffer?: TournamentSummerSubscriptionOffer;
+  }> {
+    const booking = this.resolveBookingConfig(tournament);
+    const hasCustomPricing = Boolean(this.parseMoneyAmount(tournament.skin?.priceLabel));
+    const localOptions = Array.isArray(booking.purchaseOptions) ? booking.purchaseOptions : [];
+
+    let source: 'BOOKING' | 'VIVA' | 'CUSTOM_PRICE_FALLBACK' = 'BOOKING';
+    let liveOptions: TournamentPurchaseOption[] = [];
+    let liveCatalogError: unknown;
+
+    if (exerciseId && (localOptions.length === 0 || hasCustomPricing)) {
+      try {
+        liveOptions = await this.fetchVivaJoinPurchaseOptions(tournament, {
+          throwOnError: true
+        });
+        if (liveOptions.length > 0) {
+          source = 'VIVA';
+        }
+      } catch (error) {
+        liveCatalogError = error;
+      }
+    }
+
+    const mergedOptions = this.mergePricingSnapshotPurchaseOptions(localOptions, liveOptions);
+    if (mergedOptions.length === 0 && liveCatalogError && !hasCustomPricing) {
+      throw liveCatalogError;
+    }
+
+    let options = mergedOptions;
+    if (hasCustomPricing) {
+      const customFallbackOptions = this.buildCustomPricingFallbackPurchaseOptions(tournament);
+      const promoOnlyOptions = mergedOptions.filter((option) =>
+        this.isSummerPromoOnlyPurchaseOption(option)
+      );
+      options = [...customFallbackOptions, ...promoOnlyOptions];
+      if (customFallbackOptions.length > 0) {
+        source = 'CUSTOM_PRICE_FALLBACK';
+      }
+    } else if (options.length === 0 && liveCatalogError) {
+      throw liveCatalogError;
+    }
+
+    const pricedOptions = this.applyTournamentEnergyPurchasePricing(tournament, options);
+    const summerOption =
+      pricedOptions.find((option) => this.isSummerPromoOnlyPurchaseOption(option)) ?? null;
+    const ordinaryOptions = pricedOptions.filter((option) =>
+      this.isOrdinaryPricingSnapshotPurchaseOption(option)
+    );
+    const pricePopover =
+      ordinaryOptions.length > 0
+        ? this.buildTournamentPricePopover(ordinaryOptions)
+        : undefined;
+
+    return {
+      source,
+      ordinaryProductsCount: ordinaryOptions.length,
+      pricePopover,
+      hasFriendlySubscriptionTag: Boolean(summerOption),
+      summerSubscriptionOffer: summerOption
+        ? this.toSummerSubscriptionOffer(summerOption)
+        : undefined
+    };
+  }
+
+  private mergePricingSnapshotPurchaseOptions(
+    localOptions: TournamentPurchaseOption[],
+    liveOptions: TournamentPurchaseOption[]
+  ): TournamentPurchaseOption[] {
+    const merged = new Map<string, TournamentPurchaseOption>();
+    localOptions.forEach((option, index) => {
+      const key = this.pickString(option.id) ?? this.pickString(option.label) ?? `local-${index + 1}`;
+      merged.set(key, option);
+    });
+    liveOptions.forEach((option, index) => {
+      const key = this.pickString(option.id) ?? this.pickString(option.label) ?? `live-${index + 1}`;
+      merged.set(key, {
+        ...(merged.get(key) ?? {}),
+        ...option
+      });
+    });
+    return Array.from(merged.values());
+  }
+
+  private buildCustomPricingFallbackPurchaseOptions(
+    tournament: CustomTournament
+  ): TournamentPurchaseOption[] {
+    const customPrice = this.parseMoneyAmount(tournament.skin?.priceLabel);
+    if (!customPrice) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'custom-energy-fallback',
+        label: 'Энергия 🎾',
+        priceLabel: this.formatMoneyAmount(customPrice),
+        productType: 'ONE_TIME'
+      }
+    ];
+  }
+
+  private buildTournamentPricePopover(
+    options: TournamentPurchaseOption[]
+  ): TournamentPricePopover {
+    const rows = options.map((option) => ({
+      id: option.id,
+      label: option.label,
+      value: this.buildPricingSnapshotRowValue(option)
+    }));
+    const cheapest = options
+      .map((option) => ({
+        option,
+        amount: this.parseMoneyAmount(option.priceLabel)
+      }))
+      .filter((entry): entry is { option: TournamentPurchaseOption; amount: number } =>
+        typeof entry.amount === 'number'
+      )
+      .sort((left, right) => left.amount - right.amount)[0];
+
+    return {
+      triggerLabel: cheapest?.option.priceLabel ?? rows[0]?.value ?? '—',
+      rows
+    };
+  }
+
+  private isOrdinaryPricingSnapshotPurchaseOption(
+    option: TournamentPurchaseOption
+  ): boolean {
+    if (this.isSummerPromoOnlyPurchaseOption(option)) {
+      return false;
+    }
+
+    return Boolean(this.parseMoneyAmount(option.priceLabel));
+  }
+
+  private isSummerPromoOnlyPurchaseOption(
+    option: Pick<TournamentPurchaseOption, 'label' | 'id'>
+  ): boolean {
+    const haystack = [
+      this.pickString(option.label),
+      this.pickString(option.id)
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' ');
+    return /лето\.?\s*падел\.?\s*спорт/i.test(haystack);
+  }
+
+  private toSummerSubscriptionOffer(
+    option: TournamentPurchaseOption
+  ): TournamentSummerSubscriptionOffer {
+    return {
+      id: option.id,
+      label: option.label || TOURNAMENT_SUMMER_PROMO_LABEL,
+      value: option.priceLabel
+    };
+  }
+
+  private buildPricingSnapshotRowValue(option: TournamentPurchaseOption): string {
+    const priceLabel = this.pickString(option.priceLabel) ?? '—';
+    if (option.productType === 'ONE_TIME') {
+      return `${priceLabel} / 1 посещение`;
+    }
+
+    const visitCount = this.extractPricingSnapshotVisitCount(option);
+    if (visitCount !== undefined) {
+      return visitCount === 1
+        ? `${priceLabel} / 1 посещение`
+        : `${priceLabel} / ${visitCount} посещ.`;
+    }
+
+    return priceLabel;
+  }
+
+  private extractPricingSnapshotVisitCount(
+    option: Pick<TournamentPurchaseOption, 'label' | 'description'>
+  ): number | undefined {
+    const haystack = [
+      this.pickString(option.label),
+      this.pickString(option.description)
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' ');
+    const match = haystack.match(/(?:^|[^\d])(\d{1,2})(?:\s*(?:посещ|visit|игр|games?))?/i);
+    if (!match?.[1]) {
+      return undefined;
+    }
+
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
+  private hasPersistedPricingSnapshot(tournament: Pick<
+    Tournament,
+    | 'pricePopover'
+    | 'summerSubscriptionOffer'
+    | 'pricingSnapshotUpdatedAt'
+    | 'pricingSnapshotVersion'
+  >): boolean {
+    return Boolean(
+      tournament.pricePopover
+      || tournament.summerSubscriptionOffer
+      || tournament.pricingSnapshotUpdatedAt
+      || tournament.pricingSnapshotVersion
+    );
+  }
+
+  private resolveTournamentExerciseId(
+    tournament: Partial<Tournament> | null | undefined
+  ): string | undefined {
+    const details = this.toRecord(tournament?.details) ?? {};
+    const snapshot = this.toRecord(details.sourceTournamentSnapshot) ?? {};
+    const rawBooking = this.toRecord(details.booking) ?? this.toRecord(details.joinFlow) ?? {};
+    const rawViva = this.toRecord(rawBooking.viva) ?? {};
+    const source = this.pickString(tournament?.source)?.toUpperCase();
+    const snapshotSource = this.pickString(snapshot.source)?.toUpperCase();
+
+    return (
+      this.pickString(tournament?.exerciseId)
+      ?? this.pickString(rawBooking.vivaExerciseId ?? rawBooking.exerciseId ?? rawViva.exerciseId)
+      ?? this.pickString(snapshot.exerciseId)
+      ?? this.pickString(tournament?.sourceTournamentId)
+      ?? (
+        source === 'VIVA' || snapshotSource === 'VIVA'
+          ? this.pickString(snapshot.id) ?? this.pickString(tournament?.id)
+          : undefined
+      )
+      ?? undefined
+    );
+  }
+
+  private normalizePricingSnapshotStatus(
+    value: unknown
+  ): TournamentPricingSnapshotStatus | undefined {
+    const normalized = this.pickString(value)?.toUpperCase();
+    if (normalized === 'READY' || normalized === 'MISSING' || normalized === 'STALE') {
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private logPricingSnapshotBuildSuccess(input: {
+    tournamentId: string;
+    exerciseId?: string;
+    source: 'BOOKING' | 'VIVA' | 'CUSTOM_PRICE_FALLBACK';
+    ordinaryProductsCount: number;
+    hasSummerOffer: boolean;
+  }): void {
+    this.logger.log(JSON.stringify({
+      type: 'pricing_snapshot_build_success',
+      tournamentId: input.tournamentId,
+      exerciseId: input.exerciseId,
+      source: input.source,
+      ordinaryProductsCount: input.ordinaryProductsCount,
+      hasSummerOffer: input.hasSummerOffer,
+      pricingSnapshotVersion: TOURNAMENT_PRICING_SNAPSHOT_VERSION
+    }));
+  }
+
+  private logPricingSnapshotBuildFailed(input: {
+    tournamentId: string;
+    exerciseId?: string;
+    status: TournamentPricingSnapshotStatus;
+    error: string;
+  }): void {
+    this.logger.warn(JSON.stringify({
+      type: 'pricing_snapshot_build_failed',
+      tournamentId: input.tournamentId,
+      exerciseId: input.exerciseId,
+      status: input.status,
+      error: input.error
+    }));
+  }
+
+  private recordPricingSnapshotMissingOnList(tournaments: Tournament[]): void {
+    const missing = tournaments.filter((tournament) =>
+      this.shouldTrackPricingSnapshotOnList(tournament)
+      && this.normalizePricingSnapshotStatus(tournament.pricingSnapshotStatus) !== 'READY'
+    );
+    if (missing.length === 0) {
+      return;
+    }
+
+    this.logger.warn(JSON.stringify({
+      type: 'pricing_snapshot_missing_on_list',
+      count: missing.length,
+      tournamentIds: missing.map((tournament) => tournament.id),
+      exerciseIds: missing
+        .map((tournament) => this.resolveTournamentExerciseId(tournament))
+        .filter((value): value is string => Boolean(value))
+    }));
+  }
+
+  private shouldTrackPricingSnapshotOnList(tournament: Tournament): boolean {
+    return Boolean(
+      tournament.source === 'CUSTOM'
+      || tournament.source === 'VIVA'
+      || tournament.linkedCustomTournamentId
+      || tournament.exerciseId
+      || this.parseMoneyAmount(tournament.skin?.priceLabel)
+    );
   }
 
   private ensurePersistenceEnabled(): void {
@@ -3222,6 +3713,10 @@ export class TournamentsService {
 
     return {
       ...tournament,
+      exerciseId:
+        this.resolveTournamentExerciseId(sourceTournament)
+        ?? this.pickString(sourceTournamentSnapshot.exerciseId)
+        ?? tournament.exerciseId,
       maxPlayers:
         Number(tournament.maxPlayers || 0) ||
         this.pickNumber(sourceTournamentSnapshot.maxPlayers) ||
@@ -3653,6 +4148,8 @@ export class TournamentsService {
         ?? undefined,
       vivaExerciseId:
         this.pickString(rawBooking.vivaExerciseId ?? rawBooking.exerciseId ?? rawViva.exerciseId)
+        ?? this.pickString(tournament.exerciseId)
+        ?? this.pickString(this.getSourceTournamentSnapshot(tournament).exerciseId)
         ?? this.pickString(tournament.sourceTournamentId)
         ?? this.pickString(this.getSourceTournamentSnapshot(tournament).id)
         ?? undefined,
@@ -3680,6 +4177,7 @@ export class TournamentsService {
     const booking = this.resolveBookingConfig(tournament);
     const exerciseId =
       this.pickString(booking.vivaExerciseId)
+      ?? this.pickString(tournament.exerciseId)
       ?? this.pickString(tournament.sourceTournamentId);
     if (!exerciseId) {
       return {
@@ -4395,7 +4893,10 @@ export class TournamentsService {
   }
 
   private async fetchVivaJoinPurchaseOptions(
-    tournament: CustomTournament
+    tournament: CustomTournament,
+    options?: {
+      throwOnError?: boolean;
+    }
   ): Promise<TournamentPurchaseOption[]> {
     const booking = this.resolveBookingConfig(tournament);
     const widgetId = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
@@ -4419,6 +4920,11 @@ export class TournamentsService {
           signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
         });
         if (!response.ok) {
+          if (options?.throwOnError) {
+            throw new Error(
+              `Viva product catalog ${path} failed with status ${response.status}`
+            );
+          }
           return [];
         }
         const payload = (await response.json().catch(() => null)) as unknown;
@@ -4439,6 +4945,9 @@ export class TournamentsService {
       });
       return Array.from(merged.values());
     } catch (error) {
+      if (options?.throwOnError) {
+        throw error;
+      }
       this.logger.warn(
         `Failed to load Viva product catalog for tournament ${tournament.id}: ${String(error)}`
       );
@@ -4803,6 +5312,7 @@ export class TournamentsService {
       slug: tournament.slug,
       publicUrl: tournament.publicUrl,
       joinUrl: this.buildPublicJoinUrl(tournament.publicUrl),
+      exerciseId: tournament.exerciseId,
       name: publicName,
       tournamentType: tournament.tournamentType,
       tournamentTypeBadgeLabel: this.formatTournamentTypeBadgeLabel(tournament),
@@ -4830,6 +5340,12 @@ export class TournamentsService {
       registrationOpen: this.isTournamentRegistrationOpen(tournament),
       allowedManagerPhonesCount: tournament.allowedManagerPhones.length,
       skin: tournament.skin,
+      pricePopover: tournament.pricePopover,
+      hasFriendlySubscriptionTag: tournament.hasFriendlySubscriptionTag,
+      summerSubscriptionOffer: tournament.summerSubscriptionOffer,
+      pricingSnapshotStatus: tournament.pricingSnapshotStatus,
+      pricingSnapshotUpdatedAt: tournament.pricingSnapshotUpdatedAt,
+      pricingSnapshotVersion: tournament.pricingSnapshotVersion,
       booking: this.resolveBookingConfig(tournament),
       sourceTournamentId: tournament.sourceTournamentId,
       sourceTournament: sourceTournamentSnapshot

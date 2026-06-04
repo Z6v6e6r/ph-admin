@@ -288,6 +288,12 @@ export class LkPadelHubClientService {
       name,
       status: this.normalizeTournamentStatus(rawStatus),
       rawStatus: rawStatus ?? undefined,
+      exerciseId:
+        this.readString(raw.exerciseId) ??
+        this.readString(raw.exercise_id) ??
+        this.readString(raw.vivaExerciseId) ??
+        this.readString(raw.viva_exercise_id) ??
+        undefined,
       gameId: this.readString(raw.gameId) ?? this.readString(raw.game_id),
       startsAt: this.readString(raw.startsAt) ?? this.readString(raw.starts_at),
       endsAt: this.readString(raw.endsAt) ?? this.readString(raw.ends_at),

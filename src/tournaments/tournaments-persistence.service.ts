@@ -21,10 +21,13 @@ import {
   TournamentMechanics,
   TournamentParticipant,
   TournamentPaymentStatus,
+  TournamentPricePopover,
+  TournamentPricingSnapshotStatus,
   TournamentSkin,
   TournamentStatus,
   TournamentStatusAudit,
-  TournamentStatusAuditEntry
+  TournamentStatusAuditEntry,
+  TournamentSummerSubscriptionOffer
 } from './tournaments.types';
 
 type MongoCustomTournamentDocument = Document & {
@@ -47,6 +50,7 @@ const MAX_TOURNAMENT_CHANGE_LOG_ENTRIES = 40;
 export interface CreateCustomTournamentMutation {
   sourceTournamentId?: string;
   sourceTournamentSnapshot?: Record<string, unknown>;
+  exerciseId?: string | null;
   name: string;
   status?: TournamentStatus;
   statusReason?: string;
@@ -72,6 +76,12 @@ export interface CreateCustomTournamentMutation {
   trainerName?: string;
   trainerAvatarUrl?: string | null;
   exerciseTypeId?: string;
+  pricePopover?: TournamentPricePopover | null;
+  hasFriendlySubscriptionTag?: boolean;
+  summerSubscriptionOffer?: TournamentSummerSubscriptionOffer | null;
+  pricingSnapshotStatus?: TournamentPricingSnapshotStatus;
+  pricingSnapshotUpdatedAt?: string | null;
+  pricingSnapshotVersion?: number | null;
   skin?: TournamentSkin;
   mechanics?: unknown;
   details?: Record<string, unknown>;
@@ -79,6 +89,7 @@ export interface CreateCustomTournamentMutation {
 }
 
 export interface UpdateCustomTournamentMutation {
+  exerciseId?: string | null;
   name?: string;
   status?: TournamentStatus;
   statusReason?: string;
@@ -104,6 +115,12 @@ export interface UpdateCustomTournamentMutation {
   trainerName?: string;
   trainerAvatarUrl?: string | null;
   exerciseTypeId?: string;
+  pricePopover?: TournamentPricePopover | null;
+  hasFriendlySubscriptionTag?: boolean;
+  summerSubscriptionOffer?: TournamentSummerSubscriptionOffer | null;
+  pricingSnapshotStatus?: TournamentPricingSnapshotStatus;
+  pricingSnapshotUpdatedAt?: string | null;
+  pricingSnapshotVersion?: number | null;
   skin?: TournamentSkin;
   mechanics?: unknown;
   details?: Record<string, unknown>;
@@ -231,6 +248,9 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       updatedAt: now
     };
 
+    if (mutation.exerciseId !== undefined) {
+      setPayload.exerciseId = this.pickString(mutation.exerciseId) ?? null;
+    }
     if (mutation.name !== undefined) {
       setPayload.name = this.pickString(mutation.name) ?? null;
     }
@@ -298,6 +318,29 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }
     if (mutation.exerciseTypeId !== undefined) {
       setPayload.exerciseTypeId = this.pickString(mutation.exerciseTypeId) ?? null;
+    }
+    if (mutation.pricePopover !== undefined) {
+      setPayload.pricePopover = this.normalizePricePopover(mutation.pricePopover);
+    }
+    if (mutation.hasFriendlySubscriptionTag !== undefined) {
+      setPayload.hasFriendlySubscriptionTag = mutation.hasFriendlySubscriptionTag === true;
+    }
+    if (mutation.summerSubscriptionOffer !== undefined) {
+      setPayload.summerSubscriptionOffer = this.normalizeSummerSubscriptionOffer(
+        mutation.summerSubscriptionOffer
+      );
+    }
+    if (mutation.pricingSnapshotStatus !== undefined) {
+      setPayload.pricingSnapshotStatus =
+        this.normalizePricingSnapshotStatus(mutation.pricingSnapshotStatus) ?? null;
+    }
+    if (mutation.pricingSnapshotUpdatedAt !== undefined) {
+      setPayload.pricingSnapshotUpdatedAt =
+        this.pickString(mutation.pricingSnapshotUpdatedAt) ?? null;
+    }
+    if (mutation.pricingSnapshotVersion !== undefined) {
+      setPayload.pricingSnapshotVersion =
+        this.pickPositiveInteger(mutation.pricingSnapshotVersion) ?? null;
     }
     if (mutation.skin !== undefined) {
       setPayload.skin = this.normalizeSkin(mutation.skin);
@@ -463,6 +506,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       name,
       status,
       rawStatus: this.pickString(document.status) ?? undefined,
+      exerciseId: this.pickString(document.exerciseId) ?? undefined,
       slug,
       publicUrl: this.buildPublicUrl(slug, id, startsAt),
       sourceTournamentId: this.pickString(document.sourceTournamentId) ?? undefined,
@@ -486,6 +530,14 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       trainerName: this.pickString(document.trainerName) ?? undefined,
       trainerAvatarUrl: this.pickNullableString(document.trainerAvatarUrl) ?? undefined,
       exerciseTypeId: this.pickString(document.exerciseTypeId) ?? undefined,
+      pricePopover: this.normalizePricePopover(document.pricePopover) ?? undefined,
+      hasFriendlySubscriptionTag: document.hasFriendlySubscriptionTag === true,
+      summerSubscriptionOffer:
+        this.normalizeSummerSubscriptionOffer(document.summerSubscriptionOffer) ?? undefined,
+      pricingSnapshotStatus:
+        this.normalizePricingSnapshotStatus(document.pricingSnapshotStatus) ?? undefined,
+      pricingSnapshotUpdatedAt: this.pickString(document.pricingSnapshotUpdatedAt) ?? undefined,
+      pricingSnapshotVersion: this.pickPositiveInteger(document.pricingSnapshotVersion) ?? undefined,
       startsAt,
       endsAt,
       createdAt: this.pickString(document.createdAt) ?? undefined,
@@ -548,6 +600,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       sourceTournamentSnapshot: this.isRecord(mutation.sourceTournamentSnapshot)
         ? mutation.sourceTournamentSnapshot
         : null,
+      exerciseId: this.pickString(mutation.exerciseId) ?? null,
       details: Object.keys(detailsPayload).length > 0 ? detailsPayload : null,
       name: this.pickString(mutation.name) ?? `Турнир ${id}`,
       status,
@@ -570,6 +623,15 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       trainerName: this.pickString(mutation.trainerName) ?? null,
       trainerAvatarUrl: this.pickNullableString(mutation.trainerAvatarUrl) ?? null,
       exerciseTypeId: this.pickString(mutation.exerciseTypeId) ?? null,
+      pricePopover: this.normalizePricePopover(mutation.pricePopover),
+      hasFriendlySubscriptionTag: mutation.hasFriendlySubscriptionTag === true,
+      summerSubscriptionOffer: this.normalizeSummerSubscriptionOffer(
+        mutation.summerSubscriptionOffer
+      ),
+      pricingSnapshotStatus:
+        this.normalizePricingSnapshotStatus(mutation.pricingSnapshotStatus) ?? null,
+      pricingSnapshotUpdatedAt: this.pickString(mutation.pricingSnapshotUpdatedAt) ?? null,
+      pricingSnapshotVersion: this.pickPositiveInteger(mutation.pricingSnapshotVersion) ?? null,
       skin: this.normalizeSkin(mutation.skin),
       mechanics: this.normalizeMechanics(mutation.mechanics),
       changeLog: createdLog ? [createdLog] : [],
@@ -700,6 +762,88 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       badgeLabel: this.pickString(record.badgeLabel) ?? undefined,
       tags: this.normalizeStringArray(record.tags)
     };
+  }
+
+  private normalizePricePopover(value: unknown): TournamentPricePopover | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const triggerLabel = this.pickString(record.triggerLabel);
+    const rows = this.normalizePricePopoverRows(record.rows);
+    if (!triggerLabel && rows.length === 0) {
+      return null;
+    }
+
+    return {
+      triggerLabel: triggerLabel ?? rows[0]?.value ?? '—',
+      rows
+    };
+  }
+
+  private normalizePricePopoverRows(value: unknown): TournamentPricePopover['rows'] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry, index) => this.normalizePricePopoverRow(entry, index))
+      .filter((entry): entry is TournamentPricePopover['rows'][number] => Boolean(entry));
+  }
+
+  private normalizePricePopoverRow(
+    value: unknown,
+    index: number
+  ): TournamentPricePopover['rows'][number] | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const label = this.pickString(record.label);
+    const rowValue = this.pickString(record.value);
+    if (!label || !rowValue) {
+      return null;
+    }
+
+    return {
+      id: this.pickString(record.id) ?? `price-row-${index + 1}`,
+      label,
+      value: rowValue
+    };
+  }
+
+  private normalizeSummerSubscriptionOffer(
+    value: unknown
+  ): TournamentSummerSubscriptionOffer | null {
+    const record = this.toRecord(value);
+    if (!record) {
+      return null;
+    }
+
+    const id = this.pickString(record.id);
+    const label = this.pickString(record.label);
+    const offerValue = this.pickString(record.value);
+    if (!id || !label || !offerValue) {
+      return null;
+    }
+
+    return {
+      id,
+      label,
+      value: offerValue
+    };
+  }
+
+  private normalizePricingSnapshotStatus(
+    value: unknown
+  ): TournamentPricingSnapshotStatus | undefined {
+    const normalized = this.pickString(value)?.toUpperCase();
+    if (normalized === 'READY' || normalized === 'MISSING' || normalized === 'STALE') {
+      return normalized;
+    }
+    return undefined;
   }
 
   private normalizeMechanics(value: unknown): TournamentMechanics {

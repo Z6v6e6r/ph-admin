@@ -54,6 +54,17 @@ export class TournamentsController {
     return this.tournamentsService.findAll({ date, from, to });
   }
 
+  @Post('backfill/pricing-snapshots')
+  backfillPricingSnapshots(): Promise<{
+    windowStart: string;
+    candidatesCount: number;
+    readyCount: number;
+    staleCount: number;
+    missingCount: number;
+  }> {
+    return this.tournamentsService.backfillPricingSnapshots();
+  }
+
   @Post('custom/from-source/:sourceTournamentId')
   createCustomFromSource(
     @Param('sourceTournamentId') sourceTournamentId: string,
@@ -91,6 +102,8 @@ export class TournamentsController {
     return this.tournamentsService.updateCustom(id, {
       ...dto,
       ...(user ? { actor: this.toActor(user) } : {})
+    }, {
+      rebuildPricingSnapshot: true
     });
   }
 

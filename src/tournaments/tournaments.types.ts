@@ -55,6 +55,25 @@ export interface TournamentSkin {
   tags?: string[];
 }
 
+export interface TournamentPricePopoverRow {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface TournamentPricePopover {
+  triggerLabel: string;
+  rows: TournamentPricePopoverRow[];
+}
+
+export interface TournamentSummerSubscriptionOffer {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export type TournamentPricingSnapshotStatus = 'READY' | 'MISSING' | 'STALE';
+
 export interface TournamentActor {
   id?: string;
   login?: string;
@@ -171,6 +190,7 @@ export interface Tournament {
   name: string;
   status: TournamentStatus;
   rawStatus?: string;
+  exerciseId?: string;
   gameId?: string;
   studioId?: string;
   studioName?: string;
@@ -203,6 +223,12 @@ export interface Tournament {
   allowedManagerPhones?: string[];
   publicationCommunityIds?: string[];
   skin?: TournamentSkin;
+  pricePopover?: TournamentPricePopover;
+  hasFriendlySubscriptionTag?: boolean;
+  summerSubscriptionOffer?: TournamentSummerSubscriptionOffer;
+  pricingSnapshotStatus?: TournamentPricingSnapshotStatus;
+  pricingSnapshotUpdatedAt?: string;
+  pricingSnapshotVersion?: number;
   mechanics?: TournamentMechanics;
   changeLog?: TournamentChangeLogEntry[];
   statusAudit?: TournamentStatusAudit;
@@ -263,6 +289,7 @@ export interface TournamentPublicView {
   slug: string;
   publicUrl: string;
   joinUrl: string;
+  exerciseId?: string;
   name: string;
   tournamentType: string;
   tournamentTypeBadgeLabel?: string;
@@ -288,6 +315,12 @@ export interface TournamentPublicView {
   registrationOpen: boolean;
   allowedManagerPhonesCount: number;
   skin: TournamentSkin;
+  pricePopover?: TournamentPricePopover;
+  hasFriendlySubscriptionTag?: boolean;
+  summerSubscriptionOffer?: TournamentSummerSubscriptionOffer;
+  pricingSnapshotStatus?: TournamentPricingSnapshotStatus;
+  pricingSnapshotUpdatedAt?: string;
+  pricingSnapshotVersion?: number;
   booking: TournamentBookingConfig;
   sourceTournamentId?: string;
   sourceTournament?: Pick<

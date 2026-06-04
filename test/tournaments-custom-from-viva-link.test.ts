@@ -95,6 +95,29 @@ async function main(): Promise<void> {
       createCustomTournament: async (mutation: CreateCustomTournamentMutation) => {
         capturedMutation = mutation;
         return createCustomFromMutation(mutation);
+      },
+      updateCustomTournament: async (_id: string, mutation: {
+        exerciseId?: string;
+        pricePopover?: unknown;
+        hasFriendlySubscriptionTag?: boolean;
+        summerSubscriptionOffer?: unknown;
+        pricingSnapshotStatus?: string;
+        pricingSnapshotUpdatedAt?: string;
+        pricingSnapshotVersion?: number;
+      }) => {
+        const baseMutation = capturedMutation as CreateCustomTournamentMutation;
+        const created = createCustomFromMutation(baseMutation);
+        return {
+          ...created,
+          exerciseId: mutation.exerciseId ?? created.exerciseId,
+          pricePopover: mutation.pricePopover as typeof created.pricePopover,
+          hasFriendlySubscriptionTag: mutation.hasFriendlySubscriptionTag ?? false,
+          summerSubscriptionOffer:
+            mutation.summerSubscriptionOffer as typeof created.summerSubscriptionOffer,
+          pricingSnapshotStatus: mutation.pricingSnapshotStatus as typeof created.pricingSnapshotStatus,
+          pricingSnapshotUpdatedAt: mutation.pricingSnapshotUpdatedAt,
+          pricingSnapshotVersion: mutation.pricingSnapshotVersion
+        };
       }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,

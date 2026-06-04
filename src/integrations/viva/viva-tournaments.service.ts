@@ -90,7 +90,10 @@ export class VivaTournamentsService {
     }
 
     const tournaments = await this.listTournaments();
-    const fallback = tournaments?.find((tournament) => tournament.id === normalizedId) ?? null;
+    const fallback =
+      tournaments?.find(
+        (tournament) => tournament.id === normalizedId || tournament.exerciseId === normalizedId
+      ) ?? null;
     if (!fallback) {
       return null;
     }
@@ -592,14 +595,20 @@ export class VivaTournamentsService {
       this.readNestedId(exercise.trainer) ??
       this.readNestedId(exercise.coach) ??
       this.readNestedFirstId(exercise.trainers);
-    const id =
-      this.readString(exercise.id) ??
-      this.readString(exercise.uuid) ??
+    const explicitExerciseId =
       this.readString(exercise.exerciseId) ??
       this.readString(exercise.exercise_id) ??
       this.readString(exercise.eventId) ??
-      this.readString(exercise.event_id) ??
+      this.readString(exercise.event_id);
+    const id =
+      this.readString(exercise.id) ??
+      this.readString(exercise.uuid) ??
+      explicitExerciseId ??
       this.buildSyntheticTournamentId(name, startsAt, studioId, trainerId, exerciseType.id);
+    const exerciseId =
+      explicitExerciseId ??
+      this.readString(exercise.uuid) ??
+      (this.looksLikeUuid(id) ? id : undefined);
     const rawStatus =
       this.readString(exercise.status) ??
       this.readString(exercise.state) ??
@@ -636,6 +645,7 @@ export class VivaTournamentsService {
     return {
       id,
       source: 'VIVA',
+      exerciseId,
       name:
         name ||
         [exerciseType.name, studioId ? studioNames.get(studioId) : undefined]
@@ -1838,6 +1848,12 @@ export class VivaTournamentsService {
   private normalizeString(value?: string): string | undefined {
     const normalized = String(value ?? '').trim();
     return normalized || undefined;
+  }
+
+  private looksLikeUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    );
   }
 
   private readStringListEnv(name: string, fallback: string[]): string[] {
