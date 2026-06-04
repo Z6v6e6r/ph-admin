@@ -125,6 +125,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     process.env.TELEGRAM_STATION_MAPPINGS
   );
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
+  private readonly outboxMaxAttempts = this.resolveOutboxMaxAttempts();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
   private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
   private isPersistenceSyncInProgress = false;
@@ -436,6 +437,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return 0;
     }
     return Math.max(1000, Math.floor(rawValue));
+  }
+
+  private resolveOutboxMaxAttempts(): number {
+    const rawValue = Number(process.env.SUPPORT_OUTBOX_MAX_ATTEMPTS ?? 100);
+    if (!Number.isFinite(rawValue) || rawValue <= 0) {
+      return 0;
+    }
+    return Math.max(1, Math.floor(rawValue));
   }
 
   ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
@@ -974,6 +983,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     leaseSec = 30
   ): SupportOutboxCommand[] {
     const now = Date.now();
+    this.sweepOutboxAttemptLimit(connector, now);
     const leasedUntil = new Date(now + Math.max(5, leaseSec) * 1000).toISOString();
 
     const commands = Array.from(this.outbox.values())
@@ -1002,6 +1012,41 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return commands.map((command) => this.outbox.get(command.id) ?? command);
+  }
+
+  private sweepOutboxAttemptLimit(
+    connector: SupportConnectorRoute,
+    now: number
+  ): void {
+    if (this.outboxMaxAttempts <= 0) {
+      return;
+    }
+
+    for (const command of this.outbox.values()) {
+      if (
+        command.connector !== connector ||
+        command.status === SupportOutboxStatus.SENT ||
+        command.status === SupportOutboxStatus.FAILED
+      ) {
+        continue;
+      }
+
+      const canBeRetried =
+        command.status === SupportOutboxStatus.PENDING ||
+        (
+          command.status === SupportOutboxStatus.LEASED &&
+          this.toTimestamp(command.leasedUntil) <= now
+        );
+      if (!canBeRetried || command.attempts < this.outboxMaxAttempts) {
+        continue;
+      }
+
+      const errorText = `Exceeded max delivery attempts (${this.outboxMaxAttempts})`;
+      this.logger.warn(
+        `Support outbox command ${command.id} marked FAILED: ${errorText}. connector=${command.connector} dialogId=${command.dialogId}`
+      );
+      this.failOutbox(command.id, errorText, false);
+    }
   }
 
   ackOutbox(id: string): SupportOutboxCommand {
