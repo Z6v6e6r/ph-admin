@@ -34,6 +34,22 @@ $SUDO systemctl restart "$SERVICE_NAME"
 $SUDO systemctl status "$SERVICE_NAME" --no-pager || true
 
 log "Health check"
-curl -fsS http://127.0.0.1:3000/api/health || true
+HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://127.0.0.1:3000/api/health}"
+HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-30}"
+HEALTHCHECK_SLEEP_SEC="${HEALTHCHECK_SLEEP_SEC:-1}"
+
+healthcheck_ok="false"
+for attempt in $(seq 1 "$HEALTHCHECK_ATTEMPTS"); do
+  if curl -fsS "$HEALTHCHECK_URL"; then
+    healthcheck_ok="true"
+    break
+  fi
+  sleep "$HEALTHCHECK_SLEEP_SEC"
+done
+
+if [ "$healthcheck_ok" != "true" ]; then
+  echo "Health check failed for ${HEALTHCHECK_URL} after ${HEALTHCHECK_ATTEMPTS} attempts" >&2
+  exit 1
+fi
 
 log "Update completed"

@@ -460,7 +460,6 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           { sourceTournamentId: 1 },
           {
             unique: true,
-            sparse: true,
             partialFilterExpression: { sourceTournamentId: { $type: 'string' } }
           }
         );
