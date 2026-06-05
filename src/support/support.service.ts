@@ -284,6 +284,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       outbox: number;
     };
     sync: {
+      fullSyncEnabled: boolean;
       initialSyncCompleted: boolean;
       periodicSyncEnabled: boolean;
       intervalMs: number;
@@ -317,6 +318,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         outbox: this.outbox.size
       },
       sync: {
+        fullSyncEnabled: this.persistenceSyncIntervalMs > 0,
         initialSyncCompleted: this.initialPersistenceSyncCompleted,
         periodicSyncEnabled: this.persistenceSyncIntervalMs > 0,
         intervalMs: this.persistenceSyncIntervalMs,
@@ -363,6 +365,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private async ensureInitialPersistenceSync(): Promise<void> {
     if (this.initialPersistenceSyncCompleted) {
+      return;
+    }
+    if (!this.persistence.isEnabled() || this.persistenceSyncIntervalMs <= 0) {
       return;
     }
     this.initialPersistenceSyncCompleted = await this.syncFromPersistence();
