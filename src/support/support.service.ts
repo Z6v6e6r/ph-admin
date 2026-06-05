@@ -112,6 +112,7 @@ type SupportMessageObserver = (
 
 @Injectable()
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
+  private static readonly DAY_MS = 24 * 60 * 60 * 1000;
   private readonly logger = new Logger(SupportService.name);
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
@@ -126,6 +127,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   );
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private readonly outboxMaxAttempts = this.resolveOutboxMaxAttempts();
+  private readonly dialogsExportMaxRangeDays = this.resolveDialogsExportMaxRangeDays();
+  private readonly dialogsExportMaxDialogs = this.resolveDialogsExportMaxDialogs();
+  private readonly dialogsExportMaxMessages = this.resolveDialogsExportMaxMessages();
   private persistenceSyncTimer?: ReturnType<typeof setInterval>;
   private noReplyQuickReplyTimer?: ReturnType<typeof setInterval>;
   private isPersistenceSyncInProgress = false;
@@ -173,6 +177,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return;
     }
 
+    const startedAt = process.hrtime.bigint();
+    const memoryBefore = this.captureMemoryUsageSnapshot();
     const state = await this.persistence.loadState();
     this.clients.clear();
     this.dialogs.clear();
@@ -235,6 +241,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     this.rebuildDialogsFromLoadedMessages();
+
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const memoryAfter = this.captureMemoryUsageSnapshot();
+    this.logger.log(
+      JSON.stringify({
+        type: 'support_persistence_hydrate',
+        clientsCount: state.clients.length,
+        dialogsCount: state.dialogs.length,
+        messagesCount: state.messages.length,
+        responseMetricsCount: state.responseMetrics.length,
+        outboxCount: state.outbox.length,
+        durationMs: Number(durationMs.toFixed(2)),
+        memoryBefore,
+        memoryAfter
+      })
+    );
   }
 
   resolveClient(query: ResolveClientQuery): {
@@ -314,9 +336,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.reconcileDuplicateDialogs();
   }
 
-  private async syncFromPersistence(): Promise<void> {
+  private async syncFromPersistence(): Promise<boolean> {
     if (!this.persistence.isEnabled() || this.isPersistenceSyncInProgress) {
-      return;
+      return false;
     }
 
     const startedAt = Date.now();
@@ -329,9 +351,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.lastPersistenceSyncCompletedAt = new Date(completedAt).toISOString();
       this.lastPersistenceSyncDurationMs = Math.max(0, completedAt - startedAt);
       this.lastPersistenceSyncError = undefined;
+      return true;
     } catch (error) {
       this.lastPersistenceSyncError = String(error);
       this.logger.error(`Support persistence sync failed: ${String(error)}`);
+      return false;
     } finally {
       this.isPersistenceSyncInProgress = false;
     }
@@ -341,8 +365,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (this.initialPersistenceSyncCompleted) {
       return;
     }
-    await this.syncFromPersistence();
-    this.initialPersistenceSyncCompleted = true;
+    this.initialPersistenceSyncCompleted = await this.syncFromPersistence();
   }
 
   private ensurePersistenceSyncTimer(): void {
@@ -445,6 +468,30 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return 0;
     }
     return Math.max(1, Math.floor(rawValue));
+  }
+
+  private resolveDialogsExportMaxRangeDays(): number {
+    const rawValue = Number(process.env.SUPPORT_DIALOGS_EXPORT_MAX_RANGE_DAYS ?? 31);
+    if (!Number.isFinite(rawValue) || rawValue <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(1, Math.floor(rawValue)), 366);
+  }
+
+  private resolveDialogsExportMaxDialogs(): number {
+    const rawValue = Number(process.env.SUPPORT_DIALOGS_EXPORT_MAX_DIALOGS ?? 5000);
+    if (!Number.isFinite(rawValue) || rawValue <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(1, Math.floor(rawValue)), 100000);
+  }
+
+  private resolveDialogsExportMaxMessages(): number {
+    const rawValue = Number(process.env.SUPPORT_DIALOGS_EXPORT_MAX_MESSAGES ?? 25000);
+    if (!Number.isFinite(rawValue) || rawValue <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(1, Math.floor(rawValue)), 500000);
   }
 
   ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
@@ -683,15 +730,28 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     stationId: string,
     user: RequestUser
   ): SupportDialogSummary[] {
-    return this.listAccessibleDialogs(user, { connector, stationId })
-      .map((dialog) => this.toDialogSummary(dialog, connector, user))
-      .sort((left, right) => this.compareDialogSummaryRank(left, right));
+    return this.collectDialogSummaries(user, { connector, stationId }).sort((left, right) =>
+      this.compareDialogSummaryRank(left, right)
+    );
   }
 
   listDialogs(user: RequestUser, filters: SupportDialogFilters = {}): SupportDialogSummary[] {
-    return this.listAccessibleDialogs(user, filters)
-      .map((dialog) => this.toDialogSummary(dialog, filters.connector, user))
-      .sort((left, right) => this.compareDialogSummaryRank(left, right));
+    return this.collectDialogSummaries(user, filters).sort((left, right) =>
+      this.compareDialogSummaryRank(left, right)
+    );
+  }
+
+  listDialogsWindow(
+    user: RequestUser,
+    filters: SupportDialogFilters = {},
+    targetCount = 0
+  ): SupportDialogSummary[] {
+    const normalizedTargetCount = this.resolveDialogWindowTargetCount(targetCount);
+    if (normalizedTargetCount <= 0) {
+      return [];
+    }
+
+    return this.collectDialogSummaries(user, filters, normalizedTargetCount);
   }
 
   getDialogSummary(dialogId: string, user: RequestUser): SupportDialogSummary {
@@ -1080,149 +1140,184 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.ensureStaff(user);
     }
 
+    const startedAt = process.hrtime.bigint();
+    const memoryBefore = this.captureMemoryUsageSnapshot();
     const dayStart = this.resolveAnalyticsStart(date);
-    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-    const accessibleDialogs = user ? this.listAccessibleDialogs(user) : Array.from(this.dialogs.values());
-    const accessibleDialogIds = new Set(accessibleDialogs.map((dialog) => dialog.id));
-    const accessibleByDialog = new Map(accessibleDialogs.map((dialog) => [dialog.id, dialog]));
-    const allMessages = Array.from(this.messages.values()).flat();
-    const dayMessages = allMessages.filter((message) => {
-      const createdTs = this.toTimestamp(message.createdAt);
-      return (
-        accessibleDialogIds.has(message.dialogId) &&
-        (!user || this.isConnectorAllowedForUser(user, message.connector)) &&
-        createdTs >= dayStart.getTime() &&
-        createdTs < dayEnd.getTime()
-      );
-    });
-
-    const inboundMessages = dayMessages.filter(
-      (message) => message.direction === SupportMessageDirection.INBOUND
-    );
-    const outboundMessages = dayMessages.filter(
-      (message) => message.direction === SupportMessageDirection.OUTBOUND
-    );
-
-    const allMetrics = Array.from(this.responseMetrics.values()).flat().filter((metric) => {
-      const startedTs = this.toTimestamp(metric.startedAt);
-      return (
-        accessibleDialogIds.has(metric.dialogId) &&
-        (!user || this.isConnectorAllowedForUser(user, metric.connector)) &&
-        startedTs >= dayStart.getTime() &&
-        startedTs < dayEnd.getTime()
-      );
-    });
-
-    const byStationMap = new Map<string, SupportStationAnalytics>();
-    for (const message of inboundMessages) {
-      const dialog = accessibleByDialog.get(message.dialogId);
-      if (!dialog) {
-        continue;
-      }
-      const existing = byStationMap.get(dialog.stationId) ?? {
-        stationId: dialog.stationId,
-        stationName: dialog.stationName,
-        inboundMessagesCount: 0,
-        dialogsCount: 0
-      };
-      existing.inboundMessagesCount += 1;
-      byStationMap.set(dialog.stationId, existing);
-    }
+    const dayStartTs = dayStart.getTime();
+    const dayEndTs = dayStartTs + SupportService.DAY_MS;
+    const accessibleDialogs = user
+      ? this.listAccessibleDialogs(user)
+      : Array.from(this.dialogs.values());
 
     const dialogIdsByStation = new Map<string, Set<string>>();
+    let unverifiedDialogsCount = 0;
     for (const dialog of accessibleDialogs) {
+      if (dialog.authStatus !== SupportClientAuthStatus.VERIFIED) {
+        unverifiedDialogsCount += 1;
+      }
       if (!dialogIdsByStation.has(dialog.stationId)) {
         dialogIdsByStation.set(dialog.stationId, new Set<string>());
       }
       dialogIdsByStation.get(dialog.stationId)?.add(dialog.id);
     }
+
+    const byStationMap = new Map<string, SupportStationAnalytics>();
+    const topicCounts = new Map<SupportTopic, number>();
+    const priorityCounts = new Map<SupportPriority, number>();
+    const connectorCounts = new Map<SupportConnectorRoute, number>();
+    let inboundMessagesCount = 0;
+    let outboundMessagesCount = 0;
+    let callsCount = 0;
+    let emailsCount = 0;
+
+    for (const dialog of accessibleDialogs) {
+      const sourceMessages = this.messages.get(dialog.id) ?? [];
+      for (const message of sourceMessages) {
+        const createdTs = this.toTimestamp(message.createdAt);
+        if (createdTs < dayStartTs || createdTs >= dayEndTs) {
+          continue;
+        }
+        if (user && !this.isConnectorAllowedForUser(user, message.connector)) {
+          continue;
+        }
+
+        if (message.direction === SupportMessageDirection.INBOUND) {
+          inboundMessagesCount += 1;
+          if (message.kind === SupportMessageKind.CALL) {
+            callsCount += 1;
+          }
+          if (message.kind === SupportMessageKind.EMAIL) {
+            emailsCount += 1;
+          }
+
+          const stationAnalytics = byStationMap.get(dialog.stationId) ?? {
+            stationId: dialog.stationId,
+            stationName: dialog.stationName,
+            inboundMessagesCount: 0,
+            dialogsCount: dialogIdsByStation.get(dialog.stationId)?.size ?? 0
+          };
+          stationAnalytics.inboundMessagesCount += 1;
+          byStationMap.set(dialog.stationId, stationAnalytics);
+
+          const topic = message.ai?.topic ?? dialog.ai?.topic;
+          if (topic) {
+            topicCounts.set(topic, (topicCounts.get(topic) ?? 0) + 1);
+          }
+
+          const priority = message.ai?.priority ?? dialog.ai?.priority;
+          if (priority) {
+            priorityCounts.set(priority, (priorityCounts.get(priority) ?? 0) + 1);
+          }
+
+          connectorCounts.set(message.connector, (connectorCounts.get(message.connector) ?? 0) + 1);
+          continue;
+        }
+
+        if (message.direction === SupportMessageDirection.OUTBOUND) {
+          outboundMessagesCount += 1;
+        }
+      }
+    }
+
+    const byDialogMap = new Map<string, SupportDialogReactionAnalytics>();
+    const stationMetricSums = new Map<string, { total: number; count: number }>();
+    let responseMetricsTotalMs = 0;
+    let responseMetricsCount = 0;
+
+    for (const dialog of accessibleDialogs) {
+      const metrics = this.responseMetrics.get(dialog.id) ?? [];
+      for (const metric of metrics) {
+        const startedTs = this.toTimestamp(metric.startedAt);
+        if (startedTs < dayStartTs || startedTs >= dayEndTs) {
+          continue;
+        }
+        if (user && !this.isConnectorAllowedForUser(user, metric.connector)) {
+          continue;
+        }
+
+        responseMetricsTotalMs += metric.responseTimeMs;
+        responseMetricsCount += 1;
+
+        const stationId = metric.stationId || dialog.stationId;
+        const stationMetricSum = stationMetricSums.get(stationId) ?? { total: 0, count: 0 };
+        stationMetricSum.total += metric.responseTimeMs;
+        stationMetricSum.count += 1;
+        stationMetricSums.set(stationId, stationMetricSum);
+
+        const existing = byDialogMap.get(metric.dialogId) ?? {
+          dialogId: metric.dialogId,
+          stationId: dialog.stationId,
+          stationName: dialog.stationName,
+          clientId: dialog.clientId,
+          primaryPhone: dialog.currentPhone,
+          responseCount: 0
+        };
+        existing.responseCount += 1;
+        existing.lastFirstResponseMs = metric.responseTimeMs;
+        const total = (existing.averageFirstResponseMs ?? 0) * (existing.responseCount - 1);
+        existing.averageFirstResponseMs = Math.round(
+          (total + metric.responseTimeMs) / existing.responseCount
+        );
+        byDialogMap.set(metric.dialogId, existing);
+      }
+    }
+
     for (const [stationId, analytics] of byStationMap.entries()) {
-      analytics.dialogsCount = dialogIdsByStation.get(stationId)?.size ?? 0;
-      const metrics = allMetrics.filter((metric) => metric.stationId === stationId);
-      analytics.averageFirstResponseMs = this.averageOf(metrics.map((metric) => metric.responseTimeMs));
+      const metrics = stationMetricSums.get(stationId);
+      analytics.averageFirstResponseMs =
+        metrics && metrics.count > 0
+          ? Math.round(metrics.total / metrics.count)
+          : undefined;
       byStationMap.set(stationId, analytics);
     }
 
-    const byTopic = this.countByEnum<SupportTopicAnalytics, SupportTopic>(
-      inboundMessages,
-      (message, counts) => {
-        const topic = message.ai?.topic ?? accessibleByDialog.get(message.dialogId)?.ai?.topic;
-        if (!topic) {
-          return counts;
-        }
-        counts.set(topic, (counts.get(topic) ?? 0) + 1);
-        return counts;
-      },
-      (topic, messagesCount) => ({ topic, messagesCount }),
-      Object.values(SupportTopic)
-    );
-
-    const byPriority = this.countByEnum<SupportPriorityAnalytics, SupportPriority>(
-      inboundMessages,
-      (message, counts) => {
-        const priority =
-          message.ai?.priority ?? accessibleByDialog.get(message.dialogId)?.ai?.priority;
-        if (!priority) {
-          return counts;
-        }
-        counts.set(priority, (counts.get(priority) ?? 0) + 1);
-        return counts;
-      },
-      (priority, messagesCount) => ({ priority, messagesCount }),
-      Object.values(SupportPriority)
-    );
-
-    const byConnector = this.countByEnum<SupportConnectorAnalytics, SupportConnectorRoute>(
-      inboundMessages,
-      (message, counts) => {
-        counts.set(message.connector, (counts.get(message.connector) ?? 0) + 1);
-        return counts;
-      },
-      (connector, messagesCount) => ({ connector, messagesCount }),
-      Object.values(SupportConnectorRoute)
-    );
-
-    const byDialogMap = new Map<string, SupportDialogReactionAnalytics>();
-    for (const metric of allMetrics) {
-      const dialog = accessibleByDialog.get(metric.dialogId);
-      if (!dialog) {
-        continue;
-      }
-      const existing = byDialogMap.get(metric.dialogId) ?? {
-        dialogId: metric.dialogId,
-        stationId: dialog.stationId,
-        stationName: dialog.stationName,
-        clientId: dialog.clientId,
-        primaryPhone: dialog.currentPhone,
-        responseCount: 0
-      };
-      existing.responseCount += 1;
-      existing.lastFirstResponseMs = metric.responseTimeMs;
-      const total = (existing.averageFirstResponseMs ?? 0) * (existing.responseCount - 1);
-      existing.averageFirstResponseMs = Math.round((total + metric.responseTimeMs) / existing.responseCount);
-      byDialogMap.set(metric.dialogId, existing);
-    }
-
-    return {
+    const result: SupportDailyAnalytics = {
       date: dayStart.toISOString().slice(0, 10),
-      inboundMessagesCount: inboundMessages.length,
-      outboundMessagesCount: outboundMessages.length,
-      callsCount: inboundMessages.filter((message) => message.kind === SupportMessageKind.CALL).length,
-      emailsCount: inboundMessages.filter((message) => message.kind === SupportMessageKind.EMAIL).length,
-      unverifiedDialogsCount: accessibleDialogs.filter(
-        (dialog) => dialog.authStatus !== SupportClientAuthStatus.VERIFIED
-      ).length,
-      averageFirstResponseMs: this.averageOf(allMetrics.map((metric) => metric.responseTimeMs)),
+      inboundMessagesCount,
+      outboundMessagesCount,
+      callsCount,
+      emailsCount,
+      unverifiedDialogsCount,
+      averageFirstResponseMs:
+        responseMetricsCount > 0
+          ? Math.round(responseMetricsTotalMs / responseMetricsCount)
+          : undefined,
       byStation: Array.from(byStationMap.values()).sort((left, right) =>
         left.stationId.localeCompare(right.stationId)
       ),
-      byTopic,
-      byPriority,
-      byConnector,
+      byTopic: this.mapCountsToOrderedItems(
+        topicCounts,
+        Object.values(SupportTopic),
+        (topic, messagesCount) => ({ topic, messagesCount })
+      ),
+      byPriority: this.mapCountsToOrderedItems(
+        priorityCounts,
+        Object.values(SupportPriority),
+        (priority, messagesCount) => ({ priority, messagesCount })
+      ),
+      byConnector: this.mapCountsToOrderedItems(
+        connectorCounts,
+        Object.values(SupportConnectorRoute),
+        (connector, messagesCount) => ({ connector, messagesCount })
+      ),
       byDialog: Array.from(byDialogMap.values()).sort((left, right) =>
         this.numberOrZero(right.lastFirstResponseMs) - this.numberOrZero(left.lastFirstResponseMs)
       )
     };
+
+    this.logSupportAnalyticsDiagnostics({
+      type: 'support_daily_analytics_diagnostics',
+      periodFrom: dayStart.toISOString(),
+      periodToExclusive: new Date(dayEndTs).toISOString(),
+      accessibleDialogsCount: accessibleDialogs.length,
+      inboundMessagesCount,
+      outboundMessagesCount,
+      responseMetricsCount,
+      startedAt,
+      memoryBefore
+    });
+
+    return result;
   }
 
   getDialogsExport(
@@ -1238,7 +1333,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     this.ensureStaff(user);
 
+    const startedAt = process.hrtime.bigint();
+    const memoryBefore = this.captureMemoryUsageSnapshot();
     const range = this.resolveDialogsExportDateRange(params.from, params.to);
+    this.assertDialogsExportDateRangeWithinLimit(range);
     const includeServiceMessages = params.includeService === true;
     const accessibleDialogs = this.listAccessibleDialogs(user);
     const connectorStats = new Map<
@@ -1268,29 +1366,40 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     for (const dialog of accessibleDialogs) {
       const sourceMessages = this.messages.get(dialog.id) ?? [];
-      const filteredMessages = sourceMessages
-        .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
-        .filter((message) =>
-          includeServiceMessages ? true : !this.isSystemDialogMessage(message)
-        )
-        .filter((message) => {
-          const messageTs = this.toTimestamp(message.createdAt);
-          return (
-            messageTs >= range.fromInclusive.getTime() &&
-            messageTs < range.toExclusive.getTime()
-          );
-        })
-        .sort(
-          (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
-        );
-
-      if (filteredMessages.length === 0) {
+      if (sourceMessages.length === 0) {
         continue;
       }
-      totalMessagesCount += filteredMessages.length;
 
       const periodConnectors = new Set<SupportConnectorRoute>();
-      const exportedMessages: SupportDialogsExportMessage[] = filteredMessages.map((message) => {
+      const exportedMessages: SupportDialogsExportMessage[] = [];
+      let previousMessageTs = 0;
+      let requiresSort = false;
+
+      for (const message of sourceMessages) {
+        if (!this.isConnectorAllowedForUser(user, message.connector)) {
+          continue;
+        }
+        if (!includeServiceMessages && this.isSystemDialogMessage(message)) {
+          continue;
+        }
+
+        const messageTs = this.toTimestamp(message.createdAt);
+        if (
+          messageTs < range.fromInclusive.getTime() ||
+          messageTs >= range.toExclusive.getTime()
+        ) {
+          continue;
+        }
+
+        const nextMessagesCount = totalMessagesCount + 1;
+        this.assertDialogsExportMessagesWithinLimit(nextMessagesCount);
+        totalMessagesCount = nextMessagesCount;
+
+        if (messageTs < previousMessageTs) {
+          requiresSort = true;
+        }
+        previousMessageTs = messageTs;
+
         periodConnectors.add(message.connector);
         if (message.direction === SupportMessageDirection.INBOUND) {
           inboundMessagesCount += 1;
@@ -1306,7 +1415,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         connectorStatsItem.messagesCount += 1;
         connectorStats.set(message.connector, connectorStatsItem);
 
-        return {
+        exportedMessages.push({
           messageId: message.id,
           createdAt: message.createdAt,
           connector: message.connector,
@@ -1324,8 +1433,18 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           externalMessageId: message.externalMessageId,
           ai: message.ai,
           meta: message.meta
-        };
-      });
+        });
+      }
+
+      if (exportedMessages.length === 0) {
+        continue;
+      }
+
+      if (requiresSort) {
+        exportedMessages.sort(
+          (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+        );
+      }
 
       const stationKey = dialog.stationId;
       const stationName =
@@ -1349,6 +1468,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
         withoutStationDialogsCount += 1;
       }
+
+      this.assertDialogsExportDialogsWithinLimit(exportedDialogs.length + 1);
 
       const client = this.clients.get(dialog.clientId);
       exportedDialogs.push({
@@ -1387,7 +1508,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.toTimestamp(left.messages[left.messages.length - 1]?.createdAt)
     );
 
-    return {
+    const result: SupportDialogsExportResult = {
       generatedAt: new Date().toISOString(),
       period: {
         from: this.formatDateOnly(range.fromInclusive),
@@ -1432,6 +1553,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         }),
       dialogs: exportedDialogs
     };
+
+    this.logSupportAnalyticsDiagnostics({
+      type: 'support_dialogs_export_diagnostics',
+      periodFrom: range.fromInclusive.toISOString(),
+      periodToExclusive: range.toExclusive.toISOString(),
+      accessibleDialogsCount: accessibleDialogs.length,
+      exportedDialogsCount: exportedDialogs.length,
+      exportedMessagesCount: totalMessagesCount,
+      includeServiceMessages,
+      startedAt,
+      memoryBefore
+    });
+
+    return result;
   }
 
   private listDialogsForClient(clientId: string): SupportDialog[] {
@@ -3699,15 +3834,196 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     filters: SupportDialogFilters = {}
   ): SupportDialog[] {
     return Array.from(this.dialogs.values())
-      .filter((dialog) =>
-        filters.connector ? this.isConnectorAllowedForUser(user, filters.connector) : true
-      )
-      .filter((dialog) => this.canAccessDialog(dialog, user))
-      .filter((dialog) => (filters.stationId ? dialog.stationId === filters.stationId : true))
-      .filter((dialog) =>
-        filters.connector ? dialog.connectors.includes(filters.connector) : true
-      )
+      .filter((dialog) => this.matchesDialogListFilters(dialog, user, filters))
       .sort((left, right) => this.toTimestamp(right.updatedAt) - this.toTimestamp(left.updatedAt));
+  }
+
+  private collectDialogSummaries(
+    user: RequestUser,
+    filters: SupportDialogFilters,
+    targetCount?: number
+  ): SupportDialogSummary[] {
+    const normalizedTargetCount = this.resolveDialogWindowTargetCount(targetCount);
+    const useBoundedWindow = normalizedTargetCount > 0;
+    const summaries: SupportDialogSummary[] = [];
+
+    for (const dialog of this.dialogs.values()) {
+      if (!this.matchesDialogListFilters(dialog, user, filters)) {
+        continue;
+      }
+
+      const summary = this.toDialogSummary(dialog, filters.connector, user);
+      if (useBoundedWindow) {
+        this.insertDialogSummaryByCompatibleRank(summaries, summary, normalizedTargetCount);
+      } else {
+        summaries.push(summary);
+      }
+    }
+
+    if (!useBoundedWindow) {
+      summaries.sort((left, right) => this.compareDialogSummaryRank(left, right));
+    }
+
+    return summaries;
+  }
+
+  private matchesDialogListFilters(
+    dialog: SupportDialog,
+    user: RequestUser,
+    filters: SupportDialogFilters
+  ): boolean {
+    if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) {
+      return false;
+    }
+    if (!this.canAccessDialog(dialog, user)) {
+      return false;
+    }
+    if (filters.stationId && dialog.stationId !== filters.stationId) {
+      return false;
+    }
+    if (filters.connector && !dialog.connectors.includes(filters.connector)) {
+      return false;
+    }
+    return true;
+  }
+
+  private resolveDialogWindowTargetCount(targetCount?: number): number {
+    if (!Number.isFinite(targetCount) || Number(targetCount) <= 0) {
+      return 0;
+    }
+    return Math.floor(Number(targetCount));
+  }
+
+  private insertDialogSummaryByCompatibleRank(
+    target: SupportDialogSummary[],
+    candidate: SupportDialogSummary,
+    maxSize: number
+  ): void {
+    if (!this.shouldIncludeCompatibleDialog(candidate)) {
+      return;
+    }
+
+    let insertAt = target.length;
+    for (let index = 0; index < target.length; index += 1) {
+      if (this.compareCompatibleSupportDialogRank(candidate, target[index]) < 0) {
+        insertAt = index;
+        break;
+      }
+    }
+
+    if (target.length >= maxSize && insertAt === target.length) {
+      return;
+    }
+
+    target.splice(insertAt, 0, candidate);
+    if (target.length > maxSize) {
+      target.pop();
+    }
+  }
+
+  private shouldIncludeCompatibleDialog(dialog: SupportDialogSummary): boolean {
+    if (
+      dialog.isResolved === true &&
+      dialog.connector === SupportConnectorRoute.PROMO_WEB_MESSENGER
+    ) {
+      return false;
+    }
+
+    return this.resolveCompatibleSupportDialogRankTimestamp(dialog) > 0;
+  }
+
+  private compareCompatibleSupportDialogRank(
+    left: SupportDialogSummary,
+    right: SupportDialogSummary
+  ): number {
+    const leftRankTs = this.resolveCompatibleSupportDialogRankTimestamp(left);
+    const rightRankTs = this.resolveCompatibleSupportDialogRankTimestamp(right);
+    if (leftRankTs !== rightRankTs) {
+      return rightRankTs - leftRankTs;
+    }
+
+    return left.dialogId.localeCompare(right.dialogId);
+  }
+
+  private resolveCompatibleSupportDialogRankTimestamp(dialog: SupportDialogSummary): number {
+    const explicitRankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
+    if (explicitRankingTs > 0) {
+      return explicitRankingTs;
+    }
+
+    if (this.isSystemSenderRole(dialog.lastMessageSenderRole)) {
+      return 0;
+    }
+
+    if (!dialog.lastMessageSenderRole) {
+      return 0;
+    }
+
+    return this.toTimestamp(dialog.lastMessageAt);
+  }
+
+  private captureMemoryUsageSnapshot(): {
+    rssMb: number;
+    heapUsedMb: number;
+    heapTotalMb: number;
+    externalMb: number;
+  } {
+    const usage = process.memoryUsage();
+    const toMb = (value: number): number => Number((value / 1024 / 1024).toFixed(2));
+
+    return {
+      rssMb: toMb(usage.rss),
+      heapUsedMb: toMb(usage.heapUsed),
+      heapTotalMb: toMb(usage.heapTotal),
+      externalMb: toMb(usage.external)
+    };
+  }
+
+  private logSupportAnalyticsDiagnostics(payload: {
+    type: 'support_daily_analytics_diagnostics' | 'support_dialogs_export_diagnostics';
+    periodFrom: string;
+    periodToExclusive: string;
+    accessibleDialogsCount: number;
+    inboundMessagesCount?: number;
+    outboundMessagesCount?: number;
+    responseMetricsCount?: number;
+    exportedDialogsCount?: number;
+    exportedMessagesCount?: number;
+    includeServiceMessages?: boolean;
+    startedAt: bigint;
+    memoryBefore: {
+      rssMb: number;
+      heapUsedMb: number;
+      heapTotalMb: number;
+      externalMb: number;
+    };
+  }): void {
+    const durationMs = Number(process.hrtime.bigint() - payload.startedAt) / 1_000_000;
+    const memoryAfter = this.captureMemoryUsageSnapshot();
+    const heapDeltaMb = Number(
+      (memoryAfter.heapUsedMb - payload.memoryBefore.heapUsedMb).toFixed(2)
+    );
+    const shouldWarn =
+      durationMs >= 1000 ||
+      payload.accessibleDialogsCount >= 1000 ||
+      (payload.exportedMessagesCount ?? 0) >= 5000 ||
+      (payload.inboundMessagesCount ?? 0) >= 5000 ||
+      memoryAfter.heapUsedMb >= 512 ||
+      heapDeltaMb >= 64;
+
+    if (!shouldWarn) {
+      return;
+    }
+
+    const { startedAt: _startedAt, ...logPayload } = payload;
+    this.logger.warn(
+      JSON.stringify({
+        ...logPayload,
+        durationMs: Number(durationMs.toFixed(2)),
+        heapDeltaMb,
+        memoryAfter
+      })
+    );
   }
 
   private canAccessDialog(dialog: SupportDialog, user: RequestUser): boolean {
@@ -5061,8 +5377,50 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return {
       fromInclusive,
       toInclusive,
-      toExclusive: new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000)
+      toExclusive: new Date(toInclusive.getTime() + SupportService.DAY_MS)
     };
+  }
+
+  private assertDialogsExportDateRangeWithinLimit(range: {
+    fromInclusive: Date;
+    toInclusive: Date;
+    toExclusive: Date;
+  }): void {
+    if (this.dialogsExportMaxRangeDays <= 0) {
+      return;
+    }
+
+    const rangeDays = Math.max(
+      1,
+      Math.round((range.toExclusive.getTime() - range.fromInclusive.getTime()) / SupportService.DAY_MS)
+    );
+    if (rangeDays <= this.dialogsExportMaxRangeDays) {
+      return;
+    }
+
+    throw new BadRequestException(
+      `Dialogs export range is limited to ${this.dialogsExportMaxRangeDays} days. Narrow the \`from\`/\`to\` range or raise SUPPORT_DIALOGS_EXPORT_MAX_RANGE_DAYS.`
+    );
+  }
+
+  private assertDialogsExportDialogsWithinLimit(dialogsCount: number): void {
+    if (this.dialogsExportMaxDialogs <= 0 || dialogsCount <= this.dialogsExportMaxDialogs) {
+      return;
+    }
+
+    throw new BadRequestException(
+      `Dialogs export would return more than ${this.dialogsExportMaxDialogs} dialogs. Narrow the \`from\`/\`to\` range or raise SUPPORT_DIALOGS_EXPORT_MAX_DIALOGS.`
+    );
+  }
+
+  private assertDialogsExportMessagesWithinLimit(messagesCount: number): void {
+    if (this.dialogsExportMaxMessages <= 0 || messagesCount <= this.dialogsExportMaxMessages) {
+      return;
+    }
+
+    throw new BadRequestException(
+      `Dialogs export would return more than ${this.dialogsExportMaxMessages} messages. Narrow the \`from\`/\`to\` range or raise SUPPORT_DIALOGS_EXPORT_MAX_MESSAGES.`
+    );
   }
 
   private parseAnalyticsDateOrThrow(value: string | undefined, fieldName: 'from' | 'to'): Date | undefined {
@@ -5114,6 +5472,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     for (const item of items) {
       counts = reducer(item, counts);
     }
+    return order
+      .filter((key) => counts.has(key))
+      .map((key) => mapper(key, counts.get(key) ?? 0));
+  }
+
+  private mapCountsToOrderedItems<TItem, TKey extends string>(
+    counts: Map<TKey, number>,
+    order: TKey[],
+    mapper: (key: TKey, count: number) => TItem
+  ): TItem[] {
     return order
       .filter((key) => counts.has(key))
       .map((key) => mapper(key, counts.get(key) ?? 0));

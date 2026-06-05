@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit
@@ -72,6 +73,7 @@ type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Prom
 
 @Injectable()
 export class MessengerService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
+  private readonly logger = new Logger(MessengerService.name);
   private readonly threads = new Map<string, ChatThread>();
   private readonly messages = new Map<string, ChatMessage[]>();
   private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
@@ -121,6 +123,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       return;
     }
 
+    const startedAt = process.hrtime.bigint();
+    const memoryBefore = this.captureMemoryUsageSnapshot();
     const state = await this.persistence.loadState();
 
     if (state.stations.length > 0) {
@@ -228,6 +232,26 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
         this.aiSuggestions.set(threadId, threadSuggestions);
       }
     }
+
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const memoryAfter = this.captureMemoryUsageSnapshot();
+    this.logger.log(
+      JSON.stringify({
+        type: 'messenger_persistence_hydrate',
+        threadsCount: state.threads.length,
+        messagesCount: state.messages.length,
+        stationsCount: state.stations.length,
+        connectorsCount: state.connectors.length,
+        accessRulesCount: state.accessRules.length,
+        responseMetricsEntriesCount: state.metrics.length,
+        aiConfigsCount: state.aiConfigs.length,
+        aiInsightsCount: state.aiInsights.length,
+        aiSuggestionsCount: state.aiSuggestions.length,
+        durationMs: Number(durationMs.toFixed(2)),
+        memoryBefore,
+        memoryAfter
+      })
+    );
   }
 
   createThread(dto: CreateThreadDto, user: RequestUser): ChatThread {
@@ -524,6 +548,35 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     return this.getFilteredAccessibleThreads(user, filters).map((thread) =>
       this.buildDialogSummary(thread, user)
     );
+  }
+
+  listDialogsWindow(
+    user: RequestUser,
+    filters: ThreadFilters = {},
+    targetCount = 0
+  ): StationDialogSummary[] {
+    const normalizedTargetCount = this.resolveDialogWindowTargetCount(targetCount);
+    if (normalizedTargetCount <= 0) {
+      return [];
+    }
+
+    const dialogs: StationDialogSummary[] = [];
+    for (const thread of this.threads.values()) {
+      if (filters.connector && thread.connector !== filters.connector) {
+        continue;
+      }
+      if (filters.stationId && thread.stationId !== filters.stationId) {
+        continue;
+      }
+      if (!this.canAccessThread(thread, user)) {
+        continue;
+      }
+
+      const summary = this.buildDialogSummary(thread, user);
+      this.insertDialogByCompatibleRank(dialogs, summary, normalizedTargetCount);
+    }
+
+    return dialogs;
   }
 
   getSettings(user: RequestUser): MessengerSettingsSnapshot {
@@ -1026,6 +1079,87 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
 
       return left.id.localeCompare(right.id);
     });
+  }
+
+  private resolveDialogWindowTargetCount(targetCount?: number): number {
+    if (!Number.isFinite(targetCount) || Number(targetCount) <= 0) {
+      return 0;
+    }
+    return Math.floor(Number(targetCount));
+  }
+
+  private insertDialogByCompatibleRank(
+    target: StationDialogSummary[],
+    candidate: StationDialogSummary,
+    maxSize: number
+  ): void {
+    if (!this.shouldIncludeDialogInListWindow(candidate)) {
+      return;
+    }
+
+    let insertAt = target.length;
+    for (let index = 0; index < target.length; index += 1) {
+      if (this.compareCompatibleDialogRank(candidate, target[index]) < 0) {
+        insertAt = index;
+        break;
+      }
+    }
+
+    if (target.length >= maxSize && insertAt === target.length) {
+      return;
+    }
+
+    target.splice(insertAt, 0, candidate);
+    if (target.length > maxSize) {
+      target.pop();
+    }
+  }
+
+  private shouldIncludeDialogInListWindow(dialog: StationDialogSummary): boolean {
+    if (
+      dialog.isResolved === true &&
+      dialog.connector === ConnectorRoute.PROMO_WEB_MESSENGER
+    ) {
+      return false;
+    }
+
+    return this.resolveCompatibleDialogRankTimestamp(dialog) > 0;
+  }
+
+  private compareCompatibleDialogRank(
+    left: StationDialogSummary,
+    right: StationDialogSummary
+  ): number {
+    const leftRankTs = this.resolveCompatibleDialogRankTimestamp(left);
+    const rightRankTs = this.resolveCompatibleDialogRankTimestamp(right);
+    if (leftRankTs !== rightRankTs) {
+      return rightRankTs - leftRankTs;
+    }
+
+    return left.threadId.localeCompare(right.threadId);
+  }
+
+  private resolveCompatibleDialogRankTimestamp(dialog: StationDialogSummary): number {
+    const explicitRankingTs = this.toTimestamp(dialog.lastRankingMessageAt);
+    if (explicitRankingTs > 0) {
+      return explicitRankingTs;
+    }
+
+    const senderRoleRaw = String(
+      dialog.lastMessageSenderRoleRaw ?? dialog.lastMessageSenderRole ?? ''
+    )
+      .trim()
+      .toUpperCase();
+
+    if (senderRoleRaw === 'SYSTEM') {
+      return 0;
+    }
+
+    if (!senderRoleRaw) {
+      return 0;
+    }
+
+    return this.toTimestamp(dialog.lastMessageAt);
   }
 
   private buildDialogSummary(
@@ -2231,6 +2365,23 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     }
     const normalized = value.trim();
     return normalized || undefined;
+  }
+
+  private captureMemoryUsageSnapshot(): {
+    rssMb: number;
+    heapUsedMb: number;
+    heapTotalMb: number;
+    externalMb: number;
+  } {
+    const usage = process.memoryUsage();
+    const toMb = (value: number): number => Number((value / 1024 / 1024).toFixed(2));
+
+    return {
+      rssMb: toMb(usage.rss),
+      heapUsedMb: toMb(usage.heapUsed),
+      heapTotalMb: toMb(usage.heapTotal),
+      externalMb: toMb(usage.external)
+    };
   }
 
   private toTimestamp(value?: string): number {

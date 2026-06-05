@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   NotFoundException,
   Param,
   ParseEnumPipe,
@@ -104,6 +105,8 @@ interface MessageUpdatesResponse {
   Role.CLIENT
 )
 export class MessengerController {
+  private readonly logger = new Logger(MessengerController.name);
+
   constructor(
     private readonly messengerService: MessengerService,
     private readonly supportService: SupportService,
@@ -220,7 +223,7 @@ export class MessengerController {
       ...query,
       limit: sourceLimit,
       offset: 0
-    });
+    }, 'updates');
     const updatedSinceTs = this.parseUpdatedSince(updatedSince);
     const changed = updatedSinceTs > 0
       ? sourceDialogs.filter(
@@ -755,11 +758,18 @@ export class MessengerController {
 
   private async listCompatibleDialogs(
     user: RequestUser,
-    query: ListThreadsDto = {}
+    query: ListThreadsDto = {},
+    context: 'list' | 'updates' = 'list'
   ): Promise<StationDialogSummary[]> {
+    const startedAt = process.hrtime.bigint();
+    const memoryBefore = this.captureMemoryUsageSnapshot();
+    const paging = this.resolveDialogsPaging(query);
+    const targetCount = paging.offset + paging.limit;
     const normalizedPhone = this.normalizePhoneQuery(query.phone);
     const hasPhoneSearch = normalizedPhone.length >= 10;
-    const legacySource = this.messengerService.listDialogs(user, query);
+    const legacySource = hasPhoneSearch
+      ? this.messengerService.listDialogs(user, query)
+      : this.messengerService.listDialogsWindow(user, query, targetCount);
     const legacy = this.sortDialogsByRank(
       hasPhoneSearch
         ? legacySource.filter((dialog) => this.dialogMatchesPhone(dialog, normalizedPhone))
@@ -771,27 +781,10 @@ export class MessengerController {
           connector: supportConnectorFilter,
           stationId: query.stationId
         })
-      : this.supportService.listDialogs(user, {
+      : this.supportService.listDialogsWindow(user, {
           connector: supportConnectorFilter,
           stationId: query.stationId
-        });
-
-    if (supportDialogs.length === 0) {
-      try {
-        await this.supportService.hydrateFromPersistence();
-      } catch {
-        // Keep serving the in-memory snapshot when persistence is temporarily unavailable.
-      }
-      supportDialogs = hasPhoneSearch
-        ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
-            connector: supportConnectorFilter,
-            stationId: query.stationId
-          })
-        : this.supportService.listDialogs(user, {
-            connector: supportConnectorFilter,
-            stationId: query.stationId
-          });
-    }
+        }, targetCount);
     const mappedSupport = this.sortDialogsByRank(
       supportDialogs.map((dialog) => this.mapSupportDialogToLegacy(dialog))
     );
@@ -800,15 +793,29 @@ export class MessengerController {
       this.shouldIncludeDialogInList(dialog)
     );
 
-    const paging = this.resolveDialogsPaging(query);
     const mergedTop = this.mergeDialogsByRank(
       visibleLegacy,
       visibleSupport,
       paging.offset + paging.limit
     );
     const page = mergedTop.slice(paging.offset, paging.offset + paging.limit);
-
-    return this.attachVivaCabinetUrls(page);
+    const result = await this.attachVivaCabinetUrls(page);
+    this.logDialogListDiagnostics({
+      context,
+      hasPhoneSearch,
+      normalizedPhoneLength: normalizedPhone.length,
+      paging,
+      legacyCount: legacy.length,
+      supportCount: supportDialogs.length,
+      visibleLegacyCount: visibleLegacy.length,
+      visibleSupportCount: visibleSupport.length,
+      mergedCount: mergedTop.length,
+      resultCount: result.length,
+      durationMs: Number((Number(process.hrtime.bigint() - startedAt) / 1_000_000).toFixed(2)),
+      memoryBefore,
+      memoryAfter: this.captureMemoryUsageSnapshot()
+    });
+    return result;
   }
 
   private normalizePhoneQuery(rawPhone?: string): string {
@@ -1141,6 +1148,72 @@ export class MessengerController {
         : 0;
 
     return { limit, offset };
+  }
+
+  private logDialogListDiagnostics(payload: {
+    context: 'list' | 'updates';
+    hasPhoneSearch: boolean;
+    normalizedPhoneLength: number;
+    paging: { limit: number; offset: number };
+    legacyCount: number;
+    supportCount: number;
+    visibleLegacyCount: number;
+    visibleSupportCount: number;
+    mergedCount: number;
+    resultCount: number;
+    durationMs: number;
+    memoryBefore: {
+      rssMb: number;
+      heapUsedMb: number;
+      heapTotalMb: number;
+      externalMb: number;
+    };
+    memoryAfter: {
+      rssMb: number;
+      heapUsedMb: number;
+      heapTotalMb: number;
+      externalMb: number;
+    };
+  }): void {
+    const totalVisible = payload.visibleLegacyCount + payload.visibleSupportCount;
+    const heapDeltaMb = Number(
+      (payload.memoryAfter.heapUsedMb - payload.memoryBefore.heapUsedMb).toFixed(2)
+    );
+    const shouldWarn =
+      payload.durationMs >= 1000 ||
+      totalVisible >= 200 ||
+      payload.memoryAfter.heapUsedMb >= 1024 ||
+      heapDeltaMb >= 128;
+
+    if (!shouldWarn) {
+      return;
+    }
+
+    this.logger.warn(
+      JSON.stringify({
+        type: 'messenger_dialogs_diagnostics',
+        ...payload,
+        totalVisibleCount: totalVisible,
+        heapDeltaMb
+      })
+    );
+  }
+
+  private captureMemoryUsageSnapshot(): {
+    rssMb: number;
+    heapUsedMb: number;
+    heapTotalMb: number;
+    externalMb: number;
+  } {
+    const usage = process.memoryUsage();
+    const toMb = (value: number): number => Number((value / 1024 / 1024).toFixed(2));
+
+    return {
+      rssMb: toMb(usage.rss),
+      heapUsedMb: toMb(usage.heapUsed),
+      heapTotalMb: toMb(usage.heapTotal),
+      externalMb: toMb(usage.external)
+    };
   }
 
   private mapLegacyConnectorToSupportFilter(

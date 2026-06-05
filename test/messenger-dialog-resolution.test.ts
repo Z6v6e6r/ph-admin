@@ -66,14 +66,28 @@ function createQuickRepliesStub() {
 }
 
 function createSupportServiceStub() {
+  const calls = {
+    hydrateFromPersistence: 0,
+    listDialogs: 0,
+    listDialogsWindow: 0
+  };
+
   return {
+    calls,
     listDialogs() {
+      calls.listDialogs += 1;
+      return [];
+    },
+    listDialogsWindow() {
+      calls.listDialogsWindow += 1;
       return [];
     },
     async listDialogsByPhone() {
       return [];
     },
-    async hydrateFromPersistence() {}
+    async hydrateFromPersistence() {
+      calls.hydrateFromPersistence += 1;
+    }
   };
 }
 
@@ -293,6 +307,9 @@ async function main(): Promise<void> {
     {} as never
   );
   const firstPage = await listingController.listDialogs(user, {});
+  const supportStubCalls = ((listingController as unknown as {
+    supportService: ReturnType<typeof createSupportServiceStub>;
+  }).supportService).calls;
 
   assert.deepEqual(
     firstPage.map((item) => item.threadId),
@@ -314,6 +331,8 @@ async function main(): Promise<void> {
       'real-thread-02'
     ]
   );
+  assert.equal(supportStubCalls.listDialogsWindow, 1);
+  assert.equal(supportStubCalls.hydrateFromPersistence, 0);
 
   console.log('Messenger promo dialog visibility test passed');
 }

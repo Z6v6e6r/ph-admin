@@ -28,16 +28,25 @@ export class RequestMetricsInterceptor implements NestInterceptor {
 
     const method = String(request?.method ?? 'GET').toUpperCase();
     const startedAt = process.hrtime.bigint();
+    const memoryBefore = process.memoryUsage();
     const metricRoute = `${method} ${routePath}`;
 
-    const record = (statusCode: number): void => {
+    const record = (statusCode: number, value?: unknown): void => {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-      this.metrics.record(metricRoute, durationMs, statusCode);
+      const memoryAfter = process.memoryUsage();
+      this.metrics.record(metricRoute, durationMs, statusCode, {
+        rssBytes: memoryAfter.rss,
+        heapUsedBytes: memoryAfter.heapUsed,
+        heapTotalBytes: memoryAfter.heapTotal,
+        externalBytes: memoryAfter.external,
+        heapDeltaBytes: Math.max(0, memoryAfter.heapUsed - memoryBefore.heapUsed),
+        itemCount: this.resolveResponseItemCount(value)
+      });
     };
 
     return next.handle().pipe(
-      tap(() => {
-        record(Number(response?.statusCode ?? 200));
+      tap((value) => {
+        record(Number(response?.statusCode ?? 200), value);
       }),
       catchError((error: unknown) => {
         const statusCode =
@@ -72,5 +81,24 @@ export class RequestMetricsInterceptor implements NestInterceptor {
       path.startsWith('/messenger') ||
       path.startsWith('/support')
     );
+  }
+
+  private resolveResponseItemCount(value: unknown): number | undefined {
+    if (Array.isArray(value)) {
+      return value.length;
+    }
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const record = value as Record<string, unknown>;
+    const candidateKeys = ['dialogs', 'messages', 'threads', 'items', 'results', 'data'];
+    for (const key of candidateKeys) {
+      if (Array.isArray(record[key])) {
+        return (record[key] as unknown[]).length;
+      }
+    }
+
+    return undefined;
   }
 }
