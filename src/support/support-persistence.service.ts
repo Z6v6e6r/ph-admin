@@ -120,6 +120,16 @@ export interface SupportDialogPhoneLookupOptions {
   limit?: number;
 }
 
+export interface SupportClientLookupQuery {
+  phone?: string;
+  email?: string;
+  connector?: SupportConnectorRoute;
+  externalUserId?: string;
+  externalChatId?: string;
+  username?: string;
+  limit?: number;
+}
+
 export interface SupportServiceMessagesLookupOptions {
   limit?: number;
   before?: string;
@@ -426,6 +436,178 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       .map((entry) => entry[0]);
   }
 
+  async findClients(query: SupportClientLookupQuery): Promise<SupportClientProfile[]> {
+    const normalizedPhone = this.normalizePhoneForLookup(query.phone ?? '');
+    const normalizedEmail = this.normalizeLookupEmail(query.email);
+    const normalizedExternalUserId = this.normalizeLookupIdentity(query.externalUserId);
+    const normalizedExternalChatId = this.normalizeLookupIdentity(query.externalChatId);
+    const normalizedUsername = this.normalizeLookupIdentity(query.username);
+    const connector = query.connector;
+
+    if (
+      !normalizedPhone &&
+      !normalizedEmail &&
+      !(connector && normalizedExternalUserId) &&
+      !(connector && normalizedExternalChatId) &&
+      !(connector && normalizedUsername)
+    ) {
+      return [];
+    }
+
+    const activeBackends = this.getActiveBackends();
+    if (activeBackends.length === 0) {
+      return [];
+    }
+
+    const limit = Math.min(Math.max(Math.floor(query.limit ?? 20), 1), 100);
+    const clientsById = new Map<string, TimestampedEntity<SupportClientProfile>>();
+
+    for (const backend of activeBackends) {
+      const lookups: Array<Promise<SupportClientProfile[]>> = [];
+      if (normalizedPhone) {
+        lookups.push(
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find(
+              { phones: normalizedPhone },
+              { projection: { _id: 0 }, limit }
+            )
+            .toArray()
+        );
+      }
+      if (normalizedEmail) {
+        lookups.push(
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find(
+              { emails: normalizedEmail },
+              { projection: { _id: 0 }, limit }
+            )
+            .toArray()
+        );
+      }
+      if (connector && normalizedExternalUserId) {
+        lookups.push(
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find(
+              {
+                identities: {
+                  $elemMatch: {
+                    connector,
+                    externalUserId: normalizedExternalUserId
+                  }
+                }
+              },
+              { projection: { _id: 0 }, limit }
+            )
+            .toArray()
+        );
+      }
+      if (connector && normalizedExternalChatId) {
+        lookups.push(
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find(
+              {
+                identities: {
+                  $elemMatch: {
+                    connector,
+                    externalChatId: normalizedExternalChatId
+                  }
+                }
+              },
+              { projection: { _id: 0 }, limit }
+            )
+            .toArray()
+        );
+      }
+      if (connector && normalizedUsername) {
+        lookups.push(
+          this.collection<SupportClientProfile>(backend, 'clients')
+            .find(
+              {
+                identities: {
+                  $elemMatch: {
+                    connector,
+                    username: normalizedUsername
+                  }
+                }
+              },
+              { projection: { _id: 0 }, limit }
+            )
+            .toArray()
+        );
+      }
+
+      if (lookups.length === 0) {
+        continue;
+      }
+
+      const lookupResults = await Promise.all(lookups);
+      for (const clients of lookupResults) {
+        for (const client of clients) {
+          this.upsertByTimestamp(
+            clientsById,
+            client.id,
+            client,
+            this.resolveClientTimestamp(client)
+          );
+        }
+      }
+    }
+
+    return Array.from(clientsById.values())
+      .map((item) => item.entity)
+      .sort((left, right) => {
+        const createdDiff =
+          this.parseTimestamp(left.createdAt) - this.parseTimestamp(right.createdAt);
+        if (createdDiff !== 0) {
+          return createdDiff;
+        }
+        return this.resolveClientTimestamp(left) - this.resolveClientTimestamp(right);
+      })
+      .slice(0, limit);
+  }
+
+  async findDialogsByClientId(clientId: string, limit = 50): Promise<SupportDialog[]> {
+    const normalizedClientId = String(clientId ?? '').trim();
+    if (!normalizedClientId) {
+      return [];
+    }
+
+    const activeBackends = this.getActiveBackends();
+    if (activeBackends.length === 0) {
+      return [];
+    }
+
+    const normalizedLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
+    const dialogsById = new Map<string, TimestampedEntity<SupportDialog>>();
+
+    for (const backend of activeBackends) {
+      const dialogs = await this.collection<SupportDialog>(backend, 'dialogs')
+        .find(
+          { clientId: normalizedClientId },
+          {
+            projection: { _id: 0 },
+            sort: { updatedAt: -1 },
+            limit: normalizedLimit
+          }
+        )
+        .toArray();
+
+      for (const dialog of dialogs) {
+        this.upsertByTimestamp(
+          dialogsById,
+          dialog.id,
+          dialog,
+          this.resolveDialogTimestamp(dialog)
+        );
+      }
+    }
+
+    return Array.from(dialogsById.values())
+      .map((item) => item.entity)
+      .sort((left, right) => this.resolveDialogTimestamp(right) - this.resolveDialogTimestamp(left))
+      .slice(0, normalizedLimit);
+  }
+
   persistClient(client: SupportClientProfile): void {
     this.fireAndForget(async () => {
       const activeBackends = this.getActiveBackends();
@@ -698,6 +880,16 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       return digits;
     }
     return digits;
+  }
+
+  private normalizeLookupEmail(rawEmail?: string): string | undefined {
+    const value = String(rawEmail ?? '').trim().toLowerCase();
+    return value || undefined;
+  }
+
+  private normalizeLookupIdentity(rawValue?: string): string | undefined {
+    const value = String(rawValue ?? '').trim();
+    return value || undefined;
   }
 
   private resolvePrimaryDbName(): string {

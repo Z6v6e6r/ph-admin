@@ -11,6 +11,7 @@
     "test:americano-schedule": "ts-node test/americano-schedule.test.ts",
     "test:americano-rating-simulation": "ts-node test/americano-rating-simulation.test.ts",
     "test:tournaments-pricing-snapshot": "ts-node test/tournaments-pricing-snapshot.test.ts",
+    "test:support-client-resolve": "ts-node test/support-client-resolve.test.ts",
     "test:support-station-mappings": "ts-node test/support-station-mappings.test.ts",
     "test:support-dialog-resolution": "ts-node test/support-dialog-resolution.test.ts",
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",

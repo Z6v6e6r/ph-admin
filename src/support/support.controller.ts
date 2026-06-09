@@ -37,7 +37,7 @@ export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
   @Get('clients/resolve')
-  resolveClient(
+  async resolveClient(
     @Headers('x-integration-token') token?: string,
     @Query('phone') phone?: string,
     @Query('email') email?: string,

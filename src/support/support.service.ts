@@ -29,6 +29,7 @@ import {
   parseSupportStationMappings
 } from './support-station-mappings';
 import {
+  SupportClientLookupQuery,
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
@@ -74,7 +75,7 @@ import {
   SupportPriorityAnalytics
 } from './support.types';
 
-interface ResolveClientQuery {
+interface ResolveClientQuery extends SupportClientLookupQuery {
   phone?: string;
   email?: string;
   connector?: SupportConnectorRoute;
@@ -259,11 +260,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
   }
 
-  resolveClient(query: ResolveClientQuery): {
+  async resolveClient(query: ResolveClientQuery): Promise<{
     client: SupportClientProfile | null;
     dialogs: SupportDialogSummary[];
-  } {
-    const client = this.findClientByQuery(query);
+  }> {
+    let client = this.findClientByQuery(query);
+    if (!client) {
+      client = await this.findAndCacheClientFromPersistence(query);
+    }
     if (!client) {
       return { client: null, dialogs: [] };
     }
@@ -513,7 +517,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
     const connectorFallbackStationId =
-      this.isLkConnector(normalizedDto.connector)
+      (this.isLkConnector(normalizedDto.connector) ||
+        this.isMaxConnector(normalizedDto.connector))
         ? this.normalizeStationId(client.currentStationId)
         : undefined;
     const stationId =
@@ -530,10 +535,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         stationId
       ) ?? SUPPORT_UNASSIGNED_STATION_NAME;
 
-    if (
-      selectedStationId &&
-      this.isLkConnector(normalizedDto.connector)
-    ) {
+    if (selectedStationId) {
       client.currentStationId = stationId;
       client.currentStationName = stationName;
       client.updatedAt = createdAt;
@@ -1620,6 +1622,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
     matches.sort((left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt));
     return matches[0];
+  }
+
+  private async findAndCacheClientFromPersistence(
+    query: ResolveClientQuery
+  ): Promise<SupportClientProfile | null> {
+    if (!this.persistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      const persistedClients = await this.persistence.findClients(query);
+      if (persistedClients.length === 0) {
+        return null;
+      }
+
+      for (const persistedClient of persistedClients) {
+        const normalizedClient = this.normalizeLoadedClient(persistedClient);
+        this.clients.set(normalizedClient.id, normalizedClient);
+
+        const persistedDialogs = await this.persistence.findDialogsByClientId(normalizedClient.id);
+        for (const persistedDialog of persistedDialogs) {
+          const normalizedDialog = this.normalizeLoadedDialog(persistedDialog);
+          this.dialogs.set(normalizedDialog.id, normalizedDialog);
+          if (!this.messages.has(normalizedDialog.id)) {
+            this.messages.set(normalizedDialog.id, []);
+          }
+          if (!this.responseMetrics.has(normalizedDialog.id)) {
+            this.responseMetrics.set(normalizedDialog.id, []);
+          }
+        }
+      }
+
+      return this.findClientByQuery(query);
+    } catch (error) {
+      this.logger.error(`Support client persistence lookup failed: ${String(error)}`);
+      return null;
+    }
   }
 
   private resolveOrCreateClient(
