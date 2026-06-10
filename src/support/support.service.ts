@@ -1971,6 +1971,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       kind: context.kind,
       text: this.buildMessageText(
         context.kind,
+        context.direction,
         text,
         context.normalizedPhone,
         context.normalizedEmail,
@@ -4616,12 +4617,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private buildMessageText(
     kind: SupportMessageKind,
+    direction: SupportMessageDirection,
     text: string | undefined,
     phone: string | undefined,
     email: string | undefined,
     dto: IngestSupportEventDto,
     attachments: MessageAttachment[] = []
   ): string | undefined {
+    if (direction === SupportMessageDirection.SYSTEM && text) {
+      return text;
+    }
     if (kind === SupportMessageKind.CONTACT && phone) {
       return `Клиент поделился номером: ${phone}`;
     }

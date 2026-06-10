@@ -323,6 +323,22 @@ async function main(): Promise<void> {
   const storedClient = snapshot.clients.find((client) => client.id === followUp.client.id);
   assert.equal(storedClient?.currentStationId, 'Nagatinskaya');
 
+  const serviceDelivery = maxService.ingestEvent({
+    connector: SupportConnectorRoute.MAX_BOT,
+    externalUserId: 'max-user-2',
+    externalChatId: 'max-chat-2',
+    phone: '+7 (999) 111-22-33',
+    direction: SupportMessageDirection.SYSTEM,
+    deliverToClient: true,
+    text: 'Код авторизации: 8488',
+    meta: {
+      source: 'viva_crm'
+    }
+  });
+
+  assert.equal(serviceDelivery.message?.text, 'Код авторизации: 8488');
+  assert.equal(serviceDelivery.outbox?.text, 'Код авторизации: 8488');
+
   console.log('Support client resolve and MAX station selection tests passed');
 }
 
