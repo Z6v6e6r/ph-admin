@@ -58,10 +58,10 @@ export class SupportController {
   }
 
   @Post('dialogs/events')
-  ingestEvent(
+  async ingestEvent(
     @Headers('x-integration-token') token: string | undefined,
     @Body() dto: IngestSupportEventDto
-  ): SupportIngestEventResult {
+  ): Promise<SupportIngestEventResult> {
     this.assertIntegrationToken(token);
     return this.supportService.ingestEvent(dto);
   }

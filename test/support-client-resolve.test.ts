@@ -188,6 +188,7 @@ function createService(persistence: InMemorySupportPersistence): SupportService 
 }
 
 async function main(): Promise<void> {
+  const previousSyncInterval = process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS;
   const persistedClient = {
     id: 'client-max-1',
     displayName: 'MAX User',
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
   });
   const maxService = createService(maxPersistence);
 
-  maxService.ingestEvent({
+  await maxService.ingestEvent({
     connector: SupportConnectorRoute.MAX_BOT,
     externalUserId: 'max-user-2',
     externalChatId: 'max-chat-2',
@@ -293,7 +294,7 @@ async function main(): Promise<void> {
     eventType: 'CONTACT'
   });
 
-  const stationSelection = maxService.ingestEvent({
+  const stationSelection = await maxService.ingestEvent({
     connector: SupportConnectorRoute.MAX_BOT,
     externalUserId: 'max-user-2',
     externalChatId: 'max-chat-2',
@@ -307,7 +308,7 @@ async function main(): Promise<void> {
   assert.equal(stationSelection.client.currentStationName, 'Нагатинская');
   assert.equal(stationSelection.dialog.stationId, 'Nagatinskaya');
 
-  const followUp = maxService.ingestEvent({
+  const followUp = await maxService.ingestEvent({
     connector: SupportConnectorRoute.MAX_BOT,
     externalUserId: 'max-user-2',
     externalChatId: 'max-chat-2',
@@ -323,7 +324,7 @@ async function main(): Promise<void> {
   const storedClient = snapshot.clients.find((client) => client.id === followUp.client.id);
   assert.equal(storedClient?.currentStationId, 'Nagatinskaya');
 
-  const serviceDelivery = maxService.ingestEvent({
+  const serviceDelivery = await maxService.ingestEvent({
     connector: SupportConnectorRoute.MAX_BOT,
     externalUserId: 'max-user-2',
     externalChatId: 'max-chat-2',
@@ -338,6 +339,43 @@ async function main(): Promise<void> {
 
   assert.equal(serviceDelivery.message?.text, 'Код авторизации: 8488');
   assert.equal(serviceDelivery.outbox?.text, 'Код авторизации: 8488');
+
+  process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS = '0';
+  const restartPersistence = new InMemorySupportPersistence({
+    clients: [persistedClient],
+    dialogs: [persistedDialog],
+    messages: [],
+    responseMetrics: [],
+    outbox: []
+  });
+  const serviceAfterRestart = createService(restartPersistence);
+  try {
+    await serviceAfterRestart.onModuleInit();
+    const postRestartServiceDelivery = await serviceAfterRestart.ingestEvent({
+      connector: SupportConnectorRoute.MAX_BOT,
+      phone: '+7 (999) 000-00-00',
+      direction: SupportMessageDirection.SYSTEM,
+      kind: SupportMessageKind.SYSTEM,
+      deliverToClient: true,
+      text: 'Код авторизации: 5555',
+      meta: {
+        source: 'viva_crm'
+      }
+    });
+
+    assert.equal(postRestartServiceDelivery.client.id, persistedClient.id);
+    assert.equal(postRestartServiceDelivery.message?.text, 'Код авторизации: 5555');
+    assert.equal(postRestartServiceDelivery.outbox?.text, 'Код авторизации: 5555');
+    assert.equal(postRestartServiceDelivery.outbox?.targetExternalUserId, 'max-user-1');
+    assert.equal(postRestartServiceDelivery.outbox?.targetExternalChatId, 'max-chat-1');
+  } finally {
+    serviceAfterRestart.onModuleDestroy();
+    if (previousSyncInterval === undefined) {
+      delete process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS;
+    } else {
+      process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS = previousSyncInterval;
+    }
+  }
 
   console.log('Support client resolve and MAX station selection tests passed');
 }

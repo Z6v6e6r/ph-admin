@@ -147,13 +147,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
     this.ensureNoReplyQuickReplyTimer();
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    await this.ensureInitialPersistenceSync();
     this.ensurePersistenceSyncTimer();
     this.ensureNoReplyQuickReplyTimer();
   }
@@ -503,11 +501,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return Math.min(Math.max(1, Math.floor(rawValue)), 500000);
   }
 
-  ingestEvent(dto: IngestSupportEventDto): SupportIngestEventResult {
+  async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
     const createdAt = this.resolveEventTimestamp(normalizedDto.timestamp);
     const normalizedPhone = this.normalizePhone(normalizedDto.phone);
     const normalizedEmail = this.normalizeEmail(normalizedDto.email);
+    await this.ensureClientLoadedForIngestEvent(
+      normalizedDto,
+      normalizedPhone,
+      normalizedEmail
+    );
     const client = this.resolveOrCreateClient(
       normalizedDto,
       normalizedPhone,
@@ -1638,20 +1641,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
 
       for (const persistedClient of persistedClients) {
-        const normalizedClient = this.normalizeLoadedClient(persistedClient);
-        this.clients.set(normalizedClient.id, normalizedClient);
-
-        const persistedDialogs = await this.persistence.findDialogsByClientId(normalizedClient.id);
-        for (const persistedDialog of persistedDialogs) {
-          const normalizedDialog = this.normalizeLoadedDialog(persistedDialog);
-          this.dialogs.set(normalizedDialog.id, normalizedDialog);
-          if (!this.messages.has(normalizedDialog.id)) {
-            this.messages.set(normalizedDialog.id, []);
-          }
-          if (!this.responseMetrics.has(normalizedDialog.id)) {
-            this.responseMetrics.set(normalizedDialog.id, []);
-          }
-        }
+        await this.cacheClientFromPersistence(persistedClient);
       }
 
       return this.findClientByQuery(query);
@@ -1659,6 +1649,209 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.logger.error(`Support client persistence lookup failed: ${String(error)}`);
       return null;
     }
+  }
+
+  private async ensureClientLoadedForIngestEvent(
+    dto: NormalizedIngestSupportEventDto,
+    normalizedPhone?: string,
+    normalizedEmail?: string
+  ): Promise<void> {
+    if (!this.persistence.isEnabled()) {
+      return;
+    }
+
+    const existing = this.findExistingClientForEvent(dto, normalizedPhone, normalizedEmail);
+    if (existing) {
+      return;
+    }
+
+    const queries = this.buildClientLookupQueriesForEvent(dto, normalizedPhone, normalizedEmail);
+    for (const query of queries) {
+      const persistedClient = await this.findPreferredClientFromPersistence(
+        query,
+        dto.connector,
+        normalizedPhone,
+        normalizedEmail
+      );
+      if (!persistedClient) {
+        continue;
+      }
+      await this.cacheClientFromPersistence(persistedClient);
+      return;
+    }
+  }
+
+  private findExistingClientForEvent(
+    dto: NormalizedIngestSupportEventDto,
+    normalizedPhone?: string,
+    normalizedEmail?: string
+  ): SupportClientProfile | null {
+    const queries = this.buildClientLookupQueriesForEvent(dto, normalizedPhone, normalizedEmail);
+    for (const query of queries) {
+      const client = this.findClientByQuery(query);
+      if (client) {
+        return client;
+      }
+    }
+    return null;
+  }
+
+  private buildClientLookupQueriesForEvent(
+    dto: NormalizedIngestSupportEventDto,
+    normalizedPhone?: string,
+    normalizedEmail?: string
+  ): ResolveClientQuery[] {
+    const queries: ResolveClientQuery[] = [];
+    const seen = new Set<string>();
+    const pushQuery = (query: ResolveClientQuery): void => {
+      const normalizedQuery: ResolveClientQuery = {
+        phone: this.normalizePhone(query.phone),
+        email: this.normalizeEmail(query.email),
+        connector: query.connector,
+        externalUserId: this.normalizeIdentityValue(query.externalUserId),
+        externalChatId: this.normalizeIdentityValue(query.externalChatId),
+        username: this.normalizeIdentityValue(query.username)
+      };
+      if (
+        !normalizedQuery.phone &&
+        !normalizedQuery.email &&
+        !normalizedQuery.externalUserId &&
+        !normalizedQuery.externalChatId &&
+        !normalizedQuery.username
+      ) {
+        return;
+      }
+      const key = JSON.stringify(normalizedQuery);
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      queries.push(normalizedQuery);
+    };
+
+    pushQuery({
+      connector: dto.connector,
+      externalUserId: dto.externalUserId,
+      externalChatId: dto.externalChatId
+    });
+    pushQuery({
+      connector: dto.connector,
+      externalUserId: dto.externalUserId
+    });
+    pushQuery({
+      connector: dto.connector,
+      externalChatId: dto.externalChatId
+    });
+    pushQuery({
+      connector: dto.connector,
+      username: dto.username
+    });
+    pushQuery({
+      phone: normalizedPhone
+    });
+    pushQuery({
+      email: normalizedEmail
+    });
+
+    return queries;
+  }
+
+  private async findPreferredClientFromPersistence(
+    query: ResolveClientQuery,
+    connector: SupportConnectorRoute,
+    normalizedPhone?: string,
+    normalizedEmail?: string
+  ): Promise<SupportClientProfile | null> {
+    try {
+      const persistedClients = await this.persistence.findClients({
+        ...query,
+        limit: 20
+      });
+      if (persistedClients.length === 0) {
+        return null;
+      }
+
+      const normalizedCandidates = persistedClients.map((client) =>
+        this.normalizeLoadedClient(client)
+      );
+      normalizedCandidates.sort((left, right) => {
+        const scoreDiff =
+          this.scorePersistedClientCandidate(right, connector, normalizedPhone, normalizedEmail) -
+          this.scorePersistedClientCandidate(left, connector, normalizedPhone, normalizedEmail);
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+        const updatedDiff = this.toTimestamp(right.updatedAt) - this.toTimestamp(left.updatedAt);
+        if (updatedDiff !== 0) {
+          return updatedDiff;
+        }
+        return this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt);
+      });
+      return normalizedCandidates[0] ?? null;
+    } catch (error) {
+      this.logger.error(`Support client event lookup failed: ${String(error)}`);
+      return null;
+    }
+  }
+
+  private scorePersistedClientCandidate(
+    client: SupportClientProfile,
+    connector: SupportConnectorRoute,
+    normalizedPhone?: string,
+    normalizedEmail?: string
+  ): number {
+    let score = 0;
+
+    const connectorIdentity = this.pickIdentityForConnector(client, connector);
+    if (connectorIdentity) {
+      score += 1000;
+      if (this.normalizeIdentityValue(connectorIdentity.externalUserId)) {
+        score += 50;
+      }
+      if (this.normalizeIdentityValue(connectorIdentity.externalChatId)) {
+        score += 50;
+      }
+    }
+
+    if (normalizedPhone) {
+      if (client.primaryPhone === normalizedPhone) {
+        score += 200;
+      } else if (client.phones.includes(normalizedPhone)) {
+        score += 120;
+      }
+    }
+
+    if (normalizedEmail && client.emails.includes(normalizedEmail)) {
+      score += 80;
+    }
+
+    if (client.authStatus === SupportClientAuthStatus.VERIFIED) {
+      score += 20;
+    }
+
+    score += Math.min(client.identities.length, 10);
+    return score;
+  }
+
+  private async cacheClientFromPersistence(
+    client: SupportClientProfile
+  ): Promise<SupportClientProfile> {
+    const normalizedClient = this.normalizeLoadedClient(client);
+    this.clients.set(normalizedClient.id, normalizedClient);
+
+    const persistedDialogs = await this.persistence.findDialogsByClientId(normalizedClient.id);
+    for (const persistedDialog of persistedDialogs) {
+      const normalizedDialog = this.normalizeLoadedDialog(persistedDialog);
+      this.dialogs.set(normalizedDialog.id, normalizedDialog);
+      if (!this.messages.has(normalizedDialog.id)) {
+        this.messages.set(normalizedDialog.id, []);
+      }
+      if (!this.responseMetrics.has(normalizedDialog.id)) {
+        this.responseMetrics.set(normalizedDialog.id, []);
+      }
+    }
+
+    return normalizedClient;
   }
 
   private resolveOrCreateClient(
