@@ -868,15 +868,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const includeService = options.includeService === true;
     const beforeTs = this.toTimestamp(options.before);
     const limit = this.resolveMessagesLimit(options.limit);
-    const source = this.messages.get(dialog.id) ?? [];
-    const regularMessages = source
-      .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
-      .filter(
-        (message) =>
-          !this.isSystemDialogMessage(message) ||
-          (!includeService && this.isQuickReplyAutoResponseMessage(message))
-      )
-      .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
+    const relatedDialogs = await this.findRelatedDialogsForHistory(dialog, user);
+    const regularMessages = this.collectRegularDialogMessages(
+      relatedDialogs,
+      user,
+      beforeTs,
+      includeService
+    );
 
     if (!includeService) {
       return regularMessages.length <= limit
@@ -884,10 +882,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         : regularMessages.slice(regularMessages.length - limit);
     }
 
-    const serviceMessages = await this.listServiceMessages(dialog.id, user, {
-      limit: Math.max(limit * 2, limit),
-      before: options.before
-    });
+    const serviceMessages = await this.collectServiceDialogMessages(
+      relatedDialogs,
+      user,
+      beforeTs,
+      Math.max(limit * 2, limit),
+      options.before
+    );
     const merged = [...regularMessages, ...serviceMessages].sort(
       (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
     );
@@ -904,33 +905,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.ensureDialogAccess(dialog, user);
 
     const limit = this.resolveMessagesLimit(options.limit);
-    if (this.persistence.isEnabled()) {
-      try {
-        const persisted = await this.persistence.findServiceMessages(dialog.id, {
-          limit,
-          before: options.before
-        });
-        if (persisted.length > 0) {
-          const filteredPersisted = persisted.filter((message) =>
-            this.isConnectorAllowedForUser(user, message.connector)
-          );
-          return filteredPersisted.length <= limit
-            ? filteredPersisted
-            : filteredPersisted.slice(filteredPersisted.length - limit);
-        }
-      } catch (error) {
-        this.logger.error(`Support service messages lookup failed: ${String(error)}`);
-      }
-    }
-
     const beforeTs = this.toTimestamp(options.before);
-    const source = this.messages.get(dialog.id) ?? [];
-    const filtered = source
-      .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
-      .filter((message) => this.isSystemDialogMessage(message))
-      .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
-
-    return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
+    return this.listServiceMessagesForDialog(dialog, user, {
+      limit,
+      before: options.before,
+      beforeTs
+    });
   }
 
   replyToDialog(
@@ -4996,6 +4976,154 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return false;
+  }
+
+  private async findRelatedDialogsForHistory(
+    dialog: SupportDialog,
+    user: RequestUser
+  ): Promise<SupportDialog[]> {
+    const related = new Map<string, SupportDialog>();
+    related.set(dialog.id, dialog);
+
+    const phones = this.mergeStrings(
+      [],
+      [dialog.currentPhone, ...(Array.isArray(dialog.phones) ? dialog.phones : [])]
+        .map((phone) => this.normalizePhone(phone))
+        .filter((phone): phone is string => Boolean(phone))
+    );
+
+    if (phones.length === 0) {
+      return [dialog];
+    }
+
+    if (this.persistence.isEnabled()) {
+      for (const phone of phones) {
+        try {
+          const candidateIds = await this.persistence.findDialogIdsByPhone(phone, {
+            limit: 200
+          });
+          for (const candidateId of candidateIds) {
+            const candidate = this.dialogs.get(candidateId);
+            if (candidate && this.canAccessDialog(candidate, user)) {
+              related.set(candidate.id, candidate);
+            }
+          }
+        } catch (error) {
+          this.logger.error(`Support dialog history phone lookup failed: ${String(error)}`);
+        }
+      }
+    }
+
+    if (related.size === 1) {
+      for (const candidate of this.listAccessibleDialogs(user)) {
+        if (
+          phones.some((phone) => this.dialogMatchesPhone(candidate, phone))
+        ) {
+          related.set(candidate.id, candidate);
+        }
+      }
+    }
+
+    return Array.from(related.values()).sort(
+      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+    );
+  }
+
+  private collectRegularDialogMessages(
+    dialogs: SupportDialog[],
+    user: RequestUser,
+    beforeTs: number,
+    includeService: boolean
+  ): SupportMessage[] {
+    return this.deduplicateMessagesById(
+      dialogs.flatMap((dialog) =>
+        (this.messages.get(dialog.id) ?? [])
+          .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
+          .filter(
+            (message) =>
+              !this.isSystemDialogMessage(message) ||
+              (!includeService && this.isQuickReplyAutoResponseMessage(message))
+          )
+          .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true))
+      )
+    );
+  }
+
+  private async collectServiceDialogMessages(
+    dialogs: SupportDialog[],
+    user: RequestUser,
+    beforeTs: number,
+    limit: number,
+    before?: string
+  ): Promise<SupportMessage[]> {
+    const perDialog = await Promise.all(
+      dialogs.map((dialog) =>
+        this.listServiceMessagesForDialog(dialog, user, {
+          limit,
+          before,
+          beforeTs
+        })
+      )
+    );
+
+    return this.deduplicateMessagesById(perDialog.flat()).sort(
+      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+    );
+  }
+
+  private async listServiceMessagesForDialog(
+    dialog: SupportDialog,
+    user: RequestUser,
+    options: {
+      limit: number;
+      before?: string;
+      beforeTs: number;
+    }
+  ): Promise<SupportMessage[]> {
+    if (this.persistence.isEnabled()) {
+      try {
+        const persisted = await this.persistence.findServiceMessages(dialog.id, {
+          limit: options.limit,
+          before: options.before
+        });
+        if (persisted.length > 0) {
+          const filteredPersisted = persisted.filter((message) =>
+            this.isConnectorAllowedForUser(user, message.connector)
+          );
+          return filteredPersisted.length <= options.limit
+            ? filteredPersisted
+            : filteredPersisted.slice(filteredPersisted.length - options.limit);
+        }
+      } catch (error) {
+        this.logger.error(`Support service messages lookup failed: ${String(error)}`);
+      }
+    }
+
+    const source = this.messages.get(dialog.id) ?? [];
+    const filtered = source
+      .filter((message) => this.isConnectorAllowedForUser(user, message.connector))
+      .filter((message) => this.isSystemDialogMessage(message))
+      .filter((message) =>
+        options.beforeTs > 0 ? this.toTimestamp(message.createdAt) < options.beforeTs : true
+      );
+
+    return filtered.length <= options.limit
+      ? filtered
+      : filtered.slice(filtered.length - options.limit);
+  }
+
+  private deduplicateMessagesById(messages: SupportMessage[]): SupportMessage[] {
+    const byId = new Map<string, SupportMessage>();
+    for (const message of messages) {
+      const existing = byId.get(message.id);
+      if (!existing || this.toTimestamp(message.createdAt) >= this.toTimestamp(existing.createdAt)) {
+        byId.set(message.id, message);
+      }
+    }
+
+    return Array.from(byId.values()).sort(
+      (left, right) => this.toTimestamp(left.createdAt) - this.toTimestamp(right.createdAt)
+    );
   }
 
   private normalizeEmail(raw?: string): string | undefined {
