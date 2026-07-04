@@ -482,6 +482,7 @@ export class GamesService implements OnModuleDestroy {
 
   private async findGamePageFromMongo(
     filters: {
+      phone?: string;
       page: number;
       pageSize: number;
       sortField: GameListSortField;
@@ -490,9 +491,7 @@ export class GamesService implements OnModuleDestroy {
     user?: RequestUser
   ): Promise<GameListResult> {
     const collection = await this.getMongoCollection();
-    const mongoFilter: Filter<MongoGameDoc> = {
-      archived: { $ne: true }
-    };
+    const mongoFilter = this.buildMongoGameFilter(filters);
     const total = await collection.countDocuments(mongoFilter);
     let cursor = collection
       .find(mongoFilter, {
@@ -541,7 +540,31 @@ export class GamesService implements OnModuleDestroy {
     };
   }
 
+  private buildMongoGameFilter(filters: { phone?: string }): Filter<MongoGameDoc> {
+    const phoneDigits = this.normalizePhoneSearch(filters.phone);
+    if (!phoneDigits) {
+      return {
+        archived: { $ne: true }
+      };
+    }
+
+    const phonePattern = this.buildLoosePhoneRegex(phoneDigits);
+    return {
+      archived: { $ne: true },
+      $or: [
+        { 'participants.phone': { $regex: phonePattern } },
+        { 'participants.phoneNorm': { $regex: phonePattern } },
+        { 'organizer.phone': { $regex: phonePattern } },
+        { 'metadata.allRelatedPhones': { $regex: phonePattern } },
+        { 'metadata.participantPhones': { $regex: phonePattern } },
+        { 'metadata.invitedPhones': { $regex: phonePattern } },
+        { 'metadata.waitlistPhones': { $regex: phonePattern } }
+      ]
+    } as Filter<MongoGameDoc>;
+  }
+
   private normalizeGameListPagination(filters?: GameListFilters): {
+    phone?: string;
     page: number;
     pageSize: number;
     sortField: GameListSortField;
@@ -561,8 +584,10 @@ export class GamesService implements OnModuleDestroy {
         : 'createdAt';
     const sortDirection: GameListSortDirection =
       filters?.sortDirection === 'asc' ? 'asc' : 'desc';
+    const phone = this.normalizePhoneSearch(filters?.phone) ?? undefined;
 
     return {
+      phone,
       page,
       pageSize,
       sortField,
@@ -603,13 +628,15 @@ export class GamesService implements OnModuleDestroy {
   private paginateGamesInMemory(
     games: Game[],
     filters: {
+      phone?: string;
       page: number;
       pageSize: number;
       sortField: GameListSortField;
       sortDirection: GameListSortDirection;
     }
   ): GameListResult {
-    const sorted = this.sortGamesInMemory(games, filters);
+    const filteredByPhone = this.filterGamesByPhone(games, filters.phone);
+    const sorted = this.sortGamesInMemory(filteredByPhone, filters);
     const total = sorted.length;
     const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
     const page = Math.min(filters.page, totalPages);
@@ -664,6 +691,26 @@ export class GamesService implements OnModuleDestroy {
 
         return result * direction;
       });
+  }
+
+  private filterGamesByPhone(games: Game[], phone?: string): Game[] {
+    if (!phone) {
+      return games;
+    }
+
+    return games.filter((game) => this.gameMatchesPhone(game, phone));
+  }
+
+  private gameMatchesPhone(game: Game, phoneDigits: string): boolean {
+    const phones = new Set<string>();
+    (Array.isArray(game.participantDetails) ? game.participantDetails : []).forEach((participant) => {
+      const normalizedPhone = this.normalizePhone(participant?.phone);
+      if (normalizedPhone) {
+        phones.add(normalizedPhone);
+      }
+    });
+
+    return Array.from(phones.values()).some((value) => value.includes(phoneDigits));
   }
 
   private resolveGameCreatedSortValue(game: Game): number | null {
@@ -1458,7 +1505,7 @@ export class GamesService implements OnModuleDestroy {
 
   private buildMongoEventFilter(filters?: GameEventListFilters): Filter<MongoGameEventDoc> {
     const eventName = this.readString(filters?.event);
-    const phoneDigits = this.normalizePhone(filters?.phone);
+    const phoneDigits = this.normalizePhoneSearch(filters?.phone);
     const fromIso = this.normalizeDateFilterValue(filters?.from, false);
     const toIso = this.normalizeDateFilterValue(filters?.to, true);
     if (!eventName && !phoneDigits && !fromIso && !toIso) {
@@ -2049,6 +2096,20 @@ export class GamesService implements OnModuleDestroy {
     }
     const digits = text.replace(/\D+/g, '');
     return digits.length > 0 ? digits : null;
+  }
+
+  private normalizePhoneSearch(value: unknown): string | null {
+    const digits = this.normalizePhone(value);
+    if (!digits) {
+      return null;
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `7${digits.slice(1)}`;
+    }
+    if (digits.length === 10) {
+      return `7${digits}`;
+    }
+    return digits;
   }
 
   private toStringArray(value: unknown): string[] {
