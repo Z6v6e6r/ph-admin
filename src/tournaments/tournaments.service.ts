@@ -20,6 +20,10 @@ import {
   VivaAdminTournamentEnergyCheckoutResult,
   VivaExerciseStatusSnapshot
 } from '../integrations/viva/viva-admin.service';
+import {
+  VivaTournamentSnapshotDiagnostics,
+  VivaTournamentSnapshotService
+} from '../integrations/viva/viva-tournament-snapshot.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import {
   AmericanoRatingSimulationResult,
@@ -236,7 +240,8 @@ export class TournamentsService {
     private readonly americanoScheduleService: AmericanoScheduleService,
     private readonly americanoRatingSimulationService: AmericanoRatingSimulationService,
     @Optional() private readonly vivaAdminService?: VivaAdminService,
-    @Optional() private readonly communitiesService?: CommunitiesService
+    @Optional() private readonly communitiesService?: CommunitiesService,
+    @Optional() private readonly vivaTournamentSnapshotService?: VivaTournamentSnapshotService
   ) {}
 
   async generateSchedule(
@@ -627,10 +632,32 @@ export class TournamentsService {
     const response: TournamentPublicDirectoryResponse = {
       generatedAt: new Date().toISOString(),
       count: items.length,
-      items
+      items,
+      ...this.buildPublicDirectorySnapshotMetadata()
     };
     this.setCachedPublicDirectory(cacheKey, response);
     return response;
+  }
+
+  getVivaTournamentSnapshotDiagnostics(): VivaTournamentSnapshotDiagnostics | {
+    enabled: false;
+    reason: string;
+  } {
+    if (!this.vivaTournamentSnapshotService) {
+      return {
+        enabled: false,
+        reason: 'VivaTournamentSnapshotService is not registered'
+      };
+    }
+    return this.vivaTournamentSnapshotService.getDiagnostics();
+  }
+
+  getVivaReferenceCacheDiagnostics(): ReturnType<VivaTournamentsService['getReferenceCacheDiagnostics']> {
+    return this.vivaTournamentsService.getReferenceCacheDiagnostics();
+  }
+
+  getVivaGovernorDiagnostics(): ReturnType<VivaTournamentsService['getRequestGovernorDiagnostics']> {
+    return this.vivaTournamentsService.getRequestGovernorDiagnostics();
   }
 
   async getPublicJoinFlow(
@@ -2188,12 +2215,33 @@ export class TournamentsService {
     from?: string;
     to?: string;
   }): Promise<Tournament[]> {
+    const snapshotTournaments = await this.vivaTournamentSnapshotService?.listTournaments(options);
+    if (snapshotTournaments) {
+      return snapshotTournaments;
+    }
+
     const vivaTournaments = await this.vivaTournamentsService.listTournaments(options);
     if (vivaTournaments) {
       return vivaTournaments;
     }
 
     return this.lkPadelHubClient.listTournaments();
+  }
+
+  private buildPublicDirectorySnapshotMetadata(): Partial<TournamentPublicDirectoryResponse> {
+    const freshness = this.vivaTournamentSnapshotService?.getFreshnessMetadata();
+    if (!freshness) {
+      return {};
+    }
+    return {
+      stale: freshness.stale,
+      refreshInProgress: freshness.refreshInProgress,
+      snapshotAvailable: freshness.snapshotAvailable,
+      snapshotRefreshEnabled: freshness.refreshEnabled,
+      snapshotReadModelEnabled: freshness.readModelEnabled,
+      ...(freshness.snapshotAgeMs !== undefined ? { snapshotAgeMs: freshness.snapshotAgeMs } : {}),
+      ...(freshness.lastSuccessfulAt ? { lastSuccessfulAt: freshness.lastSuccessfulAt } : {})
+    };
   }
 
   private async listCustomTournamentsSafe(): Promise<CustomTournament[]> {

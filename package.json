@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
     "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
+    "postcheck:viva-shadow": "node scripts/viva-shadow-postcheck.mjs",
     "support:cleanup-outbox": "node scripts/support-outbox-cleanup.mjs",
     "test:americano-schedule": "ts-node test/americano-schedule.test.ts",
     "test:americano-rating-simulation": "ts-node test/americano-rating-simulation.test.ts",

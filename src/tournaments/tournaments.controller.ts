@@ -258,6 +258,24 @@ export class TournamentsController {
     return this.vivaStatusSyncService.getRuntimeDiagnostics();
   }
 
+  @Get('debug/viva-snapshot')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaTournamentSnapshotDiagnostics(): ReturnType<TournamentsService['getVivaTournamentSnapshotDiagnostics']> {
+    return this.tournamentsService.getVivaTournamentSnapshotDiagnostics();
+  }
+
+  @Get('debug/viva-reference-cache')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaReferenceCacheDiagnostics(): ReturnType<TournamentsService['getVivaReferenceCacheDiagnostics']> {
+    return this.tournamentsService.getVivaReferenceCacheDiagnostics();
+  }
+
+  @Get('debug/viva-governor')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaGovernorDiagnostics(): ReturnType<TournamentsService['getVivaGovernorDiagnostics']> {
+    return this.tournamentsService.getVivaGovernorDiagnostics();
+  }
+
   @Get(':id')
   @Roles()
   findById(@Param('id') id: string): Promise<Tournament> {

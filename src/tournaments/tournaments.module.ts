@@ -3,6 +3,9 @@ import { CommunitiesModule } from '../communities/communities.module';
 import { GamesModule } from '../games/games.module';
 import { LkPadelHubModule } from '../integrations/lk-padelhub/lk-padelhub.module';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
+import { VivaReferenceCacheService } from '../integrations/viva/viva-reference-cache.service';
+import { VivaRequestGovernorService } from '../integrations/viva/viva-request-governor.service';
+import { VivaTournamentSnapshotService } from '../integrations/viva/viva-tournament-snapshot.service';
 import { AmericanoRatingSimulationService } from './americano-rating-simulation.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import { AmericanoScheduleService } from './americano-schedule.service';
@@ -24,6 +27,9 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     TournamentsPersistenceService,
     TournamentsPublicSessionService,
     VivaTournamentsService,
+    VivaRequestGovernorService,
+    VivaReferenceCacheService,
+    VivaTournamentSnapshotService,
     VivaAdminService
   ]
 })
