@@ -2,6 +2,7 @@ import * as assert from 'node:assert/strict';
 import { VivaTournamentsService } from '../src/integrations/viva/viva-tournaments.service';
 
 async function main(): Promise<void> {
+  const fallbackDate = toDateKeyFromNow(2);
   const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = process.env.VIVA_END_USER_API_BASE_URL;
   const originalWidgetId = process.env.VIVA_END_USER_WIDGET_ID;
@@ -28,18 +29,18 @@ async function main(): Promise<void> {
     }
     if (url.pathname.endsWith('/exercises/dates')) {
       const hasExerciseTypeFilter = url.searchParams.getAll('exerciseTypeIds').length > 0;
-      return jsonResponse(hasExerciseTypeFilter ? [] : ['2026-06-07']);
+      return jsonResponse(hasExerciseTypeFilter ? [] : [fallbackDate]);
     }
     if (url.pathname.endsWith('/exercises')) {
       const date = url.searchParams.get('date');
-      if (date === '2026-06-07') {
+      if (date === fallbackDate) {
         return jsonResponse([
           {
             id: 'sochi-unknown-type',
             name: 'Падел турнир от ПадлхАБ',
             exerciseTypeId: '7777',
-            startsAt: '2026-06-07T10:00:00+03:00',
-            endsAt: '2026-06-07T11:00:00+03:00',
+            startsAt: `${fallbackDate}T10:00:00+03:00`,
+            endsAt: `${fallbackDate}T11:00:00+03:00`,
             studioId: 'studio-sochi'
           }
         ]);
@@ -95,6 +96,12 @@ function restoreEnv(key: string, value: string | undefined): void {
     return;
   }
   process.env[key] = value;
+}
+
+function toDateKeyFromNow(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 main().catch((error) => {
