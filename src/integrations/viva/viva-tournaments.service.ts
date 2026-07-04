@@ -47,6 +47,10 @@ export class VivaTournamentsService {
     5000
   );
   private readonly governorEnabled = this.readBooleanEnv('VIVA_GOVERNOR_ENABLED', false);
+  private readonly profilePreloadEnabled = this.readBooleanEnv(
+    'VIVA_TOURNAMENT_PROFILE_PRELOAD_ENABLED',
+    false
+  );
 
   constructor(
     @Optional() private readonly vivaAdminService?: VivaAdminService,
@@ -440,6 +444,10 @@ export class VivaTournamentsService {
   }
 
   private async fetchProfile(widgetId: string): Promise<void> {
+    if (!this.profilePreloadEnabled) {
+      return;
+    }
+
     try {
       if (this.vivaReferenceCache) {
         await this.vivaReferenceCache.getOrLoad({

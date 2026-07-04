@@ -146,8 +146,10 @@ async function testVivaTournamentsUsesReferenceCache(): Promise<void> {
     const originalFetch = globalThis.fetch;
     const originalApiBaseUrl = process.env.VIVA_END_USER_API_BASE_URL;
     const originalWidgetId = process.env.VIVA_END_USER_WIDGET_ID;
+    const originalProfilePreload = process.env.VIVA_TOURNAMENT_PROFILE_PRELOAD_ENABLED;
     process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
     process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
+    delete process.env.VIVA_TOURNAMENT_PROFILE_PRELOAD_ENABLED;
 
     const fetchCounts = new Map<string, number>();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -181,13 +183,14 @@ async function testVivaTournamentsUsesReferenceCache(): Promise<void> {
 
       assert.equal(fetchCounts.get('studios'), 1);
       assert.equal(fetchCounts.get('trainers'), 1);
-      assert.equal(fetchCounts.get('profile'), 1);
-      assert.equal(cache.getDiagnostics().entries.length, 3);
+      assert.equal(fetchCounts.get('profile'), undefined);
+      assert.equal(cache.getDiagnostics().entries.length, 2);
     } finally {
       await cache.onModuleDestroy();
       globalThis.fetch = originalFetch;
       restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);
       restoreEnv('VIVA_END_USER_WIDGET_ID', originalWidgetId);
+      restoreEnv('VIVA_TOURNAMENT_PROFILE_PRELOAD_ENABLED', originalProfilePreload);
     }
   });
 }

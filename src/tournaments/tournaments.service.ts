@@ -229,6 +229,7 @@ export class TournamentsService {
     30000
   );
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
+  private readonly publicDirectoryInFlight = new Map<string, Promise<TournamentPublicDirectoryResponse>>();
   private readonly missingSourceSkinStatusSyncInFlight = new Set<string>();
   private lkJwksCache: { expiresAt: number; keys: LkJwksKey[] } | null = null;
 
@@ -603,21 +604,49 @@ export class TournamentsService {
     if (cached) {
       return cached;
     }
+    const inFlight = this.publicDirectoryInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const responsePromise = this.buildPublicDirectoryResponse({
+      cacheKey,
+      limit,
+      stationIds,
+      includePast,
+      forwardDays,
+      date
+    }).finally(() => {
+      this.publicDirectoryInFlight.delete(cacheKey);
+    });
+    this.publicDirectoryInFlight.set(cacheKey, responsePromise);
+    return responsePromise;
+  }
+
+  private async buildPublicDirectoryResponse(input: {
+    cacheKey: string;
+    limit: number;
+    stationIds: string[];
+    includePast: boolean;
+    forwardDays: number;
+    date?: string;
+  }): Promise<TournamentPublicDirectoryResponse> {
     const tournaments = await this.listCustomTournamentsSafe();
 
     const candidates = tournaments
       .filter((tournament) =>
         this.matchesPublicTournamentFilters(tournament, {
-          stationIds,
-          includePast,
-          forwardDays,
-          date
+          stationIds: input.stationIds,
+          includePast: input.includePast,
+          forwardDays: input.forwardDays,
+          date: input.date
         })
       )
       .sort((left, right) => this.comparePublicTournaments(left, right))
-      .slice(0, limit);
+      .slice(0, input.limit);
     const sourceTournamentsById = await this.buildSourceTournamentMapForCustomTournaments(candidates, {
-      includeDetailedSource: false
+      includeDetailedSource: false,
+      readModelOnly: true
     });
     const hydrated = await Promise.all(
       candidates.map((tournament) => this.hydrateCustomTournamentFromSourceMap(
@@ -635,7 +664,7 @@ export class TournamentsService {
       items,
       ...this.buildPublicDirectorySnapshotMetadata()
     };
-    this.setCachedPublicDirectory(cacheKey, response);
+    this.setCachedPublicDirectory(input.cacheKey, response);
     return response;
   }
 
@@ -2214,10 +2243,18 @@ export class TournamentsService {
     date?: string;
     from?: string;
     to?: string;
+    readModelOnly?: boolean;
   }): Promise<Tournament[]> {
-    const snapshotTournaments = await this.vivaTournamentSnapshotService?.listTournaments(options);
+    const {
+      readModelOnly = false,
+      ...snapshotOptions
+    } = options ?? {};
+    const snapshotTournaments = await this.vivaTournamentSnapshotService?.listTournaments(snapshotOptions);
     if (snapshotTournaments) {
       return snapshotTournaments;
+    }
+    if (readModelOnly) {
+      return [];
     }
 
     const vivaTournaments = await this.vivaTournamentsService.listTournaments(options);
@@ -2280,6 +2317,7 @@ export class TournamentsService {
     tournaments: CustomTournament[],
     options?: {
       includeDetailedSource?: boolean;
+      readModelOnly?: boolean;
     }
   ): Promise<Map<string, Tournament>> {
     const sourceIds = new Set(
@@ -2292,7 +2330,9 @@ export class TournamentsService {
     }
 
     try {
-      const sourceTournaments = await this.listSourceTournaments();
+      const sourceTournaments = await this.listSourceTournaments({
+        readModelOnly: options?.readModelOnly === true
+      });
       const sourceTournamentsById = new Map(
         sourceTournaments
           .filter((tournament) => sourceIds.has(tournament.id))
