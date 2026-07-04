@@ -78,6 +78,7 @@ export type GameListSortField = 'createdAt' | 'gameDate' | 'organizer';
 export type GameListSortDirection = 'asc' | 'desc';
 
 export interface GameListFilters {
+  phone?: string;
   page?: number;
   pageSize?: number;
   sortField?: GameListSortField;

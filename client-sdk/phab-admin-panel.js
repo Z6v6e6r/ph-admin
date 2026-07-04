@@ -4949,6 +4949,9 @@
       getGames: function () {
         var query = arguments[0] || {};
         var params = new URLSearchParams();
+        if (query.phone) {
+          params.set('phone', String(query.phone));
+        }
         if (query.page) {
           params.set('page', String(query.page));
         }
@@ -5928,6 +5931,34 @@
     });
     gamesPageSizeWrap.appendChild(gamesPageSizeSelect);
     gamesPageSizeWrap.appendChild(document.createTextNode('игр'));
+
+    var gamesPhoneWrap = document.createElement('label');
+    gamesPhoneWrap.className = 'phab-admin-logs-filter';
+    gamesControls.appendChild(gamesPhoneWrap);
+
+    var gamesPhoneLabel = document.createElement('span');
+    gamesPhoneLabel.className = 'phab-admin-settings-label';
+    gamesPhoneLabel.textContent = 'Телефон';
+    gamesPhoneWrap.appendChild(gamesPhoneLabel);
+
+    var gamesPhoneInput = document.createElement('input');
+    gamesPhoneInput.className = 'phab-admin-settings-input';
+    gamesPhoneInput.type = 'text';
+    gamesPhoneInput.placeholder = '+79991234567';
+    gamesPhoneInput.style.width = '180px';
+    gamesPhoneWrap.appendChild(gamesPhoneInput);
+
+    var gamesApplyBtn = document.createElement('button');
+    gamesApplyBtn.className = 'phab-admin-btn';
+    gamesApplyBtn.type = 'button';
+    gamesApplyBtn.textContent = 'Применить';
+    gamesControls.appendChild(gamesApplyBtn);
+
+    var gamesResetBtn = document.createElement('button');
+    gamesResetBtn.className = 'phab-admin-btn-secondary';
+    gamesResetBtn.type = 'button';
+    gamesResetBtn.textContent = 'Сбросить';
+    gamesControls.appendChild(gamesResetBtn);
 
     var gamesPagination = document.createElement('div');
     gamesPagination.className = 'phab-admin-games-pagination';
@@ -8007,6 +8038,9 @@
       tournamentEditorBody: tournamentEditorBody,
       tournamentEditorSaveBtn: tournamentEditorSaveBtn,
       tournamentEditorCloseBtn: tournamentEditorCloseBtn,
+      gamesPhoneInput: gamesPhoneInput,
+      gamesApplyBtn: gamesApplyBtn,
+      gamesResetBtn: gamesResetBtn,
       gamesPageSizeSelect: gamesPageSizeSelect,
       gamesPrevPageBtn: gamesPrevPageBtn,
       gamesNextPageBtn: gamesNextPageBtn,
@@ -8731,6 +8765,7 @@
         playersAddedCount: 0,
         paymentsAmount: 0
       },
+      gamesFilterPhone: '',
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
       gamesPageSize: 15,
@@ -8855,6 +8890,7 @@
       unlocked: false,
       lastPlayAt: 0
     };
+    dom.gamesPhoneInput.value = state.gamesFilterPhone;
     dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
     dom.dialogSearchInput.value = state.dialogSearchQuery;
     dom.messageModeToggle.checked = state.includeServiceMessages === true;
@@ -25328,6 +25364,7 @@
     async function loadGames() {
       var response =
         (await api.getGames({
+          phone: state.gamesFilterPhone || undefined,
           page: state.gamesPage,
           pageSize: state.gamesPageSize,
           sortField: state.gamesSortField,
@@ -25360,6 +25397,7 @@
         );
       }
 
+      dom.gamesPhoneInput.value = state.gamesFilterPhone;
       renderGames();
     }
 
@@ -26107,6 +26145,26 @@
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
         state.gamesPageSize = next === 50 ? 50 : 15;
+        state.gamesPage = 1;
+        loadGames().catch(handleError);
+      });
+      dom.gamesApplyBtn.addEventListener('click', function () {
+        state.gamesFilterPhone = normalizePhoneSearchValue(dom.gamesPhoneInput.value);
+        state.gamesPage = 1;
+        loadGames().catch(handleError);
+      });
+      dom.gamesResetBtn.addEventListener('click', function () {
+        state.gamesFilterPhone = '';
+        state.gamesPage = 1;
+        dom.gamesPhoneInput.value = '';
+        loadGames().catch(handleError);
+      });
+      dom.gamesPhoneInput.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') {
+          return;
+        }
+        event.preventDefault();
+        state.gamesFilterPhone = normalizePhoneSearchValue(dom.gamesPhoneInput.value);
         state.gamesPage = 1;
         loadGames().catch(handleError);
       });

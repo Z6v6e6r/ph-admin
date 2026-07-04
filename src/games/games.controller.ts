@@ -41,6 +41,7 @@ export class GamesController {
 
   @Get()
   findAll(
+    @Query('phone') phone?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sortField') sortField?: string,
@@ -48,6 +49,7 @@ export class GamesController {
     @CurrentUser() user?: RequestUser
   ): Promise<GameListResult> {
     const filters: GameListFilters = {
+      phone,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
       sortField: sortField as GameListFilters['sortField'],
