@@ -16,7 +16,7 @@
 - Public directory response расширен optional freshness полями: `snapshotAgeMs`, `lastSuccessfulAt`, `stale`, `refreshInProgress`, `snapshotAvailable`, `snapshotRefreshEnabled`, `snapshotReadModelEnabled`.
 - `VivaReferenceCacheService` реализован: `studios/trainers/profile` подключены к cache, `exerciseTypes/rooms` поддержаны как типы справочников для следующих Viva routes.
 - Debug endpoints для rollout: `/api/tournaments/debug/viva-snapshot`, `/api/tournaments/debug/viva-reference-cache`, `/api/tournaments/debug/viva-governor`.
-- Shadow rollout runbook: `docs/lk-viva-shadow-rollout-runbook.md`, postcheck command: `npm run postcheck:viva-shadow`.
+- Shadow rollout runbook: `docs/lk-viva-shadow-rollout-runbook.md`, postcheck command: `npm run postcheck:viva-shadow`; warmup gate проверяется через `PHAB_SHADOW_EXPECT_SNAPSHOT_SUCCESS=true`.
 - Следующий backend подпункт: dev/prod shadow rollout, затем перенос games/group read-heavy routes на тот же паттерн.
 
 ## Архитектурный Контракт

@@ -2,6 +2,8 @@ import * as assert from 'node:assert/strict';
 import { VivaTournamentsService } from '../src/integrations/viva/viva-tournaments.service';
 
 async function main(): Promise<void> {
+  const fallbackDate = toDateKeyFromNow(2);
+  const scopedDate = toDateKeyFromNow(3);
   const originalFetch = globalThis.fetch;
   const originalApiBaseUrl = process.env.VIVA_END_USER_API_BASE_URL;
   const originalWidgetId = process.env.VIVA_END_USER_WIDGET_ID;
@@ -29,20 +31,20 @@ async function main(): Promise<void> {
     if (url.pathname.endsWith('/exercises/dates')) {
       const studioIds = url.searchParams.getAll('studioIds');
       if (studioIds.length > 0) {
-        return jsonResponse(['2026-06-08']);
+        return jsonResponse([scopedDate]);
       }
-      return jsonResponse(['2026-06-07', '2026-06-08']);
+      return jsonResponse([fallbackDate, scopedDate]);
     }
     if (url.pathname.endsWith('/exercises')) {
       const date = url.searchParams.get('date');
-      if (date === '2026-06-07') {
+      if (date === fallbackDate) {
         return jsonResponse([
           {
             id: 'sochi-visible',
             direction: { id: 2617, name: 'Падел турнир от ПадлхАБ' },
             type: { id: 839, name: 'Падел Турнир' },
-            timeFrom: '2026-06-07T10:00:00+03:00',
-            timeTo: '2026-06-07T11:00:00+03:00',
+            timeFrom: `${fallbackDate}T10:00:00+03:00`,
+            timeTo: `${fallbackDate}T11:00:00+03:00`,
             studio: { id: 'studio-sochi', name: 'Сочи' },
             room: { name: 'Корт №4' },
             maxClientsCount: 8,
@@ -69,7 +71,7 @@ async function main(): Promise<void> {
     );
 
     assert.ok(
-      requestedUrls.some((url) => url.includes('/exercises?date=2026-06-07')),
+      requestedUrls.some((url) => url.includes(`/exercises?date=${fallbackDate}`)),
       'should fetch exercises for date available only in all-studios dates query'
     );
 
@@ -100,6 +102,12 @@ function restoreEnv(key: string, value: string | undefined): void {
     return;
   }
   process.env[key] = value;
+}
+
+function toDateKeyFromNow(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 main().catch((error) => {

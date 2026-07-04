@@ -16,6 +16,7 @@ Environment:
   PHAB_SHADOW_EXPECT_REFRESH     Expected VIVA_TOURNAMENT_SNAPSHOT_ENABLED, default true
   PHAB_SHADOW_EXPECT_REFERENCE_CACHE Expected VIVA_REFERENCE_CACHE_ENABLED, default false
   PHAB_SHADOW_EXPECT_GOVERNOR    Expected VIVA_GOVERNOR_ENABLED, default false
+  PHAB_SHADOW_EXPECT_SNAPSHOT_SUCCESS true to require warmed snapshot diagnostics
   PHAB_SHADOW_POSTCHECK_STRICT   true to fail on auth/skipped debug checks
 `);
 }
@@ -32,6 +33,7 @@ const expectedReadModel = readBooleanEnv('PHAB_SHADOW_EXPECT_READ_MODEL', false)
 const expectedRefresh = readBooleanEnv('PHAB_SHADOW_EXPECT_REFRESH', true);
 const expectedReferenceCache = readBooleanEnv('PHAB_SHADOW_EXPECT_REFERENCE_CACHE', false);
 const expectedGovernor = readBooleanEnv('PHAB_SHADOW_EXPECT_GOVERNOR', false);
+const expectedSnapshotSuccess = readBooleanEnv('PHAB_SHADOW_EXPECT_SNAPSHOT_SUCCESS', false);
 const authHeaders = buildAuthHeaders();
 
 const checks = [
@@ -59,6 +61,7 @@ const checks = [
       payload
       && payload.refreshEnabled === expectedRefresh
       && payload.readModelEnabled === expectedReadModel
+      && (!expectedSnapshotSuccess || hasSuccessfulSnapshot(payload))
   },
   {
     name: 'viva_reference_cache',
@@ -99,7 +102,8 @@ const summary = {
     snapshotRefreshEnabled: expectedRefresh,
     snapshotReadModelEnabled: expectedReadModel,
     referenceCacheEnabled: expectedReferenceCache,
-    governorEnabled: expectedGovernor
+    governorEnabled: expectedGovernor,
+    snapshotSuccess: expectedSnapshotSuccess
   },
   ok: failed.length === 0 && (!strict || skipped.length === 0),
   failedCount: failed.length,
@@ -207,6 +211,20 @@ function summarizePayload(payload) {
     }
   }
   return summary;
+}
+
+function hasSuccessfulSnapshot(payload) {
+  return payload
+    && typeof payload.lastSuccessfulAt === 'string'
+    && payload.lastSuccessfulAt.length > 0
+    && payload.snapshot
+    && typeof payload.snapshot.tournamentsCount === 'number'
+    && payload.snapshot.tournamentsCount >= 0
+    && (
+      payload.lastError === undefined
+      || payload.lastError === null
+      || payload.lastError === ''
+    );
 }
 
 function truncate(value, limit) {
