@@ -54,6 +54,12 @@ export class TournamentsController {
     return this.tournamentsService.findAll({ date, from, to });
   }
 
+  @Post('snapshot/refresh-on-open')
+  @Roles()
+  refreshSnapshotOnOpen(): ReturnType<TournamentsService['refreshVivaTournamentSnapshotOnAdminOpen']> {
+    return this.tournamentsService.refreshVivaTournamentSnapshotOnAdminOpen();
+  }
+
   @Post('backfill/pricing-snapshots')
   backfillPricingSnapshots(): Promise<{
     windowStart: string;

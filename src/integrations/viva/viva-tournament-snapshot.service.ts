@@ -58,6 +58,15 @@ export interface VivaTournamentSnapshotFreshness {
   lastSuccessfulAt?: string;
 }
 
+export interface VivaTournamentSnapshotRefreshResult {
+  enabled: boolean;
+  refreshed: boolean;
+  reason: 'disabled' | 'fresh' | 'refreshed' | 'refresh_failed';
+  snapshotAvailable: boolean;
+  snapshotAgeMs?: number;
+  lastSuccessfulAt?: string;
+}
+
 type VivaTournamentSnapshotDocument = Document & VivaTournamentSnapshot;
 
 @Injectable()
@@ -167,7 +176,43 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   }
 
   async refreshNow(reason = 'manual'): Promise<VivaTournamentSnapshot | null> {
-    if (!this.refreshEnabled) {
+    return this.refreshSnapshotNow(reason);
+  }
+
+  async refreshOnAdminOpen(
+    reason = 'admin_open',
+    maxAgeMs = 5 * 60_000
+  ): Promise<VivaTournamentSnapshotRefreshResult> {
+    if (!this.refreshEnabled && !this.readModelEnabled) {
+      return {
+        enabled: false,
+        refreshed: false,
+        reason: 'disabled',
+        snapshotAvailable: false
+      };
+    }
+
+    const snapshot = await this.getCurrentSnapshot();
+    const snapshotAgeMs = this.resolveSnapshotAgeMs(snapshot);
+    if (snapshot && snapshotAgeMs !== undefined && snapshotAgeMs < maxAgeMs) {
+      return this.buildRefreshResult('fresh', snapshot, false, snapshotAgeMs);
+    }
+
+    const refreshedSnapshot = await this.refreshSnapshotNow(reason, { force: true });
+    if (!refreshedSnapshot) {
+      return this.buildRefreshResult('refresh_failed', snapshot, false, snapshotAgeMs);
+    }
+
+    return this.buildRefreshResult('refreshed', refreshedSnapshot, true);
+  }
+
+  private async refreshSnapshotNow(
+    reason: string,
+    options?: {
+      force?: boolean;
+    }
+  ): Promise<VivaTournamentSnapshot | null> {
+    if (!this.refreshEnabled && options?.force !== true) {
       return null;
     }
     if (this.refreshPromise) {
@@ -182,13 +227,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
 
   getFreshnessMetadata(): VivaTournamentSnapshotFreshness {
     const now = Date.now();
-    const lastSuccessfulAtMs = this.snapshot?.lastSuccessfulAt
-      ? Date.parse(this.snapshot.lastSuccessfulAt)
-      : undefined;
-    const snapshotAgeMs =
-      lastSuccessfulAtMs !== undefined && Number.isFinite(lastSuccessfulAtMs)
-        ? Math.max(0, now - lastSuccessfulAtMs)
-        : undefined;
+    const snapshotAgeMs = this.resolveSnapshotAgeMs(this.snapshot, now);
     const stale =
       !this.snapshot
       || snapshotAgeMs === undefined
@@ -457,6 +496,34 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       }
       return true;
     });
+  }
+
+  private buildRefreshResult(
+    reason: VivaTournamentSnapshotRefreshResult['reason'],
+    snapshot?: VivaTournamentSnapshot | null,
+    refreshed = false,
+    snapshotAgeMs = this.resolveSnapshotAgeMs(snapshot ?? undefined)
+  ): VivaTournamentSnapshotRefreshResult {
+    return {
+      enabled: this.refreshEnabled || this.readModelEnabled,
+      refreshed,
+      reason,
+      snapshotAvailable: Boolean(snapshot),
+      ...(snapshotAgeMs !== undefined ? { snapshotAgeMs } : {}),
+      ...(snapshot?.lastSuccessfulAt ? { lastSuccessfulAt: snapshot.lastSuccessfulAt } : {})
+    };
+  }
+
+  private resolveSnapshotAgeMs(
+    snapshot?: VivaTournamentSnapshot,
+    now = Date.now()
+  ): number | undefined {
+    const lastSuccessfulAtMs = snapshot?.lastSuccessfulAt
+      ? Date.parse(snapshot.lastSuccessfulAt)
+      : undefined;
+    return lastSuccessfulAtMs !== undefined && Number.isFinite(lastSuccessfulAtMs)
+      ? Math.max(0, now - lastSuccessfulAtMs)
+      : undefined;
   }
 
   private resolveRefreshIntervalMs(now: number): number {

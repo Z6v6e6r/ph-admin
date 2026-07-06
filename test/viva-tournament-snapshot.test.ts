@@ -237,6 +237,67 @@ async function testSnapshotHydrationRetriesAfterMongoFailure(): Promise<void> {
   }
 }
 
+async function testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl(): Promise<void> {
+  const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
+  const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
+  const originalTick = process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS;
+  const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
+  const originalMongoUriFallback = process.env.MONGODB_URI;
+
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'false';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS = '600000';
+  delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  delete process.env.TOURNAMENTS_MONGODB_URI;
+  delete process.env.MONGODB_URI;
+
+  let liveCalls = 0;
+  const snapshotService = new VivaTournamentSnapshotService({
+    listTournaments: async () => {
+      liveCalls += 1;
+      return [createTournament('fresh-live', '2026-07-06T19:00:00+03:00')];
+    }
+  } as never);
+
+  (snapshotService as any).snapshot = {
+    key: 'default',
+    generatedAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+    lastSuccessfulAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+    windowFrom: '2026-07-01',
+    windowTo: '2026-07-31',
+    tournaments: [createTournament('stale', '2026-07-05T19:00:00+03:00')],
+    tournamentsCount: 1,
+    refreshReason: 'persisted'
+  };
+
+  try {
+    const refreshed = await snapshotService.refreshOnAdminOpen(
+      'admin_tournaments_schedule_open',
+      5 * 60_000
+    );
+    assert.equal(refreshed.refreshed, true);
+    assert.equal(refreshed.reason, 'refreshed');
+    assert.equal(liveCalls, 1);
+
+    const fresh = await snapshotService.refreshOnAdminOpen(
+      'admin_tournaments_schedule_open',
+      5 * 60_000
+    );
+    assert.equal(fresh.refreshed, false);
+    assert.equal(fresh.reason, 'fresh');
+    assert.equal(liveCalls, 1);
+  } finally {
+    await snapshotService.onModuleDestroy();
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_TICK_MS', originalTick);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
+    restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);
+    restoreEnv('MONGODB_URI', originalMongoUriFallback);
+  }
+}
+
 async function testTournamentsServiceUsesSnapshotBeforeLiveViva(): Promise<void> {
   const sourceTournament = createTournament('snapshot-source', '2026-07-04T19:00:00+03:00');
   let liveVivaCalls = 0;
@@ -372,6 +433,7 @@ async function main(): Promise<void> {
   await testSnapshotRefreshSingleflightAndLocalDateFilter();
   await testSnapshotShadowRefreshDoesNotServeReadModel();
   await testSnapshotHydrationRetriesAfterMongoFailure();
+  await testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl();
   await testTournamentsServiceUsesSnapshotBeforeLiveViva();
   await testPublicDirectoryIncludesSnapshotFreshness();
   await testPublicDirectoryDoesNotFallbackToLiveViva();

@@ -5032,6 +5032,9 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/tournaments' + suffix, 'GET');
       },
+      refreshTournamentSnapshotOnOpen: function () {
+        return request('/tournaments/snapshot/refresh-on-open', 'POST', {});
+      },
       getTournamentVivaStatusSyncDiagnostics: function () {
         return request('/tournaments/debug/viva-status-sync', 'GET');
       },
@@ -25455,6 +25458,18 @@
       renderTournaments();
     }
 
+    async function openTournamentsSchedule() {
+      try {
+        await api.refreshTournamentSnapshotOnOpen();
+      } catch (error) {
+        if (window.console && console.warn) {
+          console.warn('[PHAB admin panel] Failed to refresh tournament snapshot on open', error);
+        }
+      }
+
+      await loadTournaments();
+    }
+
     async function loadCommunities() {
       if (!canAccessCommunities(cfg)) {
         state.communities = [];
@@ -25860,7 +25875,7 @@
           setStatus('Готово', false);
           return;
         } else if (state.activeTab === 'tournaments') {
-          await loadTournaments();
+          await openTournamentsSchedule();
       } else if (state.activeTab === 'advertising') {
         await loadAdvertising();
       } else if (state.activeTab === 'splitPromo') {
@@ -25920,7 +25935,7 @@
           return;
         }
         if (nextTab === 'tournaments') {
-          loadTournaments().catch(handleError);
+          openTournamentsSchedule().catch(handleError);
           return;
         }
         if (nextTab === 'advertising') {
@@ -25961,7 +25976,7 @@
       });
       dom.tabTournaments.addEventListener('click', function () {
         switchTab('tournaments');
-        loadTournaments().catch(handleError);
+        openTournamentsSchedule().catch(handleError);
       });
       dom.tabCommunities.addEventListener('click', function () {
         switchTab('communities');

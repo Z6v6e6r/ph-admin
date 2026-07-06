@@ -22,6 +22,7 @@ import {
 } from '../integrations/viva/viva-admin.service';
 import {
   VivaTournamentSnapshotDiagnostics,
+  VivaTournamentSnapshotRefreshResult,
   VivaTournamentSnapshotService
 } from '../integrations/viva/viva-tournament-snapshot.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
@@ -679,6 +680,22 @@ export class TournamentsService {
       };
     }
     return this.vivaTournamentSnapshotService.getDiagnostics();
+  }
+
+  refreshVivaTournamentSnapshotOnAdminOpen(): Promise<VivaTournamentSnapshotRefreshResult> {
+    if (!this.vivaTournamentSnapshotService) {
+      return Promise.resolve({
+        enabled: false,
+        refreshed: false,
+        reason: 'disabled',
+        snapshotAvailable: false
+      });
+    }
+
+    return this.vivaTournamentSnapshotService.refreshOnAdminOpen(
+      'admin_tournaments_schedule_open',
+      5 * 60_000
+    );
   }
 
   getVivaReferenceCacheDiagnostics(): ReturnType<VivaTournamentsService['getReferenceCacheDiagnostics']> {
