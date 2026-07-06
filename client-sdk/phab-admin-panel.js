@@ -4970,6 +4970,18 @@
       getGameById: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId), 'GET');
       },
+      removeGamePlayerFromPublication: function (gameId, payload) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/publication/remove-player',
+          'POST',
+          payload || {}
+        );
+      },
+      updateGameMetadata: function (gameId, metadata) {
+        return request('/games/' + encodeURIComponent(gameId) + '/metadata', 'PATCH', {
+          metadata: normalizeObject(metadata)
+        });
+      },
       getGameChat: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId) + '/chat', 'GET');
       },
@@ -11145,6 +11157,89 @@
       state.selectedGame = null;
     }
 
+    function syncUpdatedGameInState(updatedGame) {
+      if (!updatedGame || !updatedGame.id) {
+        return;
+      }
+      state.games = normalizeArray(state.games).map(function (item) {
+        return String(item && item.id || '') === String(updatedGame.id)
+          ? updatedGame
+          : item;
+      });
+      if (String(state.selectedGameId || '') === String(updatedGame.id)) {
+        state.selectedGame = updatedGame;
+      }
+      renderGames();
+    }
+
+    function buildGamePublicationParticipants(game, details) {
+      var rawParticipants = normalizeArray(details.participants)
+        .map(function (participant) {
+          var record = normalizeObject(participant);
+          var name = String(record.name || '').trim();
+          var phone = String(record.phone || record.phoneNorm || '').trim();
+          if (!name && !phone) {
+            return null;
+          }
+          return {
+            name: name,
+            phone: phone,
+            rating: String(record.rating || '').trim(),
+            status: String(record.status || '').trim()
+          };
+        })
+        .filter(Boolean);
+      if (rawParticipants.length > 0) {
+        return rawParticipants;
+      }
+      return normalizeArray(game.participantDetails)
+        .map(function (participant) {
+          var record = normalizeObject(participant);
+          var name = String(record.name || '').trim();
+          var phone = String(record.phone || '').trim();
+          if (!name && !phone) {
+            return null;
+          }
+          return {
+            name: name,
+            phone: phone,
+            rating: '',
+            status: ''
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function buildGamePublicationPlayerLabel(player) {
+      var parts = [];
+      if (player && player.name) {
+        parts.push(String(player.name));
+      }
+      if (player && player.phone) {
+        parts.push(String(player.phone));
+      }
+      if (player && player.rating) {
+        parts.push('рейт. ' + String(player.rating));
+      }
+      if (player && player.status) {
+        parts.push(String(player.status));
+      }
+      return parts.join(' · ') || 'Игрок';
+    }
+
+    function applyUpdatedGameDetails(updatedGame, successText) {
+      if (!updatedGame || !updatedGame.id) {
+        return;
+      }
+      syncUpdatedGameInState(updatedGame);
+      state.selectedGameId = updatedGame.id;
+      state.selectedGame = updatedGame;
+      renderGameDetails(updatedGame);
+      if (successText) {
+        setStatus(successText, false);
+      }
+    }
+
     function renderGameDetails(game) {
       clearNode(dom.gameModalBody);
       if (!game || !game.id) {
@@ -11244,6 +11339,74 @@
       }
       dom.gameModalBody.appendChild(participantsCard.card);
 
+      if (!restrictedGameView) {
+        var canManagePublication =
+          String(game.source || '') === 'LK_PADELHUB_MONGO' &&
+          Object.keys(details).length > 0;
+        var publicationCard = createDetailCard('Управление публикацией', true);
+        var publicationNote = document.createElement('div');
+        publicationNote.className = 'phab-admin-empty';
+        publicationNote.textContent = canManagePublication
+          ? 'Действие снимает игрока из publication-полей игры и чистит типовые phone/teamSlot/joinResponses зеркала. Бронирование Viva не меняется.'
+          : 'Управление публикацией станет доступно после загрузки Mongo payload игры.';
+        publicationCard.body.appendChild(publicationNote);
+
+        if (canManagePublication) {
+          var publicationPlayers = buildGamePublicationParticipants(game, details);
+          if (publicationPlayers.length === 0) {
+            appendDetailRow(publicationCard.body, 'Игроки', 'Нет данных для снятия с публикации');
+          } else {
+            publicationPlayers.forEach(function (player, index) {
+              var row = document.createElement('div');
+              row.className = 'phab-admin-detail-row';
+              publicationCard.body.appendChild(row);
+
+              var key = document.createElement('div');
+              key.className = 'phab-admin-detail-key';
+              key.textContent = player.phone || ('Игрок ' + String(index + 1));
+              row.appendChild(key);
+
+              var val = document.createElement('div');
+              val.className = 'phab-admin-detail-value';
+              row.appendChild(val);
+
+              var summary = document.createElement('div');
+              summary.textContent = buildGamePublicationPlayerLabel(player);
+              val.appendChild(summary);
+
+              var actionBtn = document.createElement('button');
+              actionBtn.type = 'button';
+              actionBtn.className = 'phab-admin-btn-secondary';
+              actionBtn.style.marginTop = '8px';
+              actionBtn.textContent = 'Снять с публикации';
+              actionBtn.disabled = !player.phone && !player.name;
+              actionBtn.addEventListener('click', function () {
+                var playerLabel = buildGamePublicationPlayerLabel(player);
+                if (!window.confirm('Снять с публикации: ' + playerLabel + '?')) {
+                  return;
+                }
+                actionBtn.disabled = true;
+                actionBtn.textContent = 'Снимаем...';
+                api.removeGamePlayerFromPublication(game.id, {
+                  phone: player.phone || undefined,
+                  name: player.name || undefined
+                })
+                  .then(function (updatedGame) {
+                    applyUpdatedGameDetails(updatedGame, 'Игрок снят с публикации');
+                  })
+                  .catch(handleError)
+                  .finally(function () {
+                    actionBtn.disabled = false;
+                    actionBtn.textContent = 'Снять с публикации';
+                  });
+              });
+              val.appendChild(actionBtn);
+            });
+          }
+        }
+        dom.gameModalBody.appendChild(publicationCard.card);
+      }
+
       appendGamePhotosCard(game);
 
       if (!restrictedGameView) {
@@ -11291,6 +11454,77 @@
         appendDetailRow(phonesCard.body, 'Приглашенные', normalizeArray(details.invitedPhones));
         appendDetailRow(phonesCard.body, 'Лист ожидания', normalizeArray(details.waitlistPhones));
         dom.gameModalBody.appendChild(phonesCard.card);
+
+        var metadataEditorCard = createDetailCard('Редактор metadata', true);
+        var metadataEditorNote = document.createElement('div');
+        metadataEditorNote.className = 'phab-admin-empty';
+        metadataEditorNote.textContent =
+          Object.keys(details).length > 0
+            ? 'Сохранение заменяет весь объект metadata целиком. Используйте для точечной правки отображения игры в группах, списках и связанных публикациях.'
+            : 'Редактор откроется после загрузки полного Mongo payload игры.';
+        metadataEditorCard.body.appendChild(metadataEditorNote);
+
+        if (Object.keys(details).length > 0) {
+          var metadataInput = document.createElement('textarea');
+          metadataInput.className = 'phab-admin-input';
+          metadataInput.rows = 18;
+          metadataInput.spellcheck = false;
+          metadataInput.value = JSON.stringify(metadata, null, 2);
+          metadataEditorCard.body.appendChild(metadataInput);
+
+          var metadataActions = document.createElement('div');
+          metadataActions.className = 'phab-admin-dialog-options';
+          metadataActions.style.display = 'flex';
+          metadataActions.style.flexWrap = 'wrap';
+          metadataEditorCard.body.appendChild(metadataActions);
+
+          var metadataSaveBtn = document.createElement('button');
+          metadataSaveBtn.type = 'button';
+          metadataSaveBtn.className = 'phab-admin-btn';
+          metadataSaveBtn.textContent = 'Сохранить metadata';
+          metadataActions.appendChild(metadataSaveBtn);
+
+          var metadataResetBtn = document.createElement('button');
+          metadataResetBtn.type = 'button';
+          metadataResetBtn.className = 'phab-admin-btn-secondary';
+          metadataResetBtn.textContent = 'Сбросить';
+          metadataActions.appendChild(metadataResetBtn);
+
+          metadataResetBtn.addEventListener('click', function () {
+            metadataInput.value = JSON.stringify(normalizeObject(metadata), null, 2);
+          });
+
+          metadataSaveBtn.addEventListener('click', function () {
+            var nextMetadata;
+            try {
+              nextMetadata = JSON.parse(String(metadataInput.value || '{}'));
+            } catch (_error) {
+              setStatus('Metadata JSON содержит синтаксическую ошибку', true);
+              metadataInput.focus();
+              return;
+            }
+            if (!isObject(nextMetadata)) {
+              setStatus('Metadata должен быть JSON-объектом', true);
+              metadataInput.focus();
+              return;
+            }
+
+            metadataSaveBtn.disabled = true;
+            metadataResetBtn.disabled = true;
+            metadataSaveBtn.textContent = 'Сохраняем...';
+            api.updateGameMetadata(game.id, nextMetadata)
+              .then(function (updatedGame) {
+                applyUpdatedGameDetails(updatedGame, 'Metadata игры обновлен');
+              })
+              .catch(handleError)
+              .finally(function () {
+                metadataSaveBtn.disabled = false;
+                metadataResetBtn.disabled = false;
+                metadataSaveBtn.textContent = 'Сохранить metadata';
+              });
+          });
+        }
+        dom.gameModalBody.appendChild(metadataEditorCard.card);
 
         appendJsonCard('Metadata', metadata);
         appendJsonCard(

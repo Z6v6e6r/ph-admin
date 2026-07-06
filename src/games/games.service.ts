@@ -68,6 +68,10 @@ interface MongoGameDoc {
   };
   participants?: MongoGameParticipant[];
   participantPhones?: unknown;
+  relatedPhones?: unknown;
+  allRelatedPhones?: unknown;
+  invitedPhones?: unknown;
+  waitlistPhones?: unknown;
   metadata?: Record<string, unknown>;
   result?: unknown;
   score?: unknown;
@@ -145,6 +149,11 @@ interface TournamentStandingRow {
 interface TournamentHeadToHeadStats {
   leftWins: number;
   rightWins: number;
+}
+
+interface PublicationPlayerMatcher {
+  phone?: string;
+  name?: string;
 }
 
 @Injectable()
@@ -305,6 +314,159 @@ export class GamesService implements OnModuleDestroy {
       throw new InternalServerErrorException('Failed to persist game chat message');
     }
     return mapped;
+  }
+
+  async removePlayerFromPublication(
+    id: string,
+    target: {
+      phone?: string;
+      name?: string;
+    },
+    user?: RequestUser
+  ): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user);
+    const matcher = this.buildPublicationPlayerMatcher(target);
+    if (!matcher.phone && !matcher.name) {
+      throw new BadRequestException('Player phone or name is required');
+    }
+
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+
+    const nextMetadata = this.removePublicationPlayerFromMetadata(existing.metadata, matcher);
+    let changed = nextMetadata.changed;
+
+    const participants = Array.isArray(existing.participants)
+      ? existing.participants.filter((participant) => {
+          const matched = this.matchesPublicationPlayerCandidate(participant, matcher);
+          if (matched) {
+            changed = true;
+          }
+          return !matched;
+        })
+      : [];
+
+    const topLevelRelatedPhones = this.removePhoneMatchesFromList(existing.relatedPhones, matcher.phone);
+    if (topLevelRelatedPhones.changed) {
+      changed = true;
+    }
+
+    const invitedPhones = this.removePhoneMatchesFromList(existing.invitedPhones, matcher.phone);
+    if (invitedPhones.changed) {
+      changed = true;
+    }
+
+    const waitlistPhones = this.removePhoneMatchesFromList(existing.waitlistPhones, matcher.phone);
+    if (waitlistPhones.changed) {
+      changed = true;
+    }
+
+    const topLevelParticipantPhones = this.removePhoneMatchesFromList(
+      existing.participantPhones,
+      matcher.phone
+    );
+    if (topLevelParticipantPhones.changed) {
+      changed = true;
+    }
+
+    const nextDoc: MongoGameDoc = {
+      ...existing,
+      participants,
+      participantPhones: topLevelParticipantPhones.items,
+      relatedPhones: topLevelRelatedPhones.items,
+      invitedPhones: invitedPhones.items,
+      waitlistPhones: waitlistPhones.items,
+      metadata: nextMetadata.metadata
+    };
+
+    const participantPhones = this.extractParticipantPhonesFromDoc(nextDoc);
+    const allRelatedPhones = this.extractAllRelatedPhonesFromDoc({
+      ...nextDoc,
+      participantPhones
+    });
+
+    if (!changed) {
+      throw new NotFoundException('Player was not found in publication fields');
+    }
+
+    const now = new Date();
+    await collection.updateOne(filter, {
+      $set: {
+        participants,
+        participantPhones,
+        relatedPhones: topLevelRelatedPhones.items,
+        allRelatedPhones,
+        invitedPhones: invitedPhones.items,
+        waitlistPhones: waitlistPhones.items,
+        metadata: {
+          ...nextMetadata.metadata,
+          participantPhones,
+          allRelatedPhones
+        },
+        updatedAt: now.toISOString(),
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
+  }
+
+  async updateMetadata(
+    id: string,
+    metadata: Record<string, unknown>,
+    user?: RequestUser
+  ): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user);
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+
+    const now = new Date();
+    const normalizedMetadata = this.normalizeForJson(metadata);
+    const nextDoc: MongoGameDoc = {
+      ...existing,
+      metadata: normalizedMetadata
+    };
+    const participantPhones = this.extractParticipantPhonesFromDoc(nextDoc);
+    const allRelatedPhones = this.extractAllRelatedPhonesFromDoc({
+      ...nextDoc,
+      participantPhones
+    });
+    const invitedPhones = this.toStringArray(normalizedMetadata.invitedPhones);
+    const waitlistPhones = this.toStringArray(normalizedMetadata.waitlistPhones);
+    await collection.updateOne(filter, {
+      $set: {
+        metadata: {
+          ...normalizedMetadata,
+          participantPhones,
+          allRelatedPhones
+        },
+        participantPhones,
+        relatedPhones: allRelatedPhones,
+        allRelatedPhones,
+        invitedPhones,
+        waitlistPhones,
+        updatedAt: now.toISOString(),
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
   }
 
   async getTournamentResults(
@@ -1285,12 +1447,7 @@ export class GamesService implements OnModuleDestroy {
 
   private async findByIdFromMongo(id: string): Promise<Game | null> {
     const collection = await this.getMongoCollection();
-    const filter: Filter<MongoGameDoc>[] = [{ id }];
-    if (ObjectId.isValid(id)) {
-      filter.push({ _id: new ObjectId(id) });
-    }
-
-    const doc = (await collection.findOne({ $or: filter })) as MongoGameDoc | null;
+    const doc = (await collection.findOne(this.buildMongoGameIdFilter(id))) as MongoGameDoc | null;
     if (!doc) {
       return null;
     }
@@ -1489,6 +1646,16 @@ export class GamesService implements OnModuleDestroy {
     } as Filter<MongoGameEventDoc>;
   }
 
+  private buildMongoGameIdFilter(id: string): Filter<MongoGameDoc> {
+    const variants: Record<string, unknown>[] = [{ id }, { _id: id }];
+    if (ObjectId.isValid(id)) {
+      variants.push({ _id: new ObjectId(id) });
+    }
+    return {
+      $or: variants
+    } as Filter<MongoGameDoc>;
+  }
+
   private normalizeGameEventsPagination(
     filters?: GameEventListFilters
   ): { page: number; pageSize: number } {
@@ -1562,6 +1729,225 @@ export class GamesService implements OnModuleDestroy {
       .split('')
       .map((digit) => digit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
       .join('\\D*');
+  }
+
+  private buildPublicationPlayerMatcher(target: {
+    phone?: string;
+    name?: string;
+  }): PublicationPlayerMatcher {
+    const phone = this.normalizePhoneSearch(target.phone) ?? undefined;
+    const name = this.normalizePublicationName(target.name) ?? undefined;
+    return { phone, name };
+  }
+
+  private matchesPublicationPlayerCandidate(
+    candidate: Record<string, unknown>,
+    matcher: PublicationPlayerMatcher
+  ): boolean {
+    if (matcher.phone) {
+      const phone =
+        this.normalizePhoneSearch(candidate.phoneNorm) ??
+        this.normalizePhoneSearch(candidate.phone);
+      if (phone && phone === matcher.phone) {
+        return true;
+      }
+    }
+
+    if (!matcher.phone && matcher.name) {
+      const name = this.normalizePublicationName(candidate.name);
+      return Boolean(name && name === matcher.name);
+    }
+
+    return false;
+  }
+
+  private normalizePublicationName(value: unknown): string | null {
+    const text = this.readString(value);
+    return text ? text.trim().toLocaleLowerCase('ru') : null;
+  }
+
+  private removePhoneMatchesFromList(
+    value: unknown,
+    phone?: string
+  ): { items: string[]; changed: boolean } {
+    const items = this.toStringArray(value);
+    if (!phone || items.length === 0) {
+      return { items, changed: false };
+    }
+
+    const filtered = items.filter((item) => this.normalizePhoneSearch(item) !== phone);
+    return {
+      items: filtered,
+      changed: filtered.length !== items.length
+    };
+  }
+
+  private removePublicationPlayerFromMetadata(
+    metadataValue: unknown,
+    matcher: PublicationPlayerMatcher
+  ): { metadata: Record<string, unknown>; changed: boolean } {
+    const metadata = {
+      ...this.toRecord(metadataValue)
+    };
+    let changed = false;
+
+    const filterPhoneField = (key: string) => {
+      const result = this.removePhoneMatchesFromList(metadata[key], matcher.phone);
+      if (result.changed) {
+        metadata[key] = result.items;
+        changed = true;
+      }
+    };
+
+    filterPhoneField('participantPhones');
+    filterPhoneField('allRelatedPhones');
+    filterPhoneField('invitedPhones');
+    filterPhoneField('waitlistPhones');
+
+    const joinResponses = this.toRecord(metadata.joinResponses);
+    if (Object.keys(joinResponses).length > 0) {
+      const nextJoinResponses: Record<string, unknown> = {};
+      let joinResponsesChanged = false;
+      Object.entries(joinResponses).forEach(([key, value]) => {
+        const keyMatch = matcher.phone
+          ? this.normalizePhoneSearch(key) === matcher.phone
+          : false;
+        const valueMatch = this.matchesPublicationPlayerCandidate(this.toRecord(value), matcher);
+        if (keyMatch || valueMatch) {
+          joinResponsesChanged = true;
+          return;
+        }
+        nextJoinResponses[key] = value;
+      });
+      if (joinResponsesChanged) {
+        metadata.joinResponses = nextJoinResponses;
+        changed = true;
+      }
+    }
+
+    if (Array.isArray(metadata.teamSlots)) {
+      let teamSlotsChanged = false;
+      const nextTeamSlots = metadata.teamSlots.map((slot) => {
+        const slotRecord = this.toRecord(slot);
+        if (!this.matchesPublicationPlayerCandidate(slotRecord, matcher)) {
+          return slot;
+        }
+
+        teamSlotsChanged = true;
+        const nextSlot: Record<string, unknown> = {
+          ...slotRecord,
+          hiddenFromPublication: true
+        };
+        [
+          'name',
+          'phone',
+          'phoneNorm',
+          'participantId',
+          'playerId',
+          'clientId',
+          'rating',
+          'ratingDelta',
+          'rating_change',
+          'ratingBefore',
+          'ratingAfter',
+          'status'
+        ].forEach((key) => {
+          if (key in nextSlot) {
+            nextSlot[key] = null;
+          }
+        });
+        return nextSlot;
+      });
+
+      if (teamSlotsChanged) {
+        metadata.teamSlots = nextTeamSlots;
+        changed = true;
+      }
+    }
+
+    return { metadata, changed };
+  }
+
+  private extractParticipantPhonesFromDoc(doc: MongoGameDoc): string[] {
+    const phones = new Set<string>();
+    const addPhone = (value: unknown) => {
+      const normalized = this.normalizePhoneSearch(value);
+      if (normalized) {
+        phones.add(normalized);
+      }
+    };
+
+    this.toStringArray(doc.participantPhones).forEach((phone) => addPhone(phone));
+
+    if (Array.isArray(doc.participants)) {
+      doc.participants.forEach((participant) => {
+        addPhone(participant.phoneNorm);
+        addPhone(participant.phone);
+      });
+    }
+
+    const metadata = this.toRecord(doc.metadata);
+    this.toStringArray(metadata.participantPhones).forEach((phone) => addPhone(phone));
+    if (Array.isArray(metadata.teamSlots)) {
+      metadata.teamSlots.forEach((slot) => {
+        const slotRecord = this.toRecord(slot);
+        addPhone(slotRecord.phoneNorm);
+        addPhone(slotRecord.phone);
+      });
+    }
+
+    return Array.from(phones.values());
+  }
+
+  private extractAllRelatedPhonesFromDoc(doc: MongoGameDoc): string[] {
+    const phones = new Set<string>();
+    const addPhone = (value: unknown) => {
+      const normalized = this.normalizePhoneSearch(value);
+      if (normalized) {
+        phones.add(normalized);
+      }
+    };
+
+    const metadata = this.toRecord(doc.metadata);
+    const organizer = this.toRecord(doc.organizer);
+    const joinResponses = this.toRecord(metadata.joinResponses);
+
+    [
+      doc.participantPhones,
+      doc.invitedPhones,
+      doc.waitlistPhones,
+      metadata.participantPhones,
+      metadata.invitedPhones,
+      metadata.waitlistPhones
+    ].forEach((value) => {
+      this.toStringArray(value).forEach((phone) => addPhone(phone));
+    });
+
+    if (Array.isArray(doc.participants)) {
+      doc.participants.forEach((participant) => {
+        addPhone(participant.phoneNorm);
+        addPhone(participant.phone);
+      });
+    }
+
+    if (Array.isArray(metadata.teamSlots)) {
+      metadata.teamSlots.forEach((slot) => {
+        const slotRecord = this.toRecord(slot);
+        addPhone(slotRecord.phoneNorm);
+        addPhone(slotRecord.phone);
+      });
+    }
+
+    Object.entries(joinResponses).forEach(([key, value]) => {
+      addPhone(key);
+      const record = this.toRecord(value);
+      addPhone(record.phoneNorm);
+      addPhone(record.phone);
+    });
+
+    addPhone(organizer.phoneNorm);
+    addPhone(organizer.phone);
+    return Array.from(phones.values());
   }
 
   private normalizeDateFilterValue(value: string | undefined, endOfDay: boolean): string | null {

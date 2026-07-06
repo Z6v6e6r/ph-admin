@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Patch,
   Delete,
   Get,
   Param,
@@ -13,6 +14,8 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
+import { RemoveGamePublicationPlayerDto } from './dto/remove-game-publication-player.dto';
+import { UpdateGameMetadataDto } from './dto/update-game-metadata.dto';
 import { GamesService } from './games.service';
 import {
   Game,
@@ -147,6 +150,38 @@ export class GamesController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.gamesService.sendGameChatMessage(id, dto.text, user);
+  }
+
+  @Post(':id/publication/remove-player')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
+  removePlayerFromPublication(
+    @Param('id') id: string,
+    @Body() dto: RemoveGamePublicationPlayerDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<Game> {
+    return this.gamesService.removePlayerFromPublication(id, dto, user);
+  }
+
+  @Patch(':id/metadata')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
+  updateMetadata(
+    @Param('id') id: string,
+    @Body() dto: UpdateGameMetadataDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<Game> {
+    return this.gamesService.updateMetadata(id, dto.metadata, user);
   }
 
   @Get(':id')
