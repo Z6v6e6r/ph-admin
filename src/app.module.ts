@@ -9,6 +9,7 @@ import { RequestMetricsService } from './common/observability/request-metrics.se
 import { GamesModule } from './games/games.module';
 import { TelegramConnectorModule } from './integrations/telegram/telegram-connector.module';
 import { MessengerModule } from './messenger/messenger.module';
+import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
 import { SupportModule } from './support/support.module';
 import { RolesGuard } from './common/rbac/roles.guard';
 import { SystemController } from './system/system.controller';
@@ -25,6 +26,7 @@ import { WebPushModule } from './web-push/web-push.module';
     GamesModule,
     TournamentsModule,
     MessengerModule,
+    PlayerRatingsModule,
     SupportModule,
     TelegramConnectorModule,
     WebPushModule
