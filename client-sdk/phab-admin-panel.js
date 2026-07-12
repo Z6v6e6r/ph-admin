@@ -7322,7 +7322,6 @@
     settingsSplitPromoTabBtn.className = 'phab-admin-community-tab';
     settingsSplitPromoTabBtn.type = 'button';
     settingsSplitPromoTabBtn.textContent = 'Split-акция';
-    settingsTabs.appendChild(settingsSplitPromoTabBtn);
 
     var settingsGeneralPane = document.createElement('div');
     settingsGeneralPane.className = 'phab-admin-settings-pane';
@@ -7334,7 +7333,6 @@
 
     var settingsSplitPromoPane = document.createElement('div');
     settingsSplitPromoPane.className = 'phab-admin-settings-pane phab-admin-hidden';
-    settingsSection.appendChild(settingsSplitPromoPane);
 
     var settingsGrid = document.createElement('div');
     settingsGrid.className = 'phab-admin-settings-grid';
