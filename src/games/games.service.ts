@@ -72,6 +72,7 @@ interface MongoGameDoc {
   allRelatedPhones?: unknown;
   invitedPhones?: unknown;
   waitlistPhones?: unknown;
+  settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   result?: unknown;
   score?: unknown;
@@ -408,6 +409,50 @@ export class GamesService implements OnModuleDestroy {
           allRelatedPhones
         },
         updatedAt: now.toISOString(),
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
+  }
+
+  async hideGameFromPublicList(id: string, user?: RequestUser): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user);
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+
+    const now = new Date();
+    const at = now.toISOString();
+    const actor = user
+      ? {
+          id: user.id,
+          ...(user.login ? { login: user.login } : {}),
+          ...(user.title ? { title: user.title } : {}),
+          roles: [...user.roles]
+        }
+      : undefined;
+
+    await collection.updateOne(filter, {
+      $set: {
+        settings: {
+          ...this.toRecord(existing.settings),
+          isPrivate: true
+        },
+        metadata: {
+          ...this.toRecord(existing.metadata),
+          lastManualPublicListHideAt: at,
+          lastManualPublicListHideReason: 'ADMIN_HIDE_FROM_PUBLIC_LIST',
+          ...(actor ? { lastManualPublicListHideBy: actor } : {})
+        },
+        updatedAt: at,
         updatedTs: now.getTime()
       }
     });

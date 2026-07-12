@@ -360,6 +360,8 @@ export class UiController {
       title: query.title?.trim() || 'ЦУП Дворотека',
       pollIntervalMs:
         Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 8000,
+      playerRatingAdminEnabled:
+        String(process.env.PLAYER_RATING_ADMIN_ENABLED ?? '').trim().toLowerCase() === 'true',
       authToken: authToken || undefined
     };
 

@@ -218,9 +218,60 @@ async function testUpdateMetadataSynchronizesPhoneMirrors() {
   );
 }
 
+async function testHideGameFromPublicListPreservesGameLifecycle() {
+  const initialDoc: MutableGameDoc = {
+    _id: 'mongo-game-3',
+    id: 'game-3',
+    status: 'PAID',
+    archived: false,
+    settings: {
+      isPrivate: false,
+      ratingGame: true
+    },
+    booking: {
+      studioName: 'Дворотека',
+      roomName: 'Корт 3',
+      bookingIds: ['booking-3']
+    },
+    payment: {
+      paid: true,
+      paymentRef: 'pay-game-3'
+    },
+    metadata: {
+      vivaExerciseId: 'viva-game-3',
+      existingValue: 'keep-me'
+    }
+  };
+
+  const { service, getDoc } = createServiceWithDoc(initialDoc);
+  const updated = await service.hideGameFromPublicList('game-3', createAdminUser());
+  const saved = getDoc();
+  const settings = saved.settings as Record<string, unknown>;
+  const metadata = saved.metadata as Record<string, unknown>;
+  const audit = metadata.lastManualPublicListHideBy as Record<string, unknown>;
+
+  assert.equal(settings.isPrivate, true);
+  assert.equal(settings.ratingGame, true);
+  assert.equal(saved.status, 'PAID');
+  assert.equal(saved.archived, false);
+  assert.deepEqual(saved.booking, initialDoc.booking);
+  assert.deepEqual(saved.payment, initialDoc.payment);
+  assert.equal(metadata.vivaExerciseId, 'viva-game-3');
+  assert.equal(metadata.existingValue, 'keep-me');
+  assert.equal(metadata.lastManualPublicListHideReason, 'ADMIN_HIDE_FROM_PUBLIC_LIST');
+  assert.equal(typeof metadata.lastManualPublicListHideAt, 'string');
+  assert.equal(audit.id, 'admin-1');
+  assert.deepEqual(audit.roles, [Role.SUPER_ADMIN]);
+  assert.equal(
+    ((updated.details?.settings as Record<string, unknown> | undefined) ?? {}).isPrivate,
+    true
+  );
+}
+
 async function main() {
   await testRemovePlayerFromPublication();
   await testUpdateMetadataSynchronizesPhoneMirrors();
+  await testHideGameFromPublicListPreservesGameLifecycle();
   console.log('Games publication mutations test passed');
 }
 

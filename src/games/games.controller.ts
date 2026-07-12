@@ -168,6 +168,21 @@ export class GamesController {
     return this.gamesService.removePlayerFromPublication(id, dto, user);
   }
 
+  @Post(':id/publication/hide-game')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
+  hideGameFromPublicList(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<Game> {
+    return this.gamesService.hideGameFromPublicList(id, user);
+  }
+
   @Patch(':id/metadata')
   @Roles(
     Role.SUPER_ADMIN,

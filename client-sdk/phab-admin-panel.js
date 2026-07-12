@@ -10,7 +10,8 @@
     connectorRoutes: [],
     pollIntervalMs: 8000,
     authHeaders: {},
-    authToken: ''
+    authToken: '',
+    playerRatingAdminEnabled: false
   };
 
   var STYLE_ID = 'phab-admin-panel-style';
@@ -332,6 +333,9 @@
       }
     }
     cfg.pollIntervalMs = Math.max(3000, Number(cfg.pollIntervalMs || DEFAULTS.pollIntervalMs));
+    cfg.playerRatingAdminEnabled =
+      cfg.playerRatingAdminEnabled === true ||
+      String(cfg.playerRatingAdminEnabled || '').trim().toLowerCase() === 'true';
     return cfg;
   }
 
@@ -3718,6 +3722,394 @@
         font-weight:700;
         color:var(--cup-wine);
       }
+      .phab-admin-player-ratings-section{
+        display:flex;
+        flex-direction:column;
+        gap:12px;
+        min-height:0;
+        height:100%;
+      }
+      .phab-admin-player-ratings-toolbar{
+        display:flex;
+        align-items:flex-end;
+        justify-content:space-between;
+        gap:10px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-player-ratings-search{
+        display:flex;
+        align-items:flex-end;
+        gap:8px;
+        flex:1 1 560px;
+      }
+      .phab-admin-player-ratings-search-label{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        flex:1 1 420px;
+        min-width:220px;
+      }
+      .phab-admin-player-ratings-search-help{
+        font-size:11px;
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-player-ratings-layout{
+        display:grid;
+        grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr);
+        gap:12px;
+        min-height:0;
+        flex:1 1 auto;
+      }
+      .phab-admin-player-ratings-pane{
+        min-width:0;
+        min-height:0;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:16px;
+        background:rgba(255,255,255,.86);
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+        overflow:auto;
+      }
+      .phab-admin-player-ratings-results{
+        display:flex;
+        flex-direction:column;
+      }
+      .phab-admin-player-ratings-state{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:10px 12px;
+        min-height:42px;
+        font-size:12px;
+        color:rgba(51,0,32,.72);
+        border-bottom:1px solid rgba(51,0,32,.1);
+      }
+      .phab-admin-player-ratings-table-wrap{
+        width:100%;
+        overflow-x:auto;
+        -webkit-overflow-scrolling:touch;
+      }
+      .phab-admin-player-ratings-table{
+        width:100%;
+        min-width:790px;
+        border-collapse:collapse;
+      }
+      .phab-admin-player-ratings-table th,
+      .phab-admin-player-ratings-table td{
+        padding:10px 11px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        text-align:left;
+        vertical-align:top;
+        font-size:12px;
+      }
+      .phab-admin-player-ratings-table th{
+        position:sticky;
+        top:0;
+        z-index:1;
+        background:linear-gradient(90deg,rgba(255,232,145,.9),rgba(182,253,255,.82));
+        font-family:var(--cup-font-heading);
+        font-size:10px;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
+      .phab-admin-player-ratings-table tr[aria-selected="true"]{
+        background:rgba(221,200,252,.3);
+      }
+      .phab-admin-player-ratings-player-btn{
+        display:inline-flex;
+        flex-direction:column;
+        align-items:flex-start;
+        gap:3px;
+        padding:0;
+        border:0;
+        background:transparent;
+        color:var(--cup-wine);
+        font:inherit;
+        text-align:left;
+        cursor:pointer;
+      }
+      .phab-admin-player-ratings-player-btn strong{
+        font-size:13px;
+      }
+      .phab-admin-player-ratings-player-btn:focus-visible,
+      .phab-admin-player-rating-card:focus-visible{
+        outline:3px solid rgba(0,58,134,.42);
+        outline-offset:3px;
+        border-radius:8px;
+      }
+      .phab-admin-player-rating-cards{
+        display:none;
+        gap:10px;
+        padding:10px;
+      }
+      .phab-admin-player-rating-card{
+        width:100%;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:14px;
+        padding:12px;
+        background:rgba(255,255,255,.94);
+        color:var(--cup-wine);
+        text-align:left;
+        cursor:pointer;
+        box-shadow:0 8px 18px rgba(51,0,32,.06);
+      }
+      .phab-admin-player-rating-card[aria-current="true"]{
+        border-color:rgba(97,7,136,.38);
+        box-shadow:0 0 0 3px rgba(221,200,252,.5);
+      }
+      .phab-admin-player-rating-card-head,
+      .phab-admin-player-rating-detail-head,
+      .phab-admin-player-rating-history-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:10px;
+      }
+      .phab-admin-player-rating-card-title{
+        font-size:15px;
+        font-weight:800;
+      }
+      .phab-admin-player-rating-card-meta{
+        margin-top:4px;
+        font-size:11px;
+        color:rgba(51,0,32,.68);
+      }
+      .phab-admin-player-rating-card-values{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+        margin-top:10px;
+      }
+      .phab-admin-player-rating-card-value{
+        border-radius:10px;
+        padding:8px;
+        background:rgba(182,253,255,.28);
+      }
+      .phab-admin-player-rating-card-value span,
+      .phab-admin-player-rating-meta-item span{
+        display:block;
+        font-size:10px;
+        color:rgba(51,0,32,.62);
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .phab-admin-player-rating-card-value strong{
+        display:block;
+        margin-top:3px;
+        font-size:15px;
+      }
+      .phab-admin-player-ratings-load-more{
+        align-self:center;
+        margin:10px;
+      }
+      .phab-admin-player-rating-badges{
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+      }
+      .phab-admin-player-rating-badge{
+        display:inline-flex;
+        align-items:center;
+        min-height:24px;
+        padding:3px 8px;
+        border-radius:999px;
+        border:1px solid rgba(51,0,32,.15);
+        background:rgba(255,255,255,.9);
+        color:var(--cup-wine);
+        font-size:10px;
+        font-weight:800;
+        white-space:nowrap;
+      }
+      .phab-admin-player-rating-badge--canonical{
+        background:rgba(182,253,255,.52);
+        border-color:rgba(0,58,134,.22);
+        color:#003a86;
+      }
+      .phab-admin-player-rating-badge--synced{
+        background:rgba(207,255,182,.65);
+        border-color:rgba(1,67,58,.25);
+        color:#01433a;
+      }
+      .phab-admin-player-rating-badge--pending{
+        background:rgba(255,232,145,.7);
+        border-color:rgba(124,82,0,.25);
+        color:#7c5200;
+      }
+      .phab-admin-player-rating-badge--failed{
+        background:rgba(255,70,78,.13);
+        border-color:rgba(159,23,53,.3);
+        color:#9f1735;
+      }
+      .phab-admin-player-rating-badge--imported{
+        background:rgba(221,200,252,.58);
+        border-color:rgba(97,7,136,.23);
+        color:#610788;
+      }
+      .phab-admin-player-rating-detail{
+        padding:14px;
+      }
+      .phab-admin-player-rating-detail-title{
+        font-family:var(--cup-font-heading);
+        font-size:15px;
+        font-weight:800;
+        color:var(--cup-wine);
+      }
+      .phab-admin-player-rating-detail-subtitle{
+        margin-top:5px;
+        font-size:12px;
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-player-rating-hero{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:10px;
+        margin:14px 0;
+      }
+      .phab-admin-player-rating-hero-item{
+        padding:14px;
+        border-radius:14px;
+        background:linear-gradient(135deg,rgba(207,255,182,.7),rgba(182,253,255,.7));
+        border:1px solid rgba(51,0,32,.1);
+      }
+      .phab-admin-player-rating-hero-item span{
+        display:block;
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.05em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.65);
+      }
+      .phab-admin-player-rating-hero-item strong{
+        display:block;
+        margin-top:4px;
+        font-size:28px;
+        line-height:1;
+      }
+      .phab-admin-player-rating-meta-grid{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+      }
+      .phab-admin-player-rating-meta-item{
+        min-width:0;
+        padding:9px 10px;
+        border-radius:10px;
+        background:rgba(255,255,255,.82);
+        border:1px solid rgba(51,0,32,.1);
+      }
+      .phab-admin-player-rating-meta-item strong,
+      .phab-admin-player-rating-meta-item a{
+        display:block;
+        margin-top:3px;
+        color:var(--cup-wine);
+        font-size:12px;
+        overflow-wrap:anywhere;
+      }
+      .phab-admin-player-rating-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        margin-top:12px;
+      }
+      .phab-admin-player-rating-notice{
+        margin-top:12px;
+        padding:10px 12px;
+        border-radius:12px;
+        background:rgba(255,232,145,.55);
+        border:1px solid rgba(124,82,0,.2);
+        font-size:12px;
+        line-height:1.45;
+      }
+      .phab-admin-player-rating-history{
+        margin-top:18px;
+        padding-top:14px;
+        border-top:1px solid rgba(51,0,32,.12);
+      }
+      .phab-admin-player-rating-history-title{
+        font-family:var(--cup-font-heading);
+        font-size:12px;
+        font-weight:800;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+      .phab-admin-player-rating-timeline{
+        display:grid;
+        gap:10px;
+        margin-top:12px;
+      }
+      .phab-admin-player-rating-event{
+        position:relative;
+        padding:11px 12px 11px 18px;
+        border-radius:12px;
+        border:1px solid rgba(51,0,32,.12);
+        background:rgba(255,255,255,.88);
+      }
+      .phab-admin-player-rating-event::before{
+        content:"";
+        position:absolute;
+        left:7px;
+        top:14px;
+        bottom:14px;
+        width:3px;
+        border-radius:3px;
+        background:linear-gradient(180deg,var(--cup-blue),var(--cup-violet));
+      }
+      .phab-admin-player-rating-event-values{
+        font-size:15px;
+        font-weight:800;
+      }
+      .phab-admin-player-rating-event-meta,
+      .phab-admin-player-rating-event-reason{
+        margin-top:5px;
+        font-size:11px;
+        line-height:1.4;
+        color:rgba(51,0,32,.7);
+      }
+      .phab-admin-player-rating-event-reason{
+        color:var(--cup-wine);
+      }
+      .phab-admin-player-rating-modal-card{
+        width:min(620px,95vw);
+      }
+      .phab-admin-player-rating-modal-body{
+        display:block;
+      }
+      .phab-admin-player-rating-form{
+        display:grid;
+        gap:12px;
+      }
+      .phab-admin-player-rating-form-current,
+      .phab-admin-player-rating-form-confirm{
+        padding:11px 12px;
+        border-radius:12px;
+        border:1px solid rgba(51,0,32,.12);
+        background:rgba(182,253,255,.3);
+        font-size:13px;
+      }
+      .phab-admin-player-rating-form-label{
+        display:grid;
+        gap:5px;
+        font-size:12px;
+        font-weight:800;
+      }
+      .phab-admin-player-rating-form-grade{
+        font-size:12px;
+        color:rgba(51,0,32,.72);
+      }
+      .phab-admin-player-rating-form-error{
+        padding:10px 12px;
+        border-radius:12px;
+        border:1px solid rgba(159,23,53,.25);
+        background:rgba(255,70,78,.1);
+        color:#8f1733;
+        font-size:12px;
+        line-height:1.45;
+      }
+      .phab-admin-player-rating-form-actions{
+        display:flex;
+        justify-content:flex-end;
+        gap:8px;
+      }
       .phab-admin-empty{
         font-size:12px;
         color:rgba(51,0,32,.7);
@@ -4052,6 +4444,13 @@
         50%{box-shadow:0 0 0 4px rgba(15,92,60,.08)}
       }
       @media (max-width:980px){
+        .phab-admin-player-ratings-layout{
+          grid-template-columns:1fr;
+          overflow:auto;
+        }
+        .phab-admin-player-ratings-pane{
+          overflow:visible;
+        }
         .phab-admin-msg-grid{
           grid-template-columns:1fr;
           grid-template-rows:minmax(220px,32dvh) minmax(0,1fr);
@@ -4422,6 +4821,25 @@
         }
       }
       @media (max-width:767px){
+        .phab-admin-player-ratings-section{
+          height:auto;
+        }
+        .phab-admin-player-ratings-search{
+          align-items:stretch;
+          flex-direction:column;
+        }
+        .phab-admin-player-ratings-search .phab-admin-btn{
+          width:100%;
+        }
+        .phab-admin-player-ratings-table-wrap{
+          display:none;
+        }
+        .phab-admin-player-rating-cards{
+          display:grid;
+        }
+        .phab-admin-player-rating-detail{
+          padding:12px;
+        }
         .phab-admin-header{
           padding:10px 12px;
           gap:8px;
@@ -4720,6 +5138,17 @@
           align-items:flex-start;
         }
         .phab-admin-modal-card{max-height:calc(100dvh - 16px)}
+        .phab-admin-player-rating-meta-grid,
+        .phab-admin-player-rating-hero{
+          grid-template-columns:1fr 1fr;
+        }
+        .phab-admin-player-rating-form-actions{
+          flex-direction:column-reverse;
+        }
+        .phab-admin-player-rating-form-actions .phab-admin-btn,
+        .phab-admin-player-rating-form-actions .phab-admin-btn-secondary{
+          width:100%;
+        }
         .phab-admin-detail-row{grid-template-columns:1fr}
         .phab-admin-community-toolbar{grid-template-columns:1fr}
         .phab-admin-community-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -4756,23 +5185,79 @@
       return headers;
     }
 
-    async function request(path, method, body) {
+    function readApiErrorCode(payload) {
+      if (!payload || typeof payload !== 'object') {
+        return '';
+      }
+      if (payload.code) {
+        return String(payload.code);
+      }
+      if (payload.error && typeof payload.error === 'object' && payload.error.code) {
+        return String(payload.error.code);
+      }
+      if (payload.message && typeof payload.message === 'object') {
+        return readApiErrorCode(payload.message);
+      }
+      return '';
+    }
+
+    function readApiErrorMessage(payload, fallbackText, status) {
+      if (payload && typeof payload === 'object') {
+        if (Array.isArray(payload.message)) {
+          return payload.message.map(String).join('; ');
+        }
+        if (typeof payload.message === 'string' && payload.message.trim()) {
+          return payload.message.trim();
+        }
+        if (payload.message && typeof payload.message === 'object') {
+          var nestedMessage = readApiErrorMessage(payload.message, '', status);
+          if (nestedMessage) {
+            return nestedMessage;
+          }
+        }
+        if (typeof payload.error === 'string' && payload.error.trim()) {
+          return payload.error.trim();
+        }
+      }
+      return String(fallbackText || '').trim() || 'HTTP ' + String(status);
+    }
+
+    async function request(path, method, body, requestOptions) {
+      var options = requestOptions || {};
       var headers = buildHeaders(body ? { 'Content-Type': 'application/json' } : {});
-      var response = await fetch(cfg.apiBaseUrl + path, {
+      var fetchOptions = {
         method: method || 'GET',
         headers: headers,
         credentials: 'same-origin',
         body: body ? JSON.stringify(body) : undefined
-      });
+      };
+      if (options.signal) {
+        fetchOptions.signal = options.signal;
+      }
+      var response = await fetch(cfg.apiBaseUrl + path, fetchOptions);
 
       if (!response.ok) {
-        var text = await response.text().catch(function () {
-          return '';
-        });
-        if (response.status === 401) {
-          throw new Error('Требуется авторизация. Выполните вход снова.');
+        var errorContentType = response.headers.get('content-type') || '';
+        var errorPayload = null;
+        var errorText = '';
+        if (errorContentType.indexOf('application/json') >= 0) {
+          errorPayload = await response.json().catch(function () {
+            return null;
+          });
+        } else {
+          errorText = await response.text().catch(function () {
+            return '';
+          });
         }
-        throw new Error('HTTP ' + response.status + ': ' + text);
+        var errorMessage =
+          response.status === 401
+            ? 'Требуется авторизация. Выполните вход снова.'
+            : readApiErrorMessage(errorPayload, errorText, response.status);
+        var requestError = new Error(errorMessage);
+        requestError.status = response.status;
+        requestError.payload = errorPayload;
+        requestError.code = readApiErrorCode(errorPayload);
+        throw requestError;
       }
 
       var contentType = response.headers.get('content-type') || '';
@@ -4967,6 +5452,67 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/games' + suffix, 'GET');
       },
+      searchPlayerRatings: function (query, requestOptions) {
+        var params = new URLSearchParams();
+        if (query && query.q) {
+          params.set('q', String(query.q));
+        }
+        if (query && query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query && query.cursor) {
+          params.set('cursor', String(query.cursor));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/admin/player-ratings/search' + suffix, 'GET', undefined, requestOptions);
+      },
+      getPlayerRating: function (playerKey, requestOptions) {
+        return request(
+          '/admin/player-ratings/' + encodeURIComponent(playerKey),
+          'GET',
+          undefined,
+          requestOptions
+        );
+      },
+      getPlayerRatingEvents: function (playerKey, query, requestOptions) {
+        var params = new URLSearchParams();
+        if (query && query.limit !== undefined && query.limit !== null) {
+          params.set('limit', String(query.limit));
+        }
+        if (query && query.cursor) {
+          params.set('cursor', String(query.cursor));
+        }
+        if (query && query.eventType) {
+          params.set('eventType', String(query.eventType));
+        }
+        if (query && query.dateFrom) {
+          params.set('dateFrom', String(query.dateFrom));
+        }
+        if (query && query.dateTo) {
+          params.set('dateTo', String(query.dateTo));
+        }
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request(
+          '/admin/player-ratings/' + encodeURIComponent(playerKey) + '/events' + suffix,
+          'GET',
+          undefined,
+          requestOptions
+        );
+      },
+      changePlayerRating: function (playerKey, payload) {
+        return request(
+          '/admin/player-ratings/' + encodeURIComponent(playerKey) + '/changes',
+          'POST',
+          payload
+        );
+      },
+      retryPlayerRatingProjection: function (playerKey) {
+        return request(
+          '/admin/player-ratings/' + encodeURIComponent(playerKey) + '/projection/retry',
+          'POST',
+          {}
+        );
+      },
       getGameById: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId), 'GET');
       },
@@ -4975,6 +5521,13 @@
           '/games/' + encodeURIComponent(gameId) + '/publication/remove-player',
           'POST',
           payload || {}
+        );
+      },
+      hideGameFromPublicList: function (gameId) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/publication/hide-game',
+          'POST',
+          {}
         );
       },
       updateGameMetadata: function (gameId, metadata) {
@@ -5277,6 +5830,48 @@
     var dd = String(d.getDate()).padStart(2, '0');
     var mo = String(d.getMonth() + 1).padStart(2, '0');
     return dd + '.' + mo + ' ' + hh + ':' + mm;
+  }
+
+  function mapPlayerRatingGradeV1(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 1 || numeric > 7) {
+      return '-';
+    }
+    if (numeric < 2) {
+      return 'D';
+    }
+    if (numeric < 3) {
+      return 'D+';
+    }
+    if (numeric < 3.5) {
+      return 'C';
+    }
+    if (numeric < 4) {
+      return 'C+';
+    }
+    if (numeric < 4.7) {
+      return 'B';
+    }
+    if (numeric < 5.5) {
+      return 'B+';
+    }
+    return 'A';
+  }
+
+  function formatPlayerRatingNumeric(value) {
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return '-';
+    }
+    return numeric.toFixed(5).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function normalizePlayerRatingProjectionStatus(value) {
+    var normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'SYNCED' || normalized === 'PENDING' || normalized === 'FAILED_RETRYABLE') {
+      return normalized;
+    }
+    return 'PENDING';
   }
 
   function formatDateInputValue(value) {
@@ -5589,6 +6184,13 @@
     tabGames.textContent = 'Игры';
     tabs.appendChild(tabGames);
 
+    var tabPlayerRatings = document.createElement('button');
+    tabPlayerRatings.className =
+      'phab-admin-tab' + (canAccessPlayerRatings(cfg) ? '' : ' phab-admin-hidden');
+    tabPlayerRatings.type = 'button';
+    tabPlayerRatings.textContent = 'Уровни';
+    tabs.appendChild(tabPlayerRatings);
+
     var tabLogs = document.createElement('button');
     tabLogs.className = 'phab-admin-tab';
     tabLogs.type = 'button';
@@ -5631,12 +6233,6 @@
     tabAdvertising.textContent = 'Реклама';
     tabs.appendChild(tabAdvertising);
 
-    var tabSplitPromo = document.createElement('button');
-    tabSplitPromo.className = 'phab-admin-tab';
-    tabSplitPromo.type = 'button';
-    tabSplitPromo.textContent = 'Split-акция';
-    tabs.appendChild(tabSplitPromo);
-
     var content = document.createElement('div');
     content.className = 'phab-admin-content';
     root.appendChild(content);
@@ -5651,6 +6247,89 @@
     var gamesSection = document.createElement('div');
     gamesSection.className = 'phab-admin-hidden';
     content.appendChild(gamesSection);
+
+    var playerRatingsSection = document.createElement('div');
+    playerRatingsSection.className = 'phab-admin-hidden';
+    content.appendChild(playerRatingsSection);
+
+    var playerRatingsShell = document.createElement('div');
+    playerRatingsShell.className = 'phab-admin-player-ratings-section';
+    playerRatingsSection.appendChild(playerRatingsShell);
+
+    var playerRatingsToolbar = document.createElement('div');
+    playerRatingsToolbar.className = 'phab-admin-player-ratings-toolbar';
+    playerRatingsShell.appendChild(playerRatingsToolbar);
+
+    var playerRatingsSearch = document.createElement('div');
+    playerRatingsSearch.className = 'phab-admin-player-ratings-search';
+    playerRatingsToolbar.appendChild(playerRatingsSearch);
+
+    var playerRatingsSearchLabel = document.createElement('label');
+    playerRatingsSearchLabel.className = 'phab-admin-player-ratings-search-label';
+    playerRatingsSearch.appendChild(playerRatingsSearchLabel);
+
+    var playerRatingsSearchTitle = document.createElement('span');
+    playerRatingsSearchTitle.className = 'phab-admin-settings-label';
+    playerRatingsSearchTitle.textContent = 'Игрок';
+    playerRatingsSearchLabel.appendChild(playerRatingsSearchTitle);
+
+    var playerRatingsSearchInput = document.createElement('input');
+    playerRatingsSearchInput.className = 'phab-admin-input';
+    playerRatingsSearchInput.type = 'search';
+    playerRatingsSearchInput.placeholder = 'Телефон, имя или clientId';
+    playerRatingsSearchInput.autocomplete = 'off';
+    playerRatingsSearchInput.setAttribute('aria-label', 'Поиск игрока по телефону, имени или clientId');
+    playerRatingsSearchLabel.appendChild(playerRatingsSearchInput);
+
+    var playerRatingsSearchHelp = document.createElement('span');
+    playerRatingsSearchHelp.className = 'phab-admin-player-ratings-search-help';
+    playerRatingsSearchHelp.textContent = 'Поиск начнётся автоматически через 300 мс';
+    playerRatingsSearchLabel.appendChild(playerRatingsSearchHelp);
+
+    var playerRatingsSearchBtn = document.createElement('button');
+    playerRatingsSearchBtn.className = 'phab-admin-btn';
+    playerRatingsSearchBtn.type = 'button';
+    playerRatingsSearchBtn.textContent = 'Найти';
+    playerRatingsSearch.appendChild(playerRatingsSearchBtn);
+
+    var playerRatingsLayout = document.createElement('div');
+    playerRatingsLayout.className = 'phab-admin-player-ratings-layout';
+    playerRatingsShell.appendChild(playerRatingsLayout);
+
+    var playerRatingsResultsPane = document.createElement('div');
+    playerRatingsResultsPane.className =
+      'phab-admin-player-ratings-pane phab-admin-player-ratings-results';
+    playerRatingsLayout.appendChild(playerRatingsResultsPane);
+
+    var playerRatingsSearchState = document.createElement('div');
+    playerRatingsSearchState.className = 'phab-admin-player-ratings-state';
+    playerRatingsSearchState.setAttribute('aria-live', 'polite');
+    playerRatingsResultsPane.appendChild(playerRatingsSearchState);
+
+    var playerRatingsTableWrap = document.createElement('div');
+    playerRatingsTableWrap.className = 'phab-admin-player-ratings-table-wrap phab-admin-hidden';
+    playerRatingsResultsPane.appendChild(playerRatingsTableWrap);
+
+    var playerRatingsTable = document.createElement('table');
+    playerRatingsTable.className = 'phab-admin-player-ratings-table';
+    playerRatingsTableWrap.appendChild(playerRatingsTable);
+
+    var playerRatingCards = document.createElement('div');
+    playerRatingCards.className = 'phab-admin-player-rating-cards phab-admin-hidden';
+    playerRatingsResultsPane.appendChild(playerRatingCards);
+
+    var playerRatingsLoadMoreBtn = document.createElement('button');
+    playerRatingsLoadMoreBtn.className =
+      'phab-admin-btn-secondary phab-admin-player-ratings-load-more phab-admin-hidden';
+    playerRatingsLoadMoreBtn.type = 'button';
+    playerRatingsLoadMoreBtn.textContent = 'Показать ещё';
+    playerRatingsResultsPane.appendChild(playerRatingsLoadMoreBtn);
+
+    var playerRatingDetail = document.createElement('div');
+    playerRatingDetail.className =
+      'phab-admin-player-ratings-pane phab-admin-player-rating-detail';
+    playerRatingDetail.setAttribute('aria-live', 'polite');
+    playerRatingsLayout.appendChild(playerRatingDetail);
 
     var logsSection = document.createElement('div');
     logsSection.className = 'phab-admin-hidden';
@@ -7864,6 +8543,110 @@
     tournamentEditorBody.className = 'phab-admin-modal-body';
     tournamentEditorCard.appendChild(tournamentEditorBody);
 
+    var playerRatingEditModal = document.createElement('div');
+    playerRatingEditModal.className = 'phab-admin-modal phab-admin-hidden';
+    playerRatingEditModal.setAttribute('role', 'dialog');
+    playerRatingEditModal.setAttribute('aria-modal', 'true');
+    playerRatingEditModal.setAttribute('aria-labelledby', 'phab-admin-player-rating-edit-title');
+    overlayHost.appendChild(playerRatingEditModal);
+
+    var playerRatingEditModalCard = document.createElement('div');
+    playerRatingEditModalCard.className =
+      'phab-admin-modal-card phab-admin-player-rating-modal-card';
+    playerRatingEditModal.appendChild(playerRatingEditModalCard);
+
+    var playerRatingEditModalHead = document.createElement('div');
+    playerRatingEditModalHead.className = 'phab-admin-modal-head';
+    playerRatingEditModalCard.appendChild(playerRatingEditModalHead);
+
+    var playerRatingEditModalTitle = document.createElement('div');
+    playerRatingEditModalTitle.className = 'phab-admin-modal-title';
+    playerRatingEditModalTitle.id = 'phab-admin-player-rating-edit-title';
+    playerRatingEditModalTitle.textContent = 'Изменить уровень игрока';
+    playerRatingEditModalHead.appendChild(playerRatingEditModalTitle);
+
+    var playerRatingEditCloseBtn = document.createElement('button');
+    playerRatingEditCloseBtn.className = 'phab-admin-modal-close';
+    playerRatingEditCloseBtn.type = 'button';
+    playerRatingEditCloseBtn.textContent = '×';
+    playerRatingEditCloseBtn.setAttribute('aria-label', 'Закрыть изменение уровня');
+    playerRatingEditModalHead.appendChild(playerRatingEditCloseBtn);
+
+    var playerRatingEditModalBody = document.createElement('div');
+    playerRatingEditModalBody.className =
+      'phab-admin-modal-body phab-admin-player-rating-modal-body';
+    playerRatingEditModalCard.appendChild(playerRatingEditModalBody);
+
+    var playerRatingEditForm = document.createElement('form');
+    playerRatingEditForm.className = 'phab-admin-player-rating-form';
+    playerRatingEditForm.noValidate = true;
+    playerRatingEditModalBody.appendChild(playerRatingEditForm);
+
+    var playerRatingEditCurrent = document.createElement('div');
+    playerRatingEditCurrent.className = 'phab-admin-player-rating-form-current';
+    playerRatingEditForm.appendChild(playerRatingEditCurrent);
+
+    var playerRatingEditNumericLabel = document.createElement('label');
+    playerRatingEditNumericLabel.className = 'phab-admin-player-rating-form-label';
+    playerRatingEditNumericLabel.appendChild(document.createTextNode('Новый числовой рейтинг'));
+    playerRatingEditForm.appendChild(playerRatingEditNumericLabel);
+
+    var playerRatingEditNumericInput = document.createElement('input');
+    playerRatingEditNumericInput.className = 'phab-admin-settings-input';
+    playerRatingEditNumericInput.type = 'number';
+    playerRatingEditNumericInput.min = '1';
+    playerRatingEditNumericInput.max = '7';
+    playerRatingEditNumericInput.step = '0.00001';
+    playerRatingEditNumericInput.inputMode = 'decimal';
+    playerRatingEditNumericInput.required = true;
+    playerRatingEditNumericLabel.appendChild(playerRatingEditNumericInput);
+
+    var playerRatingEditGrade = document.createElement('div');
+    playerRatingEditGrade.className = 'phab-admin-player-rating-form-grade';
+    playerRatingEditGrade.textContent = 'Grade: -';
+    playerRatingEditNumericLabel.appendChild(playerRatingEditGrade);
+
+    var playerRatingEditReasonLabel = document.createElement('label');
+    playerRatingEditReasonLabel.className = 'phab-admin-player-rating-form-label';
+    playerRatingEditReasonLabel.appendChild(document.createTextNode('Причина изменения'));
+    playerRatingEditForm.appendChild(playerRatingEditReasonLabel);
+
+    var playerRatingEditReasonInput = document.createElement('textarea');
+    playerRatingEditReasonInput.className = 'phab-admin-settings-input';
+    playerRatingEditReasonInput.rows = 4;
+    playerRatingEditReasonInput.minLength = 10;
+    playerRatingEditReasonInput.maxLength = 1000;
+    playerRatingEditReasonInput.required = true;
+    playerRatingEditReasonInput.placeholder = 'Минимум 10 символов';
+    playerRatingEditReasonLabel.appendChild(playerRatingEditReasonInput);
+
+    var playerRatingEditConfirm = document.createElement('div');
+    playerRatingEditConfirm.className = 'phab-admin-player-rating-form-confirm';
+    playerRatingEditConfirm.textContent = 'Укажите новое значение';
+    playerRatingEditForm.appendChild(playerRatingEditConfirm);
+
+    var playerRatingEditError = document.createElement('div');
+    playerRatingEditError.className =
+      'phab-admin-player-rating-form-error phab-admin-hidden';
+    playerRatingEditError.setAttribute('role', 'alert');
+    playerRatingEditForm.appendChild(playerRatingEditError);
+
+    var playerRatingEditActions = document.createElement('div');
+    playerRatingEditActions.className = 'phab-admin-player-rating-form-actions';
+    playerRatingEditForm.appendChild(playerRatingEditActions);
+
+    var playerRatingEditCancelBtn = document.createElement('button');
+    playerRatingEditCancelBtn.className = 'phab-admin-btn-secondary';
+    playerRatingEditCancelBtn.type = 'button';
+    playerRatingEditCancelBtn.textContent = 'Отмена';
+    playerRatingEditActions.appendChild(playerRatingEditCancelBtn);
+
+    var playerRatingEditSaveBtn = document.createElement('button');
+    playerRatingEditSaveBtn.className = 'phab-admin-btn';
+    playerRatingEditSaveBtn.type = 'submit';
+    playerRatingEditSaveBtn.textContent = 'Сохранить в ЦУП';
+    playerRatingEditActions.appendChild(playerRatingEditSaveBtn);
+
     var mobileFiltersSheet = document.createElement('div');
     mobileFiltersSheet.className = 'phab-admin-bottom-sheet phab-admin-hidden';
     overlayHost.appendChild(mobileFiltersSheet);
@@ -7960,6 +8743,7 @@
       mobileTabSelect: mobileTabSelect,
       tabMessages: tabMessages,
       tabGames: tabGames,
+      tabPlayerRatings: tabPlayerRatings,
       tabLogs: tabLogs,
       tabTournaments: tabTournaments,
       tabCommunities: tabCommunities,
@@ -7967,9 +8751,17 @@
       tabAnalytics: tabAnalytics,
       tabSettings: tabSettings,
       tabAdvertising: tabAdvertising,
-      tabSplitPromo: tabSplitPromo,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
+      playerRatingsSection: playerRatingsSection,
+      playerRatingsSearchInput: playerRatingsSearchInput,
+      playerRatingsSearchBtn: playerRatingsSearchBtn,
+      playerRatingsSearchState: playerRatingsSearchState,
+      playerRatingsTableWrap: playerRatingsTableWrap,
+      playerRatingsTable: playerRatingsTable,
+      playerRatingCards: playerRatingCards,
+      playerRatingsLoadMoreBtn: playerRatingsLoadMoreBtn,
+      playerRatingDetail: playerRatingDetail,
       logsSection: logsSection,
       tournamentsSection: tournamentsSection,
       communitiesSection: communitiesSection,
@@ -8050,6 +8842,17 @@
       tournamentEditorBody: tournamentEditorBody,
       tournamentEditorSaveBtn: tournamentEditorSaveBtn,
       tournamentEditorCloseBtn: tournamentEditorCloseBtn,
+      playerRatingEditModal: playerRatingEditModal,
+      playerRatingEditCloseBtn: playerRatingEditCloseBtn,
+      playerRatingEditForm: playerRatingEditForm,
+      playerRatingEditCurrent: playerRatingEditCurrent,
+      playerRatingEditNumericInput: playerRatingEditNumericInput,
+      playerRatingEditGrade: playerRatingEditGrade,
+      playerRatingEditReasonInput: playerRatingEditReasonInput,
+      playerRatingEditConfirm: playerRatingEditConfirm,
+      playerRatingEditError: playerRatingEditError,
+      playerRatingEditCancelBtn: playerRatingEditCancelBtn,
+      playerRatingEditSaveBtn: playerRatingEditSaveBtn,
       gamesPhoneInput: gamesPhoneInput,
       gamesApplyBtn: gamesApplyBtn,
       gamesResetBtn: gamesResetBtn,
@@ -8371,6 +9174,21 @@
 
   function canAccessLaboratory(cfg) {
     return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+  }
+
+  function canAccessPlayerRatings(cfg) {
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasAnyRole(cfg, [
+      'SUPER_ADMIN',
+      'MANAGER',
+      'SUPPORT',
+      'GAME_MANAGER',
+      'TOURNAMENT_MANAGER',
+      'STATION_ADMIN'
+    ]);
+  }
+
+  function canManagePlayerRatings(cfg) {
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasRole(cfg, 'SUPER_ADMIN');
   }
 
   function canManageQuickReplySettings(cfg) {
@@ -8737,6 +9555,8 @@
     var api = createApi(cfg);
     var pollTimer = null;
     var dialogSearchTimer = null;
+    var playerRatingsSearchTimer = null;
+    var playerRatingsSearchAbort = null;
     var documentKeydownHandler = null;
     var windowResizeHandler = null;
     var isRestrictedStationAdmin = isRestrictedStationAdminConfig(cfg);
@@ -8770,6 +9590,17 @@
       messagesFetchPromisesByThreadId: Object.create(null),
       vivaLookupPromisesByDialogId: Object.create(null),
       games: [],
+      playerRatings: [],
+      playerRatingsCursor: null,
+      playerRatingsQuery: '',
+      playerRatingsLoading: false,
+      selectedPlayerRatingKey: null,
+      selectedPlayerRating: null,
+      selectedPlayerRatingEvents: [],
+      playerRatingEventsCursor: null,
+      playerRatingEventsFilter: { eventType: '', dateFrom: '', dateTo: '' },
+      playerRatingEditSubmitting: false,
+      playerRatingEditReturnFocus: null,
       gameEvents: [],
       analytics: [],
       analyticsTotals: {
@@ -9601,17 +10432,18 @@
       clearNode(dom.mobileTabSelect);
       var hideCommunitiesTab = !canAccessCommunities(cfg);
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
+      var hidePlayerRatingsTab = !canAccessPlayerRatings(cfg);
       [
         { value: 'messages', label: 'Диалоги' },
         { value: 'games', label: 'Игры' },
+        { value: 'playerRatings', label: 'Уровни', hidden: hidePlayerRatingsTab },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
         { value: 'tournaments', label: 'Турниры' },
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
         { value: 'laboratory', label: 'Лаборатория', hidden: hideLaboratoryTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
         { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin },
-        { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin },
-        { value: 'splitPromo', label: 'Split-акция', hidden: isRestrictedStationAdmin }
+        { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin }
       ]
         .filter(function (item) {
           return item.hidden !== true;
@@ -11344,11 +12176,59 @@
         var publicationNote = document.createElement('div');
         publicationNote.className = 'phab-admin-empty';
         publicationNote.textContent = canManagePublication
-          ? 'Действие снимает игрока из publication-полей игры и чистит типовые phone/teamSlot/joinResponses зеркала. Бронирование Viva не меняется.'
+          ? 'Скрытие игры из общего списка делает её приватной: прямая ссылка-приглашение остаётся активной, бронирование Viva не отменяется. Кнопки игроков ниже снимают только игрока из publication-полей и не меняют бронирование Viva.'
           : 'Управление публикацией станет доступно после загрузки Mongo payload игры.';
         publicationCard.body.appendChild(publicationNote);
 
         if (canManagePublication) {
+          var hiddenFromPublicList = settings.isPrivate === true;
+          var visibilityRow = document.createElement('div');
+          visibilityRow.className = 'phab-admin-detail-row';
+          publicationCard.body.appendChild(visibilityRow);
+
+          var visibilityKey = document.createElement('div');
+          visibilityKey.className = 'phab-admin-detail-key';
+          visibilityKey.textContent = 'Общий список игр';
+          visibilityRow.appendChild(visibilityKey);
+
+          var visibilityValue = document.createElement('div');
+          visibilityValue.className = 'phab-admin-detail-value';
+          visibilityRow.appendChild(visibilityValue);
+
+          var visibilitySummary = document.createElement('div');
+          visibilitySummary.textContent = hiddenFromPublicList
+            ? 'Игра уже скрыта из общего списка.'
+            : 'Игра видна в общем списке.';
+          visibilityValue.appendChild(visibilitySummary);
+
+          var hideGameBtn = document.createElement('button');
+          hideGameBtn.type = 'button';
+          hideGameBtn.className = 'phab-admin-btn-secondary';
+          hideGameBtn.style.marginTop = '8px';
+          hideGameBtn.textContent = hiddenFromPublicList
+            ? 'Игра скрыта из общего списка'
+            : 'Скрыть игру из общего списка';
+          hideGameBtn.disabled = hiddenFromPublicList;
+          hideGameBtn.addEventListener('click', function () {
+            if (!window.confirm(
+              'Скрыть игру из общего списка? Прямая ссылка-приглашение останется активной, бронирование Viva не будет отменено.'
+            )) {
+              return;
+            }
+            hideGameBtn.disabled = true;
+            hideGameBtn.textContent = 'Скрываем...';
+            api.hideGameFromPublicList(game.id)
+              .then(function (updatedGame) {
+                applyUpdatedGameDetails(updatedGame, 'Игра скрыта из общего списка');
+              })
+              .catch(handleError)
+              .finally(function () {
+                hideGameBtn.disabled = false;
+                hideGameBtn.textContent = 'Скрыть игру из общего списка';
+              });
+          });
+          visibilityValue.appendChild(hideGameBtn);
+
           var publicationPlayers = buildGamePublicationParticipants(game, details);
           if (publicationPlayers.length === 0) {
             appendDetailRow(publicationCard.body, 'Игроки', 'Нет данных для снятия с публикации');
@@ -11457,7 +12337,7 @@
         metadataEditorNote.className = 'phab-admin-empty';
         metadataEditorNote.textContent =
           Object.keys(details).length > 0
-            ? 'Сохранение заменяет весь объект metadata целиком. Используйте для точечной правки отображения игры в группах, списках и связанных публикациях.'
+            ? 'Сохранение заменяет весь объект metadata целиком. Используйте для точечной правки связанных публикаций; для скрытия из общего списка используйте действие выше.'
             : 'Редактор откроется после загрузки полного Mongo payload игры.';
         metadataEditorCard.body.appendChild(metadataEditorNote);
 
@@ -25995,10 +26875,78 @@
       }
     }
 
+    function playerRatingStatusLabel(value) {
+      var status = normalizePlayerRatingProjectionStatus(value);
+      return status === 'SYNCED' ? 'Viva: синхронизировано' : status === 'FAILED_RETRYABLE' ? 'Viva: ошибка, можно повторить' : 'Viva: ожидает синхронизации';
+    }
+
+    function playerRatingStatusClass(value) {
+      var status = normalizePlayerRatingProjectionStatus(value);
+      return status === 'SYNCED' ? 'phab-admin-player-rating-badge--synced' : status === 'FAILED_RETRYABLE' ? 'phab-admin-player-rating-badge--failed' : 'phab-admin-player-rating-badge--pending';
+    }
+
+    function renderPlayerRatingsList() {
+      clearNode(dom.playerRatingsTable);
+      clearNode(dom.playerRatingCards);
+      var items = state.playerRatings;
+      dom.playerRatingsTableWrap.classList.toggle('phab-admin-hidden', items.length === 0);
+      dom.playerRatingCards.classList.toggle('phab-admin-hidden', items.length === 0);
+      dom.playerRatingsLoadMoreBtn.classList.toggle('phab-admin-hidden', !state.playerRatingsCursor);
+      if (!items.length) return;
+      var header = document.createElement('tr');
+      ['Игрок', 'Уровень', 'Последнее изменение', 'Источник', 'Viva'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; header.appendChild(th); });
+      var thead = document.createElement('thead'); thead.appendChild(header); dom.playerRatingsTable.appendChild(thead);
+      var tbody = document.createElement('tbody'); dom.playerRatingsTable.appendChild(tbody);
+      items.forEach(function (item) {
+        var tr = document.createElement('tr'); tr.setAttribute('aria-selected', String(item.playerKey === state.selectedPlayerRatingKey));
+        var playerCell = document.createElement('td'); var button = document.createElement('button'); button.type = 'button'; button.className = 'phab-admin-player-ratings-player-btn'; button.innerHTML = ''; var name = document.createElement('strong'); name.textContent = item.name || 'Без имени'; var meta = document.createElement('span'); meta.textContent = [item.phoneNorm, item.clientId].filter(Boolean).join(' · ') || item.playerKey; button.appendChild(name); button.appendChild(meta); button.addEventListener('click', function () { selectPlayerRating(item.playerKey).catch(handleError); }); playerCell.appendChild(button); tr.appendChild(playerCell);
+        [formatPlayerRatingNumeric(item.ratingNumeric) + ' · ' + (item.rating || '-'), formatTime(item.lastEventAt), item.lastSource || item.lastEventType || '-', playerRatingStatusLabel(item.projectionStatus)].forEach(function (value) { var cell = document.createElement('td'); cell.textContent = value; tr.appendChild(cell); }); tbody.appendChild(tr);
+        var card = document.createElement('button'); card.type = 'button'; card.className = 'phab-admin-player-rating-card'; card.setAttribute('aria-current', String(item.playerKey === state.selectedPlayerRatingKey)); card.innerHTML = ''; var cardTitle = document.createElement('div'); cardTitle.className = 'phab-admin-player-rating-card-title'; cardTitle.textContent = item.name || 'Без имени'; var cardMeta = document.createElement('div'); cardMeta.className = 'phab-admin-player-rating-card-meta'; cardMeta.textContent = [item.phoneNorm, item.clientId].filter(Boolean).join(' · ') || item.playerKey; var values = document.createElement('div'); values.className = 'phab-admin-player-rating-card-values'; ['Уровень: ' + formatPlayerRatingNumeric(item.ratingNumeric) + ' · ' + (item.rating || '-'), playerRatingStatusLabel(item.projectionStatus)].forEach(function (text) { var node = document.createElement('div'); node.className = 'phab-admin-player-rating-card-value'; node.textContent = text; values.appendChild(node); }); card.appendChild(cardTitle); card.appendChild(cardMeta); card.appendChild(values); card.addEventListener('click', function () { selectPlayerRating(item.playerKey).catch(handleError); }); dom.playerRatingCards.appendChild(card);
+      });
+    }
+
+    function renderPlayerRatingDetail() {
+      clearNode(dom.playerRatingDetail);
+      var player = state.selectedPlayerRating;
+      if (!player) { dom.playerRatingDetail.textContent = 'Выберите игрока, чтобы посмотреть уровень и историю изменений.'; return; }
+      var head = document.createElement('div'); head.className = 'phab-admin-player-rating-detail-head'; var title = document.createElement('div'); title.className = 'phab-admin-player-rating-detail-title'; title.textContent = player.name || 'Без имени'; head.appendChild(title); var badges = document.createElement('div'); badges.className = 'phab-admin-player-rating-badges'; [['CUP canonical', 'phab-admin-player-rating-badge--canonical'], [playerRatingStatusLabel(player.projectionStatus), playerRatingStatusClass(player.projectionStatus)]].forEach(function (entry) { var badge = document.createElement('span'); badge.className = 'phab-admin-player-rating-badge ' + entry[1]; badge.textContent = entry[0]; badges.appendChild(badge); }); head.appendChild(badges); dom.playerRatingDetail.appendChild(head);
+      var subtitle = document.createElement('div'); subtitle.className = 'phab-admin-player-rating-detail-subtitle'; subtitle.textContent = [player.phoneNorm, player.clientId, player.playerKey].filter(Boolean).join(' · '); dom.playerRatingDetail.appendChild(subtitle);
+      var hero = document.createElement('div'); hero.className = 'phab-admin-player-rating-hero'; [['Текущий рейтинг', formatPlayerRatingNumeric(player.ratingNumeric)], ['Grade', player.rating || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-hero-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); hero.appendChild(item); }); dom.playerRatingDetail.appendChild(hero);
+      var meta = document.createElement('div'); meta.className = 'phab-admin-player-rating-meta-grid'; [['Последнее изменение', formatTime(player.lastEventAt)], ['Основание', player.lastSource || player.lastEventType || '-'], ['Actor', (player.lastActor && (player.lastActor.name || player.lastActor.id)) || '-']].forEach(function (entry) { var item = document.createElement('div'); item.className = 'phab-admin-player-rating-meta-item'; var label = document.createElement('span'); label.textContent = entry[0]; var value = document.createElement('strong'); value.textContent = entry[1]; item.appendChild(label); item.appendChild(value); meta.appendChild(item); }); if (player.vivaCabinetUrl) { var viva = document.createElement('a'); viva.href = player.vivaCabinetUrl; viva.target = '_blank'; viva.rel = 'noopener noreferrer'; viva.textContent = 'Открыть в Viva'; meta.appendChild(viva); } dom.playerRatingDetail.appendChild(meta);
+      var actions = document.createElement('div'); actions.className = 'phab-admin-player-rating-actions'; if (canManagePlayerRatings(cfg)) { var change = document.createElement('button'); change.type = 'button'; change.className = 'phab-admin-btn'; change.textContent = 'Изменить уровень'; change.addEventListener('click', function () { openPlayerRatingEdit(change); }); actions.appendChild(change); if (normalizePlayerRatingProjectionStatus(player.projectionStatus) === 'FAILED_RETRYABLE') { var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'phab-admin-btn-secondary'; retry.textContent = 'Повторить синхронизацию Viva'; retry.addEventListener('click', function () { retryPlayerRatingProjection().catch(handleError); }); actions.appendChild(retry); } } dom.playerRatingDetail.appendChild(actions);
+      var history = document.createElement('div'); history.className = 'phab-admin-player-rating-history'; var historyHead = document.createElement('div'); historyHead.className = 'phab-admin-player-rating-history-head'; var historyTitle = document.createElement('div'); historyTitle.className = 'phab-admin-player-rating-history-title'; historyTitle.textContent = 'История изменений'; historyHead.appendChild(historyTitle); var filters = document.createElement('div'); ['eventType', 'dateFrom', 'dateTo'].forEach(function (key) { var input = document.createElement(key === 'eventType' ? 'select' : 'input'); if (key === 'eventType') { [['', 'Все типы'], ['RATING_MANUALLY_CHANGED', 'Ручные'], ['RATING_INITIAL_IMPORTED', 'Импорт'], ['RATING_BOOTSTRAPPED_FROM_VIVA', 'Bootstrap']].forEach(function (option) { var node = document.createElement('option'); node.value = option[0]; node.textContent = option[1]; input.appendChild(node); }); } else input.type = 'date'; input.value = state.playerRatingEventsFilter[key] || ''; input.addEventListener('change', function () { state.playerRatingEventsFilter[key] = input.value; loadPlayerRatingEvents().catch(handleError); }); filters.appendChild(input); }); historyHead.appendChild(filters); history.appendChild(historyHead); var timeline = document.createElement('div'); timeline.className = 'phab-admin-player-rating-timeline'; if (!state.selectedPlayerRatingEvents.length) { timeline.textContent = 'История пока пуста.'; } else state.selectedPlayerRatingEvents.forEach(function (event) { var row = document.createElement('div'); row.className = 'phab-admin-player-rating-event'; var values = document.createElement('div'); values.className = 'phab-admin-player-rating-event-values'; values.textContent = (event.before == null ? '—' : formatPlayerRatingNumeric(event.before)) + ' → ' + formatPlayerRatingNumeric(event.after) + (event.delta == null ? '' : ' (Δ ' + (event.delta > 0 ? '+' : '') + formatPlayerRatingNumeric(event.delta) + ')'); row.appendChild(values); var eventMeta = document.createElement('div'); eventMeta.className = 'phab-admin-player-rating-event-meta'; eventMeta.textContent = [event.eventType, formatTime(event.occurredAt), event.actor && (event.actor.name || event.actor.id)].filter(Boolean).join(' · '); row.appendChild(eventMeta); var reason = event.source && event.source.reason; if (reason) { var reasonNode = document.createElement('div'); reasonNode.className = 'phab-admin-player-rating-event-reason'; reasonNode.textContent = reason; row.appendChild(reasonNode); } timeline.appendChild(row); }); history.appendChild(timeline); dom.playerRatingDetail.appendChild(history);
+    }
+
+    async function searchPlayerRatings(append) {
+      var query = String(dom.playerRatingsSearchInput.value || '').trim();
+      state.playerRatingsQuery = query;
+      if (!query) { state.playerRatings = []; state.playerRatingsCursor = null; state.selectedPlayerRating = null; dom.playerRatingsSearchState.textContent = 'Введите телефон, имя или точный clientId.'; renderPlayerRatingsList(); renderPlayerRatingDetail(); return; }
+      if (playerRatingsSearchAbort) playerRatingsSearchAbort.abort();
+      playerRatingsSearchAbort = new AbortController();
+      var requestId = String(Date.now()) + Math.random(); state.playerRatingsLoading = true; dom.playerRatingsSearchState.textContent = 'Ищем в ЦУП…';
+      try { var result = await api.searchPlayerRatings({ q: query, limit: 20, cursor: append ? state.playerRatingsCursor : undefined }, { signal: playerRatingsSearchAbort.signal }); if (state.playerRatingsQuery !== query) return; var items = Array.isArray(result && result.items) ? result.items : []; state.playerRatings = append ? state.playerRatings.concat(items) : items; state.playerRatingsCursor = result && result.nextCursor ? result.nextCursor : null; dom.playerRatingsSearchState.textContent = items.length || append ? 'Найдено: ' + state.playerRatings.length : 'По текущему состоянию ЦУП ничего не найдено.'; renderPlayerRatingsList(); } catch (error) { if (error && error.name === 'AbortError') return; dom.playerRatingsSearchState.textContent = 'Не удалось загрузить результаты: ' + (error && error.message ? error.message : 'ошибка'); renderPlayerRatingsList(); } finally { state.playerRatingsLoading = false; if (requestId) {} }
+    }
+
+    async function selectPlayerRating(playerKey) {
+      state.selectedPlayerRatingKey = playerKey; state.selectedPlayerRating = null; state.selectedPlayerRatingEvents = []; renderPlayerRatingsList(); renderPlayerRatingDetail(); dom.playerRatingDetail.textContent = 'Загружаем карточку игрока…';
+      var player = await api.getPlayerRating(playerKey); if (state.selectedPlayerRatingKey !== playerKey) return; state.selectedPlayerRating = player; state.playerRatingEventsCursor = null; renderPlayerRatingsList(); await loadPlayerRatingEvents();
+    }
+
+    async function loadPlayerRatingEvents() {
+      var player = state.selectedPlayerRating; if (!player) return; var result = await api.getPlayerRatingEvents(player.playerKey, Object.assign({ limit: 50 }, state.playerRatingEventsFilter)); if (state.selectedPlayerRatingKey !== player.playerKey) return; state.selectedPlayerRatingEvents = Array.isArray(result && result.items) ? result.items : []; state.playerRatingEventsCursor = result && result.nextCursor ? result.nextCursor : null; renderPlayerRatingDetail();
+    }
+
+    function closePlayerRatingEdit() { dom.playerRatingEditModal.classList.add('phab-admin-hidden'); dom.playerRatingEditError.classList.add('phab-admin-hidden'); if (state.playerRatingEditReturnFocus && state.playerRatingEditReturnFocus.focus) state.playerRatingEditReturnFocus.focus(); state.playerRatingEditReturnFocus = null; }
+    function openPlayerRatingEdit(trigger) { var player = state.selectedPlayerRating; if (!player || !canManagePlayerRatings(cfg)) return; state.playerRatingEditReturnFocus = trigger || document.activeElement; dom.playerRatingEditCurrent.textContent = 'Сейчас: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditNumericInput.value = String(player.ratingNumeric); dom.playerRatingEditReasonInput.value = ''; dom.playerRatingEditGrade.textContent = 'Grade: ' + player.rating; dom.playerRatingEditConfirm.textContent = 'Будет: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' · ' + player.rating; dom.playerRatingEditModal.classList.remove('phab-admin-hidden'); dom.playerRatingEditNumericInput.focus(); }
+    function updatePlayerRatingEditPreview() { var player = state.selectedPlayerRating; var value = Number(dom.playerRatingEditNumericInput.value); var grade = mapPlayerRatingGradeV1(value); dom.playerRatingEditGrade.textContent = 'Grade: ' + grade; dom.playerRatingEditConfirm.textContent = player && grade !== '-' ? 'Подтвердите: ' + formatPlayerRatingNumeric(player.ratingNumeric) + ' → ' + formatPlayerRatingNumeric(value) : 'Укажите значение от 1 до 7'; }
+    function replacePlayerRatingInList(player) { state.playerRatings = state.playerRatings.map(function (item) { return item.playerKey === player.playerKey ? Object.assign({}, item, player) : item; }); renderPlayerRatingsList(); }
+    async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
+    async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
+
     function switchTab(nextTab) {
       if (
         isRestrictedStationAdmin &&
-        ['logs', 'analytics', 'settings', 'advertising', 'splitPromo'].indexOf(nextTab) >= 0
+        ['logs', 'analytics', 'settings', 'advertising'].indexOf(nextTab) >= 0
       ) {
         nextTab = 'messages';
       }
@@ -26008,16 +26956,19 @@
       if (!canAccessLaboratory(cfg) && nextTab === 'laboratory') {
         nextTab = 'messages';
       }
+      if (!canAccessPlayerRatings(cfg) && nextTab === 'playerRatings') {
+        nextTab = 'messages';
+      }
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
+      var isPlayerRatings = nextTab === 'playerRatings';
       var isLogs = nextTab === 'logs';
       var isTournaments = nextTab === 'tournaments';
       var isCommunities = nextTab === 'communities';
       var isLaboratory = nextTab === 'laboratory';
       var isAnalytics = nextTab === 'analytics';
-      var isSplitPromo = nextTab === 'splitPromo';
-      var isSettings = nextTab === 'settings' || isSplitPromo;
+      var isSettings = nextTab === 'settings';
       var isAdvertising = nextTab === 'advertising';
       var hideLogsTab = isRestrictedStationAdmin;
       var hideCommunitiesTab = !canAccessCommunities(cfg);
@@ -26025,10 +26976,13 @@
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
       var hideAdvertisingTab = isRestrictedStationAdmin;
-      var hideSplitPromoTab = isRestrictedStationAdmin;
 
       dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
       dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
+      dom.tabPlayerRatings.className =
+        'phab-admin-tab' +
+        (isPlayerRatings ? ' phab-admin-tab-active' : '') +
+        (!canAccessPlayerRatings(cfg) ? ' phab-admin-hidden' : '');
       dom.tabLogs.className =
         'phab-admin-tab' +
         (isLogs ? ' phab-admin-tab-active' : '') +
@@ -26049,19 +27003,16 @@
         (hideAnalyticsTab ? ' phab-admin-hidden' : '');
       dom.tabSettings.className =
         'phab-admin-tab' +
-        (isSettings && !isSplitPromo ? ' phab-admin-tab-active' : '') +
+        (isSettings ? ' phab-admin-tab-active' : '') +
         (hideSettingsTab ? ' phab-admin-hidden' : '');
       dom.tabAdvertising.className =
         'phab-admin-tab' +
         (isAdvertising ? ' phab-admin-tab-active' : '') +
         (hideAdvertisingTab ? ' phab-admin-hidden' : '');
-      dom.tabSplitPromo.className =
-        'phab-admin-tab' +
-        (isSplitPromo ? ' phab-admin-tab-active' : '') +
-        (hideSplitPromoTab ? ' phab-admin-hidden' : '');
       dom.mobileTabSelect.value = nextTab;
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
+      dom.playerRatingsSection.className = isPlayerRatings ? '' : 'phab-admin-hidden';
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
       dom.communitiesSection.className = isCommunities ? '' : 'phab-admin-hidden';
@@ -26074,9 +27025,6 @@
       }
       if (isAdvertising) {
         setAdvertisingSubtab(state.advertisingSubtab);
-      }
-      if (isSplitPromo) {
-        setSettingsSubtab('splitPromo');
       }
       if (!isMessages) {
         toggleMobileFiltersSheet(false);
@@ -26120,6 +27068,8 @@
           await refreshDialogsView();
         } else if (state.activeTab === 'games') {
           await loadGames();
+        } else if (state.activeTab === 'playerRatings') {
+          await searchPlayerRatings(false);
         } else if (state.activeTab === 'logs') {
           await loadGameEvents();
         } else if (state.activeTab === 'analytics') {
@@ -26135,9 +27085,6 @@
           await loadTournaments();
       } else if (state.activeTab === 'advertising') {
         await loadAdvertising();
-      } else if (state.activeTab === 'splitPromo') {
-        setSettingsSubtab('splitPromo');
-        await loadSettings();
       } else {
         await loadSettings();
       }
@@ -26154,7 +27101,6 @@
         dom.tabAnalytics.classList.add('phab-admin-hidden');
         dom.tabSettings.classList.add('phab-admin-hidden');
         dom.tabAdvertising.classList.add('phab-admin-hidden');
-        dom.tabSplitPromo.classList.add('phab-admin-hidden');
       }
       dom.tabMessages.addEventListener('click', function () {
         switchTab('messages');
@@ -26169,6 +27115,10 @@
         }
         if (nextTab === 'games') {
           loadGames().catch(handleError);
+          return;
+        }
+        if (nextTab === 'playerRatings') {
+          searchPlayerRatings(false).catch(handleError);
           return;
         }
         if (nextTab === 'logs') {
@@ -26199,17 +27149,30 @@
           loadAdvertising().catch(handleError);
           return;
         }
-        if (nextTab === 'splitPromo') {
-          setSettingsSubtab('splitPromo');
-          loadSettings().catch(handleError);
-          return;
-        }
         loadSettings().catch(handleError);
       });
       dom.tabGames.addEventListener('click', function () {
         switchTab('games');
         loadGames().catch(handleError);
       });
+      dom.tabPlayerRatings.addEventListener('click', function () {
+        switchTab('playerRatings');
+        searchPlayerRatings(false).catch(handleError);
+      });
+      dom.playerRatingsSearchInput.addEventListener('input', function () {
+        if (playerRatingsSearchTimer) window.clearTimeout(playerRatingsSearchTimer);
+        playerRatingsSearchTimer = window.setTimeout(function () { searchPlayerRatings(false).catch(handleError); }, 300);
+      });
+      dom.playerRatingsSearchInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { event.preventDefault(); searchPlayerRatings(false).catch(handleError); }
+      });
+      dom.playerRatingsSearchBtn.addEventListener('click', function () { searchPlayerRatings(false).catch(handleError); });
+      dom.playerRatingsLoadMoreBtn.addEventListener('click', function () { searchPlayerRatings(true).catch(handleError); });
+      dom.playerRatingEditCloseBtn.addEventListener('click', closePlayerRatingEdit);
+      dom.playerRatingEditCancelBtn.addEventListener('click', closePlayerRatingEdit);
+      dom.playerRatingEditModal.addEventListener('click', function (event) { if (event.target === dom.playerRatingEditModal) closePlayerRatingEdit(); });
+      dom.playerRatingEditNumericInput.addEventListener('input', updatePlayerRatingEditPreview);
+      dom.playerRatingEditForm.addEventListener('submit', function (event) { event.preventDefault(); savePlayerRatingEdit().catch(handleError); });
       dom.tabLogs.addEventListener('click', function () {
         switchTab('logs');
         loadGameEvents().catch(handleError);
@@ -26250,11 +27213,6 @@
       dom.tabAdvertising.addEventListener('click', function () {
         switchTab('advertising');
         loadAdvertising().catch(handleError);
-      });
-      dom.tabSplitPromo.addEventListener('click', function () {
-        switchTab('splitPromo');
-        setSettingsSubtab('splitPromo');
-        loadSettings().catch(handleError);
       });
       dom.settingsGeneralTabBtn.addEventListener('click', function () {
         setSettingsSubtab('general');
@@ -26708,6 +27666,10 @@
           closeImagePreviewModal();
           return;
         }
+        if (!dom.playerRatingEditModal.classList.contains('phab-admin-hidden')) {
+          closePlayerRatingEdit();
+          return;
+        }
         if (!dom.communityFeedEditorModal.classList.contains('phab-admin-hidden')) {
           closeCommunityFeedEditorModal();
           return;
@@ -26771,6 +27733,12 @@
       }
       if (dialogSearchTimer) {
         window.clearTimeout(dialogSearchTimer);
+      }
+      if (playerRatingsSearchTimer) {
+        window.clearTimeout(playerRatingsSearchTimer);
+      }
+      if (playerRatingsSearchAbort) {
+        playerRatingsSearchAbort.abort();
       }
       if (documentKeydownHandler) {
         document.removeEventListener('keydown', documentKeydownHandler);

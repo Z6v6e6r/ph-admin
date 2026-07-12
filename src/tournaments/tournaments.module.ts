@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { CommunitiesModule } from '../communities/communities.module';
 import { GamesModule } from '../games/games.module';
 import { LkPadelHubModule } from '../integrations/lk-padelhub/lk-padelhub.module';
-import { VivaAdminService } from '../integrations/viva/viva-admin.service';
+import { VivaAdminModule } from '../integrations/viva/viva-admin.module';
 import { AmericanoRatingSimulationService } from './americano-rating-simulation.service';
 import { VivaTournamentsService } from '../integrations/viva/viva-tournaments.service';
 import { AmericanoScheduleService } from './americano-schedule.service';
@@ -14,7 +14,7 @@ import { TournamentsService } from './tournaments.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
 @Module({
-  imports: [LkPadelHubModule, GamesModule, CommunitiesModule],
+  imports: [LkPadelHubModule, GamesModule, CommunitiesModule, VivaAdminModule],
   controllers: [TournamentsController, TournamentsPublicController],
   providers: [
     AmericanoScheduleService,
@@ -23,8 +23,7 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     TournamentsVivaStatusSyncService,
     TournamentsPersistenceService,
     TournamentsPublicSessionService,
-    VivaTournamentsService,
-    VivaAdminService
+    VivaTournamentsService
   ]
 })
 export class TournamentsModule {}

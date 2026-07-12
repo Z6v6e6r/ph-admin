@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { VivaAdminService } from '../integrations/viva/viva-admin.service';
+import { VivaAdminModule } from '../integrations/viva/viva-admin.module';
 import { QuickRepliesModule } from '../quick-replies/quick-replies.module';
 import { SupportModule } from '../support/support.module';
 import { AiConnectorService } from './ai/ai-connector.service';
@@ -8,13 +8,12 @@ import { MessengerPersistenceService } from './messenger-persistence.service';
 import { MessengerService } from './messenger.service';
 
 @Module({
-  imports: [QuickRepliesModule, SupportModule],
+  imports: [QuickRepliesModule, SupportModule, VivaAdminModule],
   controllers: [MessengerController],
   providers: [
     MessengerService,
     AiConnectorService,
-    MessengerPersistenceService,
-    VivaAdminService
+    MessengerPersistenceService
   ],
   exports: [MessengerService]
 })
