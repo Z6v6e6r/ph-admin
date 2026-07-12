@@ -72,6 +72,7 @@ interface MongoGameDoc {
   allRelatedPhones?: unknown;
   invitedPhones?: unknown;
   waitlistPhones?: unknown;
+  settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   result?: unknown;
   score?: unknown;
@@ -96,6 +97,18 @@ interface MongoGameDoc {
     studioName?: unknown;
     roomName?: unknown;
   };
+}
+
+interface MongoCommunityFeedDoc {
+  [key: string]: unknown;
+  id?: unknown;
+  feedItemId?: unknown;
+  postId?: unknown;
+  gameId?: unknown;
+  exerciseId?: unknown;
+  archived?: unknown;
+  status?: unknown;
+  details?: Record<string, unknown>;
 }
 
 interface MongoGameChatSenderDoc {
@@ -180,6 +193,12 @@ export class GamesService implements OnModuleDestroy {
   private readonly mongoCollectionName = this.readEnv('GAMES_MONGODB_COLLECTION') ?? 'lk_games';
   private readonly mongoEventsCollectionName =
     this.readEnv('GAMES_EVENTS_MONGODB_COLLECTION') ?? 'events';
+  private readonly communityFeedMongoDbName =
+    this.readEnv('COMMUNITIES_FEED_MONGODB_DB') ??
+    this.readEnv('COMMUNITIES_MONGODB_DB') ??
+    this.mongoDbName;
+  private readonly communityFeedCollectionName =
+    this.readEnv('COMMUNITIES_FEED_MONGODB_COLLECTION') ?? 'lk_community_feed';
   private readonly analyticsTimeZone = this.readEnv('GAMES_ANALYTICS_TIMEZONE') ?? 'Europe/Moscow';
 
   private readonly gameChatMongoUri =
@@ -408,6 +427,94 @@ export class GamesService implements OnModuleDestroy {
           allRelatedPhones
         },
         updatedAt: now.toISOString(),
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
+  }
+
+  async hideGameFromPublicList(id: string, user?: RequestUser): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user);
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+
+    const now = new Date();
+    const at = now.toISOString();
+    const actor = this.toGamePublicationActor(user);
+    await collection.updateOne(filter, {
+      $set: {
+        settings: {
+          ...this.toRecord(existing.settings),
+          isPrivate: true
+        },
+        metadata: {
+          ...this.toRecord(existing.metadata),
+          lastManualPublicListHideAt: at,
+          lastManualPublicListHideReason: 'ADMIN_HIDE_FROM_PUBLIC_LIST',
+          ...(actor ? { lastManualPublicListHideBy: actor } : {})
+        },
+        updatedAt: at,
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
+  }
+
+  async archiveGameCommunityPublications(id: string, user?: RequestUser): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user);
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+
+    const now = new Date();
+    const at = now.toISOString();
+    const metadata = this.toRecord(existing.metadata);
+    const actor = this.toGamePublicationActor(user);
+    const feedCollection = await this.getCommunityFeedCollection();
+    const archiveResult = await feedCollection.updateMany(
+      this.buildGameCommunityPublicationFilter(id, existing, metadata),
+      {
+        $set: {
+          archived: true,
+          status: 'ARCHIVED',
+          archivedAt: at,
+          archiveReason: 'ADMIN_ARCHIVE_GAME_PUBLICATION',
+          ...(actor ? { archivedBy: actor } : {}),
+          updatedAt: at
+        }
+      }
+    );
+
+    const nextMetadata = { ...metadata };
+    delete nextMetadata.communityAutoPublish;
+    delete nextMetadata.communityAutoPublishDev;
+    await collection.updateOne(filter, {
+      $set: {
+        metadata: {
+          ...nextMetadata,
+          lastManualCommunityPublicationArchiveAt: at,
+          lastManualCommunityPublicationArchiveReason: 'ADMIN_ARCHIVE_COMMUNITY_PUBLICATIONS',
+          lastManualCommunityPublicationArchiveCount: archiveResult.modifiedCount ?? 0,
+          ...(actor ? { lastManualCommunityPublicationArchiveBy: actor } : {})
+        },
+        updatedAt: at,
         updatedTs: now.getTime()
       }
     });
@@ -1608,6 +1715,13 @@ export class GamesService implements OnModuleDestroy {
     return db.collection<MongoGameEventDoc>(this.mongoEventsCollectionName);
   }
 
+  private async getCommunityFeedCollection() {
+    await this.getMongoDatabase();
+    return this.mongoClient!
+      .db(this.communityFeedMongoDbName)
+      .collection<MongoCommunityFeedDoc>(this.communityFeedCollectionName);
+  }
+
   private async getMongoDatabase() {
     if (!this.mongoUri) {
       throw new InternalServerErrorException(
@@ -1654,6 +1768,93 @@ export class GamesService implements OnModuleDestroy {
     return {
       $or: variants
     } as Filter<MongoGameDoc>;
+  }
+
+  private buildGameCommunityPublicationFilter(
+    gameId: string,
+    game: MongoGameDoc,
+    metadata: Record<string, unknown>
+  ): Filter<MongoCommunityFeedDoc> {
+    const identities = Array.from(
+      new Set(
+        [
+          gameId,
+          this.readString((game as Record<string, unknown>).exerciseId),
+          this.readString(metadata.exerciseId),
+          this.readString(metadata.vivaExerciseId),
+          this.readString(metadata.vivaExerciseID),
+          this.readString(metadata.paymentRef)
+        ].filter((value): value is string => Boolean(value))
+      )
+    );
+    const postIds = this.collectCommunityPublicationPostIds([
+      metadata.communityAutoPublish,
+      metadata.communityAutoPublishDev
+    ]);
+    const clauses: Record<string, unknown>[] = [];
+
+    if (identities.length > 0) {
+      [
+        'gameId',
+        'exerciseId',
+        'paymentRef',
+        'details.gameId',
+        'details.exerciseId',
+        'details.paymentRef',
+        'metadata.gameId',
+        'metadata.exerciseId',
+        'metadata.paymentRef'
+      ].forEach((field) => {
+        clauses.push({ [field]: { $in: identities } });
+      });
+    }
+
+    if (postIds.length > 0) {
+      ['id', 'feedItemId', 'postId', 'uuid'].forEach((field) => {
+        clauses.push({ [field]: { $in: postIds } });
+      });
+    }
+
+    return {
+      $or: clauses.length > 0 ? clauses : [{ gameId }]
+    } as Filter<MongoCommunityFeedDoc>;
+  }
+
+  private collectCommunityPublicationPostIds(value: unknown): string[] {
+    const values = new Set<string>();
+    const visit = (entry: unknown, depth: number) => {
+      if (depth > 5 || entry === null || entry === undefined) {
+        return;
+      }
+      if (typeof entry === 'string' || typeof entry === 'number') {
+        const normalized = String(entry).trim();
+        if (normalized) {
+          values.add(normalized);
+        }
+        return;
+      }
+      if (Array.isArray(entry)) {
+        entry.forEach((item) => visit(item, depth + 1));
+        return;
+      }
+      if (typeof entry === 'object') {
+        Object.values(entry as Record<string, unknown>).forEach((item) => visit(item, depth + 1));
+      }
+    };
+    visit(value, 0);
+    return Array.from(values);
+  }
+
+  private toGamePublicationActor(user?: RequestUser): Record<string, unknown> | undefined {
+    if (!user) {
+      return undefined;
+    }
+    return {
+      id: user.id,
+      ...(user.login ? { login: user.login } : {}),
+      ...(user.title ? { title: user.title } : {}),
+      roles: [...user.roles]
+    };
   }
 
   private normalizeGameEventsPagination(

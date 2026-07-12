@@ -218,9 +218,118 @@ async function testUpdateMetadataSynchronizesPhoneMirrors() {
   );
 }
 
+async function testHideGameFromPublicListPreservesGameLifecycle() {
+  const initialDoc: MutableGameDoc = {
+    _id: 'mongo-game-3',
+    id: 'game-3',
+    status: 'PAID',
+    archived: false,
+    settings: {
+      isPrivate: false,
+      ratingGame: true
+    },
+    booking: {
+      studioName: 'Дворотека',
+      roomName: 'Корт 3',
+      bookingIds: ['booking-3']
+    },
+    payment: {
+      paid: true,
+      paymentRef: 'pay-game-3'
+    },
+    metadata: {
+      vivaExerciseId: 'viva-game-3',
+      existingValue: 'keep-me'
+    }
+  };
+
+  const { service, getDoc } = createServiceWithDoc(initialDoc);
+  const updated = await service.hideGameFromPublicList('game-3', createAdminUser());
+  const saved = getDoc();
+  const settings = saved.settings as Record<string, unknown>;
+  const metadata = saved.metadata as Record<string, unknown>;
+  const audit = metadata.lastManualPublicListHideBy as Record<string, unknown>;
+
+  assert.equal(settings.isPrivate, true);
+  assert.equal(settings.ratingGame, true);
+  assert.equal(saved.status, 'PAID');
+  assert.equal(saved.archived, false);
+  assert.deepEqual(saved.booking, initialDoc.booking);
+  assert.deepEqual(saved.payment, initialDoc.payment);
+  assert.equal(metadata.vivaExerciseId, 'viva-game-3');
+  assert.equal(metadata.existingValue, 'keep-me');
+  assert.equal(metadata.lastManualPublicListHideReason, 'ADMIN_HIDE_FROM_PUBLIC_LIST');
+  assert.equal(typeof metadata.lastManualPublicListHideAt, 'string');
+  assert.equal(audit.id, 'admin-1');
+  assert.deepEqual(audit.roles, [Role.SUPER_ADMIN]);
+  assert.equal(
+    ((updated.details?.settings as Record<string, unknown> | undefined) ?? {}).isPrivate,
+    true
+  );
+}
+
+async function testArchiveGameCommunityPublicationsPreservesGameLifecycle() {
+  const initialDoc: MutableGameDoc = {
+    _id: 'mongo-game-4',
+    id: 'game-4',
+    status: 'PAID',
+    archived: false,
+    settings: {
+      isPrivate: false
+    },
+    payment: {
+      paid: true,
+      paymentRef: 'pay-game-4'
+    },
+    metadata: {
+      vivaExerciseId: 'viva-game-4',
+      communityAutoPublish: {
+        'community-1': { feedItemId: 'feed-1' },
+        'community-2': 'feed-2'
+      },
+      communityAutoPublishDev: {
+        'community-dev': { postId: 'feed-dev' }
+      },
+      existingValue: 'keep-me'
+    }
+  };
+  const { service, getDoc } = createServiceWithDoc(initialDoc);
+  let receivedFilter: Record<string, unknown> | undefined;
+  let receivedUpdate: Record<string, unknown> | undefined;
+  const feedCollection = {
+    async updateMany(filter: Record<string, unknown>, update: Record<string, unknown>) {
+      receivedFilter = filter;
+      receivedUpdate = update;
+      return { modifiedCount: 3 };
+    }
+  };
+  (service as unknown as { getCommunityFeedCollection: () => Promise<typeof feedCollection> }).getCommunityFeedCollection =
+    async () => feedCollection;
+
+  const updated = await service.archiveGameCommunityPublications('game-4', createAdminUser());
+  const saved = getDoc();
+  const metadata = saved.metadata as Record<string, unknown>;
+
+  assert.equal((receivedUpdate?.$set as Record<string, unknown>).archived, true);
+  assert.equal((receivedUpdate?.$set as Record<string, unknown>).status, 'ARCHIVED');
+  assert.equal(Array.isArray(receivedFilter?.$or), true);
+  assert.equal(JSON.stringify(receivedFilter).includes('feed-1'), true);
+  assert.equal(JSON.stringify(receivedFilter).includes('viva-game-4'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(metadata, 'communityAutoPublish'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(metadata, 'communityAutoPublishDev'), false);
+  assert.equal(metadata.lastManualCommunityPublicationArchiveCount, 3);
+  assert.equal(metadata.lastManualCommunityPublicationArchiveReason, 'ADMIN_ARCHIVE_COMMUNITY_PUBLICATIONS');
+  assert.equal(saved.status, 'PAID');
+  assert.equal(saved.archived, false);
+  assert.equal(metadata.existingValue, 'keep-me');
+  assert.equal(updated.id, 'game-4');
+}
+
 async function main() {
   await testRemovePlayerFromPublication();
   await testUpdateMetadataSynchronizesPhoneMirrors();
+  await testHideGameFromPublicListPreservesGameLifecycle();
+  await testArchiveGameCommunityPublicationsPreservesGameLifecycle();
   console.log('Games publication mutations test passed');
 }
 

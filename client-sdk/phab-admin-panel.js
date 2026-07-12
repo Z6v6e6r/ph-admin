@@ -3940,6 +3940,59 @@
       .phab-admin-detail-value{
         word-break:break-word;
       }
+      .phab-admin-game-publication-note{
+        padding:9px 10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:rgba(182,253,255,.2);
+        color:rgba(51,0,32,.78);
+        font-size:12px;
+        line-height:1.45;
+      }
+      .phab-admin-game-publication-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:rgba(255,255,255,.9);
+      }
+      .phab-admin-game-publication-row-copy{
+        min-width:0;
+        display:grid;
+        gap:3px;
+      }
+      .phab-admin-game-publication-row-title{
+        font-size:12px;
+        font-weight:800;
+        color:var(--cup-wine);
+      }
+      .phab-admin-game-publication-row-help{
+        font-size:11px;
+        line-height:1.35;
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-game-publication-status{
+        flex:0 0 auto;
+        padding:4px 7px;
+        border-radius:999px;
+        background:rgba(207,255,182,.7);
+        color:#245b20;
+        font-size:10px;
+        font-weight:800;
+        white-space:nowrap;
+      }
+      .phab-admin-game-publication-status--hidden{
+        background:rgba(51,0,32,.1);
+        color:rgba(51,0,32,.75);
+      }
+      .phab-admin-game-publication-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
       .phab-admin-detail-link{
         color:var(--cup-blue);
         font-weight:700;
@@ -4975,6 +5028,20 @@
           '/games/' + encodeURIComponent(gameId) + '/publication/remove-player',
           'POST',
           payload || {}
+        );
+      },
+      hideGameFromPublicList: function (gameId) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/publication/hide-game',
+          'POST',
+          {}
+        );
+      },
+      archiveGameCommunityPublications: function (gameId) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/publication/archive-community-posts',
+          'POST',
+          {}
         );
       },
       updateGameMetadata: function (gameId, metadata) {
@@ -11343,66 +11410,128 @@
         var canManagePublication =
           String(game.source || '') === 'LK_PADELHUB_MONGO' &&
           Object.keys(details).length > 0;
-        var publicationCard = createDetailCard('Управление публикацией', true);
+        var publicationCard = createDetailCard('Публикация игры', true);
         var publicationNote = document.createElement('div');
-        publicationNote.className = 'phab-admin-empty';
+        publicationNote.className = 'phab-admin-game-publication-note';
         publicationNote.textContent = canManagePublication
-          ? 'Действие снимает игрока из publication-полей игры и чистит типовые phone/teamSlot/joinResponses зеркала. Бронирование Viva не меняется.'
+          ? 'Публикация управляется отдельно от состава и бронирования: уже записанные игроки сохраняют доступ к игре, а Viva-бронирование не отменяется.'
           : 'Управление публикацией станет доступно после загрузки Mongo payload игры.';
         publicationCard.body.appendChild(publicationNote);
 
         if (canManagePublication) {
-          var publicationPlayers = buildGamePublicationParticipants(game, details);
-          if (publicationPlayers.length === 0) {
-            appendDetailRow(publicationCard.body, 'Игроки', 'Нет данных для снятия с публикации');
-          } else {
-            publicationPlayers.forEach(function (player, index) {
-              var row = document.createElement('div');
-              row.className = 'phab-admin-detail-row';
-              publicationCard.body.appendChild(row);
+          var hiddenFromPublicList = settings.isPrivate === true;
+          var publicRow = document.createElement('div');
+          publicRow.className = 'phab-admin-game-publication-row';
+          publicationCard.body.appendChild(publicRow);
 
-              var key = document.createElement('div');
-              key.className = 'phab-admin-detail-key';
-              key.textContent = player.phone || ('Игрок ' + String(index + 1));
-              row.appendChild(key);
+          var publicCopy = document.createElement('div');
+          publicCopy.className = 'phab-admin-game-publication-row-copy';
+          publicRow.appendChild(publicCopy);
 
-              var val = document.createElement('div');
-              val.className = 'phab-admin-detail-value';
-              row.appendChild(val);
+          var publicTitle = document.createElement('div');
+          publicTitle.className = 'phab-admin-game-publication-row-title';
+          publicTitle.textContent = 'Общий список и публичные витрины ЛК';
+          publicCopy.appendChild(publicTitle);
 
-              var summary = document.createElement('div');
-              summary.textContent = buildGamePublicationPlayerLabel(player);
-              val.appendChild(summary);
+          var publicHelp = document.createElement('div');
+          publicHelp.className = 'phab-admin-game-publication-row-help';
+          publicHelp.textContent = hiddenFromPublicList
+            ? 'Игра скрыта из публичной выдачи. Участники по-прежнему видят её в своих играх.'
+            : 'Игра видна в общем списке и публичных витринах личных кабинетов.';
+          publicCopy.appendChild(publicHelp);
 
-              var actionBtn = document.createElement('button');
-              actionBtn.type = 'button';
-              actionBtn.className = 'phab-admin-btn-secondary';
-              actionBtn.style.marginTop = '8px';
-              actionBtn.textContent = 'Снять с публикации';
-              actionBtn.disabled = !player.phone && !player.name;
-              actionBtn.addEventListener('click', function () {
-                var playerLabel = buildGamePublicationPlayerLabel(player);
-                if (!window.confirm('Снять с публикации: ' + playerLabel + '?')) {
-                  return;
-                }
-                actionBtn.disabled = true;
-                actionBtn.textContent = 'Снимаем...';
-                api.removeGamePlayerFromPublication(game.id, {
-                  phone: player.phone || undefined,
-                  name: player.name || undefined
-                })
-                  .then(function (updatedGame) {
-                    applyUpdatedGameDetails(updatedGame, 'Игрок снят с публикации');
-                  })
-                  .catch(handleError)
-                  .finally(function () {
-                    actionBtn.disabled = false;
-                    actionBtn.textContent = 'Снять с публикации';
-                  });
+          var publicStatus = document.createElement('span');
+          publicStatus.className =
+            'phab-admin-game-publication-status' +
+            (hiddenFromPublicList ? ' phab-admin-game-publication-status--hidden' : '');
+          publicStatus.textContent = hiddenFromPublicList ? 'СНЯТА' : 'ОПУБЛИКОВАНА';
+          publicRow.appendChild(publicStatus);
+
+          var communityRow = document.createElement('div');
+          communityRow.className = 'phab-admin-game-publication-row';
+          publicationCard.body.appendChild(communityRow);
+
+          var communityCopy = document.createElement('div');
+          communityCopy.className = 'phab-admin-game-publication-row-copy';
+          communityRow.appendChild(communityCopy);
+
+          var communityTitle = document.createElement('div');
+          communityTitle.className = 'phab-admin-game-publication-row-title';
+          communityTitle.textContent = 'Ленты сообществ';
+          communityCopy.appendChild(communityTitle);
+
+          var communityHelp = document.createElement('div');
+          communityHelp.className = 'phab-admin-game-publication-row-help';
+          communityHelp.textContent = metadata.lastManualCommunityPublicationArchiveAt
+            ? 'Связанные посты были архивированы ' + formatDateTimeFull(metadata.lastManualCommunityPublicationArchiveAt) + '.'
+            : 'Архивируйте все связанные посты игры, не отменяя игру и оплату.';
+          communityCopy.appendChild(communityHelp);
+
+          var communityStatus = document.createElement('span');
+          var communityArchived = Boolean(metadata.lastManualCommunityPublicationArchiveAt);
+          communityStatus.className =
+            'phab-admin-game-publication-status' +
+            (communityArchived ? ' phab-admin-game-publication-status--hidden' : '');
+          communityStatus.textContent = communityArchived ? 'АРХИВИРОВАНЫ' : 'ПРОВЕРИТЬ';
+          communityRow.appendChild(communityStatus);
+
+          var publicationActions = document.createElement('div');
+          publicationActions.className = 'phab-admin-game-publication-actions';
+          publicationCard.body.appendChild(publicationActions);
+
+          var hideGameBtn = document.createElement('button');
+          hideGameBtn.type = 'button';
+          hideGameBtn.className = 'phab-admin-btn-secondary';
+          hideGameBtn.textContent = hiddenFromPublicList
+            ? 'Игра снята с публикации'
+            : 'Снять игру с публикации';
+          hideGameBtn.disabled = hiddenFromPublicList;
+          hideGameBtn.addEventListener('click', function () {
+            if (!window.confirm(
+              'Снять игру с публикации? Она исчезнет из общего списка и публичных витрин ЛК. Бронирование Viva и доступ уже записанных игроков сохранятся.'
+            )) {
+              return;
+            }
+            hideGameBtn.disabled = true;
+            hideGameBtn.textContent = 'Снимаем...';
+            api.hideGameFromPublicList(game.id)
+              .then(function (updatedGame) {
+                applyUpdatedGameDetails(updatedGame, 'Игра снята с публикации');
+              })
+              .catch(handleError)
+              .finally(function () {
+                hideGameBtn.disabled = false;
+                hideGameBtn.textContent = 'Снять игру с публикации';
               });
-              val.appendChild(actionBtn);
-            });
-          }
+          });
+          publicationActions.appendChild(hideGameBtn);
+
+          var archiveCommunityBtn = document.createElement('button');
+          archiveCommunityBtn.type = 'button';
+          archiveCommunityBtn.className = 'phab-admin-btn-secondary';
+          archiveCommunityBtn.textContent = communityArchived
+            ? 'Публикации сообществ архивированы'
+            : 'Архивировать публикации в сообществах';
+          archiveCommunityBtn.disabled = communityArchived;
+          archiveCommunityBtn.addEventListener('click', function () {
+            if (!window.confirm(
+              'Архивировать связанные публикации игры в сообществах? Игра, Viva-бронирование и доступ участников не изменятся.'
+            )) {
+              return;
+            }
+            archiveCommunityBtn.disabled = true;
+            archiveCommunityBtn.textContent = 'Архивируем...';
+            api.archiveGameCommunityPublications(game.id)
+              .then(function (updatedGame) {
+                applyUpdatedGameDetails(updatedGame, 'Публикации игры в сообществах архивированы');
+              })
+              .catch(handleError)
+              .finally(function () {
+                archiveCommunityBtn.disabled = false;
+                archiveCommunityBtn.textContent = 'Архивировать публикации в сообществах';
+              });
+          });
+          publicationActions.appendChild(archiveCommunityBtn);
         }
         dom.gameModalBody.appendChild(publicationCard.card);
       }
