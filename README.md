@@ -76,6 +76,11 @@ API работает на `http://localhost:3000/api`.
 - `GAMES_MONGODB_URI=mongodb://...` (опционально; если не задано, используется `MONGODB_URI`)
 - `GAMES_MONGODB_DB=games` (опционально; по умолчанию `games`)
 - `GAMES_MONGODB_COLLECTION=lk_games` (опционально; по умолчанию `lk_games`)
+- `ADVERTISING_MONGODB_DB=dialog` (опционально; база настроек, ассетов, аудита и статистики рекламы)
+- `ADVERTISING_SETTINGS_COLLECTION=advertising_settings`
+- `ADVERTISING_ASSETS_COLLECTION=advertising_assets`
+- `ADVERTISING_ENGAGEMENTS_COLLECTION=advertising_engagements`
+- `ADVERTISING_ENGAGEMENT_SECRET=<32+ random chars>` (серверный ключ приёма показов и кликов от PadlHub API; не передавать в ЛК или клиентский bundle)
 - `ADMIN_AUTH_ENABLED=true|false` (по умолчанию `true`)
 - `ADMIN_AUTH_REQUIRE_STAFF_TOKEN=true|false` (по умолчанию `true`)
 - `ADMIN_AUTH_SECRET=<strong_secret>`

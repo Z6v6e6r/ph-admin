@@ -69,6 +69,7 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
   const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
   const originalTick = process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS;
+  const originalPastDays = process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS;
   const originalHydrateRetryMs = process.env.VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS;
   const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
   const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
@@ -76,6 +77,7 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
   process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'true';
   process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS = '600000';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS = '10000';
   delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
   delete process.env.TOURNAMENTS_MONGODB_URI;
   delete process.env.MONGODB_URI;
@@ -84,6 +86,7 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_TICK_MS', originalTick);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS', originalPastDays);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS', originalHydrateRetryMs);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
     restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);

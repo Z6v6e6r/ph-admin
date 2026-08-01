@@ -8,6 +8,8 @@ import { Role } from '../common/rbac/role.enum';
 
 type AdminUiQuery = {
   apiBaseUrl?: string;
+  notificationApiBaseUrl?: string;
+  notificationTenantKey?: string;
   userId?: string;
   roles?: string;
   stationIds?: string;
@@ -325,12 +327,12 @@ export class UiController {
   }
 
   @Get('admin')
-  adminPanel(
+  async adminPanel(
     @Req() request: Request,
     @Res() response: Response,
     @Query() query: AdminUiQuery
-  ): void {
-    const authContext = this.resolveAdminAuthContext(request);
+  ): Promise<void> {
+    const authContext = await this.resolveAdminAuthContext(request);
     if (authContext.redirectToLogin) {
       response.redirect(authContext.redirectToLogin);
       return;
@@ -355,6 +357,8 @@ export class UiController {
       apiBaseUrl: query.apiBaseUrl?.trim() || `${hostUrl}/api`,
       userId: authContext.user?.id || query.userId?.trim() || 'local-admin',
       roles,
+      roleIds: authContext.user?.roleIds || roles,
+      permissions: authContext.user?.permissions || [],
       stationIds,
       connectorRoutes,
       title: query.title?.trim() || 'ЦУП Дворотека',
@@ -362,6 +366,14 @@ export class UiController {
         Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 8000,
       playerRatingAdminEnabled:
         String(process.env.PLAYER_RATING_ADMIN_ENABLED ?? '').trim().toLowerCase() === 'true',
+      notificationApiBaseUrl:
+        query.notificationApiBaseUrl?.trim() ||
+        String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim() ||
+        undefined,
+      notificationTenantKey:
+        query.notificationTenantKey?.trim() ||
+        String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim() ||
+        'local-padel',
       authToken: authToken || undefined
     };
 
@@ -422,6 +434,7 @@ export class UiController {
       window.__PHAB_ADMIN_CONFIG__ = ${configJson};
     </script>
     <script src="/api/client-script/admin-panel.js"></script>
+    <script src="/api/client-script/gift-certificates-admin.js"></script>
     <script>
       (function bootstrap() {
         function start() {
@@ -446,8 +459,8 @@ export class UiController {
   }
 
   @Get('americano-lab')
-  americanoLab(@Req() request: Request, @Res() response: Response): void {
-    const authContext = this.resolveAdminAuthContext(request);
+  async americanoLab(@Req() request: Request, @Res() response: Response): Promise<void> {
+    const authContext = await this.resolveAdminAuthContext(request);
     if (authContext.redirectToLogin) {
       response.redirect(authContext.redirectToLogin);
       return;
@@ -468,22 +481,22 @@ export class UiController {
     response.send(readFileSync(filePath, 'utf8'));
   }
 
-  private resolveAdminAuthContext(request: Request): {
+  private async resolveAdminAuthContext(request: Request): Promise<{
     user?: RequestUser;
     redirectToLogin?: string;
-  } {
+  }> {
     if (!this.authService.isEnabled()) {
       return {};
     }
 
-    const resolved = this.authService.resolveUserFromRequest(request, {
+    const resolved = await this.authService.resolveUserFromRequest(request, {
       allowHeaderFallback: false
     });
 
     if (
       resolved.source !== 'token' ||
       !resolved.user ||
-      !this.authService.hasStaffRole(resolved.user.roles)
+      !this.authService.hasStaffAccess(resolved.user)
     ) {
       const nextPath = encodeURIComponent(request.originalUrl || '/api/ui/admin');
       return { redirectToLogin: `/api/ui/admin/login?next=${nextPath}` };

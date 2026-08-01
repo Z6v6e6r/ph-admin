@@ -13,6 +13,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { Permissions } from '../common/rbac/permissions.decorator';
 import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { RemoveGamePublicationPlayerDto } from './dto/remove-game-publication-player.dto';
 import { UpdateGameMetadataDto } from './dto/update-game-metadata.dto';
@@ -31,6 +32,7 @@ import {
 } from './games.types';
 
 @Controller('games')
+@Permissions('games:read')
 @Roles(
   Role.SUPER_ADMIN,
   Role.SUPPORT,
@@ -45,6 +47,13 @@ export class GamesController {
   @Get()
   findAll(
     @Query('phone') phone?: string,
+    @Query('q') query?: string,
+    @Query('date') date?: string,
+    @Query('station') station?: string,
+    @Query('status') status?: string,
+    @Query('publication') publication?: string,
+    @Query('view') quickFilter?: string,
+    @Query('lifecycle') lifecycle?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('sortField') sortField?: string,
@@ -53,6 +62,13 @@ export class GamesController {
   ): Promise<GameListResult> {
     const filters: GameListFilters = {
       phone,
+      query,
+      date,
+      station,
+      status,
+      publication: publication as GameListFilters['publication'],
+      quickFilter: quickFilter as GameListFilters['quickFilter'],
+      lifecycle: lifecycle as GameListFilters['lifecycle'],
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
       sortField: sortField as GameListFilters['sortField'],
@@ -122,9 +138,10 @@ export class GamesController {
   }
 
   @Delete('events/:id')
+  @Permissions('games:write')
   @Roles(Role.SUPER_ADMIN)
-  deleteEvent(@Param('id') id: string): Promise<void> {
-    return this.gamesService.deleteEvent(id);
+  deleteEvent(@Param('id') id: string, @CurrentUser() user?: RequestUser): Promise<void> {
+    return this.gamesService.deleteEvent(id, user);
   }
 
   @Get(':id/chat')
@@ -140,6 +157,7 @@ export class GamesController {
   }
 
   @Post(':id/chat/messages')
+  @Permissions('games:write')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.GAME_MANAGER, Role.MANAGER, Role.TOURNAMENT_MANAGER)
   sendGameChatMessage(
     @Param('id') id: string,
@@ -153,6 +171,7 @@ export class GamesController {
   }
 
   @Post(':id/publication/remove-player')
+  @Permissions('games:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -169,6 +188,7 @@ export class GamesController {
   }
 
   @Post(':id/publication/hide-game')
+  @Permissions('games:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -184,6 +204,7 @@ export class GamesController {
   }
 
   @Post(':id/publication/archive-community-posts')
+  @Permissions('games:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -198,7 +219,24 @@ export class GamesController {
     return this.gamesService.archiveGameCommunityPublications(id, user);
   }
 
+  @Post(':id/publication/hide-player-cabinets')
+  @Permissions('games:write')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.SUPPORT,
+    Role.GAME_MANAGER,
+    Role.MANAGER,
+    Role.TOURNAMENT_MANAGER
+  )
+  hideGameFromPlayerCabinets(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<Game> {
+    return this.gamesService.hideGameFromPlayerCabinets(id, user);
+  }
+
   @Patch(':id/metadata')
+  @Permissions('games:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,

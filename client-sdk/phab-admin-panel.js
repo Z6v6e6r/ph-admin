@@ -5,13 +5,18 @@
     title: 'ЦУП Дворотека',
     userId: '',
     roles: [],
+    roleIds: [],
+    permissions: [],
     role: '',
     stationIds: [],
     connectorRoutes: [],
     pollIntervalMs: 8000,
     authHeaders: {},
     authToken: '',
-    playerRatingAdminEnabled: false
+    playerRatingAdminEnabled: false,
+    notificationApiBaseUrl: '',
+    notificationTenantKey: 'local-padel',
+    notificationAppVersion: 'phab-cup-local-0.1.0'
   };
 
   var STYLE_ID = 'phab-admin-panel-style';
@@ -175,6 +180,24 @@
     'SUPPORT',
     'CLIENT'
   ];
+  var ADMIN_PERMISSION_OPTIONS = [
+    ['dialogs:read', 'Диалоги — чтение'],
+    ['dialogs:write', 'Диалоги — ответы и изменение статуса'],
+    ['games:read', 'Игры — чтение'],
+    ['games:write', 'Игры — изменения и публикация'],
+    ['tournaments:read', 'Турниры — чтение'],
+    ['tournaments:write', 'Турниры — создание и изменения'],
+    ['settings:read', 'Настройки — просмотр'],
+    ['settings:write', 'Настройки — изменение'],
+    ['admin-users:read', 'Админы и управляющие — просмотр'],
+    ['admin-users:write', 'Админы и управляющие — изменение'],
+    ['access:manage', 'Роли и права — изменение'],
+    ['audit:read', 'Журнал действий — просмотр'],
+    ['player-ratings:read', 'Уровни игроков — просмотр'],
+    ['player-ratings:write', 'Уровни игроков — изменение'],
+    ['advertising:read', 'Реклама — просмотр'],
+    ['advertising:write', 'Реклама — изменение']
+  ];
   var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
   var MAX_FAVICON_URL = 'https://max.ru/favicon.ico';
   var FFC_FAVICON_URL = 'https://ffc.team/favicon.ico';
@@ -318,6 +341,20 @@
         cfg.roles.unshift(normalizedRole);
       }
     }
+    if (!Array.isArray(cfg.roleIds)) {
+      cfg.roleIds = cfg.roles.slice();
+    }
+    cfg.roleIds = cfg.roleIds
+      .map(function (roleId) { return String(roleId || '').trim(); })
+      .filter(Boolean)
+      .filter(function (roleId, index, list) { return list.indexOf(roleId) === index; });
+    if (!Array.isArray(cfg.permissions)) {
+      cfg.permissions = [];
+    }
+    cfg.permissions = cfg.permissions
+      .map(function (permission) { return String(permission || '').trim(); })
+      .filter(Boolean)
+      .filter(function (permission, index, list) { return list.indexOf(permission) === index; });
     if (!Array.isArray(cfg.stationIds)) {
       cfg.stationIds = [];
     }
@@ -336,6 +373,11 @@
     cfg.playerRatingAdminEnabled =
       cfg.playerRatingAdminEnabled === true ||
       String(cfg.playerRatingAdminEnabled || '').trim().toLowerCase() === 'true';
+    cfg.notificationApiBaseUrl = String(cfg.notificationApiBaseUrl || '').replace(/\/+$/, '');
+    cfg.notificationTenantKey = String(cfg.notificationTenantKey || 'local-padel').trim();
+    cfg.notificationAppVersion = String(
+      cfg.notificationAppVersion || DEFAULTS.notificationAppVersion
+    ).trim();
     return cfg;
   }
 
@@ -3386,6 +3428,730 @@
       .phab-admin-games-rating-cell .phab-admin-games-cell-line{
         white-space:pre-wrap;
       }
+      .phab-admin-games-v2{
+        display:grid;
+        gap:12px;
+        min-width:0;
+        color:var(--cup-wine);
+      }
+      .phab-admin-games-page-header{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:18px;
+        padding:8px 2px 2px;
+      }
+      .phab-admin-games-page-title{
+        margin:0;
+        font-family:var(--cup-font-heading);
+        font-size:28px;
+        line-height:1.15;
+        letter-spacing:-.025em;
+        text-transform:none;
+      }
+      .phab-admin-games-page-subtitle{
+        margin:6px 0 0;
+        color:rgba(51,0,32,.64);
+        font-size:13px;
+        line-height:1.45;
+      }
+      .phab-admin-games-page-actions{
+        position:relative;
+        display:flex;
+        align-items:center;
+        justify-content:flex-end;
+        gap:14px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-games-found{
+        font-size:13px;
+        white-space:nowrap;
+      }
+      .phab-admin-games-found strong{margin-left:6px;font-size:15px}
+      .phab-admin-games-view-switch{
+        display:inline-flex;
+        align-items:center;
+        padding:3px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        background:rgba(255,255,255,.78);
+      }
+      .phab-admin-games-view-btn{
+        min-height:32px;
+        padding:7px 12px;
+        border:0;
+        border-radius:9px;
+        background:transparent;
+        color:rgba(51,0,32,.68);
+        font:800 11px/1 var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-admin-games-view-btn.is-active{
+        background:var(--cup-wine);
+        color:#fff;
+        box-shadow:0 4px 12px rgba(51,0,32,.18);
+      }
+      .phab-admin-games-columns-panel{
+        position:absolute;
+        z-index:30;
+        top:calc(100% + 8px);
+        right:0;
+        width:min(320px,calc(100vw - 32px));
+        padding:12px;
+        border:1px solid rgba(51,0,32,.16);
+        border-radius:14px;
+        background:#fff;
+        box-shadow:0 18px 44px rgba(38,9,29,.18);
+      }
+      .phab-admin-games-columns-title{
+        margin:0 0 9px;
+        font-size:12px;
+        font-weight:800;
+      }
+      .phab-admin-games-columns-list{display:grid;gap:8px}
+      .phab-admin-games-column-option{
+        display:flex;
+        align-items:center;
+        gap:9px;
+        font-size:12px;
+        cursor:pointer;
+      }
+      .phab-admin-games-quick-filters{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        flex-wrap:wrap;
+      }
+      .phab-admin-games-quick-filter{
+        min-height:34px;
+        padding:7px 16px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:999px;
+        background:rgba(255,255,255,.82);
+        color:var(--cup-wine);
+        font:700 12px/1 var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-admin-games-quick-filter:hover{background:#fff}
+      .phab-admin-games-quick-filter.is-active{
+        border-color:var(--cup-wine);
+        background:var(--cup-wine);
+        color:#fff;
+        box-shadow:0 6px 14px rgba(51,0,32,.18);
+      }
+      .phab-admin-games-schedule-toolbar{
+        display:flex;
+        align-items:flex-end;
+        gap:10px;
+        flex-wrap:wrap;
+        padding:12px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:14px;
+        background:rgba(255,255,255,.8);
+      }
+      .phab-admin-games-schedule-date-nav{
+        display:flex;
+        align-items:center;
+        gap:6px;
+      }
+      .phab-admin-games-schedule-toolbar .phab-admin-settings-input{height:40px;background:#fff}
+      .phab-admin-games-schedule-toolbar .phab-admin-btn-secondary{height:40px}
+      .phab-admin-games-schedule-date{width:158px}
+      .phab-admin-games-schedule-station{min-width:220px}
+      .phab-admin-games-schedule-status-switch{
+        display:inline-flex;
+        align-items:center;
+        align-self:center;
+        padding:3px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        background:#fff;
+      }
+      .phab-admin-games-schedule-status-btn{
+        min-height:32px;
+        padding:7px 12px;
+        border:0;
+        border-radius:9px;
+        background:transparent;
+        color:rgba(51,0,32,.68);
+        font:800 11px/1 var(--cup-font-body);
+        white-space:nowrap;
+        cursor:pointer;
+      }
+      .phab-admin-games-schedule-status-btn:hover{background:#f7f1f5;color:var(--cup-wine)}
+      .phab-admin-games-schedule-status-btn.is-active{
+        background:var(--cup-wine);
+        color:#fff;
+        box-shadow:0 4px 12px rgba(51,0,32,.16);
+      }
+      .phab-admin-games-schedule-status-btn:focus-visible{
+        outline:3px solid rgba(52,121,255,.34);
+        outline-offset:2px;
+      }
+      .phab-admin-games-schedule-note{
+        flex:1 1 260px;
+        align-self:center;
+        color:rgba(51,0,32,.56);
+        font-size:11px;
+        line-height:1.4;
+      }
+      .phab-admin-games-filter-panel{
+        display:grid;
+        grid-template-columns:minmax(250px,1.35fr) minmax(150px,.72fr) minmax(150px,.75fr) minmax(150px,.75fr) minmax(150px,.8fr) auto;
+        gap:10px;
+        align-items:end;
+        padding:12px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:14px 14px 0 0;
+        background:rgba(255,255,255,.76);
+      }
+      .phab-admin-games-filter-field{display:grid;gap:5px;min-width:0}
+      .phab-admin-games-filter-label{
+        font-size:10px;
+        font-weight:800;
+        color:rgba(51,0,32,.58);
+      }
+      .phab-admin-games-filter-panel .phab-admin-settings-input{
+        height:42px;
+        min-width:0;
+        padding:9px 11px;
+        background:#fff;
+      }
+      .phab-admin-games-filter-reset{height:42px;white-space:nowrap}
+      .phab-admin-games-filter-note{
+        grid-column:1/-1;
+        color:rgba(51,0,32,.54);
+        font-size:10px;
+        line-height:1.35;
+      }
+      .phab-admin-games-bulk{
+        display:flex;
+        align-items:center;
+        gap:9px;
+        min-height:46px;
+        padding:7px 12px;
+        border-inline:1px solid rgba(51,0,32,.12);
+        background:linear-gradient(90deg,rgba(182,253,255,.4),rgba(221,200,252,.48));
+      }
+      .phab-admin-games-bulk-count{
+        margin-right:4px;
+        font-size:12px;
+        font-weight:800;
+      }
+      .phab-admin-games-bulk .phab-admin-btn-secondary{background:rgba(255,255,255,.92)}
+      .phab-admin-games-table-shell{
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:0 0 14px 14px;
+        background:rgba(255,255,255,.93);
+        box-shadow:0 10px 26px rgba(51,0,32,.06);
+      }
+      .phab-admin-games-v2 .phab-admin-games-table-wrap{overflow:auto}
+      .phab-admin-games-v2 .phab-admin-games-table-wrap .phab-admin-games-table{
+        min-width:1120px;
+      }
+      .phab-admin-games-v2 .phab-admin-games-table{
+        border:0;
+        border-radius:0;
+        box-shadow:none;
+        background:#fff;
+      }
+      .phab-admin-games-v2 .phab-admin-games-table th,
+      .phab-admin-games-v2 .phab-admin-games-table td{
+        padding:10px 12px;
+        vertical-align:middle;
+        font-size:12px;
+      }
+      .phab-admin-games-v2 .phab-admin-games-table th{
+        height:42px;
+        background:#fbf8fa;
+        font-family:var(--cup-font-body);
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:0;
+        text-transform:none;
+        white-space:nowrap;
+      }
+      .phab-admin-games-v2 .phab-admin-games-table tbody tr{
+        height:72px;
+        background:#fff;
+      }
+      .phab-admin-games-v2 .phab-admin-games-table tbody tr:nth-child(even){background:#fff}
+      .phab-admin-games-v2 .phab-admin-games-table tbody tr:hover{background:#fff9f2 !important}
+      .phab-admin-games-v2 .phab-admin-games-table tbody tr.is-selected{
+        background:rgba(221,200,252,.2) !important;
+        box-shadow:inset 3px 0 0 var(--cup-wine);
+      }
+      .phab-admin-games-checkbox{
+        width:17px;
+        height:17px;
+        margin:0;
+        accent-color:var(--cup-wine);
+        cursor:pointer;
+      }
+      .phab-admin-games-primary{
+        display:block;
+        overflow:hidden;
+        color:var(--cup-wine);
+        font-size:12px;
+        font-weight:800;
+        line-height:1.35;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-admin-games-secondary{
+        display:block;
+        margin-top:3px;
+        overflow:hidden;
+        color:rgba(51,0,32,.58);
+        font-size:11px;
+        line-height:1.35;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-admin-games-date-day{text-transform:lowercase}
+      .phab-admin-games-players-preview{position:relative;display:inline-block}
+      .phab-admin-games-players-summary{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        list-style:none;
+        cursor:pointer;
+      }
+      .phab-admin-games-players-summary::-webkit-details-marker{display:none}
+      .phab-admin-games-avatar-stack{display:flex;align-items:center;padding-left:5px}
+      .phab-admin-games-avatar{
+        display:grid;
+        width:28px;
+        height:28px;
+        margin-left:-5px;
+        place-items:center;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:50%;
+        background:#f3edff;
+        color:var(--cup-wine);
+        font-size:9px;
+        font-weight:800;
+      }
+      .phab-admin-games-avatar:nth-child(2){background:#fff3df}
+      .phab-admin-games-avatar:nth-child(3){background:#e7f8e9}
+      .phab-admin-games-avatar img{width:100%;height:100%;object-fit:cover}
+      .phab-admin-games-avatar.is-more{border-style:dashed;background:#fff;color:rgba(51,0,32,.66)}
+      .phab-admin-games-players-count{font-size:11px;color:rgba(51,0,32,.64);white-space:nowrap}
+      .phab-admin-games-players-popover{
+        position:absolute;
+        z-index:50;
+        top:calc(100% + 7px);
+        left:0;
+        width:300px;
+        max-height:280px;
+        overflow:auto;
+        padding:9px;
+        border:1px solid rgba(51,0,32,.15);
+        border-radius:12px;
+        background:#fff;
+        box-shadow:0 16px 36px rgba(38,9,29,.18);
+      }
+      .phab-admin-games-player-popover-row{display:grid;gap:2px;padding:7px;border-radius:9px}
+      .phab-admin-games-player-popover-row + .phab-admin-games-player-popover-row{border-top:1px solid rgba(51,0,32,.08)}
+      .phab-admin-games-player-popover-row strong{font-size:11px}
+      .phab-admin-games-player-popover-row span{font-size:10px;color:rgba(51,0,32,.62)}
+      .phab-admin-games-badge{
+        display:inline-flex;
+        align-items:center;
+        gap:5px;
+        min-height:25px;
+        max-width:150px;
+        padding:4px 9px;
+        overflow:hidden;
+        border-radius:8px;
+        background:#f3f0f3;
+        color:#5d4c58;
+        font-size:10px;
+        font-weight:800;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-admin-games-badge.is-success{background:#e8f8e3;color:#347923}
+      .phab-admin-games-badge.is-info{background:#e7f2ff;color:#2469b7}
+      .phab-admin-games-badge.is-warning{background:#fff1de;color:#b86400}
+      .phab-admin-games-badge.is-danger{background:#ffe5e8;color:#c52d3f}
+      .phab-admin-games-badge.is-private{background:#eee8fb;color:#58449d}
+      .phab-admin-games-result-score{font-size:12px;font-weight:800}
+      .phab-admin-games-result-delta{margin-top:3px;font-size:11px;color:#319755}
+      .phab-admin-games-result-delta.is-negative{color:#c33c4d}
+      .phab-admin-games-result-missing{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700}
+      .phab-admin-games-result-note{margin-top:3px;font-size:10px;color:rgba(51,0,32,.52)}
+      .phab-admin-games-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+      .phab-admin-games-icon-btn{
+        display:grid;
+        width:36px;
+        height:36px;
+        padding:0;
+        place-items:center;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:10px;
+        background:#fff;
+        color:var(--cup-wine);
+        font-size:15px;
+        cursor:pointer;
+      }
+      .phab-admin-games-icon-btn:disabled{opacity:.42;cursor:not-allowed}
+      .phab-admin-games-row-menu{position:relative}
+      .phab-admin-games-row-menu summary{list-style:none}
+      .phab-admin-games-row-menu summary::-webkit-details-marker{display:none}
+      .phab-admin-games-row-menu-popover{
+        position:absolute;
+        z-index:60;
+        top:calc(100% + 5px);
+        right:0;
+        display:grid;
+        width:190px;
+        padding:6px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:12px;
+        background:#fff;
+        box-shadow:0 16px 36px rgba(38,9,29,.18);
+      }
+      .phab-admin-games-row-menu-popover button{
+        padding:8px 9px;
+        border:0;
+        border-radius:8px;
+        background:transparent;
+        color:var(--cup-wine);
+        font:600 11px/1.3 var(--cup-font-body);
+        text-align:left;
+        cursor:pointer;
+      }
+      .phab-admin-games-row-menu-popover button:hover{background:#f7f1f5}
+      .phab-admin-games-table-empty{padding:44px 20px !important;text-align:center !important;color:rgba(51,0,32,.6)}
+      .phab-admin-games-footer{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        padding:11px 12px;
+        border-top:1px solid rgba(51,0,32,.1);
+        background:#fff;
+      }
+      .phab-admin-games-footer-left{font-size:11px;color:rgba(51,0,32,.6)}
+      .phab-admin-games-footer-right{display:flex;align-items:center;gap:10px}
+      .phab-admin-games-v2 .phab-admin-games-pagesize{font-size:11px;font-weight:500}
+      .phab-admin-games-v2 .phab-admin-games-pagesize select{width:76px;height:34px}
+      .phab-admin-games-v2 .phab-admin-games-pagination .phab-admin-btn-secondary{min-width:34px;height:34px;padding:5px 9px}
+      .phab-admin-games-schedule-shell{
+        display:grid;
+        gap:12px;
+        min-width:0;
+      }
+      .phab-admin-games-schedule-summary{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        padding:0 2px;
+        color:rgba(51,0,32,.66);
+        font-size:12px;
+      }
+      .phab-admin-games-schedule-board{display:grid;gap:14px;min-width:0}
+      .phab-admin-games-schedule-empty{
+        padding:48px 20px;
+        border:1px dashed rgba(51,0,32,.2);
+        border-radius:14px;
+        background:rgba(255,255,255,.72);
+        color:rgba(51,0,32,.58);
+        font-size:13px;
+        text-align:center;
+      }
+      .phab-admin-games-schedule-station-block{
+        min-width:0;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:16px;
+        background:rgba(255,255,255,.9);
+        box-shadow:0 10px 26px rgba(51,0,32,.06);
+      }
+      .phab-admin-games-schedule-station-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        padding:12px 14px;
+        border-bottom:1px solid rgba(51,0,32,.09);
+        background:linear-gradient(90deg,rgba(183,255,226,.38),rgba(190,238,255,.34));
+      }
+      .phab-admin-games-schedule-station-title{margin:0;font-size:14px}
+      .phab-admin-games-schedule-station-count{font-size:11px;color:rgba(51,0,32,.6)}
+      .phab-admin-games-schedule-courts{
+        display:grid;
+        grid-auto-columns:minmax(250px,1fr);
+        grid-auto-flow:column;
+        gap:10px;
+        overflow-x:auto;
+        padding:10px;
+        scroll-snap-type:x proximity;
+      }
+      .phab-admin-games-schedule-court{
+        display:grid;
+        align-content:start;
+        gap:8px;
+        min-height:132px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:12px;
+        background:#fbfafb;
+        scroll-snap-align:start;
+      }
+      .phab-admin-games-schedule-court-title{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+        padding-bottom:8px;
+        border-bottom:1px solid rgba(51,0,32,.08);
+        font-size:11px;
+        font-weight:800;
+      }
+      .phab-admin-games-schedule-court-count{color:rgba(51,0,32,.48);font-size:10px;font-weight:600}
+      .phab-admin-games-schedule-card{
+        display:grid;
+        gap:8px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-left:4px solid #2ab46d;
+        border-radius:11px;
+        background:#fff;
+        box-shadow:0 5px 14px rgba(51,0,32,.05);
+        cursor:pointer;
+      }
+      .phab-admin-games-schedule-card:hover{border-color:rgba(51,0,32,.24);transform:translateY(-1px)}
+      .phab-admin-games-schedule-card.is-cancelled{
+        border-color:#d9505f;
+        border-left-color:#b91c32;
+        background:#fff1f2;
+        box-shadow:0 5px 14px rgba(185,28,50,.1);
+      }
+      .phab-admin-games-schedule-card.is-cancelled:hover{border-color:#a8142a}
+      .phab-admin-games-schedule-card.is-cancelled .phab-admin-games-schedule-card-time,
+      .phab-admin-games-schedule-card.is-cancelled .phab-admin-games-schedule-card-title{color:#8f1426}
+      .phab-admin-games-schedule-card.is-cancelled .phab-admin-games-schedule-card-meta{color:#6f2631}
+      .phab-admin-games-schedule-card-time{font-size:13px;font-weight:900}
+      .phab-admin-games-schedule-card-title{font-size:11px;font-weight:800;line-height:1.35}
+      .phab-admin-games-schedule-card-meta{color:rgba(51,0,32,.6);font-size:10px;line-height:1.4}
+      .phab-admin-games-schedule-card-badges{display:flex;gap:5px;flex-wrap:wrap}
+      .phab-admin-games-schedule-card-action{
+        width:100%;
+        min-height:31px;
+        padding:6px 9px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:8px;
+        background:#fff;
+        color:var(--cup-wine);
+        font:800 10px/1 var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-admin-game-details-modal{padding:12px;overflow:hidden}
+      .phab-admin-game-details-modal .phab-admin-game-details-shell{
+        width:min(1540px,calc(100vw - 24px));
+        height:calc(100dvh - 24px);
+        max-height:calc(100dvh - 24px);
+        margin:0;
+        border-radius:16px;
+      }
+      .phab-admin-game-details-modal .phab-admin-modal-head{
+        flex:0 0 auto;
+        min-height:48px;
+        padding:8px 14px;
+        background:#fff;
+      }
+      .phab-admin-game-details-modal .phab-admin-modal-title{
+        font-family:var(--cup-font-body);
+        font-size:12px;
+        letter-spacing:0;
+        text-transform:none;
+        border:0;
+        background:transparent;
+        cursor:pointer;
+      }
+      .phab-admin-game-details-modal .phab-admin-game-details-content{
+        display:flex;
+        flex:1 1 auto;
+        min-height:0;
+        padding:0;
+        overflow:hidden;
+      }
+      .phab-admin-game-details-page{
+        display:flex;
+        flex:1 1 auto;
+        min-height:0;
+        flex-direction:column;
+        background:#f8faf9;
+      }
+      .phab-admin-game-details-hero{
+        flex:0 0 auto;
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:18px;
+        padding:15px 18px 14px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        background:#fff;
+      }
+      .phab-admin-game-details-heading{min-width:0}
+      .phab-admin-game-details-title{
+        margin:0;
+        overflow:hidden;
+        font-size:19px;
+        line-height:1.25;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-admin-game-details-date{margin-top:4px;font-size:13px;color:rgba(51,0,32,.72)}
+      .phab-admin-game-details-badges{display:flex;align-items:center;gap:7px;margin-top:9px;flex-wrap:wrap}
+      .phab-admin-game-details-meta{margin-top:9px;font-size:10px;color:rgba(51,0,32,.53)}
+      .phab-admin-game-details-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+      .phab-admin-game-details-tabs{
+        flex:0 0 auto;
+        display:flex;
+        align-items:center;
+        gap:4px;
+        padding:7px 16px 0;
+        overflow-x:auto;
+        border-bottom:1px solid rgba(51,0,32,.11);
+        background:#fff;
+      }
+      .phab-admin-game-details-tab{
+        min-height:39px;
+        padding:9px 12px;
+        border:0;
+        border-bottom:2px solid transparent;
+        background:transparent;
+        color:rgba(51,0,32,.72);
+        font:700 11px/1.2 var(--cup-font-body);
+        white-space:nowrap;
+        cursor:pointer;
+      }
+      .phab-admin-game-details-tab[aria-selected='true']{border-bottom-color:#37b458;color:var(--cup-wine)}
+      .phab-admin-game-details-scroll{
+        flex:1 1 auto;
+        min-height:0;
+        overflow-y:auto;
+        overflow-x:hidden;
+        overscroll-behavior:contain;
+        -webkit-overflow-scrolling:touch;
+        padding:10px;
+      }
+      .phab-admin-game-overview-layout{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) minmax(300px,32%);
+        gap:10px;
+        align-items:start;
+      }
+      .phab-admin-game-main-column,.phab-admin-game-side-column{display:grid;gap:10px;min-width:0}
+      .phab-admin-game-details-card{
+        min-width:0;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.11);
+        border-radius:12px;
+        background:#fff;
+      }
+      .phab-admin-game-details-card-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:10px 13px;
+        border-bottom:1px solid rgba(51,0,32,.08);
+      }
+      .phab-admin-game-details-card-title{margin:0;font-size:12px;font-weight:800}
+      .phab-admin-game-details-card-body{padding:11px 13px}
+      .phab-admin-game-info-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0}
+      .phab-admin-game-info-group{display:grid;align-content:start;gap:8px;padding:0 14px;border-left:1px solid rgba(51,0,32,.09)}
+      .phab-admin-game-info-group:first-child{padding-left:0;border-left:0}
+      .phab-admin-game-info-item{display:grid;grid-template-columns:minmax(86px,.9fr) minmax(0,1fr);gap:8px;font-size:11px}
+      .phab-admin-game-info-item dt{color:rgba(51,0,32,.56)}
+      .phab-admin-game-info-item dd{margin:0;overflow-wrap:anywhere;font-weight:600}
+      .phab-admin-game-description{margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap}
+      .phab-admin-game-participants-table{width:100%;border-collapse:collapse}
+      .phab-admin-game-participants-table th,
+      .phab-admin-game-participants-table td{padding:9px 10px;border-bottom:1px solid rgba(51,0,32,.08);font-size:11px;text-align:left}
+      .phab-admin-game-participants-table th{font-size:9px;color:rgba(51,0,32,.52);text-transform:uppercase}
+      .phab-admin-game-participant-person{display:flex;align-items:center;gap:8px;min-width:150px}
+      .phab-admin-game-participant-person .phab-admin-games-avatar{margin-left:0;flex:0 0 28px}
+      .phab-admin-game-free-slot{color:rgba(51,0,32,.45);font-style:italic}
+      .phab-admin-game-split-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+      .phab-admin-game-kv-list{display:grid;gap:8px}
+      .phab-admin-game-kv-row{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(0,1fr);gap:8px;font-size:11px}
+      .phab-admin-game-kv-row span:first-child{color:rgba(51,0,32,.56)}
+      .phab-admin-game-card-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+      .phab-admin-game-state-list{display:grid;gap:8px}
+      .phab-admin-game-state-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px}
+      .phab-admin-game-state-row span:first-child{color:rgba(51,0,32,.6)}
+      .phab-admin-game-quick-actions{display:grid;gap:6px}
+      .phab-admin-game-quick-actions button{text-align:left}
+      .phab-admin-game-danger{border-color:rgba(226,55,68,.2);background:#fff7f7}
+      .phab-admin-game-danger .phab-admin-game-details-card-head{color:#bd2c3c}
+      .phab-admin-game-tab-panel{display:grid;gap:10px}
+      .phab-admin-game-publication-channel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px;border:1px solid rgba(51,0,32,.09);border-radius:10px}
+      .phab-admin-game-publication-channel strong{display:block;font-size:11px}
+      .phab-admin-game-publication-channel p{margin:4px 0 0;color:rgba(51,0,32,.6);font-size:10px;line-height:1.4}
+      .phab-admin-game-system-details{border:1px solid rgba(51,0,32,.1);border-radius:10px;background:#fff}
+      .phab-admin-game-system-details summary{padding:11px 13px;font-size:11px;font-weight:800;cursor:pointer}
+      .phab-admin-game-system-details .phab-admin-detail-json-wrap{
+        max-height:480px;
+        min-height:180px;
+        overflow:auto;
+        padding:0 12px 12px;
+      }
+      .phab-admin-game-system-details .phab-admin-detail-json{white-space:pre;word-break:normal;tab-size:2}
+      .phab-admin-game-metadata-editor{width:100%;min-height:260px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px;white-space:pre}
+      .phab-admin-game-empty-state{padding:28px;text-align:center;color:rgba(51,0,32,.58);font-size:12px}
+      @media (max-width:1280px){
+        .phab-admin-games-filter-panel{grid-template-columns:repeat(3,minmax(0,1fr))}
+        .phab-admin-games-filter-note{grid-column:1/-1}
+        .phab-admin-game-overview-layout{grid-template-columns:minmax(0,1fr) minmax(290px,36%)}
+        .phab-admin-game-info-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+        .phab-admin-game-info-group:nth-child(3){padding-left:0;border-left:0}
+      }
+      @media (max-width:900px){
+        .phab-admin-games-page-header{flex-direction:column}
+        .phab-admin-games-page-actions{width:100%;justify-content:space-between}
+        .phab-admin-games-filter-panel{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-admin-games-bulk{overflow-x:auto}
+        .phab-admin-games-footer{align-items:flex-start;flex-direction:column}
+        .phab-admin-games-schedule-toolbar{align-items:stretch}
+        .phab-admin-games-schedule-note{flex-basis:100%}
+        .phab-admin-game-details-hero{flex-direction:column}
+        .phab-admin-game-details-actions{justify-content:flex-start}
+        .phab-admin-game-overview-layout{grid-template-columns:1fr}
+        .phab-admin-game-side-column{grid-row:1}
+      }
+      @media (max-width:640px){
+        .phab-admin-games-page-title{font-size:23px}
+        .phab-admin-games-filter-panel{grid-template-columns:1fr}
+        .phab-admin-games-filter-note{grid-column:auto}
+        .phab-admin-games-quick-filters{flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px}
+        .phab-admin-games-quick-filter{white-space:nowrap}
+        .phab-admin-games-view-switch{width:100%}
+        .phab-admin-games-view-btn{flex:1}
+        .phab-admin-games-schedule-date-nav{width:100%}
+        .phab-admin-games-schedule-date{min-width:0;flex:1}
+        .phab-admin-games-schedule-station{width:100%;min-width:0}
+        .phab-admin-games-schedule-status-switch{width:100%}
+        .phab-admin-games-schedule-status-btn{flex:1}
+        .phab-admin-games-schedule-summary{align-items:flex-start;flex-direction:column}
+        .phab-admin-game-details-modal{padding:0}
+        .phab-admin-game-details-modal .phab-admin-game-details-shell{width:100vw;height:100dvh;max-height:100dvh;border-radius:0}
+        .phab-admin-game-details-hero{padding:12px}
+        .phab-admin-game-details-title{font-size:17px}
+        .phab-admin-game-details-tabs{padding-inline:8px}
+        .phab-admin-game-details-scroll{padding:8px}
+        .phab-admin-game-info-grid,.phab-admin-game-split-cards{grid-template-columns:1fr}
+        .phab-admin-game-info-group{padding:0;border-left:0}
+        .phab-admin-game-participants-table{min-width:680px}
+        .phab-admin-game-participants-wrap{overflow-x:auto}
+      }
       .phab-admin-col-resizer{
         position:absolute;
         top:0;
@@ -3478,6 +4244,387 @@
       }
       .phab-admin-settings-pane{
         min-width:0;
+      }
+      .phab-location-admin-root{
+        display:grid;
+        gap:14px;
+      }
+      .phab-location-shell{
+        display:grid;
+        gap:14px;
+      }
+      .phab-location-hero{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:16px;
+        padding:18px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:18px;
+        background:
+          radial-gradient(circle at 100% 0,rgba(221,200,252,.7),transparent 38%),
+          linear-gradient(120deg,rgba(207,255,182,.92),rgba(255,255,255,.96));
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-location-eyebrow{
+        margin:0 0 5px;
+        color:rgba(51,0,32,.58);
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+      }
+      .phab-location-hero h2{
+        margin:0;
+        color:var(--cup-wine);
+        font-family:var(--cup-font-heading);
+        font-size:20px;
+        letter-spacing:.025em;
+        text-transform:uppercase;
+      }
+      .phab-location-hero p{
+        margin:7px 0 0;
+        max-width:720px;
+        color:rgba(51,0,32,.72);
+        font-size:12px;
+        line-height:1.5;
+      }
+      .phab-location-stats{
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        justify-content:flex-end;
+      }
+      .phab-location-stat{
+        min-width:92px;
+        padding:10px 12px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:13px;
+        background:rgba(255,255,255,.82);
+        text-align:center;
+      }
+      .phab-location-stat strong{
+        display:block;
+        font-size:18px;
+        color:var(--cup-wine);
+      }
+      .phab-location-stat span{
+        font-size:9px;
+        font-weight:800;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        color:rgba(51,0,32,.58);
+      }
+      .phab-location-layout{
+        display:grid;
+        grid-template-columns:minmax(250px,310px) minmax(0,1fr);
+        gap:14px;
+        align-items:start;
+      }
+      .phab-location-panel{
+        min-width:0;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:18px;
+        background:rgba(255,255,255,.93);
+        box-shadow:0 12px 26px rgba(51,0,32,.08);
+      }
+      .phab-location-list-panel{
+        position:sticky;
+        top:0;
+        overflow:hidden;
+      }
+      .phab-location-panel-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:13px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+      }
+      .phab-location-panel-head h3{
+        margin:0;
+        font-family:var(--cup-font-heading);
+        font-size:13px;
+        letter-spacing:.03em;
+        text-transform:uppercase;
+      }
+      .phab-location-search{
+        width:calc(100% - 20px);
+        margin:10px;
+      }
+      .phab-location-list{
+        display:grid;
+        gap:7px;
+        max-height:690px;
+        padding:0 10px 10px;
+        overflow:auto;
+      }
+      .phab-location-row{
+        display:grid;
+        grid-template-columns:52px minmax(0,1fr);
+        gap:9px;
+        width:100%;
+        padding:8px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:13px;
+        background:#fff;
+        color:var(--cup-wine);
+        text-align:left;
+        cursor:pointer;
+      }
+      .phab-location-row:hover,
+      .phab-location-row.is-active{
+        border-color:rgba(95,57,222,.48);
+        background:rgba(221,200,252,.24);
+        box-shadow:0 6px 14px rgba(51,0,32,.08);
+      }
+      .phab-location-row-cover{
+        width:52px;
+        height:52px;
+        border-radius:10px;
+        background:linear-gradient(135deg,#ddc8fc,#b6fdff);
+        background-size:cover;
+        background-position:center;
+      }
+      .phab-location-row-copy{
+        min-width:0;
+      }
+      .phab-location-row-copy strong,
+      .phab-location-row-copy span{
+        display:block;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-location-row-copy strong{font-size:12px;margin-top:2px;}
+      .phab-location-row-copy span{margin-top:4px;font-size:10px;color:rgba(51,0,32,.62);}
+      .phab-location-status{
+        display:inline-flex !important;
+        align-items:center;
+        gap:5px;
+      }
+      .phab-location-status::before{
+        content:'';
+        width:7px;
+        height:7px;
+        flex:0 0 auto;
+        border-radius:50%;
+        background:#d49b24;
+      }
+      .phab-location-status.is-published::before{background:#35b86b;}
+      .phab-location-status.is-archived::before{background:#929292;}
+      .phab-location-editor{
+        overflow:hidden;
+      }
+      .phab-location-editor-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:12px;
+        padding:15px 16px;
+        border-bottom:1px solid rgba(51,0,32,.1);
+        background:linear-gradient(90deg,rgba(255,232,145,.35),rgba(255,255,255,.96));
+      }
+      .phab-location-editor-head h3{margin:0;font-size:17px;}
+      .phab-location-editor-head p{margin:5px 0 0;font-size:11px;color:rgba(51,0,32,.62);}
+      .phab-location-completeness{
+        min-width:120px;
+        padding:9px 11px;
+        border-radius:12px;
+        background:rgba(207,255,182,.62);
+        font-size:10px;
+        font-weight:800;
+        text-align:center;
+      }
+      .phab-location-editor-body{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) minmax(230px,300px);
+        gap:14px;
+        padding:14px;
+      }
+      .phab-location-form{
+        display:grid;
+        gap:12px;
+        min-width:0;
+      }
+      .phab-location-section{
+        display:grid;
+        gap:10px;
+        padding:13px;
+        border:1px solid rgba(51,0,32,.11);
+        border-radius:14px;
+        background:rgba(255,255,255,.9);
+      }
+      .phab-location-section h4{
+        margin:0;
+        font-family:var(--cup-font-heading);
+        font-size:11px;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
+      .phab-location-fields{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:9px;
+      }
+      .phab-location-field{
+        display:grid;
+        gap:5px;
+        min-width:0;
+        color:rgba(51,0,32,.78);
+        font-size:9px;
+        font-weight:800;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
+      .phab-location-field.is-wide{grid-column:1/-1;}
+      .phab-location-field input,
+      .phab-location-field select,
+      .phab-location-field textarea,
+      .phab-location-repeat input,
+      .phab-location-repeat select{
+        width:100%;
+        min-width:0;
+        border:1px solid rgba(51,0,32,.18);
+        border-radius:10px;
+        padding:9px 10px;
+        background:#fff;
+        color:var(--cup-wine);
+        font:inherit;
+        font-size:12px;
+        font-weight:500;
+        letter-spacing:0;
+        text-transform:none;
+      }
+      .phab-location-inline-check{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        font-size:11px;
+        font-weight:700;
+      }
+      .phab-location-repeat-list{display:grid;gap:8px;}
+      .phab-location-repeat{
+        display:grid;
+        grid-template-columns:minmax(0,1.7fr) minmax(0,1fr) auto auto;
+        gap:7px;
+        align-items:center;
+        padding:8px;
+        border:1px dashed rgba(51,0,32,.18);
+        border-radius:12px;
+        background:rgba(246,243,250,.72);
+      }
+      .phab-location-repeat.is-amenity{
+        grid-template-columns:minmax(110px,.8fr) minmax(0,1.3fr) minmax(0,1.6fr) auto;
+      }
+      .phab-location-schedule{display:grid;gap:6px;}
+      .phab-location-day{
+        display:grid;
+        grid-template-columns:34px 86px minmax(0,1fr);
+        gap:8px;
+        align-items:center;
+        padding:7px 9px;
+        border-radius:10px;
+        background:rgba(207,255,182,.2);
+        font-size:11px;
+      }
+      .phab-location-day strong{font-size:10px;text-transform:uppercase;}
+      .phab-location-day input[type="text"]{
+        width:100%;
+        border:1px solid rgba(51,0,32,.16);
+        border-radius:9px;
+        padding:8px;
+        font-size:11px;
+      }
+      .phab-location-preview{
+        position:sticky;
+        top:0;
+        align-self:start;
+        overflow:hidden;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:24px;
+        background:#fff;
+        box-shadow:0 18px 36px rgba(51,0,32,.14);
+      }
+      .phab-location-preview-cover{
+        min-height:190px;
+        background:linear-gradient(135deg,#24212b,#9a8cab);
+        background-size:cover;
+        background-position:center;
+      }
+      .phab-location-preview-body{padding:17px;}
+      .phab-location-preview-body h4{margin:0;font-size:20px;}
+      .phab-location-preview-body p{margin:7px 0;font-size:11px;line-height:1.45;}
+      .phab-location-preview-hours{color:#238f4b;}
+      .phab-location-preview-amenities{display:grid;gap:7px;margin:14px 0;}
+      .phab-location-preview-amenities span{
+        padding-bottom:7px;
+        border-bottom:1px dotted rgba(51,0,32,.15);
+        font-size:11px;
+      }
+      .phab-location-map{
+        display:grid;
+        place-items:center;
+        min-height:105px;
+        margin-top:12px;
+        border-radius:15px;
+        background:linear-gradient(135deg,#dfe5eb,#c8d1dc);
+        font-size:11px;
+        font-weight:800;
+      }
+      .phab-location-actions{
+        position:sticky;
+        bottom:0;
+        display:flex;
+        justify-content:flex-end;
+        gap:8px;
+        flex-wrap:wrap;
+        padding:12px 14px;
+        border-top:1px solid rgba(51,0,32,.1);
+        background:rgba(255,255,255,.96);
+        backdrop-filter:blur(8px);
+      }
+      .phab-location-message{
+        padding:18px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:16px;
+        background:rgba(255,255,255,.92);
+        color:rgba(51,0,32,.75);
+        font-size:12px;
+        line-height:1.5;
+      }
+      .phab-location-message.is-error{border-color:rgba(190,30,55,.28);color:#9d1732;}
+      .phab-location-empty{padding:22px;text-align:center;color:rgba(51,0,32,.58);font-size:11px;}
+      .phab-location-operations{
+        margin-top:14px;
+        border:1px solid rgba(51,0,32,.14);
+        border-radius:16px;
+        background:rgba(255,255,255,.86);
+      }
+      .phab-location-operations > summary{
+        padding:13px 15px;
+        cursor:pointer;
+        font-size:11px;
+        font-weight:800;
+        text-transform:uppercase;
+      }
+      .phab-location-operations .phab-admin-settings-card{
+        min-height:0;
+        margin:0 12px 12px;
+      }
+      @media (max-width:1050px){
+        .phab-location-layout{grid-template-columns:1fr;}
+        .phab-location-list-panel,.phab-location-preview{position:static;}
+        .phab-location-list{max-height:300px;}
+      }
+      @media (max-width:760px){
+        .phab-location-hero,.phab-location-editor-head{display:grid;}
+        .phab-location-stats{justify-content:flex-start;}
+        .phab-location-editor-body{grid-template-columns:1fr;padding:9px;}
+        .phab-location-fields{grid-template-columns:1fr;}
+        .phab-location-field.is-wide{grid-column:auto;}
+        .phab-location-repeat,.phab-location-repeat.is-amenity{grid-template-columns:1fr;}
+        .phab-location-day{grid-template-columns:30px 78px minmax(0,1fr);}
       }
       .phab-admin-settings-quick-head{
         display:flex;
@@ -4332,59 +5479,6 @@
       .phab-admin-detail-value{
         word-break:break-word;
       }
-      .phab-admin-game-publication-note{
-        padding:9px 10px;
-        border:1px solid rgba(51,0,32,.12);
-        border-radius:10px;
-        background:rgba(182,253,255,.2);
-        color:rgba(51,0,32,.78);
-        font-size:12px;
-        line-height:1.45;
-      }
-      .phab-admin-game-publication-row{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:10px;
-        padding:10px;
-        border:1px solid rgba(51,0,32,.12);
-        border-radius:10px;
-        background:rgba(255,255,255,.9);
-      }
-      .phab-admin-game-publication-row-copy{
-        min-width:0;
-        display:grid;
-        gap:3px;
-      }
-      .phab-admin-game-publication-row-title{
-        font-size:12px;
-        font-weight:800;
-        color:var(--cup-wine);
-      }
-      .phab-admin-game-publication-row-help{
-        font-size:11px;
-        line-height:1.35;
-        color:rgba(51,0,32,.66);
-      }
-      .phab-admin-game-publication-status{
-        flex:0 0 auto;
-        padding:4px 7px;
-        border-radius:999px;
-        background:rgba(207,255,182,.7);
-        color:#245b20;
-        font-size:10px;
-        font-weight:800;
-        white-space:nowrap;
-      }
-      .phab-admin-game-publication-status--hidden{
-        background:rgba(51,0,32,.1);
-        color:rgba(51,0,32,.75);
-      }
-      .phab-admin-game-publication-actions{
-        display:flex;
-        flex-wrap:wrap;
-        gap:8px;
-      }
       .phab-admin-detail-link{
         color:var(--cup-blue);
         font-weight:700;
@@ -4469,6 +5563,1042 @@
       }
       .phab-admin-photo-sub{
         word-break:break-word;
+      }
+      .phab-advertising-section{
+        box-sizing:border-box;
+        min-width:0;
+        min-height:calc(100% + 24px);
+        margin:-12px;
+        padding:22px;
+        background:#f7f7f9;
+      }
+      .phab-advertising-root{
+        --ad-wine:#3d082a;
+        --ad-wine-strong:#4b002f;
+        --ad-red:#ff4d4f;
+        --ad-green:#3cad5b;
+        --ad-muted:#756a75;
+        display:grid;
+        min-width:0;
+        max-width:100%;
+        gap:14px;
+        color:var(--ad-wine);
+      }
+      .phab-advertising-action{
+        min-height:42px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:9px;
+        padding:9px 16px;
+        border:1px solid rgba(61,8,42,.16);
+        border-radius:10px;
+        background:rgba(255,255,255,.94);
+        color:var(--ad-wine);
+        font:700 12px var(--cup-font-body);
+        cursor:pointer;
+        box-shadow:0 4px 12px rgba(61,8,42,.04);
+        transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
+      }
+      .phab-advertising-action:hover{
+        transform:translateY(-1px);
+        border-color:rgba(61,8,42,.3);
+        box-shadow:0 9px 18px rgba(61,8,42,.09);
+      }
+      .phab-advertising-action.is-primary{
+        border-color:transparent;
+        background:linear-gradient(110deg,var(--ad-red),#ff6455);
+        color:#fff;
+        box-shadow:0 9px 20px rgba(255,77,79,.25);
+      }
+      .phab-advertising-action.is-danger{
+        border-color:rgba(191,31,61,.2);
+        color:#a61738;
+      }
+      .phab-advertising-action:disabled{
+        opacity:.52;
+        cursor:default;
+        transform:none;
+        box-shadow:none;
+      }
+      .phab-advertising-action-icon{
+        width:18px;
+        height:18px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        font-size:21px;
+        font-weight:400;
+        line-height:1;
+      }
+      .phab-advertising-mode-card{
+        display:grid;
+        grid-template-columns:54px minmax(0,1fr) auto;
+        align-items:center;
+        gap:16px;
+        min-height:84px;
+        padding:14px 20px;
+        border:1px solid rgba(61,8,42,.1);
+        border-radius:14px;
+        background:rgba(255,255,255,.96);
+        box-shadow:0 9px 24px rgba(61,8,42,.07);
+      }
+      .phab-advertising-mode-icon{
+        width:48px;
+        height:48px;
+        display:grid;
+        place-items:center;
+        border-radius:50%;
+        background:#efffdc;
+        color:#1f6843;
+        font-size:23px;
+      }
+      .phab-advertising-mode-main{
+        display:flex;
+        align-items:center;
+        gap:24px;
+        min-width:0;
+      }
+      .phab-advertising-mode-copy{
+        min-width:0;
+      }
+      .phab-advertising-mode-title{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        font-size:14px;
+        font-weight:800;
+      }
+      .phab-advertising-mode-subtitle{
+        margin-top:5px;
+        color:var(--ad-muted);
+        font-size:11px;
+      }
+      .phab-advertising-save-state{
+        display:inline-flex;
+        align-items:center;
+        gap:7px;
+        color:#23834c;
+        font-size:11px;
+        white-space:nowrap;
+      }
+      .phab-advertising-save-state::before{
+        content:'✓';
+        width:17px;
+        height:17px;
+        display:grid;
+        place-items:center;
+        border:1px solid currentColor;
+        border-radius:50%;
+        font-size:10px;
+        font-weight:900;
+      }
+      .phab-advertising-switch{
+        position:relative;
+        display:inline-flex;
+        align-items:center;
+        cursor:pointer;
+      }
+      .phab-advertising-switch input{
+        position:absolute;
+        width:1px;
+        height:1px;
+        opacity:0;
+        pointer-events:none;
+      }
+      .phab-advertising-switch-track{
+        width:38px;
+        height:22px;
+        padding:2px;
+        display:block;
+        border-radius:999px;
+        background:#dedce3;
+        transition:background .18s ease;
+      }
+      .phab-advertising-switch-track::after{
+        content:'';
+        width:18px;
+        height:18px;
+        display:block;
+        border-radius:50%;
+        background:#fff;
+        box-shadow:0 2px 6px rgba(39,15,30,.24);
+        transition:transform .18s ease;
+      }
+      .phab-advertising-switch input:checked + .phab-advertising-switch-track{
+        background:var(--ad-green);
+      }
+      .phab-advertising-switch input:checked + .phab-advertising-switch-track::after{
+        transform:translateX(16px);
+      }
+      .phab-advertising-switch input:focus-visible + .phab-advertising-switch-track{
+        box-shadow:0 0 0 3px rgba(60,173,91,.22);
+      }
+      .phab-advertising-switch input:disabled + .phab-advertising-switch-track{
+        opacity:.55;
+        cursor:default;
+      }
+      .phab-advertising-workspace{
+        display:grid;
+        grid-template-columns:minmax(0,2.15fr) minmax(350px,1fr);
+        gap:16px;
+        align-items:start;
+      }
+      .phab-advertising-panel{
+        min-width:0;
+        border:1px solid rgba(61,8,42,.1);
+        border-radius:14px;
+        background:rgba(255,255,255,.96);
+        box-shadow:0 9px 24px rgba(61,8,42,.07);
+      }
+      .phab-advertising-list-panel{
+        padding:16px;
+      }
+      .phab-advertising-list-toolbar{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        grid-column:1 / -1;
+        width:100%;
+        margin:0;
+        padding-top:14px;
+        border-top:1px solid rgba(61,8,42,.08);
+      }
+      .phab-advertising-filters{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        flex-wrap:wrap;
+      }
+      .phab-advertising-filter{
+        border:0;
+        border-radius:9px;
+        padding:8px 12px;
+        background:#f7f5f8;
+        color:#766b75;
+        font:600 11px var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-advertising-filter strong{
+        margin-left:4px;
+        color:inherit;
+      }
+      .phab-advertising-filter.is-active{
+        background:linear-gradient(100deg,#4b002f,#77064b);
+        color:#fff;
+        box-shadow:0 6px 14px rgba(75,0,47,.18);
+      }
+      .phab-advertising-search-wrap{
+        position:relative;
+        width:min(220px,100%);
+      }
+      .phab-advertising-search-icon{
+        position:absolute;
+        left:11px;
+        top:50%;
+        transform:translateY(-50%);
+        color:#756a75;
+        font-size:16px;
+        pointer-events:none;
+      }
+      .phab-advertising-search{
+        width:100%;
+        height:38px;
+        border:1px solid rgba(61,8,42,.14);
+        border-radius:9px;
+        padding:8px 11px 8px 34px;
+        background:#fff;
+        color:var(--ad-wine);
+        font:500 11px var(--cup-font-body);
+      }
+      .phab-advertising-search:focus{
+        outline:none;
+        border-color:rgba(75,0,47,.38);
+        box-shadow:0 0 0 3px rgba(75,0,47,.07);
+      }
+      .phab-advertising-list{
+        display:grid;
+        gap:8px;
+      }
+      .phab-advertising-row{
+        position:relative;
+        z-index:0;
+        display:grid;
+        grid-template-columns:22px 25px 134px minmax(145px,1fr) 105px 102px 40px 118px 38px;
+        align-items:center;
+        gap:10px;
+        min-height:88px;
+        padding:8px 10px;
+        border:1px solid rgba(61,8,42,.1);
+        border-radius:10px;
+        background:#fff;
+        transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+      }
+      .phab-advertising-row.is-menu-open{
+        z-index:40;
+      }
+      .phab-advertising-row:hover,
+      .phab-advertising-row.is-selected{
+        border-color:rgba(75,0,47,.28);
+        box-shadow:0 7px 18px rgba(61,8,42,.07);
+      }
+      .phab-advertising-row.is-dragging{
+        opacity:.52;
+        transform:scale(.99);
+      }
+      .phab-advertising-drag{
+        border:0;
+        padding:0;
+        background:transparent;
+        color:#766b75;
+        font-size:18px;
+        line-height:1;
+        cursor:grab;
+        user-select:none;
+      }
+      .phab-advertising-index{
+        color:#4a3041;
+        font-size:12px;
+        text-align:center;
+      }
+      .phab-advertising-thumb{
+        display:block;
+        width:134px;
+        height:68px;
+        border-radius:8px;
+        object-fit:cover;
+        background:#ece8ed;
+      }
+      .phab-advertising-row-copy{
+        min-width:0;
+      }
+      .phab-advertising-row-title,
+      .phab-advertising-row-link{
+        display:block;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-advertising-row-title{
+        color:var(--ad-wine);
+        font-size:13px;
+        font-weight:800;
+      }
+      .phab-advertising-row-link{
+        margin-top:5px;
+        color:#837985;
+        font-size:11px;
+      }
+      .phab-advertising-updated{
+        color:#7c717d;
+        font-size:9px;
+        line-height:1.35;
+      }
+      .phab-advertising-updated span{
+        display:block;
+      }
+      .phab-advertising-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:max-content;
+        max-width:100%;
+        border-radius:8px;
+        padding:6px 8px;
+        background:#e9faed;
+        color:#30904b;
+        font-size:9px;
+        font-weight:700;
+        white-space:nowrap;
+      }
+      .phab-advertising-badge.is-inactive{
+        background:#fff0ef;
+        color:#ed4f55;
+      }
+      .phab-advertising-badge.is-draft{
+        background:#f3ecff;
+        color:#8642dc;
+      }
+      .phab-advertising-edit-btn{
+        min-height:36px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:6px;
+        border:1px solid rgba(61,8,42,.13);
+        border-radius:9px;
+        background:#fff;
+        color:var(--ad-wine);
+        font:700 10px var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-advertising-edit-btn:hover{
+        border-color:rgba(61,8,42,.3);
+        background:#fffafd;
+      }
+      .phab-advertising-more{
+        position:relative;
+      }
+      .phab-advertising-more[open]{
+        z-index:50;
+      }
+      .phab-advertising-more > summary{
+        width:36px;
+        height:36px;
+        display:grid;
+        place-items:center;
+        border:1px solid rgba(61,8,42,.13);
+        border-radius:9px;
+        background:#fff;
+        color:var(--ad-wine);
+        cursor:pointer;
+        list-style:none;
+        font-size:18px;
+        line-height:1;
+      }
+      .phab-advertising-more > summary::-webkit-details-marker{display:none}
+      .phab-advertising-more-menu{
+        position:absolute;
+        z-index:12;
+        right:0;
+        top:42px;
+        min-width:155px;
+        display:grid;
+        gap:4px;
+        padding:6px;
+        border:1px solid rgba(61,8,42,.13);
+        border-radius:10px;
+        background:#fff;
+        box-shadow:0 14px 28px rgba(61,8,42,.16);
+      }
+      .phab-advertising-more-menu button{
+        border:0;
+        border-radius:7px;
+        padding:8px 9px;
+        background:transparent;
+        color:var(--ad-wine);
+        font:600 10px var(--cup-font-body);
+        text-align:left;
+        cursor:pointer;
+      }
+      .phab-advertising-more-menu button:hover{background:#f7f3f6}
+      .phab-advertising-more-menu button.is-danger{color:#b21d3b}
+      .phab-advertising-empty{
+        min-height:180px;
+        display:grid;
+        place-items:center;
+        padding:24px;
+        border:1px dashed rgba(61,8,42,.16);
+        border-radius:12px;
+        color:#7b707b;
+        font-size:12px;
+        text-align:center;
+      }
+      .phab-advertising-editor{
+        position:sticky;
+        top:0;
+        overflow:visible;
+      }
+      .phab-advertising-editor-empty{
+        min-height:420px;
+        display:grid;
+        place-items:center;
+        padding:40px;
+        color:#827681;
+        font-size:13px;
+        line-height:1.55;
+        text-align:center;
+      }
+      .phab-advertising-editor:not(.is-empty) > .phab-advertising-editor-empty{
+        display:none;
+      }
+      .phab-advertising-editor.is-empty > :not(.phab-advertising-editor-empty){
+        display:none;
+      }
+      .phab-advertising-editor-head{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:8px 12px;
+        align-items:start;
+        padding:18px 18px 10px;
+      }
+      .phab-advertising-editor-head h3{
+        margin:0;
+        color:var(--ad-wine-strong);
+        font-size:17px;
+      }
+      .phab-advertising-editor-context{
+        grid-column:1;
+        margin:0;
+        color:#756a75;
+        font-size:11px;
+        line-height:1.45;
+      }
+      .phab-advertising-editor-head > .phab-advertising-action{
+        grid-column:2;
+        grid-row:1 / span 2;
+        min-height:38px;
+        padding:8px 11px;
+      }
+      .phab-advertising-preview{
+        position:relative;
+        margin:8px 18px 0;
+        overflow:hidden;
+        border-radius:10px;
+        background:linear-gradient(135deg,#ede8ef,#d7d1db);
+        aspect-ratio:3.05 / 1;
+      }
+      .phab-advertising-preview img{
+        width:100%;
+        height:100%;
+        display:block;
+        object-fit:cover;
+      }
+      .phab-advertising-preview-placeholder{
+        position:absolute;
+        inset:0;
+        display:grid;
+        place-items:center;
+        color:#887c87;
+        font-size:11px;
+      }
+      .phab-advertising-card-variants{
+        display:grid;
+        grid-template-columns:minmax(112px,178px) minmax(0,1fr);
+        gap:12px;
+        align-items:end;
+        margin:8px 18px 0;
+      }
+      .phab-advertising-card-variants.is-modal{
+        width:100%;
+        margin:0;
+        grid-template-columns:minmax(150px,178px) minmax(260px,1fr);
+      }
+      .phab-advertising-card-preview{
+        min-width:0;
+        margin:0;
+      }
+      .phab-advertising-card-preview figcaption{
+        margin:0 0 6px;
+        color:#746873;
+        font-size:10px;
+        font-weight:700;
+        line-height:1.25;
+      }
+      .phab-advertising-card-preview-stage{
+        position:relative;
+        min-height:0;
+        overflow:hidden;
+        border-radius:14px;
+        background:linear-gradient(135deg,#342840,#1f1a2c);
+        box-shadow:0 8px 22px rgba(35,27,57,.12);
+      }
+      .phab-advertising-card-preview-stage.is-interactive{
+        cursor:grab;
+        touch-action:none;
+        outline:2px solid rgba(123,10,76,.24);
+        outline-offset:2px;
+      }
+      .phab-advertising-card-preview-stage.is-dragging{cursor:grabbing}
+      .phab-advertising-card-preview.is-square .phab-advertising-card-preview-stage{
+        aspect-ratio:1 / 1;
+      }
+      .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-stage{
+        aspect-ratio:335 / 164;
+      }
+      .phab-advertising-card-preview-stage::after{
+        content:'';
+        position:absolute;
+        z-index:1;
+        inset:0;
+        background:linear-gradient(180deg,rgba(13,9,25,.1),rgba(13,9,25,.7));
+        pointer-events:none;
+      }
+      .phab-advertising-card-preview-stage > img{
+        position:absolute;
+        inset:0;
+        width:100%;
+        height:100%;
+        display:block;
+        object-fit:cover;
+      }
+      .phab-advertising-card-preview-placeholder{
+        position:absolute;
+        z-index:1;
+        inset:0;
+        display:grid;
+        place-items:center;
+        padding:10px;
+        color:rgba(255,255,255,.75);
+        font-size:10px;
+        text-align:center;
+      }
+      .phab-advertising-card-preview-content{
+        position:relative;
+        z-index:2;
+        display:flex;
+        width:100%;
+        height:100%;
+        padding:10px;
+        box-sizing:border-box;
+        flex-direction:column;
+        align-items:flex-start;
+        color:#fff;
+      }
+      .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-content{
+        padding:14px;
+      }
+      .phab-advertising-card-preview-badge,
+      .phab-advertising-card-preview-footer{
+        display:inline-flex;
+        max-width:100%;
+        padding:4px 7px;
+        overflow:hidden;
+        border-radius:999px;
+        background:rgba(255,255,255,.88);
+        color:#2a203f;
+        font-size:8px;
+        font-weight:700;
+        line-height:1;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .phab-advertising-card-preview-title{
+        max-width:100%;
+        margin-top:auto;
+        overflow:hidden;
+        font-size:13px;
+        line-height:1.08;
+        text-overflow:ellipsis;
+      }
+      .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-title{
+        max-width:75%;
+        font-size:16px;
+      }
+      .phab-advertising-card-preview-footer{
+        margin-top:7px;
+        border-radius:7px;
+      }
+      .phab-advertising-dots{
+        display:flex;
+        justify-content:center;
+        gap:5px;
+        min-height:22px;
+        padding:9px 0 3px;
+      }
+      .phab-advertising-dot{
+        width:5px;
+        height:5px;
+        border-radius:50%;
+        background:#ded8de;
+      }
+      .phab-advertising-dot.is-active{background:#7b0a4c}
+      .phab-advertising-editor-form{
+        display:grid;
+        gap:12px;
+        padding:0 18px 18px;
+      }
+      .phab-advertising-field{
+        display:grid;
+        gap:6px;
+        color:#4c3444;
+        font-size:12px;
+        font-weight:700;
+      }
+      .phab-advertising-field-control{
+        position:relative;
+      }
+      .phab-advertising-field input,
+      .phab-advertising-field select{
+        width:100%;
+        height:42px;
+        border:1px solid rgba(61,8,42,.14);
+        border-radius:8px;
+        padding:8px 10px;
+        background:#fff;
+        color:var(--ad-wine);
+        font:500 12px var(--cup-font-body);
+      }
+      .phab-advertising-field input:focus,
+      .phab-advertising-field select:focus{
+        outline:none;
+        border-color:rgba(75,0,47,.38);
+        box-shadow:0 0 0 3px rgba(75,0,47,.07);
+      }
+      .phab-advertising-field-error{
+        color:#bd2444;
+        font-size:10px;
+        font-weight:600;
+      }
+      .phab-advertising-field input.has-counter{padding-right:58px}
+      .phab-advertising-counter{
+        position:absolute;
+        right:10px;
+        top:50%;
+        transform:translateY(-50%);
+        color:#8d838d;
+        font-size:9px;
+        pointer-events:none;
+      }
+      .phab-advertising-upload-label{
+        display:block;
+        margin-top:3px;
+        color:#50404d;
+        font-size:10px;
+        font-weight:700;
+      }
+      .phab-advertising-upload-meta{
+        margin-top:5px;
+        color:#8b818b;
+        font-size:9px;
+        font-weight:500;
+      }
+      .phab-advertising-card-uploads{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:10px;
+      }
+      .phab-advertising-card-upload{
+        min-width:0;
+      }
+      .phab-advertising-card-upload .phab-advertising-dropzone{
+        min-height:82px;
+        padding:12px 8px;
+      }
+      .phab-advertising-card-upload.is-active .phab-advertising-dropzone{
+        border-color:#7b0a4c;
+        box-shadow:0 0 0 3px rgba(123,10,76,.08);
+      }
+      .phab-advertising-dropzone{
+        width:100%;
+        min-height:94px;
+        display:grid;
+        place-items:center;
+        margin-top:9px;
+        padding:16px;
+        border:1px dashed rgba(61,8,42,.2);
+        border-radius:12px;
+        background:#fff;
+        color:#685664;
+        text-align:center;
+        cursor:pointer;
+        transition:border-color .16s ease,background .16s ease;
+      }
+      .phab-advertising-dropzone:hover,
+      .phab-advertising-dropzone.is-dragover{
+        border-color:rgba(75,0,47,.48);
+        background:#fffafd;
+      }
+      .phab-advertising-dropzone-icon{
+        display:block;
+        margin-bottom:6px;
+        font-size:20px;
+      }
+      .phab-advertising-dropzone strong{
+        display:block;
+        font-size:10px;
+      }
+      .phab-advertising-dropzone span{
+        display:block;
+        margin-top:5px;
+        color:#958a94;
+        font-size:9px;
+      }
+      .phab-advertising-crop-controls{
+        display:grid;
+        gap:10px;
+        margin-top:12px;
+        padding:12px;
+        border:1px solid rgba(61,8,42,.12);
+        border-radius:10px;
+        background:#faf8fa;
+      }
+      .phab-advertising-crop-head{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        color:#4c3444;
+        font-size:11px;
+        font-weight:800;
+      }
+      .phab-advertising-crop-reset{
+        padding:0;
+        border:0;
+        background:transparent;
+        color:#7b0a4c;
+        font:700 10px var(--cup-font-body);
+        cursor:pointer;
+      }
+      .phab-advertising-crop-field{
+        display:grid;
+        grid-template-columns:84px minmax(0,1fr) 38px;
+        gap:8px;
+        align-items:center;
+        color:#6f626d;
+        font-size:10px;
+      }
+      .phab-advertising-crop-field input{width:100%;accent-color:#7b0a4c}
+      .phab-advertising-crop-field output{text-align:right;font-weight:700}
+      .phab-advertising-editor-actions{
+        display:grid;
+        grid-template-columns:minmax(0,.8fr) minmax(0,1.1fr);
+        gap:10px;
+        padding-top:4px;
+      }
+      .phab-advertising-editor-actions .phab-advertising-action{width:100%}
+      .phab-advertising-insights{
+        display:grid;
+        gap:8px;
+        margin:0 18px 18px;
+        padding-top:14px;
+        border-top:1px solid rgba(61,8,42,.1);
+      }
+      .phab-advertising-insight-section{
+        overflow:hidden;
+        border:1px solid rgba(61,8,42,.1);
+        border-radius:10px;
+        background:#fff;
+      }
+      .phab-advertising-insight-section summary{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:11px 12px;
+        list-style:none;
+        color:var(--ad-wine-strong);
+        font-size:13px;
+        font-weight:800;
+        cursor:pointer;
+      }
+      .phab-admin-game-publication-note{
+        padding:9px 10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:rgba(182,253,255,.2);
+        color:rgba(51,0,32,.78);
+        font-size:12px;
+        line-height:1.45;
+      }
+      .phab-admin-game-publication-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:rgba(255,255,255,.9);
+      }
+      .phab-admin-game-publication-row-copy{
+        min-width:0;
+        display:grid;
+        gap:3px;
+      }
+      .phab-admin-game-publication-row-title{
+        font-size:12px;
+        font-weight:800;
+        color:var(--cup-wine);
+      }
+      .phab-admin-game-publication-row-help{
+        font-size:11px;
+        line-height:1.35;
+        color:rgba(51,0,32,.66);
+      }
+      .phab-admin-game-publication-status{
+        flex:0 0 auto;
+        padding:4px 7px;
+        border-radius:999px;
+        background:rgba(207,255,182,.7);
+        color:#245b20;
+        font-size:10px;
+        font-weight:800;
+        white-space:nowrap;
+      }
+      .phab-admin-game-publication-status--hidden{
+        background:rgba(51,0,32,.1);
+        color:rgba(51,0,32,.75);
+      }
+      .phab-admin-game-publication-actions{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+      }
+      .phab-admin-detail-link{
+        color:var(--cup-blue);
+        font-weight:700;
+        text-decoration:none;
+        word-break:break-word;
+      }
+      .phab-advertising-insight-section summary::-webkit-details-marker{display:none}
+      .phab-advertising-insight-section summary::after{
+        content:'⌄';
+        color:#7b0a4c;
+        transition:transform .16s ease;
+      }
+      .phab-advertising-insight-section[open] summary::after{transform:rotate(180deg)}
+      .phab-advertising-insight-section summary:focus-visible{
+        outline:3px solid rgba(123,10,76,.16);
+        outline-offset:-3px;
+      }
+      .phab-advertising-insight-section-body{
+        display:grid;
+        gap:10px;
+        padding:0 12px 12px;
+      }
+      .phab-advertising-stat-grid{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:8px;
+      }
+      .phab-advertising-stat{
+        min-width:0;
+        padding:10px;
+        border-radius:10px;
+        background:#f7f3f6;
+      }
+      .phab-advertising-stat strong,
+      .phab-advertising-stat span{display:block}
+      .phab-advertising-stat strong{font-size:18px}
+      .phab-advertising-stat span{margin-top:3px;color:#7d707a;font-size:9px}
+      .phab-advertising-insight-list{
+        display:grid;
+        gap:6px;
+        max-height:180px;
+        overflow:auto;
+      }
+      .phab-advertising-insight-row{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:8px;
+        padding:8px 9px;
+        border:1px solid rgba(61,8,42,.09);
+        border-radius:8px;
+        color:#5f505c;
+        font-size:10px;
+      }
+      .phab-advertising-insight-row small{color:#8b7f89}
+      .phab-advertising-insight-empty{color:#8b7f89;font-size:10px}
+      .phab-advertising-preview-modal-card{
+        width:min(820px,94vw);
+      }
+      .phab-advertising-preview-modal-body{
+        display:grid;
+        grid-template-columns:minmax(240px,.75fr) minmax(320px,1.1fr);
+        gap:22px;
+        align-items:center;
+        padding:22px;
+      }
+      .phab-advertising-preview-modal-copy h4{
+        margin:0 0 10px;
+        color:var(--ad-wine);
+        font-size:18px;
+      }
+      .phab-advertising-preview-modal-copy p{
+        margin:0 0 8px;
+        color:#746873;
+        font-size:12px;
+        line-height:1.5;
+        word-break:break-word;
+      }
+      .phab-advertising-preview-modal-copy a{
+        color:#5b0b3d;
+        font-weight:700;
+      }
+      .phab-advertising-mobile-frame{
+        width:min(390px,100%);
+        margin:0 auto;
+        padding:12px;
+        border:8px solid #25131f;
+        border-radius:28px;
+        background:#f6f4f6;
+        box-shadow:0 18px 36px rgba(40,16,32,.2);
+      }
+      .phab-advertising-mobile-frame img{
+        display:block;
+        width:100%;
+        aspect-ratio:16 / 9;
+        border-radius:12px;
+        object-fit:cover;
+        background:#e7e2e8;
+      }
+      @media (max-width:620px){
+        .phab-advertising-card-variants,
+        .phab-advertising-card-variants.is-modal{
+          grid-template-columns:minmax(0,1fr);
+        }
+        .phab-advertising-card-preview.is-square{width:min(178px,100%)}
+        .phab-advertising-card-uploads{grid-template-columns:1fr}
+      }
+      @media (max-width:1500px){
+        .phab-advertising-workspace{grid-template-columns:minmax(590px,1.7fr) minmax(330px,1fr)}
+        .phab-advertising-row{grid-template-columns:20px 22px 112px minmax(125px,1fr) 82px 90px 38px 42px}
+        .phab-advertising-thumb{width:112px;height:52px}
+        .phab-advertising-updated{display:none}
+        .phab-advertising-edit-btn{width:38px;font-size:0}
+        .phab-advertising-edit-btn::before{content:'✎';font-size:15px}
+      }
+      @media (max-width:1100px){
+        .phab-advertising-workspace{grid-template-columns:1fr}
+        .phab-advertising-editor.is-empty{display:none}
+        .phab-advertising-editor:not(.is-empty){
+          position:fixed;
+          z-index:2147482500;
+          top:16px;
+          right:16px;
+          bottom:16px;
+          width:min(420px,calc(100vw - 32px));
+          overflow:auto;
+          box-shadow:0 26px 70px rgba(36,8,27,.3);
+        }
+        .phab-advertising-editor:not(.is-empty) .phab-advertising-editor-head{
+          position:sticky;
+          z-index:3;
+          top:0;
+          background:#fff;
+        }
+        .phab-advertising-preview-modal-body{grid-template-columns:1fr}
+      }
+      @media (max-width:899px){
+        .phab-advertising-editor:not(.is-empty){
+          inset:0;
+          width:100vw;
+          max-width:none;
+          border-radius:0;
+        }
+      }
+      @media (max-width:760px){
+        .phab-advertising-action{min-height:38px;padding:8px 11px}
+        .phab-advertising-mode-card{grid-template-columns:44px minmax(0,1fr);padding:12px}
+        .phab-advertising-mode-icon{width:42px;height:42px}
+        .phab-advertising-mode-main{gap:12px;justify-content:space-between}
+        .phab-advertising-save-state{grid-column:1/-1;margin-left:56px}
+        .phab-advertising-list-toolbar{align-items:stretch;flex-direction:column}
+        .phab-advertising-search-wrap{width:100%}
+        .phab-advertising-row{
+          grid-template-columns:18px 22px 92px minmax(0,1fr) 36px;
+          gap:8px;
+        }
+        .phab-advertising-thumb{width:92px;height:52px}
+        .phab-advertising-badge,
+        .phab-advertising-row > .phab-advertising-switch,
+        .phab-advertising-edit-btn{display:none}
+        .phab-advertising-more{grid-column:5;grid-row:1}
+        .phab-advertising-editor-head{grid-template-columns:1fr}
+        .phab-advertising-editor-head > .phab-advertising-action{
+          grid-column:1;
+          grid-row:auto;
+          justify-self:start;
+        }
+      }
+      @media (max-width:1440px){
+        .phab-advertising-section{
+          min-height:calc(100% + 16px);
+          margin:-8px;
+          padding:16px;
+        }
       }
       .phab-admin-detail-span-2{
         grid-column:span 2;
@@ -5167,6 +7297,152 @@
           backdrop-filter:blur(14px);
         }
       }
+      .phab-admin-notifications-section{
+        height:100%;
+        min-height:0;
+        overflow:auto;
+        padding:2px;
+      }
+      .phab-admin-notifications-shell{
+        display:flex;
+        flex-direction:column;
+        gap:14px;
+        max-width:1180px;
+        margin:0 auto;
+        padding:4px 0 18px;
+      }
+      .phab-admin-notifications-hero,
+      .phab-admin-notifications-card{
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:18px;
+        background:rgba(255,255,255,.9);
+        box-shadow:0 12px 28px rgba(51,0,32,.08);
+      }
+      .phab-admin-notifications-hero{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:18px;
+        padding:18px 20px;
+        background:
+          radial-gradient(circle at 92% 0,rgba(221,200,252,.72),transparent 36%),
+          linear-gradient(135deg,rgba(255,255,255,.96),rgba(255,232,145,.34));
+      }
+      .phab-admin-notifications-hero h2,
+      .phab-admin-notifications-card h3{
+        margin:0;
+        color:var(--cup-wine);
+        font-family:"Druk Wide","Unbounded","Arial Black",sans-serif;
+      }
+      .phab-admin-notifications-hero h2{font-size:22px}
+      .phab-admin-notifications-card h3{font-size:15px}
+      .phab-admin-notifications-hero p,
+      .phab-admin-notifications-card p{
+        margin:6px 0 0;
+        color:rgba(51,0,32,.66);
+        font-size:12px;
+        line-height:1.45;
+      }
+      .phab-admin-notifications-badge{
+        flex:0 0 auto;
+        padding:7px 10px;
+        border-radius:999px;
+        background:var(--cup-wine);
+        color:#fff;
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+      }
+      .phab-admin-notifications-auth{
+        max-width:520px;
+        padding:18px;
+      }
+      .phab-admin-notifications-grid{
+        display:grid;
+        grid-template-columns:minmax(0,1.6fr) minmax(280px,.8fr);
+        gap:14px;
+        align-items:start;
+      }
+      .phab-admin-notifications-card{padding:18px}
+      .phab-admin-notifications-stack{display:flex;flex-direction:column;gap:14px}
+      .phab-admin-notifications-field{display:flex;flex-direction:column;gap:6px}
+      .phab-admin-notifications-field > span{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+      }
+      .phab-admin-notifications-field textarea{
+        min-height:92px;
+        resize:vertical;
+      }
+      .phab-admin-notifications-row{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+      }
+      .phab-admin-notifications-meta{
+        color:rgba(51,0,32,.58);
+        font-size:11px;
+      }
+      .phab-admin-notifications-channels{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+      }
+      .phab-admin-notifications-channel{
+        display:flex;
+        align-items:center;
+        gap:9px;
+        min-height:62px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:13px;
+        background:rgba(255,255,255,.84);
+        cursor:pointer;
+      }
+      .phab-admin-notifications-channel:has(input:checked){
+        border-color:rgba(0,58,134,.42);
+        background:rgba(182,253,255,.28);
+      }
+      .phab-admin-notifications-channel-disabled{opacity:.5;cursor:not-allowed}
+      .phab-admin-notifications-channel input{margin:0}
+      .phab-admin-notifications-channel-icon{
+        display:grid;
+        width:30px;
+        height:30px;
+        flex:0 0 30px;
+        place-items:center;
+        border-radius:10px;
+        background:var(--cup-wine);
+        color:#fff;
+        font-size:11px;
+        font-weight:800;
+      }
+      .phab-admin-notifications-channel-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+      .phab-admin-notifications-channel-copy strong{font-size:12px}
+      .phab-admin-notifications-channel-copy small{color:rgba(51,0,32,.58);font-size:10px;line-height:1.25}
+      .phab-admin-notifications-result{
+        min-height:74px;
+        padding:12px;
+        border-radius:13px;
+        background:rgba(221,200,252,.24);
+        color:rgba(51,0,32,.78);
+        font-size:12px;
+        line-height:1.5;
+        white-space:pre-line;
+      }
+      .phab-admin-notifications-result-error{
+        background:rgba(255,70,78,.1);
+        color:#9f1735;
+      }
+      .phab-admin-notifications-actions{display:flex;gap:8px;flex-wrap:wrap}
+      .phab-admin-notifications-actions .phab-admin-btn{flex:1 1 180px}
+      @media (max-width:900px){
+        .phab-admin-notifications-grid{grid-template-columns:1fr}
+      }
       @media (max-width:640px){
         .phab-admin{border-radius:14px}
         .phab-admin-title{font-size:15px}
@@ -5209,6 +7485,10 @@
         .phab-admin-community-about-grid{grid-template-columns:1fr}
         .phab-admin-community-main-body,
         .phab-admin-community-preview-body{padding:10px}
+        .phab-admin-notifications-hero{flex-direction:column;padding:14px}
+        .phab-admin-notifications-card{padding:14px}
+        .phab-admin-notifications-channels{grid-template-columns:1fr}
+        .phab-admin-notifications-row{align-items:stretch;flex-direction:column}
       }
     `;
     document.head.appendChild(style);
@@ -5490,6 +7770,27 @@
         if (query.phone) {
           params.set('phone', String(query.phone));
         }
+        if (query.q) {
+          params.set('q', String(query.q));
+        }
+        if (query.date) {
+          params.set('date', String(query.date));
+        }
+        if (query.station) {
+          params.set('station', String(query.station));
+        }
+        if (query.status) {
+          params.set('status', String(query.status));
+        }
+        if (query.publication) {
+          params.set('publication', String(query.publication));
+        }
+        if (query.view) {
+          params.set('view', String(query.view));
+        }
+        if (query.lifecycle) {
+          params.set('lifecycle', String(query.lifecycle));
+        }
         if (query.page) {
           params.set('page', String(query.page));
         }
@@ -5586,6 +7887,13 @@
       archiveGameCommunityPublications: function (gameId) {
         return request(
           '/games/' + encodeURIComponent(gameId) + '/publication/archive-community-posts',
+          'POST',
+          {}
+        );
+      },
+      hideGameFromPlayerCabinets: function (gameId) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/publication/hide-player-cabinets',
           'POST',
           {}
         );
@@ -5815,8 +8123,38 @@
       getCabinetHomeAdvertisingSettings: function () {
         return request('/advertising/cabinet-home/admin', 'GET');
       },
+      getCabinetHomeAdvertisingInsights: function () {
+        return request('/advertising/cabinet-home/admin/insights', 'GET');
+      },
       updateCabinetHomeAdvertisingSettings: function (payload) {
         return request('/advertising/cabinet-home/admin', 'PATCH', payload);
+      },
+      getCabinetHomeTopAdvertisingSettings: function () {
+        return request('/advertising/cabinet-home-top/admin', 'GET');
+      },
+      getCabinetHomeTopAdvertisingInsights: function () {
+        return request('/advertising/cabinet-home-top/admin/insights', 'GET');
+      },
+      updateCabinetHomeTopAdvertisingSettings: function (payload) {
+        return request('/advertising/cabinet-home-top/admin', 'PATCH', payload);
+      },
+      getCabinetForMeStripAdvertisingSettings: function () {
+        return request('/advertising/cabinet-for-me-strip/admin', 'GET');
+      },
+      getCabinetForMeStripAdvertisingInsights: function () {
+        return request('/advertising/cabinet-for-me-strip/admin/insights', 'GET');
+      },
+      updateCabinetForMeStripAdvertisingSettings: function (payload) {
+        return request('/advertising/cabinet-for-me-strip/admin', 'PATCH', payload);
+      },
+      getCabinetForMeCardAdvertisingSettings: function () {
+        return request('/advertising/cabinet-for-me-card/admin', 'GET');
+      },
+      getCabinetForMeCardAdvertisingInsights: function () {
+        return request('/advertising/cabinet-for-me-card/admin/insights', 'GET');
+      },
+      updateCabinetForMeCardAdvertisingSettings: function (payload) {
+        return request('/advertising/cabinet-for-me-card/admin', 'PATCH', payload);
       },
       getSplitPaymentPromoSettings: function () {
         return request('/advertising/split-payment-promo/admin', 'GET');
@@ -5851,6 +8189,35 @@
       getAdminUsers: function () {
         return request('/auth/admin-users', 'GET');
       },
+      createAdminUser: function (payload) {
+        return request('/auth/admin-users', 'POST', payload);
+      },
+      updateAdminUser: function (userId, payload) {
+        return request('/auth/admin-users/' + encodeURIComponent(userId), 'PATCH', payload);
+      },
+      deleteAdminUser: function (userId) {
+        return request('/auth/admin-users/' + encodeURIComponent(userId), 'DELETE');
+      },
+      getAdminRoles: function () {
+        return request('/auth/roles', 'GET');
+      },
+      createAdminRole: function (payload) {
+        return request('/auth/roles', 'POST', payload);
+      },
+      updateAdminRole: function (roleId, payload) {
+        return request('/auth/roles/' + encodeURIComponent(roleId), 'PATCH', payload);
+      },
+      deleteAdminRole: function (roleId) {
+        return request('/auth/roles/' + encodeURIComponent(roleId), 'DELETE');
+      },
+      getAdminAudit: function (query) {
+        var params = new URLSearchParams();
+        if (query && query.actorId) params.set('actorId', String(query.actorId));
+        if (query && query.targetId) params.set('targetId', String(query.targetId));
+        if (query && query.limit) params.set('limit', String(query.limit));
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/auth/audit' + suffix, 'GET');
+      },
       logout: function () {
         return request('/auth/logout', 'POST');
       },
@@ -5878,6 +8245,390 @@
         return request('/messenger/settings/access-rules', 'POST', payload);
       }
     };
+  }
+
+  function createNotificationAdminApi(cfg) {
+    var apiBaseUrl = String(cfg.notificationApiBaseUrl || '').replace(/\/+$/, '');
+    var tenantKey = encodeURIComponent(String(cfg.notificationTenantKey || 'local-padel'));
+    var userRoot = apiBaseUrl + '/user/api/v1/' + tenantKey;
+    var adminRoot = apiBaseUrl + '/admin/api/v1/' + tenantKey;
+    var accessToken = '';
+    var requestSequence = 0;
+
+    function operationId() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      requestSequence += 1;
+      return (
+        'phab-notification-' +
+        Date.now().toString(36) +
+        '-' +
+        requestSequence.toString(36) +
+        '-' +
+        Math.random().toString(36).slice(2, 12)
+      );
+    }
+
+    function requestHeaders(extra) {
+      return Object.assign(
+        {
+          Accept: 'application/json',
+          'X-App-Platform': 'cup-admin',
+          'X-App-Version': cfg.notificationAppVersion,
+          'X-Correlation-ID': operationId()
+        },
+        extra || {}
+      );
+    }
+
+    async function request(url, options) {
+      var response = await fetch(url, Object.assign({ credentials: 'include' }, options || {}));
+      var contentType = response.headers.get('content-type') || '';
+      var payload = contentType.indexOf('application/json') >= 0
+        ? await response.json().catch(function () { return null; })
+        : null;
+      if (!response.ok) {
+        var message =
+          payload && typeof payload.message === 'string' && payload.message.trim()
+            ? payload.message.trim()
+            : 'PadlHub Admin API: HTTP ' + response.status;
+        var error = new Error(message);
+        error.status = response.status;
+        error.code = payload && payload.code ? String(payload.code) : '';
+        throw error;
+      }
+      return payload;
+    }
+
+    async function refreshSession() {
+      var idempotencyKey = operationId();
+      var session = await request(userRoot + '/auth/session/refresh', {
+        method: 'POST',
+        headers: requestHeaders({
+          'Idempotency-Key': idempotencyKey,
+          'X-Session-Intent': 'refresh'
+        })
+      });
+      accessToken = session && session.accessToken ? String(session.accessToken) : '';
+      return session;
+    }
+
+    async function adminRequest(path, method, body, idempotencyKey, allowRefresh) {
+      var headers = requestHeaders(body ? { 'Content-Type': 'application/json' } : {});
+      if (accessToken) {
+        headers.Authorization = 'Bearer ' + accessToken;
+      }
+      if (idempotencyKey) {
+        headers['Idempotency-Key'] = idempotencyKey;
+      }
+      try {
+        return await request(adminRoot + path, {
+          method: method || 'GET',
+          headers: headers,
+          body: body ? JSON.stringify(body) : undefined
+        });
+      } catch (error) {
+        if (error && error.status === 401 && allowRefresh !== false) {
+          await refreshSession();
+          return adminRequest(path, method, body, idempotencyKey, false);
+        }
+        throw error;
+      }
+    }
+
+    async function adminBinaryRequest(path, file, allowRefresh) {
+      var idempotencyKey = operationId();
+      var headers = requestHeaders({
+        'Content-Type': String(file.type || 'application/octet-stream'),
+        'Idempotency-Key': idempotencyKey
+      });
+      if (accessToken) {
+        headers.Authorization = 'Bearer ' + accessToken;
+      }
+      try {
+        return await request(adminRoot + path, {
+          method: 'POST',
+          headers: headers,
+          body: file
+        });
+      } catch (error) {
+        if (error && error.status === 401 && allowRefresh !== false) {
+          await refreshSession();
+          return adminBinaryRequest(path, file, false);
+        }
+        throw error;
+      }
+    }
+
+    return {
+      restoreSession: async function () {
+        try {
+          return await refreshSession();
+        } catch (error) {
+          if (error && (error.status === 401 || error.status === 403)) {
+            accessToken = '';
+            return null;
+          }
+          throw error;
+        }
+      },
+      requestCode: function (phone) {
+        var idempotencyKey = operationId();
+        return request(userRoot + '/auth/challenges', {
+          method: 'POST',
+          headers: requestHeaders({
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey
+          }),
+          body: JSON.stringify({ method: 'phone_otp', phone: phone })
+        });
+      },
+      verifyCode: async function (challengeId, code) {
+        var idempotencyKey = operationId();
+        var session = await request(
+          userRoot + '/auth/challenges/' + encodeURIComponent(challengeId) + '/verify',
+          {
+            method: 'POST',
+            headers: requestHeaders({
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey
+            }),
+            body: JSON.stringify({ code: code })
+          }
+        );
+        accessToken = session && session.accessToken ? String(session.accessToken) : '';
+        return session;
+      },
+      getCapabilities: function () {
+        return adminRequest('/notifications/capabilities', 'GET', null, '', true);
+      },
+      resolveRecipients: function (phones) {
+        return adminRequest(
+          '/notifications/recipients/resolve',
+          'POST',
+          { phones: phones },
+          '',
+          true
+        );
+      },
+      createCampaign: function (payload) {
+        return adminRequest(
+          '/notifications/campaigns',
+          'POST',
+          payload,
+          operationId(),
+          true
+        );
+      },
+      listLocations: function () {
+        return adminRequest('/locations', 'GET', null, '', true);
+      },
+      getLocation: function (locationId) {
+        return adminRequest(
+          '/locations/' + encodeURIComponent(locationId),
+          'GET',
+          null,
+          '',
+          true
+        );
+      },
+      createLocation: function (profile) {
+        return adminRequest('/locations', 'POST', profile, operationId(), true);
+      },
+      updateLocation: function (locationId, expectedVersion, profile) {
+        return adminRequest(
+          '/locations/' + encodeURIComponent(locationId),
+          'PATCH',
+          { expectedVersion: expectedVersion, profile: profile },
+          operationId(),
+          true
+        );
+      },
+      uploadLocationMedia: function (file) {
+        return adminBinaryRequest('/location-media', file, true);
+      }
+    };
+  }
+
+  var LOCATION_WEEKDAYS = [
+    { id: 'MON', label: 'Пн' },
+    { id: 'TUE', label: 'Вт' },
+    { id: 'WED', label: 'Ср' },
+    { id: 'THU', label: 'Чт' },
+    { id: 'FRI', label: 'Пт' },
+    { id: 'SAT', label: 'Сб' },
+    { id: 'SUN', label: 'Вс' }
+  ];
+
+  var LOCATION_AMENITY_ICONS = [
+    ['PARKING', 'Парковка'],
+    ['CAFE', 'Кофейня'],
+    ['CHANGING_ROOM', 'Раздевалки'],
+    ['SHOWER', 'Душевые'],
+    ['SAUNA', 'Сауна'],
+    ['RENTAL', 'Аренда инвентаря'],
+    ['SHOP', 'Магазин'],
+    ['ACCESSIBILITY', 'Доступная среда'],
+    ['KIDS', 'Детская зона'],
+    ['LOUNGE', 'Зона отдыха'],
+    ['OTHER', 'Другое']
+  ];
+
+  function createEmptyLocationProfile() {
+    return {
+      slug: '',
+      title: '',
+      shortTitle: null,
+      city: null,
+      courtCount: 0,
+      address: null,
+      latitude: null,
+      longitude: null,
+      timezone: 'Europe/Moscow',
+      metroName: null,
+      metroDistanceMeters: null,
+      phoneE164: null,
+      workingHours: LOCATION_WEEKDAYS.map(function (day) {
+        return {
+          weekday: day.id,
+          closed: false,
+          intervals: [{ opensAt: '07:00', closesAt: '23:00' }]
+        };
+      }),
+      amenities: [],
+      gallery: [],
+      publicationStatus: 'DRAFT',
+      showOnHome: true,
+      sortOrder: 100
+    };
+  }
+
+  function editableLocationProfile(location) {
+    var source = location || {};
+    var profile = createEmptyLocationProfile();
+    profile.slug = String(source.slug || '');
+    profile.title = String(source.title || '');
+    profile.shortTitle = source.shortTitle ? String(source.shortTitle) : null;
+    profile.city = source.city ? String(source.city) : null;
+    profile.courtCount = Math.max(0, Number(source.courtCount || 0));
+    profile.address = source.address ? String(source.address) : null;
+    profile.latitude = source.latitude === null || source.latitude === undefined
+      ? null
+      : Number(source.latitude);
+    profile.longitude = source.longitude === null || source.longitude === undefined
+      ? null
+      : Number(source.longitude);
+    profile.timezone = String(source.timezone || 'Europe/Moscow');
+    profile.metroName = source.metroName ? String(source.metroName) : null;
+    profile.metroDistanceMeters =
+      source.metroDistanceMeters === null || source.metroDistanceMeters === undefined
+        ? null
+        : Number(source.metroDistanceMeters);
+    profile.phoneE164 = source.phoneE164 ? String(source.phoneE164) : null;
+    profile.workingHours = Array.isArray(source.workingHours)
+      ? source.workingHours.map(function (entry) {
+          return {
+            weekday: String(entry.weekday || ''),
+            closed: entry.closed === true,
+            intervals: Array.isArray(entry.intervals)
+              ? entry.intervals.map(function (interval) {
+                  return {
+                    opensAt: String(interval.opensAt || ''),
+                    closesAt: String(interval.closesAt || '')
+                  };
+                })
+              : []
+          };
+        })
+      : profile.workingHours;
+    profile.amenities = Array.isArray(source.amenities)
+      ? source.amenities.map(function (amenity) {
+          return {
+            key: String(amenity.key || ''),
+            icon: String(amenity.icon || 'OTHER'),
+            title: String(amenity.title || ''),
+            description: amenity.description ? String(amenity.description) : null,
+            sortOrder: Number(amenity.sortOrder || 0)
+          };
+        })
+      : [];
+    profile.gallery = Array.isArray(source.gallery)
+      ? source.gallery.map(function (image) {
+          return {
+            url: String(image.url || ''),
+            alt: String(image.alt || ''),
+            isCover: image.isCover === true,
+            sortOrder: Number(image.sortOrder || 0)
+          };
+        })
+      : [];
+    profile.publicationStatus = ['DRAFT', 'PUBLISHED', 'ARCHIVED'].indexOf(source.publicationStatus) >= 0
+      ? source.publicationStatus
+      : 'DRAFT';
+    profile.showOnHome = source.showOnHome !== false;
+    profile.sortOrder = Math.max(0, Number(source.sortOrder || 0));
+    return profile;
+  }
+
+  function slugifyLocationTitle(value) {
+    var transliteration = {
+      'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',
+      'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+      'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch',
+      'ы':'y','э':'e','ю':'yu','я':'ya','ъ':'','ь':''
+    };
+    return Array.from(String(value || '').toLocaleLowerCase('ru-RU'))
+      .map(function (character) { return transliteration[character] ?? character; })
+      .join('')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 79);
+  }
+
+  function locationNullable(value) {
+    var normalized = String(value || '').trim();
+    return normalized || null;
+  }
+
+  function locationNumber(value) {
+    var normalized = String(value === null || value === undefined ? '' : value)
+      .trim()
+      .replace(',', '.');
+    if (!normalized) return null;
+    var parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function locationCompleteness(profile) {
+    var missing = [];
+    if (!profile.gallery.some(function (image) { return image.isCover === true; })) missing.push('обложка');
+    if (!profile.city) missing.push('город');
+    if (Number(profile.courtCount || 0) < 1) missing.push('число кортов');
+    if (!profile.address) missing.push('адрес');
+    if (profile.latitude === null || profile.longitude === null) missing.push('координаты');
+    if (!profile.phoneE164) missing.push('телефон');
+    if (!Array.isArray(profile.workingHours) || profile.workingHours.length !== 7) missing.push('график');
+    return {
+      percent: Math.round(((7 - missing.length) / 7) * 100),
+      ready: missing.length === 0,
+      missing: missing
+    };
+  }
+
+  function isLocationGalleryUrl(value) {
+    var url = String(value || '').trim();
+    return (
+      /^https:\/\//i.test(url) ||
+      /^\/public\/api\/v1\/[^/]+\/location-media\/[0-9a-f-]{36}$/i.test(url)
+    );
+  }
+
+  function locationGalleryDisplayUrl(url, apiBaseUrl) {
+    var value = String(url || '').trim();
+    if (!value) return '';
+    if (value.charAt(0) !== '/') return value;
+    return String(apiBaseUrl || '').replace(/\/+$/, '') + value;
   }
 
   function formatTime(value) {
@@ -6247,6 +8998,13 @@
     tabGames.textContent = 'Игры';
     tabs.appendChild(tabGames);
 
+    var tabNotifications = document.createElement('button');
+    tabNotifications.className =
+      'phab-admin-tab' + (cfg.notificationApiBaseUrl ? '' : ' phab-admin-hidden');
+    tabNotifications.type = 'button';
+    tabNotifications.textContent = 'Уведомления';
+    tabs.appendChild(tabNotifications);
+
     var tabPlayerRatings = document.createElement('button');
     tabPlayerRatings.className =
       'phab-admin-tab' + (canAccessPlayerRatings(cfg) ? '' : ' phab-admin-hidden');
@@ -6310,6 +9068,88 @@
     var gamesSection = document.createElement('div');
     gamesSection.className = 'phab-admin-hidden';
     content.appendChild(gamesSection);
+
+    var notificationsSection = document.createElement('div');
+    notificationsSection.className = 'phab-admin-hidden';
+    content.appendChild(notificationsSection);
+    notificationsSection.innerHTML =
+      '<div class="phab-admin-notifications-section">' +
+      '<div class="phab-admin-notifications-shell">' +
+      '<header class="phab-admin-notifications-hero">' +
+      '<div><h2>Отправка уведомлений</h2>' +
+      '<p>Получатели по телефону, доступные каналы и единое сообщение PadlHub.</p></div>' +
+      '<span class="phab-admin-notifications-badge">PadlHub Admin API</span>' +
+      '</header>' +
+      '<section class="phab-admin-notifications-card phab-admin-notifications-auth" data-notification-auth>' +
+      '<h3>Подключение контура уведомлений</h3>' +
+      '<p>Основной ЦУП открыт без локальной авторизации. Для критической отправки используется отдельная PadlHub admin-сессия.</p>' +
+      '<div class="phab-admin-notifications-stack" style="margin-top:14px">' +
+      '<label class="phab-admin-notifications-field"><span>Номер телефона</span>' +
+      '<input class="phab-admin-input" type="tel" autocomplete="tel" placeholder="+7 999 000-00-01" data-notification-phone></label>' +
+      '<label class="phab-admin-notifications-field phab-admin-hidden" data-notification-code-field><span>Код</span>' +
+      '<input class="phab-admin-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="0000" data-notification-code></label>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn" type="button" data-notification-login>Получить код</button></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-auth-status>Проверяем существующую сессию…</div>' +
+      '</div></section>' +
+      '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
+      '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
+      '<div><h3>1. Получатели</h3><p>До 100 номеров — с новой строки, через запятую или точку с запятой.</p></div>' +
+      '<label class="phab-admin-notifications-field"><span>Номера телефонов</span>' +
+      '<textarea class="phab-admin-input" placeholder="+7 999 123-45-67&#10;+7 999 765-43-21" data-notification-phones></textarea></label>' +
+      '<div class="phab-admin-notifications-row"><span class="phab-admin-notifications-meta" data-notification-phone-count>0 номеров</span>' +
+      '<button class="phab-admin-btn-secondary" type="button" data-notification-preview>Проверить получателей</button></div>' +
+      '<div><h3>2. Способ отправки</h3><p>Недоступные провайдеры нельзя выбрать.</p></div>' +
+      '<div class="phab-admin-notifications-channels">' +
+      '<label class="phab-admin-notifications-channel" data-notification-channel-card="WEB_PUSH"><input type="checkbox" value="WEB_PUSH" checked data-notification-channel>' +
+      '<span class="phab-admin-notifications-channel-icon">W</span><span class="phab-admin-notifications-channel-copy"><strong>Web Push</strong><small data-notification-channel-status>Проверяем провайдер…</small></span></label>' +
+      '<label class="phab-admin-notifications-channel" data-notification-channel-card="ANDROID_PUSH"><input type="checkbox" value="ANDROID_PUSH" disabled data-notification-channel>' +
+      '<span class="phab-admin-notifications-channel-icon">A</span><span class="phab-admin-notifications-channel-copy"><strong>Android</strong><small data-notification-channel-status>Проверяем провайдер…</small></span></label>' +
+      '<label class="phab-admin-notifications-channel" data-notification-channel-card="IOS_PUSH"><input type="checkbox" value="IOS_PUSH" disabled data-notification-channel>' +
+      '<span class="phab-admin-notifications-channel-icon">i</span><span class="phab-admin-notifications-channel-copy"><strong>iOS</strong><small data-notification-channel-status>Проверяем провайдер…</small></span></label>' +
+      '<label class="phab-admin-notifications-channel" data-notification-channel-card="IN_APP"><input type="checkbox" value="IN_APP" checked data-notification-channel>' +
+      '<span class="phab-admin-notifications-channel-icon">Ц</span><span class="phab-admin-notifications-channel-copy"><strong>Центр уведомлений</strong><small data-notification-channel-status>Проверяем канал…</small></span></label>' +
+      '</div>' +
+      '<div><h3>3. Сообщение</h3><p>Текст будет одинаковым для выбранных каналов.</p></div>' +
+      '<label class="phab-admin-notifications-field"><span>Заголовок</span><input class="phab-admin-input" maxlength="300" placeholder="Изменение времени игры" data-notification-title></label>' +
+      '<label class="phab-admin-notifications-field"><span>Текст уведомления</span><textarea class="phab-admin-input" maxlength="8000" placeholder="Ваша игра перенесена. Откройте приложение, чтобы посмотреть детали." data-notification-body></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>Ссылка внутри PadlHub</span><input class="phab-admin-input" value="/notifications" placeholder="/notifications" data-notification-deep-link></label>' +
+      '</section>' +
+      '<aside class="phab-admin-notifications-stack">' +
+      '<section class="phab-admin-notifications-card phab-admin-notifications-stack"><div><h3>Проверка получателей</h3><p>Номера не сохраняются в кампании.</p></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-resolution>Сначала укажите и проверьте получателей.</div></section>' +
+      '<section class="phab-admin-notifications-card phab-admin-notifications-stack"><div><h3>Готово к отправке</h3><p>Операция идемпотентна и записывается в аудит PadlHub.</p></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-result>Кампания ещё не отправлялась.</div>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn" type="button" disabled data-notification-send>Отправить уведомление</button></div></section>' +
+      '</aside></div>' +
+      '</div></div>';
+
+    function notificationNode(selector) {
+      var node = notificationsSection.querySelector(selector);
+      if (!node) {
+        throw new Error('PHAB admin panel: notification control not found: ' + selector);
+      }
+      return node;
+    }
+
+    var notificationAuth = notificationNode('[data-notification-auth]');
+    var notificationWorkspace = notificationNode('[data-notification-workspace]');
+    var notificationPhoneInput = notificationNode('[data-notification-phone]');
+    var notificationCodeField = notificationNode('[data-notification-code-field]');
+    var notificationCodeInput = notificationNode('[data-notification-code]');
+    var notificationLoginBtn = notificationNode('[data-notification-login]');
+    var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
+    var notificationPhonesInput = notificationNode('[data-notification-phones]');
+    var notificationPhoneCount = notificationNode('[data-notification-phone-count]');
+    var notificationPreviewBtn = notificationNode('[data-notification-preview]');
+    var notificationChannelInputs = Array.prototype.slice.call(
+      notificationsSection.querySelectorAll('[data-notification-channel]')
+    );
+    var notificationTitleInput = notificationNode('[data-notification-title]');
+    var notificationBodyInput = notificationNode('[data-notification-body]');
+    var notificationDeepLinkInput = notificationNode('[data-notification-deep-link]');
+    var notificationResolution = notificationNode('[data-notification-resolution]');
+    var notificationResult = notificationNode('[data-notification-result]');
+    var notificationSendBtn = notificationNode('[data-notification-send]');
 
     var playerRatingsSection = document.createElement('div');
     playerRatingsSection.className = 'phab-admin-hidden';
@@ -6423,7 +9263,7 @@
     content.appendChild(settingsSection);
 
     var advertisingSection = document.createElement('div');
-    advertisingSection.className = 'phab-admin-hidden';
+    advertisingSection.className = 'phab-advertising-section phab-admin-hidden';
     content.appendChild(advertisingSection);
 
     var messagesGrid = document.createElement('div');
@@ -6666,17 +9506,312 @@
     sendBtn.textContent = 'Отправить';
     composeRow.appendChild(sendBtn);
 
-    var gamesControls = document.createElement('div');
-    gamesControls.className = 'phab-admin-games-controls';
+    var gamesPage = document.createElement('section');
+    gamesPage.className = 'phab-admin-games-v2';
+    gamesSection.appendChild(gamesPage);
+
+    var gamesPageHeader = document.createElement('div');
+    gamesPageHeader.className = 'phab-admin-games-page-header';
+    gamesPage.appendChild(gamesPageHeader);
+
+    var gamesPageHeading = document.createElement('div');
+    gamesPageHeader.appendChild(gamesPageHeading);
+
+    var gamesPageTitle = document.createElement('h2');
+    gamesPageTitle.className = 'phab-admin-games-page-title';
+    gamesPageTitle.textContent = 'Игры';
+    gamesPageHeading.appendChild(gamesPageTitle);
+
+    var gamesPageSubtitle = document.createElement('p');
+    gamesPageSubtitle.className = 'phab-admin-games-page-subtitle';
+    gamesPageSubtitle.textContent =
+      'Управляйте списком игр, контролируйте состав, публикацию, оплату и результаты.';
+    gamesPageHeading.appendChild(gamesPageSubtitle);
+
+    var gamesPageActions = document.createElement('div');
+    gamesPageActions.className = 'phab-admin-games-page-actions';
+    gamesPageHeader.appendChild(gamesPageActions);
+
+    var gamesViewSwitch = document.createElement('div');
+    gamesViewSwitch.className = 'phab-admin-games-view-switch';
+    gamesViewSwitch.setAttribute('role', 'group');
+    gamesViewSwitch.setAttribute('aria-label', 'Вид отображения игр');
+    gamesPageActions.appendChild(gamesViewSwitch);
+
+    var gamesListViewBtn = document.createElement('button');
+    gamesListViewBtn.className = 'phab-admin-games-view-btn';
+    gamesListViewBtn.type = 'button';
+    gamesListViewBtn.dataset.value = 'list';
+    gamesListViewBtn.textContent = '☷  Список';
+    gamesViewSwitch.appendChild(gamesListViewBtn);
+
+    var gamesScheduleViewBtn = document.createElement('button');
+    gamesScheduleViewBtn.className = 'phab-admin-games-view-btn';
+    gamesScheduleViewBtn.type = 'button';
+    gamesScheduleViewBtn.dataset.value = 'schedule';
+    gamesScheduleViewBtn.textContent = '▦  Расписание';
+    gamesViewSwitch.appendChild(gamesScheduleViewBtn);
+
+    var gamesFoundCount = document.createElement('span');
+    gamesFoundCount.className = 'phab-admin-games-found';
+    gamesFoundCount.appendChild(document.createTextNode('Найдено:'));
+    var gamesFoundCountValue = document.createElement('strong');
+    gamesFoundCountValue.textContent = '0';
+    gamesFoundCount.appendChild(gamesFoundCountValue);
+    gamesPageActions.appendChild(gamesFoundCount);
+
+    var gamesColumnsBtn = document.createElement('button');
+    gamesColumnsBtn.className = 'phab-admin-btn-secondary';
+    gamesColumnsBtn.type = 'button';
+    gamesColumnsBtn.textContent = '☷  Настроить столбцы';
+    gamesColumnsBtn.setAttribute('aria-expanded', 'false');
+    gamesPageActions.appendChild(gamesColumnsBtn);
+
+    var gamesColumnsPanel = document.createElement('div');
+    gamesColumnsPanel.className = 'phab-admin-games-columns-panel phab-admin-hidden';
+    gamesPageActions.appendChild(gamesColumnsPanel);
+    var gamesColumnsTitle = document.createElement('p');
+    gamesColumnsTitle.className = 'phab-admin-games-columns-title';
+    gamesColumnsTitle.textContent = 'Технические столбцы';
+    gamesColumnsPanel.appendChild(gamesColumnsTitle);
+    var gamesColumnsList = document.createElement('div');
+    gamesColumnsList.className = 'phab-admin-games-columns-list';
+    gamesColumnsPanel.appendChild(gamesColumnsList);
+    var gamesColumnInputs = [];
+    [
+      { key: 'id', label: 'ID игры' },
+      { key: 'source', label: 'Источник' },
+      { key: 'createdAt', label: 'Создана' },
+      { key: 'updatedAt', label: 'Обновлена' }
+    ].forEach(function (entry) {
+      var label = document.createElement('label');
+      label.className = 'phab-admin-games-column-option';
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = entry.key;
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(entry.label));
+      gamesColumnsList.appendChild(label);
+      gamesColumnInputs.push(input);
+    });
+
+    var gamesQuickFilters = document.createElement('div');
+    gamesQuickFilters.className = 'phab-admin-games-quick-filters';
+    gamesPage.appendChild(gamesQuickFilters);
+    var gamesQuickFilterButtons = [];
+    [
+      { value: 'today', label: 'Сегодня' },
+      { value: 'upcoming', label: 'Предстоящие' },
+      { value: 'past', label: 'Прошедшие' },
+      { value: 'noResult', label: 'Без результата' },
+      { value: 'cancelled', label: 'Отменённые' }
+    ].forEach(function (entry) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'phab-admin-games-quick-filter';
+      button.dataset.value = entry.value;
+      button.textContent = entry.label;
+      gamesQuickFilters.appendChild(button);
+      gamesQuickFilterButtons.push(button);
+    });
+
+    var gamesScheduleToolbar = document.createElement('div');
+    gamesScheduleToolbar.className = 'phab-admin-games-schedule-toolbar phab-admin-hidden';
+    gamesPage.appendChild(gamesScheduleToolbar);
+
+    var gamesScheduleDateNav = document.createElement('div');
+    gamesScheduleDateNav.className = 'phab-admin-games-schedule-date-nav';
+    gamesScheduleToolbar.appendChild(gamesScheduleDateNav);
+
+    var gamesSchedulePrevBtn = document.createElement('button');
+    gamesSchedulePrevBtn.className = 'phab-admin-btn-secondary';
+    gamesSchedulePrevBtn.type = 'button';
+    gamesSchedulePrevBtn.textContent = '‹';
+    gamesSchedulePrevBtn.setAttribute('aria-label', 'Предыдущий день');
+    gamesScheduleDateNav.appendChild(gamesSchedulePrevBtn);
+
+    var gamesScheduleDateInput = document.createElement('input');
+    gamesScheduleDateInput.className =
+      'phab-admin-settings-input phab-admin-games-schedule-date';
+    gamesScheduleDateInput.type = 'date';
+    gamesScheduleDateInput.setAttribute('aria-label', 'Дата расписания');
+    gamesScheduleDateNav.appendChild(gamesScheduleDateInput);
+
+    var gamesScheduleTodayBtn = document.createElement('button');
+    gamesScheduleTodayBtn.className = 'phab-admin-btn-secondary';
+    gamesScheduleTodayBtn.type = 'button';
+    gamesScheduleTodayBtn.textContent = 'Сегодня';
+    gamesScheduleDateNav.appendChild(gamesScheduleTodayBtn);
+
+    var gamesScheduleNextBtn = document.createElement('button');
+    gamesScheduleNextBtn.className = 'phab-admin-btn-secondary';
+    gamesScheduleNextBtn.type = 'button';
+    gamesScheduleNextBtn.textContent = '›';
+    gamesScheduleNextBtn.setAttribute('aria-label', 'Следующий день');
+    gamesScheduleDateNav.appendChild(gamesScheduleNextBtn);
+
+    var gamesScheduleStationSelect = document.createElement('select');
+    gamesScheduleStationSelect.className =
+      'phab-admin-settings-input phab-admin-games-schedule-station';
+    gamesScheduleStationSelect.setAttribute('aria-label', 'Станция расписания');
+    gamesScheduleToolbar.appendChild(gamesScheduleStationSelect);
+
+    var gamesScheduleStatusSwitch = document.createElement('div');
+    gamesScheduleStatusSwitch.className = 'phab-admin-games-schedule-status-switch';
+    gamesScheduleStatusSwitch.setAttribute('role', 'group');
+    gamesScheduleStatusSwitch.setAttribute('aria-label', 'Статус игр в расписании');
+    gamesScheduleToolbar.appendChild(gamesScheduleStatusSwitch);
+    var gamesScheduleStatusButtons = [];
+    [
+      { value: 'active', label: 'Активные' },
+      { value: 'cancelled', label: 'Отменённые' },
+      { value: 'all', label: 'Все' }
+    ].forEach(function (entry) {
+      var button = document.createElement('button');
+      button.className = 'phab-admin-games-schedule-status-btn';
+      button.type = 'button';
+      button.dataset.value = entry.value;
+      button.textContent = entry.label;
+      gamesScheduleStatusSwitch.appendChild(button);
+      gamesScheduleStatusButtons.push(button);
+    });
+
+    var gamesScheduleNote = document.createElement('div');
+    gamesScheduleNote.className = 'phab-admin-games-schedule-note';
+    gamesScheduleNote.textContent =
+      'Откройте карточку в сетке, чтобы посмотреть состав, публикацию и доступные действия.';
+    gamesScheduleToolbar.appendChild(gamesScheduleNote);
+
+    var gamesFilterPanel = document.createElement('div');
+    gamesFilterPanel.className = 'phab-admin-games-filter-panel';
+    gamesPage.appendChild(gamesFilterPanel);
+
+    function appendGamesFilterField(labelText, control) {
+      var wrap = document.createElement('label');
+      wrap.className = 'phab-admin-games-filter-field';
+      var label = document.createElement('span');
+      label.className = 'phab-admin-games-filter-label';
+      label.textContent = labelText;
+      wrap.appendChild(label);
+      wrap.appendChild(control);
+      gamesFilterPanel.appendChild(wrap);
+      return wrap;
+    }
+
+    var gamesPhoneInput = document.createElement('input');
+    gamesPhoneInput.className = 'phab-admin-settings-input';
+    gamesPhoneInput.type = 'search';
+    gamesPhoneInput.placeholder = 'Поиск по имени, телефону или ID';
+    appendGamesFilterField('Поиск', gamesPhoneInput);
+
+    var gamesDateInput = document.createElement('input');
+    gamesDateInput.className = 'phab-admin-settings-input';
+    gamesDateInput.type = 'date';
+    appendGamesFilterField('Дата', gamesDateInput);
+
+    var gamesStationSelect = document.createElement('select');
+    gamesStationSelect.className = 'phab-admin-settings-input';
+    appendGamesFilterField('Станция', gamesStationSelect);
+
+    var gamesStatusSelect = document.createElement('select');
+    gamesStatusSelect.className = 'phab-admin-settings-input';
+    [
+      ['', 'Все статусы'],
+      ['PAID', 'Оплачена'],
+      ['PENDING', 'Ожидает оплаты'],
+      ['COMPLETED', 'Завершена'],
+      ['CANCELLED', 'Отменена'],
+      ['CREATED', 'Создана'],
+      ['ERROR', 'Ошибка']
+    ].forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry[0];
+      option.textContent = entry[1];
+      gamesStatusSelect.appendChild(option);
+    });
+    appendGamesFilterField('Статус', gamesStatusSelect);
+
+    var gamesPublicationSelect = document.createElement('select');
+    gamesPublicationSelect.className = 'phab-admin-settings-input';
+    [
+      ['', 'Все публикации'],
+      ['public', 'Общий список'],
+      ['link', 'По ссылке'],
+      ['community', 'Сообщество'],
+      ['hidden', 'Скрыта'],
+      ['unpublished', 'Не опубликована']
+    ].forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry[0];
+      option.textContent = entry[1];
+      gamesPublicationSelect.appendChild(option);
+    });
+    appendGamesFilterField('Публикация', gamesPublicationSelect);
+
+    var gamesResetBtn = document.createElement('button');
+    gamesResetBtn.className = 'phab-admin-btn-secondary phab-admin-games-filter-reset';
+    gamesResetBtn.type = 'button';
+    gamesResetBtn.textContent = '↻  Сбросить';
+    gamesFilterPanel.appendChild(gamesResetBtn);
+
+    var gamesFilterNote = document.createElement('div');
+    gamesFilterNote.className = 'phab-admin-games-filter-note';
+    gamesFilterNote.textContent =
+      'Все фильтры применяются ко всей базе до подсчёта страниц.';
+    gamesFilterPanel.appendChild(gamesFilterNote);
+
+    var gamesBulkActions = document.createElement('div');
+    gamesBulkActions.className = 'phab-admin-games-bulk phab-admin-hidden';
+    gamesPage.appendChild(gamesBulkActions);
+    var gamesBulkCount = document.createElement('span');
+    gamesBulkCount.className = 'phab-admin-games-bulk-count';
+    gamesBulkCount.textContent = 'Выбрано: 0';
+    gamesBulkActions.appendChild(gamesBulkCount);
+    var gamesBulkHideBtn = document.createElement('button');
+    gamesBulkHideBtn.className = 'phab-admin-btn-secondary';
+    gamesBulkHideBtn.type = 'button';
+    gamesBulkHideBtn.textContent = '◉  Скрыть';
+    gamesBulkActions.appendChild(gamesBulkHideBtn);
+    var gamesBulkRefreshBtn = document.createElement('button');
+    gamesBulkRefreshBtn.className = 'phab-admin-btn-secondary';
+    gamesBulkRefreshBtn.type = 'button';
+    gamesBulkRefreshBtn.textContent = '↻  Обновить данные';
+    gamesBulkActions.appendChild(gamesBulkRefreshBtn);
+    var gamesBulkExportBtn = document.createElement('button');
+    gamesBulkExportBtn.className = 'phab-admin-btn-secondary';
+    gamesBulkExportBtn.type = 'button';
+    gamesBulkExportBtn.textContent = '⇩  Экспортировать';
+    gamesBulkActions.appendChild(gamesBulkExportBtn);
+
+    var gamesTableShell = document.createElement('div');
+    gamesTableShell.className = 'phab-admin-games-table-shell';
+    gamesPage.appendChild(gamesTableShell);
+
+    var gamesTableWrap = document.createElement('div');
+    gamesTableWrap.className = 'phab-admin-games-table-wrap';
+    gamesTableShell.appendChild(gamesTableWrap);
+
+    var gamesTable = document.createElement('table');
+    gamesTable.className = 'phab-admin-games-table';
+    gamesTableWrap.appendChild(gamesTable);
+
+    var gamesFooter = document.createElement('div');
+    gamesFooter.className = 'phab-admin-games-footer';
+    gamesTableShell.appendChild(gamesFooter);
+    var gamesPageInfo = document.createElement('span');
+    gamesPageInfo.className = 'phab-admin-games-footer-left';
+    gamesPageInfo.textContent = 'Показано 0–0 из 0 игр';
+    gamesFooter.appendChild(gamesPageInfo);
+    var gamesFooterRight = document.createElement('div');
+    gamesFooterRight.className = 'phab-admin-games-footer-right';
+    gamesFooter.appendChild(gamesFooterRight);
 
     var gamesPageSizeWrap = document.createElement('label');
     gamesPageSizeWrap.className = 'phab-admin-games-pagesize';
-    gamesPageSizeWrap.appendChild(document.createTextNode('Показывать'));
-    gamesControls.appendChild(gamesPageSizeWrap);
-
+    gamesPageSizeWrap.appendChild(document.createTextNode('На странице'));
+    gamesFooterRight.appendChild(gamesPageSizeWrap);
     var gamesPageSizeSelect = document.createElement('select');
     gamesPageSizeSelect.className = 'phab-admin-settings-input';
-    gamesPageSizeSelect.style.width = '84px';
     [{ value: '15', label: '15' }, { value: '50', label: '50' }].forEach(function (entry) {
       var option = document.createElement('option');
       option.value = entry.value;
@@ -6684,66 +9819,38 @@
       gamesPageSizeSelect.appendChild(option);
     });
     gamesPageSizeWrap.appendChild(gamesPageSizeSelect);
-    gamesPageSizeWrap.appendChild(document.createTextNode('игр'));
-
-    var gamesPhoneWrap = document.createElement('label');
-    gamesPhoneWrap.className = 'phab-admin-logs-filter';
-    gamesControls.appendChild(gamesPhoneWrap);
-
-    var gamesPhoneLabel = document.createElement('span');
-    gamesPhoneLabel.className = 'phab-admin-settings-label';
-    gamesPhoneLabel.textContent = 'Телефон';
-    gamesPhoneWrap.appendChild(gamesPhoneLabel);
-
-    var gamesPhoneInput = document.createElement('input');
-    gamesPhoneInput.className = 'phab-admin-settings-input';
-    gamesPhoneInput.type = 'text';
-    gamesPhoneInput.placeholder = '+79991234567';
-    gamesPhoneInput.style.width = '180px';
-    gamesPhoneWrap.appendChild(gamesPhoneInput);
-
-    var gamesApplyBtn = document.createElement('button');
-    gamesApplyBtn.className = 'phab-admin-btn';
-    gamesApplyBtn.type = 'button';
-    gamesApplyBtn.textContent = 'Применить';
-    gamesControls.appendChild(gamesApplyBtn);
-
-    var gamesResetBtn = document.createElement('button');
-    gamesResetBtn.className = 'phab-admin-btn-secondary';
-    gamesResetBtn.type = 'button';
-    gamesResetBtn.textContent = 'Сбросить';
-    gamesControls.appendChild(gamesResetBtn);
 
     var gamesPagination = document.createElement('div');
     gamesPagination.className = 'phab-admin-games-pagination';
-    gamesControls.appendChild(gamesPagination);
-
+    gamesFooterRight.appendChild(gamesPagination);
     var gamesPrevPageBtn = document.createElement('button');
     gamesPrevPageBtn.className = 'phab-admin-btn-secondary';
     gamesPrevPageBtn.type = 'button';
-    gamesPrevPageBtn.textContent = '←';
+    gamesPrevPageBtn.textContent = '‹';
+    gamesPrevPageBtn.setAttribute('aria-label', 'Предыдущая страница');
     gamesPagination.appendChild(gamesPrevPageBtn);
-
-    var gamesPageInfo = document.createElement('span');
-    gamesPageInfo.className = 'phab-admin-games-page-info';
-    gamesPageInfo.textContent = 'Страница 1 из 1';
-    gamesPagination.appendChild(gamesPageInfo);
-
+    var gamesPageNumber = document.createElement('span');
+    gamesPageNumber.className = 'phab-admin-games-page-info';
+    gamesPageNumber.textContent = '1 / 1';
+    gamesPagination.appendChild(gamesPageNumber);
     var gamesNextPageBtn = document.createElement('button');
     gamesNextPageBtn.className = 'phab-admin-btn-secondary';
     gamesNextPageBtn.type = 'button';
-    gamesNextPageBtn.textContent = '→';
+    gamesNextPageBtn.textContent = '›';
+    gamesNextPageBtn.setAttribute('aria-label', 'Следующая страница');
     gamesPagination.appendChild(gamesNextPageBtn);
 
-    var gamesTableWrap = document.createElement('div');
-    gamesTableWrap.className = 'phab-admin-games-table-wrap';
-    gamesSection.appendChild(gamesTableWrap);
+    var gamesScheduleShell = document.createElement('div');
+    gamesScheduleShell.className = 'phab-admin-games-schedule-shell phab-admin-hidden';
+    gamesPage.appendChild(gamesScheduleShell);
 
-    var gamesTable = document.createElement('table');
-    gamesTable.className = 'phab-admin-games-table';
-    gamesTableWrap.appendChild(gamesTable);
+    var gamesScheduleSummary = document.createElement('div');
+    gamesScheduleSummary.className = 'phab-admin-games-schedule-summary';
+    gamesScheduleShell.appendChild(gamesScheduleSummary);
 
-    gamesSection.appendChild(gamesControls);
+    var gamesScheduleBoard = document.createElement('div');
+    gamesScheduleBoard.className = 'phab-admin-games-schedule-board';
+    gamesScheduleShell.appendChild(gamesScheduleBoard);
 
     var logsTableWrap = document.createElement('div');
     logsTableWrap.className = 'phab-admin-games-table-wrap';
@@ -7321,7 +10428,8 @@
     var settingsSplitPromoTabBtn = document.createElement('button');
     settingsSplitPromoTabBtn.className = 'phab-admin-community-tab';
     settingsSplitPromoTabBtn.type = 'button';
-    settingsSplitPromoTabBtn.textContent = 'Split-акция';
+    settingsSplitPromoTabBtn.textContent = 'Станции';
+    settingsTabs.appendChild(settingsSplitPromoTabBtn);
 
     var settingsGeneralPane = document.createElement('div');
     settingsGeneralPane.className = 'phab-admin-settings-pane';
@@ -7334,13 +10442,25 @@
     var settingsSplitPromoPane = document.createElement('div');
     settingsSplitPromoPane.className = 'phab-admin-settings-pane phab-admin-hidden';
 
+    var locationAdminRoot = document.createElement('div');
+    locationAdminRoot.className = 'phab-location-admin-root';
+    settingsSplitPromoPane.appendChild(locationAdminRoot);
+
+    var operationalStationsDetails = document.createElement('details');
+    operationalStationsDetails.className = 'phab-location-operations';
+    settingsSplitPromoPane.appendChild(operationalStationsDetails);
+
+    var operationalStationsSummary = document.createElement('summary');
+    operationalStationsSummary.textContent = 'Системные ID и маршрутизация станции';
+    operationalStationsDetails.appendChild(operationalStationsSummary);
+
     var settingsGrid = document.createElement('div');
     settingsGrid.className = 'phab-admin-settings-grid';
     settingsGeneralPane.appendChild(settingsGrid);
 
     var stationCard = document.createElement('div');
     stationCard.className = 'phab-admin-settings-card';
-    settingsGrid.appendChild(stationCard);
+    operationalStationsDetails.appendChild(stationCard);
 
     var stationHead = document.createElement('div');
     stationHead.className = 'phab-admin-settings-head';
@@ -7655,9 +10775,42 @@
     staffHead.textContent = 'Админы и управляющие';
     staffCard.appendChild(staffHead);
 
+    var staffToolbar = document.createElement('div');
+    staffToolbar.className = 'phab-admin-dialog-options';
+    staffToolbar.style.display = 'flex';
+    staffToolbar.style.flexWrap = 'wrap';
+    staffToolbar.style.gap = '8px';
+    staffCard.appendChild(staffToolbar);
+
+    var staffCreateUserBtn = document.createElement('button');
+    staffCreateUserBtn.type = 'button';
+    staffCreateUserBtn.className = 'phab-admin-btn';
+    staffCreateUserBtn.textContent = '+ Сотрудник';
+    staffToolbar.appendChild(staffCreateUserBtn);
+
+    var staffCreateRoleBtn = document.createElement('button');
+    staffCreateRoleBtn.type = 'button';
+    staffCreateRoleBtn.className = 'phab-admin-btn-secondary';
+    staffCreateRoleBtn.textContent = '+ Роль';
+    staffToolbar.appendChild(staffCreateRoleBtn);
+
+    var staffAuditBtn = document.createElement('button');
+    staffAuditBtn.type = 'button';
+    staffAuditBtn.className = 'phab-admin-btn-secondary';
+    staffAuditBtn.textContent = 'Журнал действий';
+    staffToolbar.appendChild(staffAuditBtn);
+
     var staffList = document.createElement('div');
     staffList.className = 'phab-admin-settings-list';
     staffCard.appendChild(staffList);
+
+    var staffEditor = document.createElement('div');
+    staffEditor.className = 'phab-admin-settings-form phab-admin-hidden';
+    staffCard.appendChild(staffEditor);
+
+    var staffAuditList = document.createElement('div');
+    staffAuditList.className = 'phab-admin-settings-list phab-admin-hidden';
+    staffCard.appendChild(staffAuditList);
 
     var staffNote = document.createElement('div');
     staffNote.className = 'phab-admin-settings-form';
@@ -7693,7 +10846,8 @@
     quickReplyTableWrap.appendChild(quickReplyTable);
 
     var splitPromoGrid = document.createElement('div');
-    splitPromoGrid.className = 'phab-admin-settings-grid phab-admin-split-promo-grid';
+    splitPromoGrid.className =
+      'phab-admin-settings-grid phab-admin-split-promo-grid phab-admin-hidden';
     settingsSplitPromoPane.appendChild(splitPromoGrid);
 
     var splitPromoCard = document.createElement('div');
@@ -7967,136 +11121,625 @@
     splitPromoSaveBtn.textContent = 'Сохранить split-акцию';
     splitPromoForm.appendChild(splitPromoSaveBtn);
 
-    var advertisingTabs = document.createElement('div');
-    advertisingTabs.className = 'phab-admin-community-tabs phab-admin-settings-tabs';
-    advertisingSection.appendChild(advertisingTabs);
+    var advertisingPlacementTabs = document.createElement('div');
+    advertisingPlacementTabs.className = 'phab-admin-community-tabs phab-admin-settings-tabs';
+    advertisingSection.appendChild(advertisingPlacementTabs);
 
-    var advertisingCabinetHomeTabBtn = document.createElement('button');
-    advertisingCabinetHomeTabBtn.className =
-      'phab-admin-community-tab phab-admin-community-tab-active';
-    advertisingCabinetHomeTabBtn.type = 'button';
-    advertisingCabinetHomeTabBtn.textContent = 'ЛК главная';
-    advertisingTabs.appendChild(advertisingCabinetHomeTabBtn);
+    var advertisingBlock1TabBtn = document.createElement('button');
+    advertisingBlock1TabBtn.className = 'phab-admin-community-tab';
+    advertisingBlock1TabBtn.type = 'button';
+    advertisingBlock1TabBtn.textContent = 'Блок 1';
+    advertisingPlacementTabs.appendChild(advertisingBlock1TabBtn);
+
+    var advertisingBlock2TabBtn = document.createElement('button');
+    advertisingBlock2TabBtn.className = 'phab-admin-community-tab phab-admin-community-tab-active';
+    advertisingBlock2TabBtn.type = 'button';
+    advertisingBlock2TabBtn.textContent = 'Блок 2';
+    advertisingPlacementTabs.appendChild(advertisingBlock2TabBtn);
+
+    var advertisingBlock3TabBtn = document.createElement('button');
+    advertisingBlock3TabBtn.className = 'phab-admin-community-tab';
+    advertisingBlock3TabBtn.type = 'button';
+    advertisingBlock3TabBtn.textContent = 'Блок 3';
+    advertisingPlacementTabs.appendChild(advertisingBlock3TabBtn);
+
+    var advertisingBlock4TabBtn = document.createElement('button');
+    advertisingBlock4TabBtn.className = 'phab-admin-community-tab';
+    advertisingBlock4TabBtn.type = 'button';
+    advertisingBlock4TabBtn.textContent = 'Блок 4';
+    advertisingPlacementTabs.appendChild(advertisingBlock4TabBtn);
 
     var advertisingCabinetHomePane = document.createElement('div');
-    advertisingCabinetHomePane.className = 'phab-admin-settings-pane';
+    advertisingCabinetHomePane.className = 'phab-advertising-root';
     advertisingSection.appendChild(advertisingCabinetHomePane);
 
-    var advertisingGrid = document.createElement('div');
-    advertisingGrid.className = 'phab-admin-settings-grid';
-    advertisingCabinetHomePane.appendChild(advertisingGrid);
+    var advertisingPreviewBtn = document.createElement('button');
+    advertisingPreviewBtn.className = 'phab-advertising-action';
+    advertisingPreviewBtn.type = 'button';
+    advertisingPreviewBtn.innerHTML =
+      '<span class="phab-advertising-action-icon" aria-hidden="true">◉</span>' +
+      '<span>Предпросмотр в ЛК</span>';
+    var advertisingCreateBtn = document.createElement('button');
+    advertisingCreateBtn.className = 'phab-advertising-action is-primary';
+    advertisingCreateBtn.type = 'button';
+    advertisingCreateBtn.innerHTML =
+      '<span class="phab-advertising-action-icon" aria-hidden="true">＋</span>' +
+      '<span>Добавить акцию</span>';
+    var advertisingModeCard = document.createElement('section');
+    advertisingModeCard.className = 'phab-advertising-mode-card';
+    advertisingCabinetHomePane.appendChild(advertisingModeCard);
 
-    var advertisingConfigCard = document.createElement('div');
-    advertisingConfigCard.className = 'phab-admin-settings-card';
-    advertisingGrid.appendChild(advertisingConfigCard);
+    var advertisingModeIcon = document.createElement('div');
+    advertisingModeIcon.className = 'phab-advertising-mode-icon';
+    advertisingModeIcon.innerHTML =
+      '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">' +
+      '<path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4"/><path d="m4 17 8 4 8-4"/>' +
+      '</svg>';
+    advertisingModeCard.appendChild(advertisingModeIcon);
 
-    var advertisingConfigHead = document.createElement('div');
-    advertisingConfigHead.className = 'phab-admin-settings-head';
-    advertisingConfigHead.textContent = 'Настройки показа';
-    advertisingConfigCard.appendChild(advertisingConfigHead);
+    var advertisingModeMain = document.createElement('div');
+    advertisingModeMain.className = 'phab-advertising-mode-main';
+    advertisingModeCard.appendChild(advertisingModeMain);
 
-    var advertisingConfigForm = document.createElement('div');
-    advertisingConfigForm.className = 'phab-admin-settings-form';
-    advertisingConfigCard.appendChild(advertisingConfigForm);
+    var advertisingModeCopy = document.createElement('div');
+    advertisingModeCopy.className = 'phab-advertising-mode-copy';
+    advertisingModeCopy.innerHTML =
+      '<div class="phab-advertising-mode-title">Режим показа: Последовательно <span aria-hidden="true">⌄</span></div>' +
+      '<div class="phab-advertising-mode-subtitle">Показывать следующую акцию при каждом открытии</div>';
+    advertisingModeMain.appendChild(advertisingModeCopy);
 
     var advertisingRotationWrap = document.createElement('label');
-    advertisingRotationWrap.className = 'phab-admin-check';
-    advertisingConfigForm.appendChild(advertisingRotationWrap);
+    advertisingRotationWrap.className = 'phab-advertising-switch';
+    advertisingRotationWrap.title = 'Включить последовательный показ';
+    advertisingModeMain.appendChild(advertisingRotationWrap);
 
     var advertisingRotationInput = document.createElement('input');
     advertisingRotationInput.type = 'checkbox';
+    advertisingRotationInput.setAttribute('aria-label', 'Последовательный показ');
     advertisingRotationWrap.appendChild(advertisingRotationInput);
-    advertisingRotationWrap.appendChild(
-      document.createTextNode('Каждый раз показывать следующую акцию')
-    );
+    var advertisingRotationTrack = document.createElement('span');
+    advertisingRotationTrack.className = 'phab-advertising-switch-track';
+    advertisingRotationWrap.appendChild(advertisingRotationTrack);
 
-    var advertisingConfigMeta = document.createElement('div');
-    advertisingConfigMeta.className = 'phab-admin-settings-row-meta';
-    advertisingConfigMeta.textContent =
-      'Если включено, ЛК запоминает последнюю показанную акцию по пользователю и на следующем открытии показывает следующую по порядку.';
-    advertisingConfigForm.appendChild(advertisingConfigMeta);
+    var advertisingRepeatEveryWrap = document.createElement('label');
+    advertisingRepeatEveryWrap.className = 'phab-advertising-field phab-admin-hidden';
+    advertisingRepeatEveryWrap.appendChild(document.createTextNode('Повторять через карточек'));
+    advertisingModeMain.appendChild(advertisingRepeatEveryWrap);
 
-    var advertisingConfigSaveBtn = document.createElement('button');
-    advertisingConfigSaveBtn.className = 'phab-admin-btn';
-    advertisingConfigSaveBtn.type = 'button';
-    advertisingConfigSaveBtn.textContent = 'Сохранить показ';
-    advertisingConfigForm.appendChild(advertisingConfigSaveBtn);
+    var advertisingRepeatEveryInput = document.createElement('input');
+    advertisingRepeatEveryInput.type = 'number';
+    advertisingRepeatEveryInput.min = '1';
+    advertisingRepeatEveryInput.max = '20';
+    advertisingRepeatEveryInput.step = '1';
+    advertisingRepeatEveryInput.value = '4';
+    advertisingRepeatEveryWrap.appendChild(advertisingRepeatEveryInput);
 
-    var advertisingAddCard = document.createElement('div');
-    advertisingAddCard.className = 'phab-admin-settings-card';
-    advertisingGrid.appendChild(advertisingAddCard);
+    var advertisingSavedState = document.createElement('div');
+    advertisingSavedState.className = 'phab-advertising-save-state';
+    advertisingSavedState.textContent = 'Сохранено';
+    advertisingModeCard.appendChild(advertisingSavedState);
 
-    var advertisingAddHead = document.createElement('div');
-    advertisingAddHead.className = 'phab-admin-settings-head';
-    advertisingAddHead.textContent = 'Новая акция';
-    advertisingAddCard.appendChild(advertisingAddHead);
+    var advertisingWorkspace = document.createElement('div');
+    advertisingWorkspace.className = 'phab-advertising-workspace';
+    advertisingCabinetHomePane.appendChild(advertisingWorkspace);
 
-    var advertisingAddForm = document.createElement('div');
-    advertisingAddForm.className = 'phab-admin-settings-form';
-    advertisingAddCard.appendChild(advertisingAddForm);
+    var advertisingListPanel = document.createElement('section');
+    advertisingListPanel.className = 'phab-advertising-panel phab-advertising-list-panel';
+    advertisingWorkspace.appendChild(advertisingListPanel);
 
-    var advertisingDraftTitleLabel = document.createElement('label');
-    advertisingDraftTitleLabel.className = 'phab-admin-settings-label';
-    advertisingDraftTitleLabel.textContent = 'Название (опционально)';
-    advertisingAddForm.appendChild(advertisingDraftTitleLabel);
+    var advertisingListToolbar = document.createElement('div');
+    advertisingListToolbar.className = 'phab-advertising-list-toolbar';
+    advertisingModeCard.appendChild(advertisingListToolbar);
 
-    var advertisingDraftTitleInput = document.createElement('input');
-    advertisingDraftTitleInput.className = 'phab-admin-settings-input';
-    advertisingDraftTitleInput.placeholder = 'Например, Турнир выходного дня';
-    advertisingAddForm.appendChild(advertisingDraftTitleInput);
+    var advertisingFilters = document.createElement('div');
+    advertisingFilters.className = 'phab-advertising-filters';
+    advertisingListToolbar.appendChild(advertisingFilters);
 
-    var advertisingDraftHrefLabel = document.createElement('label');
-    advertisingDraftHrefLabel.className = 'phab-admin-settings-label';
-    advertisingDraftHrefLabel.textContent = 'Ссылка перехода';
-    advertisingAddForm.appendChild(advertisingDraftHrefLabel);
+    function createAdvertisingFilter(label, filterValue) {
+      var button = document.createElement('button');
+      button.className = 'phab-advertising-filter';
+      button.type = 'button';
+      button.dataset.filter = filterValue;
+      button.innerHTML = '<span>' + label + '</span> <strong>0</strong>';
+      advertisingFilters.appendChild(button);
+      return button;
+    }
 
-    var advertisingDraftHrefInput = document.createElement('input');
-    advertisingDraftHrefInput.className = 'phab-admin-settings-input';
-    advertisingDraftHrefInput.placeholder = 'https://... или /relative-path';
-    advertisingAddForm.appendChild(advertisingDraftHrefInput);
+    var advertisingFilterAllBtn = createAdvertisingFilter('Все', 'all');
+    var advertisingFilterActiveBtn = createAdvertisingFilter('Включены', 'active');
+    var advertisingFilterInactiveBtn = createAdvertisingFilter('Выключены', 'inactive');
 
-    var advertisingDraftFileLabel = document.createElement('label');
-    advertisingDraftFileLabel.className = 'phab-admin-settings-label';
-    advertisingDraftFileLabel.textContent = 'Фото акции';
-    advertisingAddForm.appendChild(advertisingDraftFileLabel);
+    var advertisingSearchWrap = document.createElement('label');
+    advertisingSearchWrap.className = 'phab-advertising-search-wrap';
+    advertisingListToolbar.appendChild(advertisingSearchWrap);
 
-    var advertisingDraftFileInput = document.createElement('input');
-    advertisingDraftFileInput.className = 'phab-admin-settings-input';
-    advertisingDraftFileInput.type = 'file';
-    advertisingDraftFileInput.accept = 'image/*';
-    advertisingAddForm.appendChild(advertisingDraftFileInput);
+    var advertisingSearchIcon = document.createElement('span');
+    advertisingSearchIcon.className = 'phab-advertising-search-icon';
+    advertisingSearchIcon.textContent = '⌕';
+    advertisingSearchWrap.appendChild(advertisingSearchIcon);
 
-    var advertisingDraftMeta = document.createElement('div');
-    advertisingDraftMeta.className = 'phab-admin-settings-row-meta';
-    advertisingDraftMeta.textContent =
-      'Перед отправкой изображение будет уменьшено и сохранено в web-формате для быстрой загрузки в ЛК.';
-    advertisingAddForm.appendChild(advertisingDraftMeta);
-
-    var advertisingDraftAddBtn = document.createElement('button');
-    advertisingDraftAddBtn.className = 'phab-admin-btn';
-    advertisingDraftAddBtn.type = 'button';
-    advertisingDraftAddBtn.textContent = 'Добавить акцию';
-    advertisingAddForm.appendChild(advertisingDraftAddBtn);
-
-    var advertisingListCard = document.createElement('div');
-    advertisingListCard.className = 'phab-admin-settings-card';
-    advertisingGrid.appendChild(advertisingListCard);
-
-    var advertisingListHead = document.createElement('div');
-    advertisingListHead.className = 'phab-admin-settings-head';
-    advertisingListHead.textContent = 'Акции в порядке показа';
-    advertisingListCard.appendChild(advertisingListHead);
-
-    var advertisingListMeta = document.createElement('div');
-    advertisingListMeta.className = 'phab-admin-settings-row-meta';
-    advertisingListMeta.textContent =
-      'Меняйте порядок кнопками вверх/вниз. В ротации участвуют только включенные акции.';
-    advertisingListCard.appendChild(advertisingListMeta);
+    var advertisingSearchInput = document.createElement('input');
+    advertisingSearchInput.className = 'phab-advertising-search';
+    advertisingSearchInput.type = 'search';
+    advertisingSearchInput.placeholder = 'Поиск акции';
+    advertisingSearchInput.setAttribute('aria-label', 'Поиск акции');
+    advertisingSearchWrap.appendChild(advertisingSearchInput);
+    advertisingListToolbar.appendChild(advertisingCreateBtn);
 
     var advertisingList = document.createElement('div');
-    advertisingList.className = 'phab-admin-photo-grid';
-    advertisingList.style.marginTop = '12px';
-    advertisingListCard.appendChild(advertisingList);
+    advertisingList.className = 'phab-advertising-list';
+    advertisingListPanel.appendChild(advertisingList);
+
+    var advertisingEditorPanel = document.createElement('aside');
+    advertisingEditorPanel.className = 'phab-advertising-panel phab-advertising-editor';
+    advertisingWorkspace.appendChild(advertisingEditorPanel);
+
+    var advertisingEditorEmpty = document.createElement('div');
+    advertisingEditorEmpty.className = 'phab-advertising-editor-empty';
+    advertisingEditorEmpty.textContent = 'Выберите акцию в списке или добавьте новую.';
+    advertisingEditorPanel.appendChild(advertisingEditorEmpty);
+
+    var advertisingEditorHead = document.createElement('div');
+    advertisingEditorHead.className = 'phab-advertising-editor-head';
+    advertisingEditorPanel.appendChild(advertisingEditorHead);
+
+    var advertisingEditorTitle = document.createElement('h3');
+    advertisingEditorTitle.textContent = 'Редактирование акции';
+    advertisingEditorHead.appendChild(advertisingEditorTitle);
+
+    var advertisingEditorContext = document.createElement('div');
+    advertisingEditorContext.className = 'phab-advertising-editor-context';
+    advertisingEditorContext.textContent =
+      'Управляйте баннерами, порядком показа и их видимостью в личном кабинете.';
+    advertisingEditorHead.appendChild(advertisingEditorContext);
+    advertisingEditorHead.appendChild(advertisingPreviewBtn);
+
+    function createAdvertisingCardPreview(label, variantClass, variant) {
+      var preview = document.createElement('figure');
+      preview.className = 'phab-advertising-card-preview ' + variantClass;
+
+      var caption = document.createElement('figcaption');
+      caption.textContent = label;
+      preview.appendChild(caption);
+
+      var stage = document.createElement('div');
+      stage.className = 'phab-advertising-card-preview-stage';
+      stage.dataset.advertisingCardVariant = variant;
+      preview.appendChild(stage);
+
+      var image = document.createElement('img');
+      image.alt = '';
+      stage.appendChild(image);
+
+      var placeholder = document.createElement('span');
+      placeholder.className = 'phab-advertising-card-preview-placeholder';
+      placeholder.textContent = 'Загрузите фон карточки';
+      stage.appendChild(placeholder);
+
+      var content = document.createElement('span');
+      content.className = 'phab-advertising-card-preview-content';
+      stage.appendChild(content);
+
+      var badge = document.createElement('span');
+      badge.className = 'phab-advertising-card-preview-badge';
+      content.appendChild(badge);
+
+      var title = document.createElement('strong');
+      title.className = 'phab-advertising-card-preview-title';
+      content.appendChild(title);
+
+      var footer = document.createElement('span');
+      footer.className = 'phab-advertising-card-preview-footer';
+      content.appendChild(footer);
+
+      return {
+        root: preview,
+        stage: stage,
+        variant: variant,
+        image: image,
+        placeholder: placeholder,
+        badge: badge,
+        title: title,
+        footer: footer
+      };
+    }
+
+    var advertisingPreview = document.createElement('div');
+    advertisingPreview.className = 'phab-advertising-preview';
+    advertisingEditorPanel.appendChild(advertisingPreview);
+
+    var advertisingPreviewImage = document.createElement('img');
+    advertisingPreviewImage.alt = 'Предпросмотр рекламной акции';
+    advertisingPreview.appendChild(advertisingPreviewImage);
+
+    var advertisingPreviewPlaceholder = document.createElement('div');
+    advertisingPreviewPlaceholder.className = 'phab-advertising-preview-placeholder';
+    advertisingPreviewPlaceholder.textContent = 'Загрузите изображение баннера';
+    advertisingPreview.appendChild(advertisingPreviewPlaceholder);
+
+    var advertisingCardVariants = document.createElement('div');
+    advertisingCardVariants.className =
+      'phab-advertising-card-variants phab-admin-hidden';
+    advertisingEditorPanel.appendChild(advertisingCardVariants);
+
+    var advertisingEditorSquarePreview = createAdvertisingCardPreview(
+      'Квадратная карточка · 178 × 178 px в ЛК',
+      'is-square',
+      'square'
+    );
+    advertisingCardVariants.appendChild(advertisingEditorSquarePreview.root);
+
+    var advertisingEditorHorizontalPreview = createAdvertisingCardPreview(
+      'Горизонтальная карточка · 335 × 164 px в ЛК',
+      'is-horizontal',
+      'horizontal'
+    );
+    advertisingCardVariants.appendChild(advertisingEditorHorizontalPreview.root);
+
+    var advertisingPreviewDots = document.createElement('div');
+    advertisingPreviewDots.className = 'phab-advertising-dots';
+    advertisingEditorPanel.appendChild(advertisingPreviewDots);
+
+    var advertisingEditorForm = document.createElement('div');
+    advertisingEditorForm.className = 'phab-advertising-editor-form';
+    advertisingEditorPanel.appendChild(advertisingEditorForm);
+
+    var advertisingDraftTitleLabel = document.createElement('label');
+    advertisingDraftTitleLabel.className = 'phab-advertising-field';
+    advertisingDraftTitleLabel.appendChild(document.createTextNode('Название'));
+    advertisingEditorForm.appendChild(advertisingDraftTitleLabel);
+
+    var advertisingDraftTitleControl = document.createElement('div');
+    advertisingDraftTitleControl.className = 'phab-advertising-field-control';
+    advertisingDraftTitleLabel.appendChild(advertisingDraftTitleControl);
+
+    var advertisingDraftTitleInput = document.createElement('input');
+    advertisingDraftTitleInput.className = 'has-counter';
+    advertisingDraftTitleInput.maxLength = 160;
+    advertisingDraftTitleInput.placeholder = 'Название акции';
+    advertisingDraftTitleControl.appendChild(advertisingDraftTitleInput);
+
+    var advertisingTitleCounter = document.createElement('span');
+    advertisingTitleCounter.className = 'phab-advertising-counter';
+    advertisingTitleCounter.textContent = '0 / 160';
+    advertisingDraftTitleControl.appendChild(advertisingTitleCounter);
+
+    var advertisingDraftHrefLabel = document.createElement('label');
+    advertisingDraftHrefLabel.className = 'phab-advertising-field';
+    advertisingDraftHrefLabel.appendChild(document.createTextNode('Ссылка перехода'));
+    advertisingEditorForm.appendChild(advertisingDraftHrefLabel);
+
+    var advertisingDraftHrefInput = document.createElement('input');
+    advertisingDraftHrefInput.placeholder = 'https://... или /relative-path';
+    advertisingDraftHrefLabel.appendChild(advertisingDraftHrefInput);
+
+    var advertisingHrefError = document.createElement('span');
+    advertisingHrefError.className = 'phab-advertising-field-error phab-admin-hidden';
+    advertisingDraftHrefLabel.appendChild(advertisingHrefError);
+
+    var advertisingDraftBadgeLabel = document.createElement('label');
+    advertisingDraftBadgeLabel.className = 'phab-advertising-field phab-admin-hidden';
+    advertisingDraftBadgeLabel.appendChild(document.createTextNode('Текст в бейдже'));
+    advertisingEditorForm.appendChild(advertisingDraftBadgeLabel);
+
+    var advertisingDraftBadgePresetLabel = document.createElement('label');
+    advertisingDraftBadgePresetLabel.className = 'phab-advertising-field phab-admin-hidden';
+    advertisingDraftBadgePresetLabel.appendChild(document.createTextNode('Готовый бейдж'));
+    advertisingEditorForm.insertBefore(
+      advertisingDraftBadgePresetLabel,
+      advertisingDraftBadgeLabel
+    );
+
+    var advertisingDraftBadgePresetInput = document.createElement('select');
+    advertisingDraftBadgePresetInput.innerHTML =
+      '<option value="">Свой текст</option>' +
+      '<option value="⚡">⚡ Молния</option>' +
+      '<option value="СПЕЦПРЕДЛОЖЕНИЕ">Спецпредложение</option>' +
+      '<option value="АКЦИЯ">Акция</option>';
+    advertisingDraftBadgePresetLabel.appendChild(advertisingDraftBadgePresetInput);
+
+    var advertisingDraftBadgeInput = document.createElement('input');
+    advertisingDraftBadgeInput.maxLength = 40;
+    advertisingDraftBadgeInput.placeholder = 'Например: Реклама';
+    advertisingDraftBadgeLabel.appendChild(advertisingDraftBadgeInput);
+
+    var advertisingDraftFooterLabel = document.createElement('label');
+    advertisingDraftFooterLabel.className = 'phab-advertising-field phab-admin-hidden';
+    advertisingDraftFooterLabel.appendChild(document.createTextNode('Текст в нижнем блоке'));
+    advertisingEditorForm.appendChild(advertisingDraftFooterLabel);
+
+    var advertisingDraftFooterInput = document.createElement('input');
+    advertisingDraftFooterInput.maxLength = 100;
+    advertisingDraftFooterInput.placeholder = 'Например: Подробнее';
+    advertisingDraftFooterLabel.appendChild(advertisingDraftFooterInput);
+
+    var advertisingStatusLabel = document.createElement('label');
+    advertisingStatusLabel.className = 'phab-advertising-field';
+    advertisingStatusLabel.appendChild(document.createTextNode('Статус'));
+    advertisingEditorForm.appendChild(advertisingStatusLabel);
+
+    var advertisingStatusInput = document.createElement('select');
+    advertisingStatusInput.innerHTML =
+      '<option value="active">Включена</option>' +
+      '<option value="inactive">Выключена</option>';
+    advertisingStatusLabel.appendChild(advertisingStatusInput);
+
+    var advertisingDraftFileBlock = document.createElement('div');
+    advertisingEditorForm.appendChild(advertisingDraftFileBlock);
+
+    var advertisingDraftFileLabel = document.createElement('div');
+    advertisingDraftFileLabel.className = 'phab-advertising-upload-label';
+    advertisingDraftFileLabel.textContent = 'Изображение баннера';
+    advertisingDraftFileBlock.appendChild(advertisingDraftFileLabel);
+
+    var advertisingDraftFileMeta = document.createElement('div');
+    advertisingDraftFileMeta.className = 'phab-advertising-upload-meta';
+    advertisingDraftFileMeta.textContent =
+      'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
+    advertisingDraftFileBlock.appendChild(advertisingDraftFileMeta);
+
+    var advertisingDraftFileInput = document.createElement('input');
+    advertisingDraftFileInput.className = 'phab-admin-hidden';
+    advertisingDraftFileInput.type = 'file';
+    advertisingDraftFileInput.accept = 'image/jpeg,image/png,image/webp';
+    advertisingDraftFileBlock.appendChild(advertisingDraftFileInput);
+
+    var advertisingDropzone = document.createElement('button');
+    advertisingDropzone.className = 'phab-advertising-dropzone';
+    advertisingDropzone.type = 'button';
+    advertisingDropzone.innerHTML =
+      '<span><span class="phab-advertising-dropzone-icon" aria-hidden="true">▧</span>' +
+      '<strong>Заменить изображение</strong>' +
+      '<span data-advertising-file-name>Нажмите или перетащите файл сюда</span></span>';
+    advertisingDraftFileBlock.appendChild(advertisingDropzone);
+
+    var advertisingFileName = advertisingDropzone.querySelector('[data-advertising-file-name]');
+
+    var advertisingCardFileBlocks = document.createElement('div');
+    advertisingCardFileBlocks.className = 'phab-advertising-card-uploads phab-admin-hidden';
+    advertisingEditorForm.appendChild(advertisingCardFileBlocks);
+
+    function createAdvertisingCardUpload(variant, title, meta) {
+      var block = document.createElement('div');
+      block.className = 'phab-advertising-card-upload';
+      block.dataset.advertisingCardVariant = variant;
+      advertisingCardFileBlocks.appendChild(block);
+
+      var label = document.createElement('div');
+      label.className = 'phab-advertising-upload-label';
+      label.textContent = title;
+      block.appendChild(label);
+
+      var description = document.createElement('div');
+      description.className = 'phab-advertising-upload-meta';
+      description.textContent = meta;
+      block.appendChild(description);
+
+      var input = document.createElement('input');
+      input.className = 'phab-admin-hidden';
+      input.type = 'file';
+      input.accept = 'image/jpeg,image/png,image/webp';
+      block.appendChild(input);
+
+      var dropzone = document.createElement('button');
+      dropzone.className = 'phab-advertising-dropzone';
+      dropzone.type = 'button';
+      dropzone.innerHTML =
+        '<span><span class="phab-advertising-dropzone-icon" aria-hidden="true">▧</span>' +
+        '<strong>Выбрать изображение</strong>' +
+        '<span data-advertising-file-name>JPG, PNG или WebP</span></span>';
+      block.appendChild(dropzone);
+      return {
+        variant: variant,
+        block: block,
+        input: input,
+        dropzone: dropzone,
+        fileName: dropzone.querySelector('[data-advertising-file-name]')
+      };
+    }
+
+    var advertisingSquareUpload = createAdvertisingCardUpload(
+      'square',
+      'Квадратное изображение',
+      'Итоговый файл: 178 × 178 px.'
+    );
+    var advertisingHorizontalUpload = createAdvertisingCardUpload(
+      'horizontal',
+      'Горизонтальное изображение',
+      'Итоговый файл: 335 × 164 px.'
+    );
+
+    var advertisingCropControls = document.createElement('div');
+    advertisingCropControls.className =
+      'phab-advertising-crop-controls phab-admin-hidden';
+    advertisingEditorForm.appendChild(advertisingCropControls);
+
+    var advertisingCropHead = document.createElement('div');
+    advertisingCropHead.className = 'phab-advertising-crop-head';
+    var advertisingCropHeadLabel = document.createElement('span');
+    advertisingCropHeadLabel.textContent = 'Кадрирование изображения';
+    advertisingCropHead.appendChild(advertisingCropHeadLabel);
+    advertisingCropControls.appendChild(advertisingCropHead);
+
+    var advertisingCropResetBtn = document.createElement('button');
+    advertisingCropResetBtn.className = 'phab-advertising-crop-reset';
+    advertisingCropResetBtn.type = 'button';
+    advertisingCropResetBtn.textContent = 'Сбросить';
+    advertisingCropHead.appendChild(advertisingCropResetBtn);
+
+    function createAdvertisingCropField(label, min, max, value, suffix) {
+      var wrap = document.createElement('label');
+      wrap.className = 'phab-advertising-crop-field';
+      wrap.appendChild(document.createTextNode(label));
+
+      var input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(min);
+      input.max = String(max);
+      input.step = '1';
+      input.value = String(value);
+      wrap.appendChild(input);
+
+      var output = document.createElement('output');
+      output.textContent = String(value) + suffix;
+      wrap.appendChild(output);
+      advertisingCropControls.appendChild(wrap);
+      return { input: input, output: output, suffix: suffix };
+    }
+
+    var advertisingCropZoom = createAdvertisingCropField(
+      'Масштаб',
+      100,
+      250,
+      100,
+      '%'
+    );
+    var advertisingCropX = createAdvertisingCropField(
+      'По горизонтали',
+      -100,
+      100,
+      0,
+      ''
+    );
+    var advertisingCropY = createAdvertisingCropField(
+      'По вертикали',
+      -100,
+      100,
+      0,
+      ''
+    );
+
+    var advertisingEditorActions = document.createElement('div');
+    advertisingEditorActions.className = 'phab-advertising-editor-actions';
+    advertisingEditorForm.appendChild(advertisingEditorActions);
+
+    var advertisingCancelBtn = document.createElement('button');
+    advertisingCancelBtn.className = 'phab-advertising-action';
+    advertisingCancelBtn.type = 'button';
+    advertisingCancelBtn.textContent = 'Отмена';
+    advertisingEditorActions.appendChild(advertisingCancelBtn);
+
+    var advertisingDraftAddBtn = document.createElement('button');
+    advertisingDraftAddBtn.className = 'phab-advertising-action is-primary';
+    advertisingDraftAddBtn.type = 'button';
+    advertisingDraftAddBtn.textContent = 'Сохранить изменения';
+    advertisingEditorActions.appendChild(advertisingDraftAddBtn);
+
+    var advertisingInsightsPanel = document.createElement('section');
+    advertisingInsightsPanel.className = 'phab-advertising-insights';
+    advertisingEditorPanel.appendChild(advertisingInsightsPanel);
+
+    var advertisingStatsDetails = document.createElement('details');
+    advertisingStatsDetails.className = 'phab-advertising-insight-section';
+    advertisingInsightsPanel.appendChild(advertisingStatsDetails);
+
+    var advertisingStatsSummary = document.createElement('summary');
+    advertisingStatsSummary.textContent = 'Статистика акции';
+    advertisingStatsDetails.appendChild(advertisingStatsSummary);
+
+    var advertisingStatsBody = document.createElement('div');
+    advertisingStatsBody.className = 'phab-advertising-insight-section-body';
+    advertisingStatsDetails.appendChild(advertisingStatsBody);
+
+    var advertisingStatsGrid = document.createElement('div');
+    advertisingStatsGrid.className = 'phab-advertising-stat-grid';
+    advertisingStatsBody.appendChild(advertisingStatsGrid);
+
+    var advertisingClickedPhones = document.createElement('div');
+    advertisingClickedPhones.className = 'phab-advertising-insight-list';
+    advertisingStatsBody.appendChild(advertisingClickedPhones);
+
+    var advertisingAuditDetails = document.createElement('details');
+    advertisingAuditDetails.className = 'phab-advertising-insight-section';
+    advertisingInsightsPanel.appendChild(advertisingAuditDetails);
+
+    var advertisingAuditSummary = document.createElement('summary');
+    advertisingAuditSummary.textContent = 'Логи изменений';
+    advertisingAuditDetails.appendChild(advertisingAuditSummary);
+
+    var advertisingAuditBody = document.createElement('div');
+    advertisingAuditBody.className = 'phab-advertising-insight-section-body';
+    advertisingAuditDetails.appendChild(advertisingAuditBody);
+
+    var advertisingAuditLog = document.createElement('div');
+    advertisingAuditLog.className = 'phab-advertising-insight-list';
+    advertisingAuditBody.appendChild(advertisingAuditLog);
+
+    var advertisingPreviewModal = document.createElement('div');
+    advertisingPreviewModal.className = 'phab-admin-modal phab-admin-hidden';
+    advertisingPreviewModal.setAttribute('role', 'dialog');
+    advertisingPreviewModal.setAttribute('aria-modal', 'true');
+    advertisingPreviewModal.setAttribute('aria-labelledby', 'phab-advertising-preview-title');
+    overlayHost.appendChild(advertisingPreviewModal);
+
+    var advertisingPreviewModalCard = document.createElement('div');
+    advertisingPreviewModalCard.className =
+      'phab-admin-modal-card phab-advertising-preview-modal-card';
+    advertisingPreviewModal.appendChild(advertisingPreviewModalCard);
+
+    var advertisingPreviewModalHead = document.createElement('div');
+    advertisingPreviewModalHead.className = 'phab-admin-modal-head';
+    advertisingPreviewModalCard.appendChild(advertisingPreviewModalHead);
+
+    var advertisingPreviewModalTitle = document.createElement('div');
+    advertisingPreviewModalTitle.id = 'phab-advertising-preview-title';
+    advertisingPreviewModalTitle.className = 'phab-admin-modal-title';
+    advertisingPreviewModalTitle.textContent = 'Предпросмотр в личном кабинете';
+    advertisingPreviewModalHead.appendChild(advertisingPreviewModalTitle);
+
+    var advertisingPreviewModalCloseBtn = document.createElement('button');
+    advertisingPreviewModalCloseBtn.className = 'phab-admin-modal-close';
+    advertisingPreviewModalCloseBtn.type = 'button';
+    advertisingPreviewModalCloseBtn.setAttribute('aria-label', 'Закрыть предпросмотр');
+    advertisingPreviewModalCloseBtn.textContent = '×';
+    advertisingPreviewModalHead.appendChild(advertisingPreviewModalCloseBtn);
+
+    var advertisingPreviewModalBody = document.createElement('div');
+    advertisingPreviewModalBody.className = 'phab-advertising-preview-modal-body';
+    advertisingPreviewModalCard.appendChild(advertisingPreviewModalBody);
+
+    var advertisingPreviewModalCopy = document.createElement('div');
+    advertisingPreviewModalCopy.className = 'phab-advertising-preview-modal-copy';
+    advertisingPreviewModalBody.appendChild(advertisingPreviewModalCopy);
+
+    var advertisingPreviewModalName = document.createElement('h4');
+    advertisingPreviewModalCopy.appendChild(advertisingPreviewModalName);
+
+    var advertisingPreviewModalMeta = document.createElement('p');
+    advertisingPreviewModalMeta.textContent = 'Мобильная ширина · соотношение баннера 16:9';
+    advertisingPreviewModalCopy.appendChild(advertisingPreviewModalMeta);
+
+    var advertisingPreviewModalLink = document.createElement('a');
+    advertisingPreviewModalLink.target = '_blank';
+    advertisingPreviewModalLink.rel = 'noopener noreferrer';
+    advertisingPreviewModalCopy.appendChild(advertisingPreviewModalLink);
+
+    var advertisingMobileFrame = document.createElement('div');
+    advertisingMobileFrame.className = 'phab-advertising-mobile-frame';
+    advertisingPreviewModalBody.appendChild(advertisingMobileFrame);
+
+    var advertisingPreviewModalImage = document.createElement('img');
+    advertisingPreviewModalImage.alt = 'Баннер акции в мобильном личном кабинете';
+    advertisingMobileFrame.appendChild(advertisingPreviewModalImage);
+
+    var advertisingModalCardVariants = document.createElement('div');
+    advertisingModalCardVariants.className =
+      'phab-advertising-card-variants is-modal phab-admin-hidden';
+    advertisingPreviewModalBody.appendChild(advertisingModalCardVariants);
+
+    var advertisingModalSquarePreview = createAdvertisingCardPreview(
+      'Квадратная карточка · 178 × 178',
+      'is-square',
+      'square'
+    );
+    advertisingModalCardVariants.appendChild(advertisingModalSquarePreview.root);
+
+    var advertisingModalHorizontalPreview = createAdvertisingCardPreview(
+      'Горизонтальная карточка · 335 × 164',
+      'is-horizontal',
+      'horizontal'
+    );
+    advertisingModalCardVariants.appendChild(advertisingModalHorizontalPreview.root);
 
     var quickReplyModal = document.createElement('div');
     quickReplyModal.className = 'phab-admin-modal phab-admin-hidden';
@@ -8409,19 +12052,20 @@
     quickReplyUsageCard.appendChild(quickReplyUsageList);
 
     var gameModal = document.createElement('div');
-    gameModal.className = 'phab-admin-modal phab-admin-hidden';
+    gameModal.className = 'phab-admin-modal phab-admin-game-details-modal phab-admin-hidden';
     overlayHost.appendChild(gameModal);
 
     var gameModalCard = document.createElement('div');
-    gameModalCard.className = 'phab-admin-modal-card';
+    gameModalCard.className = 'phab-admin-modal-card phab-admin-game-details-shell';
     gameModal.appendChild(gameModalCard);
 
     var gameModalHead = document.createElement('div');
     gameModalHead.className = 'phab-admin-modal-head';
     gameModalCard.appendChild(gameModalHead);
 
-    var gameModalTitle = document.createElement('div');
+    var gameModalTitle = document.createElement('button');
     gameModalTitle.className = 'phab-admin-modal-title';
+    gameModalTitle.type = 'button';
     gameModalTitle.textContent = 'Игра';
     gameModalHead.appendChild(gameModalTitle);
 
@@ -8432,7 +12076,7 @@
     gameModalHead.appendChild(gameModalCloseBtn);
 
     var gameModalBody = document.createElement('div');
-    gameModalBody.className = 'phab-admin-modal-body';
+    gameModalBody.className = 'phab-admin-modal-body phab-admin-game-details-content';
     gameModalCard.appendChild(gameModalBody);
 
     var eventModal = document.createElement('div');
@@ -8804,6 +12448,7 @@
       mobileTabSelect: mobileTabSelect,
       tabMessages: tabMessages,
       tabGames: tabGames,
+      tabNotifications: tabNotifications,
       tabPlayerRatings: tabPlayerRatings,
       tabLogs: tabLogs,
       tabTournaments: tabTournaments,
@@ -8812,8 +12457,30 @@
       tabAnalytics: tabAnalytics,
       tabSettings: tabSettings,
       tabAdvertising: tabAdvertising,
+      advertisingBlock1TabBtn: advertisingBlock1TabBtn,
+      advertisingBlock2TabBtn: advertisingBlock2TabBtn,
+      advertisingBlock3TabBtn: advertisingBlock3TabBtn,
+      advertisingBlock4TabBtn: advertisingBlock4TabBtn,
       messagesSection: messagesSection,
       gamesSection: gamesSection,
+      notificationsSection: notificationsSection,
+      notificationAuth: notificationAuth,
+      notificationWorkspace: notificationWorkspace,
+      notificationPhoneInput: notificationPhoneInput,
+      notificationCodeField: notificationCodeField,
+      notificationCodeInput: notificationCodeInput,
+      notificationLoginBtn: notificationLoginBtn,
+      notificationAuthStatus: notificationAuthStatus,
+      notificationPhonesInput: notificationPhonesInput,
+      notificationPhoneCount: notificationPhoneCount,
+      notificationPreviewBtn: notificationPreviewBtn,
+      notificationChannelInputs: notificationChannelInputs,
+      notificationTitleInput: notificationTitleInput,
+      notificationBodyInput: notificationBodyInput,
+      notificationDeepLinkInput: notificationDeepLinkInput,
+      notificationResolution: notificationResolution,
+      notificationResult: notificationResult,
+      notificationSendBtn: notificationSendBtn,
       playerRatingsSection: playerRatingsSection,
       playerRatingsSearchInput: playerRatingsSearchInput,
       playerRatingsSearchBtn: playerRatingsSearchBtn,
@@ -8830,6 +12497,8 @@
       analyticsSection: analyticsSection,
       settingsSection: settingsSection,
       advertisingSection: advertisingSection,
+      advertisingPlacementDescription: advertisingEditorContext,
+      advertisingDraftFileMeta: advertisingDraftFileMeta,
       messagesGrid: messagesGrid,
       leftPane: leftPane,
       rightPane: rightPane,
@@ -8915,12 +12584,41 @@
       playerRatingEditCancelBtn: playerRatingEditCancelBtn,
       playerRatingEditSaveBtn: playerRatingEditSaveBtn,
       gamesPhoneInput: gamesPhoneInput,
-      gamesApplyBtn: gamesApplyBtn,
+      gamesListViewBtn: gamesListViewBtn,
+      gamesScheduleViewBtn: gamesScheduleViewBtn,
+      gamesColumnsBtn: gamesColumnsBtn,
+      gamesQuickFilters: gamesQuickFilters,
+      gamesFilterPanel: gamesFilterPanel,
+      gamesTableShell: gamesTableShell,
+      gamesScheduleToolbar: gamesScheduleToolbar,
+      gamesSchedulePrevBtn: gamesSchedulePrevBtn,
+      gamesScheduleDateInput: gamesScheduleDateInput,
+      gamesScheduleTodayBtn: gamesScheduleTodayBtn,
+      gamesScheduleNextBtn: gamesScheduleNextBtn,
+      gamesScheduleStationSelect: gamesScheduleStationSelect,
+      gamesScheduleStatusButtons: gamesScheduleStatusButtons,
+      gamesScheduleShell: gamesScheduleShell,
+      gamesScheduleSummary: gamesScheduleSummary,
+      gamesScheduleBoard: gamesScheduleBoard,
+      gamesDateInput: gamesDateInput,
+      gamesStationSelect: gamesStationSelect,
+      gamesStatusSelect: gamesStatusSelect,
+      gamesPublicationSelect: gamesPublicationSelect,
       gamesResetBtn: gamesResetBtn,
+      gamesFoundCountValue: gamesFoundCountValue,
+      gamesColumnsPanel: gamesColumnsPanel,
+      gamesColumnInputs: gamesColumnInputs,
+      gamesQuickFilterButtons: gamesQuickFilterButtons,
+      gamesBulkActions: gamesBulkActions,
+      gamesBulkCount: gamesBulkCount,
+      gamesBulkHideBtn: gamesBulkHideBtn,
+      gamesBulkRefreshBtn: gamesBulkRefreshBtn,
+      gamesBulkExportBtn: gamesBulkExportBtn,
       gamesPageSizeSelect: gamesPageSizeSelect,
       gamesPrevPageBtn: gamesPrevPageBtn,
       gamesNextPageBtn: gamesNextPageBtn,
       gamesPageInfo: gamesPageInfo,
+      gamesPageNumber: gamesPageNumber,
       gamesTable: gamesTable,
       logsFromInput: logsFromInput,
       logsToInput: logsToInput,
@@ -8982,15 +12680,73 @@
       settingsGeneralPane: settingsGeneralPane,
       settingsQuickRepliesPane: settingsQuickRepliesPane,
       settingsSplitPromoPane: settingsSplitPromoPane,
-      advertisingCabinetHomeTabBtn: advertisingCabinetHomeTabBtn,
+      locationAdminRoot: locationAdminRoot,
       advertisingCabinetHomePane: advertisingCabinetHomePane,
+      advertisingModeCard: advertisingModeCard,
       advertisingRotationInput: advertisingRotationInput,
-      advertisingConfigSaveBtn: advertisingConfigSaveBtn,
+      advertisingRepeatEveryWrap: advertisingRepeatEveryWrap,
+      advertisingRepeatEveryInput: advertisingRepeatEveryInput,
+      advertisingSavedState: advertisingSavedState,
+      advertisingPreviewBtn: advertisingPreviewBtn,
+      advertisingCreateBtn: advertisingCreateBtn,
+      advertisingFilterAllBtn: advertisingFilterAllBtn,
+      advertisingFilterActiveBtn: advertisingFilterActiveBtn,
+      advertisingFilterInactiveBtn: advertisingFilterInactiveBtn,
+      advertisingSearchInput: advertisingSearchInput,
+      advertisingEditorPanel: advertisingEditorPanel,
+      advertisingEditorTitle: advertisingEditorTitle,
+      advertisingEditorEmpty: advertisingEditorEmpty,
+      advertisingPreview: advertisingPreview,
+      advertisingPreviewImage: advertisingPreviewImage,
+      advertisingPreviewPlaceholder: advertisingPreviewPlaceholder,
+      advertisingCardVariants: advertisingCardVariants,
+      advertisingEditorCardPreviews: [
+        advertisingEditorSquarePreview,
+        advertisingEditorHorizontalPreview
+      ],
+      advertisingPreviewDots: advertisingPreviewDots,
       advertisingDraftTitleInput: advertisingDraftTitleInput,
+      advertisingTitleCounter: advertisingTitleCounter,
       advertisingDraftHrefInput: advertisingDraftHrefInput,
+      advertisingHrefError: advertisingHrefError,
+      advertisingDraftBadgePresetLabel: advertisingDraftBadgePresetLabel,
+      advertisingDraftBadgePresetInput: advertisingDraftBadgePresetInput,
+      advertisingDraftBadgeLabel: advertisingDraftBadgeLabel,
+      advertisingDraftBadgeInput: advertisingDraftBadgeInput,
+      advertisingDraftFooterLabel: advertisingDraftFooterLabel,
+      advertisingDraftFooterInput: advertisingDraftFooterInput,
+      advertisingStatusInput: advertisingStatusInput,
+      advertisingDraftFileBlock: advertisingDraftFileBlock,
       advertisingDraftFileInput: advertisingDraftFileInput,
+      advertisingDropzone: advertisingDropzone,
+      advertisingFileName: advertisingFileName,
+      advertisingCardFileBlocks: advertisingCardFileBlocks,
+      advertisingCardUploads: [advertisingSquareUpload, advertisingHorizontalUpload],
+      advertisingCropControls: advertisingCropControls,
+      advertisingCropHeadLabel: advertisingCropHeadLabel,
+      advertisingCropResetBtn: advertisingCropResetBtn,
+      advertisingCropZoom: advertisingCropZoom,
+      advertisingCropX: advertisingCropX,
+      advertisingCropY: advertisingCropY,
+      advertisingCancelBtn: advertisingCancelBtn,
       advertisingDraftAddBtn: advertisingDraftAddBtn,
+      advertisingInsightsPanel: advertisingInsightsPanel,
+      advertisingStatsGrid: advertisingStatsGrid,
+      advertisingClickedPhones: advertisingClickedPhones,
+      advertisingAuditLog: advertisingAuditLog,
       advertisingList: advertisingList,
+      advertisingPreviewModal: advertisingPreviewModal,
+      advertisingPreviewModalCloseBtn: advertisingPreviewModalCloseBtn,
+      advertisingPreviewModalName: advertisingPreviewModalName,
+      advertisingPreviewModalMeta: advertisingPreviewModalMeta,
+      advertisingPreviewModalLink: advertisingPreviewModalLink,
+      advertisingMobileFrame: advertisingMobileFrame,
+      advertisingPreviewModalImage: advertisingPreviewModalImage,
+      advertisingModalCardVariants: advertisingModalCardVariants,
+      advertisingModalCardPreviews: [
+        advertisingModalSquarePreview,
+        advertisingModalHorizontalPreview
+      ],
       splitPromoList: splitPromoList,
       splitPromoEnabledInput: splitPromoEnabledInput,
       splitPromoExpiresAtInput: splitPromoExpiresAtInput,
@@ -9084,7 +12840,12 @@
       vivaStaticTokenInput: vivaStaticTokenInput,
       vivaPasswordInput: vivaPasswordInput,
       vivaSaveBtn: vivaSaveBtn,
-      staffList: staffList
+      staffList: staffList,
+      staffCreateUserBtn: staffCreateUserBtn,
+      staffCreateRoleBtn: staffCreateRoleBtn,
+      staffAuditBtn: staffAuditBtn,
+      staffEditor: staffEditor,
+      staffAuditList: staffAuditList
     };
   }
 
@@ -9201,22 +12962,70 @@
       : false;
   }
 
+  function hasPermission(cfg, permission) {
+    if (cfg && Array.isArray(cfg.permissions) && cfg.permissions.length > 0) {
+      return cfg.permissions.indexOf('*') >= 0 || cfg.permissions.indexOf(permission) >= 0;
+    }
+    var legacyPermissions = {
+      'dialogs:read': ['SUPER_ADMIN', 'SUPPORT', 'STATION_ADMIN', 'MANAGER', 'GAME_MANAGER', 'TOURNAMENT_MANAGER'],
+      'dialogs:write': ['SUPER_ADMIN', 'SUPPORT', 'STATION_ADMIN', 'MANAGER'],
+      'games:read': ['SUPER_ADMIN', 'SUPPORT', 'STATION_ADMIN', 'MANAGER', 'GAME_MANAGER', 'TOURNAMENT_MANAGER'],
+      'games:write': ['SUPER_ADMIN', 'SUPPORT', 'MANAGER', 'GAME_MANAGER', 'TOURNAMENT_MANAGER'],
+      'tournaments:read': ['SUPER_ADMIN', 'STATION_ADMIN', 'MANAGER', 'GAME_MANAGER', 'TOURNAMENT_MANAGER'],
+      'tournaments:write': ['SUPER_ADMIN', 'MANAGER', 'GAME_MANAGER', 'TOURNAMENT_MANAGER'],
+      'settings:read': ['SUPER_ADMIN', 'MANAGER'],
+      'settings:write': ['SUPER_ADMIN', 'MANAGER'],
+      'admin-users:read': ['SUPER_ADMIN', 'MANAGER'],
+      'admin-users:write': ['SUPER_ADMIN'],
+      'access:manage': ['SUPER_ADMIN'],
+      'audit:read': ['SUPER_ADMIN', 'MANAGER'],
+      'player-ratings:read': ['SUPER_ADMIN', 'MANAGER', 'SUPPORT', 'GAME_MANAGER', 'TOURNAMENT_MANAGER', 'STATION_ADMIN'],
+      'player-ratings:write': ['SUPER_ADMIN'],
+      'advertising:read': ['SUPER_ADMIN', 'MANAGER'],
+      'advertising:write': ['SUPER_ADMIN', 'MANAGER']
+    };
+    return hasAnyRole(cfg, legacyPermissions[permission] || []);
+  }
+
+  function canAccessSettings(cfg) {
+    return hasPermission(cfg, 'settings:read') || hasPermission(cfg, 'admin-users:read');
+  }
+
+  function canAccessDialogs(cfg) {
+    return hasPermission(cfg, 'dialogs:read');
+  }
+
+  function canAccessGames(cfg) {
+    return hasPermission(cfg, 'games:read');
+  }
+
+  function canAccessTournaments(cfg) {
+    return hasPermission(cfg, 'tournaments:read');
+  }
+
+  function canManageAdminUsers(cfg) {
+    return hasPermission(cfg, 'admin-users:write');
+  }
+
+  function canManageRoles(cfg) {
+    return hasPermission(cfg, 'access:manage');
+  }
+
+  function canReadAdminAudit(cfg) {
+    return hasPermission(cfg, 'audit:read');
+  }
+
   function isRestrictedStationAdminConfig(cfg) {
-    if (!hasRole(cfg, 'STATION_ADMIN')) {
+    if (!cfg || !Array.isArray(cfg.stationIds) || cfg.stationIds.length === 0) {
       return false;
     }
-
-    return !hasAnyRole(cfg, [
-      'SUPER_ADMIN',
-      'MANAGER',
-      'SUPPORT',
-      'GAME_MANAGER',
-      'TOURNAMENT_MANAGER'
-    ]);
+    return !hasPermission(cfg, 'settings:read') &&
+      !hasPermission(cfg, 'games:write') &&
+      !hasPermission(cfg, 'tournaments:write');
   }
 
   function canManageVivaSettings(cfg) {
-    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+    return hasPermission(cfg, 'settings:write');
   }
 
   function canToggleSystemMessages(cfg) {
@@ -9238,26 +13047,19 @@
   }
 
   function canAccessPlayerRatings(cfg) {
-    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasAnyRole(cfg, [
-      'SUPER_ADMIN',
-      'MANAGER',
-      'SUPPORT',
-      'GAME_MANAGER',
-      'TOURNAMENT_MANAGER',
-      'STATION_ADMIN'
-    ]);
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPermission(cfg, 'player-ratings:read');
   }
 
   function canManagePlayerRatings(cfg) {
-    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasRole(cfg, 'SUPER_ADMIN');
+    return Boolean(cfg && cfg.playerRatingAdminEnabled) && hasPermission(cfg, 'player-ratings:write');
   }
 
   function canManageQuickReplySettings(cfg) {
-    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+    return hasPermission(cfg, 'settings:write');
   }
 
   function canManageAdvertisingSettings(cfg) {
-    return hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']);
+    return hasPermission(cfg, 'advertising:write');
   }
 
   function estimateDataUrlSize(dataUrl) {
@@ -9272,15 +13074,23 @@
     var href = String(ad.href || '').trim();
     var imageUrl = String(ad.imageUrl || '').trim();
     var imageAssetId = String(ad.imageAssetId || '').trim();
+    var squareImageUrl = String(ad.squareImageUrl || imageUrl).trim();
+    var horizontalImageUrl = String(ad.horizontalImageUrl || imageUrl).trim();
     if (!href || !imageUrl) {
       return null;
     }
     return {
       id: String(ad.id || 'cabinet-home-ad-' + String(index + 1)).trim(),
       title: String(ad.title || '').trim(),
+      badgeText: String(ad.badgeText || '').trim(),
+      footerText: String(ad.footerText || '').trim(),
       href: href,
       imageUrl: imageUrl,
       imageAssetId: imageAssetId,
+      squareImageUrl: squareImageUrl,
+      squareImageAssetId: String(ad.squareImageAssetId || imageAssetId).trim(),
+      horizontalImageUrl: horizontalImageUrl,
+      horizontalImageAssetId: String(ad.horizontalImageAssetId || imageAssetId).trim(),
       isActive: ad.isActive !== false,
       position:
         Number.isFinite(Number(ad.position)) && Number(ad.position) >= 0
@@ -9295,6 +13105,7 @@
     var source = normalizeObject(value);
     return {
       rotationEnabled: source.rotationEnabled === true,
+      repeatEveryCards: normalizeIntSetting(source.repeatEveryCards, 4),
       updatedAt: String(source.updatedAt || '').trim(),
       updatedBy: String(source.updatedBy || '').trim(),
       ads: normalizeArray(source.ads)
@@ -9303,6 +13114,43 @@
         .sort(function (left, right) {
           return left.position - right.position;
         })
+    };
+  }
+
+  function normalizeAdvertisingInsights(value) {
+    var source = normalizeObject(value);
+    return {
+      ads: normalizeArray(source.ads).map(function (item) {
+        var insight = normalizeObject(item);
+        return {
+          adId: String(insight.adId || '').trim(),
+          impressionCount: Math.max(0, Number(insight.impressionCount || 0)),
+          clickCount: Math.max(0, Number(insight.clickCount || 0)),
+          clickThroughRate: Math.max(0, Number(insight.clickThroughRate || 0)),
+          clickedPhones: normalizeArray(insight.clickedPhones).map(function (entry) {
+            var phone = normalizeObject(entry);
+            return {
+              phoneE164: String(phone.phoneE164 || '').trim(),
+              clickCount: Math.max(0, Number(phone.clickCount || 0)),
+              lastClickedAt: String(phone.lastClickedAt || '').trim()
+            };
+          }).filter(function (phone) { return Boolean(phone.phoneE164); })
+        };
+      }).filter(function (insight) { return Boolean(insight.adId); }),
+      auditLog: normalizeArray(source.auditLog).map(function (entry) {
+        var audit = normalizeObject(entry);
+        return {
+          id: String(audit.id || '').trim(),
+          adId: String(audit.adId || '').trim(),
+          actor: String(audit.actor || 'Система').trim(),
+          action: String(audit.action || 'UPDATED').trim(),
+          title: String(audit.title || '').trim(),
+          changes: normalizeArray(audit.changes).map(function (change) {
+            return String(change || '').trim();
+          }).filter(Boolean),
+          occurredAt: String(audit.occurredAt || '').trim()
+        };
+      }).filter(function (entry) { return Boolean(entry.id); })
     };
   }
 
@@ -9614,9 +13462,30 @@
     var root = createRoot(cfg);
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
+    var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var notificationState = {
+      session: null,
+      challengeId: '',
+      capabilities: null,
+      resolution: null,
+      restoring: false,
+      busy: ''
+    };
+    var locationAdminState = {
+      items: [],
+      selectedId: '',
+      version: null,
+      profile: createEmptyLocationProfile(),
+      loading: false,
+      saving: false,
+      loaded: false,
+      error: '',
+      query: ''
+    };
     var pollTimer = null;
     var dialogSearchTimer = null;
     var playerRatingsSearchTimer = null;
+    var gamesSearchTimer = null;
     var playerRatingsSearchAbort = null;
     var documentKeydownHandler = null;
     var windowResizeHandler = null;
@@ -9670,12 +13539,33 @@
         paymentsAmount: 0
       },
       gamesFilterPhone: '',
+      gamesFilterQuery: '',
+      gamesFilterDate: '',
+      gamesFilterStation: '',
+      gamesFilterStatus: '',
+      gamesFilterPublication: '',
+      gamesQuickFilter: 'upcoming',
+      gamesViewMode: 'list',
+      gamesScheduleDate: getTodayDateInputValue(),
+      gamesScheduleStation: '',
+      gamesScheduleStatus: 'active',
+      gamesScheduleRequestToken: '',
+      gamesSelectedIds: Object.create(null),
+      gamesVisibleColumns: (function () {
+        try {
+          var stored = JSON.parse(window.localStorage.getItem('phab_games_visible_columns') || '{}');
+          return isObject(stored) ? stored : {};
+        } catch (_error) {
+          return {};
+        }
+      })(),
       gamesSortField: 'createdAt',
       gamesSortDirection: 'desc',
       gamesPageSize: 15,
       gamesPage: 1,
       gamesTotal: 0,
       gamesTotalPages: 1,
+      selectedGameTab: 'overview',
       gamesColumnWidths: {},
       gameEventsColumnWidths: {},
       analyticsColumnWidths: {},
@@ -9747,25 +13637,87 @@
       communityManagingKey: null,
       tournamentsColumnWidths: {},
       settingsSubtab: 'general',
-      advertisingSubtab: 'cabinetHome',
+      advertisingSubtab: 'cabinetHomeTop',
+      advertisingFilter: 'all',
+      advertisingSearchQuery: '',
+      advertisingEditorMode: 'empty',
+      advertisingEditorItemId: '',
+      advertisingEditorInitial: null,
+      advertisingEditorImageDataUrl: '',
+      advertisingEditorPreviewUrl: '',
+      advertisingEditorSourceFile: null,
+      advertisingEditorCardVariant: 'square',
+      advertisingEditorCardImages: {
+        square: {
+          sourceFile: null,
+          dataUrl: '',
+          previewUrl: '',
+          crop: { zoom: 100, offsetX: 0, offsetY: 0 },
+          version: 0
+        },
+        horizontal: {
+          sourceFile: null,
+          dataUrl: '',
+          previewUrl: '',
+          crop: { zoom: 100, offsetX: 0, offsetY: 0 },
+          version: 0
+        }
+      },
+      advertisingEditorCropVersion: 0,
+      advertisingEditorDirty: false,
+      advertisingSaving: false,
+      advertisingDraggedItemId: '',
+      advertisingPreviewReturnFocus: null,
+      advertisingInsights: {
+        cabinetHomeTop: { ads: [], auditLog: [] },
+        cabinetHome: { ads: [], auditLog: [] },
+        cabinetForMeStrip: { ads: [], auditLog: [] },
+        cabinetForMeCard: { ads: [], auditLog: [] }
+      },
       settings: {
         stations: [],
         connectors: [],
         accessRules: [],
         adminUsers: [],
+        adminRoles: [],
+        adminAudit: [],
         viva: null,
         quickReplies: [],
         splitPaymentPromo: normalizeSplitPaymentPromoSettings(null)
       },
       advertising: {
+        cabinetHomeTop: {
+          rotationEnabled: false,
+          updatedAt: '',
+          updatedBy: '',
+          ads: []
+        },
         cabinetHome: {
           rotationEnabled: false,
+          updatedAt: '',
+          updatedBy: '',
+          ads: []
+        },
+        cabinetForMeStrip: {
+          rotationEnabled: false,
+          repeatEveryCards: 4,
+          updatedAt: '',
+          updatedBy: '',
+          ads: []
+        },
+        cabinetForMeCard: {
+          rotationEnabled: false,
+          repeatEveryCards: 6,
           updatedAt: '',
           updatedBy: '',
           ads: []
         }
       },
       quickReplyEditorRuleId: null,
+      staffEditor: null,
+      staffAuditVisible: false,
+      staffAuditLoading: false,
+      staffAuditFilter: {},
       quickReplyEditorAttachments: [],
       quickReplyUsageLogs: [],
       quickReplySuggestions: [],
@@ -9907,8 +13859,8 @@
       state.settingsSubtab =
         nextSubtab === 'quickReplies'
           ? 'quickReplies'
-          : nextSubtab === 'splitPromo'
-            ? 'splitPromo'
+          : nextSubtab === 'stations'
+            ? 'stations'
             : 'general';
       dom.settingsGeneralTabBtn.className =
         'phab-admin-community-tab' +
@@ -9922,7 +13874,7 @@
           : '');
       dom.settingsSplitPromoTabBtn.className =
         'phab-admin-community-tab' +
-        (state.settingsSubtab === 'splitPromo'
+        (state.settingsSubtab === 'stations'
           ? ' phab-admin-community-tab-active'
           : '');
       dom.settingsGeneralPane.className =
@@ -9934,23 +13886,792 @@
           ? 'phab-admin-settings-pane'
           : 'phab-admin-settings-pane phab-admin-hidden';
       dom.settingsSplitPromoPane.className =
-        state.settingsSubtab === 'splitPromo'
+        state.settingsSubtab === 'stations'
           ? 'phab-admin-settings-pane'
           : 'phab-admin-settings-pane phab-admin-hidden';
     }
 
+    function selectedLocationAdminItem() {
+      return locationAdminState.items.find(function (item) {
+        return item && item.id === locationAdminState.selectedId;
+      }) || null;
+    }
+
+    function locationStatusLabel(status) {
+      if (status === 'PUBLISHED') return 'Опубликована';
+      if (status === 'ARCHIVED') return 'Архив';
+      return 'Черновик';
+    }
+
+    function locationIntervalsText(entry) {
+      if (!entry || entry.closed || !Array.isArray(entry.intervals)) return '';
+      return entry.intervals
+        .map(function (interval) {
+          return String(interval.opensAt || '') + '—' + String(interval.closesAt || '');
+        })
+        .join(', ');
+    }
+
+    function parseLocationIntervals(value, strict) {
+      var raw = String(value || '').trim();
+      if (!raw) return [];
+      var intervals = raw.split(',').map(function (part) {
+        var match = part.trim().match(/^(\d{2}:\d{2})\s*[-–—]\s*(\d{2}:\d{2})$/);
+        if (!match) {
+          if (strict) {
+            throw new Error('График задаётся как 07:00—23:00. Несколько интервалов разделяйте запятыми.');
+          }
+          return null;
+        }
+        return { opensAt: match[1], closesAt: match[2] };
+      });
+      return intervals.filter(Boolean);
+    }
+
+    function readLocationProfileFromEditor(editor, strict) {
+      var current = editableLocationProfile(locationAdminState.profile);
+      function field(name) {
+        return editor.querySelector('[data-location-field="' + name + '"]');
+      }
+      current.title = String(field('title').value || '').trim();
+      current.shortTitle = locationNullable(field('shortTitle').value);
+      current.slug = String(field('slug').value || '').trim().toLowerCase();
+      current.city = locationNullable(field('city').value);
+      current.courtCount = Math.max(0, Math.round(Number(field('courtCount').value || 0)));
+      current.address = locationNullable(field('address').value);
+      current.latitude = locationNumber(field('latitude').value);
+      current.longitude = locationNumber(field('longitude').value);
+      current.timezone = String(field('timezone').value || '').trim() || 'Europe/Moscow';
+      current.metroName = locationNullable(field('metroName').value);
+      var distance = locationNumber(field('metroDistanceMeters').value);
+      current.metroDistanceMeters = distance === null ? null : Math.max(0, Math.round(distance));
+      current.phoneE164 = locationNullable(field('phoneE164').value);
+      current.showOnHome = Boolean(field('showOnHome').checked);
+      current.sortOrder = Math.max(0, Math.round(Number(field('sortOrder').value || 0)));
+
+      current.gallery = Array.prototype.slice
+        .call(editor.querySelectorAll('[data-location-gallery-row]'))
+        .map(function (row, index) {
+          return {
+            url: String(row.querySelector('[data-gallery-url]').value || '').trim(),
+            alt: String(row.querySelector('[data-gallery-alt]').value || '').trim(),
+            isCover: Boolean(row.querySelector('[data-gallery-cover]').checked),
+            sortOrder: index
+          };
+        })
+        .filter(function (image) { return Boolean(image.url); });
+
+      current.amenities = Array.prototype.slice
+        .call(editor.querySelectorAll('[data-location-amenity-row]'))
+        .map(function (row, index) {
+          return {
+            key: String(row.getAttribute('data-amenity-key') || 'amenity-' + (index + 1)),
+            icon: String(row.querySelector('[data-amenity-icon]').value || 'OTHER'),
+            title: String(row.querySelector('[data-amenity-title]').value || '').trim(),
+            description: locationNullable(row.querySelector('[data-amenity-description]').value),
+            sortOrder: index
+          };
+        })
+        .filter(function (amenity) { return Boolean(amenity.title); });
+
+      current.workingHours = Array.prototype.slice
+        .call(editor.querySelectorAll('[data-location-day]'))
+        .map(function (row) {
+          var closed = Boolean(row.querySelector('[data-day-closed]').checked);
+          return {
+            weekday: String(row.getAttribute('data-location-day') || ''),
+            closed: closed,
+            intervals: closed
+              ? []
+              : parseLocationIntervals(row.querySelector('[data-day-intervals]').value, strict)
+          };
+        });
+
+      if (!current.slug && current.title) current.slug = slugifyLocationTitle(current.title);
+      if (strict) {
+        if (!current.title) throw new Error('Укажите название станции.');
+        if (!/^[a-z0-9][a-z0-9-]{1,78}$/.test(current.slug)) {
+          throw new Error('URL-код должен содержать 2–79 латинских символов, цифр или дефисов.');
+        }
+        if (current.gallery.length > 12) throw new Error('В галерее может быть не больше 12 изображений.');
+        if (current.amenities.length > 16) throw new Error('Можно добавить не больше 16 преимуществ.');
+        if (current.gallery.some(function (image) { return !isLocationGalleryUrl(image.url); })) {
+          throw new Error('Используйте HTTPS-ссылку или загруженное изображение PadlHub.');
+        }
+        if (
+          current.gallery.length > 0 &&
+          current.gallery.filter(function (image) { return image.isCover; }).length !== 1
+        ) {
+          throw new Error('Выберите одну обложку галереи.');
+        }
+        if ((current.latitude === null) !== (current.longitude === null)) {
+          throw new Error('Широта и долгота должны быть заполнены вместе.');
+        }
+        if (current.phoneE164 && !/^\+[1-9]\d{7,14}$/.test(current.phoneE164)) {
+          throw new Error('Телефон укажите в международном формате, например +79990000000.');
+        }
+      }
+      return current;
+    }
+
+    function syncLocationPreview(editor) {
+      var profile;
+      try {
+        profile = readLocationProfileFromEditor(editor, false);
+        locationAdminState.profile = profile;
+      } catch (_error) {
+        profile = locationAdminState.profile;
+      }
+      var preview = editor.querySelector('[data-location-preview]');
+      if (!preview) return;
+      var cover = profile.gallery.find(function (image) { return image.isCover; });
+      var coverElement = preview.querySelector('[data-preview-cover]');
+      coverElement.style.backgroundImage = cover && cover.url
+        ? 'url("' + locationGalleryDisplayUrl(cover.url, cfg.notificationApiBaseUrl).replace(/"/g, '%22') + '")'
+        : '';
+      preview.querySelector('[data-preview-title]').textContent = profile.title || 'Название станции';
+      var firstHours = profile.workingHours.find(function (entry) {
+        return !entry.closed && entry.intervals && entry.intervals.length > 0;
+      });
+      preview.querySelector('[data-preview-hours]').textContent = firstHours
+        ? '● Ежедневно, ' + firstHours.intervals[0].opensAt + '—' + firstHours.intervals[0].closesAt
+        : '● График не задан';
+      preview.querySelector('[data-preview-address]').textContent = profile.address || 'Адрес не указан';
+      preview.querySelector('[data-preview-phone]').textContent = profile.phoneE164 || 'Телефон не указан';
+      var amenitiesRoot = preview.querySelector('[data-preview-amenities]');
+      clearNode(amenitiesRoot);
+      profile.amenities.slice(0, 4).forEach(function (amenity) {
+        var item = document.createElement('span');
+        item.textContent = '◆ ' + amenity.title;
+        amenitiesRoot.appendChild(item);
+      });
+      if (profile.amenities.length === 0) {
+        var empty = document.createElement('span');
+        empty.textContent = 'Добавьте преимущества станции';
+        amenitiesRoot.appendChild(empty);
+      }
+      var completeness = locationCompleteness(profile);
+      editor.querySelector('[data-location-completeness]').textContent =
+        completeness.percent + '% · ' +
+        (completeness.ready ? 'готова к публикации' : 'не хватает: ' + completeness.missing.join(', '));
+    }
+
+    function renderLocationAdminList(container) {
+      clearNode(container);
+      var query = String(locationAdminState.query || '').trim().toLocaleLowerCase('ru-RU');
+      var visible = locationAdminState.items.filter(function (location) {
+        return (
+          String(location.title || '') + ' ' +
+          String(location.shortTitle || '') + ' ' +
+          String(location.city || '')
+        ).toLocaleLowerCase('ru-RU').indexOf(query) >= 0;
+      });
+      visible.forEach(function (location) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'phab-location-row' +
+          (location.id === locationAdminState.selectedId ? ' is-active' : '');
+        var cover = Array.isArray(location.gallery)
+          ? location.gallery.find(function (image) { return image.isCover; })
+          : null;
+        var coverElement = document.createElement('span');
+        coverElement.className = 'phab-location-row-cover';
+        if (cover && cover.url) {
+          coverElement.style.backgroundImage =
+            'url("' + locationGalleryDisplayUrl(cover.url, cfg.notificationApiBaseUrl).replace(/"/g, '%22') + '")';
+        }
+        button.appendChild(coverElement);
+        var copy = document.createElement('span');
+        copy.className = 'phab-location-row-copy';
+        var title = document.createElement('strong');
+        title.textContent = location.title || 'Без названия';
+        copy.appendChild(title);
+        var meta = document.createElement('span');
+        meta.textContent = (location.city || 'Город не указан') + ' · ' + Number(location.courtCount || 0) + ' кортов';
+        copy.appendChild(meta);
+        var status = document.createElement('span');
+        status.className = 'phab-location-status is-' + String(location.publicationStatus || 'DRAFT').toLowerCase();
+        status.textContent = locationStatusLabel(location.publicationStatus) + ' · ' + Number(location.completeness && location.completeness.percent || 0) + '%';
+        copy.appendChild(status);
+        button.appendChild(copy);
+        button.addEventListener('click', function () {
+          locationAdminState.selectedId = location.id;
+          locationAdminState.version = Number(location.version || 1);
+          locationAdminState.profile = editableLocationProfile(location);
+          locationAdminState.error = '';
+          renderLocationAdmin();
+        });
+        container.appendChild(button);
+      });
+      if (visible.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-location-empty';
+        empty.textContent = locationAdminState.items.length === 0
+          ? 'Создайте первую публичную карточку станции.'
+          : 'По вашему запросу ничего не найдено.';
+        container.appendChild(empty);
+      }
+    }
+
+    function renderLocationGalleryRows(editor, profile) {
+      var root = editor.querySelector('[data-location-gallery]');
+      clearNode(root);
+      profile.gallery.forEach(function (image, index) {
+        var row = document.createElement('div');
+        row.className = 'phab-location-repeat';
+        row.setAttribute('data-location-gallery-row', '');
+        var preview = document.createElement('span');
+        preview.className = 'phab-location-row-cover';
+        if (image.url) {
+          preview.style.backgroundImage =
+            'url("' + locationGalleryDisplayUrl(image.url, cfg.notificationApiBaseUrl).replace(/"/g, '%22') + '")';
+        }
+        row.appendChild(preview);
+        var url = document.createElement('input');
+        url.type = 'url';
+        url.placeholder = 'https://cdn.padlhub.ru/location.webp';
+        url.value = image.url || '';
+        url.setAttribute('data-gallery-url', '');
+        row.appendChild(url);
+        var alt = document.createElement('input');
+        alt.type = 'text';
+        alt.placeholder = 'Описание изображения';
+        alt.value = image.alt || '';
+        alt.setAttribute('data-gallery-alt', '');
+        row.appendChild(alt);
+        var coverLabel = document.createElement('label');
+        coverLabel.className = 'phab-location-inline-check';
+        var cover = document.createElement('input');
+        cover.type = 'radio';
+        cover.name = 'phab-location-cover';
+        cover.checked = image.isCover === true;
+        cover.setAttribute('data-gallery-cover', '');
+        coverLabel.appendChild(cover);
+        coverLabel.appendChild(document.createTextNode('Обложка'));
+        row.appendChild(coverLabel);
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'phab-admin-btn-secondary';
+        remove.textContent = 'Удалить';
+        remove.addEventListener('click', function () {
+          locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+          locationAdminState.profile.gallery.splice(index, 1);
+          if (
+            locationAdminState.profile.gallery.length > 0 &&
+            !locationAdminState.profile.gallery.some(function (item) { return item.isCover; })
+          ) {
+            locationAdminState.profile.gallery[0].isCover = true;
+          }
+          renderLocationAdmin();
+        });
+        row.appendChild(remove);
+        root.appendChild(row);
+      });
+    }
+
+    function renderLocationAmenityRows(editor, profile) {
+      var root = editor.querySelector('[data-location-amenities]');
+      clearNode(root);
+      profile.amenities.forEach(function (amenity, index) {
+        var row = document.createElement('div');
+        row.className = 'phab-location-repeat is-amenity';
+        row.setAttribute('data-location-amenity-row', '');
+        row.setAttribute('data-amenity-key', amenity.key || 'amenity-' + (index + 1));
+        var icon = document.createElement('select');
+        icon.setAttribute('data-amenity-icon', '');
+        LOCATION_AMENITY_ICONS.forEach(function (entry) {
+          var option = document.createElement('option');
+          option.value = entry[0];
+          option.textContent = entry[1];
+          option.selected = entry[0] === amenity.icon;
+          icon.appendChild(option);
+        });
+        row.appendChild(icon);
+        var title = document.createElement('input');
+        title.type = 'text';
+        title.placeholder = 'Название преимущества';
+        title.value = amenity.title || '';
+        title.setAttribute('data-amenity-title', '');
+        row.appendChild(title);
+        var description = document.createElement('input');
+        description.type = 'text';
+        description.placeholder = 'Подробность, если нужна';
+        description.value = amenity.description || '';
+        description.setAttribute('data-amenity-description', '');
+        row.appendChild(description);
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'phab-admin-btn-secondary';
+        remove.textContent = 'Удалить';
+        remove.addEventListener('click', function () {
+          locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+          locationAdminState.profile.amenities.splice(index, 1);
+          renderLocationAdmin();
+        });
+        row.appendChild(remove);
+        root.appendChild(row);
+      });
+    }
+
+    function renderLocationSchedule(editor, profile) {
+      var root = editor.querySelector('[data-location-schedule]');
+      clearNode(root);
+      LOCATION_WEEKDAYS.forEach(function (day) {
+        var entry = profile.workingHours.find(function (item) { return item.weekday === day.id; }) || {
+          weekday: day.id,
+          closed: true,
+          intervals: []
+        };
+        var row = document.createElement('div');
+        row.className = 'phab-location-day';
+        row.setAttribute('data-location-day', day.id);
+        var title = document.createElement('strong');
+        title.textContent = day.label;
+        row.appendChild(title);
+        var closedLabel = document.createElement('label');
+        closedLabel.className = 'phab-location-inline-check';
+        var closed = document.createElement('input');
+        closed.type = 'checkbox';
+        closed.checked = entry.closed === true;
+        closed.setAttribute('data-day-closed', '');
+        closedLabel.appendChild(closed);
+        closedLabel.appendChild(document.createTextNode('Закрыто'));
+        row.appendChild(closedLabel);
+        var intervals = document.createElement('input');
+        intervals.type = 'text';
+        intervals.placeholder = '07:00—23:00';
+        intervals.value = locationIntervalsText(entry);
+        intervals.disabled = entry.closed === true;
+        intervals.setAttribute('data-day-intervals', '');
+        closed.addEventListener('change', function () {
+          intervals.disabled = closed.checked;
+          syncLocationPreview(editor);
+        });
+        row.appendChild(intervals);
+        root.appendChild(row);
+      });
+    }
+
+    function renderLocationEditor(editor) {
+      var selected = selectedLocationAdminItem();
+      var profile = editableLocationProfile(locationAdminState.profile);
+      editor.innerHTML =
+        '<header class="phab-location-editor-head">' +
+          '<div><h3 data-location-editor-title></h3><p data-location-editor-meta></p></div>' +
+          '<div class="phab-location-completeness" data-location-completeness></div>' +
+        '</header>' +
+        '<div class="phab-location-editor-body">' +
+          '<div class="phab-location-form" data-location-form>' +
+            '<section class="phab-location-section"><h4>Основное</h4><div class="phab-location-fields">' +
+              '<label class="phab-location-field is-wide">Название станции<input data-location-field="title" maxlength="120"></label>' +
+              '<label class="phab-location-field">Короткое название<input data-location-field="shortTitle" maxlength="80"></label>' +
+              '<label class="phab-location-field">URL-код<input data-location-field="slug" maxlength="79" placeholder="hub-nagatinskaya"></label>' +
+              '<label class="phab-location-field">Город<input data-location-field="city" maxlength="120"></label>' +
+              '<label class="phab-location-field">Количество кортов<input type="number" min="0" max="999" data-location-field="courtCount"></label>' +
+            '</div></section>' +
+            '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Галерея</h4><input class="phab-admin-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-location-upload-input><button type="button" class="phab-admin-btn-secondary" data-location-upload>+ Загрузить фото</button><button type="button" class="phab-admin-btn-secondary" data-location-add-image>+ Ссылка</button></div><div class="phab-location-repeat-list" data-location-gallery></div></section>' +
+            '<section class="phab-location-section"><h4>Режим работы</h4><div class="phab-location-schedule" data-location-schedule></div><p class="phab-admin-settings-row-meta">Можно указать несколько интервалов через запятую, включая ночной график.</p></section>' +
+            '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Преимущества</h4><button type="button" class="phab-admin-btn-secondary" data-location-add-amenity>+ Преимущество</button></div><div class="phab-location-repeat-list" data-location-amenities></div></section>' +
+            '<section class="phab-location-section"><h4>Адрес и контакты</h4><div class="phab-location-fields">' +
+              '<label class="phab-location-field is-wide">Адрес<input data-location-field="address" maxlength="500"></label>' +
+              '<label class="phab-location-field">Широта<input inputmode="decimal" data-location-field="latitude" placeholder="55.6829"></label>' +
+              '<label class="phab-location-field">Долгота<input inputmode="decimal" data-location-field="longitude" placeholder="37.6254"></label>' +
+              '<label class="phab-location-field">Часовой пояс<input data-location-field="timezone" placeholder="Europe/Moscow"></label>' +
+              '<label class="phab-location-field">Телефон<input type="tel" data-location-field="phoneE164" placeholder="+79990000000"></label>' +
+              '<label class="phab-location-field">Метро<input data-location-field="metroName"></label>' +
+              '<label class="phab-location-field">До метро, м<input type="number" min="0" data-location-field="metroDistanceMeters"></label>' +
+            '</div></section>' +
+            '<section class="phab-location-section"><h4>Размещение</h4><div class="phab-location-fields">' +
+              '<label class="phab-location-field">Порядок<input type="number" min="0" max="9999" data-location-field="sortOrder"></label>' +
+              '<label class="phab-location-inline-check"><input type="checkbox" data-location-field="showOnHome">Показывать в слайдере на главной</label>' +
+            '</div></section>' +
+          '</div>' +
+          '<aside class="phab-location-preview" data-location-preview>' +
+            '<div class="phab-location-preview-cover" data-preview-cover></div>' +
+            '<div class="phab-location-preview-body"><p class="phab-location-eyebrow">Предпросмотр карточки</p><h4 data-preview-title></h4><p class="phab-location-preview-hours" data-preview-hours></p><div class="phab-location-preview-amenities" data-preview-amenities></div><div class="phab-location-map">⌖ Карта и маршрут</div><p data-preview-address></p><p data-preview-phone></p></div>' +
+          '</aside>' +
+        '</div>' +
+        '<footer class="phab-location-actions">' +
+          '<button type="button" class="phab-admin-btn-secondary" data-location-save="ARCHIVED">Архивировать</button>' +
+          '<button type="button" class="phab-admin-btn-secondary" data-location-save="DRAFT">Сохранить как черновик</button>' +
+          '<button type="button" class="phab-admin-btn" data-location-save="PUBLISHED">Опубликовать</button>' +
+        '</footer>';
+
+      editor.querySelector('[data-location-editor-title]').textContent = selected ? selected.title : 'Новая станция';
+      editor.querySelector('[data-location-editor-meta]').textContent = selected
+        ? locationStatusLabel(selected.publicationStatus) + ' · версия ' + Number(selected.version || 1)
+        : 'Сначала сохраните черновик, затем опубликуйте карточку.';
+      function setField(name, value) {
+        var element = editor.querySelector('[data-location-field="' + name + '"]');
+        if (element.type === 'checkbox') element.checked = value === true;
+        else element.value = value === null || value === undefined ? '' : String(value);
+      }
+      setField('title', profile.title);
+      setField('shortTitle', profile.shortTitle);
+      setField('slug', profile.slug);
+      setField('city', profile.city);
+      setField('courtCount', profile.courtCount);
+      setField('address', profile.address);
+      setField('latitude', profile.latitude);
+      setField('longitude', profile.longitude);
+      setField('timezone', profile.timezone);
+      setField('metroName', profile.metroName);
+      setField('metroDistanceMeters', profile.metroDistanceMeters);
+      setField('phoneE164', profile.phoneE164);
+      setField('showOnHome', profile.showOnHome);
+      setField('sortOrder', profile.sortOrder);
+      renderLocationGalleryRows(editor, profile);
+      renderLocationAmenityRows(editor, profile);
+      renderLocationSchedule(editor, profile);
+
+      var uploadInput = editor.querySelector('[data-location-upload-input]');
+      var uploadButton = editor.querySelector('[data-location-upload]');
+      uploadButton.disabled = locationAdminState.uploading === true;
+      uploadButton.textContent = locationAdminState.uploading ? 'Загружаем…' : '+ Загрузить фото';
+      uploadButton.addEventListener('click', function () {
+        if (!locationAdminState.uploading) uploadInput.click();
+      });
+      uploadInput.addEventListener('change', function () {
+        var file = uploadInput.files && uploadInput.files[0];
+        uploadInput.value = '';
+        if (!file || locationAdminState.uploading) return;
+        uploadLocationAdminPhoto(file, editor).catch(handleError);
+      });
+
+      editor.querySelector('[data-location-add-image]').addEventListener('click', function () {
+        locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+        if (locationAdminState.profile.gallery.length >= 12) {
+          setStatus('В галерее может быть не больше 12 изображений', true);
+          return;
+        }
+        locationAdminState.profile.gallery.push({
+          url: '',
+          alt: '',
+          isCover: locationAdminState.profile.gallery.length === 0,
+          sortOrder: locationAdminState.profile.gallery.length
+        });
+        renderLocationAdmin();
+      });
+      editor.querySelector('[data-location-add-amenity]').addEventListener('click', function () {
+        locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+        if (locationAdminState.profile.amenities.length >= 16) {
+          setStatus('Можно добавить не больше 16 преимуществ', true);
+          return;
+        }
+        locationAdminState.profile.amenities.push({
+          key: 'amenity-' + Date.now().toString(36),
+          icon: 'OTHER',
+          title: '',
+          description: null,
+          sortOrder: locationAdminState.profile.amenities.length
+        });
+        renderLocationAdmin();
+      });
+      editor.querySelector('[data-location-field="title"]').addEventListener('input', function () {
+        var slug = editor.querySelector('[data-location-field="slug"]');
+        if (!String(slug.value || '').trim()) slug.value = slugifyLocationTitle(this.value);
+      });
+      editor.querySelector('[data-location-form]').addEventListener('input', function () {
+        syncLocationPreview(editor);
+      });
+      editor.querySelector('[data-location-form]').addEventListener('change', function () {
+        syncLocationPreview(editor);
+      });
+      Array.prototype.slice.call(editor.querySelectorAll('[data-location-save]')).forEach(function (button) {
+        button.disabled = locationAdminState.saving;
+        button.addEventListener('click', function () {
+          saveLocationAdmin(String(button.getAttribute('data-location-save') || 'DRAFT'), editor).catch(handleError);
+        });
+      });
+      if (!selected) editor.querySelector('[data-location-save="ARCHIVED"]').classList.add('phab-admin-hidden');
+      syncLocationPreview(editor);
+    }
+
+    async function uploadLocationAdminPhoto(file, editor) {
+      if (!notificationApi || locationAdminState.uploading) return;
+      var profile = readLocationProfileFromEditor(editor, false);
+      if (profile.gallery.length >= 12) {
+        throw new Error('В галерее может быть не больше 12 изображений.');
+      }
+      locationAdminState.uploading = true;
+      locationAdminState.profile = profile;
+      locationAdminState.error = '';
+      renderLocationAdmin();
+      try {
+        var asset = await notificationApi.uploadLocationMedia(file);
+        if (!asset || !asset.mediaUrl) {
+          throw new Error('PadlHub Admin API не вернул ссылку на загруженное изображение.');
+        }
+        profile.gallery.push({
+          url: String(asset.mediaUrl),
+          alt: '',
+          isCover: profile.gallery.length === 0,
+          sortOrder: profile.gallery.length
+        });
+        locationAdminState.profile = profile;
+        setStatus('Фотография загружена и сохранена как WebP.', false);
+      } catch (error) {
+        locationAdminState.error = error && error.message
+          ? error.message
+          : 'Не удалось загрузить фотографию.';
+        if (error && (error.status === 401 || error.status === 403)) {
+          notificationState.session = null;
+        }
+        throw error;
+      } finally {
+        locationAdminState.uploading = false;
+        renderLocationAdmin();
+      }
+    }
+
+    function renderLocationAdmin() {
+      clearNode(dom.locationAdminRoot);
+      if (!notificationApi) {
+        var unavailable = document.createElement('div');
+        unavailable.className = 'phab-location-message is-error';
+        unavailable.textContent = 'PadlHub Admin API не настроен для этого ЦУП-контейнера.';
+        dom.locationAdminRoot.appendChild(unavailable);
+        return;
+      }
+      if (locationAdminState.loading) {
+        var loading = document.createElement('div');
+        loading.className = 'phab-location-message';
+        loading.textContent = 'Загружаем карточки станций из PadlHub…';
+        dom.locationAdminRoot.appendChild(loading);
+        return;
+      }
+      if (!notificationState.session) {
+        var auth = document.createElement('div');
+        auth.className = 'phab-location-message' + (locationAdminState.error ? ' is-error' : '');
+        var authText = document.createElement('p');
+        authText.textContent = locationAdminState.error || 'Подключите операторскую PadlHub-сессию для управления публичными карточками.';
+        auth.appendChild(authText);
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'phab-admin-btn';
+        retry.textContent = 'Подключить PadlHub';
+        retry.addEventListener('click', function () {
+          loadLocationAdmin(locationAdminState.selectedId).catch(handleError);
+        });
+        auth.appendChild(retry);
+        var login = document.createElement('button');
+        login.type = 'button';
+        login.className = 'phab-admin-btn-secondary';
+        login.style.marginLeft = '8px';
+        login.textContent = 'Войти через «Уведомления»';
+        login.addEventListener('click', function () {
+          switchTab('notifications');
+          ensureNotificationSession().catch(handleError);
+        });
+        auth.appendChild(login);
+        dom.locationAdminRoot.appendChild(auth);
+        return;
+      }
+
+      var shell = document.createElement('div');
+      shell.className = 'phab-location-shell';
+      dom.locationAdminRoot.appendChild(shell);
+      if (locationAdminState.error) {
+        var error = document.createElement('div');
+        error.className = 'phab-location-message is-error';
+        error.textContent = locationAdminState.error;
+        shell.appendChild(error);
+      }
+      var publishedCount = locationAdminState.items.filter(function (item) {
+        return item.publicationStatus === 'PUBLISHED';
+      }).length;
+      var homeCount = locationAdminState.items.filter(function (item) {
+        return item.publicationStatus === 'PUBLISHED' && item.showOnHome === true;
+      }).length;
+      var hero = document.createElement('header');
+      hero.className = 'phab-location-hero';
+      hero.innerHTML =
+        '<div><p class="phab-location-eyebrow">Публичный каталог PadlHub</p><h2>Станции</h2><p>Карточка отсюда используется в каталоге, на детальной странице и в слайдере главной. Публикация доступна только после заполнения обязательных полей.</p></div>' +
+        '<div class="phab-location-stats"><div class="phab-location-stat"><strong data-location-stat-all></strong><span>всего</span></div><div class="phab-location-stat"><strong data-location-stat-published></strong><span>опубликовано</span></div><div class="phab-location-stat"><strong data-location-stat-home></strong><span>на главной</span></div></div>';
+      hero.querySelector('[data-location-stat-all]').textContent = String(locationAdminState.items.length);
+      hero.querySelector('[data-location-stat-published]').textContent = String(publishedCount);
+      hero.querySelector('[data-location-stat-home]').textContent = String(homeCount);
+      shell.appendChild(hero);
+
+      var layout = document.createElement('div');
+      layout.className = 'phab-location-layout';
+      shell.appendChild(layout);
+      var listPanel = document.createElement('section');
+      listPanel.className = 'phab-location-panel phab-location-list-panel';
+      listPanel.innerHTML =
+        '<div class="phab-location-panel-head"><h3>Карточки</h3><button type="button" class="phab-admin-btn" data-location-create>+ Добавить</button></div>' +
+        '<input class="phab-admin-settings-input phab-location-search" type="search" placeholder="Название или город" data-location-search>' +
+        '<div class="phab-location-list" data-location-list></div>';
+      layout.appendChild(listPanel);
+      var search = listPanel.querySelector('[data-location-search]');
+      search.value = locationAdminState.query;
+      search.addEventListener('input', function () {
+        locationAdminState.query = String(search.value || '');
+        renderLocationAdminList(listPanel.querySelector('[data-location-list]'));
+      });
+      listPanel.querySelector('[data-location-create]').addEventListener('click', function () {
+        locationAdminState.selectedId = '';
+        locationAdminState.version = null;
+        locationAdminState.profile = createEmptyLocationProfile();
+        locationAdminState.error = '';
+        renderLocationAdmin();
+      });
+      renderLocationAdminList(listPanel.querySelector('[data-location-list]'));
+
+      var editor = document.createElement('section');
+      editor.className = 'phab-location-panel phab-location-editor';
+      layout.appendChild(editor);
+      renderLocationEditor(editor);
+    }
+
+    async function loadLocationAdmin(preferredId) {
+      if (!notificationApi || locationAdminState.loading) return;
+      locationAdminState.loading = true;
+      locationAdminState.error = '';
+      renderLocationAdmin();
+      try {
+        if (!notificationState.session) {
+          notificationState.session = await notificationApi.restoreSession();
+        }
+        if (!notificationState.session) {
+          locationAdminState.error = 'Операторская PadlHub-сессия не найдена.';
+          return;
+        }
+        var response = await notificationApi.listLocations();
+        locationAdminState.items = Array.isArray(response && response.items) ? response.items : [];
+        var selected = locationAdminState.items.find(function (item) {
+          return item.id === (preferredId || locationAdminState.selectedId);
+        }) || locationAdminState.items[0] || null;
+        if (selected) {
+          locationAdminState.selectedId = selected.id;
+          locationAdminState.version = Number(selected.version || 1);
+          locationAdminState.profile = editableLocationProfile(selected);
+        } else {
+          locationAdminState.selectedId = '';
+          locationAdminState.version = null;
+          locationAdminState.profile = createEmptyLocationProfile();
+        }
+        locationAdminState.loaded = true;
+      } catch (error) {
+        locationAdminState.error = error && error.message
+          ? error.message
+          : 'Не удалось загрузить карточки станций.';
+        if (error && (error.status === 401 || error.status === 403)) {
+          notificationState.session = null;
+        }
+      } finally {
+        locationAdminState.loading = false;
+        renderLocationAdmin();
+      }
+    }
+
+    async function saveLocationAdmin(status, editor) {
+      if (!notificationApi || locationAdminState.saving) return;
+      var profile = readLocationProfileFromEditor(editor, true);
+      profile.publicationStatus = status;
+      var completeness = locationCompleteness(profile);
+      if (status === 'PUBLISHED' && !completeness.ready) {
+        throw new Error('Для публикации заполните: ' + completeness.missing.join(', ') + '.');
+      }
+      locationAdminState.saving = true;
+      locationAdminState.profile = profile;
+      locationAdminState.error = '';
+      renderLocationAdmin();
+      try {
+        var result;
+        if (locationAdminState.selectedId) {
+          result = await notificationApi.updateLocation(
+            locationAdminState.selectedId,
+            Number(locationAdminState.version || 1),
+            profile
+          );
+        } else {
+          result = await notificationApi.createLocation(profile);
+        }
+        await loadLocationAdmin(result && result.id ? result.id : locationAdminState.selectedId);
+        setStatus(
+          status === 'PUBLISHED'
+            ? 'Карточка станции опубликована'
+            : status === 'ARCHIVED'
+              ? 'Карточка станции перемещена в архив'
+              : 'Черновик станции сохранён',
+          false
+        );
+      } catch (error) {
+        locationAdminState.error = error && error.message ? error.message : 'Не удалось сохранить станцию.';
+        if (error && (error.status === 401 || error.status === 403)) notificationState.session = null;
+        throw error;
+      } finally {
+        locationAdminState.saving = false;
+        renderLocationAdmin();
+      }
+    }
+
     function setAdvertisingSubtab(nextSubtab) {
+      var allowedSubtabs = [
+        'cabinetHomeTop',
+        'cabinetHome',
+        'cabinetForMeStrip',
+        'cabinetForMeCard'
+      ];
       state.advertisingSubtab =
-        nextSubtab === 'cabinetHome' ? 'cabinetHome' : 'cabinetHome';
-      dom.advertisingCabinetHomeTabBtn.className =
-        'phab-admin-community-tab' +
-        (state.advertisingSubtab === 'cabinetHome'
-          ? ' phab-admin-community-tab-active'
-          : '');
-      dom.advertisingCabinetHomePane.className =
-        state.advertisingSubtab === 'cabinetHome'
-          ? 'phab-admin-settings-pane'
-          : 'phab-admin-settings-pane phab-admin-hidden';
+        allowedSubtabs.indexOf(nextSubtab) >= 0 ? nextSubtab : 'cabinetHome';
+      var isBlock1 = state.advertisingSubtab === 'cabinetHomeTop';
+      var isBlock2 = state.advertisingSubtab === 'cabinetHome';
+      var isBlock3 = state.advertisingSubtab === 'cabinetForMeStrip';
+      var isBlock4 = state.advertisingSubtab === 'cabinetForMeCard';
+      dom.advertisingBlock1TabBtn.className =
+        'phab-admin-community-tab' + (isBlock1 ? ' phab-admin-community-tab-active' : '');
+      dom.advertisingBlock2TabBtn.className =
+        'phab-admin-community-tab' + (isBlock2 ? ' phab-admin-community-tab-active' : '');
+      dom.advertisingBlock3TabBtn.className =
+        'phab-admin-community-tab' + (isBlock3 ? ' phab-admin-community-tab-active' : '');
+      dom.advertisingBlock4TabBtn.className =
+        'phab-admin-community-tab' + (isBlock4 ? ' phab-admin-community-tab-active' : '');
+      dom.advertisingCabinetHomePane.className = 'phab-advertising-root';
+      dom.advertisingPlacementDescription.textContent = isBlock1
+        ? 'Блок 1 · Верхний баннер на главной. Изображение будет подготовлено в размере 670 × 240 px.'
+        : isBlock2
+          ? 'Блок 2 · Нижний баннер на главной. Управляйте порядком показа и видимостью.'
+          : isBlock3
+            ? 'Блок 3 · Узкая рекламная плашка между карточками в разделе «Для меня».'
+            : 'Блок 4 · Рекламная карточка для сетки и вертикального списка «Для меня».';
+      dom.advertisingDraftFileMeta.textContent = isBlock1
+        ? 'Размер баннера: 670 × 240 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.'
+        : isBlock3
+          ? 'Размер плашки: 670 × 120 px, JPG, PNG или WebP до 15 МБ.'
+          : isBlock4
+            ? 'Для карточки используются два отдельных изображения фактических размеров ЛК.'
+            : 'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
+      dom.advertisingDraftFileBlock.className = isBlock4 ? 'phab-admin-hidden' : '';
+      dom.advertisingCardFileBlocks.className = isBlock4
+        ? 'phab-advertising-card-uploads'
+        : 'phab-advertising-card-uploads phab-admin-hidden';
+      dom.advertisingRepeatEveryWrap.className =
+        isBlock3 || isBlock4
+          ? 'phab-advertising-field'
+          : 'phab-advertising-field phab-admin-hidden';
+      dom.advertisingDraftBadgeLabel.className =
+        isBlock4 ? 'phab-advertising-field' : 'phab-advertising-field phab-admin-hidden';
+      dom.advertisingDraftBadgePresetLabel.className =
+        isBlock4 ? 'phab-advertising-field' : 'phab-advertising-field phab-admin-hidden';
+      dom.advertisingDraftFooterLabel.className =
+        isBlock4 ? 'phab-advertising-field' : 'phab-advertising-field phab-admin-hidden';
+      dom.advertisingPreview.className = isBlock4
+        ? 'phab-advertising-preview phab-admin-hidden'
+        : 'phab-advertising-preview';
+      dom.advertisingCardVariants.className = isBlock4
+        ? 'phab-advertising-card-variants'
+        : 'phab-advertising-card-variants phab-admin-hidden';
+      dom.advertisingPreviewDots.className = isBlock4
+        ? 'phab-advertising-dots phab-admin-hidden'
+        : 'phab-advertising-dots';
+      dom.advertisingDraftTitleInput.placeholder = isBlock4
+        ? 'Текст карточки'
+        : isBlock3
+          ? 'Название плашки'
+          : 'Название акции';
     }
 
     function populateQuickReplyStationOptions(selectedStationIds) {
@@ -10495,15 +15216,20 @@
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hidePlayerRatingsTab = !canAccessPlayerRatings(cfg);
       [
-        { value: 'messages', label: 'Диалоги' },
-        { value: 'games', label: 'Игры' },
+        { value: 'messages', label: 'Диалоги', hidden: !canAccessDialogs(cfg) },
+        { value: 'games', label: 'Игры', hidden: !canAccessGames(cfg) },
+        {
+          value: 'notifications',
+          label: 'Уведомления',
+          hidden: !cfg.notificationApiBaseUrl || isRestrictedStationAdmin
+        },
         { value: 'playerRatings', label: 'Уровни', hidden: hidePlayerRatingsTab },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
-        { value: 'tournaments', label: 'Турниры' },
+        { value: 'tournaments', label: 'Турниры', hidden: !canAccessTournaments(cfg) },
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
         { value: 'laboratory', label: 'Лаборатория', hidden: hideLaboratoryTab },
         { value: 'analytics', label: 'Аналитика', hidden: isRestrictedStationAdmin },
-        { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin },
+        { value: 'settings', label: 'Настройки', hidden: isRestrictedStationAdmin || !canAccessSettings(cfg) },
         { value: 'advertising', label: 'Реклама', hidden: isRestrictedStationAdmin }
       ]
         .filter(function (item) {
@@ -11510,7 +16236,7 @@
       };
     }
 
-    async function optimizeAdvertisingImageFile(file) {
+    async function optimizeAdvertisingImageFile(file, targetSize, cropSettings) {
       if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) {
         throw new Error('Для акции можно загрузить только изображение');
       }
@@ -11534,6 +16260,73 @@
           size: Number(file.size || 0),
           dataUrl: originalDataUrl
         };
+      }
+
+      if (targetSize && targetSize.width && targetSize.height) {
+        var fixedCanvas = document.createElement('canvas');
+        fixedCanvas.width = targetSize.width;
+        fixedCanvas.height = targetSize.height;
+        var fixedContext = fixedCanvas.getContext('2d');
+        if (!fixedContext) {
+          throw new Error('Не удалось подготовить баннер');
+        }
+        var sourceRatio = width / height;
+        var targetRatio = targetSize.width / targetSize.height;
+        var baseSourceWidth = sourceRatio > targetRatio ? height * targetRatio : width;
+        var baseSourceHeight = sourceRatio > targetRatio ? height : width / targetRatio;
+        var cropZoom = Math.max(
+          1,
+          Math.min(2.5, Number(cropSettings && cropSettings.zoom || 1))
+        );
+        var sourceWidth = Math.max(1, baseSourceWidth / cropZoom);
+        var sourceHeight = Math.max(1, baseSourceHeight / cropZoom);
+        var cropOffsetX = Math.max(
+          -1,
+          Math.min(1, Number(cropSettings && cropSettings.offsetX || 0))
+        );
+        var cropOffsetY = Math.max(
+          -1,
+          Math.min(1, Number(cropSettings && cropSettings.offsetY || 0))
+        );
+        var sourceX = Math.max(
+          0,
+          Math.min(
+            width - sourceWidth,
+            (width - sourceWidth) * (cropOffsetX + 1) / 2
+          )
+        );
+        var sourceY = Math.max(
+          0,
+          Math.min(
+            height - sourceHeight,
+            (height - sourceHeight) * (cropOffsetY + 1) / 2
+          )
+        );
+        fixedContext.drawImage(
+          image,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          targetSize.width,
+          targetSize.height
+        );
+        var fixedQualities = [0.88, 0.84, 0.8, 0.76, 0.72];
+        for (var fixedIndex = 0; fixedIndex < fixedQualities.length; fixedIndex += 1) {
+          var fixedDataUrl = fixedCanvas.toDataURL('image/webp', fixedQualities[fixedIndex]);
+          var fixedSize = estimateDataUrlSize(fixedDataUrl);
+          if (fixedSize <= MAX_ADVERTISING_IMAGE_SIZE_BYTES) {
+            return {
+              name: String(file.name || 'advertisement'),
+              mimeType: 'image/webp',
+              size: fixedSize,
+              dataUrl: fixedDataUrl
+            };
+          }
+        }
+        throw new Error('Не удалось достаточно сжать изображение акции. Попробуйте файл меньше или проще по деталям.');
       }
 
       var maxWidth = 1600;
@@ -12045,6 +16838,14 @@
       dom.gameModal.classList.add('phab-admin-hidden');
       state.selectedGameId = null;
       state.selectedGame = null;
+      try {
+        var url = new URL(window.location.href);
+        url.searchParams.delete('gameId');
+        url.searchParams.delete('gameTab');
+        window.history.replaceState(window.history.state, '', url.toString());
+      } catch (_error) {
+        // URL state is an enhancement.
+      }
     }
 
     function syncUpdatedGameInState(updatedGame) {
@@ -12130,7 +16931,7 @@
       }
     }
 
-    function renderGameDetails(game) {
+    function renderGameDetailsLegacy(game) {
       clearNode(dom.gameModalBody);
       if (!game || !game.id) {
         var empty = document.createElement('div');
@@ -12486,12 +17287,559 @@
       }
     }
 
+    function createGameDetailsCard(title, actionLabel, actionHandler, extraClassName) {
+      var card = document.createElement('section');
+      card.className = 'phab-admin-game-details-card' + (extraClassName ? ' ' + extraClassName : '');
+      var head = document.createElement('div');
+      head.className = 'phab-admin-game-details-card-head';
+      card.appendChild(head);
+      var heading = document.createElement('h3');
+      heading.className = 'phab-admin-game-details-card-title';
+      heading.textContent = title;
+      head.appendChild(heading);
+      if (actionLabel && actionHandler) {
+        var action = document.createElement('button');
+        action.type = 'button';
+        action.className = 'phab-admin-detail-copy-btn';
+        action.textContent = actionLabel;
+        action.addEventListener('click', actionHandler);
+        head.appendChild(action);
+      }
+      var body = document.createElement('div');
+      body.className = 'phab-admin-game-details-card-body';
+      card.appendChild(body);
+      return { card: card, head: head, body: body };
+    }
+
+    function appendGameKv(container, label, value, valueNode) {
+      var row = document.createElement('div');
+      row.className = 'phab-admin-game-kv-row';
+      var key = document.createElement('span');
+      key.textContent = label;
+      row.appendChild(key);
+      if (valueNode) row.appendChild(valueNode);
+      else {
+        var node = document.createElement('span');
+        node.textContent = value === null || value === undefined || value === '' ? 'Не указано' : String(value);
+        row.appendChild(node);
+      }
+      container.appendChild(row);
+      return row;
+    }
+
+    function appendGameInfoItem(container, label, value) {
+      var item = document.createElement('div');
+      item.className = 'phab-admin-game-info-item';
+      var key = document.createElement('dt');
+      key.textContent = label;
+      item.appendChild(key);
+      var val = document.createElement('dd');
+      val.textContent = value === null || value === undefined || value === '' ? 'Не указано' : String(value);
+      item.appendChild(val);
+      container.appendChild(item);
+    }
+
+    function formatGameMoney(value) {
+      var amount = Number(value);
+      if (!Number.isFinite(amount)) return 'Не указано';
+      return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(amount);
+    }
+
+    function getGameDetailParticipants(game, details) {
+      var raw = normalizeArray(details.participants);
+      if (raw.length > 0) return raw.map(function (participant) { return normalizeObject(participant); });
+      return normalizeArray(game.participantDetails).map(function (participant) { return normalizeObject(participant); });
+    }
+
+    function createGameParticipantsTable(game, details, options) {
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-game-participants-wrap';
+      var table = document.createElement('table');
+      table.className = 'phab-admin-game-participants-table';
+      wrap.appendChild(table);
+      var head = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      ['Игрок', 'Рейтинг', 'Роль / источник', 'Статус', 'Телефон', 'Действия'].forEach(function (label) {
+        var th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+      });
+      head.appendChild(headRow);
+      table.appendChild(head);
+      var body = document.createElement('tbody');
+      table.appendChild(body);
+      var participants = getGameDetailParticipants(game, details);
+      var organizer = normalizeObject(details.organizer);
+      participants.forEach(function (participant, index) {
+        var row = document.createElement('tr');
+        var personCell = document.createElement('td');
+        var person = document.createElement('div');
+        person.className = 'phab-admin-game-participant-person';
+        personCell.appendChild(person);
+        var avatar = document.createElement('span');
+        avatar.className = 'phab-admin-games-avatar';
+        if (participant.photo) {
+          var image = document.createElement('img');
+          image.src = String(participant.photo);
+          image.alt = '';
+          avatar.appendChild(image);
+        } else avatar.textContent = getGameInitials(participant.name);
+        person.appendChild(avatar);
+        var name = document.createElement('strong');
+        name.textContent = String(participant.name || 'Игрок ' + String(index + 1));
+        person.appendChild(name);
+        row.appendChild(personCell);
+
+        var rating = document.createElement('td');
+        rating.textContent = participant.rating || participant.ratingNumeric || 'Не указано';
+        row.appendChild(rating);
+        var role = document.createElement('td');
+        role.textContent = participant.source || participant.role ||
+          (String(participant.id || '') === String(organizer.id || '') ? 'Организатор' : 'Участник');
+        row.appendChild(role);
+        var status = document.createElement('td');
+        status.appendChild(createGameBadge({ label: participant.status || 'Не указано', tone: participant.status === 'CONFIRMED' ? 'is-success' : '' }));
+        row.appendChild(status);
+        var phone = document.createElement('td');
+        phone.textContent = participant.phone || participant.phoneNorm ? formatGamePhone(participant.phone || participant.phoneNorm) : 'Не указано';
+        row.appendChild(phone);
+        var actions = document.createElement('td');
+        if (!isRestrictedStationAdmin && participant.id) {
+          var profile = document.createElement('a');
+          profile.className = 'phab-admin-detail-link';
+          profile.href = 'https://cabinet.vivacrm.ru/clients/' + encodeURIComponent(String(participant.id));
+          profile.target = '_blank';
+          profile.rel = 'noopener noreferrer';
+          profile.textContent = 'Открыть профиль ↗';
+          actions.appendChild(profile);
+        } else actions.textContent = 'Нет действий';
+        if (options && options.publicationActions && !isRestrictedStationAdmin) {
+          var hide = document.createElement('button');
+          hide.type = 'button';
+          hide.className = 'phab-admin-detail-copy-btn';
+          hide.textContent = 'Скрыть игрока в публикациях';
+          hide.disabled = !participant.phone && !participant.phoneNorm && !participant.name;
+          hide.addEventListener('click', function () {
+            var playerLabel = String(participant.name || participant.phone || 'игрока');
+            if (!window.confirm('Скрыть игрока в публикациях: ' + playerLabel + '? Состав и бронирование игры не изменятся.')) return;
+            hide.disabled = true;
+            api.removeGamePlayerFromPublication(game.id, {
+              phone: participant.phone || participant.phoneNorm || undefined,
+              name: participant.name || undefined
+            }).then(function (updatedGame) {
+              applyUpdatedGameDetails(updatedGame, 'Игрок скрыт в публикациях');
+            }).catch(handleError).finally(function () { hide.disabled = false; });
+          });
+          actions.appendChild(document.createElement('br'));
+          actions.appendChild(hide);
+        }
+        row.appendChild(actions);
+        body.appendChild(row);
+      });
+
+      var invite = normalizeObject(details.invite);
+      var maxPlayers = Math.max(participants.length, Number(invite.maxPlayers || game.maxPlayers || 0));
+      for (var freeIndex = participants.length; freeIndex < maxPlayers; freeIndex += 1) {
+        var freeRow = document.createElement('tr');
+        var freeCell = document.createElement('td');
+        freeCell.colSpan = 6;
+        freeCell.className = 'phab-admin-game-free-slot';
+        freeCell.textContent = 'Свободное место';
+        freeRow.appendChild(freeCell);
+        body.appendChild(freeRow);
+      }
+      if (participants.length === 0 && maxPlayers === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 6;
+        emptyCell.className = 'phab-admin-game-free-slot';
+        emptyCell.textContent = 'Участники не указаны';
+        emptyRow.appendChild(emptyCell);
+        body.appendChild(emptyRow);
+      }
+      return wrap;
+    }
+
+    function createBookingCard(game, details) {
+      var booking = normalizeObject(details.booking);
+      var card = createGameDetailsCard('Бронирование');
+      var list = document.createElement('div');
+      list.className = 'phab-admin-game-kv-list';
+      card.body.appendChild(list);
+      appendGameKv(list, 'Студия / Корт', [booking.studioName || game.stationName, booking.roomName || game.courtName].filter(Boolean).join(' · '));
+      appendGameKv(list, 'Дата', booking.date || game.gameDate);
+      appendGameKv(list, 'Время', booking.timeFrom && booking.timeTo ? String(booking.timeFrom) + '–' + String(booking.timeTo) : game.gameTime);
+      appendGameKv(list, 'Длительность', booking.durationMinutes ? String(booking.durationMinutes) + ' мин' : null);
+      appendGameKv(list, 'Booking ID', normalizeArray(booking.bookingIds).join(', '));
+      appendGameKv(list, 'Slot ID', booking.slotId);
+      appendGameKv(list, 'Синхронизация', booking.vivaExerciseId ? 'Связано с Viva' : 'Viva exercise не указан');
+      var actions = document.createElement('div');
+      actions.className = 'phab-admin-game-card-actions';
+      card.body.appendChild(actions);
+      if (booking.vivaExerciseId) {
+        var viva = document.createElement('a');
+        viva.className = 'phab-admin-btn-secondary';
+        viva.href = 'https://cabinet.vivacrm.ru/exercises/' + encodeURIComponent(String(booking.vivaExerciseId));
+        viva.target = '_blank';
+        viva.rel = 'noopener noreferrer';
+        viva.textContent = 'Открыть в Viva ↗';
+        actions.appendChild(viva);
+      }
+      if (normalizeArray(booking.bookingIds).length > 0) {
+        var copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'phab-admin-btn-secondary';
+        copy.textContent = 'Скопировать booking ID';
+        copy.addEventListener('click', function () {
+          copyText(normalizeArray(booking.bookingIds).join(', ')).then(function () { setStatus('Booking ID скопирован', false); }).catch(handleError);
+        });
+        actions.appendChild(copy);
+      }
+      return card.card;
+    }
+
+    function createPaymentCard(game, details) {
+      var payment = normalizeObject(details.payment);
+      var card = createGameDetailsCard('Оплата');
+      var list = document.createElement('div');
+      list.className = 'phab-admin-game-kv-list';
+      card.body.appendChild(list);
+      appendGameKv(list, 'Сумма', formatGameMoney(payment.amount !== undefined ? payment.amount : game.paymentAmount));
+      appendGameKv(list, 'Статус', payment.paid === true || game.paymentPaid === true ? 'Оплачено' : 'Не подтверждено');
+      appendGameKv(list, 'Метод', payment.paymentMethod || game.paymentMethod);
+      appendGameKv(list, 'Оплачено в', payment.paidAt ? formatDateTimeFull(payment.paidAt) : null);
+      appendGameKv(list, 'Payment ref', payment.paymentRef || normalizeObject(details.metadata).paymentRef);
+      var actions = document.createElement('div');
+      actions.className = 'phab-admin-game-card-actions';
+      card.body.appendChild(actions);
+      if (payment.paymentUrl) {
+        var open = document.createElement('a');
+        open.className = 'phab-admin-btn-secondary';
+        open.href = String(payment.paymentUrl);
+        open.target = '_blank';
+        open.rel = 'noopener noreferrer';
+        open.textContent = 'Открыть платёж ↗';
+        actions.appendChild(open);
+        var copy = document.createElement('button');
+        copy.type = 'button';
+        copy.className = 'phab-admin-btn-secondary';
+        copy.textContent = 'Скопировать ссылку';
+        copy.addEventListener('click', function () {
+          copyText(payment.paymentUrl).then(function () { setStatus('Платёжная ссылка скопирована', false); }).catch(handleError);
+        });
+        actions.appendChild(copy);
+      }
+      return card.card;
+    }
+
+    function renderGameOverviewTab(container, game, details) {
+      var settings = normalizeObject(details.settings);
+      var invite = normalizeObject(details.invite);
+      var metadata = normalizeObject(details.metadata);
+      var booking = normalizeObject(details.booking);
+      var payment = normalizeObject(details.payment);
+      var participants = getGameDetailParticipants(game, details);
+      var layout = document.createElement('div');
+      layout.className = 'phab-admin-game-overview-layout';
+      container.appendChild(layout);
+      var main = document.createElement('div');
+      main.className = 'phab-admin-game-main-column';
+      layout.appendChild(main);
+      var side = document.createElement('aside');
+      side.className = 'phab-admin-game-side-column';
+      layout.appendChild(side);
+
+      var info = createGameDetailsCard('ⓘ  Основная информация');
+      var infoGrid = document.createElement('div');
+      infoGrid.className = 'phab-admin-game-info-grid';
+      info.body.appendChild(infoGrid);
+      var group1 = document.createElement('dl'); group1.className = 'phab-admin-game-info-group';
+      var group2 = document.createElement('dl'); group2.className = 'phab-admin-game-info-group';
+      var group3 = document.createElement('dl'); group3.className = 'phab-admin-game-info-group';
+      infoGrid.appendChild(group1); infoGrid.appendChild(group2); infoGrid.appendChild(group3);
+      appendGameInfoItem(group1, 'Статус', getGameStatusMeta(game).label);
+      appendGameInfoItem(group1, 'Создана', formatDateTimeFull(game.createdAt));
+      appendGameInfoItem(group1, 'Обновлена', formatDateTimeFull(game.updatedAt));
+      appendGameInfoItem(group1, 'Дата игры', booking.date || game.gameDate);
+      appendGameInfoItem(group1, 'Время игры', booking.timeFrom && booking.timeTo ? String(booking.timeFrom) + '–' + String(booking.timeTo) : game.gameTime);
+      appendGameInfoItem(group1, 'Станция', booking.studioName || game.stationName);
+      appendGameInfoItem(group2, 'Корт', booking.roomName || game.courtName);
+      appendGameInfoItem(group2, 'Формат', metadata.gameFormat);
+      appendGameInfoItem(group2, 'Мин. рейтинг', settings.minRating !== undefined ? settings.minRating : game.minRating);
+      appendGameInfoItem(group2, 'Макс. рейтинг', settings.maxRating !== undefined ? settings.maxRating : game.maxRating);
+      appendGameInfoItem(group2, 'Рейтинговая', settings.ratingGame === true || game.ratingGame === true ? 'Да' : 'Нет');
+      appendGameInfoItem(group3, 'Макс. игроков', invite.maxPlayers || game.maxPlayers);
+      appendGameInfoItem(group3, 'Waitlist', invite.waitlistEnabled === true || game.waitlistEnabled === true ? 'Да' : 'Нет');
+      appendGameInfoItem(group3, 'Приватность', settings.isPrivate === true || game.isPrivate === true ? 'Приватная' : 'Публичная');
+      appendGameInfoItem(group3, 'Pay mode', settings.payMode || game.payMode);
+      appendGameInfoItem(group3, 'Источник', game.source);
+      main.appendChild(info.card);
+
+      var descriptionText = String(details.description || metadata.description || '').trim();
+      var description = createGameDetailsCard('💬  Описание игры');
+      var descriptionNode = document.createElement('p');
+      descriptionNode.className = 'phab-admin-game-description';
+      descriptionNode.textContent = descriptionText || 'Описание не добавлено';
+      description.body.appendChild(descriptionNode);
+      main.appendChild(description.card);
+
+      var participantsCard = createGameDetailsCard('♙  Участники');
+      participantsCard.body.appendChild(createGameParticipantsTable(game, details));
+      main.appendChild(participantsCard.card);
+
+      var split = document.createElement('div');
+      split.className = 'phab-admin-game-split-cards';
+      split.appendChild(createBookingCard(game, details));
+      split.appendChild(createPaymentCard(game, details));
+      main.appendChild(split);
+
+      var stateCard = createGameDetailsCard('⌁  Состояние игры');
+      var stateList = document.createElement('div');
+      stateList.className = 'phab-admin-game-state-list';
+      stateCard.body.appendChild(stateList);
+      [
+        ['Статус', getGameStatusMeta(game).label],
+        ['Публикация', getGamePublicationMeta(game).label],
+        ['Мест занято', String(participants.length) + ' / ' + String(invite.maxPlayers || game.maxPlayers || participants.length)],
+        ['Чат', game.chatAvailable === false ? 'Не создан' : 'Доступен'],
+        ['Ссылка-приглашение', invite.inviteUrl || game.inviteUrl ? 'Активна' : 'Не указана'],
+        ['Оплата', payment.paid === true || game.paymentPaid === true ? 'Подтверждена' : 'Не подтверждена'],
+        ['Бронирование', normalizeArray(booking.bookingIds).length > 0 ? 'Активно' : 'Не указано']
+      ].forEach(function (entry) {
+        var row = document.createElement('div'); row.className = 'phab-admin-game-state-row';
+        var label = document.createElement('span'); label.textContent = entry[0]; row.appendChild(label);
+        var value = document.createElement('strong'); value.textContent = entry[1]; row.appendChild(value);
+        stateList.appendChild(row);
+      });
+      side.appendChild(stateCard.card);
+
+      var quick = createGameDetailsCard('ϟ  Быстрые действия');
+      var quickList = document.createElement('div');
+      quickList.className = 'phab-admin-game-quick-actions';
+      quick.body.appendChild(quickList);
+      function quickButton(label, handler) {
+        var button = document.createElement('button'); button.type = 'button'; button.className = 'phab-admin-btn-secondary'; button.textContent = label; button.addEventListener('click', handler); quickList.appendChild(button);
+      }
+      if (!isRestrictedStationAdmin) {
+        quickButton('Управлять публикацией  ›', function () { setGameDetailsTab('publication'); });
+        quickButton('Открыть чат  ›', function () { openGameChat(game).catch(handleError); });
+      }
+      if (invite.inviteUrl || game.inviteUrl) {
+        quickButton('Скопировать ссылку  ›', function () { copyText(invite.inviteUrl || game.inviteUrl).then(function () { setStatus('Ссылка скопирована', false); }).catch(handleError); });
+      }
+      if (quickList.children.length === 0) {
+        var noActions = document.createElement('div'); noActions.className = 'phab-admin-game-empty-state'; noActions.textContent = 'Доступных действий нет'; quickList.appendChild(noActions);
+      }
+      side.appendChild(quick.card);
+
+      var danger = createGameDetailsCard('⚠  Опасная зона', null, null, 'phab-admin-game-danger');
+      var dangerText = document.createElement('p');
+      dangerText.className = 'phab-admin-game-description';
+      dangerText.textContent = 'Отмена игры недоступна: соответствующий API в текущем backend не подключён.';
+      danger.body.appendChild(dangerText);
+      side.appendChild(danger.card);
+    }
+
+    function renderGamePublicationTab(container, game, details) {
+      var settings = normalizeObject(details.settings);
+      var invite = normalizeObject(details.invite);
+      var metadata = normalizeObject(details.metadata);
+      var community = normalizeObject(metadata.communityAutoPublish);
+      var archived = details.archived === true || game.archived === true;
+      var card = createGameDetailsCard('Каналы публикации');
+      var list = document.createElement('div');
+      list.className = 'phab-admin-game-kv-list';
+      card.body.appendChild(list);
+      function channel(title, description, active, action) {
+        var row = document.createElement('div'); row.className = 'phab-admin-game-publication-channel';
+        var copy = document.createElement('div'); var heading = document.createElement('strong'); heading.textContent = title; copy.appendChild(heading);
+        var note = document.createElement('p'); note.textContent = description; copy.appendChild(note); row.appendChild(copy);
+        var control = action || createGameBadge({ label: active ? 'Активна' : 'Скрыта', tone: active ? 'is-success' : '' }); row.appendChild(control); list.appendChild(row);
+      }
+      var isPrivate = settings.isPrivate === true || game.isPrivate === true;
+      var canHide = !isPrivate && String(game.source || '') === 'LK_PADELHUB_MONGO' && Object.keys(details).length > 0 && !isRestrictedStationAdmin;
+      var hideAction = null;
+      if (canHide) {
+        hideAction = document.createElement('button'); hideAction.type = 'button'; hideAction.className = 'phab-admin-btn-secondary'; hideAction.textContent = 'Скрыть';
+        hideAction.addEventListener('click', function () {
+          if (!window.confirm('Скрыть игру из общего списка? Ссылка-приглашение и бронирование останутся активными.')) return;
+          hideAction.disabled = true;
+          api.hideGameFromPublicList(game.id).then(function (updatedGame) { applyUpdatedGameDetails(updatedGame, 'Игра скрыта из общего списка'); }).catch(handleError).finally(function () { hideAction.disabled = false; });
+        });
+      }
+      var communityActive = community.enabled === true && (game.communityPublished === true || Object.keys(normalizeObject(community.posts)).length > 0);
+      var hideCommunityAction = null;
+      if (communityActive && !isRestrictedStationAdmin) {
+        hideCommunityAction = document.createElement('button'); hideCommunityAction.type = 'button'; hideCommunityAction.className = 'phab-admin-btn-secondary'; hideCommunityAction.textContent = 'Скрыть';
+        hideCommunityAction.addEventListener('click', function () {
+          if (!window.confirm('Скрыть публикацию игры из сообщества станции? Бронирование, расписание и ЛК игроков останутся без изменений.')) return;
+          hideCommunityAction.disabled = true;
+          api.archiveGameCommunityPublications(game.id).then(function (updatedGame) { applyUpdatedGameDetails(updatedGame, 'Игра скрыта из сообщества станции'); }).catch(handleError).finally(function () { hideCommunityAction.disabled = false; });
+        });
+      }
+      var canHidePlayerCabinets = !archived && String(game.source || '') === 'LK_PADELHUB_MONGO' && Object.keys(details).length > 0 && !isRestrictedStationAdmin;
+      function createHidePlayerCabinetsAction() {
+        if (!canHidePlayerCabinets) return null;
+        var action = document.createElement('button'); action.type = 'button'; action.className = 'phab-admin-btn-secondary'; action.textContent = 'Скрыть';
+        action.addEventListener('click', function () {
+          if (!window.confirm('Скрыть игру из ЛК всех игроков, включая организатора? Игра будет архивирована, но бронирование и оплата не отменятся. Публикация сообщества управляется отдельно.')) return;
+          action.disabled = true;
+          api.hideGameFromPlayerCabinets(game.id).then(function (updatedGame) { applyUpdatedGameDetails(updatedGame, 'Игра скрыта из ЛК организатора и игроков'); }).catch(handleError).finally(function () { action.disabled = false; });
+        });
+        return action;
+      }
+      var hideOrganizerCabinetAction = createHidePlayerCabinetsAction();
+      var hidePlayerCabinetsAction = createHidePlayerCabinetsAction();
+      channel('Расписание / общий список', 'Скрытие из расписания не отменяет бронирование и не отключает ссылку-приглашение.', !isPrivate, hideAction);
+      channel('ЛК организатора', 'Архивирование игры скрывает её из ЛК организатора и остальных игроков.', !archived, hideOrganizerCabinetAction);
+      channel('ЛК игроков', 'Скрывает игру из всех личных кабинетов. Бронирование и оплата сохраняются.', !archived, hidePlayerCabinetsAction);
+      channel('Сообщество станции', 'Удаляет карточку игры из ленты станции и отключает повторную автопубликацию.', communityActive, hideCommunityAction);
+      channel('Ссылка-приглашение', 'Работает независимо от расписания; после архивирования игры становится недоступна.', !archived && Boolean(invite.inviteUrl || game.inviteUrl));
+      container.appendChild(card.card);
+      var players = createGameDetailsCard('Игроки в публикациях');
+      players.body.appendChild(createGameParticipantsTable(game, details, { publicationActions: true }));
+      container.appendChild(players.card);
+    }
+
+    function createGameSystemJson(title, payload) {
+      var details = document.createElement('details');
+      details.className = 'phab-admin-game-system-details';
+      var summary = document.createElement('summary'); summary.textContent = title; details.appendChild(summary);
+      var body = document.createElement('div'); body.className = 'phab-admin-game-details-card-body'; details.appendChild(body);
+      var textValue = JSON.stringify(payload || {}, null, 2);
+      var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'phab-admin-detail-copy-btn'; copy.textContent = 'Скопировать';
+      copy.addEventListener('click', function () { copyText(textValue).then(function () { setStatus(title + ': скопировано', false); }).catch(handleError); });
+      body.appendChild(copy);
+      var wrap = document.createElement('div'); wrap.className = 'phab-admin-detail-json-wrap'; body.appendChild(wrap);
+      var pre = document.createElement('pre'); pre.className = 'phab-admin-detail-json'; pre.textContent = textValue; wrap.appendChild(pre);
+      return details;
+    }
+
+    function renderGameSystemTab(container, game, details) {
+      var metadata = normalizeObject(details.metadata);
+      if (!isRestrictedStationAdmin && Object.keys(details).length > 0) {
+        var editor = createGameDetailsCard('Редактор metadata');
+        var note = document.createElement('p'); note.className = 'phab-admin-game-description'; note.textContent = 'Сохранение заменяет объект metadata целиком. Перед отправкой проверьте diff ключей и подтвердите замену.'; editor.body.appendChild(note);
+        var input = document.createElement('textarea'); input.className = 'phab-admin-input phab-admin-game-metadata-editor'; input.spellcheck = false; input.value = JSON.stringify(metadata, null, 2); editor.body.appendChild(input);
+        var actions = document.createElement('div'); actions.className = 'phab-admin-game-card-actions'; editor.body.appendChild(actions);
+        var format = document.createElement('button'); format.type = 'button'; format.className = 'phab-admin-btn-secondary'; format.textContent = 'Форматировать'; actions.appendChild(format);
+        var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'phab-admin-btn-secondary'; copy.textContent = 'Скопировать'; actions.appendChild(copy);
+        var reset = document.createElement('button'); reset.type = 'button'; reset.className = 'phab-admin-btn-secondary'; reset.textContent = 'Сбросить'; actions.appendChild(reset);
+        var save = document.createElement('button'); save.type = 'button'; save.className = 'phab-admin-btn-danger'; save.textContent = 'Сохранить metadata'; actions.appendChild(save);
+        function parseMetadata() {
+          try {
+            var parsed = JSON.parse(String(input.value || '{}'));
+            if (!isObject(parsed)) throw new Error('Metadata должен быть JSON-объектом');
+            return parsed;
+          } catch (error) {
+            setStatus('Metadata JSON: ' + String(error && error.message || 'синтаксическая ошибка'), true);
+            input.focus();
+            return null;
+          }
+        }
+        format.addEventListener('click', function () { var parsed = parseMetadata(); if (parsed) input.value = JSON.stringify(parsed, null, 2); });
+        copy.addEventListener('click', function () { copyText(input.value).then(function () { setStatus('Metadata скопирован', false); }).catch(handleError); });
+        reset.addEventListener('click', function () { input.value = JSON.stringify(metadata, null, 2); });
+        save.addEventListener('click', function () {
+          var parsed = parseMetadata(); if (!parsed) return;
+          var oldKeys = Object.keys(metadata); var newKeys = Object.keys(parsed);
+          var changed = oldKeys.concat(newKeys).filter(function (key, index, list) { return list.indexOf(key) === index && JSON.stringify(metadata[key]) !== JSON.stringify(parsed[key]); });
+          if (!window.confirm('Metadata будет заменён целиком. Изменённые ключи: ' + (changed.join(', ') || 'нет различий') + '. Продолжить?')) return;
+          save.disabled = true; format.disabled = true; reset.disabled = true; save.textContent = 'Сохраняем…';
+          api.updateGameMetadata(game.id, parsed).then(function (updatedGame) { applyUpdatedGameDetails(updatedGame, 'Metadata игры обновлён'); }).catch(handleError).finally(function () { save.disabled = false; format.disabled = false; reset.disabled = false; save.textContent = 'Сохранить metadata'; });
+        });
+        container.appendChild(editor.card);
+      }
+      container.appendChild(createGameSystemJson('Metadata', metadata));
+      container.appendChild(createGameSystemJson('Booking payload', normalizeObject(details.booking)));
+      container.appendChild(createGameSystemJson('Payment payload', normalizeObject(details.payment)));
+      container.appendChild(createGameSystemJson('Raw game payload', Object.keys(details).length > 0 ? details : game));
+    }
+
+    function setGameDetailsTab(tab) {
+      var allowed = ['overview', 'players', 'publication', 'booking', 'result', 'system', 'history'];
+      state.selectedGameTab = allowed.indexOf(tab) >= 0 ? tab : 'overview';
+      try {
+        var url = new URL(window.location.href); url.searchParams.set('gameTab', state.selectedGameTab); window.history.replaceState(window.history.state, '', url.toString());
+      } catch (_error) {}
+      if (state.selectedGame) renderGameDetails(state.selectedGame);
+    }
+
+    function renderGameDetails(game) {
+      clearNode(dom.gameModalBody);
+      if (!game || !game.id) {
+        var empty = document.createElement('div'); empty.className = 'phab-admin-game-empty-state'; empty.textContent = 'Игра не найдена'; dom.gameModalBody.appendChild(empty); return;
+      }
+      var details = normalizeObject(game.details);
+      var settings = normalizeObject(details.settings);
+      var invite = normalizeObject(details.invite);
+      var participants = getGameDetailParticipants(game, details);
+      dom.gameModalTitle.textContent = '←  К списку игр';
+      var page = document.createElement('div'); page.className = 'phab-admin-game-details-page'; dom.gameModalBody.appendChild(page);
+      var hero = document.createElement('header'); hero.className = 'phab-admin-game-details-hero'; page.appendChild(hero);
+      var heading = document.createElement('div'); heading.className = 'phab-admin-game-details-heading'; hero.appendChild(heading);
+      var title = document.createElement('h2'); title.className = 'phab-admin-game-details-title'; title.textContent = [game.stationName, game.courtName].filter(Boolean).join(' · ') || game.name || 'Игра'; heading.appendChild(title);
+      var date = document.createElement('div'); date.className = 'phab-admin-game-details-date'; date.textContent = formatGameLongDate(game); heading.appendChild(date);
+      var badges = document.createElement('div'); badges.className = 'phab-admin-game-details-badges'; heading.appendChild(badges);
+      badges.appendChild(createGameBadge(getGameStatusMeta(game)));
+      badges.appendChild(createGameBadge({ label: settings.isPrivate === true || game.isPrivate === true ? 'Приватная' : 'Публичная', tone: 'is-private' }));
+      badges.appendChild(createGameBadge({ label: String(participants.length) + ' из ' + String(invite.maxPlayers || game.maxPlayers || participants.length) + ' игроков', tone: 'is-warning' }));
+      if (settings.ratingGame === true || game.ratingGame === true) badges.appendChild(createGameBadge({ label: 'Рейтинговая', tone: 'is-info' }));
+      var meta = document.createElement('div'); meta.className = 'phab-admin-game-details-meta'; meta.textContent = 'ID игры: ' + String(game.id) + '  ·  Обновлена ' + formatDateTimeFull(game.updatedAt); heading.appendChild(meta);
+      var heroActions = document.createElement('div'); heroActions.className = 'phab-admin-game-details-actions'; hero.appendChild(heroActions);
+      if (!isRestrictedStationAdmin && game.chatAvailable !== false) {
+        var chat = document.createElement('button'); chat.type = 'button'; chat.className = 'phab-admin-btn-secondary'; chat.textContent = '◌  Открыть чат'; chat.addEventListener('click', function () { openGameChat(game).catch(handleError); }); heroActions.appendChild(chat);
+      }
+      var more = document.createElement('details'); more.className = 'phab-admin-games-row-menu'; heroActions.appendChild(more);
+      var moreSummary = document.createElement('summary'); moreSummary.className = 'phab-admin-games-icon-btn'; moreSummary.textContent = '•••'; moreSummary.setAttribute('aria-label', 'Дополнительные действия'); more.appendChild(moreSummary);
+      var morePopover = document.createElement('div'); morePopover.className = 'phab-admin-games-row-menu-popover'; more.appendChild(morePopover);
+      function detailMenuAction(label, handler) { var button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.addEventListener('click', function () { more.removeAttribute('open'); handler(); }); morePopover.appendChild(button); }
+      detailMenuAction('Скопировать ID', function () { copyText(game.id).then(function () { setStatus('ID игры скопирован', false); }).catch(handleError); });
+      if (invite.inviteUrl || game.inviteUrl) detailMenuAction('Скопировать ссылку', function () { copyText(invite.inviteUrl || game.inviteUrl).then(function () { setStatus('Ссылка скопирована', false); }).catch(handleError); });
+
+      var tabs = document.createElement('div'); tabs.className = 'phab-admin-game-details-tabs'; tabs.setAttribute('role', 'tablist'); page.appendChild(tabs);
+      [
+        ['overview', 'Обзор'], ['players', 'Игроки'], ['publication', 'Публикация'], ['booking', 'Бронирование и оплата'], ['result', 'Результат'], ['system', 'Системные данные'], ['history', 'История']
+      ].forEach(function (entry) {
+        var tab = document.createElement('button'); tab.type = 'button'; tab.className = 'phab-admin-game-details-tab'; tab.textContent = entry[1]; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', state.selectedGameTab === entry[0] ? 'true' : 'false'); tab.addEventListener('click', function () { setGameDetailsTab(entry[0]); }); tabs.appendChild(tab);
+      });
+      var scroll = document.createElement('div'); scroll.className = 'phab-admin-game-details-scroll'; scroll.setAttribute('role', 'tabpanel'); scroll.tabIndex = 0; page.appendChild(scroll);
+      var panel = document.createElement('div'); panel.className = 'phab-admin-game-tab-panel'; scroll.appendChild(panel);
+      if (state.selectedGameTab === 'overview') renderGameOverviewTab(panel, game, details);
+      else if (state.selectedGameTab === 'players') {
+        var playerCard = createGameDetailsCard('Участники игры'); playerCard.body.appendChild(createGameParticipantsTable(game, details)); panel.appendChild(playerCard.card);
+      } else if (state.selectedGameTab === 'publication') renderGamePublicationTab(panel, game, details);
+      else if (state.selectedGameTab === 'booking') {
+        var split = document.createElement('div'); split.className = 'phab-admin-game-split-cards'; split.appendChild(createBookingCard(game, details)); split.appendChild(createPaymentCard(game, details)); panel.appendChild(split);
+      } else if (state.selectedGameTab === 'result') {
+        var resultCard = createGameDetailsCard('Результат игры');
+        if (hasGameResult(game)) {
+          appendGameKv(resultCard.body, 'Счёт', getGameResultLines(game).join(' · ') || game.result);
+          appendGameKv(resultCard.body, 'Изменение рейтинга', getGameRatingDeltaLines(game).join(' · ') || game.ratingDelta);
+        } else {
+          var noResult = document.createElement('div'); noResult.className = 'phab-admin-game-empty-state'; noResult.textContent = 'Результат ещё не внесён. API внесения результата в текущем backend отсутствует.'; resultCard.body.appendChild(noResult);
+        }
+        panel.appendChild(resultCard.card);
+      } else if (state.selectedGameTab === 'system') renderGameSystemTab(panel, game, details);
+      else {
+        var history = createGameDetailsCard('История изменений'); var noHistory = document.createElement('div'); noHistory.className = 'phab-admin-game-empty-state'; noHistory.textContent = 'Audit log для игры не предоставляется текущим API.'; history.body.appendChild(noHistory); panel.appendChild(history.card);
+      }
+    }
+
     async function openGameDetails(game) {
       if (!game || !game.id) {
         return;
       }
       state.selectedGameId = game.id;
       state.selectedGame = game;
+      try {
+        var url = new URL(window.location.href);
+        url.searchParams.set('gameId', String(game.id));
+        url.searchParams.set('gameTab', String(state.selectedGameTab || 'overview'));
+        window.history.replaceState(window.history.state, '', url.toString());
+      } catch (_error) {
+        // URL state is an enhancement.
+      }
       dom.gameModal.classList.remove('phab-admin-hidden');
       renderGameDetails(game);
 
@@ -15007,28 +20355,345 @@
 
     function updateGamesPaginationControls(totalItems, totalPages) {
       if (totalItems === 0) {
-        dom.gamesPageInfo.textContent = 'Страница 1 из 1 · 0 игр';
+        dom.gamesPageInfo.textContent = 'Показано 0–0 из 0 игр';
+        dom.gamesPageNumber.textContent = '1 / 1';
         dom.gamesPrevPageBtn.disabled = true;
         dom.gamesNextPageBtn.disabled = true;
         dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+        dom.gamesFoundCountValue.textContent = '0';
         return;
       }
       var from = totalItems === 0 ? 0 : (state.gamesPage - 1) * state.gamesPageSize + 1;
       var to = Math.min(totalItems, state.gamesPage * state.gamesPageSize);
-      dom.gamesPageInfo.textContent =
-        'Страница ' +
-        String(state.gamesPage) +
-        ' из ' +
-        String(totalPages) +
-        ' · ' +
-        String(from) +
-        '-' +
-        String(to) +
-        ' из ' +
-        String(totalItems);
+      dom.gamesPageInfo.textContent = 'Показано ' + String(from) + '–' + String(to) + ' из ' + String(totalItems) + ' игр';
+      dom.gamesPageNumber.textContent = String(state.gamesPage) + ' / ' + String(totalPages);
       dom.gamesPrevPageBtn.disabled = state.gamesPage <= 1;
       dom.gamesNextPageBtn.disabled = state.gamesPage >= totalPages;
       dom.gamesPageSizeSelect.value = String(state.gamesPageSize);
+      dom.gamesFoundCountValue.textContent = String(totalItems);
+    }
+
+    function formatGamePhone(value) {
+      var digits = String(value || '').replace(/\D+/g, '');
+      if (digits.length === 11 && digits.charAt(0) === '8') {
+        digits = '7' + digits.slice(1);
+      }
+      if (digits.length === 10) {
+        digits = '7' + digits;
+      }
+      if (digits.length !== 11 || digits.charAt(0) !== '7') {
+        return String(value || '').trim() || 'Телефон не указан';
+      }
+      return '+7 ' + digits.slice(1, 4) + ' ' + digits.slice(4, 7) + '-' + digits.slice(7, 9) + '-' + digits.slice(9);
+    }
+
+    function getGameDateRange(game) {
+      var start = game && game.startsAt ? new Date(game.startsAt) : null;
+      if (!start || Number.isNaN(start.getTime())) {
+        var date = String(game && game.gameDate || '').trim();
+        var time = String(game && game.gameTime || '').split(/[-–—]/)[0].trim() || '00:00';
+        start = date ? new Date(date + 'T' + time + ':00') : null;
+      }
+      if (!start || Number.isNaN(start.getTime())) {
+        return { start: null, end: null };
+      }
+      var timeParts = String(game && game.gameTime || '').split(/[-–—]/);
+      var end = null;
+      if (String(game && game.gameDate || '').trim() && timeParts.length > 1) {
+        end = new Date(String(game.gameDate) + 'T' + timeParts[1].trim() + ':00');
+      }
+      if (!end || Number.isNaN(end.getTime())) {
+        end = new Date(start.getTime() + 90 * 60 * 1000);
+      }
+      return { start: start, end: end };
+    }
+
+    function formatGameListDate(game) {
+      var range = getGameDateRange(game);
+      if (!range.start) {
+        return { day: 'Дата не указана', time: 'Время не указано' };
+      }
+      var includeYear = range.start.getFullYear() !== new Date().getFullYear();
+      var day = new Intl.DateTimeFormat('ru-RU', {
+        day: 'numeric',
+        month: 'short',
+        year: includeYear ? 'numeric' : undefined
+      }).format(range.start).replace(/\./g, '');
+      var time = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(range.start) +
+        '–' + new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(range.end);
+      return { day: day, time: time };
+    }
+
+    function formatGameLongDate(game) {
+      var range = getGameDateRange(game);
+      if (!range.start) {
+        return 'Дата и время не указаны';
+      }
+      var date = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(range.start);
+      var time = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(range.start) +
+        '–' + new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(range.end);
+      return date + ' · ' + time;
+    }
+
+    function gameDateKey(game) {
+      var range = getGameDateRange(game);
+      if (!range.start) return '';
+      return formatDateInputValue(range.start);
+    }
+
+    function normalizeGameStatus(value) {
+      return String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    }
+
+    function isGameCancelled(game) {
+      if (game && game.isCancelled === true) return true;
+      return [game && game.rawStatus, game && game.status].some(function (status) {
+        return ['CANCELLED', 'CANCELED'].indexOf(normalizeGameStatus(status)) >= 0;
+      });
+    }
+
+    function getGameStatusMeta(game) {
+      var status = isGameCancelled(game)
+        ? 'CANCELLED'
+        : normalizeGameStatus(game && (game.rawStatus || game.status));
+      var labels = {
+        PAID: ['Оплачена', 'is-success'],
+        PENDING: ['Ожидает оплаты', 'is-warning'],
+        PAYMENT_PENDING: ['Ожидает оплаты', 'is-warning'],
+        WAITING_PAYMENT: ['Ожидает оплаты', 'is-warning'],
+        COMPLETED: ['Завершена', 'is-success'],
+        FINISHED: ['Завершена', 'is-success'],
+        DONE: ['Завершена', 'is-success'],
+        CANCELLED: ['Отменена', 'is-danger'],
+        CANCELED: ['Отменена', 'is-danger'],
+        CREATED: ['Создана', 'is-info'],
+        DRAFT: ['Создана', 'is-info'],
+        ERROR: ['Ошибка', 'is-danger'],
+        ACTIVE: ['Активна', 'is-success']
+      };
+      var meta = labels[status] || [status || 'Не указано', ''];
+      return { value: status, label: meta[0], tone: meta[1] };
+    }
+
+    function getGamePublicationMeta(game) {
+      if (game && game.isPrivate === false) {
+        return { value: 'public', label: 'Общий список', icon: '◎', tone: 'is-success' };
+      }
+      if (game && game.communityPublished === true) {
+        return { value: 'community', label: 'Сообщество', icon: '♙', tone: 'is-info' };
+      }
+      if (game && game.inviteUrl) {
+        return { value: 'link', label: 'По ссылке', icon: '↗', tone: 'is-info' };
+      }
+      if (game && game.isPrivate === true) {
+        return { value: 'hidden', label: 'Скрыта', icon: '▣', tone: 'is-private' };
+      }
+      return { value: 'unpublished', label: 'Не опубликована', icon: '○', tone: '' };
+    }
+
+    function hasGameResult(game) {
+      return getGameResultLines(game).length > 0 || Boolean(String(game && game.result || '').trim());
+    }
+
+    function gameMatchesQuickFilter(game) {
+      var filter = state.gamesQuickFilter;
+      if (!filter) return true;
+      var range = getGameDateRange(game);
+      var now = new Date();
+      if (filter === 'today') return gameDateKey(game) === formatDateInputValue(now);
+      if (filter === 'cancelled') return isGameCancelled(game);
+      if (!range.start || !range.end) return false;
+      if (filter === 'upcoming') return range.start.getTime() > now.getTime() && !isGameCancelled(game);
+      if (filter === 'past') return range.end.getTime() < now.getTime();
+      if (filter === 'noResult') return range.end.getTime() < now.getTime() && !hasGameResult(game);
+      return true;
+    }
+
+    function buildGameSearchHaystack(game) {
+      var participants = normalizeArray(game && game.participantDetails);
+      return [
+        game && game.id,
+        game && game.name,
+        game && game.stationName,
+        game && game.courtName,
+        game && game.organizerName,
+        game && game.organizerPhone
+      ].concat(participants.reduce(function (acc, participant) {
+        acc.push(participant && participant.name, participant && participant.phone);
+        return acc;
+      }, [])).filter(Boolean).join(' ').toLocaleLowerCase('ru-RU');
+    }
+
+    function getVisibleGames() {
+      return normalizeArray(state.games);
+    }
+
+    function getGameInitials(name) {
+      var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+      return parts.slice(0, 2).map(function (part) { return part.charAt(0).toLocaleUpperCase('ru-RU'); }).join('') || 'И';
+    }
+
+    function createGameBadge(meta) {
+      var badge = document.createElement('span');
+      badge.className = 'phab-admin-games-badge' + (meta && meta.tone ? ' ' + meta.tone : '');
+      badge.textContent = (meta && meta.icon ? meta.icon + '  ' : '') + String(meta && meta.label || 'Не указано');
+      return badge;
+    }
+
+    function updateGamesStationOptions() {
+      var current = state.gamesFilterStation;
+      clearNode(dom.gamesStationSelect);
+      var all = document.createElement('option');
+      all.value = '';
+      all.textContent = 'Все станции';
+      dom.gamesStationSelect.appendChild(all);
+      getGamesScheduleStationOptions().forEach(function (station) {
+        var option = document.createElement('option');
+        option.value = station;
+        option.textContent = station;
+        dom.gamesStationSelect.appendChild(option);
+      });
+      dom.gamesStationSelect.value = current;
+    }
+
+    function getGamesScheduleStationOptions() {
+      var values = Object.create(null);
+      normalizeArray(state.settings && state.settings.stations).forEach(function (station) {
+        var stationName = String(
+          station && (station.stationName || station.name || station.stationId || station.id) || ''
+        ).trim();
+        if (stationName) values[stationName] = stationName;
+      });
+      normalizeArray(state.games).forEach(function (game) {
+        var stationName = String(game && game.stationName || '').trim();
+        if (stationName) values[stationName] = stationName;
+      });
+      if (state.gamesScheduleStation) {
+        values[state.gamesScheduleStation] = state.gamesScheduleStation;
+      }
+      if (state.gamesFilterStation) {
+        values[state.gamesFilterStation] = state.gamesFilterStation;
+      }
+      return Object.keys(values).sort(function (left, right) {
+        return left.localeCompare(right, 'ru');
+      });
+    }
+
+    function updateGamesScheduleStationOptions() {
+      clearNode(dom.gamesScheduleStationSelect);
+      var all = document.createElement('option');
+      all.value = '';
+      all.textContent = 'Все станции';
+      dom.gamesScheduleStationSelect.appendChild(all);
+      getGamesScheduleStationOptions().forEach(function (stationName) {
+        var option = document.createElement('option');
+        option.value = stationName;
+        option.textContent = stationName;
+        dom.gamesScheduleStationSelect.appendChild(option);
+      });
+      dom.gamesScheduleStationSelect.value = state.gamesScheduleStation;
+    }
+
+    function syncGamesFiltersToUrl() {
+      try {
+        var url = new URL(window.location.href);
+        var mappings = [
+          ['gamesLayout', state.gamesViewMode === 'schedule' ? 'schedule' : ''],
+          ['scheduleDate', state.gamesViewMode === 'schedule' ? state.gamesScheduleDate : ''],
+          ['scheduleStation', state.gamesViewMode === 'schedule' ? state.gamesScheduleStation : ''],
+          ['scheduleStatus', state.gamesViewMode === 'schedule' ? state.gamesScheduleStatus : ''],
+          ['gamesView', state.gamesQuickFilter],
+          ['gamesQ', state.gamesFilterQuery],
+          ['gamesDate', state.gamesFilterDate],
+          ['gamesStation', state.gamesFilterStation],
+          ['gamesStatus', state.gamesFilterStatus],
+          ['gamesPublication', state.gamesFilterPublication]
+        ];
+        mappings.forEach(function (entry) {
+          if (entry[1]) url.searchParams.set(entry[0], String(entry[1]));
+          else url.searchParams.delete(entry[0]);
+        });
+        window.history.replaceState(window.history.state, '', url.toString());
+      } catch (_error) {
+        // URL state is an enhancement; filtering still works without it.
+      }
+    }
+
+    function hydrateGamesFiltersFromUrl() {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        state.gamesViewMode = params.get('gamesLayout') === 'schedule' ? 'schedule' : 'list';
+        var view = params.get('gamesView');
+        if (['today', 'upcoming', 'past', 'noResult', 'cancelled'].indexOf(view) >= 0) state.gamesQuickFilter = view;
+        state.gamesFilterQuery = String(params.get('gamesQ') || '');
+        state.gamesFilterDate = String(params.get('gamesDate') || '');
+        state.gamesFilterStation = String(params.get('gamesStation') || '');
+        state.gamesFilterStatus = String(params.get('gamesStatus') || '');
+        state.gamesFilterPublication = String(params.get('gamesPublication') || '');
+        state.gamesScheduleDate = String(
+          params.get('scheduleDate') || params.get('gamesDate') || getTodayDateInputValue()
+        );
+        state.gamesScheduleStation = String(params.get('scheduleStation') || '');
+        var scheduleStatus = String(params.get('scheduleStatus') || 'active');
+        state.gamesScheduleStatus = ['active', 'cancelled', 'all'].indexOf(scheduleStatus) >= 0
+          ? scheduleStatus
+          : 'active';
+        state.selectedGameTab = String(params.get('gameTab') || 'overview');
+      } catch (_error) {
+        // Ignore malformed URL input.
+      }
+    }
+
+    function updateGamesFilterControls() {
+      dom.gamesPhoneInput.value = state.gamesFilterQuery;
+      dom.gamesDateInput.value = state.gamesFilterDate;
+      dom.gamesStationSelect.value = state.gamesFilterStation;
+      dom.gamesStatusSelect.value = state.gamesFilterStatus;
+      dom.gamesPublicationSelect.value = state.gamesFilterPublication;
+      dom.gamesQuickFilterButtons.forEach(function (button) {
+        var active = button.dataset.value === state.gamesQuickFilter;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      dom.gamesColumnInputs.forEach(function (input) {
+        input.checked = state.gamesVisibleColumns[input.value] === true;
+      });
+    }
+
+    function updateGamesViewControls() {
+      var scheduleMode = state.gamesViewMode === 'schedule';
+      dom.gamesListViewBtn.classList.toggle('is-active', !scheduleMode);
+      dom.gamesScheduleViewBtn.classList.toggle('is-active', scheduleMode);
+      dom.gamesListViewBtn.setAttribute('aria-pressed', scheduleMode ? 'false' : 'true');
+      dom.gamesScheduleViewBtn.setAttribute('aria-pressed', scheduleMode ? 'true' : 'false');
+      dom.gamesQuickFilters.classList.toggle('phab-admin-hidden', scheduleMode);
+      dom.gamesFilterPanel.classList.toggle('phab-admin-hidden', scheduleMode);
+      dom.gamesTableShell.classList.toggle('phab-admin-hidden', scheduleMode);
+      dom.gamesScheduleToolbar.classList.toggle('phab-admin-hidden', !scheduleMode);
+      dom.gamesScheduleShell.classList.toggle('phab-admin-hidden', !scheduleMode);
+      dom.gamesColumnsBtn.classList.toggle('phab-admin-hidden', scheduleMode);
+      if (scheduleMode) {
+        dom.gamesColumnsPanel.classList.add('phab-admin-hidden');
+        dom.gamesColumnsBtn.setAttribute('aria-expanded', 'false');
+      }
+      dom.gamesScheduleDateInput.value = state.gamesScheduleDate;
+      dom.gamesScheduleStatusButtons.forEach(function (button) {
+        var active = button.dataset.value === state.gamesScheduleStatus;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      updateGamesScheduleStationOptions();
+    }
+
+    function updateGamesBulkActions() {
+      var count = Object.keys(state.gamesSelectedIds).filter(function (id) {
+        return state.gamesSelectedIds[id] === true;
+      }).length;
+      dom.gamesBulkCount.textContent = 'Выбрано: ' + String(count);
+      dom.gamesBulkActions.classList.toggle(
+        'phab-admin-hidden',
+        count === 0 || state.gamesViewMode === 'schedule'
+      );
     }
 
     function updateGameEventsPaginationControls(totalItems, totalPages) {
@@ -15095,7 +20760,7 @@
       });
     }
 
-    function renderGames() {
+    function renderGamesLegacy() {
       clearNode(dom.gamesTable);
       var pageGames = Array.isArray(state.games) ? state.games.slice() : [];
       var pagination = clampGamesPage(state.gamesTotal);
@@ -15270,6 +20935,554 @@
 
         tbody.appendChild(tr);
       });
+    }
+
+    function appendGameTableTextCell(row, primary, secondary, options) {
+      var cell = document.createElement('td');
+      if (options && options.className) cell.className = options.className;
+      var primaryNode = document.createElement('span');
+      primaryNode.className = 'phab-admin-games-primary' + (options && options.primaryClassName ? ' ' + options.primaryClassName : '');
+      primaryNode.textContent = String(primary || 'Не указано');
+      primaryNode.title = String(primary || 'Не указано');
+      cell.appendChild(primaryNode);
+      if (secondary) {
+        var secondaryNode = document.createElement('span');
+        secondaryNode.className = 'phab-admin-games-secondary';
+        secondaryNode.textContent = String(secondary);
+        secondaryNode.title = String(secondary);
+        cell.appendChild(secondaryNode);
+      }
+      row.appendChild(cell);
+      return cell;
+    }
+
+    function createGamePlayersPreview(game) {
+      var participants = normalizeArray(game && game.participantDetails);
+      var maxPlayers = Math.max(participants.length, Number(game && game.maxPlayers || 0));
+      var details = document.createElement('details');
+      details.className = 'phab-admin-games-players-preview';
+      details.addEventListener('click', function (event) { event.stopPropagation(); });
+      var summary = document.createElement('summary');
+      summary.className = 'phab-admin-games-players-summary';
+      summary.setAttribute('aria-label', 'Показать состав игры');
+      details.appendChild(summary);
+      var avatars = document.createElement('span');
+      avatars.className = 'phab-admin-games-avatar-stack';
+      summary.appendChild(avatars);
+      participants.slice(0, 3).forEach(function (participant) {
+        var avatar = document.createElement('span');
+        avatar.className = 'phab-admin-games-avatar';
+        if (participant && participant.photo) {
+          var image = document.createElement('img');
+          image.src = String(participant.photo);
+          image.alt = '';
+          avatar.appendChild(image);
+        } else {
+          avatar.textContent = getGameInitials(participant && participant.name);
+        }
+        avatar.title = String(participant && participant.name || 'Игрок');
+        avatars.appendChild(avatar);
+      });
+      if (participants.length > 3) {
+        var more = document.createElement('span');
+        more.className = 'phab-admin-games-avatar is-more';
+        more.textContent = '+' + String(participants.length - 3);
+        avatars.appendChild(more);
+      }
+      if (participants.length === 0) {
+        var emptyAvatar = document.createElement('span');
+        emptyAvatar.className = 'phab-admin-games-avatar is-more';
+        emptyAvatar.textContent = '0';
+        avatars.appendChild(emptyAvatar);
+      }
+      var count = document.createElement('span');
+      count.className = 'phab-admin-games-players-count';
+      count.textContent = String(participants.length) + ' из ' + String(maxPlayers || participants.length || 0);
+      summary.appendChild(count);
+
+      var popover = document.createElement('div');
+      popover.className = 'phab-admin-games-players-popover';
+      details.appendChild(popover);
+      participants.forEach(function (participant, index) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-games-player-popover-row';
+        var name = document.createElement('strong');
+        name.textContent = String(participant && participant.name || 'Игрок ' + String(index + 1));
+        row.appendChild(name);
+        var meta = document.createElement('span');
+        meta.textContent = [
+          participant && participant.rating ? 'Рейтинг ' + String(participant.rating) : null,
+          participant && participant.role ? String(participant.role) : null,
+          participant && participant.status ? String(participant.status) : null,
+          participant && participant.phone ? formatGamePhone(participant.phone) : null
+        ].filter(Boolean).join(' · ') || 'Дополнительные данные не указаны';
+        row.appendChild(meta);
+        popover.appendChild(row);
+      });
+      if (maxPlayers > participants.length) {
+        var free = document.createElement('div');
+        free.className = 'phab-admin-games-player-popover-row';
+        var freeTitle = document.createElement('strong');
+        freeTitle.textContent = 'Свободных мест: ' + String(maxPlayers - participants.length);
+        free.appendChild(freeTitle);
+        popover.appendChild(free);
+      }
+      return details;
+    }
+
+    function openGameDetailsTab(game, tab) {
+      state.selectedGameTab = tab || 'overview';
+      return openGameDetails(game);
+    }
+
+    function createGameRowActions(game) {
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-games-row-actions';
+      if (!isRestrictedStationAdmin) {
+        var chat = document.createElement('button');
+        chat.type = 'button';
+        chat.className = 'phab-admin-games-icon-btn';
+        chat.textContent = '◌';
+        chat.setAttribute('aria-label', 'Открыть чат');
+        chat.title = game && game.chatAvailable === false ? 'Чат для этой игры не создан' : 'Открыть чат';
+        chat.disabled = game && game.chatAvailable === false;
+        chat.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openGameChat(game).catch(handleError);
+        });
+        wrap.appendChild(chat);
+      }
+      var menu = document.createElement('details');
+      menu.className = 'phab-admin-games-row-menu';
+      menu.addEventListener('click', function (event) { event.stopPropagation(); });
+      var summary = document.createElement('summary');
+      summary.className = 'phab-admin-games-icon-btn';
+      summary.textContent = '•••';
+      summary.setAttribute('aria-label', 'Действия с игрой');
+      menu.appendChild(summary);
+      var popover = document.createElement('div');
+      popover.className = 'phab-admin-games-row-menu-popover';
+      menu.appendChild(popover);
+      function addAction(label, handler) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.addEventListener('click', function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          menu.removeAttribute('open');
+          handler();
+        });
+        popover.appendChild(button);
+      }
+      addAction('Открыть игру', function () { openGameDetailsTab(game, 'overview').catch(handleError); });
+      if (!isRestrictedStationAdmin && game && game.chatAvailable !== false) {
+        addAction('Открыть чат', function () { openGameChat(game).catch(handleError); });
+      }
+      if (game && game.inviteUrl) {
+        addAction('Скопировать ссылку', function () {
+          copyText(game.inviteUrl).then(function () { setStatus('Ссылка скопирована', false); }).catch(handleError);
+        });
+      }
+      if (!isRestrictedStationAdmin && String(game && game.source || '') === 'LK_PADELHUB_MONGO') {
+        addAction('Управлять публикацией', function () { openGameDetailsTab(game, 'publication').catch(handleError); });
+      }
+      addAction('Скопировать ID', function () {
+        copyText(game.id).then(function () { setStatus('ID игры скопирован', false); }).catch(handleError);
+      });
+      wrap.appendChild(menu);
+      return wrap;
+    }
+
+    function formatGamesScheduleDateLabel(value) {
+      var date = new Date(String(value || '') + 'T12:00:00');
+      if (Number.isNaN(date.getTime())) return 'Дата не выбрана';
+      return new Intl.DateTimeFormat('ru-RU', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }).format(date);
+    }
+
+    function formatRussianCount(value, one, few, many) {
+      var count = Math.abs(Number(value || 0));
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      var form = many;
+      if (mod100 < 11 || mod100 > 14) {
+        if (mod10 === 1) form = one;
+        else if (mod10 >= 2 && mod10 <= 4) form = few;
+      }
+      return String(count) + ' ' + form;
+    }
+
+    function formatGamesScheduleTime(game) {
+      var range = getGameDateRange(game);
+      if (!range.start) return String(game && game.gameTime || 'Время не указано');
+      var formatter = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      return formatter.format(range.start) + '–' + formatter.format(range.end);
+    }
+
+    function getGamesScheduleItems() {
+      return normalizeArray(state.games).filter(function (game) {
+        if (state.gamesScheduleDate && gameDateKey(game) !== state.gamesScheduleDate) return false;
+        if (
+          state.gamesScheduleStation &&
+          String(game && game.stationName || '') !== state.gamesScheduleStation
+        ) return false;
+        if (state.gamesScheduleStatus === 'cancelled') return isGameCancelled(game);
+        if (state.gamesScheduleStatus === 'active') return !isGameCancelled(game);
+        return true;
+      }).sort(function (left, right) {
+        var leftRange = getGameDateRange(left);
+        var rightRange = getGameDateRange(right);
+        var timeOrder = compareNullable(
+          leftRange.start ? leftRange.start.getTime() : null,
+          rightRange.start ? rightRange.start.getTime() : null
+        );
+        if (timeOrder !== 0) return timeOrder;
+        return String(left && left.courtName || '').localeCompare(
+          String(right && right.courtName || ''),
+          'ru'
+        );
+      });
+    }
+
+    function createGamesScheduleCard(game) {
+      var card = document.createElement('article');
+      card.className =
+        'phab-admin-games-schedule-card' + (isGameCancelled(game) ? ' is-cancelled' : '');
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', 'Открыть игру ' + String(game && game.name || game.id));
+
+      var time = document.createElement('div');
+      time.className = 'phab-admin-games-schedule-card-time';
+      time.textContent = formatGamesScheduleTime(game);
+      card.appendChild(time);
+
+      var title = document.createElement('div');
+      title.className = 'phab-admin-games-schedule-card-title';
+      title.textContent = game.organizerName
+        ? 'Игра · ' + String(game.organizerName)
+        : String(game.name || 'Игра');
+      card.appendChild(title);
+
+      var participantsCount = normalizeArray(game.participantDetails).length ||
+        normalizeArray(game.participantNames).length;
+      var meta = document.createElement('div');
+      meta.className = 'phab-admin-games-schedule-card-meta';
+      meta.textContent =
+        (game.maxPlayers
+          ? String(participantsCount) + ' из ' + String(game.maxPlayers) + ' игроков'
+          : formatRussianCount(participantsCount, 'игрок', 'игрока', 'игроков')) +
+        ' · ID ' +
+        String(game.id || '').slice(0, 10);
+      card.appendChild(meta);
+
+      var badges = document.createElement('div');
+      badges.className = 'phab-admin-games-schedule-card-badges';
+      badges.appendChild(createGameBadge(getGameStatusMeta(game)));
+      badges.appendChild(createGameBadge(getGamePublicationMeta(game)));
+      card.appendChild(badges);
+
+      var action = document.createElement('button');
+      action.className = 'phab-admin-games-schedule-card-action';
+      action.type = 'button';
+      action.textContent = 'Открыть и редактировать';
+      card.appendChild(action);
+
+      function openScheduleGame(event) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        openGameDetailsTab(game, 'overview').catch(handleError);
+      }
+      action.addEventListener('click', openScheduleGame);
+      card.addEventListener('click', openScheduleGame);
+      card.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        openScheduleGame(event);
+      });
+      return card;
+    }
+
+    function renderGamesSchedule() {
+      clearNode(dom.gamesScheduleBoard);
+      updateGamesViewControls();
+      var games = getGamesScheduleItems();
+      dom.gamesFoundCountValue.textContent = String(games.length);
+      var cancelledCount = games.filter(isGameCancelled).length;
+      var activeCount = games.length - cancelledCount;
+
+      var stations = Object.create(null);
+      games.forEach(function (game) {
+        var stationName = String(game && game.stationName || 'Без станции').trim() || 'Без станции';
+        var courtName = String(game && game.courtName || 'Корт не указан').trim() || 'Корт не указан';
+        if (!stations[stationName]) stations[stationName] = Object.create(null);
+        if (!stations[stationName][courtName]) stations[stationName][courtName] = [];
+        stations[stationName][courtName].push(game);
+      });
+
+      var stationNames = Object.keys(stations).sort(function (left, right) {
+        return left.localeCompare(right, 'ru');
+      });
+      dom.gamesScheduleSummary.textContent =
+        formatGamesScheduleDateLabel(state.gamesScheduleDate) +
+        ' · ' +
+        (state.gamesScheduleStatus === 'all'
+          ? formatRussianCount(activeCount, 'активная', 'активные', 'активных') +
+            ' · ' + formatRussianCount(cancelledCount, 'отменённая', 'отменённые', 'отменённых')
+          : formatRussianCount(games.length, 'игра', 'игры', 'игр')) +
+        ' · ' +
+        formatRussianCount(stationNames.length, 'станция', 'станции', 'станций');
+
+      if (games.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-games-schedule-empty';
+        empty.textContent = state.gamesScheduleStatus === 'cancelled'
+          ? 'На выбранную дату и станцию отменённых игр нет.'
+          : state.gamesScheduleStatus === 'active'
+            ? 'На выбранную дату и станцию активных игр нет.'
+            : 'На выбранную дату и станцию созданных игр нет.';
+        dom.gamesScheduleBoard.appendChild(empty);
+        updateGamesBulkActions();
+        return;
+      }
+
+      stationNames.forEach(function (stationName) {
+        var stationBlock = document.createElement('section');
+        stationBlock.className = 'phab-admin-games-schedule-station-block';
+        dom.gamesScheduleBoard.appendChild(stationBlock);
+
+        var stationHead = document.createElement('header');
+        stationHead.className = 'phab-admin-games-schedule-station-head';
+        stationBlock.appendChild(stationHead);
+        var stationTitle = document.createElement('h3');
+        stationTitle.className = 'phab-admin-games-schedule-station-title';
+        stationTitle.textContent = stationName;
+        stationHead.appendChild(stationTitle);
+
+        var courts = stations[stationName];
+        var stationCount = Object.keys(courts).reduce(function (sum, courtName) {
+          return sum + courts[courtName].length;
+        }, 0);
+        var stationCountNode = document.createElement('span');
+        stationCountNode.className = 'phab-admin-games-schedule-station-count';
+        stationCountNode.textContent = formatRussianCount(stationCount, 'игра', 'игры', 'игр');
+        stationHead.appendChild(stationCountNode);
+
+        var courtsGrid = document.createElement('div');
+        courtsGrid.className = 'phab-admin-games-schedule-courts';
+        stationBlock.appendChild(courtsGrid);
+        Object.keys(courts).sort(function (left, right) {
+          return left.localeCompare(right, 'ru', { numeric: true });
+        }).forEach(function (courtName) {
+          var court = document.createElement('div');
+          court.className = 'phab-admin-games-schedule-court';
+          courtsGrid.appendChild(court);
+          var courtTitle = document.createElement('div');
+          courtTitle.className = 'phab-admin-games-schedule-court-title';
+          court.appendChild(courtTitle);
+          var courtLabel = document.createElement('span');
+          courtLabel.textContent = courtName;
+          courtTitle.appendChild(courtLabel);
+          var courtCount = document.createElement('span');
+          courtCount.className = 'phab-admin-games-schedule-court-count';
+          courtCount.textContent = String(courts[courtName].length);
+          courtTitle.appendChild(courtCount);
+          courts[courtName].forEach(function (game) {
+            court.appendChild(createGamesScheduleCard(game));
+          });
+        });
+      });
+      updateGamesBulkActions();
+    }
+
+    function renderGames() {
+      updateGamesViewControls();
+      if (state.gamesViewMode === 'schedule') {
+        renderGamesSchedule();
+        return;
+      }
+      clearNode(dom.gamesTable);
+      updateGamesStationOptions();
+      updateGamesFilterControls();
+      var pagination = clampGamesPage(state.gamesTotal);
+      updateGamesPaginationControls(state.gamesTotal, pagination.totalPages);
+      var pageGames = getVisibleGames();
+      var visibleTechnical = Object.keys(state.gamesVisibleColumns).filter(function (key) {
+        return state.gamesVisibleColumns[key] === true;
+      });
+      var columns = [
+        { key: 'select', label: '', width: 42 },
+        { key: 'gameDate', label: 'Дата', sortField: 'gameDate', width: 122 },
+        { key: 'game', label: 'Игра', width: 205 },
+        { key: 'organizer', label: 'Организатор', sortField: 'organizer', width: 200 },
+        { key: 'participants', label: 'Игроки', width: 190 },
+        { key: 'publication', label: 'Публикация', width: 150 },
+        { key: 'result', label: 'Результат', width: 125 },
+        { key: 'status', label: 'Статус', width: 145 }
+      ];
+      visibleTechnical.forEach(function (key) {
+        var labels = { id: 'ID', source: 'Источник', createdAt: 'Создана', updatedAt: 'Обновлена' };
+        columns.push({ key: key, label: labels[key] || key, width: key === 'id' ? 210 : 135 });
+      });
+      columns.push({ key: 'actions', label: '', width: isRestrictedStationAdmin ? 54 : 96 });
+
+      var colgroup = document.createElement('colgroup');
+      columns.forEach(function (column) {
+        var col = document.createElement('col');
+        if (column.width) col.style.width = String(column.width) + 'px';
+        colgroup.appendChild(col);
+      });
+      dom.gamesTable.appendChild(colgroup);
+
+      var thead = document.createElement('thead');
+      var headRow = document.createElement('tr');
+      columns.forEach(function (column) {
+        var th = document.createElement('th');
+        if (column.key === 'select') {
+          var selectAll = document.createElement('input');
+          selectAll.type = 'checkbox';
+          selectAll.className = 'phab-admin-games-checkbox';
+          selectAll.setAttribute('aria-label', 'Выбрать все игры на странице');
+          var selectedVisible = pageGames.filter(function (game) { return state.gamesSelectedIds[game.id] === true; }).length;
+          selectAll.checked = pageGames.length > 0 && selectedVisible === pageGames.length;
+          selectAll.indeterminate = selectedVisible > 0 && selectedVisible < pageGames.length;
+          selectAll.addEventListener('change', function () {
+            pageGames.forEach(function (game) { state.gamesSelectedIds[game.id] = selectAll.checked; });
+            renderGames();
+          });
+          th.appendChild(selectAll);
+        } else {
+          th.textContent = column.label;
+          if (column.sortField) {
+            th.className = 'phab-admin-games-sortable';
+            var indicator = getGamesSortIndicator(column.sortField);
+            if (indicator) th.appendChild(document.createTextNode(' ' + indicator));
+            th.addEventListener('click', function () { setGamesSorting(column.sortField); });
+          }
+        }
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      dom.gamesTable.appendChild(thead);
+      var tbody = document.createElement('tbody');
+      dom.gamesTable.appendChild(tbody);
+
+      if (pageGames.length === 0) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = columns.length;
+        emptyCell.className = 'phab-admin-games-table-empty';
+        emptyCell.textContent = state.games.length === 0
+          ? 'Игры не найдены. Обновите данные или измените параметры запроса.'
+          : 'На текущей странице нет игр, подходящих под выбранные фильтры.';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        updateGamesBulkActions();
+        return;
+      }
+
+      pageGames.forEach(function (game) {
+        var tr = document.createElement('tr');
+        tr.className = 'phab-admin-games-row' + (state.gamesSelectedIds[game.id] ? ' is-selected' : '');
+        tr.tabIndex = 0;
+        tr.setAttribute('role', 'link');
+        tr.setAttribute('aria-label', 'Открыть игру ' + String(game.name || game.id));
+        function openFromRow(event) {
+          if (event && event.target && event.target.closest && event.target.closest('button,a,input,select,details,summary')) return;
+          openGameDetailsTab(game, 'overview').catch(handleError);
+        }
+        tr.addEventListener('click', openFromRow);
+        tr.addEventListener('keydown', function (event) {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          openFromRow(event);
+        });
+
+        var checkboxCell = document.createElement('td');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'phab-admin-games-checkbox';
+        checkbox.checked = state.gamesSelectedIds[game.id] === true;
+        checkbox.setAttribute('aria-label', 'Выбрать игру ' + String(game.name || game.id));
+        checkbox.addEventListener('click', function (event) { event.stopPropagation(); });
+        checkbox.addEventListener('change', function () {
+          state.gamesSelectedIds[game.id] = checkbox.checked;
+          renderGames();
+        });
+        checkboxCell.appendChild(checkbox);
+        tr.appendChild(checkboxCell);
+
+        var date = formatGameListDate(game);
+        appendGameTableTextCell(tr, date.day, date.time, { primaryClassName: 'phab-admin-games-date-day' });
+        appendGameTableTextCell(tr, game.stationName || game.locationName || game.name, game.courtName || 'Корт не указан');
+
+        var organizerName = String(game.organizerName || '').trim();
+        if (!organizerName || organizerName.toLocaleLowerCase('ru-RU') === 'организатор') organizerName = 'Имя не указано';
+        appendGameTableTextCell(tr, organizerName, formatGamePhone(game.organizerPhone));
+
+        var playersCell = document.createElement('td');
+        playersCell.appendChild(createGamePlayersPreview(game));
+        tr.appendChild(playersCell);
+
+        var publicationCell = document.createElement('td');
+        publicationCell.appendChild(createGameBadge(getGamePublicationMeta(game)));
+        tr.appendChild(publicationCell);
+
+        var resultCell = document.createElement('td');
+        var resultLines = getGameResultLines(game);
+        var deltaLines = getGameRatingDeltaLines(game);
+        if (resultLines.length > 0) {
+          var score = document.createElement('div');
+          score.className = 'phab-admin-games-result-score';
+          score.textContent = resultLines.join(' · ');
+          resultCell.appendChild(score);
+          if (deltaLines.length > 0) {
+            var delta = document.createElement('div');
+            delta.className = 'phab-admin-games-result-delta' + (deltaLines.join(' ').indexOf('-') >= 0 ? ' is-negative' : '');
+            delta.textContent = deltaLines.join(' · ');
+            resultCell.appendChild(delta);
+          }
+        } else {
+          var missing = document.createElement('div');
+          missing.className = 'phab-admin-games-result-missing';
+          missing.textContent = (getGameDateRange(game).end && getGameDateRange(game).end.getTime() < Date.now() ? '⚠  ' : '') + 'Не внесён';
+          resultCell.appendChild(missing);
+          if (getGameDateRange(game).end && getGameDateRange(game).end.getTime() < Date.now()) {
+            var note = document.createElement('div');
+            note.className = 'phab-admin-games-result-note';
+            note.textContent = 'Нет результата';
+            resultCell.appendChild(note);
+          }
+        }
+        tr.appendChild(resultCell);
+
+        var statusCell = document.createElement('td');
+        statusCell.appendChild(createGameBadge(getGameStatusMeta(game)));
+        tr.appendChild(statusCell);
+
+        visibleTechnical.forEach(function (key) {
+          if (key === 'id') appendGameTableTextCell(tr, game.id, null);
+          else if (key === 'source') appendGameTableTextCell(tr, game.source, null);
+          else if (key === 'createdAt') appendGameTableTextCell(tr, formatDateTimeFull(game.createdAt), null);
+          else if (key === 'updatedAt') appendGameTableTextCell(tr, formatDateTimeFull(game.updatedAt), null);
+        });
+
+        var actionsCell = document.createElement('td');
+        actionsCell.appendChild(createGameRowActions(game));
+        tr.appendChild(actionsCell);
+        tbody.appendChild(tr);
+      });
+      updateGamesBulkActions();
     }
 
     function renderGameEvents() {
@@ -25604,60 +31817,391 @@
     function renderSettingsAdminUsers() {
       clearNode(dom.staffList);
       var users = state.settings.adminUsers || [];
+      var roles = state.settings.adminRoles || [];
+      dom.staffCreateUserBtn.className = canManageAdminUsers(cfg)
+        ? 'phab-admin-btn'
+        : 'phab-admin-btn phab-admin-hidden';
+      dom.staffCreateRoleBtn.className = canManageRoles(cfg)
+        ? 'phab-admin-btn-secondary'
+        : 'phab-admin-btn-secondary phab-admin-hidden';
+      dom.staffAuditBtn.className = canReadAdminAudit(cfg)
+        ? 'phab-admin-btn-secondary'
+        : 'phab-admin-btn-secondary phab-admin-hidden';
+
+      var usersTitle = document.createElement('div');
+      usersTitle.className = 'phab-admin-settings-label';
+      usersTitle.textContent = 'Сотрудники';
+      dom.staffList.appendChild(usersTitle);
       if (users.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'phab-admin-empty';
-        empty.textContent = 'Сотрудники в auth-конфигурации не найдены';
+        empty.textContent = 'Сотрудники ещё не добавлены.';
         dom.staffList.appendChild(empty);
-        return;
       }
-
-      [
-        { role: 'SUPER_ADMIN', title: 'Суперадмины' },
-        { role: 'MANAGER', title: 'Управляющие' },
-        { role: 'STATION_ADMIN', title: 'Админы станций' }
-      ].forEach(function (group) {
-        var groupUsers = users.filter(function (user) {
-          return Array.isArray(user.roles) && user.roles.indexOf(group.role) >= 0;
-        });
-        if (groupUsers.length === 0) {
-          return;
-        }
-
-        var groupTitle = document.createElement('div');
-        groupTitle.className = 'phab-admin-settings-label';
-        groupTitle.style.marginBottom = '6px';
-        groupTitle.textContent = group.title;
-        dom.staffList.appendChild(groupTitle);
-
-        groupUsers.forEach(function (user) {
+      users
+        .slice()
+        .sort(function (left, right) { return String(left.login || '').localeCompare(String(right.login || ''), 'ru'); })
+        .forEach(function (user) {
           var row = document.createElement('div');
           row.className = 'phab-admin-settings-row';
           dom.staffList.appendChild(row);
-
           var main = document.createElement('div');
           main.className = 'phab-admin-settings-row-main';
           row.appendChild(main);
-
           var title = document.createElement('div');
           title.className = 'phab-admin-settings-row-title';
-          title.textContent = user.title || user.login;
+          title.textContent = (user.title || user.login) + (user.active === false ? ' · выключен' : '');
           main.appendChild(title);
-
+          var roleIds = Array.isArray(user.roleIds) && user.roleIds.length
+            ? user.roleIds
+            : normalizeArray(user.roles);
           var meta = document.createElement('div');
           meta.className = 'phab-admin-settings-row-meta';
           meta.textContent =
-            'логин: ' +
-            user.login +
-            ' · ' +
-            user.roles.map(formatRoleLabel).join(', ') +
-            ' · станции: ' +
-            formatStationScope(user.stationIds) +
-            ' · коннекторы: ' +
-            formatConnectorScope(user.connectorRoutes);
+            'логин: ' + user.login +
+            ' · роли: ' + roleIds.map(getAdminRoleLabel).join(', ') +
+            ' · станции: ' + formatStationScope(user.stationIds) +
+            ' · коннекторы: ' + formatConnectorScope(user.connectorRoutes);
           main.appendChild(meta);
+          if (canManageAdminUsers(cfg)) {
+            var edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'phab-admin-btn-secondary';
+            edit.textContent = 'Редактировать';
+            edit.addEventListener('click', function () {
+              state.staffEditor = { kind: 'user', value: user };
+              renderStaffEditor();
+            });
+            row.appendChild(edit);
+          }
+          if (canReadAdminAudit(cfg)) {
+            var history = document.createElement('button');
+            history.type = 'button';
+            history.className = 'phab-admin-btn-secondary';
+            history.textContent = 'История';
+            history.addEventListener('click', function () {
+              loadStaffAudit({ actorId: user.id }).catch(handleError);
+            });
+            row.appendChild(history);
+          }
         });
+
+      var rolesTitle = document.createElement('div');
+      rolesTitle.className = 'phab-admin-settings-label';
+      rolesTitle.style.marginTop = '12px';
+      rolesTitle.textContent = 'Роли и права';
+      dom.staffList.appendChild(rolesTitle);
+      roles.forEach(function (role) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-settings-row';
+        dom.staffList.appendChild(row);
+        var main = document.createElement('div');
+        main.className = 'phab-admin-settings-row-main';
+        row.appendChild(main);
+        var title = document.createElement('div');
+        title.className = 'phab-admin-settings-row-title';
+        title.textContent = role.name + ' (' + role.id + ')';
+        main.appendChild(title);
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-settings-row-meta';
+        meta.textContent =
+          'права: ' + (normalizeArray(role.permissions).join(', ') || 'нет') +
+          ' · станции: ' + formatStationScope(role.stationIds);
+        main.appendChild(meta);
+        if (canManageRoles(cfg)) {
+          var editRole = document.createElement('button');
+          editRole.type = 'button';
+          editRole.className = 'phab-admin-btn-secondary';
+          editRole.textContent = 'Редактировать';
+          editRole.addEventListener('click', function () {
+            state.staffEditor = { kind: 'role', value: role };
+            renderStaffEditor();
+          });
+          row.appendChild(editRole);
+        }
       });
+      renderStaffEditor();
+      renderStaffAudit();
+    }
+
+    function getAdminRoleLabel(roleId) {
+      var role = normalizeArray(state.settings.adminRoles).find(function (item) {
+        return String(item && item.id || '') === String(roleId || '');
+      });
+      return role && role.name ? role.name : formatRoleLabel(String(roleId || ''));
+    }
+
+    function createStaffField(labelText, input) {
+      var label = document.createElement('label');
+      label.className = 'phab-admin-settings-label';
+      label.textContent = labelText;
+      label.appendChild(input);
+      return label;
+    }
+
+    function createStaffInput(type, value, placeholder) {
+      var input = document.createElement('input');
+      input.type = type;
+      input.className = 'phab-admin-settings-input';
+      input.value = value || '';
+      if (placeholder) input.placeholder = placeholder;
+      return input;
+    }
+
+    function renderStaffEditor() {
+      clearNode(dom.staffEditor);
+      var editor = state.staffEditor;
+      if (!editor || (editor.kind === 'user' && !canManageAdminUsers(cfg)) ||
+        (editor.kind === 'role' && !canManageRoles(cfg))) {
+        dom.staffEditor.className = 'phab-admin-settings-form phab-admin-hidden';
+        return;
+      }
+      dom.staffEditor.className = 'phab-admin-settings-form';
+      var isUser = editor.kind === 'user';
+      var existing = editor.value || {};
+      var heading = document.createElement('div');
+      heading.className = 'phab-admin-settings-row-title';
+      heading.textContent = isUser
+        ? (existing.id ? 'Редактирование сотрудника' : 'Новый сотрудник')
+        : (existing.id ? 'Редактирование роли' : 'Новая роль');
+      dom.staffEditor.appendChild(heading);
+
+      if (isUser) {
+        var titleInput = createStaffInput('text', existing.title, 'Например, Администратор Ясенево');
+        titleInput.maxLength = 160;
+        dom.staffEditor.appendChild(createStaffField('Имя в ЦУП', titleInput));
+        var loginInput = createStaffInput('text', existing.login, 'latin_login');
+        loginInput.autocomplete = 'username';
+        dom.staffEditor.appendChild(createStaffField('Логин', loginInput));
+        var passwordInput = createStaffInput('password', '', existing.id ? 'Оставьте пустым, чтобы не менять' : 'Минимум 10 символов');
+        passwordInput.autocomplete = 'new-password';
+        dom.staffEditor.appendChild(createStaffField('Пароль', passwordInput));
+        var roleLabel = document.createElement('div');
+        roleLabel.className = 'phab-admin-settings-label';
+        roleLabel.textContent = 'Роли';
+        dom.staffEditor.appendChild(roleLabel);
+        var selectedRoleIds = Array.isArray(existing.roleIds) && existing.roleIds.length
+          ? existing.roleIds
+          : normalizeArray(existing.roles);
+        var roleChecks = [];
+        normalizeArray(state.settings.adminRoles).forEach(function (role) {
+          var option = document.createElement('label');
+          option.className = 'phab-admin-settings-row-meta';
+          option.style.display = 'block';
+          var checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = role.id;
+          checkbox.checked = selectedRoleIds.indexOf(role.id) >= 0;
+          option.appendChild(checkbox);
+          option.appendChild(document.createTextNode(' ' + role.name));
+          roleLabel.appendChild(option);
+          roleChecks.push(checkbox);
+        });
+        var stationsInput = createStaffInput('text', normalizeArray(existing.stationIds).join(', '), 'Yasenevo, Nagatinskaya');
+        dom.staffEditor.appendChild(createStaffField('Станции (через запятую; пусто — все)', stationsInput));
+        var routesInput = createStaffInput('text', normalizeArray(existing.connectorRoutes).join(', '), 'TG_BOT, LK_WEB_MESSENGER');
+        dom.staffEditor.appendChild(createStaffField('Коннекторы (через запятую; пусто — все)', routesInput));
+        var activeLabel = document.createElement('label');
+        activeLabel.className = 'phab-admin-settings-row-meta';
+        var activeInput = document.createElement('input');
+        activeInput.type = 'checkbox';
+        activeInput.checked = existing.active !== false;
+        activeLabel.appendChild(activeInput);
+        activeLabel.appendChild(document.createTextNode(' Учётная запись активна'));
+        dom.staffEditor.appendChild(activeLabel);
+        appendStaffEditorActions({
+          save: async function () {
+            var roleIds = roleChecks.filter(function (item) { return item.checked; }).map(function (item) { return item.value; });
+            if (!roleIds.length) throw new Error('Выберите хотя бы одну роль');
+            var payload = {
+              title: String(titleInput.value || '').trim() || undefined,
+              login: String(loginInput.value || '').trim(),
+              roleIds: roleIds,
+              stationIds: parseCsvInput(stationsInput.value),
+              connectorRoutes: parseCsvInput(routesInput.value),
+              active: activeInput.checked
+            };
+            if (String(passwordInput.value || '')) payload.password = String(passwordInput.value);
+            if (!existing.id && !payload.password) throw new Error('Введите пароль для нового сотрудника');
+            if (existing.id) await api.updateAdminUser(existing.id, payload);
+            else await api.createAdminUser(payload);
+            state.staffEditor = null;
+            await loadSettings();
+            setStatus(existing.id ? 'Учётная запись обновлена' : 'Сотрудник добавлен', false);
+          },
+          remove: existing.id ? async function () {
+            if (!window.confirm('Удалить учётную запись ' + existing.login + '?')) return;
+            await api.deleteAdminUser(existing.id);
+            state.staffEditor = null;
+            await loadSettings();
+            setStatus('Учётная запись удалена', false);
+          } : null
+        });
+        return;
+      }
+
+      var idInput = createStaffInput('text', existing.id, 'station-observer');
+      idInput.disabled = Boolean(existing.id);
+      dom.staffEditor.appendChild(createStaffField('Код роли', idInput));
+      var nameInput = createStaffInput('text', existing.name, 'Наблюдатель станции');
+      dom.staffEditor.appendChild(createStaffField('Название роли', nameInput));
+      var descriptionInput = createStaffInput('text', existing.description, 'Необязательно');
+      dom.staffEditor.appendChild(createStaffField('Описание', descriptionInput));
+      var roleStationsInput = createStaffInput('text', normalizeArray(existing.stationIds).join(', '), 'Пусто — все станции');
+      dom.staffEditor.appendChild(createStaffField('Станции роли', roleStationsInput));
+      var permissionLabel = document.createElement('div');
+      permissionLabel.className = 'phab-admin-settings-label';
+      permissionLabel.textContent = 'Права';
+      dom.staffEditor.appendChild(permissionLabel);
+      var selectedPermissions = normalizeArray(existing.permissions);
+      var permissionChecks = [];
+      ADMIN_PERMISSION_OPTIONS.forEach(function (item) {
+        var option = document.createElement('label');
+        option.className = 'phab-admin-settings-row-meta';
+        option.style.display = 'block';
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = item[0];
+        checkbox.checked = selectedPermissions.indexOf('*') >= 0 || selectedPermissions.indexOf(item[0]) >= 0;
+        checkbox.disabled = selectedPermissions.indexOf('*') >= 0;
+        option.appendChild(checkbox);
+        option.appendChild(document.createTextNode(' ' + item[1]));
+        permissionLabel.appendChild(option);
+        permissionChecks.push(checkbox);
+      });
+      if (selectedPermissions.indexOf('*') >= 0) {
+        var fullAccess = document.createElement('div');
+        fullAccess.className = 'phab-admin-settings-row-meta';
+        fullAccess.textContent = 'Полный доступ. Набор прав системной роли суперадмина защищён от сужения.';
+        permissionLabel.appendChild(fullAccess);
+      }
+      appendStaffEditorActions({
+        save: async function () {
+          var permissions = selectedPermissions.indexOf('*') >= 0
+            ? ['*']
+            : permissionChecks.filter(function (item) { return item.checked; }).map(function (item) { return item.value; });
+          var payload = {
+            name: String(nameInput.value || '').trim(),
+            description: String(descriptionInput.value || '').trim() || undefined,
+            permissions: permissions,
+            stationIds: parseCsvInput(roleStationsInput.value)
+          };
+          if (!payload.name) throw new Error('Введите название роли');
+          if (existing.id) await api.updateAdminRole(existing.id, payload);
+          else {
+            payload.id = String(idInput.value || '').trim();
+            if (!payload.id) throw new Error('Введите код роли');
+            await api.createAdminRole(payload);
+          }
+          state.staffEditor = null;
+          await loadSettings();
+          setStatus(existing.id ? 'Роль обновлена' : 'Роль добавлена', false);
+        },
+        remove: existing.id && existing.isSystem !== true ? async function () {
+          if (!window.confirm('Удалить роль ' + existing.name + '?')) return;
+          await api.deleteAdminRole(existing.id);
+          state.staffEditor = null;
+          await loadSettings();
+          setStatus('Роль удалена', false);
+        } : null
+      });
+    }
+
+    function appendStaffEditorActions(actions) {
+      var wrap = document.createElement('div');
+      wrap.className = 'phab-admin-dialog-options';
+      wrap.style.display = 'flex';
+      wrap.style.flexWrap = 'wrap';
+      wrap.style.gap = '8px';
+      dom.staffEditor.appendChild(wrap);
+      var save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'phab-admin-btn';
+      save.textContent = 'Сохранить';
+      save.addEventListener('click', function () {
+        save.disabled = true;
+        Promise.resolve(actions.save()).catch(handleError).finally(function () { save.disabled = false; });
+      });
+      wrap.appendChild(save);
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'phab-admin-btn-secondary';
+      cancel.textContent = 'Отмена';
+      cancel.addEventListener('click', function () { state.staffEditor = null; renderStaffEditor(); });
+      wrap.appendChild(cancel);
+      if (actions.remove) {
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'phab-admin-btn-secondary';
+        remove.textContent = 'Удалить';
+        remove.addEventListener('click', function () {
+          remove.disabled = true;
+          Promise.resolve(actions.remove()).catch(handleError).finally(function () { remove.disabled = false; });
+        });
+        wrap.appendChild(remove);
+      }
+    }
+
+    function renderStaffAudit() {
+      clearNode(dom.staffAuditList);
+      if (!state.staffAuditVisible || !canReadAdminAudit(cfg)) {
+        dom.staffAuditList.className = 'phab-admin-settings-list phab-admin-hidden';
+        return;
+      }
+      dom.staffAuditList.className = 'phab-admin-settings-list';
+      var title = document.createElement('div');
+      title.className = 'phab-admin-settings-label';
+      title.textContent = state.staffAuditFilter.actorId ? 'История действий сотрудника' : 'Журнал действий';
+      dom.staffAuditList.appendChild(title);
+      if (state.staffAuditLoading) {
+        var loading = document.createElement('div');
+        loading.className = 'phab-admin-empty';
+        loading.textContent = 'Загружаем журнал…';
+        dom.staffAuditList.appendChild(loading);
+        return;
+      }
+      var items = normalizeArray(state.settings.adminAudit);
+      if (!items.length) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-admin-empty';
+        empty.textContent = 'Записей пока нет.';
+        dom.staffAuditList.appendChild(empty);
+        return;
+      }
+      items.forEach(function (entry) {
+        var row = document.createElement('div');
+        row.className = 'phab-admin-settings-row';
+        var main = document.createElement('div');
+        main.className = 'phab-admin-settings-row-main';
+        var action = document.createElement('div');
+        action.className = 'phab-admin-settings-row-title';
+        action.textContent = String(entry.action || 'Действие');
+        main.appendChild(action);
+        var meta = document.createElement('div');
+        meta.className = 'phab-admin-settings-row-meta';
+        meta.textContent =
+          formatDateTimeFull(entry.at) +
+          ' · ' + String(entry.actor && (entry.actor.title || entry.actor.login || entry.actor.id) || 'система') +
+          (entry.targetLabel ? ' · ' + entry.targetLabel : '');
+        main.appendChild(meta);
+        row.appendChild(main);
+        dom.staffAuditList.appendChild(row);
+      });
+    }
+
+    async function loadStaffAudit(filter) {
+      if (!canReadAdminAudit(cfg)) return;
+      state.staffAuditVisible = true;
+      state.staffAuditFilter = filter || {};
+      state.staffAuditLoading = true;
+      renderStaffAudit();
+      try {
+        var response = await api.getAdminAudit(Object.assign({ limit: 100 }, state.staffAuditFilter));
+        state.settings.adminAudit = normalizeArray(response && response.items);
+      } finally {
+        state.staffAuditLoading = false;
+        renderStaffAudit();
+      }
     }
 
     function renderQuickReplyPreviewCell(cell, rule) {
@@ -25950,12 +32494,21 @@
       renderSettingsAdminUsers();
       renderSettingsQuickReplies();
       renderSettingsSplitPaymentPromo();
+      renderLocationAdmin();
       setSettingsSubtab(state.settingsSubtab);
     }
 
+    function getAdvertisingStateKey() {
+      if (state.advertisingSubtab === 'cabinetHomeTop') return 'cabinetHomeTop';
+      if (state.advertisingSubtab === 'cabinetForMeStrip') return 'cabinetForMeStrip';
+      if (state.advertisingSubtab === 'cabinetForMeCard') return 'cabinetForMeCard';
+      return 'cabinetHome';
+    }
+
     function getCabinetHomeAdvertisingState() {
+      var key = getAdvertisingStateKey();
       return normalizeCabinetHomeAdvertisingSettings(
-        state.advertising && state.advertising.cabinetHome
+        state.advertising && state.advertising[key]
       );
     }
 
@@ -26054,74 +32607,650 @@
 
       var payload = {
         rotationEnabled: nextState && nextState.rotationEnabled === true,
+        repeatEveryCards: normalizeIntSetting(
+          nextState && nextState.repeatEveryCards,
+          getCabinetHomeAdvertisingState().repeatEveryCards || 4
+        ),
         ads: normalizeArray(nextState && nextState.ads).map(function (item) {
           return {
             id: String(item && item.id || '').trim() || undefined,
             title: String(item && item.title || '').trim() || undefined,
+            badgeText: String(item && item.badgeText || '').trim() || undefined,
+            footerText: String(item && item.footerText || '').trim() || undefined,
             href: String(item && item.href || '').trim(),
             imageAssetId: String(item && item.imageAssetId || '').trim() || undefined,
             imageDataUrl: String(item && item.imageDataUrl || '').trim() || undefined,
+            squareImageAssetId:
+              String(item && item.squareImageAssetId || '').trim() || undefined,
+            squareImageDataUrl:
+              String(item && item.squareImageDataUrl || '').trim() || undefined,
+            horizontalImageAssetId:
+              String(item && item.horizontalImageAssetId || '').trim() || undefined,
+            horizontalImageDataUrl:
+              String(item && item.horizontalImageDataUrl || '').trim() || undefined,
             isActive: item && item.isActive !== false
           };
         })
       };
 
-      var response = await api.updateCabinetHomeAdvertisingSettings(payload);
-      state.advertising.cabinetHome = normalizeCabinetHomeAdvertisingSettings(response || {});
+      var key = getAdvertisingStateKey();
+      var response = key === 'cabinetHomeTop'
+        ? await api.updateCabinetHomeTopAdvertisingSettings(payload)
+        : key === 'cabinetForMeStrip'
+          ? await api.updateCabinetForMeStripAdvertisingSettings(payload)
+          : key === 'cabinetForMeCard'
+            ? await api.updateCabinetForMeCardAdvertisingSettings(payload)
+            : await api.updateCabinetHomeAdvertisingSettings(payload);
+      state.advertising[key] =
+        normalizeCabinetHomeAdvertisingSettings(response || {});
+      await loadAdvertisingInsights();
       renderAdvertising();
       setStatus(successText || 'Реклама обновлена', false);
     }
 
     async function saveCabinetHomeAdvertisingRotation() {
       var current = getCabinetHomeAdvertisingState();
-      await saveCabinetHomeAdvertising(
-        {
-          rotationEnabled: Boolean(dom.advertisingRotationInput.checked),
-          ads: current.ads
-        },
-        'Настройки показа сохранены'
-      );
+      var previousValue = current.rotationEnabled === true;
+      var nextValue = Boolean(dom.advertisingRotationInput.checked);
+      dom.advertisingRotationInput.disabled = true;
+      dom.advertisingSavedState.textContent = 'Сохраняем…';
+      try {
+        await saveCabinetHomeAdvertising(
+          {
+            rotationEnabled: nextValue,
+            repeatEveryCards: current.repeatEveryCards,
+            ads: current.ads
+          },
+          'Настройки показа сохранены'
+        );
+        dom.advertisingSavedState.textContent = 'Сохранено';
+      } catch (error) {
+        dom.advertisingRotationInput.checked = previousValue;
+        dom.advertisingSavedState.textContent = 'Ошибка сохранения';
+        throw error;
+      } finally {
+        dom.advertisingRotationInput.disabled = !canManageAdvertisingSettings(cfg);
+      }
     }
 
-    async function addCabinetHomeAdvertisingItem() {
-      if (!canManageAdvertisingSettings(cfg)) {
-        return;
-      }
-
-      var href = String(dom.advertisingDraftHrefInput.value || '').trim();
-      var file = dom.advertisingDraftFileInput.files && dom.advertisingDraftFileInput.files[0];
-      if (!href) {
-        setStatus('Укажите ссылку для новой акции', true);
-        return;
-      }
-      if (!file) {
-        setStatus('Выберите фото для новой акции', true);
-        return;
-      }
-
-      dom.advertisingDraftAddBtn.disabled = true;
+    async function saveCabinetHomeAdvertisingRepeatEvery() {
+      if (!canManageAdvertisingSettings(cfg)) return;
+      var current = getCabinetHomeAdvertisingState();
+      var previousValue = current.repeatEveryCards || 4;
+      var nextValue = Math.min(
+        20,
+        normalizeIntSetting(dom.advertisingRepeatEveryInput.value, previousValue)
+      );
+      dom.advertisingRepeatEveryInput.disabled = true;
+      dom.advertisingSavedState.textContent = 'Сохраняем…';
       try {
-        var optimized = await optimizeAdvertisingImageFile(file);
-        var current = getCabinetHomeAdvertisingState();
-        var nextAds = current.ads.slice();
-        nextAds.push({
-          title: String(dom.advertisingDraftTitleInput.value || '').trim(),
-          href: href,
-          imageDataUrl: optimized.dataUrl,
-          isActive: true
-        });
         await saveCabinetHomeAdvertising(
           {
             rotationEnabled: current.rotationEnabled,
+            repeatEveryCards: nextValue,
+            ads: current.ads
+          },
+          'Периодичность показа сохранена'
+        );
+        dom.advertisingSavedState.textContent = 'Сохранено';
+      } catch (error) {
+        dom.advertisingRepeatEveryInput.value = String(previousValue);
+        dom.advertisingSavedState.textContent = 'Ошибка сохранения';
+        throw error;
+      } finally {
+        dom.advertisingRepeatEveryInput.disabled = !canManageAdvertisingSettings(cfg);
+      }
+    }
+
+    function isValidAdvertisingHref(value) {
+      var normalized = String(value || '').trim();
+      return /^(https?:\/\/|\/|#|mailto:|tel:)/i.test(normalized) && !/^javascript:/i.test(normalized);
+    }
+
+    function getAdvertisingEditorItem() {
+      if (state.advertisingEditorMode !== 'edit' || !state.advertisingEditorItemId) {
+        return null;
+      }
+      return getCabinetHomeAdvertisingState().ads.find(function (item) {
+        return String(item.id) === String(state.advertisingEditorItemId);
+      }) || null;
+    }
+
+    function getAdvertisingEditorFormValue() {
+      return {
+        title: String(dom.advertisingDraftTitleInput.value || '').trim(),
+        badgeText: String(dom.advertisingDraftBadgeInput.value || '').trim(),
+        footerText: String(dom.advertisingDraftFooterInput.value || '').trim(),
+        href: String(dom.advertisingDraftHrefInput.value || '').trim(),
+        isActive: dom.advertisingStatusInput.value !== 'inactive'
+      };
+    }
+
+    function updateAdvertisingEditorDirty() {
+      if (state.advertisingEditorMode === 'empty') {
+        state.advertisingEditorDirty = false;
+        return;
+      }
+      var initial = state.advertisingEditorInitial || {
+        title: '',
+        badgeText: '',
+        footerText: '',
+        href: '',
+        isActive: true
+      };
+      var current = getAdvertisingEditorFormValue();
+      state.advertisingEditorDirty =
+        current.title !== String(initial.title || '') ||
+        current.badgeText !== String(initial.badgeText || '') ||
+        current.footerText !== String(initial.footerText || '') ||
+        current.href !== String(initial.href || '') ||
+        current.isActive !== (initial.isActive !== false) ||
+        Boolean(state.advertisingEditorImageDataUrl) ||
+        Boolean(state.advertisingEditorCardImages.square.dataUrl) ||
+        Boolean(state.advertisingEditorCardImages.horizontal.dataUrl);
+    }
+
+    function confirmDiscardAdvertisingChanges() {
+      if (!state.advertisingEditorDirty) {
+        return true;
+      }
+      return window.confirm('Есть несохранённые изменения. Отменить их?');
+    }
+
+    function resetAdvertisingEditorFile() {
+      state.advertisingEditorCropVersion += 1;
+      state.advertisingEditorImageDataUrl = '';
+      state.advertisingEditorPreviewUrl = '';
+      state.advertisingEditorSourceFile = null;
+      state.advertisingEditorCardVariant = 'square';
+      ['square', 'horizontal'].forEach(function (variant) {
+        state.advertisingEditorCardImages[variant] = {
+          sourceFile: null,
+          dataUrl: '',
+          previewUrl: '',
+          crop: { zoom: 100, offsetX: 0, offsetY: 0 },
+          version: (state.advertisingEditorCardImages[variant].version || 0) + 1
+        };
+      });
+      dom.advertisingDraftFileInput.value = '';
+      dom.advertisingFileName.textContent = 'Нажмите или перетащите файл сюда';
+      dom.advertisingCardUploads.forEach(function (upload) {
+        upload.input.value = '';
+        upload.fileName.textContent = 'JPG, PNG или WebP';
+        upload.block.className =
+          'phab-advertising-card-upload' +
+          (upload.variant === 'square' ? ' is-active' : '');
+      });
+      dom.advertisingCropControls.className =
+        'phab-advertising-crop-controls phab-admin-hidden';
+      dom.advertisingCropZoom.input.value = '100';
+      dom.advertisingCropX.input.value = '0';
+      dom.advertisingCropY.input.value = '0';
+      dom.advertisingCropZoom.output.textContent = '100%';
+      dom.advertisingCropX.output.textContent = '0';
+      dom.advertisingCropY.output.textContent = '0';
+      dom.advertisingCropHeadLabel.textContent = 'Кадрирование изображения';
+    }
+
+    function getAdvertisingTargetSize(cardVariant) {
+      return state.advertisingSubtab === 'cabinetHomeTop'
+        ? { width: 670, height: 240 }
+        : state.advertisingSubtab === 'cabinetForMeStrip'
+          ? { width: 670, height: 120 }
+        : state.advertisingSubtab === 'cabinetForMeCard'
+            ? cardVariant === 'horizontal'
+              ? { width: 335, height: 164 }
+              : { width: 178, height: 178 }
+            : { width: 1600, height: 900 };
+    }
+
+    function getAdvertisingCardImageState(variant) {
+      return state.advertisingEditorCardImages[variant === 'horizontal' ? 'horizontal' : 'square'];
+    }
+
+    function activateAdvertisingCardVariant(variant) {
+      var normalized = variant === 'horizontal' ? 'horizontal' : 'square';
+      state.advertisingEditorCardVariant = normalized;
+      var imageState = getAdvertisingCardImageState(normalized);
+      dom.advertisingCardUploads.forEach(function (upload) {
+        upload.block.className =
+          'phab-advertising-card-upload' +
+          (upload.variant === normalized ? ' is-active' : '');
+      });
+      dom.advertisingCropZoom.input.value = String(imageState.crop.zoom);
+      dom.advertisingCropX.input.value = String(imageState.crop.offsetX);
+      dom.advertisingCropY.input.value = String(imageState.crop.offsetY);
+      dom.advertisingCropZoom.output.textContent = String(imageState.crop.zoom) + '%';
+      dom.advertisingCropX.output.textContent = String(imageState.crop.offsetX);
+      dom.advertisingCropY.output.textContent = String(imageState.crop.offsetY);
+      dom.advertisingCropHeadLabel.textContent =
+        normalized === 'square'
+          ? 'Кадрирование: квадрат 178 × 178'
+          : 'Кадрирование: горизонталь 335 × 164';
+      dom.advertisingCropControls.className = imageState.sourceFile
+        ? 'phab-advertising-crop-controls'
+        : 'phab-advertising-crop-controls phab-admin-hidden';
+      renderAdvertisingEditorPreview();
+    }
+
+    function getAdvertisingCropSettings() {
+      return {
+        zoom: Number(dom.advertisingCropZoom.input.value || 100) / 100,
+        offsetX: Number(dom.advertisingCropX.input.value || 0) / 100,
+        offsetY: Number(dom.advertisingCropY.input.value || 0) / 100
+      };
+    }
+
+    function syncAdvertisingCardCropFromControls(variant) {
+      var imageState = getAdvertisingCardImageState(variant);
+      imageState.crop = {
+        zoom: Number(dom.advertisingCropZoom.input.value || 100),
+        offsetX: Number(dom.advertisingCropX.input.value || 0),
+        offsetY: Number(dom.advertisingCropY.input.value || 0)
+      };
+    }
+
+    async function rebuildAdvertisingEditorImage(cardVariant) {
+      var isCard = state.advertisingSubtab === 'cabinetForMeCard';
+      var variant = cardVariant || state.advertisingEditorCardVariant;
+      var cardImageState = isCard ? getAdvertisingCardImageState(variant) : null;
+      if (isCard && variant === state.advertisingEditorCardVariant) {
+        syncAdvertisingCardCropFromControls(variant);
+      }
+      var file = cardImageState ? cardImageState.sourceFile : state.advertisingEditorSourceFile;
+      if (!file) {
+        return;
+      }
+      var rebuildVersion = cardImageState
+        ? cardImageState.version + 1
+        : state.advertisingEditorCropVersion + 1;
+      if (cardImageState) cardImageState.version = rebuildVersion;
+      else state.advertisingEditorCropVersion = rebuildVersion;
+      var upload = isCard
+        ? dom.advertisingCardUploads.find(function (candidate) {
+            return candidate.variant === variant;
+          })
+        : null;
+      if (upload) upload.fileName.textContent = 'Подготавливаем кадр…';
+      else dom.advertisingFileName.textContent = 'Подготавливаем кадр…';
+      var optimized = await optimizeAdvertisingImageFile(
+        file,
+        getAdvertisingTargetSize(variant),
+        cardImageState
+          ? {
+              zoom: cardImageState.crop.zoom / 100,
+              offsetX: cardImageState.crop.offsetX / 100,
+              offsetY: cardImageState.crop.offsetY / 100
+            }
+          : getAdvertisingCropSettings()
+      );
+      if (
+        rebuildVersion !==
+        (cardImageState ? cardImageState.version : state.advertisingEditorCropVersion)
+      ) {
+        return;
+      }
+      if (cardImageState) {
+        cardImageState.dataUrl = optimized.dataUrl;
+        cardImageState.previewUrl = optimized.dataUrl;
+        if (upload) upload.fileName.textContent = String(file.name || 'Новое изображение');
+      } else {
+        state.advertisingEditorImageDataUrl = optimized.dataUrl;
+        state.advertisingEditorPreviewUrl = optimized.dataUrl;
+        dom.advertisingFileName.textContent = String(file.name || 'Новое изображение');
+      }
+      updateAdvertisingEditorDirty();
+      renderAdvertisingEditorPreview();
+    }
+
+    function setAdvertisingEditorForItem(item) {
+      if (!item) {
+        state.advertisingEditorMode = 'empty';
+        state.advertisingEditorItemId = '';
+        state.advertisingEditorInitial = null;
+        state.advertisingEditorDirty = false;
+        resetAdvertisingEditorFile();
+        renderAdvertisingEditor();
+        return;
+      }
+      state.advertisingEditorMode = 'edit';
+      state.advertisingEditorItemId = String(item.id);
+      state.advertisingEditorInitial = {
+        title: String(item.title || ''),
+        badgeText: String(item.badgeText || ''),
+        footerText: String(item.footerText || ''),
+        href: String(item.href || ''),
+        isActive: item.isActive !== false
+      };
+      state.advertisingEditorDirty = false;
+      resetAdvertisingEditorFile();
+      renderAdvertisingEditor();
+      if (state.advertisingSubtab === 'cabinetForMeCard') {
+        prepareExistingAdvertisingCardSources(item).catch(function () {
+          // The saved previews still work; direct manipulation will become available after upload.
+        });
+      }
+    }
+
+    function openAdvertisingEditor(itemId) {
+      if (
+        state.advertisingEditorMode === 'edit' &&
+        String(itemId) === String(state.advertisingEditorItemId)
+      ) {
+        return;
+      }
+      if (
+        String(itemId) !== String(state.advertisingEditorItemId) &&
+        !confirmDiscardAdvertisingChanges()
+      ) {
+        return;
+      }
+      var item = getCabinetHomeAdvertisingState().ads.find(function (candidate) {
+        return String(candidate.id) === String(itemId);
+      });
+      setAdvertisingEditorForItem(item || null);
+      renderAdvertisingList();
+    }
+
+    function openAdvertisingCreateEditor() {
+      if (!confirmDiscardAdvertisingChanges()) {
+        return;
+      }
+      state.advertisingEditorMode = 'create';
+      state.advertisingEditorItemId = '';
+      state.advertisingEditorInitial = {
+        title: '',
+        badgeText: '',
+        footerText: '',
+        href: '',
+        isActive: true
+      };
+      state.advertisingEditorDirty = false;
+      resetAdvertisingEditorFile();
+      renderAdvertisingEditor();
+      renderAdvertisingList();
+      dom.advertisingDraftTitleInput.focus();
+    }
+
+    function closeAdvertisingEditor() {
+      if (!confirmDiscardAdvertisingChanges()) {
+        return;
+      }
+      setAdvertisingEditorForItem(null);
+      renderAdvertisingList();
+    }
+
+    function renderAdvertisingCardPreviews(previews, imageUrls, formValue) {
+      normalizeArray(previews).forEach(function (preview) {
+        var imageUrl = typeof imageUrls === 'string'
+          ? imageUrls
+          : String(imageUrls && imageUrls[preview.variant] || '');
+        if (imageUrl) {
+          preview.image.src = imageUrl;
+          preview.image.className = '';
+          preview.placeholder.className =
+            'phab-advertising-card-preview-placeholder phab-admin-hidden';
+        } else {
+          preview.image.removeAttribute('src');
+          preview.image.className = 'phab-admin-hidden';
+          preview.placeholder.className = 'phab-advertising-card-preview-placeholder';
+        }
+
+        var isEditorPreview =
+          normalizeArray(dom.advertisingEditorCardPreviews).indexOf(preview) >= 0;
+        var canInteract =
+          isEditorPreview &&
+          state.advertisingSubtab === 'cabinetForMeCard' &&
+          Boolean(getAdvertisingCardImageState(preview.variant).sourceFile);
+        preview.stage.className =
+          'phab-advertising-card-preview-stage' + (canInteract ? ' is-interactive' : '');
+
+        preview.badge.textContent = formValue.badgeText || 'РЕКЛАМА';
+        preview.title.textContent = formValue.title || 'Текст рекламной карточки';
+        preview.footer.textContent = formValue.footerText || 'Подробнее';
+      });
+    }
+
+    function openAdvertisingPreview() {
+      if (state.advertisingEditorMode === 'empty') {
+        return;
+      }
+      var item = getAdvertisingEditorItem();
+      var formValue = getAdvertisingEditorFormValue();
+      var imageUrl = state.advertisingEditorPreviewUrl || (item && item.imageUrl ? String(item.imageUrl) : '');
+      var cardImageUrls = {
+        square:
+          state.advertisingEditorCardImages.square.previewUrl ||
+          (item && (item.squareImageUrl || item.imageUrl) ? String(item.squareImageUrl || item.imageUrl) : ''),
+        horizontal:
+          state.advertisingEditorCardImages.horizontal.previewUrl ||
+          (item && (item.horizontalImageUrl || item.imageUrl)
+            ? String(item.horizontalImageUrl || item.imageUrl)
+            : '')
+      };
+      if (!imageUrl && !cardImageUrls.square && !cardImageUrls.horizontal) {
+        setStatus('Сначала выберите изображение для предпросмотра', true);
+        return;
+      }
+      state.advertisingPreviewReturnFocus = document.activeElement;
+      dom.advertisingPreviewModalName.textContent = formValue.title || 'Акция без названия';
+      var isCardPlacement = state.advertisingSubtab === 'cabinetForMeCard';
+      dom.advertisingPreviewModalMeta.textContent = isCardPlacement
+        ? 'Два варианта карточки в разделе «Для меня»'
+        : 'Мобильная ширина · соотношение баннера 16:9';
+      dom.advertisingMobileFrame.className = isCardPlacement
+        ? 'phab-advertising-mobile-frame phab-admin-hidden'
+        : 'phab-advertising-mobile-frame';
+      dom.advertisingModalCardVariants.className = isCardPlacement
+        ? 'phab-advertising-card-variants is-modal'
+        : 'phab-advertising-card-variants is-modal phab-admin-hidden';
+      if (isCardPlacement) {
+        renderAdvertisingCardPreviews(
+          dom.advertisingModalCardPreviews,
+          cardImageUrls,
+          formValue
+        );
+        dom.advertisingPreviewModalImage.removeAttribute('src');
+      } else {
+        dom.advertisingPreviewModalImage.src = imageUrl;
+      }
+      dom.advertisingPreviewModalLink.href = formValue.href || '#';
+      dom.advertisingPreviewModalLink.textContent = formValue.href || 'Ссылка ещё не указана';
+      dom.advertisingPreviewModal.className = 'phab-admin-modal';
+      dom.advertisingPreviewModalCloseBtn.focus();
+    }
+
+    function closeAdvertisingPreview() {
+      dom.advertisingPreviewModal.className = 'phab-admin-modal phab-admin-hidden';
+      dom.advertisingPreviewModalImage.removeAttribute('src');
+      renderAdvertisingCardPreviews(dom.advertisingModalCardPreviews, { square: '', horizontal: '' }, {
+        title: '',
+        badgeText: '',
+        footerText: ''
+      });
+      var returnFocus = state.advertisingPreviewReturnFocus;
+      state.advertisingPreviewReturnFocus = null;
+      if (returnFocus && typeof returnFocus.focus === 'function') {
+        returnFocus.focus();
+      }
+    }
+
+    async function selectAdvertisingEditorFile(file, cardVariant) {
+      if (!file) {
+        return;
+      }
+      if (!/^image\/(jpeg|png|webp)$/i.test(String(file.type || ''))) {
+        throw new Error('Поддерживаются только изображения JPG, PNG или WebP');
+      }
+      var isCard = state.advertisingSubtab === 'cabinetForMeCard';
+      var variant = cardVariant === 'horizontal' ? 'horizontal' : 'square';
+      var upload = isCard
+        ? dom.advertisingCardUploads.find(function (candidate) {
+            return candidate.variant === variant;
+          })
+        : null;
+      if (upload) upload.fileName.textContent = 'Обрабатываем изображение…';
+      else dom.advertisingFileName.textContent = 'Обрабатываем изображение…';
+      try {
+        if (isCard) {
+          var cardImageState = getAdvertisingCardImageState(variant);
+          cardImageState.sourceFile = file;
+          cardImageState.crop = { zoom: 100, offsetX: 0, offsetY: 0 };
+          activateAdvertisingCardVariant(variant);
+        } else {
+          state.advertisingEditorSourceFile = file;
+          dom.advertisingCropControls.className = 'phab-advertising-crop-controls';
+        }
+        dom.advertisingCropZoom.input.value = '100';
+        dom.advertisingCropX.input.value = '0';
+        dom.advertisingCropY.input.value = '0';
+        dom.advertisingCropZoom.output.textContent = '100%';
+        dom.advertisingCropX.output.textContent = '0';
+        dom.advertisingCropY.output.textContent = '0';
+        await rebuildAdvertisingEditorImage(isCard ? variant : undefined);
+      } catch (error) {
+        if (upload) upload.fileName.textContent = 'JPG, PNG или WebP';
+        else dom.advertisingFileName.textContent = 'Нажмите или перетащите файл сюда';
+        throw error;
+      }
+    }
+
+    async function prepareExistingAdvertisingCardSources(item) {
+      var editorItemId = String(item && item.id || '');
+      if (!editorItemId || state.advertisingSubtab !== 'cabinetForMeCard') return;
+      var sources = [
+        {
+          variant: 'square',
+          url: String(item.squareImageUrl || item.imageUrl || '')
+        },
+        {
+          variant: 'horizontal',
+          url: String(item.horizontalImageUrl || item.imageUrl || '')
+        }
+      ];
+      await Promise.all(sources.map(async function (source) {
+        if (!source.url) return;
+        var response = await window.fetch(source.url, { credentials: 'same-origin' });
+        if (!response.ok) return;
+        var blob = await response.blob();
+        if (!String(blob.type || '').toLowerCase().startsWith('image/')) return;
+        if (
+          String(state.advertisingEditorItemId) !== editorItemId ||
+          state.advertisingSubtab !== 'cabinetForMeCard'
+        ) return;
+        var imageState = getAdvertisingCardImageState(source.variant);
+        imageState.sourceFile = new File(
+          [blob],
+          source.variant + '-saved-card.webp',
+          { type: blob.type || 'image/webp' }
+        );
+      }));
+      if (
+        String(state.advertisingEditorItemId) === editorItemId &&
+        state.advertisingSubtab === 'cabinetForMeCard'
+      ) {
+        activateAdvertisingCardVariant(state.advertisingEditorCardVariant);
+      }
+    }
+
+    function validateAdvertisingEditor() {
+      var formValue = getAdvertisingEditorFormValue();
+      var hrefIsValid = isValidAdvertisingHref(formValue.href);
+      dom.advertisingHrefError.textContent = hrefIsValid
+        ? ''
+        : 'Введите корректную ссылку или внутренний путь.';
+      dom.advertisingHrefError.className = hrefIsValid
+        ? 'phab-advertising-field-error phab-admin-hidden'
+        : 'phab-advertising-field-error';
+      if (!hrefIsValid) {
+        dom.advertisingDraftHrefInput.focus();
+        return null;
+      }
+      if (state.advertisingEditorMode === 'create') {
+        if (state.advertisingSubtab === 'cabinetForMeCard') {
+          if (
+            !state.advertisingEditorCardImages.square.dataUrl ||
+            !state.advertisingEditorCardImages.horizontal.dataUrl
+          ) {
+            setStatus('Загрузите квадратное и горизонтальное изображения', true);
+            return null;
+          }
+        } else if (!state.advertisingEditorImageDataUrl) {
+          setStatus('Выберите изображение для новой акции', true);
+          return null;
+        }
+      }
+      return formValue;
+    }
+
+    async function saveAdvertisingEditor() {
+      if (!canManageAdvertisingSettings(cfg) || state.advertisingSaving) {
+        return;
+      }
+      var formValue = validateAdvertisingEditor();
+      if (!formValue) {
+        return;
+      }
+      var current = getCabinetHomeAdvertisingState();
+      var isCreate = state.advertisingEditorMode === 'create';
+      var isCard = state.advertisingSubtab === 'cabinetForMeCard';
+      var editingId = String(state.advertisingEditorItemId || '');
+      var nextAds = current.ads.map(function (item) {
+        if (String(item.id) !== editingId) {
+          return Object.assign({}, item);
+        }
+        return Object.assign(
+          {},
+          item,
+          formValue,
+          isCard
+            ? {
+                squareImageDataUrl:
+                  state.advertisingEditorCardImages.square.dataUrl || undefined,
+                horizontalImageDataUrl:
+                  state.advertisingEditorCardImages.horizontal.dataUrl || undefined
+              }
+            : { imageDataUrl: state.advertisingEditorImageDataUrl || undefined }
+        );
+      });
+      if (isCreate) {
+        nextAds.push({
+          title: formValue.title,
+          badgeText: formValue.badgeText,
+          footerText: formValue.footerText,
+          href: formValue.href,
+          ...(isCard
+            ? {
+                squareImageDataUrl: state.advertisingEditorCardImages.square.dataUrl,
+                horizontalImageDataUrl: state.advertisingEditorCardImages.horizontal.dataUrl
+              }
+            : { imageDataUrl: state.advertisingEditorImageDataUrl }),
+          isActive: formValue.isActive
+        });
+      }
+
+      state.advertisingSaving = true;
+      renderAdvertisingEditor();
+      try {
+        await saveCabinetHomeAdvertising(
+          {
+            rotationEnabled: current.rotationEnabled,
+            repeatEveryCards: current.repeatEveryCards,
             ads: nextAds
           },
-          'Акция добавлена'
+          isCreate ? 'Акция добавлена' : 'Акция сохранена'
         );
-        dom.advertisingDraftTitleInput.value = '';
-        dom.advertisingDraftHrefInput.value = '';
-        dom.advertisingDraftFileInput.value = '';
+        var savedItems = getCabinetHomeAdvertisingState().ads;
+        var savedItem = isCreate
+          ? savedItems[savedItems.length - 1]
+          : savedItems.find(function (item) {
+              return String(item.id) === editingId;
+            });
+        setAdvertisingEditorForItem(savedItem || null);
+        renderAdvertising();
       } finally {
-        dom.advertisingDraftAddBtn.disabled = false;
+        state.advertisingSaving = false;
+        renderAdvertisingEditor();
       }
     }
 
@@ -26136,6 +33265,7 @@
       await saveCabinetHomeAdvertising(
         {
           rotationEnabled: current.rotationEnabled,
+          repeatEveryCards: current.repeatEveryCards,
           ads: nextAds
         },
         successText || 'Акция сохранена'
@@ -26146,20 +33276,33 @@
       if (!canManageAdvertisingSettings(cfg)) {
         return;
       }
-      if (!window.confirm('Удалить эту акцию из показа?')) {
+      var current = getCabinetHomeAdvertisingState();
+      var item = current.ads.find(function (candidate) {
+        return String(candidate.id) === String(itemId);
+      });
+      var itemName = item && item.title ? item.title : 'Без названия';
+      if (
+        !window.confirm(
+          'Удалить акцию “' + itemName + '”? Восстановить её после удаления не получится.'
+        )
+      ) {
         return;
       }
 
-      var current = getCabinetHomeAdvertisingState();
       await saveCabinetHomeAdvertising(
         {
           rotationEnabled: current.rotationEnabled,
+          repeatEveryCards: current.repeatEveryCards,
           ads: current.ads.filter(function (item) {
             return String(item.id) !== String(itemId);
           })
         },
         'Акция удалена'
       );
+      if (String(state.advertisingEditorItemId) === String(itemId)) {
+        setAdvertisingEditorForItem(null);
+      }
+      renderAdvertising();
     }
 
     async function moveCabinetHomeAdvertisingItem(itemId, direction) {
@@ -26176,28 +33319,103 @@
         return;
       }
 
-      var targetIndex = direction === 'up' ? index - 1 : index + 1;
+      var targetIndex = direction === 'start' ? 0 : direction === 'up' ? index - 1 : index + 1;
       if (targetIndex < 0 || targetIndex >= items.length) {
         return;
       }
 
-      var moved = items[index];
-      items[index] = items[targetIndex];
-      items[targetIndex] = moved;
+      var moved = items.splice(index, 1)[0];
+      items.splice(targetIndex, 0, moved);
 
       await saveCabinetHomeAdvertising(
         {
           rotationEnabled: current.rotationEnabled,
+          repeatEveryCards: current.repeatEveryCards,
           ads: items
         },
         'Порядок акций обновлен'
       );
     }
 
-    function renderAdvertising() {
+    async function reorderCabinetHomeAdvertisingItems(sourceId, targetId) {
+      if (!canManageAdvertisingSettings(cfg) || String(sourceId) === String(targetId)) {
+        return;
+      }
+      var current = getCabinetHomeAdvertisingState();
+      var previousItems = current.ads.slice();
+      var items = current.ads.slice();
+      var sourceIndex = items.findIndex(function (item) {
+        return String(item.id) === String(sourceId);
+      });
+      var targetIndex = items.findIndex(function (item) {
+        return String(item.id) === String(targetId);
+      });
+      if (sourceIndex < 0 || targetIndex < 0) {
+        return;
+      }
+      var moved = items.splice(sourceIndex, 1)[0];
+      items.splice(targetIndex, 0, moved);
+      items = items.map(function (item, index) {
+        return Object.assign({}, item, { position: index });
+      });
+      state.advertising[getAdvertisingStateKey()] = Object.assign({}, current, { ads: items });
+      renderAdvertisingList();
+      try {
+        await saveCabinetHomeAdvertising(
+          {
+            rotationEnabled: current.rotationEnabled,
+            repeatEveryCards: current.repeatEveryCards,
+            ads: items
+          },
+          'Порядок акций обновлен'
+        );
+      } catch (error) {
+        state.advertising[getAdvertisingStateKey()] = Object.assign({}, current, {
+          ads: previousItems
+        });
+        renderAdvertisingList();
+        throw error;
+      }
+    }
+
+    async function duplicateCabinetHomeAdvertisingItem(itemId) {
+      if (!canManageAdvertisingSettings(cfg)) {
+        return;
+      }
+      var current = getCabinetHomeAdvertisingState();
+      var source = current.ads.find(function (item) {
+        return String(item.id) === String(itemId);
+      });
+      if (!source) {
+        return;
+      }
+      var copy = {
+        title: (source.title || 'Акция') + ' — копия',
+        badgeText: source.badgeText,
+        footerText: source.footerText,
+        href: source.href,
+        imageAssetId: source.imageAssetId,
+        squareImageAssetId: source.squareImageAssetId,
+        horizontalImageAssetId: source.horizontalImageAssetId,
+        isActive: false
+      };
+      await saveCabinetHomeAdvertising(
+        {
+          rotationEnabled: current.rotationEnabled,
+          repeatEveryCards: current.repeatEveryCards,
+          ads: current.ads.concat([copy])
+        },
+        'Копия акции создана'
+      );
+      var items = getCabinetHomeAdvertisingState().ads;
+      setAdvertisingEditorForItem(items[items.length - 1] || null);
+      renderAdvertising();
+    }
+
+    function renderAdvertisingLegacy() {
       var canManage = canManageAdvertisingSettings(cfg);
       var cabinetHome = getCabinetHomeAdvertisingState();
-      state.advertising.cabinetHome = cabinetHome;
+      state.advertising[getAdvertisingStateKey()] = cabinetHome;
 
       dom.advertisingRotationInput.checked = cabinetHome.rotationEnabled === true;
       dom.advertisingRotationInput.disabled = !canManage;
@@ -26385,11 +33603,533 @@
       setAdvertisingSubtab(state.advertisingSubtab);
     }
 
+    function formatAdvertisingUpdatedAt(value) {
+      var parsed = new Date(value || '');
+      if (Number.isNaN(parsed.getTime())) {
+        return { date: '—', time: '' };
+      }
+      return {
+        date: parsed.toLocaleDateString('ru-RU'),
+        time: parsed.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+      };
+    }
+
+    function renderAdvertisingInsights() {
+      clearNode(dom.advertisingStatsGrid);
+      clearNode(dom.advertisingClickedPhones);
+      clearNode(dom.advertisingAuditLog);
+      var item = getAdvertisingEditorItem();
+      if (!item) {
+        dom.advertisingInsightsPanel.className =
+          'phab-advertising-insights phab-admin-hidden';
+        return;
+      }
+      dom.advertisingInsightsPanel.className = 'phab-advertising-insights';
+      var insights = normalizeAdvertisingInsights(
+        state.advertisingInsights[getAdvertisingStateKey()]
+      );
+      var stats = insights.ads.find(function (entry) {
+        return String(entry.adId) === String(item.id);
+      }) || {
+        impressionCount: 0,
+        clickCount: 0,
+        clickThroughRate: 0,
+        clickedPhones: []
+      };
+      [
+        { value: stats.impressionCount, label: 'Показы' },
+        { value: stats.clickCount, label: 'Клики' },
+        { value: String(stats.clickThroughRate || 0).replace('.', ',') + '%', label: 'CTR' }
+      ].forEach(function (metric) {
+        var card = document.createElement('div');
+        card.className = 'phab-advertising-stat';
+        var value = document.createElement('strong');
+        value.textContent = String(metric.value);
+        card.appendChild(value);
+        var label = document.createElement('span');
+        label.textContent = metric.label;
+        card.appendChild(label);
+        dom.advertisingStatsGrid.appendChild(card);
+      });
+
+      if (!stats.clickedPhones.length) {
+        var noPhones = document.createElement('div');
+        noPhones.className = 'phab-advertising-insight-empty';
+        noPhones.textContent = 'Телефоны появятся после переходов авторизованных клиентов.';
+        dom.advertisingClickedPhones.appendChild(noPhones);
+      } else {
+        stats.clickedPhones.forEach(function (phone) {
+          var row = document.createElement('div');
+          row.className = 'phab-advertising-insight-row';
+          var main = document.createElement('span');
+          main.textContent = phone.phoneE164;
+          row.appendChild(main);
+          var meta = document.createElement('small');
+          meta.textContent =
+            String(phone.clickCount) + ' переход.' +
+            (phone.lastClickedAt
+              ? ' · ' + formatDateTimeFull(phone.lastClickedAt)
+              : '');
+          row.appendChild(meta);
+          dom.advertisingClickedPhones.appendChild(row);
+        });
+      }
+
+      var audit = insights.auditLog.filter(function (entry) {
+        return !entry.adId || String(entry.adId) === String(item.id);
+      }).slice(0, 20);
+      if (!audit.length) {
+        var noAudit = document.createElement('div');
+        noAudit.className = 'phab-advertising-insight-empty';
+        noAudit.textContent = 'Изменений пока нет.';
+        dom.advertisingAuditLog.appendChild(noAudit);
+      } else {
+        audit.forEach(function (entry) {
+          var row = document.createElement('div');
+          row.className = 'phab-advertising-insight-row';
+          var main = document.createElement('span');
+          main.textContent = entry.changes.join(' · ') || 'Настройки изменены';
+          row.appendChild(main);
+          var meta = document.createElement('small');
+          meta.textContent =
+            entry.actor +
+            (entry.occurredAt ? ' · ' + formatDateTimeFull(entry.occurredAt) : '');
+          row.appendChild(meta);
+          dom.advertisingAuditLog.appendChild(row);
+        });
+      }
+    }
+
+    function renderAdvertisingEditorPreview() {
+      var item = getAdvertisingEditorItem();
+      var formValue = getAdvertisingEditorFormValue();
+      var previewUrl =
+        state.advertisingEditorPreviewUrl ||
+        (item && item.imageUrl ? String(item.imageUrl) : '');
+      var cardImageUrls = {
+        square:
+          state.advertisingEditorCardImages.square.previewUrl ||
+          (item && (item.squareImageUrl || item.imageUrl)
+            ? String(item.squareImageUrl || item.imageUrl)
+            : ''),
+        horizontal:
+          state.advertisingEditorCardImages.horizontal.previewUrl ||
+          (item && (item.horizontalImageUrl || item.imageUrl)
+            ? String(item.horizontalImageUrl || item.imageUrl)
+            : '')
+      };
+      renderAdvertisingCardPreviews(
+        dom.advertisingEditorCardPreviews,
+        cardImageUrls,
+        formValue
+      );
+      if (previewUrl) {
+        dom.advertisingPreviewImage.src = previewUrl;
+        dom.advertisingPreviewImage.className = '';
+        dom.advertisingPreviewPlaceholder.className =
+          'phab-advertising-preview-placeholder phab-admin-hidden';
+      } else {
+        dom.advertisingPreviewImage.removeAttribute('src');
+        dom.advertisingPreviewImage.className = 'phab-admin-hidden';
+        dom.advertisingPreviewPlaceholder.className = 'phab-advertising-preview-placeholder';
+      }
+
+      clearNode(dom.advertisingPreviewDots);
+      var ads = getCabinetHomeAdvertisingState().ads;
+      var selectedIndex = item
+        ? ads.findIndex(function (candidate) {
+            return String(candidate.id) === String(item.id);
+          })
+        : -1;
+      var dotCount = Math.min(Math.max(ads.length, 1), 5);
+      for (var index = 0; index < dotCount; index += 1) {
+        var dot = document.createElement('span');
+        dot.className =
+          'phab-advertising-dot' +
+          (index === Math.max(0, selectedIndex) ? ' is-active' : '');
+        dom.advertisingPreviewDots.appendChild(dot);
+      }
+    }
+
+    function renderAdvertisingEditor() {
+      var canManage = canManageAdvertisingSettings(cfg);
+      var isEmpty = state.advertisingEditorMode === 'empty';
+      dom.advertisingEditorPanel.className =
+        'phab-advertising-panel phab-advertising-editor' + (isEmpty ? ' is-empty' : '');
+      dom.advertisingCreateBtn.disabled = !canManage;
+      if (isEmpty) {
+        dom.advertisingPreviewBtn.disabled = true;
+        return;
+      }
+
+      var item = getAdvertisingEditorItem();
+      if (state.advertisingEditorMode === 'edit' && !item) {
+        setAdvertisingEditorForItem(null);
+        return;
+      }
+      if (!state.advertisingEditorDirty) {
+        dom.advertisingDraftTitleInput.value = item ? item.title || '' : '';
+        dom.advertisingDraftBadgeInput.value = item ? item.badgeText || '' : '';
+        dom.advertisingDraftBadgePresetInput.value = ['⚡', 'СПЕЦПРЕДЛОЖЕНИЕ', 'АКЦИЯ'].indexOf(
+          dom.advertisingDraftBadgeInput.value
+        ) >= 0
+          ? dom.advertisingDraftBadgeInput.value
+          : '';
+        dom.advertisingDraftFooterInput.value = item ? item.footerText || '' : '';
+        dom.advertisingDraftHrefInput.value = item ? item.href || '' : '';
+        dom.advertisingStatusInput.value = item && item.isActive === false ? 'inactive' : 'active';
+      }
+      dom.advertisingEditorTitle.textContent =
+        state.advertisingEditorMode === 'create' ? 'Новая акция' : 'Редактирование акции';
+      dom.advertisingTitleCounter.textContent =
+        String(dom.advertisingDraftTitleInput.value.length) + ' / 160';
+      dom.advertisingDraftAddBtn.textContent = state.advertisingSaving
+        ? 'Сохраняем…'
+        : state.advertisingEditorMode === 'create'
+          ? 'Добавить акцию'
+          : 'Сохранить изменения';
+      [
+        dom.advertisingDraftTitleInput,
+        dom.advertisingDraftBadgeInput,
+        dom.advertisingDraftBadgePresetInput,
+        dom.advertisingDraftFooterInput,
+        dom.advertisingDraftHrefInput,
+        dom.advertisingStatusInput,
+        dom.advertisingDraftFileInput,
+        dom.advertisingDropzone,
+        dom.advertisingCropZoom.input,
+        dom.advertisingCropX.input,
+        dom.advertisingCropY.input,
+        dom.advertisingCropResetBtn,
+        dom.advertisingCancelBtn,
+        dom.advertisingDraftAddBtn
+      ].forEach(function (control) {
+        control.disabled = !canManage || state.advertisingSaving;
+      });
+      dom.advertisingCardUploads.forEach(function (upload) {
+        upload.input.disabled = !canManage || state.advertisingSaving;
+        upload.dropzone.disabled = !canManage || state.advertisingSaving;
+      });
+      dom.advertisingPreviewBtn.disabled = false;
+      renderAdvertisingEditorPreview();
+      renderAdvertisingInsights();
+    }
+
+    function createAdvertisingVisibilitySwitch(item, canManage) {
+      var wrap = document.createElement('label');
+      wrap.className = 'phab-advertising-switch';
+      wrap.title = item.isActive ? 'Выключить акцию' : 'Включить акцию';
+      wrap.addEventListener('click', function (event) {
+        event.stopPropagation();
+      });
+
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = item.isActive === true;
+      input.disabled = !canManage;
+      input.setAttribute(
+        'aria-label',
+        (item.isActive ? 'Выключить' : 'Включить') + ' акцию ' + (item.title || '')
+      );
+      wrap.appendChild(input);
+
+      var track = document.createElement('span');
+      track.className = 'phab-advertising-switch-track';
+      wrap.appendChild(track);
+
+      input.addEventListener('change', function () {
+        input.disabled = true;
+        updateCabinetHomeAdvertisingItem(
+          item.id,
+          { isActive: input.checked },
+          input.checked ? 'Акция включена' : 'Акция выключена'
+        )
+          .then(function () {
+            if (String(state.advertisingEditorItemId) === String(item.id)) {
+              var savedItem = getCabinetHomeAdvertisingState().ads.find(function (candidate) {
+                return String(candidate.id) === String(item.id);
+              });
+              setAdvertisingEditorForItem(savedItem || null);
+            }
+          })
+          .catch(function (error) {
+            input.checked = item.isActive === true;
+            handleError(error);
+            renderAdvertising();
+          });
+      });
+      return wrap;
+    }
+
+    function createAdvertisingListItem(item, index, canManage) {
+      var row = document.createElement('div');
+      row.className =
+        'phab-advertising-row' +
+        (String(state.advertisingEditorItemId) === String(item.id) ? ' is-selected' : '');
+      row.setAttribute('role', 'group');
+      row.setAttribute('aria-label', 'Акция ' + (item.title || String(index + 1)));
+      row.addEventListener('click', function () {
+        openAdvertisingEditor(item.id);
+      });
+      row.addEventListener('dragover', function (event) {
+        if (state.advertisingDraggedItemId) {
+          event.preventDefault();
+        }
+      });
+      row.addEventListener('drop', function (event) {
+        event.preventDefault();
+        var sourceId = state.advertisingDraggedItemId;
+        state.advertisingDraggedItemId = '';
+        reorderCabinetHomeAdvertisingItems(sourceId, item.id).catch(handleError);
+      });
+
+      var drag = document.createElement('span');
+      drag.className = 'phab-advertising-drag';
+      drag.textContent = '⠿';
+      drag.draggable = canManage;
+      drag.tabIndex = canManage ? 0 : -1;
+      drag.setAttribute('role', 'button');
+      drag.setAttribute('aria-label', 'Перетащить акцию ' + (item.title || String(index + 1)));
+      drag.addEventListener('click', function (event) {
+        event.stopPropagation();
+      });
+      drag.addEventListener('dragstart', function (event) {
+        state.advertisingDraggedItemId = String(item.id);
+        row.classList.add('is-dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', String(item.id));
+        }
+      });
+      drag.addEventListener('dragend', function () {
+        state.advertisingDraggedItemId = '';
+        row.classList.remove('is-dragging');
+      });
+      row.appendChild(drag);
+
+      var position = document.createElement('span');
+      position.className = 'phab-advertising-index';
+      position.textContent = String(index + 1);
+      row.appendChild(position);
+
+      var image = document.createElement('img');
+      image.className = 'phab-advertising-thumb';
+      image.src = item.horizontalImageUrl || item.imageUrl;
+      image.alt = item.title || 'Рекламная акция';
+      image.loading = 'lazy';
+      row.appendChild(image);
+
+      var copy = document.createElement('div');
+      copy.className = 'phab-advertising-row-copy';
+      row.appendChild(copy);
+
+      var title = document.createElement('span');
+      title.className = 'phab-advertising-row-title';
+      title.textContent = item.title || 'Акция #' + String(index + 1);
+      copy.appendChild(title);
+
+      var href = document.createElement('span');
+      href.className = 'phab-advertising-row-link';
+      href.textContent = item.href;
+      href.title = item.href;
+      copy.appendChild(href);
+
+      var updatedValue = formatAdvertisingUpdatedAt(item.updatedAt);
+      var updated = document.createElement('div');
+      updated.className = 'phab-advertising-updated';
+      updated.innerHTML =
+        '<span>Обновлено</span><span>' + updatedValue.date + '</span><span>' + updatedValue.time + '</span>';
+      row.appendChild(updated);
+
+      var badge = document.createElement('span');
+      badge.className = 'phab-advertising-badge' + (item.isActive ? '' : ' is-inactive');
+      badge.textContent = item.isActive ? 'Включена' : 'Выключена';
+      row.appendChild(badge);
+
+      row.appendChild(createAdvertisingVisibilitySwitch(item, canManage));
+
+      var edit = document.createElement('button');
+      edit.className = 'phab-advertising-edit-btn';
+      edit.type = 'button';
+      edit.textContent = '✎ Редактировать';
+      edit.setAttribute(
+        'aria-label',
+        'Редактировать акцию ' + (item.title || String(index + 1))
+      );
+      edit.addEventListener('click', function (event) {
+        event.stopPropagation();
+        openAdvertisingEditor(item.id);
+      });
+      row.appendChild(edit);
+
+      var more = document.createElement('details');
+      more.className = 'phab-advertising-more';
+      more.addEventListener('click', function (event) {
+        event.stopPropagation();
+      });
+      more.addEventListener('toggle', function () {
+        row.classList.toggle('is-menu-open', more.open);
+        if (!more.open) return;
+        dom.advertisingList
+          .querySelectorAll('.phab-advertising-more[open]')
+          .forEach(function (candidate) {
+            if (candidate !== more) candidate.open = false;
+          });
+      });
+      row.appendChild(more);
+
+      var summary = document.createElement('summary');
+      summary.textContent = '⋮';
+      summary.setAttribute('aria-label', 'Действия с акцией ' + (item.title || ''));
+      more.appendChild(summary);
+
+      var menu = document.createElement('div');
+      menu.className = 'phab-advertising-more-menu';
+      more.appendChild(menu);
+
+      function appendMenuAction(label, onClick, className, disabled) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.className = className || '';
+        button.disabled = disabled === true;
+        button.addEventListener('click', function () {
+          more.open = false;
+          onClick();
+        });
+        menu.appendChild(button);
+      }
+
+      appendMenuAction('Открыть ссылку', function () {
+        window.open(item.href, '_blank', 'noopener,noreferrer');
+      });
+      if (canManage) {
+        appendMenuAction('Дублировать', function () {
+          duplicateCabinetHomeAdvertisingItem(item.id).catch(handleError);
+        });
+        appendMenuAction('Переместить выше', function () {
+          moveCabinetHomeAdvertisingItem(item.id, 'up').catch(handleError);
+        }, '', index === 0);
+        appendMenuAction('Переместить ниже', function () {
+          moveCabinetHomeAdvertisingItem(item.id, 'down').catch(handleError);
+        }, '', index === getCabinetHomeAdvertisingState().ads.length - 1);
+        appendMenuAction('Переместить в начало', function () {
+          moveCabinetHomeAdvertisingItem(item.id, 'start').catch(handleError);
+        }, '', index === 0);
+        appendMenuAction('Удалить', function () {
+          deleteCabinetHomeAdvertisingItem(item.id).catch(handleError);
+        }, 'is-danger');
+      }
+      return row;
+    }
+
+    function renderAdvertisingList() {
+      var canManage = canManageAdvertisingSettings(cfg);
+      var cabinetHome = getCabinetHomeAdvertisingState();
+      var ads = cabinetHome.ads;
+      var activeCount = ads.filter(function (item) { return item.isActive === true; }).length;
+      var inactiveCount = ads.length - activeCount;
+      [
+        { button: dom.advertisingFilterAllBtn, value: 'all', count: ads.length },
+        { button: dom.advertisingFilterActiveBtn, value: 'active', count: activeCount },
+        { button: dom.advertisingFilterInactiveBtn, value: 'inactive', count: inactiveCount }
+      ].forEach(function (filter) {
+        filter.button.className =
+          'phab-advertising-filter' +
+          (state.advertisingFilter === filter.value ? ' is-active' : '');
+        var count = filter.button.querySelector('strong');
+        if (count) count.textContent = String(filter.count);
+      });
+
+      var query = String(state.advertisingSearchQuery || '').trim().toLowerCase();
+      var filtered = ads.filter(function (item) {
+        var matchesFilter =
+          state.advertisingFilter === 'all' ||
+          (state.advertisingFilter === 'active' && item.isActive === true) ||
+          (state.advertisingFilter === 'inactive' && item.isActive !== true);
+        var matchesQuery =
+          !query ||
+          String(item.title || '').toLowerCase().indexOf(query) >= 0 ||
+          String(item.href || '').toLowerCase().indexOf(query) >= 0;
+        return matchesFilter && matchesQuery;
+      });
+
+      clearNode(dom.advertisingList);
+      if (!filtered.length) {
+        var empty = document.createElement('div');
+        empty.className = 'phab-advertising-empty';
+        empty.textContent = ads.length
+          ? 'По выбранным фильтрам акции не найдены.'
+          : 'Акции ещё не добавлены. Нажмите «Добавить акцию», чтобы создать первую.';
+        dom.advertisingList.appendChild(empty);
+        return;
+      }
+      filtered.forEach(function (item) {
+        var originalIndex = ads.findIndex(function (candidate) {
+          return String(candidate.id) === String(item.id);
+        });
+        dom.advertisingList.appendChild(
+          createAdvertisingListItem(item, originalIndex, canManage)
+        );
+      });
+    }
+
+    function renderAdvertising() {
+      var canManage = canManageAdvertisingSettings(cfg);
+      var cabinetHome = getCabinetHomeAdvertisingState();
+      state.advertising[getAdvertisingStateKey()] = cabinetHome;
+      dom.advertisingRotationInput.checked = cabinetHome.rotationEnabled === true;
+      dom.advertisingRotationInput.disabled = !canManage;
+      dom.advertisingRepeatEveryInput.value = String(cabinetHome.repeatEveryCards || 4);
+      dom.advertisingRepeatEveryInput.disabled = !canManage;
+      dom.advertisingSavedState.textContent = 'Сохранено';
+      dom.advertisingSearchInput.value = state.advertisingSearchQuery;
+      renderAdvertisingList();
+      renderAdvertisingEditor();
+      setAdvertisingSubtab(state.advertisingSubtab);
+    }
+
+    async function loadAdvertisingInsights() {
+      var responses = await Promise.all([
+        api.getCabinetHomeTopAdvertisingInsights().catch(function () { return {}; }),
+        api.getCabinetHomeAdvertisingInsights().catch(function () { return {}; }),
+        api.getCabinetForMeStripAdvertisingInsights().catch(function () { return {}; }),
+        api.getCabinetForMeCardAdvertisingInsights().catch(function () { return {}; })
+      ]);
+      state.advertisingInsights = {
+        cabinetHomeTop: normalizeAdvertisingInsights(responses[0]),
+        cabinetHome: normalizeAdvertisingInsights(responses[1]),
+        cabinetForMeStrip: normalizeAdvertisingInsights(responses[2]),
+        cabinetForMeCard: normalizeAdvertisingInsights(responses[3])
+      };
+      renderAdvertisingInsights();
+    }
+
     async function loadAdvertising() {
       if (isRestrictedStationAdmin) {
         state.advertising = {
+          cabinetHomeTop: {
+            rotationEnabled: false,
+            updatedAt: '',
+            updatedBy: '',
+            ads: []
+          },
           cabinetHome: {
             rotationEnabled: false,
+            updatedAt: '',
+            updatedBy: '',
+            ads: []
+          },
+          cabinetForMeStrip: {
+            rotationEnabled: false,
+            repeatEveryCards: 4,
+            updatedAt: '',
+            updatedBy: '',
+            ads: []
+          },
+          cabinetForMeCard: {
+            rotationEnabled: false,
+            repeatEveryCards: 6,
             updatedAt: '',
             updatedBy: '',
             ads: []
@@ -26399,11 +34139,40 @@
         return;
       }
 
-      var cabinetHomeResponse = (await api.getCabinetHomeAdvertisingSettings()) || {};
-      state.advertising = {
-        cabinetHome: normalizeCabinetHomeAdvertisingSettings(cabinetHomeResponse)
-      };
-      renderAdvertising();
+      clearNode(dom.advertisingList);
+      var loading = document.createElement('div');
+      loading.className = 'phab-advertising-empty';
+      loading.textContent = 'Загружаем акции…';
+      dom.advertisingList.appendChild(loading);
+      try {
+        var responses = await Promise.all([
+          api.getCabinetHomeTopAdvertisingSettings(),
+          api.getCabinetHomeAdvertisingSettings(),
+          api.getCabinetForMeStripAdvertisingSettings(),
+          api.getCabinetForMeCardAdvertisingSettings()
+        ]);
+        state.advertising = {
+          cabinetHomeTop: normalizeCabinetHomeAdvertisingSettings(responses[0] || {}),
+          cabinetHome: normalizeCabinetHomeAdvertisingSettings(responses[1] || {}),
+          cabinetForMeStrip: normalizeCabinetHomeAdvertisingSettings(responses[2] || {}),
+          cabinetForMeCard: normalizeCabinetHomeAdvertisingSettings(responses[3] || {})
+        };
+        await loadAdvertisingInsights();
+        if (
+          state.advertisingEditorMode === 'edit' &&
+          !getAdvertisingEditorItem()
+        ) {
+          setAdvertisingEditorForItem(null);
+        }
+        renderAdvertising();
+      } catch (error) {
+        clearNode(dom.advertisingList);
+        var failure = document.createElement('div');
+        failure.className = 'phab-advertising-empty';
+        failure.textContent = 'Не удалось загрузить акции. Обновите данные и попробуйте ещё раз.';
+        dom.advertisingList.appendChild(failure);
+        throw error;
+      }
     }
 
     async function loadDialogs(options) {
@@ -26550,10 +34319,69 @@
       }
     }
 
+    async function loadGamesSchedule() {
+      var requestToken =
+        String(state.gamesScheduleDate) +
+        ':' +
+        String(state.gamesScheduleStation) +
+        ':' +
+        String(state.gamesScheduleStatus) +
+        ':' +
+        Date.now() +
+        ':' +
+        Math.random().toString(36).slice(2, 8);
+      state.gamesScheduleRequestToken = requestToken;
+
+      var query = {
+        date: state.gamesScheduleDate,
+        station: state.gamesScheduleStation || undefined,
+        lifecycle: state.gamesScheduleStatus,
+        page: 1,
+        pageSize: 100,
+        sortField: 'gameDate',
+        sortDirection: 'asc'
+      };
+      var first = (await api.getGames(query)) || [];
+      if (state.gamesScheduleRequestToken !== requestToken) return;
+
+      if (Array.isArray(first)) {
+        state.games = first;
+        state.gamesTotal = first.length;
+        state.gamesTotalPages = 1;
+      } else {
+        var items = Array.isArray(first.items) ? first.items.slice() : [];
+        var totalPages = Math.max(1, Number(first.totalPages || 1));
+        for (var pageNumber = 2; pageNumber <= totalPages; pageNumber += 1) {
+          var pageResponse = (await api.getGames(Object.assign({}, query, { page: pageNumber }))) || {};
+          if (state.gamesScheduleRequestToken !== requestToken) return;
+          if (Array.isArray(pageResponse)) items = items.concat(pageResponse);
+          else if (Array.isArray(pageResponse.items)) items = items.concat(pageResponse.items);
+        }
+        state.games = items;
+        state.gamesTotal = Number(first.total || items.length);
+        state.gamesTotalPages = totalPages;
+      }
+
+      state.gamesPage = 1;
+      state.gamesSelectedIds = Object.create(null);
+      renderGames();
+    }
+
     async function loadGames() {
+      if (state.gamesViewMode === 'schedule') {
+        await loadGamesSchedule();
+        return;
+      }
       var response =
         (await api.getGames({
           phone: state.gamesFilterPhone || undefined,
+          q: state.gamesFilterPhone ? undefined : state.gamesFilterQuery || undefined,
+          date: state.gamesFilterDate || undefined,
+          station: state.gamesFilterStation || undefined,
+          status: state.gamesFilterStatus || undefined,
+          publication: state.gamesFilterPublication || undefined,
+          view: state.gamesQuickFilter || undefined,
+          lifecycle: state.gamesQuickFilter === 'cancelled' ? 'cancelled' : undefined,
           page: state.gamesPage,
           pageSize: state.gamesPageSize,
           sortField: state.gamesSortField,
@@ -26586,7 +34414,12 @@
         );
       }
 
-      dom.gamesPhoneInput.value = state.gamesFilterPhone;
+      var loadedIds = Object.create(null);
+      state.games.forEach(function (game) { if (game && game.id) loadedIds[game.id] = true; });
+      Object.keys(state.gamesSelectedIds).forEach(function (id) {
+        if (!loadedIds[id]) delete state.gamesSelectedIds[id];
+      });
+      dom.gamesPhoneInput.value = state.gamesFilterQuery;
       renderGames();
     }
 
@@ -26741,6 +34574,8 @@
           connectors: [],
           accessRules: [],
           adminUsers: [],
+          adminRoles: [],
+          adminAudit: [],
           viva: null,
           quickReplies: [],
           splitPaymentPromo: normalizeSplitPaymentPromoSettings(null)
@@ -26748,8 +34583,15 @@
         renderSettings();
         return;
       }
-      var settings = (await api.getSettings()) || {};
-      var adminUsersResponse = (await api.getAdminUsers()) || {};
+      var settings = canAccessSettings(cfg) && hasPermission(cfg, 'settings:read')
+        ? (await api.getSettings()) || {}
+        : {};
+      var adminUsersResponse = hasPermission(cfg, 'admin-users:read')
+        ? (await api.getAdminUsers()) || {}
+        : {};
+      var adminRolesResponse = hasPermission(cfg, 'admin-users:read')
+        ? (await api.getAdminRoles()) || {}
+        : {};
       var vivaSettings =
         canManageVivaSettings(cfg) ? (await api.getVivaSettings()) || null : null;
       var splitPaymentPromoSettings = null;
@@ -26768,6 +34610,10 @@
           .filter(Boolean),
         accessRules: settings.accessRules || [],
         adminUsers: Array.isArray(adminUsersResponse.users) ? adminUsersResponse.users : [],
+        adminRoles: Array.isArray(adminRolesResponse.roles) ? adminRolesResponse.roles : [],
+        adminAudit: state.settings && Array.isArray(state.settings.adminAudit)
+          ? state.settings.adminAudit
+          : [],
         viva: vivaSettings,
         quickReplies: (settings.quickReplies || [])
           .map(normalizeQuickReplyRule)
@@ -27030,7 +34876,305 @@
     async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
+    function parseNotificationPhones() {
+      return Array.from(
+        new Set(
+          String(dom.notificationPhonesInput.value || '')
+            .split(/[\n,;]+/)
+            .map(function (phone) { return phone.trim(); })
+            .filter(Boolean)
+        )
+      );
+    }
+
+    function selectedNotificationChannels() {
+      return dom.notificationChannelInputs
+        .filter(function (input) { return input.checked && !input.disabled; })
+        .map(function (input) { return String(input.value || ''); })
+        .filter(Boolean);
+    }
+
+    function setNotificationResult(node, message, isError) {
+      node.textContent = message;
+      node.className =
+        'phab-admin-notifications-result' +
+        (isError ? ' phab-admin-notifications-result-error' : '');
+    }
+
+    function notificationCapabilityReason(reason) {
+      var reasons = {
+        GLOBAL_RUNTIME_DISABLED: 'Web Push выключен на сервере',
+        TENANT_RUNTIME_DISABLED: 'Канал выключен для организации',
+        PROVIDER_NOT_CONFIGURED: 'Провайдер не настроен',
+        FCM_ADAPTER_NOT_IMPLEMENTED: 'FCM ещё не подключён',
+        APNS_ADAPTER_NOT_IMPLEMENTED: 'APNs ещё не подключён'
+      };
+      return reasons[String(reason || '')] || 'Канал недоступен';
+    }
+
+    function notificationChannelDescription(channel) {
+      var descriptions = {
+        WEB_PUSH: 'Браузеры с активной подпиской PadlHub',
+        ANDROID_PUSH: 'Push через Firebase Cloud Messaging',
+        IOS_PUSH: 'Push через Apple Push Notification service',
+        IN_APP: 'Сообщение останется в личном кабинете'
+      };
+      return descriptions[channel] || 'Канал доступен';
+    }
+
+    function renderNotificationCapabilities() {
+      var capabilities =
+        notificationState.capabilities && Array.isArray(notificationState.capabilities.channels)
+          ? notificationState.capabilities.channels
+          : [];
+      var hasSelected = false;
+      dom.notificationChannelInputs.forEach(function (input) {
+        var channel = String(input.value || '');
+        var capability = capabilities.find(function (item) { return item.channel === channel; });
+        var enabled = Boolean(capability && capability.enabled);
+        input.disabled = !enabled;
+        if (!enabled) input.checked = false;
+        if (input.checked) hasSelected = true;
+        var card = input.closest('[data-notification-channel-card]');
+        if (card) {
+          card.classList.toggle('phab-admin-notifications-channel-disabled', !enabled);
+          var status = card.querySelector('[data-notification-channel-status]');
+          if (status) {
+            status.textContent = enabled
+              ? notificationChannelDescription(channel)
+              : notificationCapabilityReason(capability && capability.reason);
+          }
+        }
+      });
+      if (!hasSelected) {
+        var fallback = dom.notificationChannelInputs.find(function (input) { return !input.disabled; });
+        if (fallback) fallback.checked = true;
+      }
+    }
+
+    function updateNotificationControls() {
+      var phones = parseNotificationPhones();
+      var selectedChannels = selectedNotificationChannels();
+      dom.notificationPhoneCount.textContent = phones.length + ' номеров';
+      dom.notificationPreviewBtn.disabled = phones.length === 0 || Boolean(notificationState.busy);
+      dom.notificationSendBtn.disabled =
+        !notificationState.resolution ||
+        !Array.isArray(notificationState.resolution.matched) ||
+        notificationState.resolution.matched.length === 0 ||
+        !String(dom.notificationTitleInput.value || '').trim() ||
+        !String(dom.notificationBodyInput.value || '').trim() ||
+        selectedChannels.length === 0 ||
+        Boolean(notificationState.busy);
+      dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
+    }
+
+    function showNotificationAuth(message, isError) {
+      notificationState.session = null;
+      dom.notificationAuth.classList.remove('phab-admin-hidden');
+      dom.notificationWorkspace.classList.add('phab-admin-hidden');
+      setNotificationResult(
+        dom.notificationAuthStatus,
+        message || 'Войдите под учётной записью с правом notifications.manage.',
+        isError === true
+      );
+      updateNotificationControls();
+    }
+
+    function showNotificationWorkspace() {
+      dom.notificationAuth.classList.add('phab-admin-hidden');
+      dom.notificationWorkspace.classList.remove('phab-admin-hidden');
+      updateNotificationControls();
+    }
+
+    async function loadNotificationCapabilities() {
+      if (!notificationApi || !notificationState.session) return;
+      notificationState.busy = 'capabilities';
+      updateNotificationControls();
+      try {
+        notificationState.capabilities = await notificationApi.getCapabilities();
+        renderNotificationCapabilities();
+        showNotificationWorkspace();
+        setStatus('Каналы уведомлений загружены', false);
+      } catch (error) {
+        if (error && (error.status === 401 || error.status === 403)) {
+          showNotificationAuth(error.message, true);
+          return;
+        }
+        setNotificationResult(
+          dom.notificationResult,
+          error && error.message ? error.message : 'Не удалось загрузить каналы уведомлений.',
+          true
+        );
+        throw error;
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
+    async function ensureNotificationSession() {
+      if (!notificationApi) {
+        showNotificationAuth('PadlHub Notification API не настроен для этого контейнера.', true);
+        return;
+      }
+      if (notificationState.session) {
+        await loadNotificationCapabilities();
+        return;
+      }
+      if (notificationState.restoring) return;
+      notificationState.restoring = true;
+      setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
+      try {
+        var session = await notificationApi.restoreSession();
+        if (!session) {
+          showNotificationAuth('Сессия отправки не найдена. Получите локальный код и войдите.', false);
+          return;
+        }
+        notificationState.session = session;
+        showNotificationWorkspace();
+        await loadNotificationCapabilities();
+      } catch (error) {
+        showNotificationAuth(
+          error && error.message ? error.message : 'Не удалось подключить контур уведомлений.',
+          true
+        );
+      } finally {
+        notificationState.restoring = false;
+      }
+    }
+
+    async function submitNotificationLogin() {
+      if (!notificationApi) return;
+      notificationState.busy = 'login';
+      updateNotificationControls();
+      try {
+        if (!notificationState.challengeId) {
+          var phone = String(dom.notificationPhoneInput.value || '').trim();
+          if (phone.length < 5) throw new Error('Введите номер телефона оператора.');
+          var challenge = await notificationApi.requestCode(phone);
+          notificationState.challengeId = String(challenge.challengeId || '');
+          dom.notificationCodeField.classList.remove('phab-admin-hidden');
+          dom.notificationLoginBtn.textContent = 'Войти в контур уведомлений';
+          setNotificationResult(
+            dom.notificationAuthStatus,
+            'Код отправлен. В локальном окружении используйте настроенный dev-код.',
+            false
+          );
+          dom.notificationCodeInput.focus();
+          return;
+        }
+        var code = String(dom.notificationCodeInput.value || '').replace(/\D/g, '').slice(0, 4);
+        if (code.length !== 4) throw new Error('Введите четыре цифры кода.');
+        notificationState.session = await notificationApi.verifyCode(
+          notificationState.challengeId,
+          code
+        );
+        notificationState.challengeId = '';
+        dom.notificationCodeInput.value = '';
+        showNotificationWorkspace();
+        await loadNotificationCapabilities();
+      } catch (error) {
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          error && error.message ? error.message : 'Не удалось войти.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
+    async function previewNotificationRecipients() {
+      if (!notificationApi) return;
+      var phones = parseNotificationPhones();
+      notificationState.busy = 'preview';
+      notificationState.resolution = null;
+      setNotificationResult(dom.notificationResolution, 'Проверяем получателей…', false);
+      updateNotificationControls();
+      try {
+        var resolution = await notificationApi.resolveRecipients(phones);
+        notificationState.resolution = resolution;
+        var matched = Array.isArray(resolution.matched) ? resolution.matched : [];
+        var unresolved = Array.isArray(resolution.unresolvedPhones)
+          ? resolution.unresolvedPhones
+          : [];
+        var lines = [
+          'Найдено: ' + matched.length,
+          'Не найдено: ' + unresolved.length
+        ];
+        matched.slice(0, 20).forEach(function (recipient) {
+          lines.push(
+            '• ' +
+              String(recipient.displayName || 'Получатель') +
+              ' · ' +
+              String(recipient.phoneMasked || '')
+          );
+        });
+        setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
+      } catch (error) {
+        setNotificationResult(
+          dom.notificationResolution,
+          error && error.message ? error.message : 'Не удалось проверить получателей.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
+    async function sendNotificationCampaign() {
+      if (!notificationApi) return;
+      notificationState.busy = 'send';
+      setNotificationResult(dom.notificationResult, 'Отправляем кампанию…', false);
+      updateNotificationControls();
+      try {
+        var payload = {
+          phones: parseNotificationPhones(),
+          title: String(dom.notificationTitleInput.value || '').trim(),
+          body: String(dom.notificationBodyInput.value || '').trim(),
+          channels: selectedNotificationChannels()
+        };
+        var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
+        if (deepLink) payload.deepLink = deepLink;
+        var result = await notificationApi.createCampaign(payload);
+        setNotificationResult(
+          dom.notificationResult,
+          'Кампания принята.\nInbox: ' +
+            Number(result.inAppCreatedCount || 0) +
+            ', Web Push в очереди: ' +
+            Number(result.pushQueuedCount || 0) +
+            '.\nID: ' +
+            String(result.campaignId || '').slice(0, 8),
+          false
+        );
+        setStatus('Кампания уведомлений принята', false);
+      } catch (error) {
+        setNotificationResult(
+          dom.notificationResult,
+          error && error.message ? error.message : 'Не удалось отправить кампанию.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
     function switchTab(nextTab) {
+      if (!canAccessDialogs(cfg) && nextTab === 'messages') {
+        nextTab = canAccessGames(cfg) ? 'games' : canAccessTournaments(cfg) ? 'tournaments' : canAccessSettings(cfg) ? 'settings' : 'messages';
+      }
+      if (!canAccessGames(cfg) && nextTab === 'games') {
+        nextTab = canAccessDialogs(cfg) ? 'messages' : 'tournaments';
+      }
+      if (!canAccessTournaments(cfg) && nextTab === 'tournaments') {
+        nextTab = canAccessDialogs(cfg) ? 'messages' : 'games';
+      }
+      if (!canAccessSettings(cfg) && nextTab === 'settings') {
+        nextTab = canAccessDialogs(cfg) ? 'messages' : 'games';
+      }
       if (
         isRestrictedStationAdmin &&
         ['logs', 'analytics', 'settings', 'advertising'].indexOf(nextTab) >= 0
@@ -27046,9 +35190,13 @@
       if (!canAccessPlayerRatings(cfg) && nextTab === 'playerRatings') {
         nextTab = 'messages';
       }
+      if ((!cfg.notificationApiBaseUrl || isRestrictedStationAdmin) && nextTab === 'notifications') {
+        nextTab = 'messages';
+      }
       state.activeTab = nextTab;
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
+      var isNotifications = nextTab === 'notifications';
       var isPlayerRatings = nextTab === 'playerRatings';
       var isLogs = nextTab === 'logs';
       var isTournaments = nextTab === 'tournaments';
@@ -27058,14 +35206,25 @@
       var isSettings = nextTab === 'settings';
       var isAdvertising = nextTab === 'advertising';
       var hideLogsTab = isRestrictedStationAdmin;
+      var hideMessagesTab = !canAccessDialogs(cfg);
+      var hideGamesTab = !canAccessGames(cfg);
+      var hideTournamentsTab = !canAccessTournaments(cfg);
       var hideCommunitiesTab = !canAccessCommunities(cfg);
       var hideLaboratoryTab = !canAccessLaboratory(cfg);
       var hideAnalyticsTab = isRestrictedStationAdmin;
       var hideSettingsTab = isRestrictedStationAdmin;
+      hideSettingsTab = hideSettingsTab || !canAccessSettings(cfg);
       var hideAdvertisingTab = isRestrictedStationAdmin;
+      var hideNotificationsTab = isRestrictedStationAdmin || !cfg.notificationApiBaseUrl;
 
-      dom.tabMessages.className = 'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '');
-      dom.tabGames.className = 'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '');
+      dom.tabMessages.className =
+        'phab-admin-tab' + (isMessages ? ' phab-admin-tab-active' : '') + (hideMessagesTab ? ' phab-admin-hidden' : '');
+      dom.tabGames.className =
+        'phab-admin-tab' + (isGames ? ' phab-admin-tab-active' : '') + (hideGamesTab ? ' phab-admin-hidden' : '');
+      dom.tabNotifications.className =
+        'phab-admin-tab' +
+        (isNotifications ? ' phab-admin-tab-active' : '') +
+        (hideNotificationsTab ? ' phab-admin-hidden' : '');
       dom.tabPlayerRatings.className =
         'phab-admin-tab' +
         (isPlayerRatings ? ' phab-admin-tab-active' : '') +
@@ -27075,7 +35234,7 @@
         (isLogs ? ' phab-admin-tab-active' : '') +
         (hideLogsTab ? ' phab-admin-hidden' : '');
       dom.tabTournaments.className =
-        'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '');
+        'phab-admin-tab' + (isTournaments ? ' phab-admin-tab-active' : '') + (hideTournamentsTab ? ' phab-admin-hidden' : '');
       dom.tabCommunities.className =
         'phab-admin-tab' +
         (isCommunities ? ' phab-admin-tab-active' : '') +
@@ -27099,6 +35258,7 @@
       dom.mobileTabSelect.value = nextTab;
       dom.messagesSection.className = isMessages ? '' : 'phab-admin-hidden';
       dom.gamesSection.className = isGames ? '' : 'phab-admin-hidden';
+      dom.notificationsSection.className = isNotifications ? '' : 'phab-admin-hidden';
       dom.playerRatingsSection.className = isPlayerRatings ? '' : 'phab-admin-hidden';
       dom.logsSection.className = isLogs ? '' : 'phab-admin-hidden';
       dom.tournamentsSection.className = isTournaments ? '' : 'phab-admin-hidden';
@@ -27106,7 +35266,9 @@
       dom.laboratorySection.className = isLaboratory ? '' : 'phab-admin-hidden';
       dom.analyticsSection.className = isAnalytics ? '' : 'phab-admin-hidden';
       dom.settingsSection.className = isSettings ? '' : 'phab-admin-hidden';
-      dom.advertisingSection.className = isAdvertising ? '' : 'phab-admin-hidden';
+      dom.advertisingSection.className = isAdvertising
+        ? 'phab-advertising-section'
+        : 'phab-advertising-section phab-admin-hidden';
       if (isAnalytics) {
         setAnalyticsSubtab(state.analyticsSubtab);
       }
@@ -27155,6 +35317,8 @@
           await refreshDialogsView();
         } else if (state.activeTab === 'games') {
           await loadGames();
+        } else if (state.activeTab === 'notifications') {
+          await ensureNotificationSession();
         } else if (state.activeTab === 'playerRatings') {
           await searchPlayerRatings(false);
         } else if (state.activeTab === 'logs') {
@@ -27174,6 +35338,9 @@
         await loadAdvertising();
       } else {
         await loadSettings();
+        if (state.settingsSubtab === 'stations') {
+          await loadLocationAdmin(locationAdminState.selectedId);
+        }
       }
         setStatus('Готово', false);
       } catch (error) {
@@ -27202,6 +35369,10 @@
         }
         if (nextTab === 'games') {
           loadGames().catch(handleError);
+          return;
+        }
+        if (nextTab === 'notifications') {
+          ensureNotificationSession().catch(handleError);
           return;
         }
         if (nextTab === 'playerRatings') {
@@ -27241,6 +35412,51 @@
       dom.tabGames.addEventListener('click', function () {
         switchTab('games');
         loadGames().catch(handleError);
+      });
+      dom.tabNotifications.addEventListener('click', function () {
+        switchTab('notifications');
+        ensureNotificationSession().catch(handleError);
+      });
+      dom.notificationLoginBtn.addEventListener('click', function () {
+        submitNotificationLogin().catch(handleError);
+      });
+      dom.notificationPhoneInput.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        submitNotificationLogin().catch(handleError);
+      });
+      dom.notificationCodeInput.addEventListener('input', function () {
+        dom.notificationCodeInput.value = String(dom.notificationCodeInput.value || '')
+          .replace(/\D/g, '')
+          .slice(0, 4);
+      });
+      dom.notificationCodeInput.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        submitNotificationLogin().catch(handleError);
+      });
+      dom.notificationPhonesInput.addEventListener('input', function () {
+        notificationState.resolution = null;
+        setNotificationResult(
+          dom.notificationResolution,
+          'Проверьте номера перед отправкой кампании.',
+          false
+        );
+        updateNotificationControls();
+      });
+      [dom.notificationTitleInput, dom.notificationBodyInput, dom.notificationDeepLinkInput].forEach(
+        function (input) {
+          input.addEventListener('input', updateNotificationControls);
+        }
+      );
+      dom.notificationChannelInputs.forEach(function (input) {
+        input.addEventListener('change', updateNotificationControls);
+      });
+      dom.notificationPreviewBtn.addEventListener('click', function () {
+        previewNotificationRecipients().catch(handleError);
+      });
+      dom.notificationSendBtn.addEventListener('click', function () {
+        sendNotificationCampaign().catch(handleError);
       });
       dom.tabPlayerRatings.addEventListener('click', function () {
         switchTab('playerRatings');
@@ -27301,6 +35517,42 @@
         switchTab('advertising');
         loadAdvertising().catch(handleError);
       });
+      dom.advertisingBlock1TabBtn.addEventListener('click', function () {
+        if (state.advertisingSubtab === 'cabinetHomeTop') return;
+        if (!confirmDiscardAdvertisingChanges()) return;
+        setAdvertisingEditorForItem(null);
+        state.advertisingFilter = 'all';
+        state.advertisingSearchQuery = '';
+        setAdvertisingSubtab('cabinetHomeTop');
+        renderAdvertising();
+      });
+      dom.advertisingBlock2TabBtn.addEventListener('click', function () {
+        if (state.advertisingSubtab === 'cabinetHome') return;
+        if (!confirmDiscardAdvertisingChanges()) return;
+        setAdvertisingEditorForItem(null);
+        state.advertisingFilter = 'all';
+        state.advertisingSearchQuery = '';
+        setAdvertisingSubtab('cabinetHome');
+        renderAdvertising();
+      });
+      dom.advertisingBlock3TabBtn.addEventListener('click', function () {
+        if (state.advertisingSubtab === 'cabinetForMeStrip') return;
+        if (!confirmDiscardAdvertisingChanges()) return;
+        setAdvertisingEditorForItem(null);
+        state.advertisingFilter = 'all';
+        state.advertisingSearchQuery = '';
+        setAdvertisingSubtab('cabinetForMeStrip');
+        renderAdvertising();
+      });
+      dom.advertisingBlock4TabBtn.addEventListener('click', function () {
+        if (state.advertisingSubtab === 'cabinetForMeCard') return;
+        if (!confirmDiscardAdvertisingChanges()) return;
+        setAdvertisingEditorForItem(null);
+        state.advertisingFilter = 'all';
+        state.advertisingSearchQuery = '';
+        setAdvertisingSubtab('cabinetForMeCard');
+        renderAdvertising();
+      });
       dom.settingsGeneralTabBtn.addEventListener('click', function () {
         setSettingsSubtab('general');
       });
@@ -27308,10 +35560,8 @@
         setSettingsSubtab('quickReplies');
       });
       dom.settingsSplitPromoTabBtn.addEventListener('click', function () {
-        setSettingsSubtab('splitPromo');
-      });
-      dom.advertisingCabinetHomeTabBtn.addEventListener('click', function () {
-        setAdvertisingSubtab('cabinetHome');
+        setSettingsSubtab('stations');
+        loadLocationAdmin(locationAdminState.selectedId).catch(handleError);
       });
       dom.messageModeToggle.addEventListener('change', function () {
         setIncludeServiceMessages(dom.messageModeToggle.checked).catch(handleError);
@@ -27372,14 +35622,284 @@
         }
         openCommunityFeedEditor(community, null, { mode: 'create' });
       });
-      dom.advertisingConfigSaveBtn.addEventListener('click', function () {
+      dom.advertisingRotationInput.addEventListener('change', function () {
         saveCabinetHomeAdvertisingRotation().catch(handleError);
+      });
+      dom.advertisingRepeatEveryInput.addEventListener('change', function () {
+        saveCabinetHomeAdvertisingRepeatEvery().catch(handleError);
+      });
+      dom.advertisingPreviewBtn.addEventListener('click', openAdvertisingPreview);
+      dom.advertisingPreviewModalCloseBtn.addEventListener('click', closeAdvertisingPreview);
+      dom.advertisingPreviewModal.addEventListener('click', function (event) {
+        if (event.target === dom.advertisingPreviewModal) {
+          closeAdvertisingPreview();
+        }
+      });
+      dom.advertisingPreviewModal.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeAdvertisingPreview();
+          return;
+        }
+        if (event.key !== 'Tab') {
+          return;
+        }
+        var focusable = [
+          dom.advertisingPreviewModalCloseBtn,
+          dom.advertisingPreviewModalLink
+        ].filter(function (element) {
+          return element && !element.disabled;
+        });
+        var currentIndex = focusable.indexOf(document.activeElement);
+        event.preventDefault();
+        var nextIndex = event.shiftKey
+          ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+          : (currentIndex + 1) % focusable.length;
+        focusable[nextIndex].focus();
+      });
+      dom.advertisingCreateBtn.addEventListener('click', openAdvertisingCreateEditor);
+      [
+        dom.advertisingFilterAllBtn,
+        dom.advertisingFilterActiveBtn,
+        dom.advertisingFilterInactiveBtn
+      ].forEach(function (button) {
+        button.addEventListener('click', function () {
+          state.advertisingFilter = String(button.dataset.filter || 'all');
+          renderAdvertisingList();
+        });
+      });
+      dom.advertisingSearchInput.addEventListener('input', function () {
+        state.advertisingSearchQuery = String(dom.advertisingSearchInput.value || '').trim();
+        renderAdvertisingList();
+      });
+      [
+        dom.advertisingDraftTitleInput,
+        dom.advertisingDraftBadgeInput,
+        dom.advertisingDraftFooterInput,
+        dom.advertisingDraftHrefInput
+      ].forEach(function (input) {
+        input.addEventListener('input', function () {
+          if (input === dom.advertisingDraftTitleInput) {
+            dom.advertisingTitleCounter.textContent =
+              String(dom.advertisingDraftTitleInput.value.length) + ' / 160';
+          }
+          if (input === dom.advertisingDraftHrefInput) {
+            dom.advertisingHrefError.className =
+              'phab-advertising-field-error phab-admin-hidden';
+          }
+          updateAdvertisingEditorDirty();
+          renderAdvertisingEditorPreview();
+        });
+      });
+      dom.advertisingDraftBadgePresetInput.addEventListener('change', function () {
+        var preset = String(dom.advertisingDraftBadgePresetInput.value || '');
+        if (preset) dom.advertisingDraftBadgeInput.value = preset;
+        updateAdvertisingEditorDirty();
+        renderAdvertisingEditorPreview();
+      });
+      dom.advertisingStatusInput.addEventListener('change', updateAdvertisingEditorDirty);
+      var advertisingCropRenderTimer = null;
+      function scheduleAdvertisingCropRebuild(variant) {
+        if (advertisingCropRenderTimer) {
+          window.clearTimeout(advertisingCropRenderTimer);
+        }
+        advertisingCropRenderTimer = window.setTimeout(function () {
+          advertisingCropRenderTimer = null;
+          rebuildAdvertisingEditorImage(variant).catch(handleError);
+        }, 80);
+      }
+      [
+        dom.advertisingCropZoom,
+        dom.advertisingCropX,
+        dom.advertisingCropY
+      ].forEach(function (control) {
+        control.input.addEventListener('input', function () {
+          control.output.textContent = control.input.value + control.suffix;
+          if (state.advertisingSubtab === 'cabinetForMeCard') {
+            syncAdvertisingCardCropFromControls(state.advertisingEditorCardVariant);
+          }
+          scheduleAdvertisingCropRebuild(
+            state.advertisingSubtab === 'cabinetForMeCard'
+              ? state.advertisingEditorCardVariant
+              : undefined
+          );
+        });
+      });
+      dom.advertisingCropResetBtn.addEventListener('click', function () {
+        dom.advertisingCropZoom.input.value = '100';
+        dom.advertisingCropX.input.value = '0';
+        dom.advertisingCropY.input.value = '0';
+        dom.advertisingCropZoom.output.textContent = '100%';
+        dom.advertisingCropX.output.textContent = '0';
+        dom.advertisingCropY.output.textContent = '0';
+        if (state.advertisingSubtab === 'cabinetForMeCard') {
+          syncAdvertisingCardCropFromControls(state.advertisingEditorCardVariant);
+        }
+        rebuildAdvertisingEditorImage(
+          state.advertisingSubtab === 'cabinetForMeCard'
+            ? state.advertisingEditorCardVariant
+            : undefined
+        ).catch(handleError);
+      });
+      dom.advertisingDropzone.addEventListener('click', function () {
+        dom.advertisingDraftFileInput.click();
+      });
+      dom.advertisingDraftFileInput.addEventListener('change', function () {
+        var file = dom.advertisingDraftFileInput.files && dom.advertisingDraftFileInput.files[0];
+        selectAdvertisingEditorFile(file).catch(handleError);
+      });
+      ['dragenter', 'dragover'].forEach(function (eventName) {
+        dom.advertisingDropzone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dom.advertisingDropzone.classList.add('is-dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (eventName) {
+        dom.advertisingDropzone.addEventListener(eventName, function (event) {
+          event.preventDefault();
+          dom.advertisingDropzone.classList.remove('is-dragover');
+        });
+      });
+      dom.advertisingDropzone.addEventListener('drop', function (event) {
+        var file = event.dataTransfer && event.dataTransfer.files
+          ? event.dataTransfer.files[0]
+          : null;
+        selectAdvertisingEditorFile(file).catch(handleError);
+      });
+      dom.advertisingCardUploads.forEach(function (upload) {
+        upload.dropzone.addEventListener('click', function () {
+          activateAdvertisingCardVariant(upload.variant);
+          upload.input.click();
+        });
+        upload.input.addEventListener('change', function () {
+          var file = upload.input.files && upload.input.files[0];
+          selectAdvertisingEditorFile(file, upload.variant).catch(handleError);
+        });
+        ['dragenter', 'dragover'].forEach(function (eventName) {
+          upload.dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            upload.dropzone.classList.add('is-dragover');
+          });
+        });
+        ['dragleave', 'drop'].forEach(function (eventName) {
+          upload.dropzone.addEventListener(eventName, function (event) {
+            event.preventDefault();
+            upload.dropzone.classList.remove('is-dragover');
+          });
+        });
+        upload.dropzone.addEventListener('drop', function (event) {
+          var file = event.dataTransfer && event.dataTransfer.files
+            ? event.dataTransfer.files[0]
+            : null;
+          selectAdvertisingEditorFile(file, upload.variant).catch(handleError);
+        });
+      });
+      dom.advertisingEditorCardPreviews.forEach(function (preview) {
+        var pointers = new Map();
+        var startCrop = null;
+        var startCenter = null;
+        var startDistance = 0;
+        function pointerCenter() {
+          var values = Array.from(pointers.values());
+          if (!values.length) return null;
+          var total = values.reduce(function (result, point) {
+            return { x: result.x + point.x, y: result.y + point.y };
+          }, { x: 0, y: 0 });
+          return { x: total.x / values.length, y: total.y / values.length };
+        }
+        function pointerDistance() {
+          var values = Array.from(pointers.values());
+          return values.length < 2
+            ? 0
+            : Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+        }
+        function beginGesture() {
+          var imageState = getAdvertisingCardImageState(preview.variant);
+          startCrop = Object.assign({}, imageState.crop);
+          startCenter = pointerCenter();
+          startDistance = pointerDistance();
+        }
+        preview.stage.addEventListener('pointerdown', function (event) {
+          if (
+            state.advertisingSubtab !== 'cabinetForMeCard' ||
+            !getAdvertisingCardImageState(preview.variant).sourceFile
+          ) return;
+          event.preventDefault();
+          activateAdvertisingCardVariant(preview.variant);
+          pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          preview.stage.setPointerCapture(event.pointerId);
+          preview.stage.classList.add('is-dragging');
+          beginGesture();
+        });
+        preview.stage.addEventListener('pointermove', function (event) {
+          if (!pointers.has(event.pointerId) || !startCrop || !startCenter) return;
+          pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          var center = pointerCenter();
+          if (!center) return;
+          var bounds = preview.stage.getBoundingClientRect();
+          var offsetX = Math.max(
+            -100,
+            Math.min(100, startCrop.offsetX + ((center.x - startCenter.x) / Math.max(1, bounds.width)) * 200)
+          );
+          var offsetY = Math.max(
+            -100,
+            Math.min(100, startCrop.offsetY + ((center.y - startCenter.y) / Math.max(1, bounds.height)) * 200)
+          );
+          var distance = pointerDistance();
+          var zoom = startDistance > 0 && distance > 0
+            ? Math.max(100, Math.min(250, startCrop.zoom * distance / startDistance))
+            : startCrop.zoom;
+          dom.advertisingCropX.input.value = String(Math.round(offsetX));
+          dom.advertisingCropY.input.value = String(Math.round(offsetY));
+          dom.advertisingCropZoom.input.value = String(Math.round(zoom));
+          dom.advertisingCropX.output.textContent = String(Math.round(offsetX));
+          dom.advertisingCropY.output.textContent = String(Math.round(offsetY));
+          dom.advertisingCropZoom.output.textContent = String(Math.round(zoom)) + '%';
+          syncAdvertisingCardCropFromControls(preview.variant);
+          scheduleAdvertisingCropRebuild(preview.variant);
+        });
+        function endPointer(event) {
+          pointers.delete(event.pointerId);
+          if (!pointers.size) {
+            preview.stage.classList.remove('is-dragging');
+            startCrop = null;
+            startCenter = null;
+            startDistance = 0;
+          } else {
+            beginGesture();
+          }
+        }
+        preview.stage.addEventListener('pointerup', endPointer);
+        preview.stage.addEventListener('pointercancel', endPointer);
+        preview.stage.addEventListener('wheel', function (event) {
+          if (
+            state.advertisingSubtab !== 'cabinetForMeCard' ||
+            !getAdvertisingCardImageState(preview.variant).sourceFile
+          ) return;
+          event.preventDefault();
+          activateAdvertisingCardVariant(preview.variant);
+          var nextZoom = Math.max(
+            100,
+            Math.min(250, Number(dom.advertisingCropZoom.input.value || 100) + (event.deltaY < 0 ? 5 : -5))
+          );
+          dom.advertisingCropZoom.input.value = String(nextZoom);
+          dom.advertisingCropZoom.output.textContent = String(nextZoom) + '%';
+          syncAdvertisingCardCropFromControls(preview.variant);
+          scheduleAdvertisingCropRebuild(preview.variant);
+        }, { passive: false });
+      });
+      dom.advertisingCancelBtn.addEventListener('click', closeAdvertisingEditor);
+      dom.advertisingEditorPanel.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeAdvertisingEditor();
+        }
       });
       dom.splitPromoSaveBtn.addEventListener('click', function () {
         saveSplitPaymentPromoSettings().catch(handleError);
       });
       dom.advertisingDraftAddBtn.addEventListener('click', function () {
-        addCabinetHomeAdvertisingItem().catch(handleError);
+        saveAdvertisingEditor().catch(handleError);
       });
       dom.dialogFiltersBtn.addEventListener('click', function () {
         if (dom.dialogFiltersBtn.disabled) {
@@ -27421,21 +35941,106 @@
       dom.communitiesPreviewPane.addEventListener('scroll', function () {
         maybeLoadMoreCommunityFeedFromScroll(dom.communitiesPreviewPane);
       });
+      function selectGamesViewMode(nextMode) {
+        var normalizedMode = nextMode === 'schedule' ? 'schedule' : 'list';
+        if (state.gamesViewMode === normalizedMode) return;
+        state.gamesViewMode = normalizedMode;
+        state.gamesSelectedIds = Object.create(null);
+        state.gamesPage = 1;
+        if (normalizedMode === 'schedule' && !state.gamesScheduleDate) {
+          state.gamesScheduleDate = getTodayDateInputValue();
+        }
+        syncGamesFiltersToUrl();
+        updateGamesViewControls();
+        loadGames().catch(handleError);
+      }
+      function setGamesScheduleDate(nextDate) {
+        var normalized = String(nextDate || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return;
+        state.gamesScheduleDate = normalized;
+        dom.gamesScheduleDateInput.value = normalized;
+        syncGamesFiltersToUrl();
+        loadGames().catch(handleError);
+      }
+      function shiftGamesScheduleDate(dayDelta) {
+        var current = new Date(String(state.gamesScheduleDate || getTodayDateInputValue()) + 'T12:00:00');
+        if (Number.isNaN(current.getTime())) current = new Date();
+        current.setDate(current.getDate() + Number(dayDelta || 0));
+        setGamesScheduleDate(formatDateInputValue(current));
+      }
+      dom.gamesListViewBtn.addEventListener('click', function () {
+        selectGamesViewMode('list');
+      });
+      dom.gamesScheduleViewBtn.addEventListener('click', function () {
+        selectGamesViewMode('schedule');
+      });
+      dom.gamesSchedulePrevBtn.addEventListener('click', function () {
+        shiftGamesScheduleDate(-1);
+      });
+      dom.gamesScheduleNextBtn.addEventListener('click', function () {
+        shiftGamesScheduleDate(1);
+      });
+      dom.gamesScheduleTodayBtn.addEventListener('click', function () {
+        setGamesScheduleDate(getTodayDateInputValue());
+      });
+      dom.gamesScheduleDateInput.addEventListener('change', function () {
+        setGamesScheduleDate(dom.gamesScheduleDateInput.value);
+      });
+      dom.gamesScheduleStationSelect.addEventListener('change', function () {
+        state.gamesScheduleStation = String(dom.gamesScheduleStationSelect.value || '');
+        syncGamesFiltersToUrl();
+        loadGames().catch(handleError);
+      });
+      dom.gamesScheduleStatusButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          var nextStatus = String(button.dataset.value || 'active');
+          if (['active', 'cancelled', 'all'].indexOf(nextStatus) < 0) nextStatus = 'active';
+          if (state.gamesScheduleStatus === nextStatus) return;
+          state.gamesScheduleStatus = nextStatus;
+          syncGamesFiltersToUrl();
+          updateGamesViewControls();
+          loadGames().catch(handleError);
+        });
+      });
       dom.gamesPageSizeSelect.addEventListener('change', function () {
         var next = Number(dom.gamesPageSizeSelect.value || 15);
         state.gamesPageSize = next === 50 ? 50 : 15;
         state.gamesPage = 1;
         loadGames().catch(handleError);
       });
-      dom.gamesApplyBtn.addEventListener('click', function () {
-        state.gamesFilterPhone = normalizePhoneSearchValue(dom.gamesPhoneInput.value);
+      function applyGamesSearchValue(forceServerSearch) {
+        var previousQuery = state.gamesFilterQuery;
+        state.gamesFilterQuery = String(dom.gamesPhoneInput.value || '').trim();
+        var isPhoneQuery = /^[+\d\s()\-]+$/.test(state.gamesFilterQuery);
+        var nextPhone = isPhoneQuery && state.gamesFilterQuery.replace(/\D+/g, '').length >= 7
+          ? normalizePhoneSearchValue(state.gamesFilterQuery)
+          : '';
+        var serverFilterChanged = nextPhone !== state.gamesFilterPhone;
+        var queryChanged = previousQuery !== state.gamesFilterQuery;
+        state.gamesFilterPhone = nextPhone;
         state.gamesPage = 1;
-        loadGames().catch(handleError);
+        syncGamesFiltersToUrl();
+        if (forceServerSearch || serverFilterChanged || queryChanged) loadGames().catch(handleError);
+        else renderGames();
+      }
+      dom.gamesPhoneInput.addEventListener('input', function () {
+        if (gamesSearchTimer) window.clearTimeout(gamesSearchTimer);
+        gamesSearchTimer = window.setTimeout(function () {
+          gamesSearchTimer = null;
+          applyGamesSearchValue(false);
+        }, 320);
       });
       dom.gamesResetBtn.addEventListener('click', function () {
         state.gamesFilterPhone = '';
+        state.gamesFilterQuery = '';
+        state.gamesFilterDate = '';
+        state.gamesFilterStation = '';
+        state.gamesFilterStatus = '';
+        state.gamesFilterPublication = '';
+        state.gamesQuickFilter = '';
+        state.gamesSelectedIds = Object.create(null);
         state.gamesPage = 1;
-        dom.gamesPhoneInput.value = '';
+        syncGamesFiltersToUrl();
         loadGames().catch(handleError);
       });
       dom.gamesPhoneInput.addEventListener('keydown', function (event) {
@@ -27443,9 +36048,83 @@
           return;
         }
         event.preventDefault();
-        state.gamesFilterPhone = normalizePhoneSearchValue(dom.gamesPhoneInput.value);
+        if (gamesSearchTimer) window.clearTimeout(gamesSearchTimer);
+        gamesSearchTimer = null;
+        applyGamesSearchValue(true);
+      });
+      dom.gamesDateInput.addEventListener('change', function () {
+        state.gamesFilterDate = String(dom.gamesDateInput.value || '');
         state.gamesPage = 1;
+        syncGamesFiltersToUrl();
         loadGames().catch(handleError);
+      });
+      dom.gamesStationSelect.addEventListener('change', function () {
+        state.gamesFilterStation = String(dom.gamesStationSelect.value || '');
+        state.gamesPage = 1;
+        syncGamesFiltersToUrl();
+        loadGames().catch(handleError);
+      });
+      dom.gamesStatusSelect.addEventListener('change', function () {
+        state.gamesFilterStatus = String(dom.gamesStatusSelect.value || '');
+        state.gamesPage = 1;
+        syncGamesFiltersToUrl();
+        loadGames().catch(handleError);
+      });
+      dom.gamesPublicationSelect.addEventListener('change', function () {
+        state.gamesFilterPublication = String(dom.gamesPublicationSelect.value || '');
+        state.gamesPage = 1;
+        syncGamesFiltersToUrl();
+        loadGames().catch(handleError);
+      });
+      dom.gamesQuickFilterButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          state.gamesQuickFilter = button.dataset.value === state.gamesQuickFilter ? '' : button.dataset.value;
+          state.gamesPage = 1;
+          syncGamesFiltersToUrl();
+          loadGames().catch(handleError);
+        });
+      });
+      dom.gamesColumnsBtn.addEventListener('click', function () {
+        var opening = dom.gamesColumnsPanel.classList.contains('phab-admin-hidden');
+        dom.gamesColumnsPanel.classList.toggle('phab-admin-hidden', !opening);
+        dom.gamesColumnsBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      });
+      dom.gamesColumnInputs.forEach(function (input) {
+        input.addEventListener('change', function () {
+          state.gamesVisibleColumns[input.value] = input.checked;
+          try { window.localStorage.setItem('phab_games_visible_columns', JSON.stringify(state.gamesVisibleColumns)); } catch (_error) {}
+          renderGames();
+        });
+      });
+      dom.gamesBulkRefreshBtn.addEventListener('click', function () { loadGames().catch(handleError); });
+      dom.gamesBulkExportBtn.addEventListener('click', function () {
+        var selected = normalizeArray(state.games).filter(function (game) { return state.gamesSelectedIds[game.id] === true; });
+        if (selected.length === 0) return;
+        var rows = [['ID', 'Дата', 'Время', 'Станция', 'Корт', 'Организатор', 'Телефон', 'Статус']].concat(selected.map(function (game) {
+          return [game.id, game.gameDate, game.gameTime, game.stationName, game.courtName, game.organizerName, game.organizerPhone, getGameStatusMeta(game).label];
+        }));
+        var csv = rows.map(function (row) { return row.map(function (value) { return '"' + String(value || '').replace(/"/g, '""') + '"'; }).join(';'); }).join('\n');
+        var blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+        var href = URL.createObjectURL(blob);
+        var link = document.createElement('a'); link.href = href; link.download = 'games-export.csv'; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(href);
+        setStatus('Экспортировано игр: ' + String(selected.length), false);
+      });
+      dom.gamesBulkHideBtn.addEventListener('click', async function () {
+        var selected = normalizeArray(state.games).filter(function (game) { return state.gamesSelectedIds[game.id] === true && game.isPrivate !== true; });
+        if (selected.length === 0) { setStatus('Выбранные игры уже скрыты или недоступны', true); return; }
+        if (!window.confirm('Скрыть из общего списка выбранные игры: ' + String(selected.length) + '? Бронирования и ссылки-приглашения останутся активными.')) return;
+        dom.gamesBulkHideBtn.disabled = true;
+        var succeeded = 0; var failed = 0;
+        try {
+          for (var offset = 0; offset < selected.length; offset += 3) {
+            var batch = selected.slice(offset, offset + 3);
+            var results = await Promise.allSettled(batch.map(function (game) { return api.hideGameFromPublicList(game.id); }));
+            results.forEach(function (result) { if (result.status === 'fulfilled') succeeded += 1; else failed += 1; });
+          }
+          state.gamesSelectedIds = Object.create(null);
+          await loadGames();
+          setStatus('Скрыто: ' + String(succeeded) + (failed ? ' · Ошибок: ' + String(failed) : ''), failed > 0);
+        } finally { dom.gamesBulkHideBtn.disabled = false; }
       });
       dom.gamesPrevPageBtn.addEventListener('click', function () {
         if (state.gamesPage <= 1) {
@@ -27627,6 +36306,24 @@
       dom.accessCreateBtn.addEventListener('click', function () {
         createAccessRule().catch(handleError);
       });
+      dom.staffCreateUserBtn.addEventListener('click', function () {
+        state.staffAuditVisible = false;
+        state.staffEditor = { kind: 'user', value: {} };
+        renderStaffEditor();
+      });
+      dom.staffCreateRoleBtn.addEventListener('click', function () {
+        state.staffAuditVisible = false;
+        state.staffEditor = { kind: 'role', value: {} };
+        renderStaffEditor();
+      });
+      dom.staffAuditBtn.addEventListener('click', function () {
+        if (state.staffAuditVisible) {
+          state.staffAuditVisible = false;
+          renderStaffAudit();
+          return;
+        }
+        loadStaffAudit({}).catch(handleError);
+      });
       dom.vivaSaveBtn.addEventListener('click', function () {
         saveVivaSettings().catch(handleError);
       });
@@ -27685,6 +36382,9 @@
         ).catch(handleError);
       });
       dom.gameModalCloseBtn.addEventListener('click', function () {
+        closeGameModal();
+      });
+      dom.gameModalTitle.addEventListener('click', function () {
         closeGameModal();
       });
       dom.gameModal.addEventListener('click', function (event) {
@@ -27799,12 +36499,26 @@
 
     async function init() {
       populateMobileTabSelect();
+      hydrateGamesFiltersFromUrl();
       setStatus('Готово', false);
       bindEvents();
+      var initialGameId = '';
+      try { initialGameId = String(new URLSearchParams(window.location.search).get('gameId') || ''); } catch (_error) {}
+      if (initialGameId) state.activeTab = 'games';
       switchTab(state.activeTab);
       setAnalyticsSubtab(state.analyticsSubtab);
       await loadSettings();
-      await refreshDialogsView();
+      if (initialGameId) {
+        await loadGames();
+        var initialGame = normalizeArray(state.games).find(function (game) { return String(game && game.id || '') === initialGameId; }) || { id: initialGameId, name: 'Игра ' + initialGameId };
+        await openGameDetails(initialGame);
+      } else if (state.activeTab === 'messages') {
+        await refreshDialogsView();
+      } else if (state.activeTab === 'games') {
+        await loadGames();
+      } else if (state.activeTab === 'tournaments') {
+        await loadTournaments();
+      }
       syncResponsiveChatLayout();
       pollTimer = window.setInterval(function () {
         if (state.activeTab === 'messages') {
@@ -27823,6 +36537,9 @@
       }
       if (playerRatingsSearchTimer) {
         window.clearTimeout(playerRatingsSearchTimer);
+      }
+      if (gamesSearchTimer) {
+        window.clearTimeout(gamesSearchTimer);
       }
       if (playerRatingsSearchAbort) {
         playerRatingsSearchAbort.abort();

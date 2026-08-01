@@ -1,0 +1,49 @@
+# Local ЦУП runtime backed by the production MongoDB data.
+# It intentionally starts only the API: no local Node-RED worker can consume
+# or deliver messages, and the service is reachable only from this Mac.
+services:
+  phab-api-local:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: phab-api-local
+    env_file:
+      - .env.local.production
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      HOST: 0.0.0.0
+      TRUST_PROXY: "false"
+      PHAB_PUBLIC_BASE_URL: http://127.0.0.1:3001
+      # Local-only UI session. The panel sends the local SUPER_ADMIN context
+      # over loopback; no production admin account or auth secret is copied.
+      ADMIN_AUTH_ENABLED: "false"
+      ADMIN_AUTH_REQUIRE_STAFF_TOKEN: "false"
+      MONGODB_DB: dialog
+      GAMES_SOURCE: mongo
+      GAMES_MONGODB_DB: games
+      SUPPORT_MONGODB_DB: dialog
+      SUPPORT_WEB_MONGODB_DB: games
+      SUPPORT_MAX_MONGODB_DB: support_max
+      PLAYER_RATING_ADMIN_ENABLED: "true"
+      PADLHUB_NOTIFICATION_API_BASE_URL: http://127.0.0.1:3000
+      PADLHUB_NOTIFICATION_TENANT_KEY: local-padel
+      # Prevent this local runtime from making direct Telegram/Web Push calls.
+      TELEGRAM_DELIVERY_MODE: outbox
+      TELEGRAM_BOT_TOKEN: ""
+      WEB_PUSH_ENABLED: "false"
+    ports:
+      - "127.0.0.1:3001:3000"
+    restart: "no"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s

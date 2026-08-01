@@ -21,9 +21,13 @@ export interface AdminUserConfig {
   password: string;
   title?: string;
   maxPublicUrl?: string;
-  roles: Role[];
+  /** Legacy built-in role identifiers, retained for environment bootstrap. */
+  roles?: Role[];
+  /** Persisted role identifiers. Custom roles are supported alongside built-in roles. */
+  roleIds?: string[];
   stationIds: string[];
   connectorRoutes?: string[];
+  active?: boolean;
 }
 
 export interface AdminUserRecord {
@@ -33,8 +37,10 @@ export interface AdminUserRecord {
   title?: string;
   maxPublicUrl?: string;
   roles: Role[];
+  roleIds: string[];
   stationIds: string[];
   connectorRoutes: string[];
+  active: boolean;
 }
 
 export interface AdminUserSummary {
@@ -43,6 +49,36 @@ export interface AdminUserSummary {
   title?: string;
   maxPublicUrl?: string;
   roles: Role[];
+  roleIds: string[];
   stationIds: string[];
   connectorRoutes: string[];
+  active: boolean;
+}
+
+export interface AdminRoleDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  permissions: string[];
+  stationIds: string[];
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminAuditActor {
+  id: string;
+  login?: string;
+  title?: string;
+}
+
+export interface AdminAuditEntry {
+  id: string;
+  at: string;
+  action: string;
+  actor?: AdminAuditActor;
+  targetType: 'ADMIN_USER' | 'ROLE' | 'AUTH' | 'RESOURCE';
+  targetId?: string;
+  targetLabel?: string;
+  metadata?: Record<string, string | number | boolean | null>;
 }

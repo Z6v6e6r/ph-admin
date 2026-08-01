@@ -1,5 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { GamesService } from '../src/games/games.service';
+import { GameStatus } from '../src/games/games.types';
 import { Role } from '../src/common/rbac/role.enum';
 import { RequestUser } from '../src/common/rbac/request-user.interface';
 
@@ -14,7 +15,9 @@ function createAdminUser(): RequestUser {
   };
 }
 
-function createServiceWithDoc(initialDoc: MutableGameDoc): {
+function createServiceWithDoc(
+  initialDoc: MutableGameDoc
+): {
   service: GamesService;
   getDoc: () => MutableGameDoc;
 } {
@@ -268,10 +271,10 @@ async function testHideGameFromPublicListPreservesGameLifecycle() {
   );
 }
 
-async function testArchiveGameCommunityPublicationsPreservesGameLifecycle() {
+async function testArchiveLegacyCommunityPublicationsPreservesGameLifecycle() {
   const initialDoc: MutableGameDoc = {
-    _id: 'mongo-game-4',
-    id: 'game-4',
+    _id: 'mongo-game-legacy',
+    id: 'game-legacy',
     status: 'PAID',
     archived: false,
     settings: {
@@ -279,10 +282,10 @@ async function testArchiveGameCommunityPublicationsPreservesGameLifecycle() {
     },
     payment: {
       paid: true,
-      paymentRef: 'pay-game-4'
+      paymentRef: 'pay-game-legacy'
     },
     metadata: {
-      vivaExerciseId: 'viva-game-4',
+      vivaExerciseId: 'viva-game-legacy',
       communityAutoPublish: {
         'community-1': { feedItemId: 'feed-1' },
         'community-2': 'feed-2'
@@ -293,6 +296,7 @@ async function testArchiveGameCommunityPublicationsPreservesGameLifecycle() {
       existingValue: 'keep-me'
     }
   };
+
   const { service, getDoc } = createServiceWithDoc(initialDoc);
   let receivedFilter: Record<string, unknown> | undefined;
   let receivedUpdate: Record<string, unknown> | undefined;
@@ -306,30 +310,139 @@ async function testArchiveGameCommunityPublicationsPreservesGameLifecycle() {
   (service as unknown as { getCommunityFeedCollection: () => Promise<typeof feedCollection> }).getCommunityFeedCollection =
     async () => feedCollection;
 
-  const updated = await service.archiveGameCommunityPublications('game-4', createAdminUser());
+  const updated = await service.archiveGameCommunityPublications(
+    'game-legacy',
+    createAdminUser()
+  );
   const saved = getDoc();
   const metadata = saved.metadata as Record<string, unknown>;
+  const config = metadata.communityAutoPublish as Record<string, unknown>;
+  const devConfig = metadata.communityAutoPublishDev as Record<string, unknown>;
 
   assert.equal((receivedUpdate?.$set as Record<string, unknown>).archived, true);
   assert.equal((receivedUpdate?.$set as Record<string, unknown>).status, 'ARCHIVED');
   assert.equal(Array.isArray(receivedFilter?.$or), true);
   assert.equal(JSON.stringify(receivedFilter).includes('feed-1'), true);
-  assert.equal(JSON.stringify(receivedFilter).includes('viva-game-4'), true);
-  assert.equal(Object.prototype.hasOwnProperty.call(metadata, 'communityAutoPublish'), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(metadata, 'communityAutoPublishDev'), false);
+  assert.equal(JSON.stringify(receivedFilter).includes('viva-game-legacy'), true);
+  assert.equal(config.enabled, false);
+  assert.equal(devConfig.enabled, false);
   assert.equal(metadata.lastManualCommunityPublicationArchiveCount, 3);
-  assert.equal(metadata.lastManualCommunityPublicationArchiveReason, 'ADMIN_ARCHIVE_COMMUNITY_PUBLICATIONS');
+  assert.equal(
+    metadata.lastManualCommunityPublicationArchiveReason,
+    'ADMIN_ARCHIVE_COMMUNITY_PUBLICATIONS'
+  );
   assert.equal(saved.status, 'PAID');
   assert.equal(saved.archived, false);
   assert.equal(metadata.existingValue, 'keep-me');
-  assert.equal(updated.id, 'game-4');
+  assert.equal(updated.id, 'game-legacy');
+}
+
+async function testHideGameFromStationCommunityArchivesExactPosts() {
+  const initialDoc: MutableGameDoc = {
+    _id: 'mongo-game-4',
+    id: 'game-4',
+    archived: false,
+    booking: {
+      studioName: 'Дворотека',
+      roomName: 'Корт 4',
+      bookingIds: ['booking-4']
+    },
+    payment: {
+      paid: true,
+      paymentRef: 'pay-game-4'
+    },
+    metadata: {
+      communityAutoPublish: {
+        enabled: true,
+        posts: {
+          'community-1': 'post-1'
+        },
+        communities: [
+          {
+            communityId: 'community-1',
+            postId: 'post-1',
+            status: 'PUBLISHED'
+          }
+        ]
+      }
+    }
+  };
+  const { service, getDoc } = createServiceWithDoc(initialDoc);
+  let receivedFilter: Record<string, unknown> | undefined;
+  let receivedUpdate: Record<string, unknown> | undefined;
+  const feedCollection = {
+    async updateMany(filter: Record<string, unknown>, update: Record<string, unknown>) {
+      receivedFilter = filter;
+      receivedUpdate = update;
+      return { modifiedCount: 1 };
+    }
+  };
+  (service as unknown as { getCommunityFeedCollection: () => Promise<typeof feedCollection> }).getCommunityFeedCollection =
+    async () => feedCollection;
+
+  const updated = await service.archiveGameCommunityPublications('game-4', createAdminUser());
+  const saved = getDoc();
+  const metadata = saved.metadata as Record<string, unknown>;
+  const config = metadata.communityAutoPublish as Record<string, unknown>;
+  const communities = config.communities as Array<Record<string, unknown>>;
+
+  assert.equal((receivedUpdate?.$set as Record<string, unknown>).archived, true);
+  assert.equal((receivedUpdate?.$set as Record<string, unknown>).status, 'ARCHIVED');
+  assert.equal(JSON.stringify(receivedFilter).includes('post-1'), true);
+  assert.equal(JSON.stringify(receivedFilter).includes('game-4'), true);
+  assert.equal(config.enabled, false);
+  assert.deepEqual(config.posts, {});
+  assert.equal(communities[0]?.status, 'ARCHIVED');
+  assert.equal(metadata.lastManualCommunityHideReason, 'ADMIN_HIDE_FROM_STATION_COMMUNITY');
+  assert.equal(metadata.lastManualCommunityPublicationArchiveCount, 1);
+  assert.equal(saved.archived, false);
+  assert.deepEqual(saved.booking, initialDoc.booking);
+  assert.deepEqual(saved.payment, initialDoc.payment);
+  assert.equal(updated.communityPublished, false);
+}
+
+async function testHideGameFromPlayerCabinetsPreservesBookingAndPayment() {
+  const initialDoc: MutableGameDoc = {
+    _id: 'mongo-game-5',
+    id: 'game-5',
+    status: 'PAID',
+    archived: false,
+    booking: {
+      studioName: 'Дворотека',
+      roomName: 'Корт 5',
+      bookingIds: ['booking-5']
+    },
+    payment: {
+      paid: true,
+      paymentRef: 'pay-game-5'
+    },
+    metadata: {
+      existingValue: 'keep-me'
+    }
+  };
+
+  const { service, getDoc } = createServiceWithDoc(initialDoc);
+  const updated = await service.hideGameFromPlayerCabinets('game-5', createAdminUser());
+  const saved = getDoc();
+  const metadata = saved.metadata as Record<string, unknown>;
+
+  assert.equal(saved.archived, true);
+  assert.equal(saved.status, 'PAID');
+  assert.deepEqual(saved.booking, initialDoc.booking);
+  assert.deepEqual(saved.payment, initialDoc.payment);
+  assert.equal(metadata.existingValue, 'keep-me');
+  assert.equal(metadata.lastManualPlayerCabinetHideReason, 'ADMIN_HIDE_FROM_PLAYER_CABINETS');
+  assert.equal(updated.archived, true);
+  assert.equal(updated.status, GameStatus.ARCHIVED);
 }
 
 async function main() {
   await testRemovePlayerFromPublication();
   await testUpdateMetadataSynchronizesPhoneMirrors();
   await testHideGameFromPublicListPreservesGameLifecycle();
-  await testArchiveGameCommunityPublicationsPreservesGameLifecycle();
+  await testArchiveLegacyCommunityPublicationsPreservesGameLifecycle();
+  await testHideGameFromStationCommunityArchivesExactPosts();
+  await testHideGameFromPlayerCabinetsPreservesBookingAndPayment();
   console.log('Games publication mutations test passed');
 }
 

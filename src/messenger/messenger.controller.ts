@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { Permissions } from '../common/rbac/permissions.decorator';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import {
@@ -115,6 +116,7 @@ export class MessengerController {
   ) {}
 
   @Get('threads')
+  @Permissions('dialogs:read')
   listThreads(
     @CurrentUser() user?: RequestUser,
     @Query() query: ListThreadsDto = {}
@@ -126,6 +128,7 @@ export class MessengerController {
   }
 
   @Get('connectors')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -142,6 +145,7 @@ export class MessengerController {
   }
 
   @Get('connectors/:connector/stations')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -161,6 +165,7 @@ export class MessengerController {
   }
 
   @Get('connectors/:connector/stations/:stationId/dialogs')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -181,6 +186,7 @@ export class MessengerController {
   }
 
   @Get('dialogs')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -200,6 +206,7 @@ export class MessengerController {
   }
 
   @Get('dialogs/updates')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -242,6 +249,7 @@ export class MessengerController {
   }
 
   @Get('viva/client-cabinet')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -450,6 +458,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId')
+  @Permissions('dialogs:read')
   async getThread(
     @Param('threadId') threadId: string,
     @CurrentUser() user?: RequestUser
@@ -461,6 +470,7 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId')
+  @Permissions('dialogs:read')
   async getDialog(
     @Param('dialogId') dialogId: string,
     @CurrentUser() user?: RequestUser
@@ -472,6 +482,7 @@ export class MessengerController {
   }
 
   @Post('threads')
+  @Permissions('dialogs:write')
   createThread(
     @Body() dto: CreateThreadDto,
     @CurrentUser() user?: RequestUser
@@ -483,6 +494,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/messages')
+  @Permissions('dialogs:read')
   async listMessages(
     @Param('threadId') threadId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
@@ -501,6 +513,7 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId/messages')
+  @Permissions('dialogs:read')
   async listDialogMessages(
     @Param('dialogId') dialogId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
@@ -519,6 +532,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/messages/updates')
+  @Permissions('dialogs:read')
   async listThreadMessageUpdates(
     @Param('threadId') threadId: string,
     @Query('updatedSince') updatedSince: string | undefined,
@@ -536,6 +550,7 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId/messages/updates')
+  @Permissions('dialogs:read')
   async listDialogMessageUpdates(
     @Param('dialogId') dialogId: string,
     @Query('updatedSince') updatedSince: string | undefined,
@@ -553,6 +568,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/service-messages')
+  @Permissions('dialogs:read')
   async listThreadServiceMessages(
     @Param('threadId') threadId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
@@ -566,6 +582,7 @@ export class MessengerController {
   }
 
   @Get('dialogs/:dialogId/service-messages')
+  @Permissions('dialogs:read')
   async listDialogServiceMessages(
     @Param('dialogId') dialogId: string,
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number | undefined,
@@ -579,6 +596,7 @@ export class MessengerController {
   }
 
   @Post('threads/:threadId/messages')
+  @Permissions('dialogs:write')
   sendMessage(
     @Param('threadId') threadId: string,
     @Body() dto: CreateMessageDto,
@@ -591,6 +609,7 @@ export class MessengerController {
   }
 
   @Post('dialogs/:dialogId/messages')
+  @Permissions('dialogs:write')
   sendDialogMessage(
     @Param('dialogId') dialogId: string,
     @Body() dto: CreateMessageDto,
@@ -603,6 +622,7 @@ export class MessengerController {
   }
 
   @Patch('threads/:threadId/resolution')
+  @Permissions('dialogs:write')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
   setThreadResolution(
     @Param('threadId') threadId: string,
@@ -619,6 +639,7 @@ export class MessengerController {
   }
 
   @Patch('dialogs/:dialogId/resolution')
+  @Permissions('dialogs:write')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
   setDialogResolution(
     @Param('dialogId') dialogId: string,
@@ -1353,6 +1374,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/response-metrics')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1372,6 +1394,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/ai-insight')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1391,6 +1414,7 @@ export class MessengerController {
   }
 
   @Post('threads/:threadId/ai-analyze')
+  @Permissions('dialogs:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1410,6 +1434,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/ai-suggestions')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1429,6 +1454,7 @@ export class MessengerController {
   }
 
   @Post('threads/:threadId/ai-suggest')
+  @Permissions('dialogs:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1448,6 +1474,7 @@ export class MessengerController {
   }
 
   @Get('threads/:threadId/ai-mode')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1467,6 +1494,7 @@ export class MessengerController {
   }
 
   @Patch('threads/:threadId/ai-mode')
+  @Permissions('dialogs:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -1487,6 +1515,7 @@ export class MessengerController {
   }
 
   @Patch('threads/:threadId/close')
+  @Permissions('dialogs:write')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
   closeThread(
     @Param('threadId') threadId: string,

@@ -1,6 +1,7 @@
 export enum GameStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
+  CANCELLED = 'CANCELLED',
   ARCHIVED = 'ARCHIVED',
   UNKNOWN = 'UNKNOWN'
 }
@@ -8,6 +9,10 @@ export enum GameStatus {
 export interface GameParticipantDetails {
   name: string;
   phone?: string;
+  rating?: string | number;
+  status?: string;
+  role?: string;
+  photo?: string;
 }
 
 export interface Game {
@@ -21,6 +26,9 @@ export interface Game {
   createdAt?: string;
   updatedAt?: string;
   organizerName?: string;
+  organizerPhone?: string;
+  organizerId?: string;
+  organizerRating?: string | number;
   participantNames?: string[];
   participantDetails?: GameParticipantDetails[];
   gameDate?: string;
@@ -33,6 +41,21 @@ export interface Game {
   resultLines?: string[];
   ratingDelta?: string;
   ratingDeltaLines?: string[];
+  maxPlayers?: number;
+  waitlistEnabled?: boolean;
+  archived?: boolean;
+  isPrivate?: boolean;
+  ratingGame?: boolean;
+  minRating?: string | number;
+  maxRating?: string | number;
+  payMode?: string;
+  inviteUrl?: string;
+  communityPublicationEnabled?: boolean;
+  communityPublished?: boolean;
+  chatAvailable?: boolean;
+  paymentPaid?: boolean;
+  paymentAmount?: number;
+  paymentMethod?: string;
   details?: Record<string, unknown>;
 }
 
@@ -76,9 +99,19 @@ export interface GameEventListResult {
 
 export type GameListSortField = 'createdAt' | 'gameDate' | 'organizer';
 export type GameListSortDirection = 'asc' | 'desc';
+export type GameListLifecycle = 'active' | 'cancelled' | 'all';
+export type GameListQuickFilter = 'today' | 'upcoming' | 'past' | 'noResult' | 'cancelled';
+export type GameListPublication = 'public' | 'link' | 'community' | 'hidden' | 'unpublished';
 
 export interface GameListFilters {
   phone?: string;
+  query?: string;
+  date?: string;
+  station?: string;
+  status?: string;
+  publication?: GameListPublication;
+  quickFilter?: GameListQuickFilter;
+  lifecycle?: GameListLifecycle;
   page?: number;
   pageSize?: number;
   sortField?: GameListSortField;

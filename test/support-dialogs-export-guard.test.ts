@@ -151,7 +151,7 @@ function createUser(): RequestUser {
   return {
     id: 'support-1',
     roles: [Role.SUPPORT],
-    stationIds: ['station-1'],
+    stationIds: [],
     connectorRoutes: [SupportConnectorRoute.LK_WEB_MESSENGER]
   };
 }

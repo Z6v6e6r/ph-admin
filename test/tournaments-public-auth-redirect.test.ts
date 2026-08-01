@@ -126,7 +126,8 @@ async function main(): Promise<void> {
     {
       ensureAuthorizedClient: (_request: Request, _response: Response) =>
         createClient(currentFlowCode !== 'AUTH_REQUIRED'),
-      requiresRealAuth: () => true
+      requiresRealAuth: () => true,
+      resolveExternalAuthorizationHeader: () => undefined
     } as never
   );
 

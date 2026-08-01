@@ -30,6 +30,9 @@ export interface DialogSettings {
 
 export interface ChatThread {
   id: string;
+  archived?: boolean;
+  deletedAt?: string;
+  deletedReason?: string;
   connector: ConnectorRoute;
   stationId: string;
   stationName?: string;

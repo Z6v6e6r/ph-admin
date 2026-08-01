@@ -11,6 +11,7 @@ import {
 import { randomUUID } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
+import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import { QuickRepliesService } from '../quick-replies/quick-replies.service';
 import {
   QuickReplyMode,
@@ -4014,17 +4015,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (this.getAccessibleDialogConnectors(dialog, user).length === 0) {
       return false;
     }
-    if (
-      user.roles.includes(Role.SUPER_ADMIN) ||
-      user.roles.includes(Role.SUPPORT) ||
-      user.stationIds.length === 0
-    ) {
+    if (!this.hasDialogPermission(user, 'dialogs:write')) {
+      return false;
+    }
+    const stationScope = getStationScopeForPermission(user, 'dialogs:write');
+    if (stationScope === null) {
       return true;
     }
     if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
-      return true;
+      return false;
     }
-    if (user.stationIds.includes(dialog.stationId)) {
+    if (stationScope.includes(dialog.stationId)) {
       return true;
     }
 
@@ -4032,7 +4033,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       dialog.writeStationIds.length > 0
         ? this.mergeStationAccessIds([], dialog.writeStationIds)
         : this.resolveDialogWriteStationIds(dialog);
-    return user.stationIds.some((stationId) => {
+    return stationScope.some((stationId) => {
       if (writeStationIds.includes(stationId)) {
         return true;
       }
@@ -4248,25 +4249,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (this.getAccessibleDialogConnectors(dialog, user).length === 0) {
       return false;
     }
-    if (!this.isStaff(user)) {
+    if (!this.isStaff(user) || !this.hasDialogPermission(user, 'dialogs:read')) {
       return false;
     }
-    if (user.roles.includes(Role.SUPER_ADMIN)) {
+    const stationScope = getStationScopeForPermission(user, 'dialogs:read');
+    if (stationScope === null) {
       return true;
     }
     if (dialog.stationId === SUPPORT_UNASSIGNED_STATION_ID) {
-      return user.roles.some((role) =>
-        [Role.SUPPORT, Role.MANAGER, Role.STATION_ADMIN].includes(role)
-      );
+      return false;
     }
-    if (user.stationIds.length === 0) {
-      return true;
-    }
-    if (user.stationIds.includes(dialog.stationId)) {
+    if (stationScope.includes(dialog.stationId)) {
       return true;
     }
     const accessStationIds = this.getDialogAccessStationIds(dialog);
-    return user.stationIds.some((stationId) => {
+    return stationScope.some((stationId) => {
       if (accessStationIds.includes(stationId)) {
         return true;
       }
@@ -4296,7 +4293,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private isStaff(user: RequestUser): boolean {
-    return user.roles.some((role) => STAFF_ROLES.includes(role));
+    return (
+      user.roles.some((role) => STAFF_ROLES.includes(role)) ||
+      hasAdminPermission(user.permissions, 'dialogs:read') ||
+      hasAdminPermission(user.permissions, 'dialogs:write')
+    );
+  }
+
+  private hasDialogPermission(user: RequestUser, permission: 'dialogs:read' | 'dialogs:write'): boolean {
+    if (hasAdminPermission(user.permissions, permission)) {
+      return true;
+    }
+    return permission === 'dialogs:read'
+      ? user.roles.some((role) => STAFF_ROLES.includes(role))
+      : user.roles.some((role) =>
+          [Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER].includes(role)
+        );
   }
 
   private getUserConnectorRoutes(user?: RequestUser): string[] {

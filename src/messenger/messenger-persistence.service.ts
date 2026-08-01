@@ -107,7 +107,9 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
       aiInsights,
       aiSuggestions
     ] = await Promise.all([
-      this.threads().find({}, { projection: { _id: 0 } }).toArray(),
+      this.threads()
+        .find({ archived: { $ne: true } }, { projection: { _id: 0 } })
+        .toArray(),
       this.messages().find({}, { projection: { _id: 0 } }).toArray(),
       this.stations().find({}, { projection: { _id: 0 } }).toArray(),
       this.connectors().find({}, { projection: { _id: 0 } }).toArray(),

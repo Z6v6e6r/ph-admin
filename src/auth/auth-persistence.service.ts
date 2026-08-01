@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
-import { AdminUserRecord } from './auth.types';
+import { AdminAuditEntry, AdminRoleDefinition, AdminUserRecord } from './auth.types';
 
 @Injectable()
 export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
@@ -10,6 +10,10 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
   private db?: Db;
   private collectionName =
     String(process.env.ADMIN_AUTH_MONGODB_COLLECTION ?? '').trim() || 'admin_users';
+  private rolesCollectionName =
+    String(process.env.ADMIN_AUTH_ROLES_MONGODB_COLLECTION ?? '').trim() || 'admin_roles';
+  private auditCollectionName =
+    String(process.env.ADMIN_AUTH_AUDIT_MONGODB_COLLECTION ?? '').trim() || 'admin_audit_log';
 
   async onModuleInit(): Promise<void> {
     const uri = String(process.env.MONGODB_URI ?? '').trim();
@@ -77,8 +81,93 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  async findUserById(id: string): Promise<AdminUserRecord | null> {
+    if (!this.db) {
+      return null;
+    }
+    return this.users().findOne({ id }, { projection: { _id: 0 } });
+  }
+
+  async upsertUser(user: AdminUserRecord): Promise<void> {
+    await this.users().updateOne({ id: user.id }, { $set: user }, { upsert: true });
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const result = await this.users().deleteOne({ id });
+    return result.deletedCount === 1;
+  }
+
+  async loadRoles(): Promise<AdminRoleDefinition[]> {
+    if (!this.db) {
+      return [];
+    }
+    return this.roles().find({}, { projection: { _id: 0 } }).toArray();
+  }
+
+  async seedRoles(roles: AdminRoleDefinition[]): Promise<void> {
+    if (!this.db || roles.length === 0) {
+      return;
+    }
+    await this.roles().bulkWrite(
+      roles.map((role) => ({
+        updateOne: {
+          filter: { id: role.id },
+          update: { $setOnInsert: role },
+          upsert: true
+        }
+      }))
+    );
+  }
+
+  async upsertRole(role: AdminRoleDefinition): Promise<void> {
+    await this.roles().updateOne({ id: role.id }, { $set: role }, { upsert: true });
+  }
+
+  async deleteRole(id: string): Promise<boolean> {
+    const result = await this.roles().deleteOne({ id });
+    return result.deletedCount === 1;
+  }
+
+  async appendAudit(entry: AdminAuditEntry): Promise<void> {
+    if (!this.db) {
+      return;
+    }
+    await this.audit().insertOne(entry);
+  }
+
+  async listAudit(filters: {
+    actorId?: string;
+    targetId?: string;
+    limit?: number;
+  }): Promise<AdminAuditEntry[]> {
+    if (!this.db) {
+      return [];
+    }
+    const query: Record<string, unknown> = {};
+    if (filters.actorId) {
+      query['actor.id'] = filters.actorId;
+    }
+    if (filters.targetId) {
+      query.targetId = filters.targetId;
+    }
+    const limit = Math.min(Math.max(Math.floor(filters.limit ?? 100), 1), 500);
+    return this.audit()
+      .find(query, { projection: { _id: 0 } })
+      .sort({ at: -1, _id: -1 })
+      .limit(limit)
+      .toArray();
+  }
+
   private users(): Collection<AdminUserRecord> {
     return this.requireDb().collection<AdminUserRecord>(this.collectionName);
+  }
+
+  private roles(): Collection<AdminRoleDefinition> {
+    return this.requireDb().collection<AdminRoleDefinition>(this.rolesCollectionName);
+  }
+
+  private audit(): Collection<AdminAuditEntry> {
+    return this.requireDb().collection<AdminAuditEntry>(this.auditCollectionName);
   }
 
   private requireDb(): Db {
@@ -91,7 +180,11 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
       this.users().createIndex({ id: 1 }, { unique: true }),
-      this.users().createIndex({ login: 1 }, { unique: true })
+      this.users().createIndex({ login: 1 }, { unique: true }),
+      this.roles().createIndex({ id: 1 }, { unique: true }),
+      this.audit().createIndex({ at: -1 }),
+      this.audit().createIndex({ 'actor.id': 1, at: -1 }),
+      this.audit().createIndex({ targetId: 1, at: -1 })
     ]);
   }
 

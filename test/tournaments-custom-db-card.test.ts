@@ -220,7 +220,11 @@ function createService(options: {
     {
       isEnabled: () => true,
       findCustomTournamentById: async (id: string) =>
-        customById && customById.id === id ? customById : null,
+        customById && customById.id === id
+          ? customById
+          : customBySlug && customBySlug.id === id
+            ? customBySlug
+            : null,
       findCustomTournamentBySlug: async (slug: string) =>
         customBySlug && customBySlug.slug === slug ? customBySlug : null,
       updateCustomTournament: async (_id: string, mutation: { participants?: unknown; waitlist?: unknown }) => {

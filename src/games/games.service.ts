@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Filter, MongoClient, ObjectId } from 'mongodb';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { getStationScopeForPermission } from '../common/rbac/permissions';
 import { Role } from '../common/rbac/role.enum';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
 import {
@@ -27,6 +28,9 @@ import {
   GameEventListFilters,
   GameEventListResult,
   GameListFilters,
+  GameListLifecycle,
+  GameListPublication,
+  GameListQuickFilter,
   GameListResult,
   GameListSortDirection,
   GameListSortField,
@@ -48,6 +52,10 @@ interface MongoGameParticipant {
   rating_change?: unknown;
   ratingBefore?: unknown;
   ratingAfter?: unknown;
+  status?: unknown;
+  source?: unknown;
+  role?: unknown;
+  photo?: unknown;
 }
 
 interface MongoGameDoc {
@@ -65,6 +73,7 @@ interface MongoGameDoc {
     name?: unknown;
     phone?: unknown;
     phoneNorm?: unknown;
+    rating?: unknown;
   };
   participants?: MongoGameParticipant[];
   participantPhones?: unknown;
@@ -73,6 +82,8 @@ interface MongoGameDoc {
   invitedPhones?: unknown;
   waitlistPhones?: unknown;
   settings?: Record<string, unknown>;
+  invite?: Record<string, unknown>;
+  chatUrl?: unknown;
   metadata?: Record<string, unknown>;
   result?: unknown;
   score?: unknown;
@@ -86,6 +97,7 @@ interface MongoGameDoc {
     paid?: unknown;
     paidAt?: unknown;
     status?: unknown;
+    paymentMethod?: unknown;
   };
   booking?: {
     [key: string]: unknown;
@@ -104,11 +116,13 @@ interface MongoCommunityFeedDoc {
   id?: unknown;
   feedItemId?: unknown;
   postId?: unknown;
+  uuid?: unknown;
   gameId?: unknown;
   exerciseId?: unknown;
   archived?: unknown;
   status?: unknown;
   details?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 interface MongoGameChatSenderDoc {
@@ -218,19 +232,23 @@ export class GamesService implements OnModuleDestroy {
 
   async findAll(filters?: GameListFilters, user?: RequestUser): Promise<GameListResult> {
     const normalizedFilters = this.normalizeGameListPagination(filters);
-    if (this.sourceMode === 'mongo' && !this.isRestrictedStationAdmin(user)) {
+    if (this.sourceMode === 'mongo' && !this.hasStationScope(user)) {
       return this.findGamePageFromMongo(normalizedFilters, user);
     }
 
     const games =
       this.sourceMode === 'mongo'
-        ? await this.findAllFromMongo()
+        ? await this.findAllFromMongo(normalizedFilters.lifecycle)
         : await this.lkPadelHubClient.listGames();
 
     return this.paginateGamesInMemory(this.filterGamesForUser(games, user), normalizedFilters);
   }
 
-  async findById(id: string, user?: RequestUser): Promise<Game> {
+  async findById(
+    id: string,
+    user?: RequestUser,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): Promise<Game> {
     let game: Game | null = null;
     if (this.sourceMode === 'mongo') {
       game = await this.findByIdFromMongo(id);
@@ -244,7 +262,7 @@ export class GamesService implements OnModuleDestroy {
       }
     }
 
-    this.ensureGameVisibleForUser(game, user);
+    this.ensureGameVisibleForUser(game, user, permission);
     return this.sanitizeGameForUser(game, user);
   }
 
@@ -252,7 +270,7 @@ export class GamesService implements OnModuleDestroy {
     filters?: GameAnalyticsFilters,
     user?: RequestUser
   ): Promise<GameAnalyticsResult> {
-    this.ensureNonStationAdminGamePrivilege(user);
+    this.ensureNonStationAdminGamePrivilege(user, 'games:read');
     return this.findAnalyticsFromMongo(filters);
   }
 
@@ -260,12 +278,12 @@ export class GamesService implements OnModuleDestroy {
     filters?: GameEventListFilters,
     user?: RequestUser
   ): Promise<GameEventListResult> {
-    this.ensureNonStationAdminGamePrivilege(user);
+    this.ensureNonStationAdminGamePrivilege(user, 'games:read');
     return this.findEventsFromMongo(filters);
   }
 
   async findEventById(id: string, user?: RequestUser): Promise<GameEvent> {
-    this.ensureNonStationAdminGamePrivilege(user);
+    this.ensureNonStationAdminGamePrivilege(user, 'games:read');
     const event = await this.findEventByIdFromMongo(id);
     if (!event) {
       throw new NotFoundException(`Game event with id ${id} not found`);
@@ -273,7 +291,8 @@ export class GamesService implements OnModuleDestroy {
     return event;
   }
 
-  async deleteEvent(id: string): Promise<void> {
+  async deleteEvent(id: string, user?: RequestUser): Promise<void> {
+    this.ensureNonStationAdminGamePrivilege(user, 'games:write');
     const collection = await this.getMongoEventsCollection();
     const result = await collection.deleteOne(this.buildMongoEventIdFilter(id));
     if (!result.deletedCount) {
@@ -297,7 +316,7 @@ export class GamesService implements OnModuleDestroy {
     text: string,
     user: RequestUser
   ): Promise<GameChatMessage> {
-    const game = await this.findById(id, user);
+    const game = await this.findById(id, user, 'games:write');
     const trimmed = text.trim();
     if (!trimmed) {
       throw new BadRequestException('Message text cannot be empty');
@@ -343,7 +362,6 @@ export class GamesService implements OnModuleDestroy {
     },
     user?: RequestUser
   ): Promise<Game> {
-    this.ensureNonStationAdminGamePrivilege(user);
     const matcher = this.buildPublicationPlayerMatcher(target);
     if (!matcher.phone && !matcher.name) {
       throw new BadRequestException('Player phone or name is required');
@@ -355,6 +373,7 @@ export class GamesService implements OnModuleDestroy {
     if (!existing) {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
 
     const nextMetadata = this.removePublicationPlayerFromMetadata(existing.metadata, matcher);
     let changed = nextMetadata.changed;
@@ -439,13 +458,13 @@ export class GamesService implements OnModuleDestroy {
   }
 
   async hideGameFromPublicList(id: string, user?: RequestUser): Promise<Game> {
-    this.ensureNonStationAdminGamePrivilege(user);
     const collection = await this.getMongoCollection();
     const filter = this.buildMongoGameIdFilter(id);
     const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
     if (!existing) {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
 
     const now = new Date();
     const at = now.toISOString();
@@ -475,17 +494,18 @@ export class GamesService implements OnModuleDestroy {
   }
 
   async archiveGameCommunityPublications(id: string, user?: RequestUser): Promise<Game> {
-    this.ensureNonStationAdminGamePrivilege(user);
+    this.ensureNonStationAdminGamePrivilege(user, 'games:write');
     const collection = await this.getMongoCollection();
     const filter = this.buildMongoGameIdFilter(id);
     const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
     if (!existing) {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
 
+    const metadata = this.toRecord(existing.metadata);
     const now = new Date();
     const at = now.toISOString();
-    const metadata = this.toRecord(existing.metadata);
     const actor = this.toGamePublicationActor(user);
     const feedCollection = await this.getCommunityFeedCollection();
     const archiveResult = await feedCollection.updateMany(
@@ -501,18 +521,79 @@ export class GamesService implements OnModuleDestroy {
         }
       }
     );
+    const hideCommunityConfig = (value: unknown): Record<string, unknown> => {
+      const config = this.toRecord(value);
+      const communities = Array.isArray(config.communities)
+        ? config.communities.map((item) => ({
+            ...this.toRecord(item),
+            status: 'ARCHIVED',
+            archivedAt: at
+          }))
+        : [];
+      return {
+        ...config,
+        enabled: false,
+        posts: {},
+        communities,
+        lastManualHideAt: at,
+        lastManualHideReason: 'ADMIN_HIDE_FROM_STATION_COMMUNITY',
+        ...(actor ? { lastManualHideBy: actor } : {})
+      };
+    };
 
-    const nextMetadata = { ...metadata };
-    delete nextMetadata.communityAutoPublish;
-    delete nextMetadata.communityAutoPublishDev;
     await collection.updateOne(filter, {
       $set: {
         metadata: {
-          ...nextMetadata,
+          ...metadata,
+          communityAutoPublish: hideCommunityConfig(metadata.communityAutoPublish),
+          ...(metadata.communityAutoPublishDev
+            ? { communityAutoPublishDev: hideCommunityConfig(metadata.communityAutoPublishDev) }
+            : {}),
+          lastManualCommunityHideAt: at,
+          lastManualCommunityHideReason: 'ADMIN_HIDE_FROM_STATION_COMMUNITY',
+          lastManualCommunityPublicationArchiveCount: archiveResult.modifiedCount ?? 0,
           lastManualCommunityPublicationArchiveAt: at,
           lastManualCommunityPublicationArchiveReason: 'ADMIN_ARCHIVE_COMMUNITY_PUBLICATIONS',
-          lastManualCommunityPublicationArchiveCount: archiveResult.modifiedCount ?? 0,
-          ...(actor ? { lastManualCommunityPublicationArchiveBy: actor } : {})
+          ...(actor
+            ? {
+                lastManualCommunityHideBy: actor,
+                lastManualCommunityPublicationArchiveBy: actor
+              }
+            : {})
+        },
+        updatedAt: at,
+        updatedTs: now.getTime()
+      }
+    });
+
+    const updated = await this.findByIdFromMongo(id);
+    if (!updated) {
+      throw new InternalServerErrorException('Failed to reload updated game');
+    }
+    return updated;
+  }
+
+  async hideGameFromPlayerCabinets(id: string, user?: RequestUser): Promise<Game> {
+    this.ensureNonStationAdminGamePrivilege(user, 'games:write');
+    const collection = await this.getMongoCollection();
+    const filter = this.buildMongoGameIdFilter(id);
+    const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${id} not found`);
+    }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
+
+    const now = new Date();
+    const at = now.toISOString();
+    const actor = this.toGamePublicationActor(user);
+    await collection.updateOne(filter, {
+      $set: {
+        archived: true,
+        metadata: {
+          ...this.toRecord(existing.metadata),
+          lastManualPlayerCabinetHideAt: at,
+          lastManualPlayerCabinetHideReason: 'ADMIN_HIDE_FROM_PLAYER_CABINETS',
+          ...(actor ? { lastManualPlayerCabinetHideBy: actor } : {})
         },
         updatedAt: at,
         updatedTs: now.getTime()
@@ -531,13 +612,13 @@ export class GamesService implements OnModuleDestroy {
     metadata: Record<string, unknown>,
     user?: RequestUser
   ): Promise<Game> {
-    this.ensureNonStationAdminGamePrivilege(user);
     const collection = await this.getMongoCollection();
     const filter = this.buildMongoGameIdFilter(id);
     const existing = (await collection.findOne(filter)) as MongoGameDoc | null;
     if (!existing) {
       throw new NotFoundException(`Game with id ${id} not found`);
     }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
 
     const now = new Date();
     const normalizedMetadata = this.normalizeForJson(metadata);
@@ -714,11 +795,11 @@ export class GamesService implements OnModuleDestroy {
     return 'lk';
   }
 
-  private async findAllFromMongo(): Promise<Game[]> {
+  private async findAllFromMongo(lifecycle?: GameListLifecycle): Promise<Game[]> {
     const collection = await this.getMongoCollection();
     const docs = (await collection
       .find(
-        { archived: { $ne: true } },
+        this.buildMongoLifecycleFilter(lifecycle),
         {
           projection: {
             id: 1,
@@ -731,6 +812,9 @@ export class GamesService implements OnModuleDestroy {
             organizer: 1,
             participants: 1,
             metadata: 1,
+            settings: 1,
+            invite: 1,
+            chatUrl: 1,
             result: 1,
             score: 1,
             matchResult: 1,
@@ -752,6 +836,13 @@ export class GamesService implements OnModuleDestroy {
   private async findGamePageFromMongo(
     filters: {
       phone?: string;
+      query?: string;
+      date?: string;
+      station?: string;
+      status?: string;
+      publication?: GameListPublication;
+      quickFilter?: GameListQuickFilter;
+      lifecycle?: GameListLifecycle;
       page: number;
       pageSize: number;
       sortField: GameListSortField;
@@ -775,6 +866,9 @@ export class GamesService implements OnModuleDestroy {
           organizer: 1,
           participants: 1,
           metadata: 1,
+          settings: 1,
+          invite: 1,
+          chatUrl: 1,
           result: 1,
           score: 1,
           matchResult: 1,
@@ -809,31 +903,261 @@ export class GamesService implements OnModuleDestroy {
     };
   }
 
-  private buildMongoGameFilter(filters: { phone?: string }): Filter<MongoGameDoc> {
+  private buildMongoGameFilter(filters: {
+    phone?: string;
+    query?: string;
+    date?: string;
+    station?: string;
+    status?: string;
+    publication?: GameListPublication;
+    quickFilter?: GameListQuickFilter;
+    lifecycle?: GameListLifecycle;
+  }): Filter<MongoGameDoc> {
     const phoneDigits = this.normalizePhoneSearch(filters.phone);
-    if (!phoneDigits) {
-      return {
-        archived: { $ne: true }
-      };
+    const clauses: Filter<MongoGameDoc>[] = [this.buildMongoLifecycleFilter(filters.lifecycle)];
+
+    if (filters.date) {
+      clauses.push({ 'booking.date': filters.date });
     }
 
-    const phonePattern = this.buildLoosePhoneRegex(phoneDigits);
+    if (filters.station) {
+      clauses.push({
+        $or: [
+          { 'booking.studioName': filters.station },
+          { 'booking.studioId': filters.station }
+        ]
+      } as Filter<MongoGameDoc>);
+    }
+
+    if (filters.query) {
+      const queryPattern = new RegExp(this.escapeRegex(filters.query), 'i');
+      clauses.push({
+        $or: [
+          { id: { $regex: queryPattern } },
+          { 'booking.studioName': { $regex: queryPattern } },
+          { 'booking.roomName': { $regex: queryPattern } },
+          { 'organizer.name': { $regex: queryPattern } },
+          { 'organizer.phone': { $regex: queryPattern } },
+          { 'participants.name': { $regex: queryPattern } },
+          { 'participants.phone': { $regex: queryPattern } }
+        ]
+      } as Filter<MongoGameDoc>);
+    }
+
+    if (filters.status) {
+      clauses.push({
+        status: { $regex: new RegExp(`^${this.escapeRegex(filters.status)}$`, 'i') }
+      } as Filter<MongoGameDoc>);
+    }
+
+    if (filters.publication) {
+      clauses.push(this.buildMongoPublicationFilter(filters.publication));
+    }
+
+    if (filters.quickFilter) {
+      clauses.push(this.buildMongoQuickFilter(filters.quickFilter));
+    }
+
+    if (phoneDigits) {
+      const phonePattern = this.buildLoosePhoneRegex(phoneDigits);
+      clauses.push({
+        $or: [
+          { 'participants.phone': { $regex: phonePattern } },
+          { 'participants.phoneNorm': { $regex: phonePattern } },
+          { 'organizer.phone': { $regex: phonePattern } },
+          { 'metadata.allRelatedPhones': { $regex: phonePattern } },
+          { 'metadata.participantPhones': { $regex: phonePattern } },
+          { 'metadata.invitedPhones': { $regex: phonePattern } },
+          { 'metadata.waitlistPhones': { $regex: phonePattern } }
+        ]
+      } as Filter<MongoGameDoc>);
+    }
+
+    return clauses.length === 1
+      ? clauses[0]
+      : ({ $and: clauses } as Filter<MongoGameDoc>);
+  }
+
+  private buildMongoLifecycleFilter(lifecycle?: GameListLifecycle): Filter<MongoGameDoc> {
+    const cancelledStatus = {
+      status: { $regex: /^CANCEL(?:L)?ED$/i }
+    } as Filter<MongoGameDoc>;
+
+    if (lifecycle === 'cancelled') {
+      return cancelledStatus;
+    }
+    if (lifecycle === 'active') {
+      return {
+        archived: { $ne: true },
+        $nor: [cancelledStatus]
+      } as Filter<MongoGameDoc>;
+    }
+    if (lifecycle === 'all') {
+      return {
+        $or: [
+          { archived: { $ne: true } },
+          cancelledStatus
+        ]
+      } as Filter<MongoGameDoc>;
+    }
+
+    // Legacy callers without lifecycle keep the previous list contract.
+    return { archived: { $ne: true } } as Filter<MongoGameDoc>;
+  }
+
+  private buildMongoPublicationFilter(publication: GameListPublication): Filter<MongoGameDoc> {
+    const publicSignal = { 'settings.isPrivate': false } as Filter<MongoGameDoc>;
+    const communitySignal = {
+      $and: [
+        { 'metadata.communityAutoPublish.enabled': { $ne: false } },
+        {
+          $or: [
+            {
+              $expr: {
+                $gt: [
+                  {
+                    $size: {
+                      $objectToArray: {
+                        $ifNull: ['$metadata.communityAutoPublish.posts', {}]
+                      }
+                    }
+                  },
+                  0
+                ]
+              }
+            },
+            {
+              'metadata.communityAutoPublish.communities': {
+                $elemMatch: { status: { $not: /^(ARCHIVED|HIDDEN|DELETED)$/i } }
+              }
+            }
+          ]
+        }
+      ]
+    } as unknown as Filter<MongoGameDoc>;
+    const inviteSignal = {
+      $and: [
+        { 'invite.inviteUrl': { $type: 'string' } },
+        { 'invite.inviteUrl': { $ne: '' } }
+      ]
+    } as unknown as Filter<MongoGameDoc>;
+    const hiddenSignal = { 'settings.isPrivate': true } as Filter<MongoGameDoc>;
+
+    if (publication === 'public') {
+      return publicSignal;
+    }
+    if (publication === 'community') {
+      return {
+        $and: [{ $nor: [publicSignal] }, communitySignal]
+      } as Filter<MongoGameDoc>;
+    }
+    if (publication === 'link') {
+      return {
+        $and: [{ $nor: [publicSignal, communitySignal] }, inviteSignal]
+      } as Filter<MongoGameDoc>;
+    }
+    if (publication === 'hidden') {
+      return {
+        $and: [{ $nor: [communitySignal, inviteSignal] }, hiddenSignal]
+      } as Filter<MongoGameDoc>;
+    }
     return {
-      archived: { $ne: true },
-      $or: [
-        { 'participants.phone': { $regex: phonePattern } },
-        { 'participants.phoneNorm': { $regex: phonePattern } },
-        { 'organizer.phone': { $regex: phonePattern } },
-        { 'metadata.allRelatedPhones': { $regex: phonePattern } },
-        { 'metadata.participantPhones': { $regex: phonePattern } },
-        { 'metadata.invitedPhones': { $regex: phonePattern } },
-        { 'metadata.waitlistPhones': { $regex: phonePattern } }
+      $nor: [publicSignal, communitySignal, inviteSignal, hiddenSignal]
+    } as Filter<MongoGameDoc>;
+  }
+
+  private buildMongoQuickFilter(quickFilter: GameListQuickFilter): Filter<MongoGameDoc> {
+    if (quickFilter === 'cancelled') {
+      return this.buildMongoLifecycleFilter('cancelled');
+    }
+
+    const now = new Date();
+    const nowTimestamp = now.getTime();
+    const pastCutoff = new Date(nowTimestamp - 90 * 60 * 1000);
+    const today = this.formatGamesDateKey(now);
+    const currentTime = this.formatGamesTimeKey(now);
+    const cancelled = this.buildMongoLifecycleFilter('cancelled');
+    const upcoming = {
+      $and: [
+        { $nor: [cancelled] },
+        {
+          $or: [
+            { 'booking.startTs': { $gt: nowTimestamp } },
+            { 'booking.timeFromIso': { $gt: now.toISOString() } },
+            { 'booking.date': { $gt: today } },
+            { 'booking.date': today, 'booking.timeFrom': { $gt: currentTime } }
+          ]
+        }
       ]
     } as Filter<MongoGameDoc>;
+    const past = {
+      $or: [
+        { 'booking.startTs': { $lt: pastCutoff.getTime() } },
+        { 'booking.timeFromIso': { $lt: pastCutoff.toISOString() } },
+        { 'booking.date': { $lt: today } },
+        { 'booking.date': today, 'booking.timeTo': { $lt: currentTime } }
+      ]
+    } as Filter<MongoGameDoc>;
+
+    if (quickFilter === 'today') {
+      return { 'booking.date': today } as Filter<MongoGameDoc>;
+    }
+    if (quickFilter === 'upcoming') {
+      return upcoming;
+    }
+    if (quickFilter === 'past') {
+      return past;
+    }
+    return {
+      $and: [
+        past,
+        {
+          $nor: [
+            { result: { $exists: true, $nin: [null, '', []] } },
+            { score: { $exists: true, $nin: [null, '', []] } },
+            { matchResult: { $exists: true, $nin: [null, '', []] } },
+            { gameResult: { $exists: true, $nin: [null, '', []] } }
+          ]
+        }
+      ]
+    } as unknown as Filter<MongoGameDoc>;
+  }
+
+  private formatGamesDateKey(value: Date): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  private formatGamesTimeKey(value: Date): string {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.hour}:${values.minute}`;
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private normalizeGameListPagination(filters?: GameListFilters): {
     phone?: string;
+    query?: string;
+    date?: string;
+    station?: string;
+    status?: string;
+    publication?: GameListPublication;
+    quickFilter?: GameListQuickFilter;
+    lifecycle?: GameListLifecycle;
     page: number;
     pageSize: number;
     sortField: GameListSortField;
@@ -854,9 +1178,53 @@ export class GamesService implements OnModuleDestroy {
     const sortDirection: GameListSortDirection =
       filters?.sortDirection === 'asc' ? 'asc' : 'desc';
     const phone = this.normalizePhoneSearch(filters?.phone) ?? undefined;
+    const queryCandidate = this.readString(filters?.query);
+    const query = queryCandidate ? queryCandidate.slice(0, 160) : undefined;
+    const dateCandidate = this.readString(filters?.date);
+    const date = dateCandidate && /^\d{4}-\d{2}-\d{2}$/.test(dateCandidate)
+      ? dateCandidate
+      : undefined;
+    const stationCandidate = this.readString(filters?.station);
+    const station = stationCandidate ? stationCandidate.slice(0, 160) : undefined;
+    const statusCandidate = this.readString(filters?.status);
+    const status = statusCandidate
+      ? statusCandidate.trim().toUpperCase().replace(/[\s-]+/g, '_').slice(0, 80)
+      : undefined;
+    const publicationCandidate = this.readString(filters?.publication);
+    const publication: GameListPublication | undefined =
+      publicationCandidate === 'public' ||
+      publicationCandidate === 'link' ||
+      publicationCandidate === 'community' ||
+      publicationCandidate === 'hidden' ||
+      publicationCandidate === 'unpublished'
+        ? publicationCandidate
+        : undefined;
+    const quickFilterCandidate = this.readString(filters?.quickFilter);
+    const quickFilter: GameListQuickFilter | undefined =
+      quickFilterCandidate === 'today' ||
+      quickFilterCandidate === 'upcoming' ||
+      quickFilterCandidate === 'past' ||
+      quickFilterCandidate === 'noResult' ||
+      quickFilterCandidate === 'cancelled'
+        ? quickFilterCandidate
+        : undefined;
+    const lifecycleCandidate = this.readString(filters?.lifecycle)?.toLowerCase();
+    const lifecycle: GameListLifecycle | undefined =
+      lifecycleCandidate === 'active' ||
+      lifecycleCandidate === 'cancelled' ||
+      lifecycleCandidate === 'all'
+        ? lifecycleCandidate
+        : undefined;
 
     return {
       phone,
+      query,
+      date,
+      station,
+      status,
+      publication,
+      quickFilter,
+      lifecycle,
       page,
       pageSize,
       sortField,
@@ -898,14 +1266,21 @@ export class GamesService implements OnModuleDestroy {
     games: Game[],
     filters: {
       phone?: string;
+      query?: string;
+      date?: string;
+      station?: string;
+      status?: string;
+      publication?: GameListPublication;
+      quickFilter?: GameListQuickFilter;
+      lifecycle?: GameListLifecycle;
       page: number;
       pageSize: number;
       sortField: GameListSortField;
       sortDirection: GameListSortDirection;
     }
   ): GameListResult {
-    const filteredByPhone = this.filterGamesByPhone(games, filters.phone);
-    const sorted = this.sortGamesInMemory(filteredByPhone, filters);
+    const filtered = this.filterGamesByListFilters(games, filters);
+    const sorted = this.sortGamesInMemory(filtered, filters);
     const total = sorted.length;
     const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
     const page = Math.min(filters.page, totalPages);
@@ -968,6 +1343,181 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return games.filter((game) => this.gameMatchesPhone(game, phone));
+  }
+
+  private filterGamesByListFilters(
+    games: Game[],
+    filters: {
+      phone?: string;
+      query?: string;
+      date?: string;
+      station?: string;
+      status?: string;
+      publication?: GameListPublication;
+      quickFilter?: GameListQuickFilter;
+      lifecycle?: GameListLifecycle;
+    }
+  ): Game[] {
+    return this.filterGamesByPhone(games, filters.phone).filter((game) => {
+      if (!this.gameMatchesLifecycle(game, filters.lifecycle)) {
+        return false;
+      }
+
+      if (filters.quickFilter && !this.gameMatchesQuickFilter(game, filters.quickFilter)) {
+        return false;
+      }
+
+      if (filters.query && !this.buildGameSearchHaystack(game).includes(filters.query.toLocaleLowerCase('ru-RU'))) {
+        return false;
+      }
+
+      if (filters.date && this.readString(game.gameDate) !== filters.date) {
+        return false;
+      }
+
+      if (filters.station) {
+        const stationCandidates = [game.stationName, this.toRecord(game.details).stationId]
+          .map((value) => this.readString(value))
+          .filter((value): value is string => Boolean(value));
+        if (!stationCandidates.some((value) => value === filters.station)) {
+          return false;
+        }
+      }
+
+      if (filters.status && this.normalizeGameStatus(game.rawStatus ?? game.status) !== filters.status) {
+        return false;
+      }
+
+      if (filters.publication && this.getGamePublicationValue(game) !== filters.publication) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  private gameMatchesLifecycle(game: Game, lifecycle?: GameListLifecycle): boolean {
+    if (!lifecycle) {
+      return true;
+    }
+
+    const normalizedRawStatus = (game.rawStatus ?? '').trim().toUpperCase();
+    const cancelled =
+      game.status === GameStatus.CANCELLED ||
+      normalizedRawStatus === 'CANCELLED' ||
+      normalizedRawStatus === 'CANCELED';
+    const manuallyArchived =
+      !cancelled && (game.archived === true || game.status === GameStatus.ARCHIVED);
+
+    if (lifecycle === 'cancelled') {
+      return cancelled;
+    }
+    if (lifecycle === 'active') {
+      return !cancelled && !manuallyArchived;
+    }
+    return cancelled || !manuallyArchived;
+  }
+
+  private gameMatchesQuickFilter(game: Game, quickFilter: GameListQuickFilter): boolean {
+    if (quickFilter === 'cancelled') {
+      return this.gameMatchesLifecycle(game, 'cancelled');
+    }
+
+    const start = this.resolveGameStartTimestamp(game);
+    const end = this.resolveGameEndTimestamp(game, start);
+    const now = Date.now();
+    if (quickFilter === 'today') {
+      return this.resolveGameDateKey(game, start) === this.formatGamesDateKey(new Date(now));
+    }
+    if (quickFilter === 'upcoming') {
+      return start !== null && start > now && !this.gameMatchesLifecycle(game, 'cancelled');
+    }
+    if (quickFilter === 'past') {
+      return end !== null && end < now;
+    }
+    return end !== null && end < now && !this.gameHasResult(game);
+  }
+
+  private resolveGameStartTimestamp(game: Game): number | null {
+    const startsAt = this.readString(game.startsAt);
+    if (startsAt) {
+      const parsed = Date.parse(startsAt);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    const date = this.readString(game.gameDate);
+    const time = this.readString(game.gameTime)?.split(/[-–—]/)[0]?.trim();
+    if (!date) {
+      return null;
+    }
+    const parsed = Date.parse(`${date}T${time || '00:00'}:00+03:00`);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private resolveGameEndTimestamp(game: Game, start: number | null): number | null {
+    const date = this.readString(game.gameDate);
+    const timeParts = this.readString(game.gameTime)?.split(/[-–—]/) ?? [];
+    const endTime = timeParts.length > 1 ? timeParts[1]?.trim() : undefined;
+    if (date && endTime) {
+      const parsed = Date.parse(`${date}T${endTime}:00+03:00`);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return start === null ? null : start + 90 * 60 * 1000;
+  }
+
+  private resolveGameDateKey(game: Game, start: number | null): string {
+    const date = this.readString(game.gameDate);
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return date;
+    }
+    return start === null ? '' : this.formatGamesDateKey(new Date(start));
+  }
+
+  private gameHasResult(game: Game): boolean {
+    return Boolean(this.readString(game.result)) ||
+      (Array.isArray(game.resultLines) && game.resultLines.some((line) => Boolean(this.readString(line))));
+  }
+
+  private buildGameSearchHaystack(game: Game): string {
+    const participantValues = (Array.isArray(game.participantDetails) ? game.participantDetails : [])
+      .flatMap((participant) => [participant?.name, participant?.phone]);
+    return [
+      game.id,
+      game.name,
+      game.stationName,
+      game.courtName,
+      game.organizerName,
+      game.organizerPhone,
+      ...participantValues
+    ]
+      .map((value) => this.readString(value))
+      .filter((value): value is string => Boolean(value))
+      .join(' ')
+      .toLocaleLowerCase('ru-RU');
+  }
+
+  private normalizeGameStatus(value: unknown): string {
+    return String(value ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  }
+
+  private getGamePublicationValue(game: Game): GameListPublication {
+    if (game.isPrivate === false) {
+      return 'public';
+    }
+    if (game.communityPublished === true) {
+      return 'community';
+    }
+    if (this.readString(game.inviteUrl)) {
+      return 'link';
+    }
+    if (game.isPrivate === true) {
+      return 'hidden';
+    }
+    return 'unpublished';
   }
 
   private gameMatchesPhone(game: Game, phoneDigits: string): boolean {
@@ -1036,9 +1586,23 @@ export class GamesService implements OnModuleDestroy {
     return 0;
   }
 
-  private ensureNonStationAdminGamePrivilege(user?: RequestUser): void {
-    if (this.isRestrictedStationAdmin(user)) {
+  private ensureNonStationAdminGamePrivilege(
+    user: RequestUser | undefined,
+    permission: 'games:read' | 'games:write'
+  ): void {
+    if (this.hasStationScope(user, permission)) {
       throw new NotFoundException('Resource not found');
+    }
+  }
+
+  private ensureMongoGameVisibleForUser(
+    doc: MongoGameDoc,
+    user: RequestUser | undefined,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): void {
+    const game = this.mapMongoGame(doc, { includeDetails: true });
+    if (!game || !this.canViewGame(game, user, permission)) {
+      throw new NotFoundException('Game not found');
     }
   }
 
@@ -1052,18 +1616,26 @@ export class GamesService implements OnModuleDestroy {
       .map((game) => this.sanitizeGameForUser(game, user));
   }
 
-  private ensureGameVisibleForUser(game: Game, user?: RequestUser): void {
-    if (!this.canViewGame(game, user)) {
+  private ensureGameVisibleForUser(
+    game: Game,
+    user: RequestUser | undefined,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): void {
+    if (!this.canViewGame(game, user, permission)) {
       throw new NotFoundException(`Game with id ${game.id} not found`);
     }
   }
 
-  private canViewGame(game: Game, user?: RequestUser): boolean {
-    if (!this.isRestrictedStationAdmin(user)) {
+  private canViewGame(
+    game: Game,
+    user?: RequestUser,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): boolean {
+    if (!this.hasStationScope(user, permission)) {
       return true;
     }
 
-    const userStationKeys = this.normalizeUserStationKeys(user);
+    const userStationKeys = this.normalizeUserStationKeys(user, permission);
     if (userStationKeys.length === 0) {
       return false;
     }
@@ -1089,9 +1661,22 @@ export class GamesService implements OnModuleDestroy {
 
     return {
       ...game,
+      organizerPhone: undefined,
+      organizerId: undefined,
+      organizerRating: undefined,
       participantDetails: participantNames.map((name) => ({ name })),
+      inviteUrl: undefined,
+      paymentAmount: undefined,
+      paymentMethod: undefined,
       details: undefined
     };
+  }
+
+  private hasStationScope(
+    user: RequestUser | undefined,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): boolean {
+    return getStationScopeForPermission(user, permission) !== null;
   }
 
   private async findGamesByTournamentId(
@@ -1488,13 +2073,17 @@ export class GamesService implements OnModuleDestroy {
     );
   }
 
-  private normalizeUserStationKeys(user?: RequestUser): string[] {
-    if (!user || !Array.isArray(user.stationIds)) {
+  private normalizeUserStationKeys(
+    user: RequestUser | undefined,
+    permission: 'games:read' | 'games:write' = 'games:read'
+  ): string[] {
+    const stationIds = getStationScopeForPermission(user, permission);
+    if (!stationIds) {
       return [];
     }
 
     const keys = new Set<string>();
-    user.stationIds.forEach((stationId) => {
+    stationIds.forEach((stationId) => {
       this.expandStationAliases(stationId).forEach((key) => keys.add(key));
     });
     return Array.from(keys.values());
@@ -2711,6 +3300,18 @@ export class GamesService implements OnModuleDestroy {
   private mapMongoGame(doc: MongoGameDoc, options?: { includeDetails?: boolean }): Game | null {
     const id = this.readString(doc.id) ?? this.readObjectId(doc._id);
     const metadata = this.toRecord(doc.metadata);
+    const settings = this.toRecord(doc.settings);
+    const invite = this.toRecord(doc.invite);
+    const communityAutoPublish = this.toRecord(metadata.communityAutoPublish);
+    const communityPosts = this.toRecord(communityAutoPublish.posts);
+    const communityPublished =
+      communityAutoPublish.enabled !== false &&
+      (Object.keys(communityPosts).length > 0 ||
+        (Array.isArray(communityAutoPublish.communities) &&
+          communityAutoPublish.communities.some((item) => {
+            const status = (this.readString(this.toRecord(item).status) ?? '').toUpperCase();
+            return status !== 'ARCHIVED' && status !== 'HIDDEN' && status !== 'DELETED';
+          })));
     const studioName = this.readString(doc.booking?.studioName);
     const roomName = this.readString(doc.booking?.roomName);
     const bookingDate = this.readString(doc.booking?.date);
@@ -2731,7 +3332,19 @@ export class GamesService implements OnModuleDestroy {
             return acc;
           }
           const phone = this.readString(participant?.phone);
-          const value: GameParticipantDetails = phone ? { name, phone } : { name };
+          const rating = this.readNumber(participant?.rating) ?? this.readString(participant?.rating);
+          const status = this.readString(participant?.status);
+          const role =
+            this.readString(participant?.role) ?? this.readString(participant?.source);
+          const photo = this.readString(participant?.photo);
+          const value: GameParticipantDetails = {
+            name,
+            ...(phone ? { phone } : {}),
+            ...(rating !== null ? { rating } : {}),
+            ...(status ? { status } : {}),
+            ...(role ? { role } : {}),
+            ...(photo ? { photo } : {})
+          };
           acc.push(value);
           return acc;
         }, [] as GameParticipantDetails[])
@@ -2764,6 +3377,11 @@ export class GamesService implements OnModuleDestroy {
       createdAt: this.resolveGameCreatedAt(doc) ?? undefined,
       updatedAt: this.readString(doc.updatedAt) ?? undefined,
       organizerName: this.readString(doc.organizer?.name) ?? undefined,
+      organizerPhone:
+        this.readString(doc.organizer?.phone) ?? this.readString(doc.organizer?.phoneNorm) ?? undefined,
+      organizerId: this.readString(doc.organizer?.id) ?? undefined,
+      organizerRating:
+        this.readNumber(doc.organizer?.rating) ?? this.readString(doc.organizer?.rating) ?? undefined,
       participantNames,
       participantDetails,
       gameDate: bookingDate ?? undefined,
@@ -2776,6 +3394,25 @@ export class GamesService implements OnModuleDestroy {
       resultLines,
       ratingDelta: ratingDelta ?? undefined,
       ratingDeltaLines,
+      maxPlayers: this.readNumber(invite.maxPlayers) ?? undefined,
+      waitlistEnabled:
+        typeof invite.waitlistEnabled === 'boolean' ? invite.waitlistEnabled : undefined,
+      archived: doc.archived === true,
+      isPrivate: typeof settings.isPrivate === 'boolean' ? settings.isPrivate : undefined,
+      ratingGame: typeof settings.ratingGame === 'boolean' ? settings.ratingGame : undefined,
+      minRating: this.readNumber(settings.minRating) ?? this.readString(settings.minRating) ?? undefined,
+      maxRating: this.readNumber(settings.maxRating) ?? this.readString(settings.maxRating) ?? undefined,
+      payMode: this.readString(settings.payMode) ?? undefined,
+      inviteUrl: this.readString(invite.inviteUrl) ?? undefined,
+      communityPublicationEnabled:
+        typeof communityAutoPublish.enabled === 'boolean'
+          ? communityAutoPublish.enabled
+          : undefined,
+      communityPublished,
+      chatAvailable: Boolean(this.readString(doc.chatUrl)),
+      paymentPaid: typeof doc.payment?.paid === 'boolean' ? doc.payment.paid : undefined,
+      paymentAmount: this.readNumber(doc.payment?.amount) ?? undefined,
+      paymentMethod: this.readString(doc.payment?.paymentMethod) ?? undefined,
       details: options?.includeDetails ? this.normalizeForJson(doc) : undefined
     };
   }
@@ -3378,14 +4015,17 @@ export class GamesService implements OnModuleDestroy {
   }
 
   private normalizeMongoStatus(rawStatus: string | null, archived: unknown): GameStatus {
-    if (archived === true) {
-      return GameStatus.ARCHIVED;
-    }
     if (!rawStatus) {
-      return GameStatus.UNKNOWN;
+      return archived === true ? GameStatus.ARCHIVED : GameStatus.UNKNOWN;
     }
 
     const normalized = rawStatus.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (normalized === 'CANCELLED' || normalized === 'CANCELED') {
+      return GameStatus.CANCELLED;
+    }
+    if (archived === true) {
+      return GameStatus.ARCHIVED;
+    }
     if (
       ['PAYMENT_PENDING', 'PENDING', 'DRAFT', 'NEW', 'WAITING_PAYMENT'].includes(normalized)
     ) {
@@ -3397,9 +4037,7 @@ export class GamesService implements OnModuleDestroy {
       return GameStatus.ACTIVE;
     }
     if (
-      ['ARCHIVED', 'CANCELLED', 'CANCELED', 'FINISHED', 'DONE', 'COMPLETED'].includes(
-        normalized
-      )
+      ['ARCHIVED', 'FINISHED', 'DONE', 'COMPLETED'].includes(normalized)
     ) {
       return GameStatus.ARCHIVED;
     }

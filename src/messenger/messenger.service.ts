@@ -14,6 +14,7 @@ import {
   MessageAttachmentType
 } from '../common/messages/message-attachment.types';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { QuickRepliesService } from '../quick-replies/quick-replies.service';
 import {
@@ -888,11 +889,15 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   }
 
   private isStaff(user: RequestUser): boolean {
-    return user.roles.some((role) => STAFF_ROLES.includes(role));
+    return (
+      user.roles.some((role) => STAFF_ROLES.includes(role)) ||
+      hasAdminPermission(user.permissions, 'dialogs:read') ||
+      hasAdminPermission(user.permissions, 'dialogs:write')
+    );
   }
 
   private isSuperAdmin(user: RequestUser): boolean {
-    return user.roles.includes(Role.SUPER_ADMIN);
+    return user.roles.includes(Role.SUPER_ADMIN) || hasAdminPermission(user.permissions, '*');
   }
 
   private isStaffRole(role: Role): boolean {
@@ -901,7 +906,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
 
   private resolveSenderRole(roles: Role[]): Role {
     if (roles.length === 0) {
-      throw new ForbiddenException('User must have at least one role');
+      // Custom roles are permission-based and have no legacy enum value. Their
+      // messages remain explicitly staff-originated in the legacy dialog model.
+      return Role.SUPPORT;
     }
 
     const priority: Role[] = [
@@ -1005,23 +1012,6 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
 
     if (!this.isConnectorAllowedForUser(user, connector)) {
       throw new ForbiddenException('Staff cannot create thread outside assigned connectors');
-    }
-
-    if (this.isSuperAdmin(user)) {
-      return;
-    }
-
-    if (user.stationIds.length === 0) {
-      if (!this.hasStaffAccess(user, stationId, connector, 'write')) {
-        throw new ForbiddenException(
-          'Staff cannot create thread in this connector/station by access rules'
-        );
-      }
-      return;
-    }
-
-    if (!user.stationIds.includes(stationId)) {
-      throw new ForbiddenException('Staff cannot create thread outside assigned stations');
     }
 
     if (!this.hasStaffAccess(user, stationId, connector, 'write')) {
@@ -1211,14 +1201,13 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       return false;
     }
 
-    if (this.isSuperAdmin(user)) {
-      return true;
+    const dialogScope = getStationScopeForPermission(user, 'dialogs:read');
+    if (dialogScope !== null && !dialogScope.includes(thread.stationId)) {
+      return false;
     }
 
-    if (user.stationIds.length > 0) {
-      if (!user.stationIds.includes(thread.stationId)) {
-        return false;
-      }
+    if (this.isSuperAdmin(user)) {
+      return true;
     }
 
     if (!this.isStationActive(thread.stationId)) {
@@ -1370,13 +1359,23 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     if (!this.isConnectorAllowedForUser(user, connector)) {
       return false;
     }
+    const requiredPermission = operation === 'write' ? 'dialogs:write' : 'dialogs:read';
+    if (!hasAdminPermission(user.permissions, requiredPermission)) {
+      return false;
+    }
+    const stationScope = getStationScopeForPermission(user, requiredPermission);
+    if (stationScope !== null && !stationScope.includes(stationId)) {
+      return false;
+    }
     if (this.isSuperAdmin(user)) {
       return true;
     }
 
     const roles = user.roles.filter((role) => STAFF_ROLES.includes(role));
     if (roles.length === 0) {
-      return false;
+      // A configurable role has its own station scope resolved by AuthService;
+      // it is not represented in the old enum-based connector-rule collection.
+      return true;
     }
 
     for (const role of roles) {
@@ -1504,9 +1503,6 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     }
 
     const filtered = Array.from(stationIds.values()).filter((stationId) => {
-      if (user.stationIds.length > 0 && !user.stationIds.includes(stationId)) {
-        return false;
-      }
       return this.hasStaffAccess(user, stationId, route, 'read');
     });
 

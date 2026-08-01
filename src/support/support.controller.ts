@@ -17,6 +17,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { Permissions } from '../common/rbac/permissions.decorator';
 import { IngestSupportEventDto } from './dto/ingest-support-event.dto';
 import { ReplySupportDialogDto } from './dto/reply-support-dialog.dto';
 import { SupportService } from './support.service';
@@ -67,6 +68,7 @@ export class SupportController {
   }
 
   @Get('connectors')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -83,6 +85,7 @@ export class SupportController {
   }
 
   @Get('connectors/:connector/stations')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -103,6 +106,7 @@ export class SupportController {
   }
 
   @Get('connectors/:connector/stations/:stationId/dialogs')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -124,6 +128,7 @@ export class SupportController {
   }
 
   @Get('dialogs')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -140,6 +145,7 @@ export class SupportController {
   }
 
   @Get('dialogs/:dialogId/messages')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -166,6 +172,7 @@ export class SupportController {
   }
 
   @Get('dialogs/:dialogId/service-messages')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -190,6 +197,7 @@ export class SupportController {
   }
 
   @Post('dialogs/:dialogId/reply')
+  @Permissions('dialogs:write')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -208,6 +216,7 @@ export class SupportController {
   }
 
   @Patch('dialogs/:dialogId/resolution')
+  @Permissions('dialogs:write')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.STATION_ADMIN, Role.MANAGER)
   setDialogResolution(
     @Param('dialogId') dialogId: string,
@@ -224,6 +233,7 @@ export class SupportController {
   }
 
   @Get('analytics/daily')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -243,6 +253,7 @@ export class SupportController {
   }
 
   @Get('analytics/dialogs')
+  @Permissions('dialogs:read')
   @Roles(
     Role.SUPER_ADMIN,
     Role.SUPPORT,
@@ -271,6 +282,7 @@ export class SupportController {
   }
 
   @Get('debug/runtime')
+  @Permissions('settings:read')
   @Roles(Role.SUPER_ADMIN, Role.SUPPORT, Role.MANAGER)
   async getRuntimeDiagnostics(@CurrentUser() user?: RequestUser) {
     if (!user) {

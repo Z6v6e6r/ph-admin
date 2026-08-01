@@ -1,8 +1,18 @@
+export type CabinetHomeAdvertisingPlacement =
+  | 'cabinet_home'
+  | 'cabinet_home_top'
+  | 'cabinet_for_me_strip'
+  | 'cabinet_for_me_card';
+
 export interface CabinetHomeAdvertisingAdRecord {
   id: string;
   title?: string;
+  badgeText?: string;
+  footerText?: string;
   href: string;
   imageAssetId: string;
+  squareImageAssetId?: string;
+  horizontalImageAssetId?: string;
   isActive: boolean;
   position: number;
   createdAt: string;
@@ -12,9 +22,11 @@ export interface CabinetHomeAdvertisingAdRecord {
 export interface CabinetHomeAdvertisingSettingsRecord {
   key: string;
   rotationEnabled: boolean;
+  repeatEveryCards?: number;
   ads: CabinetHomeAdvertisingAdRecord[];
   updatedAt?: string;
   updatedBy?: string;
+  auditLog?: AdvertisingAuditRecord[];
 }
 
 export interface AdvertisingAssetRecord {
@@ -31,9 +43,15 @@ export interface AdvertisingAssetRecord {
 export interface CabinetHomeAdvertisingAdminAdItem {
   id: string;
   title?: string;
+  badgeText?: string;
+  footerText?: string;
   href: string;
   imageAssetId: string;
   imageUrl: string;
+  squareImageAssetId?: string;
+  squareImageUrl?: string;
+  horizontalImageAssetId?: string;
+  horizontalImageUrl?: string;
   isActive: boolean;
   position: number;
   createdAt: string;
@@ -41,8 +59,9 @@ export interface CabinetHomeAdvertisingAdminAdItem {
 }
 
 export interface CabinetHomeAdvertisingAdminSnapshot {
-  placement: 'cabinet_home';
+  placement: CabinetHomeAdvertisingPlacement;
   rotationEnabled: boolean;
+  repeatEveryCards?: number;
   ads: CabinetHomeAdvertisingAdminAdItem[];
   updatedAt?: string;
   updatedBy?: string;
@@ -51,15 +70,63 @@ export interface CabinetHomeAdvertisingAdminSnapshot {
 export interface CabinetHomeAdvertisingPublicAdItem {
   id: string;
   title?: string;
+  badgeText?: string;
+  footerText?: string;
   href: string;
   imageUrl: string;
+  squareImageUrl?: string;
+  horizontalImageUrl?: string;
 }
 
 export interface CabinetHomeAdvertisingPublicSnapshot {
-  placement: 'cabinet_home';
+  placement: CabinetHomeAdvertisingPlacement;
   rotationEnabled: boolean;
+  repeatEveryCards?: number;
   ads: CabinetHomeAdvertisingPublicAdItem[];
   updatedAt?: string;
+}
+
+export type AdvertisingEngagementKind = 'IMPRESSION' | 'CLICK';
+
+export interface AdvertisingEngagementRecord {
+  eventId: string;
+  placement: CabinetHomeAdvertisingPlacement;
+  adId: string;
+  kind: AdvertisingEngagementKind;
+  phoneE164?: string;
+  occurredAt: string;
+  receivedAt: string;
+}
+
+export interface AdvertisingAuditRecord {
+  id: string;
+  placement: CabinetHomeAdvertisingPlacement;
+  actor: string;
+  action: 'CREATED' | 'UPDATED' | 'DELETED' | 'SETTINGS_UPDATED';
+  adId?: string;
+  title?: string;
+  changes: string[];
+  occurredAt: string;
+}
+
+export interface AdvertisingClickedPhone {
+  phoneE164: string;
+  clickCount: number;
+  lastClickedAt: string;
+}
+
+export interface AdvertisingAdInsights {
+  adId: string;
+  impressionCount: number;
+  clickCount: number;
+  clickThroughRate: number;
+  clickedPhones: AdvertisingClickedPhone[];
+}
+
+export interface AdvertisingAdminInsightsSnapshot {
+  placement: CabinetHomeAdvertisingPlacement;
+  ads: AdvertisingAdInsights[];
+  auditLog: AdvertisingAuditRecord[];
 }
 
 export interface SplitPaymentPromoShareAmounts {

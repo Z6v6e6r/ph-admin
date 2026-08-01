@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     'public tournament view should expose skin title as public name'
   );
 
-  const directory = await service.listPublicDirectory();
+  const directory = await service.listPublicDirectory({ includePast: true });
   assert.equal(directory.count, 1);
   assert.equal(directory.items[0]?.name, customTournament.skin.title);
   assert.equal(directory.items[0]?.skin.title, customTournament.skin.title);

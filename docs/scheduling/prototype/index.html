@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Интерактивный прототип диспетчерской расписания ЦУП"
+    />
+    <title>ЦУП · Диспетчерская расписания</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="ЦУП — главная">
+          <span class="brand-mark" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </span>
+          <span>ЦУП</span>
+        </a>
+        <label class="global-search">
+          <span aria-hidden="true">⌕</span>
+          <input type="search" placeholder="Быстрый поиск" aria-label="Быстрый поиск" />
+          <kbd>⌘ K</kbd>
+        </label>
+        <nav class="global-nav" aria-label="Служебные действия">
+          <button class="system-indicator" type="button">
+            <i></i><span>Сервисы доступны</span>
+          </button>
+          <button type="button" aria-label="Сообщения">Сообщения <b>3</b></button>
+          <button type="button" aria-label="Уведомления">Уведомления <b>4</b></button>
+        </nav>
+        <button class="profile" type="button" aria-label="Профиль Академии">
+          <span>АБ</span>
+          <i></i>
+        </button>
+      </header>
+
+      <aside class="sidebar">
+        <button class="station-card" type="button">
+          <span>
+            <small>Станция</small>
+            <strong>Терехово</strong>
+          </span>
+          <span aria-hidden="true">⌄</span>
+        </button>
+
+        <nav class="side-nav" aria-label="Навигация ЦУП">
+          <a href="#"><span>◫</span> Дашборд</a>
+          <a href="#"><span>₽</span> Транзакции</a>
+          <p>Операции</p>
+          <a class="active" href="#"><span>◷</span> Расписание</a>
+          <a href="#"><span>◎</span> Игры и турниры</a>
+          <a href="#"><span>♙</span> Клиенты</a>
+          <p>Планирование</p>
+          <a href="#"><span>▦</span> Серии</a>
+          <a href="#"><span>▨</span> Закрытия</a>
+          <a href="#"><span>▥</span> Загрузка</a>
+        </nav>
+
+        <div class="sidebar-health">
+          <span class="health-dot warning"></span>
+          <div>
+            <strong>Сервисы доступны</strong>
+            <small>1 запись требует синхронизации</small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="command-bar" aria-label="Управление расписанием">
+          <div class="command-title">
+            <span>РАСПИСАНИЕ</span>
+            <strong>Терехово</strong>
+          </div>
+
+          <div class="module-switch" aria-label="Раздел расписания">
+            <button class="active" type="button" data-mode="normal">Расписание</button>
+            <button type="button" data-mode="attention">Проблемы <b>4</b></button>
+          </div>
+
+          <div class="command-controls">
+            <div class="date-control">
+              <button type="button" id="prevDay" aria-label="Предыдущий день">←</button>
+              <button class="today-button" type="button" id="todayButton">Сегодня</button>
+              <button class="date-button" type="button" id="dateButton">
+                <span id="dateLabel">Пн, 27 июля</span>
+              </button>
+              <button type="button" id="nextDay" aria-label="Следующий день">→</button>
+            </div>
+
+            <div class="segmented" aria-label="Вид расписания">
+              <button class="active" type="button">Сетка</button>
+              <button type="button">Лента</button>
+              <button type="button">Загрузка</button>
+            </div>
+
+            <div class="segmented" aria-label="Ось расписания">
+              <button class="active" type="button">Корты</button>
+              <button type="button">Тренеры</button>
+              <button type="button">Зоны</button>
+            </div>
+
+            <div class="toolbar-spacer"></div>
+
+            <button class="icon-button" id="filterButton" type="button" aria-expanded="false">
+              Фильтры
+            </button>
+            <label class="schedule-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="scheduleSearch" type="search" placeholder="Найти запись" />
+            </label>
+            <button class="secondary-button" id="findTime" type="button">Найти слот</button>
+            <button class="primary-button" id="createEvent" type="button">
+              <span>＋</span> Создать
+            </button>
+            <button class="icon-button more-button" id="moreButton" type="button" aria-label="Ещё">
+              •••
+            </button>
+            <button class="focus-button" id="focusMode" type="button" aria-pressed="false">
+              <span>⛶</span><em>Развернуть расписание</em>
+            </button>
+          </div>
+
+          <div class="filters-popover" id="filtersPopover" hidden>
+            <strong>Тип события</strong>
+            <button class="filter-chip active" type="button" data-filter="all">Все</button>
+            <button class="filter-chip" type="button" data-filter="game">Игры</button>
+            <button class="filter-chip" type="button" data-filter="training">Тренировки</button>
+            <button class="filter-chip" type="button" data-filter="tournament">Турниры</button>
+            <label class="scale-control">
+              Масштаб
+              <select id="scaleSelect">
+                <option value="64">Компактно</option>
+                <option value="84" selected>Комфортно</option>
+                <option value="112">Подробно</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="operational-strip" id="kpiStrip" aria-label="Операционная сводка"></section>
+
+        <section class="calendar-layout">
+          <div class="calendar-card">
+            <div class="calendar-header">
+              <div class="time-corner">
+                <span>МСК</span>
+                <small>30 мин</small>
+              </div>
+              <div class="court-headers" id="courtHeaders"></div>
+            </div>
+            <div class="calendar-scroll" id="calendarScroll">
+              <div class="time-axis" id="timeAxis"></div>
+              <div class="courts-grid" id="courtsGrid"></div>
+              <div class="now-line" id="nowLine"><span>15:32</span></div>
+            </div>
+          </div>
+
+          <aside class="drawer" id="drawer" aria-live="polite" aria-label="Карточка события">
+            <div class="drawer-empty">
+              <span>↗</span>
+              <strong>Выберите событие</strong>
+              <p>Карточка откроется здесь, не скрывая расписание.</p>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

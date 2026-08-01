@@ -11,6 +11,7 @@ import {
 import { createPublicKey, verify as verifySignature } from 'crypto';
 import type { JsonWebKey } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { getStationScopeForPermission } from '../common/rbac/permissions';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
@@ -156,6 +157,7 @@ interface TournamentListOptions {
   from?: string;
   to?: string;
   now?: Date;
+  user?: RequestUser;
 }
 
 interface ParsedVivaTournamentLink {
@@ -302,6 +304,7 @@ export class TournamentsService {
 
     const tournaments = [...mergedSource, ...standaloneCustom, ...missingLinkedCustom]
       .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
+      .filter((tournament) => this.isTournamentVisibleForUser(tournament, options?.user))
       .sort((left, right) => {
         const leftStartsAt = Date.parse(left.startsAt ?? '');
         const rightStartsAt = Date.parse(right.startsAt ?? '');
@@ -414,9 +417,10 @@ export class TournamentsService {
     };
   }
 
-  async findById(id: string): Promise<Tournament> {
+  async findById(id: string, user?: RequestUser): Promise<Tournament> {
     const customTournament = await this.findCustomTournamentByIdSafe(id);
     if (customTournament) {
+      this.ensureTournamentVisibleForUser(customTournament, user);
       return this.toLkCompatibleTournament(
         this.toTournamentListItem(await this.enrichTournamentVivaProfiles(customTournament))
       );
@@ -426,6 +430,7 @@ export class TournamentsService {
     if (!tournament) {
       throw new NotFoundException(`Tournament with id ${id} not found`);
     }
+    this.ensureTournamentVisibleForUser(tournament, user);
 
     const linkedCustom = await this.findCustomTournamentBySourceIdSafe(tournament.id);
     const enrichedLinkedCustom = linkedCustom
@@ -436,13 +441,15 @@ export class TournamentsService {
     );
   }
 
-  async findCustomById(id: string): Promise<CustomTournament> {
+  async findCustomById(id: string, user?: RequestUser): Promise<CustomTournament> {
     this.ensurePersistenceEnabled();
     const tournament = await this.tournamentsPersistence.findCustomTournamentById(id);
     if (!tournament) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
     }
-    return this.enrichTournamentVivaProfiles(await this.hydrateCustomTournament(tournament));
+    const hydrated = await this.enrichTournamentVivaProfiles(await this.hydrateCustomTournament(tournament));
+    this.ensureTournamentVisibleForUser(hydrated, user);
+    return hydrated;
   }
 
   async getResults(id: string, user?: RequestUser): Promise<TournamentResultsView> {
@@ -452,6 +459,14 @@ export class TournamentsService {
     }
 
     const customTournament = await this.findCustomTournamentByIdSafe(requestedId);
+    if (customTournament) {
+      this.ensureTournamentVisibleForUser(customTournament, user);
+    } else {
+      const sourceTournament = await this.findSourceTournamentByIdSafe(requestedId);
+      if (sourceTournament) {
+        this.ensureTournamentVisibleForUser(sourceTournament, user);
+      }
+    }
     const sourceTournamentSnapshot = customTournament
       ? this.getSourceTournamentSnapshot(customTournament)
       : {};
@@ -470,19 +485,22 @@ export class TournamentsService {
 
   async createCustomFromSource(
     sourceTournamentId: string,
-    mutation: Partial<CreateCustomTournamentMutation>
+    mutation: Partial<CreateCustomTournamentMutation>,
+    user?: RequestUser
   ): Promise<CustomTournament> {
     this.ensurePersistenceEnabled();
     const sourceTournament = await this.findSourceTournamentById(sourceTournamentId);
     if (!sourceTournament) {
       throw new NotFoundException(`Source tournament with id ${sourceTournamentId} not found`);
     }
+    this.ensureTournamentVisibleForUser(sourceTournament, user, 'tournaments:write');
     return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
   }
 
   async createCustomFromVivaLink(
     vivaUrl: string,
-    mutation: Partial<CreateCustomTournamentMutation>
+    mutation: Partial<CreateCustomTournamentMutation>,
+    user?: RequestUser
   ): Promise<CustomTournament> {
     this.ensurePersistenceEnabled();
     const parsedLink = this.parseVivaTournamentLink(vivaUrl);
@@ -490,7 +508,7 @@ export class TournamentsService {
     const sourceTournament = sourceTournamentFromFeed
       ? this.applyVivaLinkFallbackToSourceTournament(sourceTournamentFromFeed, parsedLink)
       : await this.buildFallbackSourceTournamentFromVivaLink(parsedLink);
-
+    this.ensureTournamentVisibleForUser(sourceTournament, user, 'tournaments:write');
     return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
   }
 
@@ -499,9 +517,15 @@ export class TournamentsService {
     mutation: UpdateCustomTournamentMutation,
     options?: {
       rebuildPricingSnapshot?: boolean;
-    }
+    },
+    user?: RequestUser
   ): Promise<CustomTournament> {
     this.ensurePersistenceEnabled();
+    const current = await this.tournamentsPersistence.findCustomTournamentById(id);
+    if (!current) {
+      throw new NotFoundException(`Custom tournament with id ${id} not found`);
+    }
+    this.ensureTournamentVisibleForUser(current, user, 'tournaments:write');
     const updated = await this.tournamentsPersistence.updateCustomTournament(id, mutation);
     if (!updated) {
       throw new NotFoundException(`Custom tournament with id ${id} not found`);
@@ -2575,6 +2599,38 @@ export class TournamentsService {
       return false;
     }
     return true;
+  }
+
+  private ensureTournamentVisibleForUser(
+    tournament: Tournament,
+    user?: RequestUser,
+    permission: 'tournaments:read' | 'tournaments:write' = 'tournaments:read'
+  ): void {
+    if (this.isTournamentVisibleForUser(tournament, user, permission)) {
+      return;
+    }
+    throw new NotFoundException('Tournament not found');
+  }
+
+  private isTournamentVisibleForUser(
+    tournament: Tournament,
+    user?: RequestUser,
+    permission: 'tournaments:read' | 'tournaments:write' = 'tournaments:read'
+  ): boolean {
+    const permissionScope = getStationScopeForPermission(user, permission);
+    if (permissionScope === null) {
+      return true;
+    }
+    const stationIds = permissionScope
+      .map((stationId) => this.normalizeFilterValue(stationId))
+      .filter((stationId): stationId is string => Boolean(stationId));
+    const candidates = [
+      this.normalizeFilterValue(tournament.studioId),
+      this.normalizeFilterValue(tournament.studioName),
+      this.normalizeFilterValue(tournament.locationName),
+      this.normalizeFilterValue(tournament.courtName)
+    ].filter((value): value is string => Boolean(value));
+    return candidates.length > 0 && stationIds.some((stationId) => candidates.includes(stationId));
   }
 
   private matchesPublicTournamentFilters(

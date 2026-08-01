@@ -6,6 +6,7 @@ import { ClientScriptModule } from './client-script/client-script.module';
 import { CommunitiesModule } from './communities/communities.module';
 import { RequestMetricsInterceptor } from './common/observability/request-metrics.interceptor';
 import { RequestMetricsService } from './common/observability/request-metrics.service';
+import { AdminAuditInterceptor } from './common/observability/admin-audit.interceptor';
 import { GamesModule } from './games/games.module';
 import { TelegramConnectorModule } from './integrations/telegram/telegram-connector.module';
 import { MessengerModule } from './messenger/messenger.module';
@@ -41,6 +42,10 @@ import { WebPushModule } from './web-push/web-push.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestMetricsInterceptor
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AdminAuditInterceptor
     }
   ]
 })
