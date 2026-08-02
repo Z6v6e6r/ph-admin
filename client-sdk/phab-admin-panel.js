@@ -10441,6 +10441,7 @@
 
     var settingsSplitPromoPane = document.createElement('div');
     settingsSplitPromoPane.className = 'phab-admin-settings-pane phab-admin-hidden';
+    settingsSection.appendChild(settingsSplitPromoPane);
 
     var locationAdminRoot = document.createElement('div');
     locationAdminRoot.className = 'phab-location-admin-root';
