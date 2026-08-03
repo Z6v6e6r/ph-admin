@@ -8,6 +8,7 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthPersistenceService.name);
   private client?: MongoClient;
   private db?: Db;
+  private initialization?: Promise<void>;
   private collectionName =
     String(process.env.ADMIN_AUTH_MONGODB_COLLECTION ?? '').trim() || 'admin_users';
   private rolesCollectionName =
@@ -16,6 +17,17 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
     String(process.env.ADMIN_AUTH_AUDIT_MONGODB_COLLECTION ?? '').trim() || 'admin_audit_log';
 
   async onModuleInit(): Promise<void> {
+    await this.initialize();
+  }
+
+  initialize(): Promise<void> {
+    if (!this.initialization) {
+      this.initialization = this.connect();
+    }
+    return this.initialization;
+  }
+
+  private async connect(): Promise<void> {
     const uri = String(process.env.MONGODB_URI ?? '').trim();
     if (!uri) {
       this.logger.log('MONGODB_URI is empty. Auth persistence disabled (env/in-memory mode).');

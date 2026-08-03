@@ -75,6 +75,10 @@ export class AuthService implements OnModuleInit {
   constructor(private readonly persistence: AuthPersistenceService) {}
 
   async onModuleInit(): Promise<void> {
+    // Nest does not guarantee lifecycle hook order between providers in the same
+    // module. Auth must not decide that persistence is disabled before the
+    // Mongo-backed provider has finished initializing.
+    await this.persistence.initialize();
     await this.initializeRoles();
     await this.initializeUsers();
   }

@@ -11,10 +11,15 @@ import {
 class InMemoryAuthPersistence {
   private users: AdminUserRecord[] = [];
   private roles: AdminRoleDefinition[] = [];
+  private initialized = false;
   readonly audit: AdminAuditEntry[] = [];
 
+  async initialize(): Promise<void> {
+    this.initialized = true;
+  }
+
   isEnabled(): boolean {
-    return true;
+    return this.initialized;
   }
 
   async loadUsers(): Promise<AdminUserRecord[]> {
