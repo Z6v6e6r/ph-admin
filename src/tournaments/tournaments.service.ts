@@ -264,7 +264,8 @@ export class TournamentsService {
     const sourceTournaments = await this.listSourceTournaments({
       date: options?.date,
       from: options?.from,
-      to: options?.to
+      to: options?.to,
+      readModelOnly: true
     });
     const customTournaments = await this.listCustomTournamentsSafe();
     const customBySourceId = new Map<string, CustomTournament>();
@@ -275,32 +276,27 @@ export class TournamentsService {
     });
 
     const sourceIds = new Set(sourceTournaments.map((item) => item.id));
-    this.scheduleMissingSourceSkinStatusSync(customTournaments, sourceIds, options);
     const mergedSource = sourceTournaments.map((tournament) =>
       this.enrichSourceTournament(tournament, customBySourceId.get(tournament.id))
     );
-    const standaloneCustom = await Promise.all(
-      customTournaments
-        .filter(
-          (tournament) =>
-            !tournament.sourceTournamentId
-        )
-        .filter((tournament) =>
-          this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
-        )
-        .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
-    );
-    const missingLinkedCustom = await Promise.all(
-      customTournaments
-        .filter((tournament) => {
-          const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
-          return sourceTournamentId !== undefined && !sourceIds.has(sourceTournamentId);
-        })
-        .filter((tournament) =>
-          this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
-        )
-        .map((tournament) => this.toTournamentListItemWithLiveSourceStatus(tournament))
-    );
+    const standaloneCustom = customTournaments
+      .filter(
+        (tournament) =>
+          !tournament.sourceTournamentId
+      )
+      .filter((tournament) =>
+        this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
+      )
+      .map((tournament) => this.toTournamentListItem(tournament));
+    const missingLinkedCustom = customTournaments
+      .filter((tournament) => {
+        const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+        return sourceTournamentId !== undefined && !sourceIds.has(sourceTournamentId);
+      })
+      .filter((tournament) =>
+        this.matchesTournamentListFilters(this.toTournamentListItem(tournament), options)
+      )
+      .map((tournament) => this.toTournamentListItem(tournament));
 
     const tournaments = [...mergedSource, ...standaloneCustom, ...missingLinkedCustom]
       .filter((tournament) => this.matchesTournamentListFilters(tournament, options))
@@ -2290,7 +2286,10 @@ export class TournamentsService {
       readModelOnly = false,
       ...snapshotOptions
     } = options ?? {};
-    const snapshotTournaments = await this.vivaTournamentSnapshotService?.listTournaments(snapshotOptions);
+    const snapshotTournaments = await this.vivaTournamentSnapshotService?.listTournaments({
+      ...snapshotOptions,
+      refreshOnRead: !readModelOnly
+    });
     if (snapshotTournaments) {
       return snapshotTournaments;
     }

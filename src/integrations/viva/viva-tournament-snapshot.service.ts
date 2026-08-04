@@ -7,6 +7,7 @@ export interface VivaTournamentSnapshotListOptions {
   date?: string;
   from?: string;
   to?: string;
+  refreshOnRead?: boolean;
 }
 
 export interface VivaTournamentSnapshot {
@@ -165,7 +166,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
 
     this.lastPublicReadAt = Date.now();
     const snapshot = await this.getCurrentSnapshot();
-    if (this.refreshEnabled) {
+    if (this.refreshEnabled && options?.refreshOnRead !== false) {
       this.scheduleRefreshIfDue(snapshot ? 'read' : 'cold_read');
     }
     if (!this.readModelEnabled || !snapshot || !this.coversOptions(snapshot, options)) {

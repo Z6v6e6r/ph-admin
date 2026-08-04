@@ -359,7 +359,10 @@ function createService(options: {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     persistence as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
-    { simulateRating: () => { throw new Error('Not used in test'); } } as never
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    undefined,
+    undefined,
+    { listTournaments: async () => sourceTournaments } as never
   );
 }
 

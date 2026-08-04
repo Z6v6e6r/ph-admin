@@ -337,6 +337,172 @@ async function testTournamentsServiceUsesSnapshotBeforeLiveViva(): Promise<void>
   assert.equal(liveVivaCalls, 0);
 }
 
+async function testAdminListUsesOnlyPersistedReadModels(): Promise<void> {
+  for (const scenario of ['snapshot-cache-miss', 'missing-linked-source'] as const) {
+    const persistedTournament = createCustomTournament(
+      `persisted-${scenario}`,
+      'missing-source',
+      '2026-07-04T19:00:00+03:00'
+    );
+    const canceledLiveTournament = createTournament(
+      'missing-source',
+      '2026-07-04T20:00:00+03:00'
+    );
+    canceledLiveTournament.status = TournamentStatus.CANCELED;
+    const calls = {
+      snapshotList: 0,
+      liveList: 0,
+      liveDetail: 0,
+      legacyList: 0,
+      adminStatus: 0,
+      persistenceUpdate: 0
+    };
+    const service = new TournamentsService(
+      {
+        listTournaments: async () => {
+          calls.legacyList += 1;
+          return [createTournament('legacy-source', '2026-07-04T20:00:00+03:00')];
+        }
+      } as never,
+      {
+        listTournaments: async () => {
+          calls.liveList += 1;
+          return [canceledLiveTournament];
+        },
+        findTournamentById: async () => {
+          calls.liveDetail += 1;
+          return canceledLiveTournament;
+        }
+      } as never,
+      { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+      {
+        isEnabled: () => true,
+        listCustomTournaments: async () => [persistedTournament],
+        updateCustomTournament: async () => {
+          calls.persistenceUpdate += 1;
+          return persistedTournament;
+        }
+      } as never,
+      { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+      { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+      {
+        getExerciseStatus: async () => {
+          calls.adminStatus += 1;
+          return { canceled: true };
+        }
+      } as never,
+      undefined,
+      {
+        listTournaments: async () => {
+          calls.snapshotList += 1;
+          return scenario === 'snapshot-cache-miss'
+            ? null
+            : [createTournament('another-source', '2026-07-05T19:00:00+03:00')];
+        }
+      } as never
+    );
+
+    const result = await service.findAll({
+      date: '2026-07-04',
+      now: new Date('2026-07-04T18:00:00+03:00')
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(result.length, 1, `${scenario}: persisted tournament should remain visible`);
+    assert.equal(result[0]?.id, persistedTournament.id);
+    assert.equal(result[0]?.sourceTournamentId, persistedTournament.sourceTournamentId);
+    assert.equal(result[0]?.name, persistedTournament.name);
+    assert.equal(result[0]?.status, TournamentStatus.REGISTRATION);
+    assert.deepEqual(result[0]?.participants, persistedTournament.participants);
+    assert.equal(
+      (result[0]?.details?.sourceTournamentSnapshot as { id?: string } | undefined)?.id,
+      persistedTournament.sourceTournamentId
+    );
+    assert.deepEqual(calls, {
+      snapshotList: 1,
+      liveList: 0,
+      liveDetail: 0,
+      legacyList: 0,
+      adminStatus: 0,
+      persistenceUpdate: 0
+    });
+  }
+}
+
+async function testAdminListDoesNotTriggerSnapshotRefreshOnRead(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    for (const scenario of ['cold', 'stale'] as const) {
+      let liveRefreshCalls = 0;
+      let legacyListCalls = 0;
+      const sourceTournamentId = scenario === 'stale' ? 'stale-source' : 'cold-source';
+      const persistedTournament = createCustomTournament(
+        `persisted-${scenario}`,
+        sourceTournamentId,
+        '2026-07-04T19:00:00+03:00'
+      );
+      const liveVivaService = {
+        listTournaments: async () => {
+          liveRefreshCalls += 1;
+          return [createTournament('live-refresh', '2026-07-04T20:00:00+03:00')];
+        },
+        findTournamentById: async () => {
+          liveRefreshCalls += 1;
+          return null;
+        }
+      };
+      const snapshotService = new VivaTournamentSnapshotService(liveVivaService as never);
+
+      if (scenario === 'stale') {
+        (snapshotService as any).snapshot = {
+          key: 'default',
+          generatedAt: '2020-01-01T00:00:00.000Z',
+          lastSuccessfulAt: '2020-01-01T00:00:00.000Z',
+          windowFrom: '2026-07-01',
+          windowTo: '2026-07-31',
+          tournaments: [createTournament(sourceTournamentId, '2026-07-04T19:00:00+03:00')],
+          tournamentsCount: 1,
+          refreshReason: 'persisted'
+        };
+      }
+
+      const service = new TournamentsService(
+        {
+          listTournaments: async () => {
+            legacyListCalls += 1;
+            return [];
+          }
+        } as never,
+        liveVivaService as never,
+        { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+        {
+          isEnabled: () => true,
+          listCustomTournaments: async () => [persistedTournament]
+        } as never,
+        { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+        { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+        undefined,
+        undefined,
+        snapshotService
+      );
+
+      try {
+        const result = await service.findAll({
+          date: '2026-07-04',
+          now: new Date('2026-07-04T18:00:00+03:00')
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        assert.equal(result.length, 1, `${scenario}: read model should still serve the list`);
+        assert.equal(liveRefreshCalls, 0, `${scenario}: list GET must not refresh Viva`);
+        assert.equal(legacyListCalls, 0, `${scenario}: list GET must not use the legacy source`);
+        assert.equal(snapshotService.getDiagnostics().lastStartedAt, undefined);
+      } finally {
+        await snapshotService.onModuleDestroy();
+      }
+    }
+  });
+}
+
 async function testPublicDirectoryIncludesSnapshotFreshness(): Promise<void> {
   const lastSuccessfulAt = '2026-07-04T10:00:00.000Z';
   const service = new TournamentsService(
@@ -438,6 +604,8 @@ async function main(): Promise<void> {
   await testSnapshotHydrationRetriesAfterMongoFailure();
   await testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl();
   await testTournamentsServiceUsesSnapshotBeforeLiveViva();
+  await testAdminListUsesOnlyPersistedReadModels();
+  await testAdminListDoesNotTriggerSnapshotRefreshOnRead();
   await testPublicDirectoryIncludesSnapshotFreshness();
   await testPublicDirectoryDoesNotFallbackToLiveViva();
   console.log('Viva tournament snapshot test passed');
