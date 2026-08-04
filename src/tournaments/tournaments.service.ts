@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
 import { createPublicKey, verify as verifySignature } from 'crypto';
@@ -23,6 +24,7 @@ import {
 } from '../integrations/viva/viva-admin.service';
 import {
   VivaTournamentSnapshotDiagnostics,
+  VivaTournamentSnapshotDayRefreshResult,
   VivaTournamentSnapshotRefreshResult,
   VivaTournamentSnapshotService
 } from '../integrations/viva/viva-tournament-snapshot.service';
@@ -173,6 +175,8 @@ const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
 const TOURNAMENT_ENERGY_BASE_AMOUNT = 20000;
+const TOURNAMENT_HOSTING_ACCESS_FIELD_ID = 'e17a32f3-65f7-47c5-bda1-33d79932c884';
+const TOURNAMENT_HOSTING_ACCESS_VALUE = 'проводит турниры';
 const TOURNAMENT_PRICING_SNAPSHOT_VERSION = 1;
 const TOURNAMENT_SUMMER_PROMO_LABEL = 'Лето.Падел.Спорт';
 const TOURNAMENT_LEVEL_BANDS = [
@@ -716,6 +720,29 @@ export class TournamentsService {
       'admin_tournaments_schedule_open',
       5 * 60_000
     );
+  }
+
+  async refreshVivaTournamentSnapshotDay(input: {
+    date?: unknown;
+    authorizationHeader?: string;
+    tenantKeyHeader?: string;
+  }): Promise<VivaTournamentSnapshotDayRefreshResult> {
+    const date = this.requireManualTournamentRefreshDate(input.date);
+    this.assertCheckoutTenant(input.tenantKeyHeader);
+    await this.assertTournamentHostingAccess(input.authorizationHeader);
+
+    if (!this.vivaTournamentSnapshotService) {
+      throw new ServiceUnavailableException('Viva tournament snapshot service is unavailable');
+    }
+
+    const result = await this.vivaTournamentSnapshotService.refreshDate(
+      date,
+      'lk_tournament_mechanics_manual_refresh'
+    );
+    if (result.refreshed) {
+      this.invalidatePublicDirectoryCache();
+    }
+    return result;
   }
 
   getVivaReferenceCacheDiagnostics(): ReturnType<VivaTournamentsService['getReferenceCacheDiagnostics']> {
@@ -1765,6 +1792,116 @@ export class TournamentsService {
       name: this.extractLkAuthName(merged),
       tenantKey: tokenTenant
     };
+  }
+
+  private async assertTournamentHostingAccess(authorizationHeader?: string): Promise<void> {
+    const token = this.extractBearerToken(authorizationHeader);
+    if (!token) {
+      throw new UnauthorizedException('Bearer token is required');
+    }
+
+    const claims = await this.verifyLkJwtToken(token);
+    if (!claims) {
+      throw new UnauthorizedException('LK auth token is invalid');
+    }
+    this.assertBearerNotExpired(claims);
+
+    const tokenTenant = this.extractLkAuthTenantKey(claims);
+    if (tokenTenant && tokenTenant !== this.publicTenantKey) {
+      throw new ForbiddenException('LK auth tenant is not allowed');
+    }
+
+    const profileUrl = new URL(
+      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
+      `${this.vivaEndUserApiBaseUrl}/`
+    );
+    let response: globalThis.Response;
+    try {
+      response = await fetch(profileUrl.toString(), {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+      });
+    } catch (_error) {
+      throw new ServiceUnavailableException('Viva profile is temporarily unavailable');
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new UnauthorizedException('LK auth token is invalid');
+    }
+    if (!response.ok) {
+      throw new ServiceUnavailableException('Viva profile is temporarily unavailable');
+    }
+
+    const profile = await response.json().catch(() => null);
+    if (!this.hasTournamentHostingAccess(profile)) {
+      throw new ForbiddenException('Tournament hosting access is required');
+    }
+  }
+
+  private hasTournamentHostingAccess(payload: unknown): boolean {
+    const root = this.toRecord(payload);
+    const profiles = [
+      root,
+      this.toRecord(root?.data),
+      this.toRecord(root?.profile),
+      this.toRecord(root?.client)
+    ].filter((item): item is Record<string, unknown> => Boolean(item));
+
+    return profiles.some((profile) => {
+      const fields = [profile.customFields, profile.custom_fields, profile.fields]
+        .find((value) => Array.isArray(value));
+      if (!Array.isArray(fields)) {
+        return false;
+      }
+
+      return fields.some((candidate) => {
+        const field = this.toRecord(candidate);
+        if (!field) {
+          return false;
+        }
+        const customField = this.toRecord(field.customField);
+        const fieldId = this.pickString(field.id)
+          ?? this.pickString(field.customFieldId)
+          ?? this.pickString(field.custom_field_id)
+          ?? this.pickString(customField?.id);
+        if (fieldId !== TOURNAMENT_HOSTING_ACCESS_FIELD_ID) {
+          return false;
+        }
+
+        const selectedValues = this.pickStringArray(field.value)
+          ?? this.pickStringArray(field.values)
+          ?? this.pickStringArray(customField?.value)
+          ?? [
+            this.pickString(field.value),
+            this.pickString(field.values),
+            this.pickString(customField?.value)
+          ].filter((value): value is string => Boolean(value));
+        if (selectedValues.some((value) => (
+          value.trim().toLowerCase() === TOURNAMENT_HOSTING_ACCESS_VALUE
+        ))) {
+          return true;
+        }
+
+        const attributes = this.toRecord(field.attributes)
+          ?? this.toRecord(customField?.attributes);
+        const options = Array.isArray(attributes?.options)
+          ? attributes.options
+          : [];
+        return options.some((candidateOption) => {
+          const option = this.toRecord(candidateOption);
+          const optionId = this.pickString(option?.id);
+          const optionName = this.pickString(option?.name)?.toLowerCase();
+          return Boolean(
+            optionId
+            && selectedValues.includes(optionId)
+            && optionName === TOURNAMENT_HOSTING_ACCESS_VALUE
+          );
+        });
+      });
+    });
   }
 
   private readCustomEnergyPricing(body: Record<string, unknown>): {
@@ -6217,6 +6354,26 @@ export class TournamentsService {
     const text = this.pickString(value);
     if (!text || !/^\d{4}-\d{2}-\d{2}$/.test(text)) {
       return undefined;
+    }
+    return text;
+  }
+
+  private requireManualTournamentRefreshDate(value: unknown): string {
+    const text = this.pickString(value);
+    if (!text || !/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      throw new BadRequestException('date must use YYYY-MM-DD format');
+    }
+    const parsed = new Date(`${text}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+      throw new BadRequestException('date must be a valid calendar date');
+    }
+
+    const today = new Date();
+    const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const requestedUtc = parsed.getTime();
+    const distanceDays = Math.abs(Math.round((requestedUtc - todayUtc) / 86_400_000));
+    if (distanceDays > 366) {
+      throw new BadRequestException('date is outside the allowed refresh window');
     }
     return text;
   }

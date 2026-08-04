@@ -93,6 +93,7 @@ export class VivaTournamentsService {
     date?: string;
     from?: string;
     to?: string;
+    includePast?: boolean;
   }): Promise<Tournament[] | null> {
     if (this.widgetIds.length === 0) {
       return null;
@@ -227,6 +228,7 @@ export class VivaTournamentsService {
       date?: string;
       from?: string;
       to?: string;
+      includePast?: boolean;
     }
   ): Promise<Tournament[]> {
     const requestedDate = this.normalizeDateKey(options?.date);
@@ -265,7 +267,11 @@ export class VivaTournamentsService {
           widgetId
         );
     const exercises = await Promise.all(
-      dates.map((dateKey) => this.fetchExercisesByDate(dateKey, widgetId))
+      dates.map((dateKey) => this.fetchExercisesByDate(
+        dateKey,
+        widgetId,
+        options?.includePast === true
+      ))
     );
 
     const studioNames = new Map(studios.map((studio) => [studio.id, studio.name]));
@@ -463,8 +469,15 @@ export class VivaTournamentsService {
     }
   }
 
-  private async fetchExercisesByDate(dateKey: string, widgetId: string): Promise<VivaRawRecord[]> {
-    const payload = await this.fetchJson('exercises', { date: dateKey }, widgetId);
+  private async fetchExercisesByDate(
+    dateKey: string,
+    widgetId: string,
+    includePast = false
+  ): Promise<VivaRawRecord[]> {
+    const payload = await this.fetchJson('exercises', {
+      date: dateKey,
+      ...(includePast ? { includePast: 'true', past: 'true' } : {})
+    }, widgetId);
     return this.unwrapRecords(payload);
   }
 
