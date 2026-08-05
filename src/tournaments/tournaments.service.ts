@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
-import { createPublicKey, verify as verifySignature } from 'crypto';
+import { createHash, createPublicKey, verify as verifySignature } from 'crypto';
 import type { JsonWebKey } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { getStationScopeForPermission } from '../common/rbac/permissions';
@@ -154,6 +154,11 @@ interface PublicDirectoryCacheEntry {
   payload: TournamentPublicDirectoryResponse;
 }
 
+interface TournamentHostingAccessCacheEntry {
+  allowed: boolean;
+  expiresAt: number;
+}
+
 interface TournamentListOptions {
   date?: string;
   from?: string;
@@ -231,12 +236,21 @@ export class TournamentsService {
     this.readPositiveNumberEnv('TOURNAMENTS_PUBLIC_AUTH_TIMEOUT_MS', 5000);
   private readonly lkJwksCacheTtlMs =
     this.readPositiveNumberEnv('TOURNAMENTS_PUBLIC_JWKS_CACHE_TTL_MS', 10 * 60 * 1000);
+  private readonly tournamentHostingAccessCacheTtlMs = this.readPositiveNumberEnv(
+    'TOURNAMENTS_HOSTING_ACCESS_CACHE_TTL_MS',
+    15_000
+  );
   private readonly publicDirectoryCacheTtlMs = this.readPositiveNumberEnv(
     'TOURNAMENTS_PUBLIC_DIRECTORY_CACHE_TTL_MS',
     30000
   );
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
   private readonly publicDirectoryInFlight = new Map<string, Promise<TournamentPublicDirectoryResponse>>();
+  private readonly tournamentHostingAccessCache = new Map<
+    string,
+    TournamentHostingAccessCacheEntry
+  >();
+  private readonly tournamentHostingAccessInFlight = new Map<string, Promise<boolean>>();
   private readonly missingSourceSkinStatusSyncInFlight = new Set<string>();
   private lkJwksCache: { expiresAt: number; keys: LkJwksKey[] } | null = null;
 
@@ -716,10 +730,19 @@ export class TournamentsService {
       });
     }
 
-    return this.vivaTournamentSnapshotService.refreshOnAdminOpen(
-      'admin_tournaments_schedule_open',
-      5 * 60_000
-    );
+    const freshness = this.vivaTournamentSnapshotService.getFreshnessMetadata();
+    return Promise.resolve({
+      enabled: freshness.refreshEnabled || freshness.readModelEnabled,
+      refreshed: false,
+      reason: freshness.snapshotAvailable ? 'fresh' : 'refresh_failed',
+      snapshotAvailable: freshness.snapshotAvailable,
+      ...(freshness.snapshotAgeMs !== undefined
+        ? { snapshotAgeMs: freshness.snapshotAgeMs }
+        : {}),
+      ...(freshness.lastSuccessfulAt
+        ? { lastSuccessfulAt: freshness.lastSuccessfulAt }
+        : {})
+    });
   }
 
   async refreshVivaTournamentSnapshotDay(input: {
@@ -1811,6 +1834,48 @@ export class TournamentsService {
       throw new ForbiddenException('LK auth tenant is not allowed');
     }
 
+    const cacheKey = createHash('sha256').update(token).digest('base64url');
+    const hasAccess = await this.resolveTournamentHostingAccess(cacheKey, token);
+    if (!hasAccess) {
+      throw new ForbiddenException('Tournament hosting access is required');
+    }
+  }
+
+  private async resolveTournamentHostingAccess(
+    cacheKey: string,
+    token: string
+  ): Promise<boolean> {
+    const now = Date.now();
+    const cached = this.tournamentHostingAccessCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.allowed;
+    }
+    if (cached) {
+      this.tournamentHostingAccessCache.delete(cacheKey);
+    }
+
+    const active = this.tournamentHostingAccessInFlight.get(cacheKey);
+    if (active) {
+      return active;
+    }
+
+    const request = this.fetchTournamentHostingAccess(token)
+      .then((allowed) => {
+        this.pruneTournamentHostingAccessCache();
+        this.tournamentHostingAccessCache.set(cacheKey, {
+          allowed,
+          expiresAt: Date.now() + this.tournamentHostingAccessCacheTtlMs
+        });
+        return allowed;
+      })
+      .finally(() => {
+        this.tournamentHostingAccessInFlight.delete(cacheKey);
+      });
+    this.tournamentHostingAccessInFlight.set(cacheKey, request);
+    return request;
+  }
+
+  private async fetchTournamentHostingAccess(token: string): Promise<boolean> {
     const profileUrl = new URL(
       `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
       `${this.vivaEndUserApiBaseUrl}/`
@@ -1836,8 +1901,22 @@ export class TournamentsService {
     }
 
     const profile = await response.json().catch(() => null);
-    if (!this.hasTournamentHostingAccess(profile)) {
-      throw new ForbiddenException('Tournament hosting access is required');
+    return this.hasTournamentHostingAccess(profile);
+  }
+
+  private pruneTournamentHostingAccessCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.tournamentHostingAccessCache) {
+      if (entry.expiresAt <= now) {
+        this.tournamentHostingAccessCache.delete(key);
+      }
+    }
+    while (this.tournamentHostingAccessCache.size >= 512) {
+      const oldestKey = this.tournamentHostingAccessCache.keys().next().value as string | undefined;
+      if (!oldestKey) {
+        break;
+      }
+      this.tournamentHostingAccessCache.delete(oldestKey);
     }
   }
 

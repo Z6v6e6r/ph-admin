@@ -7968,9 +7968,6 @@
         var suffix = params.toString() ? '?' + params.toString() : '';
         return request('/tournaments' + suffix, 'GET');
       },
-      refreshTournamentSnapshotOnOpen: function () {
-        return request('/tournaments/snapshot/refresh-on-open', 'POST', {});
-      },
       getTournamentVivaStatusSyncDiagnostics: function () {
         return request('/tournaments/debug/viva-status-sync', 'GET');
       },
@@ -34517,14 +34514,6 @@
     }
 
     async function openTournamentsSchedule() {
-      try {
-        await api.refreshTournamentSnapshotOnOpen();
-      } catch (error) {
-        if (window.console && console.warn) {
-          console.warn('[PHAB admin panel] Failed to refresh tournament snapshot on open', error);
-        }
-      }
-
       await loadTournaments();
     }
 

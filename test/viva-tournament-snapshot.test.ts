@@ -235,6 +235,45 @@ async function testManualDayRefreshCoalescesConcurrentFailures(): Promise<void> 
   });
 }
 
+async function testManualDayRefreshWorksWithBackgroundRefreshDisabled(): Promise<void> {
+  const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
+  const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
+  const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
+  const originalMongoUriFallback = process.env.MONGODB_URI;
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'false';
+  delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  delete process.env.TOURNAMENTS_MONGODB_URI;
+  delete process.env.MONGODB_URI;
+
+  let calls = 0;
+  const snapshotService = new VivaTournamentSnapshotService({
+    listTournaments: async () => {
+      calls += 1;
+      return [createTournament('manual-with-background-off', '2026-07-04T20:00:00+03:00')];
+    }
+  } as never);
+
+  try {
+    const result = await snapshotService.refreshDate('2026-07-04', 'test_manual_background_off');
+    assert.equal(result.refreshed, true);
+    assert.equal(result.reason, 'refreshed');
+    assert.equal(calls, 1);
+    assert.deepEqual(
+      result.tournaments.map((tournament) => tournament.id),
+      ['manual-with-background-off']
+    );
+  } finally {
+    await snapshotService.onModuleDestroy();
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
+    restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);
+    restoreEnv('MONGODB_URI', originalMongoUriFallback);
+  }
+}
+
 async function testSnapshotShadowRefreshDoesNotServeReadModel(): Promise<void> {
   const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
   const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
@@ -700,6 +739,7 @@ async function main(): Promise<void> {
   await testSnapshotRefreshSingleflightAndLocalDateFilter();
   await testManualDayRefreshUsesOneBoundedVivaCall();
   await testManualDayRefreshCoalescesConcurrentFailures();
+  await testManualDayRefreshWorksWithBackgroundRefreshDisabled();
   await testSnapshotShadowRefreshDoesNotServeReadModel();
   await testSnapshotHydrationRetriesAfterMongoFailure();
   await testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl();

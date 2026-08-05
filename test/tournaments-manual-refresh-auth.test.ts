@@ -37,13 +37,21 @@ async function main(): Promise<void> {
     ]
   };
   let profileCalls = 0;
+  let profileGate: Promise<void> | undefined;
+  let releaseProfile: (() => void) | undefined;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     profileCalls += 1;
     assert.equal(
       String(input),
       'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/profile'
     );
-    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer valid-token');
+    assert.match(
+      new Headers(init?.headers).get('authorization') ?? '',
+      /^Bearer (valid|denied)-token$/
+    );
+    if (profileGate) {
+      await profileGate;
+    }
     return new Response(JSON.stringify(profilePayload), {
       status: 200,
       headers: { 'content-type': 'application/json' }
@@ -66,14 +74,35 @@ async function main(): Promise<void> {
       };
     });
 
-    const result = await service.refreshVivaTournamentSnapshotDay({
+    profileGate = new Promise<void>((resolve) => {
+      releaseProfile = resolve;
+    });
+    const first = service.refreshVivaTournamentSnapshotDay({
       date: TEST_DATE,
       authorizationHeader: 'Bearer valid-token',
       tenantKeyHeader: 'iSkq6G'
     });
-    assert.equal(result.refreshed, true);
+    const duplicate = service.refreshVivaTournamentSnapshotDay({
+      date: TEST_DATE,
+      authorizationHeader: 'Bearer valid-token',
+      tenantKeyHeader: 'iSkq6G'
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(profileCalls, 1);
-    assert.equal(refreshCalls, 1);
+    releaseProfile?.();
+    profileGate = undefined;
+    const [result, duplicateResult] = await Promise.all([first, duplicate]);
+    assert.equal(result.refreshed, true);
+    assert.equal(duplicateResult.refreshed, true);
+    assert.equal(refreshCalls, 2);
+
+    await service.refreshVivaTournamentSnapshotDay({
+      date: TEST_DATE,
+      authorizationHeader: 'Bearer valid-token',
+      tenantKeyHeader: 'iSkq6G'
+    });
+    assert.equal(profileCalls, 1, 'repeated token must reuse the bounded access check');
+    assert.equal(refreshCalls, 3);
 
     profilePayload = {
       customFields: [{ id: ACCESS_FIELD_ID, value: ['не проводит турниры'] }]
@@ -81,12 +110,23 @@ async function main(): Promise<void> {
     await assert.rejects(
       () => service.refreshVivaTournamentSnapshotDay({
         date: TEST_DATE,
-        authorizationHeader: 'Bearer valid-token',
+        authorizationHeader: 'Bearer denied-token',
         tenantKeyHeader: 'iSkq6G'
       }),
       (error: any) => error?.getStatus?.() === 403
     );
-    assert.equal(refreshCalls, 1, 'access denial must happen before snapshot refresh');
+    assert.equal(profileCalls, 2);
+    assert.equal(refreshCalls, 3, 'access denial must happen before snapshot refresh');
+
+    await assert.rejects(
+      () => service.refreshVivaTournamentSnapshotDay({
+        date: TEST_DATE,
+        authorizationHeader: 'Bearer denied-token',
+        tenantKeyHeader: 'iSkq6G'
+      }),
+      (error: any) => error?.getStatus?.() === 403
+    );
+    assert.equal(profileCalls, 2, 'denied token must also use the bounded access check');
 
     await assert.rejects(
       () => service.refreshVivaTournamentSnapshotDay({

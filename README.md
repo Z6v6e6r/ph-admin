@@ -50,8 +50,9 @@ API работает на `http://localhost:3000/api`.
 
 Игры по-прежнему читаются из ЛК ПадлХаб.
 
-Турниры в `/api/tournaments` сначала грузятся из Viva End-User виджета расписания,
-а если Viva недоступна или не отвечает, используется fallback на старый источник ЛК.
+Обычный `GET /api/tournaments` читает Viva-каталог только из Mongo snapshot и не
+запускает live-запросы или background refresh. Оперативное обновление выбранного
+дня выполняется отдельно через защищённый `POST /api/tournaments/snapshot/refresh-day`.
 
 Для ЛК ПадлХаб поддерживаются два режима:
 
@@ -132,6 +133,8 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_TOURNAMENT_EXERCISE_TYPE_IDS=839,1013` (опционально; какие `exerciseTypeIds` считать турнирами)
 - `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
 - `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
+- `VIVA_TOURNAMENT_SNAPSHOT_MANUAL_REFRESH_COOLDOWN_MS=15000` (опционально; минимальный интервал между ручными обновлениями выбранного дня; параллельные запросы объединяются)
+- `TOURNAMENTS_HOSTING_ACCESS_CACHE_TTL_MS=15000` (опционально; короткий cache/single-flight проверки поля доступа в Viva-профиле, чтобы повторные нажатия не создавали profile fan-out)
 - `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
@@ -163,6 +166,7 @@ API работает на `http://localhost:3000/api`.
 
 Админские endpoint'ы кастомных турниров:
 
+- `POST /api/tournaments/snapshot/refresh-day` - авторизованное обновление только выбранной даты из Viva для профиля с доступом к проведению турниров; body `{ "date": "YYYY-MM-DD" }`
 - `POST /api/tournaments/custom/from-source/:sourceTournamentId` - создать кастомный турнир на основе турнира из Viva
 - `POST /api/tournaments/custom/from-viva-link` - создать/обновить кастомный турнир по ссылке вида `https://cabinet.vivacrm.ru/schedule/{studioId}/exercise/{exerciseId}?date=YYYY-MM-DD`
 - `GET /api/tournaments/custom/:id` - получить кастомный турнир целиком для редактирования
