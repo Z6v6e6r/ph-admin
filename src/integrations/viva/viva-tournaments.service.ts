@@ -33,6 +33,9 @@ export class VivaTournamentsService {
     this.normalizeBaseUrl(process.env.VIVA_END_USER_API_BASE_URL) ||
     this.normalizeBaseUrl(process.env.VIVA_ADMIN_API_BASE_URL) ||
     'https://api.vivacrm.ru';
+  private readonly endUserUserAgent =
+    this.normalizeString(process.env.VIVA_END_USER_USER_AGENT)
+    ?? 'PadlHub-LK-Tournament-Refresh/1.0';
   private readonly widgetIds = this.resolveWidgetIds();
   private readonly exerciseTypeIds = this.readStringListEnv(
     'VIVA_TOURNAMENT_EXERCISE_TYPE_IDS',
@@ -572,7 +575,8 @@ export class VivaTournamentsService {
     const execute = async (): Promise<unknown> => {
       const response = await fetch(url, {
         headers: {
-          Accept: 'application/json'
+          Accept: 'application/json',
+          'User-Agent': this.endUserUserAgent
         },
         signal: this.buildAbortSignal()
       });

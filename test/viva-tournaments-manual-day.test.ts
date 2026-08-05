@@ -6,14 +6,18 @@ async function main(): Promise<void> {
   const originalApiBaseUrl = process.env.VIVA_END_USER_API_BASE_URL;
   const originalWidgetId = process.env.VIVA_END_USER_WIDGET_ID;
   const originalWidgetIds = process.env.VIVA_END_USER_WIDGET_IDS;
+  const originalUserAgent = process.env.VIVA_END_USER_USER_AGENT;
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
   process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
   delete process.env.VIVA_END_USER_WIDGET_IDS;
+  delete process.env.VIVA_END_USER_USER_AGENT;
 
   const requestedUrls: string[] = [];
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  const requestedUserAgents: Array<string | null> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     requestedUrls.push(url.toString());
+    requestedUserAgents.push(new Headers(init?.headers).get('user-agent'));
     return new Response(JSON.stringify([
       {
         id: 'manual-day-tournament',
@@ -41,11 +45,13 @@ async function main(): Promise<void> {
     assert.equal(requestUrl.searchParams.get('date'), '2026-08-04');
     assert.equal(requestUrl.searchParams.get('includePast'), 'true');
     assert.equal(requestUrl.searchParams.get('past'), 'true');
+    assert.deepEqual(requestedUserAgents, ['PadlHub-LK-Tournament-Refresh/1.0']);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);
     restoreEnv('VIVA_END_USER_WIDGET_ID', originalWidgetId);
     restoreEnv('VIVA_END_USER_WIDGET_IDS', originalWidgetIds);
+    restoreEnv('VIVA_END_USER_USER_AGENT', originalUserAgent);
   }
 
   console.log('Viva tournaments manual-day test passed');

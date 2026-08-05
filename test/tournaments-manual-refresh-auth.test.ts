@@ -24,6 +24,7 @@ function createService(refreshDay: (date: string, reason: string) => Promise<unk
 }
 
 async function main(): Promise<void> {
+  delete process.env.VIVA_END_USER_USER_AGENT;
   const originalFetch = globalThis.fetch;
   let profilePayload: unknown = {
     customFields: [
@@ -48,6 +49,10 @@ async function main(): Promise<void> {
     assert.match(
       new Headers(init?.headers).get('authorization') ?? '',
       /^Bearer (valid|denied)-token$/
+    );
+    assert.equal(
+      new Headers(init?.headers).get('user-agent'),
+      'PadlHub-LK-Tournament-Refresh/1.0'
     );
     if (profileGate) {
       await profileGate;

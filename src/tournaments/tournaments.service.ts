@@ -218,6 +218,9 @@ export class TournamentsService {
     || 'https://api.vivacrm.ru';
   private readonly vivaEndUserWidgetId =
     this.pickString(process.env.VIVA_END_USER_WIDGET_ID) ?? 'iSkq6G';
+  private readonly vivaEndUserUserAgent =
+    this.pickString(process.env.VIVA_END_USER_USER_AGENT)
+    ?? 'PadlHub-LK-Tournament-Refresh/1.0';
   private readonly publicTenantKey =
     this.pickString(process.env.TOURNAMENTS_PUBLIC_TENANT_KEY)
     ?? this.vivaEndUserWidgetId
@@ -1885,7 +1888,8 @@ export class TournamentsService {
       response = await fetch(profileUrl.toString(), {
         headers: {
           Accept: 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
+          'User-Agent': this.vivaEndUserUserAgent
         },
         signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
       });
