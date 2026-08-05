@@ -229,7 +229,7 @@ export class TournamentsService {
       ?? process.env.VIVA_KEYCLOAK_BASE_URL
     ) ?? 'https://kc.vivacrm.ru';
   private readonly lkKeycloakRealm =
-    this.pickString(process.env.TOURNAMENTS_PUBLIC_KEYCLOAK_REALM) ?? 'prod';
+    this.pickString(process.env.TOURNAMENTS_LK_KEYCLOAK_REALM) ?? 'clients';
   private readonly vivaEndUserRequestTimeoutMs =
     this.readPositiveNumberEnv('VIVA_END_USER_TIMEOUT_MS', 5000);
   private readonly lkAuthRequestTimeoutMs =
