@@ -13,8 +13,8 @@ These rules are mandatory for every change in this repository.
 
 Every task uses the following stage gates. Approval of one stage never authorizes a later stage.
 
-1. **Implement and verify in isolation.** Identify the base `origin/main` SHA, use a focused branch/worktree, preserve existing dirty changes, implement only the requested scope, run relevant checks, and create a focused checkpoint commit in the task branch. Do not merge, push, or deploy.
-2. **User verification.** Provide the runnable result, changed-file summary, checks, checkpoint SHA, and limitations. The user verifies the result. Corrections remain in the same task branch and get another checkpoint commit.
+1. **Implement and verify in isolation.** Identify the base `origin/main` SHA, use a focused branch/worktree, preserve dirty changes, implement the approved scope, and run relevant checks. Stop with a verified uncommitted diff and ask for checkpoint-commit approval. Do not merge, push, or deploy.
+2. **User verification.** After explicit checkpoint-commit approval, provide the result, changed-file summary, checks, SHA, and limitations. Corrections remain in the same task branch and require another approved checkpoint.
 3. **Integrate into `main`.** Only after explicit approval, refresh `origin/main`, inspect the final diff, integrate only the approved task branch into local `main`, and rerun proportionate checks. Do not push or deploy.
 4. **Push `main`.** Only after separate explicit approval, show the outgoing commits, push local `main`, confirm the remote SHA, and check required CI. Do not deploy.
 5. **Deploy and post-check.** Only after another explicit approval, deploy an immutable artifact built from the confirmed pushed SHA to the approved environment. Verification is part of this stage: confirm the served release/image SHA, health/readiness, and the affected authenticated UI/API/worker/persistence journey. Never deploy a dirty tree or edit server code manually.
@@ -69,7 +69,7 @@ Before any nontrivial feature, bug fix, audit, refactor, API change, migration, 
 
 Do not change public routes, DTOs, error/status semantics, stored shapes, env contracts, or client payloads without compatibility analysis and relevant contract/negative tests. Documentation proposals under `docs/migration/` are not automatically approved runtime architecture.
 
-Do not commit, push, merge, rebase, deploy, mutate external data, or overwrite user changes unless the user explicitly requests that exact action. After an agreed implementation stage, report the evidence and ask before the next named stage.
+Do not merge, rebase, deploy, mutate external data, or overwrite user changes without explicit approval. Commit and push follow the separate stage gates above.
 
 The final answer must list changed files, exact commands run and results, skipped or blocked checks, residual risks, and whether commit/push/deploy occurred. Record stable new project rules only after repeated evidence or an explicit long-term user instruction; put detail in the orchestration skill and log material rule changes in `docs/ai/AGENT_RULES_CHANGELOG.md`.
 
