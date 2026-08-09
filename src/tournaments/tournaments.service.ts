@@ -234,6 +234,7 @@ export class TournamentsService {
   private readonly publicDirectoryCache = new Map<string, PublicDirectoryCacheEntry>();
   private readonly publicDirectoryInFlight = new Map<string, Promise<TournamentPublicDirectoryResponse>>();
   private readonly missingSourceSkinStatusSyncInFlight = new Set<string>();
+  private missingSourceSkinStatusSyncQueue: Promise<void> = Promise.resolve();
   private lkJwksCache: { expiresAt: number; keys: LkJwksKey[] } | null = null;
 
   constructor(
@@ -2463,41 +2464,54 @@ export class TournamentsService {
     tournaments: CustomTournament[],
     syncKey: string
   ): Promise<void> {
+    const syncRun = this.missingSourceSkinStatusSyncQueue.then(() =>
+      this.runMissingSourceSkinStatusSync(tournaments)
+    );
+    this.missingSourceSkinStatusSyncQueue = syncRun.catch(() => undefined);
+
     try {
-      await Promise.all(
-        tournaments.map(async (tournament) => {
-          const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
-          if (!sourceTournamentId) {
-            return;
-          }
-
-          const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
-          const adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(sourceTournamentId);
-          const shouldCancel =
-            (sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status))
-            || adminCanceledState === 'CANCELED';
-          if (!shouldCancel) {
-            return;
-          }
-
-          await this.tournamentsPersistence.updateCustomTournament(tournament.id, {
-            status: TournamentStatus.CANCELED,
-            statusReason:
-              'Автоотмена Viva sync: связанный турнир в источнике Viva имеет статус CANCELED.',
-            statusSource: 'VIVA_SYNC',
-            autoStatusChange: true,
-            actor: {
-              id: 'system:viva-sync',
-              name: 'Viva sync'
-            }
-          });
-          this.invalidatePublicDirectoryCache();
-        })
-      );
+      await syncRun;
     } catch (error) {
       this.logger.warn(`Failed to sync missing Viva tournament skins: ${String(error)}`);
     } finally {
       this.missingSourceSkinStatusSyncInFlight.delete(syncKey);
+    }
+  }
+
+  private async runMissingSourceSkinStatusSync(tournaments: CustomTournament[]): Promise<void> {
+    for (const tournament of tournaments) {
+      try {
+        const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+        if (!sourceTournamentId) {
+          continue;
+        }
+
+        const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
+        const adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(sourceTournamentId);
+        const shouldCancel =
+          (sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status))
+          || adminCanceledState === 'CANCELED';
+        if (!shouldCancel) {
+          continue;
+        }
+
+        await this.tournamentsPersistence.updateCustomTournament(tournament.id, {
+          status: TournamentStatus.CANCELED,
+          statusReason:
+            'Автоотмена Viva sync: связанный турнир в источнике Viva имеет статус CANCELED.',
+          statusSource: 'VIVA_SYNC',
+          autoStatusChange: true,
+          actor: {
+            id: 'system:viva-sync',
+            name: 'Viva sync'
+          }
+        });
+        this.invalidatePublicDirectoryCache();
+      } catch (error) {
+        this.logger.warn(
+          `Failed to sync missing Viva tournament skin ${tournament.id}: ${String(error)}`
+        );
+      }
     }
   }
 
