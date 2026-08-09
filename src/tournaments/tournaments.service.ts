@@ -348,6 +348,10 @@ export class TournamentsService {
     windowEnd: string;
     candidatesCount: number;
     checkedCount: number;
+    uniqueSourceCount: number;
+    readModelCanceledCandidateCount: number;
+    uniqueAdminStatusLookupCount: number;
+    adminStatusUnknownCandidateCount: number;
     updatedCount: number;
     sourceNotFoundCount: number;
     sourceNotCanceledCount: number;
@@ -366,6 +370,10 @@ export class TournamentsService {
         windowEnd: windowEnd.toISOString(),
         candidatesCount: 0,
         checkedCount: 0,
+        uniqueSourceCount: 0,
+        readModelCanceledCandidateCount: 0,
+        uniqueAdminStatusLookupCount: 0,
+        adminStatusUnknownCandidateCount: 0,
         updatedCount: 0,
         sourceNotFoundCount: 0,
         sourceNotCanceledCount: 0
@@ -376,8 +384,36 @@ export class TournamentsService {
     const candidates = customTournaments.filter((tournament) =>
       this.isCandidateForVivaCancelSync(tournament, windowStart, windowEnd)
     );
+    const uniqueSourceIds = new Set(
+      candidates
+        .map((tournament) => this.pickString(tournament.sourceTournamentId))
+        .filter((sourceTournamentId): sourceTournamentId is string => Boolean(sourceTournamentId))
+    );
+    let sourceReadModels: Tournament[] = [];
+    try {
+      sourceReadModels = await this.listSourceTournaments({ readModelOnly: true });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load Viva tournament read model for hourly status sync: ${String(error)}`
+      );
+    }
+    const sourceReadModelById = new Map<string, Tournament>();
+    sourceReadModels.forEach((sourceTournament) => {
+      sourceReadModelById.set(sourceTournament.id, sourceTournament);
+      const exerciseId = this.pickString(sourceTournament.exerciseId);
+      if (exerciseId) {
+        sourceReadModelById.set(exerciseId, sourceTournament);
+      }
+    });
+    const adminCanceledStateBySourceId = new Map<
+      string,
+      'CANCELED' | 'NOT_CANCELED' | 'UNKNOWN'
+    >();
 
     let checkedCount = 0;
+    let readModelCanceledCandidateCount = 0;
+    let uniqueAdminStatusLookupCount = 0;
+    let adminStatusUnknownCandidateCount = 0;
     let updatedCount = 0;
     let sourceNotFoundCount = 0;
     let sourceNotCanceledCount = 0;
@@ -389,15 +425,30 @@ export class TournamentsService {
       }
 
       checkedCount += 1;
-      const sourceTournament = await this.findSourceTournamentByIdSafe(sourceTournamentId);
-      const adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(sourceTournamentId);
-      const shouldCancel =
-        (sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status))
-        || adminCanceledState === 'CANCELED';
+      const sourceTournament = sourceReadModelById.get(sourceTournamentId) ?? null;
+      const readModelCanceled = Boolean(
+        sourceTournament && this.isCanceledTournamentStatus(sourceTournament.status)
+      );
+      if (readModelCanceled) {
+        readModelCanceledCandidateCount += 1;
+      }
+
+      let adminCanceledState = adminCanceledStateBySourceId.get(sourceTournamentId);
+      if (!adminCanceledState) {
+        uniqueAdminStatusLookupCount += 1;
+        adminCanceledState = await this.resolveSourceCanceledStateFromVivaAdmin(
+          sourceTournamentId
+        );
+        adminCanceledStateBySourceId.set(sourceTournamentId, adminCanceledState);
+      }
+      const shouldCancel = adminCanceledState === 'CANCELED';
 
       if (!shouldCancel) {
-        if (!sourceTournament && adminCanceledState === 'UNKNOWN') {
-          sourceNotFoundCount += 1;
+        if (adminCanceledState === 'UNKNOWN') {
+          adminStatusUnknownCandidateCount += 1;
+          if (!sourceTournament) {
+            sourceNotFoundCount += 1;
+          }
           continue;
         }
         sourceNotCanceledCount += 1;
@@ -429,6 +480,10 @@ export class TournamentsService {
       windowEnd: windowEnd.toISOString(),
       candidatesCount: candidates.length,
       checkedCount,
+      uniqueSourceCount: uniqueSourceIds.size,
+      readModelCanceledCandidateCount,
+      uniqueAdminStatusLookupCount,
+      adminStatusUnknownCandidateCount,
       updatedCount,
       sourceNotFoundCount,
       sourceNotCanceledCount
