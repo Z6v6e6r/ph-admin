@@ -6,6 +6,12 @@ import {
   TournamentStatus
 } from '../../tournaments/tournaments.types';
 import { VivaAdminService } from './viva-admin.service';
+import {
+  VivaReferenceCacheDiagnostics,
+  VivaReferenceCacheService,
+  VivaReferenceCacheType
+} from './viva-reference-cache.service';
+import { VivaRequestGovernorService } from './viva-request-governor.service';
 
 interface VivaEntitySummary {
   id: string;
@@ -27,6 +33,9 @@ export class VivaTournamentsService {
     this.normalizeBaseUrl(process.env.VIVA_END_USER_API_BASE_URL) ||
     this.normalizeBaseUrl(process.env.VIVA_ADMIN_API_BASE_URL) ||
     'https://api.vivacrm.ru';
+  private readonly endUserUserAgent =
+    this.normalizeString(process.env.VIVA_END_USER_USER_AGENT)
+    ?? 'PadlHub-LK-Tournament-Refresh/1.0';
   private readonly widgetIds = this.resolveWidgetIds();
   private readonly exerciseTypeIds = this.readStringListEnv(
     'VIVA_TOURNAMENT_EXERCISE_TYPE_IDS',
@@ -40,13 +49,54 @@ export class VivaTournamentsService {
     'VIVA_END_USER_TIMEOUT_MS',
     5000
   );
+  private readonly governorEnabled = this.readBooleanEnv('VIVA_GOVERNOR_ENABLED', false);
+  private readonly profilePreloadEnabled = this.readBooleanEnv(
+    'VIVA_TOURNAMENT_PROFILE_PRELOAD_ENABLED',
+    false
+  );
 
-  constructor(@Optional() private readonly vivaAdminService?: VivaAdminService) {}
+  constructor(
+    @Optional() private readonly vivaAdminService?: VivaAdminService,
+    @Optional() private readonly vivaRequestGovernor?: VivaRequestGovernorService,
+    @Optional() private readonly vivaReferenceCache?: VivaReferenceCacheService
+  ) {}
+
+  getReferenceCacheDiagnostics(): VivaReferenceCacheDiagnostics | {
+    enabled: false;
+    reason: string;
+  } {
+    if (!this.vivaReferenceCache) {
+      return {
+        enabled: false,
+        reason: 'VivaReferenceCacheService is not registered'
+      };
+    }
+    return this.vivaReferenceCache.getDiagnostics();
+  }
+
+  getRequestGovernorDiagnostics(): ({
+    enabled: boolean;
+  } & ReturnType<VivaRequestGovernorService['getDiagnostics']>) | {
+    enabled: false;
+    reason: string;
+  } {
+    if (!this.vivaRequestGovernor) {
+      return {
+        enabled: false,
+        reason: 'VivaRequestGovernorService is not registered'
+      };
+    }
+    return {
+      enabled: this.governorEnabled,
+      ...this.vivaRequestGovernor.getDiagnostics()
+    };
+  }
 
   async listTournaments(options?: {
     date?: string;
     from?: string;
     to?: string;
+    includePast?: boolean;
   }): Promise<Tournament[] | null> {
     if (this.widgetIds.length === 0) {
       return null;
@@ -181,6 +231,7 @@ export class VivaTournamentsService {
       date?: string;
       from?: string;
       to?: string;
+      includePast?: boolean;
     }
   ): Promise<Tournament[]> {
     const requestedDate = this.normalizeDateKey(options?.date);
@@ -219,7 +270,11 @@ export class VivaTournamentsService {
           widgetId
         );
     const exercises = await Promise.all(
-      dates.map((dateKey) => this.fetchExercisesByDate(dateKey, widgetId))
+      dates.map((dateKey) => this.fetchExercisesByDate(
+        dateKey,
+        widgetId,
+        options?.includePast === true
+      ))
     );
 
     const studioNames = new Map(studios.map((studio) => [studio.id, studio.name]));
@@ -382,6 +437,14 @@ export class VivaTournamentsService {
     widgetId: string
   ): Promise<VivaEntitySummary[]> {
     try {
+      const cacheType = this.resolveReferenceCacheType(path);
+      if (cacheType && this.vivaReferenceCache) {
+        return await this.vivaReferenceCache.getOrLoad({
+          widgetId,
+          type: cacheType,
+          load: () => this.fetchEntitySummaries(path, widgetId)
+        });
+      }
       return await this.fetchEntitySummaries(path, widgetId);
     } catch (error) {
       this.logger.warn(`Failed to load Viva ${path}: ${String(error)}`);
@@ -390,15 +453,34 @@ export class VivaTournamentsService {
   }
 
   private async fetchProfile(widgetId: string): Promise<void> {
+    if (!this.profilePreloadEnabled) {
+      return;
+    }
+
     try {
+      if (this.vivaReferenceCache) {
+        await this.vivaReferenceCache.getOrLoad({
+          widgetId,
+          type: 'profile',
+          load: () => this.fetchJson('profile', undefined, widgetId)
+        });
+        return;
+      }
       await this.fetchJson('profile', undefined, widgetId);
     } catch (error) {
       this.logger.warn(`Failed to preload Viva schedule profile: ${String(error)}`);
     }
   }
 
-  private async fetchExercisesByDate(dateKey: string, widgetId: string): Promise<VivaRawRecord[]> {
-    const payload = await this.fetchJson('exercises', { date: dateKey }, widgetId);
+  private async fetchExercisesByDate(
+    dateKey: string,
+    widgetId: string,
+    includePast = false
+  ): Promise<VivaRawRecord[]> {
+    const payload = await this.fetchJson('exercises', {
+      date: dateKey,
+      ...(includePast ? { includePast: 'true', past: 'true' } : {})
+    }, widgetId);
     return this.unwrapRecords(payload);
   }
 
@@ -488,18 +570,100 @@ export class VivaTournamentsService {
     widgetId?: string
   ): Promise<unknown> {
     const url = this.buildUrl(path, query, widgetId);
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json'
-      },
-      signal: this.buildAbortSignal()
-    });
+    const resolvedWidgetId = widgetId ?? this.widgetIds[0] ?? 'default';
+    const priority = this.resolveRequestPriority(path);
+    const execute = async (): Promise<unknown> => {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': this.endUserUserAgent
+        },
+        signal: this.buildAbortSignal()
+      });
 
-    if (!response.ok) {
-      throw new Error(`Viva request ${path} failed with status ${response.status}`);
+      if (!response.ok) {
+        throw this.buildVivaRequestError(path, response);
+      }
+
+      return response.json();
+    };
+    if (this.governorEnabled && this.vivaRequestGovernor) {
+      return this.vivaRequestGovernor.run({
+        key: `GET ${url}`,
+        bucket: `viva:${resolvedWidgetId}:${priority}`,
+        priority,
+        execute
+      });
     }
 
-    return response.json();
+    return execute();
+  }
+
+  private buildVivaRequestError(path: string, response: Response): Error {
+    const error = new Error(`Viva request ${path} failed with status ${response.status}`) as Error & {
+      status?: number;
+      retryAfterMs?: number;
+    };
+    error.status = response.status;
+    const retryAfterMs = this.parseRetryAfterMs(response.headers.get('retry-after'));
+    if (retryAfterMs !== undefined) {
+      error.retryAfterMs = retryAfterMs;
+    }
+    return error;
+  }
+
+  private parseRetryAfterMs(value: string | null): number | undefined {
+    const normalized = this.normalizeString(value ?? undefined);
+    if (!normalized) {
+      return undefined;
+    }
+    const seconds = Number(normalized);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.floor(seconds * 1000);
+    }
+    const dateMs = Date.parse(normalized);
+    if (!Number.isFinite(dateMs)) {
+      return undefined;
+    }
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : undefined;
+  }
+
+  private resolveRequestPriority(path: string): 'catalog' | 'detail' | 'reference' {
+    const normalized = String(path || '').replace(/^\/+/, '').toLowerCase();
+    if (
+      normalized === 'studios'
+      || normalized === 'trainers'
+      || normalized === 'profile'
+      || normalized.startsWith('exercise-types')
+      || normalized.startsWith('types')
+    ) {
+      return 'reference';
+    }
+    if (normalized.includes('/bookings') || normalized.includes('/clients')) {
+      return 'detail';
+    }
+    return 'catalog';
+  }
+
+  private resolveReferenceCacheType(path: string): VivaReferenceCacheType | undefined {
+    const normalized = String(path || '').replace(/^\/+/, '').toLowerCase();
+    if (normalized === 'studios') {
+      return 'studios';
+    }
+    if (normalized === 'trainers') {
+      return 'trainers';
+    }
+    if (normalized === 'rooms') {
+      return 'rooms';
+    }
+    if (normalized === 'exercise-types' || normalized === 'types') {
+      return 'exerciseTypes';
+    }
+    if (normalized === 'profile') {
+      return 'profile';
+    }
+    return undefined;
   }
 
   private buildUrl(path: string, query?: Record<string, string>, widgetId?: string): string {
@@ -1876,5 +2040,19 @@ export class VivaTournamentsService {
       return fallback;
     }
     return Math.trunc(parsed);
+  }
+
+  private readBooleanEnv(name: string, fallback: boolean): boolean {
+    const raw = this.normalizeString(process.env[name])?.toLowerCase();
+    if (!raw) {
+      return fallback;
+    }
+    if (['1', 'true', 'yes', 'on'].includes(raw)) {
+      return true;
+    }
+    if (['0', 'false', 'no', 'off'].includes(raw)) {
+      return false;
+    }
+    return fallback;
   }
 }

@@ -343,6 +343,13 @@ export interface TournamentPublicDirectoryResponse {
   generatedAt: string;
   count: number;
   items: TournamentPublicView[];
+  snapshotAgeMs?: number;
+  lastSuccessfulAt?: string;
+  stale?: boolean;
+  refreshInProgress?: boolean;
+  snapshotAvailable?: boolean;
+  snapshotRefreshEnabled?: boolean;
+  snapshotReadModelEnabled?: boolean;
 }
 
 export interface TournamentAccessCheckResponse {

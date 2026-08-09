@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, scryptSync, timingSafeEqual } from 'crypto';
 import { Request } from 'express';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
@@ -489,8 +489,16 @@ export class AuthService implements OnModuleInit {
     return Math.floor(parsed);
   }
 
-  private passwordsEqual(left: string, right: string): boolean {
-    return this.safeStringEquals(left, right);
+  private passwordsEqual(candidate: string, stored: string): boolean {
+    if (stored.startsWith('scrypt$')) {
+      const [, salt, digest] = stored.split('$');
+      if (!salt || !digest) {
+        return false;
+      }
+      const candidateDigest = scryptSync(candidate, salt, 64).toString('base64url');
+      return this.safeStringEquals(candidateDigest, digest);
+    }
+    return this.safeStringEquals(candidate, stored);
   }
 
   private safeStringEquals(left: string, right: string): boolean {

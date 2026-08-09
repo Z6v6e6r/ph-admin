@@ -4,7 +4,8 @@ import {
   InternalServerErrorException,
   Logger,
   OnModuleDestroy,
-  OnModuleInit
+  OnModuleInit,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../../common/constants/dialogs-mongo.constants';
@@ -19,6 +20,55 @@ export interface VivaClientCabinetLookup {
   displayName?: string;
   avatarUrl?: string | null;
   levelLabel?: string;
+}
+
+export interface VivaAdminClientSearchResult {
+  clientId: string;
+  clientLabel?: string;
+  clientDetails?: string;
+  relevanceScore?: number;
+  familyMembers: Record<string, unknown>[];
+}
+
+export interface VivaAdminClientRatingFieldSnapshot {
+  fieldId: string;
+  values: string[];
+}
+
+export interface VivaAdminClientRatingSnapshot {
+  clientId: string;
+  phone?: string;
+  displayName?: string;
+  vivaCabinetUrl: string;
+  levelNumeric?: number;
+  fields: {
+    levelNumeric: VivaAdminClientRatingFieldSnapshot;
+  };
+}
+
+export interface VivaAdminClientRatingUpdateInput {
+  levelNumeric: number;
+}
+
+export type VivaAdminClientRatingField = 'LEVEL_NUMERIC';
+
+export interface VivaAdminClientRatingFieldUpdateResult {
+  field: VivaAdminClientRatingField;
+  fieldId: string;
+  requestedValue: string;
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  responseSummary?: string;
+  error?: string;
+}
+
+export interface VivaAdminClientRatingUpdateResult {
+  clientId: string;
+  ok: boolean;
+  fields: {
+    levelNumeric: VivaAdminClientRatingFieldUpdateResult;
+  };
 }
 
 export interface VivaAdminSettingsSnapshot {
@@ -157,6 +207,8 @@ interface VivaAdminSettingsRecord {
   updatedBy?: string;
 }
 
+const DEFAULT_VIVA_LEVEL_NUMERIC_FIELD_ID = 'eabfe27b-3f72-4496-9185-1a2ec6e6465e';
+
 @Injectable()
 export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(VivaAdminService.name);
@@ -181,6 +233,9 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     String(process.env.VIVA_ADMIN_CLIENT_ID ?? '').trim() || 'React-auth-dev';
   private readonly envUsername = String(process.env.VIVA_ADMIN_USERNAME ?? '').trim();
   private readonly envPassword = String(process.env.VIVA_ADMIN_PASSWORD ?? '').trim();
+  private readonly levelNumericFieldId =
+    String(process.env.VIVA_LEVEL_NUMERIC_FIELD_ID ?? '').trim()
+    || DEFAULT_VIVA_LEVEL_NUMERIC_FIELD_ID;
   private readonly cacheTtlMs = this.readPositiveNumberEnv(
     'VIVA_ADMIN_CACHE_TTL_MS',
     10 * 60 * 1000
@@ -264,6 +319,113 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
     this.inflight.set(normalizedPhone, request);
     return request;
+  }
+
+  async searchClients(query?: string): Promise<VivaAdminClientSearchResult[]> {
+    const normalizedQuery = this.normalizeOptional(query);
+    if (!normalizedQuery) {
+      throw new BadRequestException('Viva client search query is required');
+    }
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const payload = await this.fetchAdminJson(
+      `/api/v2/search/clients?q=${encodeURIComponent(normalizedQuery)}`,
+      token,
+      resolved.config.baseUrl
+    );
+
+    const clientsById = new Map<string, VivaAdminClientSearchResult>();
+    for (const record of this.unwrapRecords(payload)) {
+      const clientId = this.extractClientId(record);
+      if (!clientId) {
+        continue;
+      }
+      const familyMembers = Array.isArray(record.familyMembers)
+        ? record.familyMembers.filter(this.isRecord)
+        : [];
+      clientsById.set(clientId, {
+        clientId,
+        clientLabel: this.pickString(record.clientLabel),
+        clientDetails: this.pickString(record.clientDetails),
+        relevanceScore: this.pickFiniteNumber(record.relevanceScore),
+        familyMembers
+      });
+    }
+    return Array.from(clientsById.values());
+  }
+
+  async getClientRating(clientId?: string): Promise<VivaAdminClientRatingSnapshot> {
+    const normalizedClientId = this.normalizeOptional(clientId);
+    if (!normalizedClientId) {
+      throw new BadRequestException('Viva client id is required');
+    }
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const payload = await this.fetchAdminJson(
+      `/api/v1/clients/${encodeURIComponent(normalizedClientId)}`,
+      token,
+      resolved.config.baseUrl
+    );
+    const client = this.unwrapRecord(payload);
+    if (!client) {
+      throw new Error(`Viva CRM client ${normalizedClientId} response is empty`);
+    }
+
+    const levelNumericField = this.extractClientCustomField(
+      client,
+      this.levelNumericFieldId
+    );
+    const rawLevelNumeric = levelNumericField.values[0];
+
+    return {
+      clientId: this.extractClientId(client) ?? normalizedClientId,
+      phone: this.extractClientPhone(client),
+      displayName: this.extractClientName(client),
+      vivaCabinetUrl:
+        `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(normalizedClientId)}`,
+      levelNumeric: this.parsePlayerRatingNumeric(rawLevelNumeric),
+      fields: {
+        levelNumeric: levelNumericField
+      }
+    };
+  }
+
+  async updateClientRating(
+    clientId: string | undefined,
+    input: VivaAdminClientRatingUpdateInput
+  ): Promise<VivaAdminClientRatingUpdateResult> {
+    const normalizedClientId = this.normalizeOptional(clientId);
+    if (!normalizedClientId) {
+      throw new BadRequestException('Viva client id is required');
+    }
+
+    const levelNumeric = this.normalizePlayerRatingNumeric(input?.levelNumeric);
+    if (levelNumeric === undefined) {
+      throw new BadRequestException('Viva numeric level must be between 1 and 7');
+    }
+    const levelNumericText = this.formatPlayerRatingNumeric(levelNumeric);
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const levelNumericResult = await this.updateClientCustomField({
+      clientId: normalizedClientId,
+      field: 'LEVEL_NUMERIC',
+      fieldId: this.levelNumericFieldId,
+      value: levelNumericText,
+      token,
+      baseUrl: resolved.config.baseUrl
+    });
+
+    this.cache.clear();
+    return {
+      clientId: normalizedClientId,
+      ok: levelNumericResult.ok,
+      fields: {
+        levelNumeric: levelNumericResult
+      }
+    };
   }
 
   async listExerciseBookings(exerciseId?: string): Promise<Record<string, unknown>[]> {
@@ -1140,6 +1302,67 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return Math.trunc(numeric);
   }
 
+  private pickFiniteNumber(value: unknown): number | undefined {
+    const numeric = typeof value === 'number' ? value : Number(String(value ?? '').trim());
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+
+  private summarizeResponseText(value: string): string | undefined {
+    const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return normalized ? normalized.slice(0, 500) : undefined;
+  }
+
+  private summarizeError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+    return message.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Unknown error';
+  }
+
+  private async updateClientCustomField(input: {
+    clientId: string;
+    field: VivaAdminClientRatingField;
+    fieldId: string;
+    value: string;
+    token: string;
+    baseUrl: string;
+  }): Promise<VivaAdminClientRatingFieldUpdateResult> {
+    const path =
+      `/api/v1/clients/${encodeURIComponent(input.clientId)}`
+      + `/custom-fields/${encodeURIComponent(input.fieldId)}`;
+    const url = new URL(path, `${input.baseUrl}/`).toString();
+
+    try {
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${input.token}`
+        },
+        body: JSON.stringify([input.value]),
+        signal: this.buildAbortSignal()
+      });
+      const responseText = await response.text().catch(() => '');
+      const responseSummary = this.summarizeResponseText(responseText);
+      return {
+        field: input.field,
+        fieldId: input.fieldId,
+        requestedValue: input.value,
+        ok: response.ok,
+        status: response.status,
+        statusText: this.normalizeOptional(response.statusText),
+        responseSummary
+      };
+    } catch (error) {
+      return {
+        field: input.field,
+        fieldId: input.fieldId,
+        requestedValue: input.value,
+        ok: false,
+        error: this.summarizeError(error)
+      };
+    }
+  }
+
   private async fetchAdminJson(
     path: string,
     token: string,
@@ -1230,6 +1453,16 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
         input.fallbackPayload
       );
     }
+  }
+
+  private async requireAccessToken(): Promise<string> {
+    const token = await this.resolveAccessToken();
+    if (!token) {
+      throw new ServiceUnavailableException(
+        'Viva CRM admin access is not configured or is temporarily unavailable'
+      );
+    }
+    return token;
   }
 
   private async resolveAccessToken(): Promise<string | null> {
@@ -1417,8 +1650,12 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   }
 
   private extractClientId(candidate: Record<string, unknown>): string | undefined {
-    const id = String(candidate.id ?? '').trim();
-    return id || undefined;
+    return (
+      this.pickString(candidate.clientId) ??
+      this.pickString(candidate.client_id) ??
+      this.pickString(candidate.id) ??
+      this.pickString(candidate.uuid)
+    );
   }
 
   private extractClientName(candidate: Record<string, unknown>): string | undefined {
@@ -1449,6 +1686,49 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       this.pickString(candidate.photoUrl) ??
       this.pickString(candidate.photo_url)
     );
+  }
+
+  private extractClientCustomField(
+    client: Record<string, unknown>,
+    fieldId: string
+  ): VivaAdminClientRatingFieldSnapshot {
+    const fieldCollections = [client.customFields, client.custom_fields, client.fields];
+    for (const collection of fieldCollections) {
+      if (!Array.isArray(collection)) {
+        continue;
+      }
+      for (const candidate of collection) {
+        if (!this.isRecord(candidate)) {
+          continue;
+        }
+        const customField = this.isRecord(candidate.customField)
+          ? candidate.customField
+          : null;
+        const compositeId = this.isRecord(candidate.id) ? candidate.id : null;
+        const candidateFieldId =
+          this.pickString(candidate.id) ??
+          this.pickString(candidate.customFieldId) ??
+          this.pickString(candidate.custom_field_id) ??
+          (compositeId
+            ? this.pickString(compositeId.customFieldId) ??
+              this.pickString(compositeId.custom_field_id) ??
+              this.pickString(compositeId.id)
+            : undefined) ??
+          (customField
+            ? this.pickString(customField.id) ??
+              this.pickString(customField.customFieldId)
+            : undefined);
+        if (candidateFieldId !== fieldId) {
+          continue;
+        }
+
+        const values = this.normalizeCustomFieldValues(
+          candidate.value ?? candidate.values ?? customField?.value
+        );
+        return { fieldId, values };
+      }
+    }
+    return { fieldId, values: [] };
   }
 
   private extractClientLevelLabel(candidate: Record<string, unknown>): string | undefined {
@@ -1819,6 +2099,41 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       candidates.add(normalizedPhone);
     }
     return Array.from(candidates).filter(Boolean);
+  }
+
+  private normalizeCustomFieldValues(value: unknown): string[] {
+    const values = Array.isArray(value) ? value : [value];
+    return values
+      .map((item) => {
+        if (typeof item !== 'string' && typeof item !== 'number') {
+          return '';
+        }
+        return String(item).trim();
+      })
+      .filter((item) => item.length > 0);
+  }
+
+  private parsePlayerRatingNumeric(value: unknown): number | undefined {
+    if (value === null || value === undefined || value === '') {
+      return undefined;
+    }
+    const parsed = Number(String(value).trim().replace(',', '.'));
+    return this.normalizePlayerRatingNumeric(parsed);
+  }
+
+  private normalizePlayerRatingNumeric(value: unknown): number | undefined {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 7) {
+      return undefined;
+    }
+    return Math.round(parsed * 100_000) / 100_000;
+  }
+
+  private formatPlayerRatingNumeric(value: number): string {
+    return value
+      .toFixed(5)
+      .replace(/0+$/, '')
+      .replace(/\.$/, '');
   }
 
   private normalizeBaseUrl(value?: string): string | undefined {

@@ -50,8 +50,9 @@ API работает на `http://localhost:3000/api`.
 
 Игры по-прежнему читаются из ЛК ПадлХаб.
 
-Турниры в `/api/tournaments` сначала грузятся из Viva End-User виджета расписания,
-а если Viva недоступна или не отвечает, используется fallback на старый источник ЛК.
+Обычный `GET /api/tournaments` читает Viva-каталог только из Mongo snapshot и не
+запускает live-запросы или background refresh. Оперативное обновление выбранного
+дня выполняется отдельно через защищённый `POST /api/tournaments/snapshot/refresh-day`.
 
 Для ЛК ПадлХаб поддерживаются два режима:
 
@@ -76,6 +77,11 @@ API работает на `http://localhost:3000/api`.
 - `GAMES_MONGODB_URI=mongodb://...` (опционально; если не задано, используется `MONGODB_URI`)
 - `GAMES_MONGODB_DB=games` (опционально; по умолчанию `games`)
 - `GAMES_MONGODB_COLLECTION=lk_games` (опционально; по умолчанию `lk_games`)
+- `ADVERTISING_MONGODB_DB=dialog` (опционально; база настроек, ассетов, аудита и статистики рекламы)
+- `ADVERTISING_SETTINGS_COLLECTION=advertising_settings`
+- `ADVERTISING_ASSETS_COLLECTION=advertising_assets`
+- `ADVERTISING_ENGAGEMENTS_COLLECTION=advertising_engagements`
+- `ADVERTISING_ENGAGEMENT_SECRET=<32+ random chars>` (серверный ключ приёма показов и кликов от PadlHub API; не передавать в ЛК или клиентский bundle)
 - `ADMIN_AUTH_ENABLED=true|false` (по умолчанию `true`)
 - `ADMIN_AUTH_REQUIRE_STAFF_TOKEN=true|false` (по умолчанию `true`)
 - `ADMIN_AUTH_SECRET=<strong_secret>`
@@ -122,11 +128,14 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_ADMIN_CACHE_TTL_MS=600000` (опционально; TTL кэша ссылок на ЛК клиентов)
 - `VIVA_ADMIN_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva в миллисекундах)
 - `VIVA_END_USER_API_BASE_URL=https://api.vivacrm.ru` (опционально; базовый URL Viva End-User API для вкладки «Турниры»)
+- `VIVA_END_USER_USER_AGENT=PadlHub-LK-Tournament-Refresh/1.0` (опционально; идентифицируемый User-Agent для server-side End-User API; Viva отклоняет стандартный `undici` User-Agent с `403`)
 - `VIVA_END_USER_WIDGET_ID=iSkq6G` (опционально; идентификатор end-user виджета расписания)
 - `VIVA_END_USER_WIDGET_IDS=iSkq6G,anotherWidgetKey` (опционально; список widget key через запятую; если задан — турниры агрегируются по всем указанным виджетам)
 - `VIVA_TOURNAMENT_EXERCISE_TYPE_IDS=839,1013` (опционально; какие `exerciseTypeIds` считать турнирами)
 - `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
 - `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
+- `VIVA_TOURNAMENT_SNAPSHOT_MANUAL_REFRESH_COOLDOWN_MS=15000` (опционально; минимальный интервал между ручными обновлениями выбранного дня; параллельные запросы объединяются)
+- `TOURNAMENTS_HOSTING_ACCESS_CACHE_TTL_MS=15000` (опционально; короткий cache/single-flight проверки поля доступа в Viva-профиле, чтобы повторные нажатия не создавали profile fan-out)
 - `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
@@ -137,6 +146,7 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS=1500` (опционально; рекомендованный интервал polling для Tilda-блока после открытия LK в popup)
 - `TOURNAMENTS_PUBLIC_KEYCLOAK_BASE_URL=https://kc.vivacrm.ru` (опционально; база Keycloak/Viva auth для отправки и проверки SMS-кода)
 - `TOURNAMENTS_PUBLIC_KEYCLOAK_REALM=prod` (опционально; realm Keycloak)
+- `TOURNAMENTS_LK_KEYCLOAK_REALM=clients` (опционально; realm access-токена Viva LK для защищённых турнирных операций; по умолчанию `clients`)
 - `TOURNAMENTS_PUBLIC_TENANT_KEY=iSkq6G` (опционально; tenant/widget key для auth, по умолчанию `VIVA_END_USER_WIDGET_ID` или `iSkq6G`)
 - `TOURNAMENTS_PUBLIC_AUTH_CLIENT_ID=widget` (опционально; client_id для обмена phone+code на токен)
 - `TOURNAMENTS_PUBLIC_AUTH_CHANNEL=cascade` (опционально; канал отправки кода, как в LK)
@@ -158,6 +168,7 @@ API работает на `http://localhost:3000/api`.
 
 Админские endpoint'ы кастомных турниров:
 
+- `POST /api/tournaments/snapshot/refresh-day` - авторизованное обновление только выбранной даты из Viva для профиля с доступом к проведению турниров; body `{ "date": "YYYY-MM-DD" }`
 - `POST /api/tournaments/custom/from-source/:sourceTournamentId` - создать кастомный турнир на основе турнира из Viva
 - `POST /api/tournaments/custom/from-viva-link` - создать/обновить кастомный турнир по ссылке вида `https://cabinet.vivacrm.ru/schedule/{studioId}/exercise/{exerciseId}?date=YYYY-MM-DD`
 - `GET /api/tournaments/custom/:id` - получить кастомный турнир целиком для редактирования

@@ -14,6 +14,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
+import { Permissions } from '../common/rbac/permissions.decorator';
 import { AmericanoRatingSimulationResult } from './americano-rating.types';
 import { AmericanoScheduleResult } from './americano-schedule.types';
 import { CreateCustomTournamentFromVivaLinkDto } from './dto/create-custom-tournament-from-viva-link.dto';
@@ -45,16 +46,39 @@ export class TournamentsController {
   ) {}
 
   @Get()
+  @Permissions('tournaments:read')
   @Roles()
   findAll(
     @Query('date') date?: string,
     @Query('from') from?: string,
-    @Query('to') to?: string
+    @Query('to') to?: string,
+    @CurrentUser() user?: RequestUser
   ): Promise<Tournament[]> {
-    return this.tournamentsService.findAll({ date, from, to });
+    return this.tournamentsService.findAll({ date, from, to, user });
+  }
+
+  @Post('snapshot/refresh-on-open')
+  @Permissions('tournaments:read')
+  @Roles()
+  refreshSnapshotOnOpen(): ReturnType<TournamentsService['refreshVivaTournamentSnapshotOnAdminOpen']> {
+    return this.tournamentsService.refreshVivaTournamentSnapshotOnAdminOpen();
+  }
+
+  @Post('snapshot/refresh-day')
+  @Roles()
+  refreshSnapshotDay(
+    @Body() body: Record<string, unknown> | undefined,
+    @Req() request: Request
+  ): ReturnType<TournamentsService['refreshVivaTournamentSnapshotDay']> {
+    return this.tournamentsService.refreshVivaTournamentSnapshotDay({
+      date: body?.date,
+      authorizationHeader: this.pickString(request.headers.authorization),
+      tenantKeyHeader: this.pickString(request.headers['x-padlhub-tenant-key'])
+    });
   }
 
   @Post('backfill/pricing-snapshots')
+  @Permissions('access:manage')
   backfillPricingSnapshots(): Promise<{
     windowStart: string;
     candidatesCount: number;
@@ -66,6 +90,7 @@ export class TournamentsController {
   }
 
   @Post('custom/from-source/:sourceTournamentId')
+  @Permissions('tournaments:write')
   createCustomFromSource(
     @Param('sourceTournamentId') sourceTournamentId: string,
     @Body() dto: CreateCustomTournamentFromSourceDto,
@@ -74,10 +99,11 @@ export class TournamentsController {
     return this.tournamentsService.createCustomFromSource(sourceTournamentId, {
       ...dto,
       ...(user ? { actor: this.toActor(user) } : {})
-    });
+    }, user);
   }
 
   @Post('custom/from-viva-link')
+  @Permissions('tournaments:write')
   createCustomFromVivaLink(
     @Body() dto: CreateCustomTournamentFromVivaLinkDto,
     @CurrentUser() user?: RequestUser
@@ -85,15 +111,20 @@ export class TournamentsController {
     return this.tournamentsService.createCustomFromVivaLink(dto.vivaUrl, {
       ...dto,
       ...(user ? { actor: this.toActor(user) } : {})
-    });
+    }, user);
   }
 
   @Get('custom/:id')
-  findCustomById(@Param('id') id: string): Promise<CustomTournament> {
-    return this.tournamentsService.findCustomById(id);
+  @Permissions('tournaments:read')
+  findCustomById(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<CustomTournament> {
+    return this.tournamentsService.findCustomById(id, user);
   }
 
   @Patch('custom/:id')
+  @Permissions('tournaments:write')
   updateCustom(
     @Param('id') id: string,
     @Body() dto: UpdateCustomTournamentDto,
@@ -104,10 +135,11 @@ export class TournamentsController {
       ...(user ? { actor: this.toActor(user) } : {})
     }, {
       rebuildPricingSnapshot: true
-    });
+    }, user);
   }
 
   @Post('generate-schedule')
+  @Permissions('tournaments:write')
   generateSchedule(
     @Body() dto: GenerateTournamentScheduleDto
   ): Promise<AmericanoScheduleResult> {
@@ -115,6 +147,7 @@ export class TournamentsController {
   }
 
   @Post('simulate-rating')
+  @Permissions('tournaments:write')
   simulateRating(
     @Body() dto: SimulateTournamentRatingDto
   ): Promise<AmericanoRatingSimulationResult> {
@@ -122,6 +155,7 @@ export class TournamentsController {
   }
 
   @Get(':id/results')
+  @Permissions('tournaments:read')
   getResults(
     @Param('id') id: string,
     @CurrentUser() user?: RequestUser
@@ -214,6 +248,7 @@ export class TournamentsController {
   }
 
   @Get('debug/viva-status-sync')
+  @Permissions('tournaments:read')
   @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
   getVivaStatusSyncDiagnostics(): {
     enabled: boolean;
@@ -258,10 +293,31 @@ export class TournamentsController {
     return this.vivaStatusSyncService.getRuntimeDiagnostics();
   }
 
+  @Get('debug/viva-snapshot')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaTournamentSnapshotDiagnostics(): ReturnType<TournamentsService['getVivaTournamentSnapshotDiagnostics']> {
+    return this.tournamentsService.getVivaTournamentSnapshotDiagnostics();
+  }
+
+  @Get('debug/viva-reference-cache')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaReferenceCacheDiagnostics(): ReturnType<TournamentsService['getVivaReferenceCacheDiagnostics']> {
+    return this.tournamentsService.getVivaReferenceCacheDiagnostics();
+  }
+
+  @Get('debug/viva-governor')
+  @Roles(Role.SUPER_ADMIN, Role.TOURNAMENT_MANAGER, Role.MANAGER)
+  getVivaGovernorDiagnostics(): ReturnType<TournamentsService['getVivaGovernorDiagnostics']> {
+    return this.tournamentsService.getVivaGovernorDiagnostics();
+  }
+
   @Get(':id')
   @Roles()
-  findById(@Param('id') id: string): Promise<Tournament> {
-    return this.tournamentsService.findById(id);
+  findById(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<Tournament> {
+    return this.tournamentsService.findById(id, user);
   }
 
   private toActor(user: RequestUser): { id: string; login?: string; name: string } {
