@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
+import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { ROLES_KEY } from '../src/common/rbac/roles.decorator';
 import { Role } from '../src/common/rbac/role.enum';
 import { TournamentsController } from '../src/tournaments/tournaments.controller';
@@ -21,6 +22,17 @@ function main(): void {
   assert.deepEqual(
     Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.findById),
     []
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.refreshSnapshotDay),
+    []
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      TournamentsController.prototype.refreshSnapshotOnOpen
+    ),
+    ['tournaments:read']
   );
   assert.equal(
     Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.findCustomById),

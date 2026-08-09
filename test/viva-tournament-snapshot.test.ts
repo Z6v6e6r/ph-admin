@@ -1,7 +1,11 @@
 import * as assert from 'node:assert/strict';
 import { VivaTournamentSnapshotService } from '../src/integrations/viva/viva-tournament-snapshot.service';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
-import { Tournament, TournamentStatus } from '../src/tournaments/tournaments.types';
+import {
+  CustomTournament,
+  Tournament,
+  TournamentStatus
+} from '../src/tournaments/tournaments.types';
 
 function createTournament(id: string, startsAt: string): Tournament {
   return {
@@ -15,10 +19,57 @@ function createTournament(id: string, startsAt: string): Tournament {
   };
 }
 
+function createCustomTournament(id: string, sourceTournamentId: string, startsAt: string): CustomTournament {
+  return {
+    id,
+    source: 'CUSTOM',
+    sourceTournamentId,
+    exerciseId: sourceTournamentId,
+    name: `Custom ${id}`,
+    status: TournamentStatus.REGISTRATION,
+    startsAt,
+    endsAt: startsAt.replace('19:00:00', '21:00:00'),
+    studioId: 'station-test',
+    studioName: 'Test station',
+    slug: `custom-${id}`,
+    publicUrl: `https://example.test/tournaments/${id}`,
+    isPublic: true,
+    tournamentType: 'Мексикано',
+    accessLevels: ['D'],
+    gender: 'MIXED',
+    maxPlayers: 8,
+    participants: [],
+    waitlist: [],
+    allowedManagerPhones: [],
+    skin: {
+      title: `Custom ${id}`,
+      ctaLabel: 'Записаться',
+      tags: []
+    },
+    mechanics: {
+      enabled: false,
+      config: {} as never
+    },
+    changeLog: [],
+    details: {
+      sourceTournamentSnapshot: {
+        id: sourceTournamentId,
+        source: 'VIVA',
+        name: `Snapshot ${sourceTournamentId}`,
+        status: TournamentStatus.REGISTRATION,
+        startsAt,
+        endsAt: startsAt.replace('19:00:00', '21:00:00'),
+        studioName: 'Test station'
+      }
+    }
+  };
+}
+
 function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
   const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
   const originalTick = process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS;
+  const originalPastDays = process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS;
   const originalHydrateRetryMs = process.env.VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS;
   const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
   const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
@@ -26,6 +77,7 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
   process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'true';
   process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS = '600000';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS = '10000';
   delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
   delete process.env.TOURNAMENTS_MONGODB_URI;
   delete process.env.MONGODB_URI;
@@ -34,6 +86,7 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_TICK_MS', originalTick);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS', originalPastDays);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS', originalHydrateRetryMs);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
     restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);
@@ -87,6 +140,138 @@ async function testSnapshotRefreshSingleflightAndLocalDateFilter(): Promise<void
       await snapshotService.onModuleDestroy();
     }
   });
+}
+
+async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    let lastOptions: { date?: string; includePast?: boolean } | undefined;
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async (options?: { date?: string; includePast?: boolean }) => {
+        calls += 1;
+        lastOptions = options;
+        return [createTournament('fresh-day', '2026-07-04T20:00:00+03:00')];
+      }
+    } as never);
+    const previousLastSuccessfulAt = '2026-07-01T10:00:00.000Z';
+    (snapshotService as any).snapshot = {
+      key: 'default',
+      generatedAt: previousLastSuccessfulAt,
+      lastSuccessfulAt: previousLastSuccessfulAt,
+      windowFrom: '2026-07-01',
+      windowTo: '2026-07-10',
+      tournaments: [
+        createTournament('stale-day', '2026-07-04T19:00:00+03:00'),
+        createTournament('untouched-day', '2026-07-05T19:00:00+03:00')
+      ],
+      tournamentsCount: 2,
+      refreshReason: 'persisted'
+    };
+
+    try {
+      const refreshed = await snapshotService.refreshDate('2026-07-04', 'test_manual');
+      assert.equal(refreshed.refreshed, true);
+      assert.equal(refreshed.reason, 'refreshed');
+      assert.deepEqual(refreshed.tournaments.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(lastOptions, { date: '2026-07-04', includePast: true });
+      assert.equal(calls, 1);
+
+      const selectedDay = await snapshotService.listTournaments({
+        date: '2026-07-04',
+        refreshOnRead: false
+      });
+      const untouchedDay = await snapshotService.listTournaments({
+        date: '2026-07-05',
+        refreshOnRead: false
+      });
+      assert.deepEqual(selectedDay?.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(untouchedDay?.map((item) => item.id), ['untouched-day']);
+      assert.equal(snapshotService.getDiagnostics().lastSuccessfulAt, previousLastSuccessfulAt);
+
+      const throttled = await snapshotService.refreshDate('2026-07-05', 'test_duplicate');
+      assert.equal(throttled.refreshed, false);
+      assert.equal(throttled.reason, 'cooldown');
+      assert.ok((throttled.retryAfterMs ?? 0) > 0);
+      assert.equal(calls, 1, 'cooldown must not call Viva for another date');
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  });
+}
+
+async function testManualDayRefreshCoalescesConcurrentFailures(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async () => {
+        calls += 1;
+        await gate;
+        return null;
+      }
+    } as never);
+
+    try {
+      const first = snapshotService.refreshDate('2026-07-04', 'test_failure');
+      const duplicate = snapshotService.refreshDate('2026-07-04', 'test_failure_duplicate');
+      await Promise.resolve();
+      assert.equal(calls, 1);
+      release?.();
+
+      const [firstResult, duplicateResult] = await Promise.all([first, duplicate]);
+      assert.equal(firstResult.reason, 'refresh_failed');
+      assert.equal(duplicateResult.reason, 'refresh_failed');
+      assert.equal(calls, 1, 'concurrent failure must remain single-flight');
+
+      const throttled = await snapshotService.refreshDate('2026-07-04', 'test_retry');
+      assert.equal(throttled.reason, 'cooldown');
+      assert.equal(calls, 1, 'failed attempt must also enter cooldown');
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  });
+}
+
+async function testManualDayRefreshWorksWithBackgroundRefreshDisabled(): Promise<void> {
+  const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
+  const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
+  const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
+  const originalMongoUriFallback = process.env.MONGODB_URI;
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'false';
+  delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  delete process.env.TOURNAMENTS_MONGODB_URI;
+  delete process.env.MONGODB_URI;
+
+  let calls = 0;
+  const snapshotService = new VivaTournamentSnapshotService({
+    listTournaments: async () => {
+      calls += 1;
+      return [createTournament('manual-with-background-off', '2026-07-04T20:00:00+03:00')];
+    }
+  } as never);
+
+  try {
+    const result = await snapshotService.refreshDate('2026-07-04', 'test_manual_background_off');
+    assert.equal(result.refreshed, true);
+    assert.equal(result.reason, 'refreshed');
+    assert.equal(calls, 1);
+    assert.deepEqual(
+      result.tournaments.map((tournament) => tournament.id),
+      ['manual-with-background-off']
+    );
+  } finally {
+    await snapshotService.onModuleDestroy();
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
+    restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);
+    restoreEnv('MONGODB_URI', originalMongoUriFallback);
+  }
 }
 
 async function testSnapshotShadowRefreshDoesNotServeReadModel(): Promise<void> {
@@ -270,15 +455,189 @@ async function testTournamentsServiceUsesSnapshotBeforeLiveViva(): Promise<void>
     undefined,
     undefined,
     {
-      listTournaments: async () => [sourceTournament],
+      listTournaments: async (_options?: { date?: string }) => [sourceTournament],
       getDiagnostics: () => ({ enabled: true }),
       isEnabled: () => true
     } as never
   );
 
-  const result = await service.findAll({ date: '2026-07-04' });
+  const result = await service.findAll({
+    date: '2026-07-04',
+    now: new Date('2026-07-04T18:00:00+03:00')
+  });
   assert.deepEqual(result.map((tournament) => tournament.id), ['snapshot-source']);
   assert.equal(liveVivaCalls, 0);
+}
+
+async function testAdminListUsesOnlyPersistedReadModels(): Promise<void> {
+  for (const scenario of ['snapshot-cache-miss', 'missing-linked-source'] as const) {
+    const persistedTournament = createCustomTournament(
+      `persisted-${scenario}`,
+      'missing-source',
+      '2026-07-04T19:00:00+03:00'
+    );
+    const canceledLiveTournament = createTournament(
+      'missing-source',
+      '2026-07-04T20:00:00+03:00'
+    );
+    canceledLiveTournament.status = TournamentStatus.CANCELED;
+    const calls = {
+      snapshotList: 0,
+      liveList: 0,
+      liveDetail: 0,
+      legacyList: 0,
+      adminStatus: 0,
+      persistenceUpdate: 0
+    };
+    const service = new TournamentsService(
+      {
+        listTournaments: async () => {
+          calls.legacyList += 1;
+          return [createTournament('legacy-source', '2026-07-04T20:00:00+03:00')];
+        }
+      } as never,
+      {
+        listTournaments: async () => {
+          calls.liveList += 1;
+          return [canceledLiveTournament];
+        },
+        findTournamentById: async () => {
+          calls.liveDetail += 1;
+          return canceledLiveTournament;
+        }
+      } as never,
+      { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+      {
+        isEnabled: () => true,
+        listCustomTournaments: async () => [persistedTournament],
+        updateCustomTournament: async () => {
+          calls.persistenceUpdate += 1;
+          return persistedTournament;
+        }
+      } as never,
+      { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+      { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+      {
+        getExerciseStatus: async () => {
+          calls.adminStatus += 1;
+          return { canceled: true };
+        }
+      } as never,
+      undefined,
+      {
+        listTournaments: async () => {
+          calls.snapshotList += 1;
+          return scenario === 'snapshot-cache-miss'
+            ? null
+            : [createTournament('another-source', '2026-07-05T19:00:00+03:00')];
+        }
+      } as never
+    );
+
+    const result = await service.findAll({
+      date: '2026-07-04',
+      now: new Date('2026-07-04T18:00:00+03:00')
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(result.length, 1, `${scenario}: persisted tournament should remain visible`);
+    assert.equal(result[0]?.id, persistedTournament.id);
+    assert.equal(result[0]?.sourceTournamentId, persistedTournament.sourceTournamentId);
+    assert.equal(result[0]?.name, persistedTournament.name);
+    assert.equal(result[0]?.status, TournamentStatus.REGISTRATION);
+    assert.deepEqual(result[0]?.participants, persistedTournament.participants);
+    assert.equal(
+      (result[0]?.details?.sourceTournamentSnapshot as { id?: string } | undefined)?.id,
+      persistedTournament.sourceTournamentId
+    );
+    assert.deepEqual(calls, {
+      snapshotList: 1,
+      liveList: 0,
+      liveDetail: 0,
+      legacyList: 0,
+      adminStatus: 0,
+      persistenceUpdate: 0
+    });
+  }
+}
+
+async function testAdminListDoesNotTriggerSnapshotRefreshOnRead(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    for (const scenario of ['cold', 'stale'] as const) {
+      let liveRefreshCalls = 0;
+      let legacyListCalls = 0;
+      const sourceTournamentId = scenario === 'stale' ? 'stale-source' : 'cold-source';
+      const persistedTournament = createCustomTournament(
+        `persisted-${scenario}`,
+        sourceTournamentId,
+        '2026-07-04T19:00:00+03:00'
+      );
+      const liveVivaService = {
+        listTournaments: async () => {
+          liveRefreshCalls += 1;
+          return [createTournament('live-refresh', '2026-07-04T20:00:00+03:00')];
+        },
+        findTournamentById: async () => {
+          liveRefreshCalls += 1;
+          return null;
+        }
+      };
+      const snapshotService = new VivaTournamentSnapshotService(liveVivaService as never);
+
+      if (scenario === 'stale') {
+        (snapshotService as any).snapshot = {
+          key: 'default',
+          generatedAt: '2020-01-01T00:00:00.000Z',
+          lastSuccessfulAt: '2020-01-01T00:00:00.000Z',
+          windowFrom: '2026-07-01',
+          windowTo: '2026-07-31',
+          tournaments: [createTournament(sourceTournamentId, '2026-07-04T19:00:00+03:00')],
+          tournamentsCount: 1,
+          refreshReason: 'persisted'
+        };
+      }
+
+      const service = new TournamentsService(
+        {
+          listTournaments: async () => {
+            legacyListCalls += 1;
+            return [];
+          }
+        } as never,
+        liveVivaService as never,
+        { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+        {
+          isEnabled: () => true,
+          listCustomTournaments: async () => [persistedTournament]
+        } as never,
+        { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+        { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+        undefined,
+        undefined,
+        snapshotService
+      );
+
+      try {
+        const result = await service.findAll({
+          date: '2026-07-04',
+          now: new Date('2026-07-04T18:00:00+03:00')
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        assert.equal(result.length, 1, `${scenario}: read model should still serve the list`);
+        assert.equal(liveRefreshCalls, 0, `${scenario}: list GET must not refresh Viva`);
+        assert.equal(legacyListCalls, 0, `${scenario}: list GET must not use the legacy source`);
+        assert.equal(snapshotService.getDiagnostics().lastStartedAt, undefined);
+        assert.equal(
+          snapshotService.getDiagnostics().lastPublicReadAt,
+          undefined,
+          `${scenario}: read-only GET must not activate the background refresh cadence`
+        );
+      } finally {
+        await snapshotService.onModuleDestroy();
+      }
+    }
+  });
 }
 
 async function testPublicDirectoryIncludesSnapshotFreshness(): Promise<void> {
@@ -325,13 +684,70 @@ async function testPublicDirectoryIncludesSnapshotFreshness(): Promise<void> {
   assert.equal(response.snapshotReadModelEnabled, true);
 }
 
+async function testPublicDirectoryDoesNotFallbackToLiveViva(): Promise<void> {
+  const customTournament = createCustomTournament(
+    'public-local',
+    'snapshot-unavailable',
+    '2026-07-04T19:00:00+03:00'
+  );
+  let liveVivaCalls = 0;
+  const service = new TournamentsService(
+    { listTournaments: async () => [] } as never,
+    {
+      listTournaments: async () => {
+        liveVivaCalls += 1;
+        return [createTournament('live-source', '2026-07-04T20:00:00+03:00')];
+      },
+      findTournamentById: async () => {
+        liveVivaCalls += 1;
+        return createTournament('live-detail', '2026-07-04T20:00:00+03:00');
+      }
+    } as never,
+    { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
+    {
+      isEnabled: () => true,
+      listCustomTournaments: async () => [customTournament]
+    } as never,
+    { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    undefined,
+    undefined,
+    {
+      listTournaments: async () => null,
+      getDiagnostics: () => ({ enabled: true }),
+      getFreshnessMetadata: () => ({
+        refreshEnabled: false,
+        readModelEnabled: true,
+        refreshInProgress: false,
+        stale: true,
+        snapshotAvailable: false
+      }),
+      isEnabled: () => true
+    } as never
+  );
+
+  const response = await service.listPublicDirectory({
+    date: '2026-07-04',
+    includePast: true
+  });
+  assert.equal(response.count, 1);
+  assert.equal(response.items[0]?.sourceTournamentId, 'snapshot-unavailable');
+  assert.equal(liveVivaCalls, 0);
+}
+
 async function main(): Promise<void> {
   await testSnapshotRefreshSingleflightAndLocalDateFilter();
+  await testManualDayRefreshUsesOneBoundedVivaCall();
+  await testManualDayRefreshCoalescesConcurrentFailures();
+  await testManualDayRefreshWorksWithBackgroundRefreshDisabled();
   await testSnapshotShadowRefreshDoesNotServeReadModel();
   await testSnapshotHydrationRetriesAfterMongoFailure();
   await testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl();
   await testTournamentsServiceUsesSnapshotBeforeLiveViva();
+  await testAdminListUsesOnlyPersistedReadModels();
+  await testAdminListDoesNotTriggerSnapshotRefreshOnRead();
   await testPublicDirectoryIncludesSnapshotFreshness();
+  await testPublicDirectoryDoesNotFallbackToLiveViva();
   console.log('Viva tournament snapshot test passed');
 }
 

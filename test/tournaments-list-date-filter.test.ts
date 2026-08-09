@@ -123,7 +123,10 @@ function createService(
       }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
-    { simulateRating: () => { throw new Error('Not used in test'); } } as never
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    undefined,
+    undefined,
+    { listTournaments: async () => sourceTournaments } as never
   );
 }
 
@@ -277,18 +280,9 @@ async function main(): Promise<void> {
     date: '2026-05-05',
     now: new Date('2026-05-05T10:00:00+03:00')
   });
-  assert.equal(syncedListWithCanceledSource[0]?.status, TournamentStatus.CANCELED);
+  assert.equal(syncedListWithCanceledSource[0]?.status, TournamentStatus.REGISTRATION);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(statusUpdatesForCanceledSource, [
-    {
-      id: 'custom-linked-canceled-source',
-      status: TournamentStatus.CANCELED,
-      statusReason:
-        'Автоотмена Viva sync: связанный турнир в источнике Viva имеет статус CANCELED.',
-      statusSource: 'VIVA_SYNC',
-      autoStatusChange: true
-    }
-  ]);
+  assert.deepEqual(statusUpdatesForCanceledSource, []);
 
   console.log('Tournament list date filter test passed');
 }

@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      findCustomTournamentById: async () => tournament,
       updateCustomTournament: async () => tournament
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
@@ -156,6 +157,7 @@ async function main(): Promise<void> {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      findCustomTournamentById: async () => canceledTournament,
       updateCustomTournament: async () => canceledTournament
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,

@@ -87,7 +87,10 @@ async function main(): Promise<void> {
       listCustomTournaments: async () => [customTournament]
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
-    { simulateRating: () => { throw new Error('Not used in test'); } } as never
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    undefined,
+    undefined,
+    { listTournaments: async () => [sourceTournament] } as never
   );
 
   const tournaments = await service.findAll();
