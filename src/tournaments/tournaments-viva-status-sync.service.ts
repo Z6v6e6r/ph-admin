@@ -9,6 +9,10 @@ interface VivaTournamentSyncResultSnapshot {
   windowEnd: string;
   candidatesCount: number;
   checkedCount: number;
+  uniqueSourceCount: number;
+  readModelCanceledCandidateCount: number;
+  uniqueAdminStatusLookupCount: number;
+  adminStatusUnknownCandidateCount: number;
   updatedCount: number;
   sourceNotFoundCount: number;
   sourceNotCanceledCount: number;
