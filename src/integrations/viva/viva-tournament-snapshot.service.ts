@@ -68,6 +68,18 @@ export interface VivaTournamentSnapshotRefreshResult {
   lastSuccessfulAt?: string;
 }
 
+export interface VivaTournamentSnapshotDayRefreshResult {
+  enabled: boolean;
+  refreshed: boolean;
+  reason: 'refreshed' | 'cooldown' | 'refresh_failed';
+  date: string;
+  snapshotAvailable: boolean;
+  tournaments: Tournament[];
+  refreshedAt?: string;
+  retryAfterMs?: number;
+  persisted?: boolean;
+}
+
 type VivaTournamentSnapshotDocument = Document & VivaTournamentSnapshot;
 
 @Injectable()
@@ -94,6 +106,10 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private readonly hydrateRetryMs = this.readPositiveNumberEnv(
     'VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS',
     60_000
+  );
+  private readonly manualRefreshCooldownMs = this.readPositiveNumberEnv(
+    'VIVA_TOURNAMENT_SNAPSHOT_MANUAL_REFRESH_COOLDOWN_MS',
+    15_000
   );
   private readonly tickMs = this.readPositiveNumberEnv(
     'VIVA_TOURNAMENT_SNAPSHOT_TICK_MS',
@@ -126,6 +142,8 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private refreshTimer?: NodeJS.Timeout;
   private snapshot?: VivaTournamentSnapshot;
   private refreshPromise?: Promise<VivaTournamentSnapshot | null>;
+  private manualRefreshPromise?: Promise<VivaTournamentSnapshotDayRefreshResult>;
+  private manualRefreshDate?: string;
   private hydrateAttempted = false;
   private lastHydrateFailureAt?: number;
   private indexesEnsured = false;
@@ -133,6 +151,8 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private lastStartedAt?: string;
   private lastFailureAt?: string;
   private lastError?: string;
+  private lastManualRefreshAt?: number;
+  private lastManualRefreshAttemptAt?: number;
 
   constructor(private readonly vivaTournamentsService: VivaTournamentsService) {
     if (this.refreshEnabled) {
@@ -164,10 +184,12 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       return null;
     }
 
-    this.lastPublicReadAt = Date.now();
     const snapshot = await this.getCurrentSnapshot();
-    if (this.refreshEnabled && options?.refreshOnRead !== false) {
-      this.scheduleRefreshIfDue(snapshot ? 'read' : 'cold_read');
+    if (options?.refreshOnRead !== false) {
+      this.lastPublicReadAt = Date.now();
+      if (this.refreshEnabled) {
+        this.scheduleRefreshIfDue(snapshot ? 'read' : 'cold_read');
+      }
     }
     if (!this.readModelEnabled || !snapshot || !this.coversOptions(snapshot, options)) {
       return null;
@@ -205,6 +227,83 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     }
 
     return this.buildRefreshResult('refreshed', refreshedSnapshot, true);
+  }
+
+  async refreshDate(
+    date: string,
+    reason = 'manual_day_refresh'
+  ): Promise<VivaTournamentSnapshotDayRefreshResult> {
+    const normalizedDate = this.normalizeDateKey(date);
+    if (!normalizedDate) {
+      throw new Error('Manual Viva tournament refresh requires date in YYYY-MM-DD format');
+    }
+
+    if (this.manualRefreshPromise) {
+      const activeDate = this.manualRefreshDate;
+      const activeResult = await this.manualRefreshPromise;
+      if (activeDate === normalizedDate) {
+        return activeResult;
+      }
+      return this.buildManualRefreshCooldownResult(normalizedDate);
+    }
+
+    if (this.refreshPromise) {
+      await this.refreshPromise;
+    }
+
+    const now = Date.now();
+    const retryAfterMs = this.lastManualRefreshAttemptAt
+      ? Math.max(0, this.manualRefreshCooldownMs - (now - this.lastManualRefreshAttemptAt))
+      : 0;
+    if (retryAfterMs > 0) {
+      return this.buildManualRefreshCooldownResult(normalizedDate, retryAfterMs);
+    }
+
+    this.lastManualRefreshAttemptAt = now;
+    this.manualRefreshDate = normalizedDate;
+    const operation = this.refreshSnapshotDate(normalizedDate, reason);
+    const snapshotPromise = operation.then((result) => result.snapshot);
+    const trackedSnapshotPromise = snapshotPromise.finally(() => {
+      if (this.refreshPromise === trackedSnapshotPromise) {
+        this.refreshPromise = undefined;
+      }
+    });
+    this.refreshPromise = trackedSnapshotPromise;
+    const responsePromise = operation.then((result) => result.response);
+    const trackedResponsePromise = responsePromise.finally(() => {
+      if (this.manualRefreshPromise === trackedResponsePromise) {
+        this.manualRefreshPromise = undefined;
+        this.manualRefreshDate = undefined;
+      }
+    });
+    this.manualRefreshPromise = trackedResponsePromise;
+    return trackedResponsePromise;
+  }
+
+  private async buildManualRefreshCooldownResult(
+    date: string,
+    retryAfterMs = this.lastManualRefreshAttemptAt
+      ? Math.max(
+          0,
+          this.manualRefreshCooldownMs - (Date.now() - this.lastManualRefreshAttemptAt)
+        )
+      : this.manualRefreshCooldownMs
+  ): Promise<VivaTournamentSnapshotDayRefreshResult> {
+    const snapshot = await this.getCurrentSnapshot();
+    return {
+      enabled: true,
+      refreshed: false,
+      reason: 'cooldown',
+      date,
+      snapshotAvailable: Boolean(snapshot),
+      tournaments: snapshot
+        ? this.filterTournaments(snapshot.tournaments, { date })
+        : [],
+      retryAfterMs,
+      ...(this.lastManualRefreshAt
+        ? { refreshedAt: new Date(this.lastManualRefreshAt).toISOString() }
+        : {})
+    };
   }
 
   private async refreshSnapshotNow(
@@ -381,9 +480,125 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     }
   }
 
-  private async persistSnapshot(snapshot: VivaTournamentSnapshot): Promise<void> {
+  private async refreshSnapshotDate(
+    date: string,
+    reason: string
+  ): Promise<{
+    response: VivaTournamentSnapshotDayRefreshResult;
+    snapshot: VivaTournamentSnapshot | null;
+  }> {
+    const startedAt = Date.now();
+    this.lastStartedAt = new Date(startedAt).toISOString();
+    const previousSnapshot = await this.getCurrentSnapshot();
+
+    try {
+      const tournaments = await this.vivaTournamentsService.listTournaments({
+        date,
+        includePast: true
+      });
+      if (!tournaments) {
+        throw new Error('Viva tournaments source returned no data');
+      }
+
+      const generatedAt = new Date().toISOString();
+      const snapshot = this.mergeRefreshedDate(
+        previousSnapshot,
+        date,
+        tournaments,
+        generatedAt,
+        reason
+      );
+      this.snapshot = snapshot;
+      this.lastManualRefreshAt = Date.now();
+      this.lastError = undefined;
+      this.lastFailureAt = undefined;
+      const persisted = await this.persistSnapshot(snapshot);
+      return {
+        response: {
+          enabled: true,
+          refreshed: true,
+          reason: 'refreshed',
+          date,
+          snapshotAvailable: true,
+          tournaments,
+          refreshedAt: generatedAt,
+          persisted
+        },
+        snapshot
+      };
+    } catch (error) {
+      this.lastFailureAt = new Date().toISOString();
+      this.lastError = this.formatError(error);
+      this.logger.warn(
+        JSON.stringify({
+          type: 'viva_tournament_snapshot_day_refresh_failed',
+          reason,
+          date,
+          error: this.lastError
+        })
+      );
+      return {
+        response: {
+          enabled: true,
+          refreshed: false,
+          reason: 'refresh_failed',
+          date,
+          snapshotAvailable: Boolean(previousSnapshot),
+          tournaments: previousSnapshot
+            ? this.filterTournaments(previousSnapshot.tournaments, { date })
+            : []
+        },
+        snapshot: previousSnapshot ?? null
+      };
+    }
+  }
+
+  private mergeRefreshedDate(
+    snapshot: VivaTournamentSnapshot | undefined,
+    date: string,
+    refreshedTournaments: Tournament[],
+    generatedAt: string,
+    reason: string
+  ): VivaTournamentSnapshot {
+    const merged = new Map<string, Tournament>();
+    (snapshot?.tournaments ?? [])
+      .filter((tournament) => {
+        const tournamentDate = this.normalizeDateKey(tournament.startsAt ?? tournament.createdAt);
+        return tournamentDate !== date;
+      })
+      .forEach((tournament) => merged.set(tournament.id, tournament));
+    refreshedTournaments.forEach((tournament) => merged.set(tournament.id, tournament));
+
+    const tournaments = Array.from(merged.values()).sort((left, right) => {
+      const leftStartsAt = Date.parse(left.startsAt ?? left.createdAt ?? '');
+      const rightStartsAt = Date.parse(right.startsAt ?? right.createdAt ?? '');
+      const leftRank = Number.isFinite(leftStartsAt) ? leftStartsAt : Number.MAX_SAFE_INTEGER;
+      const rightRank = Number.isFinite(rightStartsAt) ? rightStartsAt : Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ru');
+    });
+
+    return {
+      key: this.snapshotKey,
+      generatedAt,
+      lastSuccessfulAt: snapshot?.lastSuccessfulAt ?? generatedAt,
+      windowFrom: snapshot?.windowFrom && snapshot.windowFrom < date
+        ? snapshot.windowFrom
+        : date,
+      windowTo: snapshot?.windowTo && snapshot.windowTo > date
+        ? snapshot.windowTo
+        : date,
+      tournaments,
+      tournamentsCount: tournaments.length,
+      refreshReason: reason
+    };
+  }
+
+  private async persistSnapshot(snapshot: VivaTournamentSnapshot): Promise<boolean> {
     if (!this.mongoUri) {
-      return;
+      return false;
     }
     try {
       const collection = await this.collection();
@@ -392,8 +607,10 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
         { $set: snapshot },
         { upsert: true }
       );
+      return true;
     } catch (error) {
       this.logger.warn(`Failed to persist Viva tournament snapshot: ${String(error)}`);
+      return false;
     }
   }
 

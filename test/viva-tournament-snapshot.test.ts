@@ -142,6 +142,138 @@ async function testSnapshotRefreshSingleflightAndLocalDateFilter(): Promise<void
   });
 }
 
+async function testManualDayRefreshUsesOneBoundedVivaCall(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    let lastOptions: { date?: string; includePast?: boolean } | undefined;
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async (options?: { date?: string; includePast?: boolean }) => {
+        calls += 1;
+        lastOptions = options;
+        return [createTournament('fresh-day', '2026-07-04T20:00:00+03:00')];
+      }
+    } as never);
+    const previousLastSuccessfulAt = '2026-07-01T10:00:00.000Z';
+    (snapshotService as any).snapshot = {
+      key: 'default',
+      generatedAt: previousLastSuccessfulAt,
+      lastSuccessfulAt: previousLastSuccessfulAt,
+      windowFrom: '2026-07-01',
+      windowTo: '2026-07-10',
+      tournaments: [
+        createTournament('stale-day', '2026-07-04T19:00:00+03:00'),
+        createTournament('untouched-day', '2026-07-05T19:00:00+03:00')
+      ],
+      tournamentsCount: 2,
+      refreshReason: 'persisted'
+    };
+
+    try {
+      const refreshed = await snapshotService.refreshDate('2026-07-04', 'test_manual');
+      assert.equal(refreshed.refreshed, true);
+      assert.equal(refreshed.reason, 'refreshed');
+      assert.deepEqual(refreshed.tournaments.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(lastOptions, { date: '2026-07-04', includePast: true });
+      assert.equal(calls, 1);
+
+      const selectedDay = await snapshotService.listTournaments({
+        date: '2026-07-04',
+        refreshOnRead: false
+      });
+      const untouchedDay = await snapshotService.listTournaments({
+        date: '2026-07-05',
+        refreshOnRead: false
+      });
+      assert.deepEqual(selectedDay?.map((item) => item.id), ['fresh-day']);
+      assert.deepEqual(untouchedDay?.map((item) => item.id), ['untouched-day']);
+      assert.equal(snapshotService.getDiagnostics().lastSuccessfulAt, previousLastSuccessfulAt);
+
+      const throttled = await snapshotService.refreshDate('2026-07-05', 'test_duplicate');
+      assert.equal(throttled.refreshed, false);
+      assert.equal(throttled.reason, 'cooldown');
+      assert.ok((throttled.retryAfterMs ?? 0) > 0);
+      assert.equal(calls, 1, 'cooldown must not call Viva for another date');
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  });
+}
+
+async function testManualDayRefreshCoalescesConcurrentFailures(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async () => {
+        calls += 1;
+        await gate;
+        return null;
+      }
+    } as never);
+
+    try {
+      const first = snapshotService.refreshDate('2026-07-04', 'test_failure');
+      const duplicate = snapshotService.refreshDate('2026-07-04', 'test_failure_duplicate');
+      await Promise.resolve();
+      assert.equal(calls, 1);
+      release?.();
+
+      const [firstResult, duplicateResult] = await Promise.all([first, duplicate]);
+      assert.equal(firstResult.reason, 'refresh_failed');
+      assert.equal(duplicateResult.reason, 'refresh_failed');
+      assert.equal(calls, 1, 'concurrent failure must remain single-flight');
+
+      const throttled = await snapshotService.refreshDate('2026-07-04', 'test_retry');
+      assert.equal(throttled.reason, 'cooldown');
+      assert.equal(calls, 1, 'failed attempt must also enter cooldown');
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  });
+}
+
+async function testManualDayRefreshWorksWithBackgroundRefreshDisabled(): Promise<void> {
+  const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
+  const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
+  const originalMongoUri = process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
+  const originalMongoUriFallback = process.env.MONGODB_URI;
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'false';
+  delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
+  delete process.env.TOURNAMENTS_MONGODB_URI;
+  delete process.env.MONGODB_URI;
+
+  let calls = 0;
+  const snapshotService = new VivaTournamentSnapshotService({
+    listTournaments: async () => {
+      calls += 1;
+      return [createTournament('manual-with-background-off', '2026-07-04T20:00:00+03:00')];
+    }
+  } as never);
+
+  try {
+    const result = await snapshotService.refreshDate('2026-07-04', 'test_manual_background_off');
+    assert.equal(result.refreshed, true);
+    assert.equal(result.reason, 'refreshed');
+    assert.equal(calls, 1);
+    assert.deepEqual(
+      result.tournaments.map((tournament) => tournament.id),
+      ['manual-with-background-off']
+    );
+  } finally {
+    await snapshotService.onModuleDestroy();
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
+    restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI', originalMongoUri);
+    restoreEnv('TOURNAMENTS_MONGODB_URI', originalTournamentsMongoUri);
+    restoreEnv('MONGODB_URI', originalMongoUriFallback);
+  }
+}
+
 async function testSnapshotShadowRefreshDoesNotServeReadModel(): Promise<void> {
   const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
   const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
@@ -496,6 +628,11 @@ async function testAdminListDoesNotTriggerSnapshotRefreshOnRead(): Promise<void>
         assert.equal(liveRefreshCalls, 0, `${scenario}: list GET must not refresh Viva`);
         assert.equal(legacyListCalls, 0, `${scenario}: list GET must not use the legacy source`);
         assert.equal(snapshotService.getDiagnostics().lastStartedAt, undefined);
+        assert.equal(
+          snapshotService.getDiagnostics().lastPublicReadAt,
+          undefined,
+          `${scenario}: read-only GET must not activate the background refresh cadence`
+        );
       } finally {
         await snapshotService.onModuleDestroy();
       }
@@ -600,6 +737,9 @@ async function testPublicDirectoryDoesNotFallbackToLiveViva(): Promise<void> {
 
 async function main(): Promise<void> {
   await testSnapshotRefreshSingleflightAndLocalDateFilter();
+  await testManualDayRefreshUsesOneBoundedVivaCall();
+  await testManualDayRefreshCoalescesConcurrentFailures();
+  await testManualDayRefreshWorksWithBackgroundRefreshDisabled();
   await testSnapshotShadowRefreshDoesNotServeReadModel();
   await testSnapshotHydrationRetriesAfterMongoFailure();
   await testSnapshotRefreshOnAdminOpenUsesFiveMinuteTtl();

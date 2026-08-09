@@ -58,9 +58,23 @@ export class TournamentsController {
   }
 
   @Post('snapshot/refresh-on-open')
+  @Permissions('tournaments:read')
   @Roles()
   refreshSnapshotOnOpen(): ReturnType<TournamentsService['refreshVivaTournamentSnapshotOnAdminOpen']> {
     return this.tournamentsService.refreshVivaTournamentSnapshotOnAdminOpen();
+  }
+
+  @Post('snapshot/refresh-day')
+  @Roles()
+  refreshSnapshotDay(
+    @Body() body: Record<string, unknown> | undefined,
+    @Req() request: Request
+  ): ReturnType<TournamentsService['refreshVivaTournamentSnapshotDay']> {
+    return this.tournamentsService.refreshVivaTournamentSnapshotDay({
+      date: body?.date,
+      authorizationHeader: this.pickString(request.headers.authorization),
+      tenantKeyHeader: this.pickString(request.headers['x-padlhub-tenant-key'])
+    });
   }
 
   @Post('backfill/pricing-snapshots')

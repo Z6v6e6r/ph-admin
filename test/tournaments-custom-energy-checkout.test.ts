@@ -168,6 +168,8 @@ function createService(tournament: CustomTournament, vivaAdmin: Record<string, u
 
 async function main(): Promise<void> {
   process.env.TOURNAMENTS_PUBLIC_TENANT_KEY = 'iSkq6G';
+  process.env.TOURNAMENTS_PUBLIC_KEYCLOAK_REALM = 'prod';
+  delete process.env.TOURNAMENTS_LK_KEYCLOAK_REALM;
   const originalFetch = globalThis.fetch;
   const token = buildJwt({
     exp: Math.floor(Date.now() / 1000) + 3600,
@@ -178,7 +180,7 @@ async function main(): Promise<void> {
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     assert.equal(
       String(url),
-      'https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/userinfo'
+      'https://kc.vivacrm.ru/realms/clients/protocol/openid-connect/userinfo'
     );
     assert.equal((init?.headers as Record<string, string>).Authorization, `Bearer ${token}`);
     return {
@@ -292,7 +294,7 @@ async function main(): Promise<void> {
   const signedToken = buildSignedJwt(
     {
       exp: Math.floor(Date.now() / 1000) + 3600,
-      iss: 'https://kc.vivacrm.ru/realms/prod',
+      iss: 'https://kc.vivacrm.ru/realms/clients',
       phone_number: '79123456789',
       tenantKey: 'iSkq6G',
       sub: 'client-1'
