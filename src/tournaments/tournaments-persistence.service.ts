@@ -194,6 +194,14 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return document ? this.toCustomTournament(document) : null;
   }
 
+  async findCustomTournamentByExerciseId(exerciseId: string): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const document = (await collection.findOne({
+      exerciseId: String(exerciseId || '').trim()
+    } as Filter<MongoCustomTournamentDocument>)) as MongoCustomTournamentDocument | null;
+    return document ? this.toCustomTournament(document) : null;
+  }
+
   async createCustomTournament(
     mutation: CreateCustomTournamentMutation
   ): Promise<CustomTournament> {
@@ -462,6 +470,10 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
             unique: true,
             partialFilterExpression: { sourceTournamentId: { $type: 'string' } }
           }
+        );
+        await collection.createIndex(
+          { exerciseId: 1 },
+          { partialFilterExpression: { exerciseId: { $type: 'string' } } }
         );
       } catch (error) {
         this.logger.warn(`Failed to ensure custom tournaments indexes: ${String(error)}`);

@@ -167,6 +167,12 @@ interface TournamentListOptions {
   user?: RequestUser;
 }
 
+interface TournamentReadModelLookupOptions {
+  refreshSourceSnapshot?: boolean;
+  markSourceSnapshotUnavailable?: boolean;
+  mergeEmbeddedSourceSnapshot?: boolean;
+}
+
 interface ParsedVivaTournamentLink {
   originalUrl: string;
   studioId: string;
@@ -491,26 +497,68 @@ export class TournamentsService {
   }
 
   async findById(id: string, user?: RequestUser): Promise<Tournament> {
-    const customTournament = await this.findCustomTournamentByIdSafe(id);
+    const customTournament = await this.findCustomTournamentByIdReadModelSafe(id);
     if (customTournament) {
       this.ensureTournamentVisibleForUser(customTournament, user);
       return this.toLkCompatibleTournament(
-        this.toTournamentListItem(await this.enrichTournamentVivaProfiles(customTournament))
+        this.toTournamentListItem(customTournament)
       );
     }
 
-    const tournament = await this.findSourceTournamentById(id);
+    let sourceTournaments: Tournament[] = [];
+    try {
+      sourceTournaments = await this.listSourceTournaments({ readModelOnly: true });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to load the persisted Viva tournament snapshot for ${id}: ${String(error)}`
+      );
+    }
+    const tournament = sourceTournaments.find(
+      (item) => item.id === id || item.exerciseId === id
+    ) ?? null;
     if (!tournament) {
-      throw new NotFoundException(`Tournament with id ${id} not found`);
+      const linkedCustomByRequestedSourceRef =
+        await this.findCustomTournamentBySourceIdReadModelSafe(id, {
+          refreshSourceSnapshot: false
+        })
+        ?? await this.findCustomTournamentByExerciseIdReadModelSafe(id, {
+          refreshSourceSnapshot: false
+        });
+      if (linkedCustomByRequestedSourceRef) {
+        this.ensureTournamentVisibleForUser(linkedCustomByRequestedSourceRef, user);
+        const persistedSource = this.buildPersistedSourceTournamentReadModel(
+          linkedCustomByRequestedSourceRef,
+          id
+        );
+        return this.toLkCompatibleTournament(
+          this.enrichSourceTournament(persistedSource, linkedCustomByRequestedSourceRef, {
+            sourceParticipantStateAuthoritative: false,
+            preserveCustomDetails: true
+          })
+        );
+      }
+      throw new ServiceUnavailableException(
+        `Persisted tournament snapshot for ${id} is unavailable`
+      );
     }
     this.ensureTournamentVisibleForUser(tournament, user);
 
-    const linkedCustom = await this.findCustomTournamentBySourceIdSafe(tournament.id);
-    const enrichedLinkedCustom = linkedCustom
-      ? await this.enrichTournamentVivaProfiles(linkedCustom)
-      : undefined;
-    return this.enrichTournamentParticipantsForLk(
-      this.enrichSourceTournament(tournament, enrichedLinkedCustom)
+    const linkedCustom =
+      await this.findCustomTournamentBySourceIdReadModelSafe(tournament.id, {
+        refreshSourceSnapshot: false,
+        mergeEmbeddedSourceSnapshot: false
+      })
+      ?? (tournament.exerciseId
+        ? await this.findCustomTournamentByExerciseIdReadModelSafe(tournament.exerciseId, {
+            refreshSourceSnapshot: false,
+            mergeEmbeddedSourceSnapshot: false
+          })
+        : null);
+    return this.toLkCompatibleTournament(
+      this.enrichSourceTournament(tournament, linkedCustom ?? undefined, {
+        sourceParticipantStateAuthoritative: false,
+        preserveCustomDetails: true
+      })
     );
   }
 
@@ -1239,7 +1287,7 @@ export class TournamentsService {
     message: string;
   }> {
     this.ensurePersistenceEnabled();
-    const tournament = await this.requireCustomByPublicRef(tournamentRef);
+    const tournament = await this.requireCustomByPublicRefReadModel(tournamentRef);
     const normalizedPhone = this.normalizePhone(phone);
     if (!normalizedPhone) {
       return {
@@ -1273,6 +1321,27 @@ export class TournamentsService {
         canRegister: false,
         canCancel: true,
         message: 'Игрок находится в листе ожидания.'
+      };
+    }
+
+    if (this.toRecord(tournament.details)?.sourceReadModelUnavailable === true) {
+      return {
+        status: 'NONE',
+        canRegister: false,
+        canCancel: false,
+        message: 'Данные записи Viva временно недоступны. Повторите попытку позже.'
+      };
+    }
+
+    if (
+      this.pickString(tournament.sourceTournamentId)
+      && Object.keys(this.getSourceTournamentSnapshot(tournament)).length === 0
+    ) {
+      return {
+        status: 'NONE',
+        canRegister: false,
+        canCancel: false,
+        message: 'Данные записи Viva временно недоступны. Повторите попытку позже.'
       };
     }
 
@@ -2688,6 +2757,34 @@ export class TournamentsService {
     }
   }
 
+  private async findCustomTournamentByIdReadModelSafe(
+    id: string,
+    options?: TournamentReadModelLookupOptions
+  ): Promise<CustomTournament | null> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      const tournament = await this.tournamentsPersistence.findCustomTournamentById(id);
+      if (!tournament) {
+        return null;
+      }
+      return options?.refreshSourceSnapshot === false
+        ? (options.mergeEmbeddedSourceSnapshot === false
+          ? this.ensureTournamentDefaults(tournament)
+          : this.mergeCustomWithSourceTournament(tournament))
+        : await this.mergeCustomWithPersistedSourceReadModel(tournament, options);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to read custom tournament ${id} from persisted read model: ${String(error)}`
+      );
+      throw new ServiceUnavailableException(
+        'Tournament read model is temporarily unavailable'
+      );
+    }
+  }
+
   private async findSourceTournamentByIdSafe(id: string): Promise<Tournament | null> {
     try {
       return await this.findSourceTournamentById(id);
@@ -2807,6 +2904,66 @@ export class TournamentsService {
         `Failed to lookup custom tournament by source id ${sourceTournamentId}: ${String(error)}`
       );
       return null;
+    }
+  }
+
+  private async findCustomTournamentBySourceIdReadModelSafe(
+    sourceTournamentId: string,
+    options?: TournamentReadModelLookupOptions
+  ): Promise<CustomTournament | null> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      const tournament = await this.tournamentsPersistence.findCustomTournamentBySourceTournamentId(
+        sourceTournamentId
+      );
+      if (!tournament) {
+        return null;
+      }
+      return options?.refreshSourceSnapshot === false
+        ? (options.mergeEmbeddedSourceSnapshot === false
+          ? this.ensureTournamentDefaults(tournament)
+          : this.mergeCustomWithSourceTournament(tournament))
+        : await this.mergeCustomWithPersistedSourceReadModel(tournament, options);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to read custom tournament by source ${sourceTournamentId} from persisted read model: ${String(error)}`
+      );
+      throw new ServiceUnavailableException(
+        'Tournament read model is temporarily unavailable'
+      );
+    }
+  }
+
+  private async findCustomTournamentByExerciseIdReadModelSafe(
+    exerciseId: string,
+    options?: TournamentReadModelLookupOptions
+  ): Promise<CustomTournament | null> {
+    if (!this.tournamentsPersistence.isEnabled()) {
+      return null;
+    }
+
+    try {
+      const tournament = await this.tournamentsPersistence.findCustomTournamentByExerciseId(
+        exerciseId
+      );
+      if (!tournament) {
+        return null;
+      }
+      return options?.refreshSourceSnapshot === false
+        ? (options.mergeEmbeddedSourceSnapshot === false
+          ? this.ensureTournamentDefaults(tournament)
+          : this.mergeCustomWithSourceTournament(tournament))
+        : await this.mergeCustomWithPersistedSourceReadModel(tournament, options);
+    } catch (error) {
+      this.logger.warn(
+        `Failed to read custom tournament by exercise ${exerciseId} from persisted read model: ${String(error)}`
+      );
+      throw new ServiceUnavailableException(
+        'Tournament read model is temporarily unavailable'
+      );
     }
   }
 
@@ -3021,7 +3178,11 @@ export class TournamentsService {
 
   private enrichSourceTournament(
     tournament: Tournament,
-    customTournament?: CustomTournament
+    customTournament?: CustomTournament,
+    options?: {
+      sourceParticipantStateAuthoritative?: boolean;
+      preserveCustomDetails?: boolean;
+    }
   ): Tournament {
     const sourceTournamentSnapshot = this.buildSourceTournamentSnapshot(tournament);
 
@@ -3054,7 +3215,11 @@ export class TournamentsService {
       };
     }
 
-    const mergedCustomTournament = this.mergeCustomWithSourceTournament(customTournament, tournament);
+    const mergedCustomTournament = this.mergeCustomWithSourceTournament(
+      customTournament,
+      tournament,
+      options
+    );
 
     return {
       ...tournament,
@@ -3063,6 +3228,11 @@ export class TournamentsService {
       rawStatus: mergedCustomTournament.rawStatus ?? mergedCustomTournament.status,
       exerciseId: mergedCustomTournament.exerciseId ?? this.resolveTournamentExerciseId(tournament),
       details: {
+        ...(options?.preserveCustomDetails
+          && mergedCustomTournament.details
+          && typeof mergedCustomTournament.details === 'object'
+          ? mergedCustomTournament.details
+          : {}),
         sourceTournamentSnapshot
       },
       linkedCustomTournamentId: mergedCustomTournament.id,
@@ -4098,6 +4268,99 @@ export class TournamentsService {
     return this.requireCustomBySlug(normalizedRef);
   }
 
+  private async requireCustomByPublicRefReadModel(ref: string): Promise<CustomTournament> {
+    const normalizedRef = this.pickString(ref);
+    if (!normalizedRef) {
+      throw new BadRequestException('Tournament id is required');
+    }
+
+    const lookupOptions: TournamentReadModelLookupOptions = {
+      markSourceSnapshotUnavailable: true
+    };
+    const byId = await this.findCustomTournamentByIdReadModelSafe(normalizedRef, lookupOptions);
+    if (byId) {
+      return byId;
+    }
+
+    const bySourceId = await this.findCustomTournamentBySourceIdReadModelSafe(
+      normalizedRef,
+      lookupOptions
+    );
+    if (bySourceId) {
+      return bySourceId;
+    }
+
+    const byExerciseId = await this.findCustomTournamentByExerciseIdReadModelSafe(
+      normalizedRef,
+      lookupOptions
+    );
+    if (byExerciseId) {
+      return byExerciseId;
+    }
+
+    const bySlug = await this.tournamentsPersistence.findCustomTournamentBySlug(normalizedRef);
+    if (!bySlug) {
+      throw new NotFoundException(`Public tournament with ref ${normalizedRef} not found`);
+    }
+    return this.mergeCustomWithPersistedSourceReadModel(bySlug, lookupOptions);
+  }
+
+  private async mergeCustomWithPersistedSourceReadModel(
+    tournament: CustomTournament,
+    options?: TournamentReadModelLookupOptions
+  ): Promise<CustomTournament> {
+    const embeddedSnapshot = this.getSourceTournamentSnapshot(tournament);
+    const embeddedSource = this.pickString(embeddedSnapshot.source)?.toUpperCase();
+    if (embeddedSource && embeddedSource !== 'VIVA') {
+      return this.mergeCustomWithSourceTournament(tournament);
+    }
+
+    const sourceTournamentId = this.pickString(tournament.sourceTournamentId);
+    const exerciseId =
+      this.pickString(tournament.exerciseId)
+      ?? this.pickString(embeddedSnapshot.exerciseId);
+    if (!sourceTournamentId && !exerciseId) {
+      return this.mergeCustomWithSourceTournament(tournament);
+    }
+
+    try {
+      const sourceTournaments = await this.listSourceTournaments({ readModelOnly: true });
+      const currentSource = sourceTournaments.find((sourceTournament) =>
+        sourceTournament.id === sourceTournamentId
+        || sourceTournament.id === exerciseId
+        || sourceTournament.exerciseId === sourceTournamentId
+        || sourceTournament.exerciseId === exerciseId
+      );
+      if (!currentSource && options?.markSourceSnapshotUnavailable === true) {
+        return this.markCustomSourceReadModelUnavailable(tournament);
+      }
+      return this.mergeCustomWithSourceTournament(tournament, currentSource, {
+        sourceParticipantStateAuthoritative: false
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to refresh persisted source data for custom tournament ${tournament.id}: ${String(error)}`
+      );
+      if (options?.markSourceSnapshotUnavailable === true) {
+        return this.markCustomSourceReadModelUnavailable(tournament);
+      }
+      return this.mergeCustomWithSourceTournament(tournament);
+    }
+  }
+
+  private markCustomSourceReadModelUnavailable(
+    tournament: CustomTournament
+  ): CustomTournament {
+    const merged = this.ensureTournamentDefaults(tournament);
+    return {
+      ...merged,
+      details: {
+        ...(merged.details && typeof merged.details === 'object' ? merged.details : {}),
+        sourceReadModelUnavailable: true
+      }
+    };
+  }
+
   private async hydrateCustomTournament(tournament: CustomTournament): Promise<CustomTournament> {
     if (!tournament.sourceTournamentId) {
       return this.ensureTournamentDefaults(tournament);
@@ -4129,7 +4392,11 @@ export class TournamentsService {
 
   private mergeCustomWithSourceTournament(
     tournament: CustomTournament,
-    sourceTournament?: Tournament
+    sourceTournament?: Tournament,
+    options?: {
+      sourceParticipantStateAuthoritative?: boolean;
+      preserveCustomDetails?: boolean;
+    }
   ): CustomTournament {
     const sourceTournamentSnapshot = sourceTournament
       ? this.buildSourceTournamentSnapshot(sourceTournament)
@@ -4144,7 +4411,8 @@ export class TournamentsService {
       this.pickNumber(sourceTournament?.participantsCount)
       ?? this.pickNumber(sourceTournamentSnapshot.participantsCount);
     const sourceProvidesParticipantState =
-      this.isLiveVivaParticipantState(sourceTournament, sourceTournamentSnapshot);
+      options?.sourceParticipantStateAuthoritative !== false
+      && this.isLiveVivaParticipantState(sourceTournament, sourceTournamentSnapshot);
     const participants = this.mergeTournamentParticipants(
       sourceParticipants,
       customParticipants,
@@ -4330,6 +4598,52 @@ export class TournamentsService {
     return snapshot && typeof snapshot === 'object'
       ? (snapshot as Record<string, unknown>)
       : {};
+  }
+
+  private buildPersistedSourceTournamentReadModel(
+    tournament: CustomTournament,
+    requestedSourceId: string
+  ): Tournament {
+    const snapshot = this.getSourceTournamentSnapshot(tournament);
+    const sourceTournamentId =
+      this.pickString(snapshot.id)
+      ?? this.pickString(tournament.sourceTournamentId)
+      ?? requestedSourceId;
+    const snapshotSource = this.pickString(snapshot.source)?.toUpperCase();
+    return {
+      id: sourceTournamentId,
+      exerciseId:
+        this.pickString(snapshot.exerciseId)
+        ?? this.pickString(tournament.exerciseId)
+        ?? sourceTournamentId,
+      source: snapshotSource === 'LK_PADELHUB' ? 'LK_PADELHUB' : 'VIVA',
+      name: this.pickString(snapshot.name) ?? tournament.name,
+      status: tournament.status,
+      rawStatus: this.pickString(snapshot.status) ?? tournament.rawStatus ?? tournament.status,
+      startsAt: this.pickString(snapshot.startsAt) ?? tournament.startsAt,
+      endsAt: this.pickString(snapshot.endsAt) ?? tournament.endsAt,
+      studioId: this.pickString(snapshot.studioId) ?? tournament.studioId,
+      studioName: this.pickString(snapshot.studioName) ?? tournament.studioName,
+      courtName: this.pickString(snapshot.courtName) ?? tournament.courtName,
+      locationName: this.pickString(snapshot.locationName) ?? tournament.locationName,
+      trainerId: this.pickString(snapshot.trainerId) ?? tournament.trainerId,
+      trainerName: this.pickString(snapshot.trainerName) ?? tournament.trainerName,
+      trainerAvatarUrl:
+        this.pickNullableString(snapshot.trainerAvatarUrl)
+        ?? tournament.trainerAvatarUrl
+        ?? undefined,
+      exerciseTypeId:
+        this.pickString(snapshot.exerciseTypeId) ?? tournament.exerciseTypeId,
+      tournamentType:
+        this.pickString(snapshot.tournamentType) ?? tournament.tournamentType,
+      maxPlayers:
+        this.pickNumber(snapshot.maxPlayers)
+        ?? tournament.maxPlayers,
+      participants: this.readSnapshotParticipants(snapshot),
+      participantsCount:
+        this.pickNumber(snapshot.participantsCount)
+        ?? tournament.participantsCount
+    };
   }
 
   private readSnapshotParticipants(snapshot: Record<string, unknown>): TournamentParticipant[] {
@@ -4619,8 +4933,16 @@ export class TournamentsService {
       vivaAuthorizationHeader?: string;
     }
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    if (!this.isVivaSourceTournament(tournament)) {
+    const sourceProvider = this.resolveSourceTournamentProvider(tournament);
+    if (sourceProvider === 'NON_VIVA') {
       return { ok: true };
+    }
+    if (sourceProvider === 'UNKNOWN') {
+      return {
+        ok: false,
+        message:
+          'Данные источника турнира временно недоступны. Запись не сохранена, чтобы не разойтись с внешней системой.'
+      };
     }
 
     const booking = this.resolveBookingConfig(tournament);
@@ -4653,10 +4975,18 @@ export class TournamentsService {
     };
   }
 
-  private isVivaSourceTournament(tournament: CustomTournament): boolean {
+  private resolveSourceTournamentProvider(
+    tournament: CustomTournament
+  ): 'VIVA' | 'NON_VIVA' | 'UNKNOWN' {
     const snapshot = this.getSourceTournamentSnapshot(tournament);
     const source = this.pickString(snapshot.source)?.toUpperCase();
-    return source === 'VIVA';
+    if (source === 'VIVA') {
+      return 'VIVA';
+    }
+    if (source) {
+      return 'NON_VIVA';
+    }
+    return this.pickString(tournament.sourceTournamentId) ? 'UNKNOWN' : 'NON_VIVA';
   }
 
   private normalizeAcceptedSubscriptions(value: unknown): TournamentAcceptedSubscriptionRule[] {
