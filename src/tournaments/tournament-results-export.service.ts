@@ -7,6 +7,10 @@ import {
   TournamentResultMatchEntry,
   TournamentResultsView
 } from './tournaments.types';
+import {
+  StoredTournamentStanding,
+  TournamentResultsStoreService
+} from './tournament-results-store.service';
 import { TournamentsService } from './tournaments.service';
 
 const EXPORT_TIME_ZONE = 'Europe/Moscow';
@@ -89,7 +93,10 @@ export interface TournamentResultsExportFile {
 
 @Injectable()
 export class TournamentResultsExportService {
-  constructor(private readonly tournamentsService: TournamentsService) {}
+  constructor(
+    private readonly tournamentsService: TournamentsService,
+    private readonly tournamentResultsStore: TournamentResultsStoreService
+  ) {}
 
   async buildExport(input: TournamentResultsExportInput): Promise<TournamentResultsExportFile> {
     const period = this.normalizePeriod(input.from, input.to);
@@ -111,17 +118,30 @@ export class TournamentResultsExportService {
       );
     }
 
+    const storedResults = await this.tournamentResultsStore.findByTournamentIds(
+      tournaments.flatMap((tournament) => this.resolveTournamentIdentifiers(tournament))
+    );
     const resultSets = await this.mapWithConcurrency(
       tournaments,
       EXPORT_CONCURRENCY,
-      async (tournament) => ({
-        tournament,
-        results: await this.tournamentsService.getResults(tournament.id, input.user)
-      })
+      async (tournament) => {
+        const stored = storedResults
+          ? this.resolveTournamentIdentifiers(tournament)
+              .map((identifier) => storedResults.get(identifier))
+              .find((value) => value !== undefined)
+          : undefined;
+        return {
+          tournament,
+          rows: stored
+            ? this.buildStoredTournamentRows(tournament, stored.standings)
+            : this.buildTournamentRows(
+                tournament,
+                await this.tournamentsService.getResults(tournament.id, input.user)
+              )
+        };
+      }
     );
-    const resultRows = resultSets.flatMap(({ tournament, results }) =>
-      this.buildTournamentRows(tournament, results)
-    );
+    const resultRows = resultSets.flatMap(({ rows }) => rows);
     if (resultRows.length > EXPORT_MAX_RESULT_ROWS) {
       throw new BadRequestException(
         `Export contains more than ${EXPORT_MAX_RESULT_ROWS} result rows; narrow the filters`
@@ -134,10 +154,47 @@ export class TournamentResultsExportService {
     return {
       buffer: Buffer.from(workbookBuffer),
       fileName: `tournament-results-${period.from}_to_${period.to}.xlsx`,
-      tournamentsCount: resultSets.filter(({ results }) => results.standings.length > 0).length,
+      tournamentsCount: resultSets.filter(({ rows }) => rows.length > 0).length,
       resultRowsCount: resultRows.length,
       uniqueParticipantsCount: uniqueRows.length
     };
+  }
+
+  private buildStoredTournamentRows(
+    tournament: Tournament,
+    standings: StoredTournamentStanding[]
+  ): TournamentResultsExportRow[] {
+    const station = this.pickString(tournament.studioName)
+      ?? this.pickString(tournament.studioId)
+      ?? 'Без станции';
+    const direction = resolveTournamentDirectionLabel(tournament);
+    const startIso = this.pickString(tournament.startsAt);
+    const start = startIso ? this.toExcelDate(startIso) : null;
+
+    return standings
+      .slice()
+      .sort((left, right) => left.rank - right.rank)
+      .map((standing) => ({
+        start,
+        startIso,
+        station,
+        direction,
+        tournament: this.pickString(tournament.name) ?? 'Без названия',
+        player: standing.name,
+        participantId: standing.id,
+        rank: standing.rank,
+        matches: standing.matchesPlayed,
+        wins: standing.wins,
+        losses: standing.losses,
+        draws: standing.draws,
+        pointsFor: standing.pointsFor,
+        pointsAgainst: standing.pointsAgainst,
+        pointDiff: standing.pointDiff,
+        totalPoints: standing.totalPoints,
+        ratingBefore: standing.ratingBefore,
+        ratingAfter: standing.ratingAfter,
+        ratingDelta: this.roundRating(standing.ratingDelta)
+      }));
   }
 
   private buildTournamentRows(
@@ -258,6 +315,17 @@ export class TournamentResultsExportService {
       }
     });
     return resolved;
+  }
+
+  private resolveTournamentIdentifiers(tournament: Tournament): string[] {
+    const details = this.toRecord(tournament.details);
+    const sourceSnapshot = this.toRecord(details.sourceTournamentSnapshot);
+    return Array.from(new Set([
+      this.pickString(tournament.id),
+      this.pickString(tournament.exerciseId),
+      this.pickString(tournament.sourceTournamentId),
+      this.pickString(sourceSnapshot.id)
+    ].filter((value): value is string => Boolean(value))));
   }
 
   private consolidateParticipants(

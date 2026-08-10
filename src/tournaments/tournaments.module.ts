@@ -14,6 +14,7 @@ import { TournamentsPersistenceService } from './tournaments-persistence.service
 import { TournamentsController } from './tournaments.controller';
 import { TournamentsPublicController } from './tournaments-public.controller';
 import { TournamentResultsExportService } from './tournament-results-export.service';
+import { TournamentResultsStoreService } from './tournament-results-store.service';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
@@ -25,6 +26,7 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     AmericanoRatingSimulationService,
     TournamentsService,
     TournamentResultsExportService,
+    TournamentResultsStoreService,
     TournamentsVivaStatusSyncService,
     TournamentsPersistenceService,
     TournamentsPublicSessionService,
