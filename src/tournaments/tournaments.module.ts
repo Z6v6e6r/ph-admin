@@ -13,6 +13,7 @@ import { TournamentsPublicSessionService } from './tournaments-public-session.se
 import { TournamentsPersistenceService } from './tournaments-persistence.service';
 import { TournamentsController } from './tournaments.controller';
 import { TournamentsPublicController } from './tournaments-public.controller';
+import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsService } from './tournaments.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
@@ -23,6 +24,7 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
     TournamentsService,
+    TournamentResultsExportService,
     TournamentsVivaStatusSyncService,
     TournamentsPersistenceService,
     TournamentsPublicSessionService,

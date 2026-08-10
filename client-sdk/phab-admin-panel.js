@@ -7555,6 +7555,20 @@
       return String(fallbackText || '').trim() || 'HTTP ' + String(status);
     }
 
+    function readAttachmentFileName(response, fallbackName) {
+      var contentDisposition = response.headers.get('content-disposition') || '';
+      var utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          return decodeURIComponent(String(utf8Match[1]).replace(/^"|"$/g, ''));
+        } catch (_decodeError) {
+          return String(utf8Match[1]).replace(/^"|"$/g, '');
+        }
+      }
+      var plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+      return plainMatch && plainMatch[1] ? plainMatch[1] : fallbackName;
+    }
+
     async function request(path, method, body, requestOptions) {
       var options = requestOptions || {};
       var headers = buildHeaders(body ? { 'Content-Type': 'application/json' } : {});
@@ -7591,6 +7605,18 @@
         requestError.payload = errorPayload;
         requestError.code = readApiErrorCode(errorPayload);
         throw requestError;
+      }
+
+      if (options.responseType === 'blob') {
+        return {
+          blob: await response.blob(),
+          fileName: readAttachmentFileName(response, options.fallbackFileName || 'export.xlsx'),
+          tournamentsCount: Number(response.headers.get('x-export-tournaments') || 0),
+          rowsCount: Number(response.headers.get('x-export-rows') || 0),
+          uniqueParticipantsCount: Number(
+            response.headers.get('x-export-unique-participants') || 0
+          )
+        };
       }
 
       var contentType = response.headers.get('content-type') || '';
@@ -7979,6 +8005,20 @@
       },
       getTournamentResults: function (tournamentId) {
         return request('/tournaments/' + encodeURIComponent(tournamentId) + '/results', 'GET');
+      },
+      exportTournamentResults: function () {
+        var query = arguments[0] || {};
+        var params = new URLSearchParams();
+        ['from', 'to', 'station', 'direction'].forEach(function (key) {
+          if (query[key]) {
+            params.set(key, String(query[key]));
+          }
+        });
+        var suffix = params.toString() ? '?' + params.toString() : '';
+        return request('/tournaments/export/results.xlsx' + suffix, 'GET', undefined, {
+          responseType: 'blob',
+          fallbackFileName: 'tournament-results.xlsx'
+        });
       },
       createCustomTournamentFromSource: function (sourceTournamentId, payload) {
         return request(
@@ -10200,6 +10240,12 @@
     tournamentsResetBtn.textContent = 'Сбросить';
     tournamentsFilters.appendChild(tournamentsResetBtn);
 
+    var tournamentsExportBtn = document.createElement('button');
+    tournamentsExportBtn.className = 'phab-admin-btn-secondary';
+    tournamentsExportBtn.type = 'button';
+    tournamentsExportBtn.textContent = '⇩ Выгрузить результаты';
+    tournamentsFilters.appendChild(tournamentsExportBtn);
+
     var tournamentsAddByVivaBtn = document.createElement('button');
     tournamentsAddByVivaBtn.className = 'phab-admin-btn-secondary';
     tournamentsAddByVivaBtn.type = 'button';
@@ -12246,6 +12292,115 @@
     tournamentEditorBody.className = 'phab-admin-modal-body';
     tournamentEditorCard.appendChild(tournamentEditorBody);
 
+    var tournamentExportModal = document.createElement('div');
+    tournamentExportModal.className = 'phab-admin-modal phab-admin-hidden';
+    tournamentExportModal.setAttribute('role', 'dialog');
+    tournamentExportModal.setAttribute('aria-modal', 'true');
+    tournamentExportModal.setAttribute('aria-labelledby', 'phab-admin-tournament-export-title');
+    overlayHost.appendChild(tournamentExportModal);
+
+    var tournamentExportCard = document.createElement('div');
+    tournamentExportCard.className = 'phab-admin-modal-card';
+    tournamentExportCard.style.maxWidth = '820px';
+    tournamentExportModal.appendChild(tournamentExportCard);
+
+    var tournamentExportHead = document.createElement('div');
+    tournamentExportHead.className = 'phab-admin-modal-head';
+    tournamentExportCard.appendChild(tournamentExportHead);
+
+    var tournamentExportTitle = document.createElement('div');
+    tournamentExportTitle.className = 'phab-admin-modal-title';
+    tournamentExportTitle.id = 'phab-admin-tournament-export-title';
+    tournamentExportTitle.textContent = 'Выгрузка результатов турниров';
+    tournamentExportHead.appendChild(tournamentExportTitle);
+
+    var tournamentExportActions = document.createElement('div');
+    tournamentExportActions.className = 'phab-admin-modal-actions';
+    tournamentExportHead.appendChild(tournamentExportActions);
+
+    var tournamentExportSubmitBtn = document.createElement('button');
+    tournamentExportSubmitBtn.className = 'phab-admin-btn';
+    tournamentExportSubmitBtn.type = 'button';
+    tournamentExportSubmitBtn.textContent = 'Выгрузить Excel';
+    tournamentExportActions.appendChild(tournamentExportSubmitBtn);
+
+    var tournamentExportCloseBtn = document.createElement('button');
+    tournamentExportCloseBtn.className = 'phab-admin-modal-close';
+    tournamentExportCloseBtn.type = 'button';
+    tournamentExportCloseBtn.textContent = '×';
+    tournamentExportCloseBtn.setAttribute('aria-label', 'Закрыть выгрузку результатов');
+    tournamentExportActions.appendChild(tournamentExportCloseBtn);
+
+    var tournamentExportBody = document.createElement('div');
+    tournamentExportBody.className = 'phab-admin-modal-body';
+    tournamentExportBody.style.display = 'block';
+    tournamentExportCard.appendChild(tournamentExportBody);
+
+    var tournamentExportHelp = document.createElement('p');
+    tournamentExportHelp.className = 'phab-admin-games-page-info';
+    tournamentExportHelp.textContent =
+      'Файл содержит листы «Результаты» и «Уникальные участники». Выберите период — станции и направления обновятся автоматически.';
+    tournamentExportBody.appendChild(tournamentExportHelp);
+
+    var tournamentExportFields = document.createElement('div');
+    tournamentExportFields.className = 'phab-admin-logs-filters';
+    tournamentExportBody.appendChild(tournamentExportFields);
+
+    var tournamentExportFromWrap = document.createElement('label');
+    tournamentExportFromWrap.className = 'phab-admin-logs-filter';
+    tournamentExportFields.appendChild(tournamentExportFromWrap);
+    var tournamentExportFromLabel = document.createElement('span');
+    tournamentExportFromLabel.className = 'phab-admin-settings-label';
+    tournamentExportFromLabel.textContent = 'С даты';
+    tournamentExportFromWrap.appendChild(tournamentExportFromLabel);
+    var tournamentExportFromInput = document.createElement('input');
+    tournamentExportFromInput.className = 'phab-admin-settings-input';
+    tournamentExportFromInput.type = 'date';
+    tournamentExportFromInput.style.width = '170px';
+    tournamentExportFromWrap.appendChild(tournamentExportFromInput);
+
+    var tournamentExportToWrap = document.createElement('label');
+    tournamentExportToWrap.className = 'phab-admin-logs-filter';
+    tournamentExportFields.appendChild(tournamentExportToWrap);
+    var tournamentExportToLabel = document.createElement('span');
+    tournamentExportToLabel.className = 'phab-admin-settings-label';
+    tournamentExportToLabel.textContent = 'По дату';
+    tournamentExportToWrap.appendChild(tournamentExportToLabel);
+    var tournamentExportToInput = document.createElement('input');
+    tournamentExportToInput.className = 'phab-admin-settings-input';
+    tournamentExportToInput.type = 'date';
+    tournamentExportToInput.style.width = '170px';
+    tournamentExportToWrap.appendChild(tournamentExportToInput);
+
+    var tournamentExportStationWrap = document.createElement('label');
+    tournamentExportStationWrap.className = 'phab-admin-logs-filter';
+    tournamentExportFields.appendChild(tournamentExportStationWrap);
+    var tournamentExportStationLabel = document.createElement('span');
+    tournamentExportStationLabel.className = 'phab-admin-settings-label';
+    tournamentExportStationLabel.textContent = 'Станция';
+    tournamentExportStationWrap.appendChild(tournamentExportStationLabel);
+    var tournamentExportStationInput = document.createElement('select');
+    tournamentExportStationInput.className = 'phab-admin-settings-input';
+    tournamentExportStationInput.style.width = '220px';
+    tournamentExportStationWrap.appendChild(tournamentExportStationInput);
+
+    var tournamentExportDirectionWrap = document.createElement('label');
+    tournamentExportDirectionWrap.className = 'phab-admin-logs-filter';
+    tournamentExportFields.appendChild(tournamentExportDirectionWrap);
+    var tournamentExportDirectionLabel = document.createElement('span');
+    tournamentExportDirectionLabel.className = 'phab-admin-settings-label';
+    tournamentExportDirectionLabel.textContent = 'Направление';
+    tournamentExportDirectionWrap.appendChild(tournamentExportDirectionLabel);
+    var tournamentExportDirectionInput = document.createElement('select');
+    tournamentExportDirectionInput.className = 'phab-admin-settings-input';
+    tournamentExportDirectionInput.style.width = '260px';
+    tournamentExportDirectionWrap.appendChild(tournamentExportDirectionInput);
+
+    var tournamentExportSummary = document.createElement('div');
+    tournamentExportSummary.className = 'phab-admin-analytics-export-summary';
+    tournamentExportSummary.textContent = 'Выберите период для подготовки вариантов.';
+    tournamentExportBody.appendChild(tournamentExportSummary);
+
     var playerRatingEditModal = document.createElement('div');
     playerRatingEditModal.className = 'phab-admin-modal phab-admin-hidden';
     playerRatingEditModal.setAttribute('role', 'dialog');
@@ -12649,12 +12804,21 @@
       tournamentsToInput: tournamentsToInput,
       tournamentsApplyBtn: tournamentsApplyBtn,
       tournamentsResetBtn: tournamentsResetBtn,
+      tournamentsExportBtn: tournamentsExportBtn,
       tournamentsAddByVivaBtn: tournamentsAddByVivaBtn,
       tournamentsSummary: tournamentsSummary,
       tournamentsPrevPageBtn: tournamentsPrevPageBtn,
       tournamentsPageInfo: tournamentsPageInfo,
       tournamentsNextPageBtn: tournamentsNextPageBtn,
       tournamentsTable: tournamentsTable,
+      tournamentExportModal: tournamentExportModal,
+      tournamentExportCloseBtn: tournamentExportCloseBtn,
+      tournamentExportSubmitBtn: tournamentExportSubmitBtn,
+      tournamentExportFromInput: tournamentExportFromInput,
+      tournamentExportToInput: tournamentExportToInput,
+      tournamentExportStationInput: tournamentExportStationInput,
+      tournamentExportDirectionInput: tournamentExportDirectionInput,
+      tournamentExportSummary: tournamentExportSummary,
       communitySearchInput: communitySearchInput,
       communitiesList: communitiesList,
       communitiesDetailPane: communitiesDetailPane,
@@ -13591,6 +13755,13 @@
       tournamentsFilterStation: 'ALL',
       tournamentsFilterFrom: getTodayStartDateTimeInputValue(),
       tournamentsFilterTo: '',
+      tournamentExportCandidates: [],
+      tournamentExportLoading: false,
+      tournamentExportRequestToken: '',
+      tournamentExportFrom: getMonthStartDateInputValue(),
+      tournamentExportTo: getTodayDateInputValue(),
+      tournamentExportStation: 'ALL',
+      tournamentExportDirection: 'ALL',
       tournamentEditor: null,
       communities: [],
       selectedCommunityId: null,
@@ -22217,10 +22388,10 @@
       return 'Без станции';
     }
 
-    function getTournamentStationFilterOptions() {
+    function getTournamentStationFilterOptions(sourceItems) {
       var byValue = Object.create(null);
       var items = [];
-      normalizeArray(state.tournaments).forEach(function (tournament) {
+      normalizeArray(sourceItems || state.tournaments).forEach(function (tournament) {
         var value = buildTournamentStationFilterValue(tournament);
         if (byValue[value]) {
           return;
@@ -22236,6 +22407,188 @@
         return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
       });
       return [{ value: 'ALL', label: 'Все станции' }].concat(items);
+    }
+
+    function buildTournamentDirectionFilterLabel(tournament) {
+      var details = normalizeObject(tournament && tournament.details);
+      var sourceSnapshot = normalizeObject(details.sourceTournamentSnapshot);
+      var skin = normalizeObject(tournament && tournament.skin);
+      return String(
+        sourceSnapshot.name ||
+        skin.title ||
+        (tournament && tournament.name) ||
+        (tournament && tournament.tournamentType) ||
+        'Без направления'
+      ).trim();
+    }
+
+    function buildTournamentDirectionFilterValue(tournament) {
+      return 'name:' + buildTournamentDirectionFilterLabel(tournament).toLocaleLowerCase('ru');
+    }
+
+    function getTournamentDirectionFilterOptions(sourceItems) {
+      var byValue = Object.create(null);
+      var items = [];
+      normalizeArray(sourceItems).forEach(function (tournament) {
+        var value = buildTournamentDirectionFilterValue(tournament);
+        if (byValue[value]) {
+          return;
+        }
+        byValue[value] = true;
+        items.push({
+          value: value,
+          label: buildTournamentDirectionFilterLabel(tournament)
+        });
+      });
+      items.sort(function (left, right) {
+        return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
+      });
+      return [{ value: 'ALL', label: 'Все направления' }].concat(items);
+    }
+
+    function getTournamentExportCandidatesForStation(stationValue) {
+      var normalizedStation = String(stationValue || 'ALL');
+      return normalizeArray(state.tournamentExportCandidates).filter(function (tournament) {
+        return normalizedStation === 'ALL' ||
+          buildTournamentStationFilterValue(tournament) === normalizedStation;
+      });
+    }
+
+    function renderTournamentExportOptions() {
+      var stationOptions = getTournamentStationFilterOptions(state.tournamentExportCandidates);
+      ensureCommunitySelectOptions(
+        dom.tournamentExportStationInput,
+        stationOptions,
+        String(state.tournamentExportStation || 'ALL')
+      );
+      state.tournamentExportStation = String(
+        dom.tournamentExportStationInput.value || 'ALL'
+      );
+
+      var directionCandidates = getTournamentExportCandidatesForStation(
+        state.tournamentExportStation
+      );
+      ensureCommunitySelectOptions(
+        dom.tournamentExportDirectionInput,
+        getTournamentDirectionFilterOptions(directionCandidates),
+        String(state.tournamentExportDirection || 'ALL')
+      );
+      state.tournamentExportDirection = String(
+        dom.tournamentExportDirectionInput.value || 'ALL'
+      );
+      dom.tournamentExportSummary.textContent = state.tournamentExportLoading
+        ? 'Загружаем турниры выбранного периода...'
+        : 'Найдено турниров: ' + String(directionCandidates.length) +
+          '. В выгрузку попадут турниры, для которых сохранены результаты.';
+      dom.tournamentExportSubmitBtn.disabled =
+        state.tournamentExportLoading || directionCandidates.length === 0;
+    }
+
+    function validateTournamentExportPeriod(from, to) {
+      if (!from || !to) {
+        throw new Error('Выберите обе даты периода выгрузки');
+      }
+      if (to < from) {
+        throw new Error('Дата «По дату» должна быть не раньше «С даты»');
+      }
+      var fromTimestamp = Date.parse(from + 'T00:00:00Z');
+      var toTimestamp = Date.parse(to + 'T00:00:00Z');
+      var days = Math.floor((toTimestamp - fromTimestamp) / 86400000) + 1;
+      if (!Number.isFinite(days) || days > 366) {
+        throw new Error('Период выгрузки не должен превышать 366 дней');
+      }
+    }
+
+    async function refreshTournamentExportOptions() {
+      var from = String(dom.tournamentExportFromInput.value || '').trim();
+      var to = String(dom.tournamentExportToInput.value || '').trim();
+      validateTournamentExportPeriod(from, to);
+      state.tournamentExportFrom = from;
+      state.tournamentExportTo = to;
+      var requestToken = from + '|' + to + '|' + String(Date.now());
+      state.tournamentExportRequestToken = requestToken;
+      state.tournamentExportLoading = true;
+      renderTournamentExportOptions();
+      try {
+        var tournaments = await api.getTournaments({
+          from: from + 'T00:00:00+03:00',
+          to: to + 'T23:59:59.999+03:00'
+        });
+        if (state.tournamentExportRequestToken !== requestToken) {
+          return;
+        }
+        state.tournamentExportCandidates = normalizeArray(tournaments);
+      } finally {
+        if (state.tournamentExportRequestToken === requestToken) {
+          state.tournamentExportLoading = false;
+          renderTournamentExportOptions();
+        }
+      }
+    }
+
+    function closeTournamentExportModal() {
+      state.tournamentExportRequestToken = '';
+      state.tournamentExportLoading = false;
+      dom.tournamentExportSubmitBtn.disabled = false;
+      dom.tournamentExportSubmitBtn.textContent = 'Выгрузить Excel';
+      dom.tournamentExportModal.classList.add('phab-admin-hidden');
+    }
+
+    async function openTournamentExportModal() {
+      state.tournamentExportFrom = String(
+        state.tournamentExportFrom || getMonthStartDateInputValue()
+      );
+      state.tournamentExportTo = String(
+        state.tournamentExportTo || getTodayDateInputValue()
+      );
+      dom.tournamentExportFromInput.value = state.tournamentExportFrom;
+      dom.tournamentExportToInput.value = state.tournamentExportTo;
+      dom.tournamentExportModal.classList.remove('phab-admin-hidden');
+      await refreshTournamentExportOptions();
+    }
+
+    async function downloadTournamentResultsExport() {
+      var from = String(dom.tournamentExportFromInput.value || '').trim();
+      var to = String(dom.tournamentExportToInput.value || '').trim();
+      validateTournamentExportPeriod(from, to);
+      state.tournamentExportFrom = from;
+      state.tournamentExportTo = to;
+      state.tournamentExportStation = String(
+        dom.tournamentExportStationInput.value || 'ALL'
+      );
+      state.tournamentExportDirection = String(
+        dom.tournamentExportDirectionInput.value || 'ALL'
+      );
+
+      dom.tournamentExportSubmitBtn.disabled = true;
+      dom.tournamentExportSubmitBtn.textContent = 'Формируем...';
+      try {
+        var exported = await api.exportTournamentResults({
+          from: from,
+          to: to,
+          station: state.tournamentExportStation,
+          direction: state.tournamentExportDirection
+        });
+        if (!exported || !exported.blob) {
+          throw new Error('Сервис выгрузки вернул пустой файл');
+        }
+        var objectUrl = window.URL.createObjectURL(exported.blob);
+        try {
+          triggerAttachmentDownload(objectUrl, exported.fileName || 'tournament-results.xlsx');
+        } finally {
+          window.setTimeout(function () {
+            window.URL.revokeObjectURL(objectUrl);
+          }, 1500);
+        }
+        dom.tournamentExportSummary.textContent =
+          'Файл готов: турниров ' + String(exported.tournamentsCount || 0) +
+          ', строк результатов ' + String(exported.rowsCount || 0) +
+          ', уникальных участников ' + String(exported.uniqueParticipantsCount || 0) + '.';
+        setStatus('Выгрузка результатов турниров готова', false);
+      } finally {
+        dom.tournamentExportSubmitBtn.disabled = false;
+        dom.tournamentExportSubmitBtn.textContent = 'Выгрузить Excel';
+      }
     }
 
     function parseTournamentFilterTimestamp(value) {
@@ -36185,6 +36538,9 @@
       dom.tournamentsResetBtn.addEventListener('click', function () {
         resetTournamentFilters().catch(handleError);
       });
+      dom.tournamentsExportBtn.addEventListener('click', function () {
+        openTournamentExportModal().catch(handleError);
+      });
       dom.tournamentsAddByVivaBtn.addEventListener('click', function () {
         createTournamentFromVivaLink().catch(handleError);
       });
@@ -36426,6 +36782,34 @@
       dom.tournamentEditorSaveBtn.addEventListener('click', function () {
         saveTournamentEditor().catch(handleError);
       });
+      dom.tournamentExportCloseBtn.addEventListener('click', function () {
+        closeTournamentExportModal();
+      });
+      dom.tournamentExportModal.addEventListener('click', function (event) {
+        if (event.target === dom.tournamentExportModal) {
+          closeTournamentExportModal();
+        }
+      });
+      dom.tournamentExportSubmitBtn.addEventListener('click', function () {
+        downloadTournamentResultsExport().catch(handleError);
+      });
+      [dom.tournamentExportFromInput, dom.tournamentExportToInput].forEach(function (input) {
+        input.addEventListener('change', function () {
+          refreshTournamentExportOptions().catch(handleError);
+        });
+      });
+      dom.tournamentExportStationInput.addEventListener('change', function () {
+        state.tournamentExportStation = String(
+          dom.tournamentExportStationInput.value || 'ALL'
+        );
+        state.tournamentExportDirection = 'ALL';
+        renderTournamentExportOptions();
+      });
+      dom.tournamentExportDirectionInput.addEventListener('change', function () {
+        state.tournamentExportDirection = String(
+          dom.tournamentExportDirectionInput.value || 'ALL'
+        );
+      });
       dom.gameChatSendBtn.addEventListener('click', function () {
         sendGameChatMessage().catch(handleError);
       });
@@ -36453,6 +36837,10 @@
         }
         if (!dom.tournamentEditorModal.classList.contains('phab-admin-hidden')) {
           closeTournamentEditorModal();
+          return;
+        }
+        if (!dom.tournamentExportModal.classList.contains('phab-admin-hidden')) {
+          closeTournamentExportModal();
           return;
         }
         if (!dom.quickReplyModal.classList.contains('phab-admin-hidden')) {
@@ -36546,6 +36934,7 @@
         dom.gameChatModal,
         dom.communityFeedEditorModal,
         dom.tournamentEditorModal,
+        dom.tournamentExportModal,
         dom.mobileFiltersSheet
       ].forEach(function (node) {
         if (node && node.parentNode) {

@@ -7,9 +7,10 @@ import {
   Patch,
   Post,
   Query,
-  Req
+  Req,
+  Res
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
@@ -28,6 +29,7 @@ import {
   TournamentCustomEnergyCheckoutResponse,
   TournamentResultsView
 } from './tournaments.types';
+import { TournamentResultsExportService } from './tournament-results-export.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 import { TournamentsService } from './tournaments.service';
 
@@ -42,7 +44,8 @@ import { TournamentsService } from './tournaments.service';
 export class TournamentsController {
   constructor(
     private readonly tournamentsService: TournamentsService,
-    private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService
+    private readonly vivaStatusSyncService: TournamentsVivaStatusSyncService,
+    private readonly tournamentResultsExportService: TournamentResultsExportService
   ) {}
 
   @Get()
@@ -55,6 +58,43 @@ export class TournamentsController {
     @CurrentUser() user?: RequestUser
   ): Promise<Tournament[]> {
     return this.tournamentsService.findAll({ date, from, to, user });
+  }
+
+  @Get('export/results.xlsx')
+  @Permissions('tournaments:read')
+  @Roles()
+  async exportResults(
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Query('station') station: string | undefined,
+    @Query('direction') direction: string | undefined,
+    @CurrentUser() user: RequestUser | undefined,
+    @Res() response: Response
+  ): Promise<void> {
+    const exported = await this.tournamentResultsExportService.buildExport({
+      from,
+      to,
+      station,
+      direction,
+      user
+    });
+    response.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${exported.fileName}"`
+    );
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader(
+      'Access-Control-Expose-Headers',
+      'Content-Disposition, X-Export-Tournaments, X-Export-Rows, X-Export-Unique-Participants'
+    );
+    response.setHeader('X-Export-Tournaments', String(exported.tournamentsCount));
+    response.setHeader('X-Export-Rows', String(exported.resultRowsCount));
+    response.setHeader('X-Export-Unique-Participants', String(exported.uniqueParticipantsCount));
+    response.send(exported.buffer);
   }
 
   @Post('snapshot/refresh-on-open')
