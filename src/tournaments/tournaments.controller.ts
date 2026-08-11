@@ -49,7 +49,6 @@ export class TournamentsController {
   ) {}
 
   @Get()
-  @Permissions('tournaments:read')
   @Roles()
   findAll(
     @Query('date') date?: string,
