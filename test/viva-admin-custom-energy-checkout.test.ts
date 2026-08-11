@@ -77,6 +77,14 @@ async function main(): Promise<void> {
       } as Response;
     }
 
+    if (method === 'GET' && url.pathname === '/api/v1/transactions') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ content: [] })
+      } as Response;
+    }
+
     if (method === 'POST' && url.pathname === '/api/v1/transactions') {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       transactionBodies.push(body);
@@ -187,6 +195,13 @@ async function main(): Promise<void> {
           json: async () => ({ content: [] })
         } as Response;
       }
+      if (method === 'GET' && url.pathname === '/api/v1/transactions') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
       if (method === 'POST' && url.pathname === '/api/v1/transactions') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
         transactionBodies.push(body);
@@ -261,6 +276,13 @@ async function main(): Promise<void> {
         } as Response;
       }
       if (method === 'GET' && url.pathname === '/api/v1/contracts/clients/client-by-10') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/transactions') {
         return {
           ok: true,
           status: 200,
@@ -346,6 +368,13 @@ async function main(): Promise<void> {
         } as Response;
       }
       if (method === 'GET' && url.pathname === '/api/v1/contracts/clients/client-by-v1-plus') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ content: [] })
+        } as Response;
+      }
+      if (method === 'GET' && url.pathname === '/api/v1/transactions') {
         return {
           ok: true,
           status: 200,

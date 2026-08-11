@@ -208,6 +208,7 @@ interface VivaAdminSettingsRecord {
 }
 
 const DEFAULT_VIVA_LEVEL_NUMERIC_FIELD_ID = 'eabfe27b-3f72-4496-9185-1a2ec6e6465e';
+const TOURNAMENT_CHECKOUT_REUSE_MIN_REMAINING_MS = 15_000;
 
 @Injectable()
 export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
@@ -246,6 +247,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   );
   private readonly cache = new Map<string, VivaLookupCacheEntry>();
   private readonly inflight = new Map<string, Promise<VivaClientCabinetLookup>>();
+  private readonly tournamentEnergyCheckoutInflight = new Map<
+    string,
+    Promise<VivaAdminTournamentEnergyCheckoutResult>
+  >();
   private client?: MongoClient;
   private db?: Db;
   private settingsCache: VivaAdminSettingsRecord | null = null;
@@ -584,44 +589,41 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException(`Viva contract check failed: ${String(error)}`);
     }
 
-    const basePayload = {
-      clientPhone: this.formatPhoneForViva(clientPhone),
-      paymentMethod: input.paymentMethod,
-      products: [
-        {
-          id: product.id,
-          count: 1,
-          customAmount: null,
-          type: 'SUBSCRIPTION',
-          discount: Math.trunc(input.discountAmountMinor)
-        }
-      ],
+    const inflightKey = [
+      client.id,
       studioId,
+      product.id,
       discountReason,
-      offlineTillId: null,
-      deposit: 0
-    };
-    const payload = {
-      ...basePayload,
-      ...(input.successUrl ? { successUrl: input.successUrl } : {}),
-      ...(input.failUrl ? { failUrl: input.failUrl } : {})
-    };
+      Math.trunc(input.baseAmountMinor),
+      Math.trunc(input.discountAmountMinor)
+    ].join('|');
+    const existingInflight = this.tournamentEnergyCheckoutInflight.get(inflightKey);
+    if (existingInflight) {
+      return existingInflight;
+    }
 
-    const responsePayload = await this.createAdminTransactionWithReturnUrlFallback({
+    const checkoutPromise = this.createOrReuseTournamentEnergyCheckout({
       token,
       baseUrl: resolved.config.baseUrl,
-      payload,
-      fallbackPayload: basePayload,
-      hasReturnUrls: Boolean(input.successUrl || input.failUrl)
-    });
-
-    const parsed = this.parseAdminTransactionResponse(responsePayload);
-    return {
       clientId: client.id,
+      clientPhone,
+      studioId,
       productId: product.id,
-      ...parsed,
-      raw: responsePayload
-    };
+      paymentMethod: input.paymentMethod,
+      amountMinor: Math.trunc(input.baseAmountMinor) - Math.trunc(input.discountAmountMinor),
+      discountAmountMinor: Math.trunc(input.discountAmountMinor),
+      discountReason,
+      successUrl: input.successUrl,
+      failUrl: input.failUrl
+    });
+    this.tournamentEnergyCheckoutInflight.set(inflightKey, checkoutPromise);
+    try {
+      return await checkoutPromise;
+    } finally {
+      if (this.tournamentEnergyCheckoutInflight.get(inflightKey) === checkoutPromise) {
+        this.tournamentEnergyCheckoutInflight.delete(inflightKey);
+      }
+    }
   }
 
   async createBookingPaymentCheckout(
@@ -1453,6 +1455,202 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
         input.fallbackPayload
       );
     }
+  }
+
+  private async createOrReuseTournamentEnergyCheckout(input: {
+    token: string;
+    baseUrl: string;
+    clientId: string;
+    clientPhone: string;
+    studioId: string;
+    productId: string;
+    paymentMethod: 'SMS';
+    amountMinor: number;
+    discountAmountMinor: number;
+    discountReason: string;
+    successUrl?: string;
+    failUrl?: string;
+  }): Promise<VivaAdminTournamentEnergyCheckoutResult> {
+    const reusableTransaction = await this.findReusableTournamentEnergyTransaction(input);
+    if (reusableTransaction) {
+      const parsed = this.parseAdminTransactionResponse(reusableTransaction);
+      return {
+        clientId: input.clientId,
+        productId: input.productId,
+        ...parsed,
+        raw: reusableTransaction
+      };
+    }
+
+    const basePayload = {
+      clientPhone: this.formatPhoneForViva(input.clientPhone),
+      paymentMethod: input.paymentMethod,
+      products: [
+        {
+          id: input.productId,
+          count: 1,
+          customAmount: null,
+          type: 'SUBSCRIPTION',
+          discount: input.discountAmountMinor
+        }
+      ],
+      studioId: input.studioId,
+      discountReason: input.discountReason,
+      offlineTillId: null,
+      deposit: 0
+    };
+    const payload = {
+      ...basePayload,
+      ...(input.successUrl ? { successUrl: input.successUrl } : {}),
+      ...(input.failUrl ? { failUrl: input.failUrl } : {})
+    };
+    const responsePayload = await this.createAdminTransactionWithReturnUrlFallback({
+      token: input.token,
+      baseUrl: input.baseUrl,
+      payload,
+      fallbackPayload: basePayload,
+      hasReturnUrls: Boolean(input.successUrl || input.failUrl)
+    });
+    const parsed = this.parseAdminTransactionResponse(responsePayload);
+    return {
+      clientId: input.clientId,
+      productId: input.productId,
+      ...parsed,
+      raw: responsePayload
+    };
+  }
+
+  private async findReusableTournamentEnergyTransaction(input: {
+    token: string;
+    baseUrl: string;
+    clientId: string;
+    studioId: string;
+    productId: string;
+    paymentMethod: 'SMS';
+    amountMinor: number;
+    discountReason: string;
+  }): Promise<Record<string, unknown> | null> {
+    // Viva keeps expired UNPAID accounting records, so reuse is bounded by the
+    // provider deadline and non-terminal card status instead of row existence.
+    const query = new URLSearchParams();
+    query.set('studioId', input.studioId);
+    query.set('status', 'UNPAID');
+    query.set('paymentMethod', input.paymentMethod);
+    query.append('productIds', input.productId);
+    query.append('clientIds', input.clientId);
+    query.set('page', '0');
+    query.set('size', '20');
+    query.append('sort', 'createDate,DESC');
+
+    let payload: unknown;
+    try {
+      payload = await this.fetchAdminJson(
+        `/api/v1/transactions?${query.toString()}`,
+        input.token,
+        input.baseUrl
+      );
+    } catch {
+      this.logger.warn(
+        'Viva active tournament checkout lookup failed; blocking duplicate-sensitive creation'
+      );
+      throw new ServiceUnavailableException(
+        'Не удалось проверить активную оплату Viva. Повторите попытку.'
+      );
+    }
+
+    const response = this.unwrapRecord(payload);
+    if (!response || !Array.isArray(response.content)) {
+      this.logger.warn(
+        'Viva active tournament checkout lookup returned an invalid response shape'
+      );
+      throw new ServiceUnavailableException(
+        'Не удалось проверить активную оплату Viva. Повторите попытку.'
+      );
+    }
+    const content = response.content;
+    const now = Date.now();
+    for (const item of content) {
+      const transaction = this.unwrapRecord(item);
+      if (!transaction) {
+        this.logger.warn(
+          'Viva active tournament checkout lookup returned an invalid transaction item'
+        );
+        throw new ServiceUnavailableException(
+          'Не удалось проверить активную оплату Viva. Повторите попытку.'
+        );
+      }
+      const status = (this.pickString(transaction.status) ?? '').toUpperCase();
+      const paymentMethod = (this.pickString(transaction.paymentMethod) ?? '').toUpperCase();
+      const discountReason = this.pickString(transaction.discountReason);
+      const transactionClient = this.unwrapRecord(transaction.client);
+      const transactionClientId = this.pickString(transactionClient?.id);
+      const products = Array.isArray(transaction.products) ? transaction.products : null;
+      if (
+        !this.pickString(transaction.id)
+        || !status
+        || !paymentMethod
+        || !transactionClientId
+        || !products
+        || this.readMinorAmount(transaction.toPay) === undefined
+      ) {
+        this.logger.warn(
+          'Viva active tournament checkout lookup returned an invalid transaction item'
+        );
+        throw new ServiceUnavailableException(
+          'Не удалось проверить активную оплату Viva. Повторите попытку.'
+        );
+      }
+      if (
+        status !== 'UNPAID'
+        || paymentMethod !== input.paymentMethod
+        || discountReason !== input.discountReason
+      ) {
+        continue;
+      }
+
+      if (transactionClientId !== input.clientId) {
+        continue;
+      }
+
+      const hasProduct = products.some((candidate) => {
+        const product = this.unwrapRecord(candidate);
+        return this.pickString(product?.id) === input.productId;
+      });
+      if (!hasProduct) {
+        continue;
+      }
+
+      const parsed = this.parseAdminTransactionResponse(transaction);
+      const expiresAt = parsed.paymentExpiresAt
+        ? Date.parse(parsed.paymentExpiresAt)
+        : Number.NaN;
+      if (
+        parsed.paid === true
+        || parsed.toPayMinor !== input.amountMinor
+        || !parsed.paymentUrl
+        || !Number.isFinite(expiresAt)
+        || expiresAt <= now + TOURNAMENT_CHECKOUT_REUSE_MIN_REMAINING_MS
+      ) {
+        continue;
+      }
+
+      const cardPaymentInfo = this.unwrapRecord(transaction.cardPaymentInfo);
+      const cardPaymentStatus = (this.pickString(cardPaymentInfo?.status) ?? '').toUpperCase();
+      if (cardPaymentStatus === 'PENDING') {
+        return transaction;
+      }
+      if (['CANCELED', 'CANCELLED', 'EXPIRED', 'FAILED', 'REFUNDED'].includes(cardPaymentStatus)) {
+        continue;
+      }
+      this.logger.warn(
+        'Viva active tournament checkout lookup returned an unsupported card payment status'
+      );
+      throw new ServiceUnavailableException(
+        'Не удалось подтвердить статус активной оплаты Viva. Повторите попытку.'
+      );
+    }
+
+    return null;
   }
 
   private async requireAccessToken(): Promise<string> {
