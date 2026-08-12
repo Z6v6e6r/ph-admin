@@ -105,7 +105,7 @@ Idempotency-метаданные сохраняются внутри созда�
 1. С `subscriptions:read` формы создания заблокированы; GET работает.
 2. Без permission получить `403`; без auth — `401` при обязательной token-auth конфигурации.
 3. Проверить ошибки: дублированный code, пустые durations при включённом create, `min>max`, невалидная timezone, разрыв order фаз, daily quantity больше total.
-4. `providerProductRef` должен вернуть `422 PROVIDER_EVIDENCE_REQUIRED`.
+4. `providerProductRef` должен вернуть публичный `422 VALIDATION_ERROR` с `error.details.domainCode=PROVIDER_EVIDENCE_REQUIRED`.
 5. Первая фаза с `PREVIOUS_SOLD_OUT`, schedule без даты и manual mode с не-manual activation должны вернуть `422`.
 6. После каждого отказа выполнить read-back: число документов не изменилось.
 
