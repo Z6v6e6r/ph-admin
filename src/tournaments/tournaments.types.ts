@@ -352,6 +352,29 @@ export interface TournamentPublicDirectoryResponse {
   snapshotReadModelEnabled?: boolean;
 }
 
+export interface TournamentListSnapshotResponse {
+  generatedAt: string;
+  count: number;
+  items: Tournament[];
+  snapshotAgeMs?: number;
+  lastSuccessfulAt?: string;
+  stale?: boolean;
+  refreshInProgress?: boolean;
+  snapshotAvailable?: boolean;
+  snapshotRefreshEnabled?: boolean;
+  snapshotReadModelEnabled?: boolean;
+  refreshScheduled: boolean;
+  refreshCompleted: boolean;
+  refreshReason:
+    | 'disabled'
+    | 'fresh'
+    | 'refreshed'
+    | 'refresh_failed'
+    | 'cooldown'
+    | 'out_of_range';
+  retryAfterMs?: number;
+}
+
 export interface TournamentAccessCheckResponse {
   ok: boolean;
   code: TournamentAccessCheckCode;

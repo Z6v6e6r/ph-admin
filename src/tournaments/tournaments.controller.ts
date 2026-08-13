@@ -27,6 +27,7 @@ import {
   CustomTournament,
   Tournament,
   TournamentCustomEnergyCheckoutResponse,
+  TournamentListSnapshotResponse,
   TournamentResultsView
 } from './tournaments.types';
 import { TournamentResultsExportService } from './tournament-results-export.service';
@@ -54,9 +55,13 @@ export class TournamentsController {
     @Query('date') date?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('refresh') refresh?: string,
     @CurrentUser() user?: RequestUser
-  ): Promise<Tournament[]> {
-    return this.tournamentsService.findAll({ date, from, to, user });
+  ): Promise<Tournament[] | TournamentListSnapshotResponse> {
+    const options = { date, from, to, user };
+    return refresh === 'if-stale'
+      ? this.tournamentsService.findAllWithSnapshotRevalidation(options)
+      : this.tournamentsService.findAll(options);
   }
 
   @Get('export/results.xlsx')

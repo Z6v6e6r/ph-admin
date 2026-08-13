@@ -19,6 +19,7 @@ export interface VivaTournamentSnapshot {
   tournaments: Tournament[];
   tournamentsCount: number;
   refreshReason: string;
+  dateLastSuccessfulAt?: Record<string, string>;
 }
 
 export interface VivaTournamentSnapshotDiagnostics {
@@ -78,6 +79,18 @@ export interface VivaTournamentSnapshotDayRefreshResult {
   refreshedAt?: string;
   retryAfterMs?: number;
   persisted?: boolean;
+}
+
+export interface VivaTournamentSnapshotDayRevalidationResult {
+  enabled: boolean;
+  scheduled: boolean;
+  refreshed: boolean;
+  reason: 'disabled' | 'fresh' | 'refreshed' | 'refresh_failed' | 'cooldown' | 'out_of_range';
+  date: string;
+  snapshotAvailable: boolean;
+  snapshotAgeMs?: number;
+  lastSuccessfulAt?: string;
+  retryAfterMs?: number;
 }
 
 type VivaTournamentSnapshotDocument = Document & VivaTournamentSnapshot;
@@ -153,6 +166,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private lastError?: string;
   private lastManualRefreshAt?: number;
   private lastManualRefreshAttemptAt?: number;
+  private lastPublicDateRefreshAttemptAt?: number;
 
   constructor(private readonly vivaTournamentsService: VivaTournamentsService) {
     if (this.refreshEnabled) {
@@ -200,6 +214,83 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
 
   async refreshNow(reason = 'manual'): Promise<VivaTournamentSnapshot | null> {
     return this.refreshSnapshotNow(reason);
+  }
+
+  async revalidateDateIfStale(
+    date: string,
+    reason = 'public_list_revalidation'
+  ): Promise<VivaTournamentSnapshotDayRevalidationResult> {
+    const normalizedDate = this.normalizeDateKey(date);
+    if (!normalizedDate) {
+      throw new Error('Public Viva tournament revalidation requires date in YYYY-MM-DD format');
+    }
+
+    if (!this.refreshEnabled) {
+      return this.buildDayRevalidationResult('disabled', normalizedDate, false, false);
+    }
+
+    const today = this.toMoscowDateKey(new Date());
+    const windowFrom = this.addDays(today, -this.windowPastDays);
+    const windowTo = this.addDays(today, this.windowLookaheadDays);
+    if (normalizedDate < windowFrom || normalizedDate > windowTo) {
+      return this.buildDayRevalidationResult('out_of_range', normalizedDate, false, false);
+    }
+
+    const snapshot = await this.getCurrentSnapshot();
+    const snapshotAgeMs = this.resolveSnapshotAgeMs(snapshot, Date.now(), normalizedDate);
+    if (
+      snapshot
+      && this.coversOptions(snapshot, { date: normalizedDate })
+      && snapshotAgeMs !== undefined
+      && snapshotAgeMs < this.activeRefreshIntervalMs
+    ) {
+      return this.buildDayRevalidationResult('fresh', normalizedDate, false, false, snapshot);
+    }
+
+    if (this.manualRefreshPromise) {
+      const activeRefresh = this.manualRefreshPromise;
+      if (this.manualRefreshDate === normalizedDate) {
+        const activeResult = await activeRefresh;
+        return this.buildDayRevalidationFromRefresh(activeResult);
+      }
+      return this.buildDayRevalidationResult(
+        'cooldown',
+        normalizedDate,
+        false,
+        false,
+        snapshot,
+        this.activeRefreshIntervalMs
+      );
+    }
+    if (this.refreshPromise) {
+      return this.buildDayRevalidationResult(
+        'cooldown',
+        normalizedDate,
+        false,
+        false,
+        snapshot,
+        this.activeRefreshIntervalMs
+      );
+    }
+
+    const now = Date.now();
+    const retryAfterMs = this.lastPublicDateRefreshAttemptAt
+      ? Math.max(0, this.activeRefreshIntervalMs - (now - this.lastPublicDateRefreshAttemptAt))
+      : 0;
+    if (retryAfterMs > 0) {
+      return this.buildDayRevalidationResult(
+        'cooldown',
+        normalizedDate,
+        false,
+        false,
+        snapshot,
+        retryAfterMs
+      );
+    }
+
+    this.lastPublicDateRefreshAttemptAt = now;
+    const result = await this.startDateRefresh(normalizedDate, reason);
+    return this.buildDayRevalidationFromRefresh(result);
   }
 
   async refreshOnAdminOpen(
@@ -259,7 +350,14 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       return this.buildManualRefreshCooldownResult(normalizedDate, retryAfterMs);
     }
 
-    this.lastManualRefreshAttemptAt = now;
+    return this.startDateRefresh(normalizedDate, reason);
+  }
+
+  private startDateRefresh(
+    normalizedDate: string,
+    reason: string
+  ): Promise<VivaTournamentSnapshotDayRefreshResult> {
+    this.lastManualRefreshAttemptAt = Date.now();
     this.manualRefreshDate = normalizedDate;
     const operation = this.refreshSnapshotDate(normalizedDate, reason);
     const snapshotPromise = operation.then((result) => result.snapshot);
@@ -325,13 +423,17 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     return this.refreshPromise;
   }
 
-  getFreshnessMetadata(): VivaTournamentSnapshotFreshness {
+  getFreshnessMetadata(date?: string): VivaTournamentSnapshotFreshness {
     const now = Date.now();
-    const snapshotAgeMs = this.resolveSnapshotAgeMs(this.snapshot, now);
+    const snapshotAgeMs = this.resolveSnapshotAgeMs(this.snapshot, now, date);
+    const lastSuccessfulAt = this.resolveLastSuccessfulAt(this.snapshot, date);
+    const refreshIntervalMs = this.normalizeDateKey(date)
+      ? this.activeRefreshIntervalMs
+      : this.resolveRefreshIntervalMs(now);
     const stale =
       !this.snapshot
       || snapshotAgeMs === undefined
-      || snapshotAgeMs > this.resolveRefreshIntervalMs(now);
+      || snapshotAgeMs > refreshIntervalMs;
     return {
       refreshEnabled: this.refreshEnabled,
       readModelEnabled: this.readModelEnabled,
@@ -339,7 +441,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       stale,
       snapshotAvailable: Boolean(this.snapshot),
       ...(snapshotAgeMs !== undefined ? { snapshotAgeMs } : {}),
-      ...(this.snapshot?.lastSuccessfulAt ? { lastSuccessfulAt: this.snapshot.lastSuccessfulAt } : {})
+      ...(lastSuccessfulAt ? { lastSuccessfulAt } : {})
     };
   }
 
@@ -457,7 +559,8 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
         windowTo,
         tournaments,
         tournamentsCount: tournaments.length,
-        refreshReason: reason
+        refreshReason: reason,
+        dateLastSuccessfulAt: {}
       };
       this.snapshot = snapshot;
       this.lastError = undefined;
@@ -592,7 +695,11 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
         : date,
       tournaments,
       tournamentsCount: tournaments.length,
-      refreshReason: reason
+      refreshReason: reason,
+      dateLastSuccessfulAt: {
+        ...(snapshot?.dateLastSuccessfulAt ?? {}),
+        [date]: generatedAt
+      }
     };
   }
 
@@ -667,7 +774,8 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       windowTo,
       tournaments: document.tournaments,
       tournamentsCount: document.tournaments.length,
-      refreshReason: this.normalizeString(document.refreshReason) ?? 'persisted'
+      refreshReason: this.normalizeString(document.refreshReason) ?? 'persisted',
+      dateLastSuccessfulAt: this.normalizeDateFreshnessRecord(document.dateLastSuccessfulAt)
     };
   }
 
@@ -732,16 +840,81 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     };
   }
 
+  private buildDayRevalidationResult(
+    reason: VivaTournamentSnapshotDayRevalidationResult['reason'],
+    date: string,
+    scheduled: boolean,
+    refreshed: boolean,
+    snapshot = this.snapshot,
+    retryAfterMs?: number
+  ): VivaTournamentSnapshotDayRevalidationResult {
+    const snapshotAgeMs = this.resolveSnapshotAgeMs(snapshot, Date.now(), date);
+    const lastSuccessfulAt = this.resolveLastSuccessfulAt(snapshot, date);
+    return {
+      enabled: this.refreshEnabled,
+      scheduled,
+      refreshed,
+      reason,
+      date,
+      snapshotAvailable: Boolean(snapshot),
+      ...(snapshotAgeMs !== undefined ? { snapshotAgeMs } : {}),
+      ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}),
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {})
+    };
+  }
+
+  private buildDayRevalidationFromRefresh(
+    result: VivaTournamentSnapshotDayRefreshResult
+  ): VivaTournamentSnapshotDayRevalidationResult {
+    return this.buildDayRevalidationResult(
+      result.refreshed ? 'refreshed' : 'refresh_failed',
+      result.date,
+      false,
+      result.refreshed,
+      this.snapshot,
+      result.retryAfterMs
+    );
+  }
+
   private resolveSnapshotAgeMs(
     snapshot?: VivaTournamentSnapshot,
-    now = Date.now()
+    now = Date.now(),
+    date?: string
   ): number | undefined {
-    const lastSuccessfulAtMs = snapshot?.lastSuccessfulAt
-      ? Date.parse(snapshot.lastSuccessfulAt)
+    const lastSuccessfulAt = this.resolveLastSuccessfulAt(snapshot, date);
+    const lastSuccessfulAtMs = lastSuccessfulAt
+      ? Date.parse(lastSuccessfulAt)
       : undefined;
     return lastSuccessfulAtMs !== undefined && Number.isFinite(lastSuccessfulAtMs)
       ? Math.max(0, now - lastSuccessfulAtMs)
       : undefined;
+  }
+
+  private resolveLastSuccessfulAt(
+    snapshot?: VivaTournamentSnapshot,
+    date?: string
+  ): string | undefined {
+    const normalizedDate = this.normalizeDateKey(date);
+    return (
+      normalizedDate
+        ? this.normalizeString(snapshot?.dateLastSuccessfulAt?.[normalizedDate])
+        : undefined
+    ) ?? snapshot?.lastSuccessfulAt;
+  }
+
+  private normalizeDateFreshnessRecord(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    const result: Record<string, string> = {};
+    Object.entries(value).forEach(([rawDate, rawTimestamp]) => {
+      const date = this.normalizeDateKey(rawDate);
+      const timestamp = this.normalizeString(String(rawTimestamp ?? ''));
+      if (date && timestamp && Number.isFinite(Date.parse(timestamp))) {
+        result[date] = timestamp;
+      }
+    });
+    return result;
   }
 
   private resolveRefreshIntervalMs(now: number): number {

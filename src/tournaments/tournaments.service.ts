@@ -25,6 +25,7 @@ import {
 import {
   VivaTournamentSnapshotDiagnostics,
   VivaTournamentSnapshotDayRefreshResult,
+  VivaTournamentSnapshotDayRevalidationResult,
   VivaTournamentSnapshotRefreshResult,
   VivaTournamentSnapshotService
 } from '../integrations/viva/viva-tournament-snapshot.service';
@@ -57,6 +58,7 @@ import {
   TournamentGender,
   TournamentJoinFlowResponse,
   TournamentJoinPaymentState,
+  TournamentListSnapshotResponse,
   TournamentMechanics,
   TournamentMechanicsAccessResponse,
   TournamentParticipant,
@@ -183,6 +185,16 @@ interface ParsedVivaTournamentLink {
 const PUBLIC_TOURNAMENTS_LIMIT_DEFAULT = 48;
 const PUBLIC_TOURNAMENTS_LIMIT_MAX = 96;
 const PUBLIC_TOURNAMENTS_FORWARD_DAYS = 30;
+const PUBLIC_SIGNUP_CLOSED_STATUSES = new Set([
+  'CANCEL',
+  'CANCELED',
+  'CANCELLED',
+  'CLOSED',
+  'FINISHED',
+  'ARCHIVED',
+  'HIDDEN',
+  'DRAFT'
+]);
 const TOURNAMENT_BASE_LEVELS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'] as const;
 const TOURNAMENT_LEVEL_DIVISION_COUNT = 4;
 const TOURNAMENT_ENERGY_BASE_AMOUNT = 20000;
@@ -344,6 +356,64 @@ export class TournamentsService {
       .map((tournament) => this.toLkCompatibleTournament(tournament));
     this.recordPricingSnapshotMissingOnList(tournaments);
     return tournaments;
+  }
+
+  async findAllWithSnapshotRevalidation(
+    options: TournamentListOptions
+  ): Promise<TournamentListSnapshotResponse> {
+    const date = this.requireManualTournamentRefreshDate(options.date);
+    const revalidation: VivaTournamentSnapshotDayRevalidationResult =
+      this.vivaTournamentSnapshotService
+        ? await this.vivaTournamentSnapshotService.revalidateDateIfStale(
+            date,
+            'lk_tournament_public_list_revalidation'
+          )
+        : {
+            enabled: false,
+            scheduled: false,
+            refreshed: false,
+            reason: 'disabled',
+            date,
+            snapshotAvailable: false
+          };
+    const items = await this.findAll(options);
+    const publicItems = items.filter((tournament) =>
+      this.isTournamentPublishedForPublicSignupList(tournament)
+    );
+    const freshness = this.vivaTournamentSnapshotService?.getFreshnessMetadata(date);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      count: publicItems.length,
+      items: publicItems,
+      refreshScheduled: revalidation.scheduled,
+      refreshCompleted: revalidation.refreshed,
+      refreshReason: revalidation.reason,
+      ...(freshness
+        ? {
+            stale: freshness.stale,
+            refreshInProgress: freshness.refreshInProgress,
+            snapshotAvailable: freshness.snapshotAvailable,
+            snapshotRefreshEnabled: freshness.refreshEnabled,
+            snapshotReadModelEnabled: freshness.readModelEnabled,
+            ...(freshness.snapshotAgeMs !== undefined
+              ? { snapshotAgeMs: freshness.snapshotAgeMs }
+              : {}),
+            ...(freshness.lastSuccessfulAt
+              ? { lastSuccessfulAt: freshness.lastSuccessfulAt }
+              : {})
+          }
+        : {
+            stale: true,
+            refreshInProgress: false,
+            snapshotAvailable: false,
+            snapshotRefreshEnabled: false,
+            snapshotReadModelEnabled: false
+          }),
+      ...(revalidation.retryAfterMs !== undefined
+        ? { retryAfterMs: revalidation.retryAfterMs }
+        : {})
+    };
   }
 
   async syncCanceledCustomTournamentsFromViva(options?: {
@@ -3076,6 +3146,24 @@ export class TournamentsService {
       this.normalizeFilterValue(tournament.courtName)
     ].filter((value): value is string => Boolean(value));
     return candidates.length > 0 && stationIds.some((stationId) => candidates.includes(stationId));
+  }
+
+  private isTournamentPublishedForPublicSignupList(tournament: Tournament): boolean {
+    const status = String(tournament.rawStatus ?? tournament.status).trim().toUpperCase();
+    const sourceSnapshot = tournament.details?.sourceTournamentSnapshot;
+    const sourceStatus = sourceSnapshot && typeof sourceSnapshot === 'object'
+      ? String(
+          (sourceSnapshot as Record<string, unknown>).rawStatus
+          ?? (sourceSnapshot as Record<string, unknown>).status
+          ?? ''
+        ).trim().toUpperCase()
+      : '';
+    return Boolean(
+      tournament.publicUrl
+      && tournament.isPublic !== false
+      && !PUBLIC_SIGNUP_CLOSED_STATUSES.has(status)
+      && !PUBLIC_SIGNUP_CLOSED_STATUSES.has(sourceStatus)
+    );
   }
 
   private matchesPublicTournamentFilters(
