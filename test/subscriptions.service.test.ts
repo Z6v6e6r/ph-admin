@@ -49,6 +49,7 @@ class InMemorySubscriptionsRepository {
   }
   async insertPolicyVersion(row: StoredSubscriptionPolicyVersion) {
     if (await this.policyByIdempotency(row.idempotency.actorId, row.idempotency.key) || this.policies.some((item) => item.subscriptionTypeId === row.subscriptionTypeId && item.version === row.version)) throw new Error('DUPLICATE_KEY');
+    (row as StoredSubscriptionPolicyVersion & { _id?: string })._id = 'mongo-generated-id';
     this.policies.push(structuredClone(row));
   }
   async releaseProgramByIdempotency(actorId: string, key: string) {
@@ -275,6 +276,7 @@ async function main(): Promise<void> {
   assert.equal(policyOne.item.maxActiveServices, 3);
   assert.equal(policyOne.item.dailyUsageLimit, 1);
   assert.equal(policyOne.item.modelVersion, 2);
+  assert.equal('_id' in policyOne.item, false);
   assert.equal(policyOne.item.capabilities.lifecycle.activationMode, 'PURCHASE');
   assert.equal(policyOne.item.capabilities.lifecycle.freeze.enabled, false);
   assert.equal(policyOne.item.capabilities.commerce.reservationTtlMinutes, 15);

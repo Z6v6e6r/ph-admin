@@ -743,13 +743,14 @@ export class SubscriptionsService implements OnModuleDestroy {
 
   private publicPolicy(row: StoredSubscriptionPolicyVersion): SubscriptionPolicyVersion {
     const {
+      _id: _documentId,
       schemaVersion: _schemaVersion,
       idempotency: _idempotency,
       capabilities,
       providerBinding,
       modelVersion: _modelVersion,
       ...policy
-    } = row;
+    } = row as StoredSubscriptionPolicyVersion & { _id?: unknown };
     return {
       ...policy,
       modelVersion: 2,
