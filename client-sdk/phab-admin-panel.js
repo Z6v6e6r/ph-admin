@@ -4079,6 +4079,14 @@
       .phab-admin-game-participants-table th{font-size:9px;color:rgba(51,0,32,.52);text-transform:uppercase}
       .phab-admin-game-participant-person{display:flex;align-items:center;gap:8px;min-width:150px}
       .phab-admin-game-participant-person .phab-admin-games-avatar{margin-left:0;flex:0 0 28px}
+      .phab-admin-game-player-removal-status{display:block;margin-top:6px;color:rgba(51,0,32,.62);font-size:10px;white-space:nowrap}
+      .phab-admin-game-player-removal-spinner{display:inline-block;width:10px;height:10px;margin-right:5px;border:2px solid rgba(51,0,32,.2);border-top-color:#37b458;border-radius:50%;vertical-align:-1px;animation:phab-admin-player-removal-spin .8s linear infinite}
+      .phab-admin-game-player-removal-modal{z-index:2147483005}
+      .phab-admin-game-player-removal-form{display:grid;gap:12px}
+      .phab-admin-game-player-removal-options{display:grid;gap:8px}
+      .phab-admin-game-player-removal-option{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px solid rgba(51,0,32,.12);border-radius:9px;cursor:pointer;font-size:12px}
+      .phab-admin-game-player-removal-note{margin:0;color:rgba(51,0,32,.62);font-size:11px;line-height:1.45}
+      @keyframes phab-admin-player-removal-spin{to{transform:rotate(360deg)}}
       .phab-admin-game-free-slot{color:rgba(51,0,32,.45);font-style:italic}
       .phab-admin-game-split-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
       .phab-admin-game-kv-list{display:grid;gap:8px}
@@ -7895,6 +7903,19 @@
       },
       getGameById: function (gameId) {
         return request('/games/' + encodeURIComponent(gameId), 'GET');
+      },
+      requestGamePlayerRemoval: function (gameId, playerId, payload) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/players/' + encodeURIComponent(playerId) + '/removal-requests',
+          'POST',
+          payload || {}
+        );
+      },
+      getGamePlayerRemovalRequest: function (gameId, playerId, operationId) {
+        return request(
+          '/games/' + encodeURIComponent(gameId) + '/players/' + encodeURIComponent(playerId) + '/removal-requests/' + encodeURIComponent(operationId),
+          'GET'
+        );
       },
       removeGamePlayerFromPublication: function (gameId, payload) {
         return request(
@@ -13161,6 +13182,14 @@
     return hasPermission(cfg, 'games:read');
   }
 
+  function canRequestGamePlayerRemoval(cfg) {
+    return hasPermission(cfg, 'games:write') && hasAnyRole(cfg, [
+      'SUPER_ADMIN',
+      'GAME_MANAGER',
+      'MANAGER'
+    ]);
+  }
+
   function canAccessTournaments(cfg) {
     return hasPermission(cfg, 'tournaments:read');
   }
@@ -13892,6 +13921,8 @@
       quickReplySuggestions: [],
       selectedGameId: null,
       selectedGame: null,
+      playerRemovalOperationsByKey: Object.create(null),
+      playerRemovalPollTimersByKey: Object.create(null),
       selectedGameEventId: null,
       selectedGameEvent: null,
       deletingGameEvent: false,
@@ -17520,6 +17551,162 @@
       return normalizeArray(game.participantDetails).map(function (participant) { return normalizeObject(participant); });
     }
 
+    function gamePlayerRemovalKey(gameId, playerId) {
+      return String(gameId || '') + ':' + String(playerId || '');
+    }
+
+    function getGamePlayerRemovalOperation(gameId, playerId) {
+      return state.playerRemovalOperationsByKey[gamePlayerRemovalKey(gameId, playerId)] || null;
+    }
+
+    function setGamePlayerRemovalOperation(operation) {
+      if (!operation || !operation.gameId || !operation.playerId || !operation.operationId) return;
+      state.playerRemovalOperationsByKey[gamePlayerRemovalKey(operation.gameId, operation.playerId)] = operation;
+    }
+
+    function clearGamePlayerRemovalOperation(gameId, playerId) {
+      var key = gamePlayerRemovalKey(gameId, playerId);
+      delete state.playerRemovalOperationsByKey[key];
+      if (state.playerRemovalPollTimersByKey[key]) {
+        window.clearTimeout(state.playerRemovalPollTimersByKey[key]);
+        delete state.playerRemovalPollTimersByKey[key];
+      }
+    }
+
+    function createGamePlayerRemovalIdempotencyKey() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+      return 'cup-player-leave-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 14);
+    }
+
+    async function reloadGameAfterPlayerRemoval(gameId, playerId, successText) {
+      var refreshed = await api.getGameById(gameId);
+      clearGamePlayerRemovalOperation(gameId, playerId);
+      applyUpdatedGameDetails(refreshed, successText || 'Игрок удалён из игры');
+    }
+
+    function renderGamePlayerRemovalError(gameId, playerId, operation) {
+      clearGamePlayerRemovalOperation(gameId, playerId);
+      if (state.selectedGame && String(state.selectedGame.id) === String(gameId)) {
+        renderGameDetails(state.selectedGame);
+      }
+      setStatus(operation && operation.message ? operation.message : 'Удаление игрока требует внимания', true);
+    }
+
+    function scheduleGamePlayerRemovalPoll(operation) {
+      var key = gamePlayerRemovalKey(operation.gameId, operation.playerId);
+      if (state.playerRemovalPollTimersByKey[key]) {
+        window.clearTimeout(state.playerRemovalPollTimersByKey[key]);
+      }
+      var delay = Number(operation.retryAfterMs);
+      if (!Number.isFinite(delay) || delay < 250) delay = 1500;
+      state.playerRemovalPollTimersByKey[key] = window.setTimeout(function () {
+        pollGamePlayerRemoval(operation);
+      }, Math.min(delay, 10000));
+    }
+
+    async function pollGamePlayerRemoval(operation) {
+      var current = getGamePlayerRemovalOperation(operation.gameId, operation.playerId);
+      if (!current || current.operationId !== operation.operationId) return;
+      var next;
+      try {
+        next = await api.getGamePlayerRemovalRequest(operation.gameId, operation.playerId, operation.operationId);
+      } catch (error) {
+        var failures = Number(current.pollFailures || 0) + 1;
+        if (failures >= 5) {
+          renderGamePlayerRemovalError(operation.gameId, operation.playerId, {
+            message: 'Не удалось получить подтверждение отмены. Попробуйте повторить запрос позже.'
+          });
+          return;
+        }
+        current.pollFailures = failures;
+        current.pollMessage = 'Проверяем подтверждение отмены…';
+        current.retryAfterMs = Math.min(10000, 1500 * Math.pow(2, failures - 1));
+        setGamePlayerRemovalOperation(current);
+        if (state.selectedGame && String(state.selectedGame.id) === String(operation.gameId)) {
+          renderGameDetails(state.selectedGame);
+        }
+        scheduleGamePlayerRemovalPoll(current);
+        return;
+      }
+      next.pollFailures = 0;
+      next.pollMessage = '';
+      setGamePlayerRemovalOperation(next);
+      if (next.status === 'DONE') {
+        await reloadGameAfterPlayerRemoval(next.gameId, next.playerId, 'Игрок удалён из игры');
+        return;
+      }
+      if (next.status === 'FAILED') {
+        renderGamePlayerRemovalError(next.gameId, next.playerId, next);
+        return;
+      }
+      if (state.selectedGame && String(state.selectedGame.id) === String(next.gameId)) {
+        renderGameDetails(state.selectedGame);
+      }
+      scheduleGamePlayerRemovalPoll(next);
+    }
+
+    function openGamePlayerRemovalDialog(game, participant, trigger) {
+      if (!game || !game.id || !participant || !participant.id) return;
+      var modal = document.createElement('div');
+      modal.className = 'phab-admin-modal phab-admin-game-player-removal-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      var titleId = 'phab-admin-player-removal-' + createGamePlayerRemovalIdempotencyKey();
+      modal.setAttribute('aria-labelledby', titleId);
+      var card = document.createElement('div'); card.className = 'phab-admin-modal-card'; modal.appendChild(card);
+      var head = document.createElement('div'); head.className = 'phab-admin-modal-head'; card.appendChild(head);
+      var title = document.createElement('div'); title.className = 'phab-admin-modal-title'; title.id = titleId; title.textContent = 'Удалить игрока из игры'; head.appendChild(title);
+      var close = document.createElement('button'); close.type = 'button'; close.className = 'phab-admin-modal-close'; close.textContent = '×'; close.setAttribute('aria-label', 'Закрыть'); head.appendChild(close);
+      var form = document.createElement('form'); form.className = 'phab-admin-modal-body phab-admin-game-player-removal-form'; form.noValidate = true; card.appendChild(form);
+      var label = document.createElement('p'); label.className = 'phab-admin-game-player-removal-note'; label.textContent = 'Игрок: ' + String(participant.name || participant.id) + '. Состав изменится только после подтверждения отмены.'; form.appendChild(label);
+      var options = document.createElement('div'); options.className = 'phab-admin-game-player-removal-options'; form.appendChild(options);
+      [['RETURN_VISIT', 'Вернуть посещение'], ['NO_RETURN', 'Не возвращать посещение']].forEach(function (entry, index) {
+        var option = document.createElement('label'); option.className = 'phab-admin-game-player-removal-option';
+        var input = document.createElement('input'); input.type = 'radio'; input.name = titleId + '-visit'; input.value = entry[0]; input.checked = index === 0; option.appendChild(input);
+        var text = document.createElement('span'); text.textContent = entry[1]; option.appendChild(text); options.appendChild(option);
+      });
+      var error = document.createElement('div'); error.className = 'phab-admin-player-rating-form-error phab-admin-hidden'; error.setAttribute('role', 'alert'); form.appendChild(error);
+      var actions = document.createElement('div'); actions.className = 'phab-admin-player-rating-form-actions'; form.appendChild(actions);
+      var cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'phab-admin-btn-secondary'; cancel.textContent = 'Отмена'; actions.appendChild(cancel);
+      var submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'phab-admin-btn-danger'; submit.textContent = 'Удалить из игры'; actions.appendChild(submit);
+      var closeDialog = function () { modal.remove(); if (trigger && trigger.focus) trigger.focus(); };
+      close.addEventListener('click', closeDialog); cancel.addEventListener('click', closeDialog);
+      modal.addEventListener('click', function (event) { if (event.target === modal) closeDialog(); });
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var selected = form.querySelector('input[name="' + titleId + '-visit"]:checked');
+        var visitAction = selected ? selected.value : '';
+        if (visitAction !== 'RETURN_VISIT' && visitAction !== 'NO_RETURN') return;
+        submit.disabled = true; cancel.disabled = true; close.disabled = true; submit.textContent = 'Запускаем…';
+        api.requestGamePlayerRemoval(game.id, participant.id, {
+          refundPolicy: visitAction,
+          idempotencyKey: createGamePlayerRemovalIdempotencyKey()
+        }).then(async function (operation) {
+          setGamePlayerRemovalOperation(operation);
+          closeDialog();
+          if (operation.status === 'DONE') {
+            await reloadGameAfterPlayerRemoval(operation.gameId, operation.playerId, 'Игрок удалён из игры');
+            return;
+          }
+          if (operation.status === 'FAILED') {
+            renderGamePlayerRemovalError(operation.gameId, operation.playerId, operation);
+            return;
+          }
+          if (state.selectedGame && String(state.selectedGame.id) === String(operation.gameId)) renderGameDetails(state.selectedGame);
+          scheduleGamePlayerRemovalPoll(operation);
+          setStatus('Запустили процесс исключения игрока из игры', false);
+        }).catch(function (requestError) {
+          error.textContent = requestError && requestError.message ? requestError.message : 'Не удалось запустить удаление игрока';
+          error.classList.remove('phab-admin-hidden');
+          submit.disabled = false; cancel.disabled = false; close.disabled = false; submit.textContent = 'Удалить из игры';
+        });
+      });
+      document.body.appendChild(modal);
+      var first = form.querySelector('input'); if (first && first.focus) first.focus();
+    }
+
     function createGameParticipantsTable(game, details, options) {
       var wrap = document.createElement('div');
       wrap.className = 'phab-admin-game-participants-wrap';
@@ -17539,6 +17726,7 @@
       table.appendChild(body);
       var participants = getGameDetailParticipants(game, details);
       var organizer = normalizeObject(details.organizer);
+      var organizerPlayerId = organizer.clientId || organizer.playerId || organizer.userId || organizer.id || game.organizerId;
       participants.forEach(function (participant, index) {
         var row = document.createElement('tr');
         var personCell = document.createElement('td');
@@ -17573,6 +17761,26 @@
         phone.textContent = participant.phone || participant.phoneNorm ? formatGamePhone(participant.phone || participant.phoneNorm) : 'Не указано';
         row.appendChild(phone);
         var actions = document.createElement('td');
+        var removal = participant.id ? getGamePlayerRemovalOperation(game.id, participant.id) : null;
+        var participantRole = String(participant.source || participant.role || '').toUpperCase();
+        if (canRequestGamePlayerRemoval(cfg) && participant.id && String(participant.id) !== String(organizerPlayerId || '') && participantRole !== 'ORGANIZER') {
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'phab-admin-btn-danger';
+          remove.textContent = removal && removal.status === 'PENDING' ? 'Покидает игру…' : 'Удалить из игры';
+          remove.disabled = Boolean(removal && removal.status === 'PENDING');
+          remove.addEventListener('click', function () {
+            openGamePlayerRemovalDialog(game, participant, remove);
+          });
+          actions.appendChild(remove);
+          if (removal && removal.status === 'PENDING') {
+            var removalStatus = document.createElement('span');
+            removalStatus.className = 'phab-admin-game-player-removal-status';
+            var spinner = document.createElement('span'); spinner.className = 'phab-admin-game-player-removal-spinner'; spinner.setAttribute('aria-hidden', 'true'); removalStatus.appendChild(spinner);
+            removalStatus.appendChild(document.createTextNode(removal.pollMessage || removal.message || 'Отмена ещё подтверждается…'));
+            actions.appendChild(removalStatus);
+          }
+        }
         if (!isRestrictedStationAdmin && participant.id) {
           var profile = document.createElement('a');
           profile.className = 'phab-admin-detail-link';
@@ -17580,6 +17788,7 @@
           profile.target = '_blank';
           profile.rel = 'noopener noreferrer';
           profile.textContent = 'Открыть профиль ↗';
+          if (actions.childNodes.length > 0) actions.appendChild(document.createElement('br'));
           actions.appendChild(profile);
         } else actions.textContent = 'Нет действий';
         if (options && options.publicationActions && !isRestrictedStationAdmin) {
@@ -36919,6 +37128,10 @@
       if (gamesSearchTimer) {
         window.clearTimeout(gamesSearchTimer);
       }
+      Object.keys(state.playerRemovalPollTimersByKey).forEach(function (key) {
+        window.clearTimeout(state.playerRemovalPollTimersByKey[key]);
+      });
+      state.playerRemovalPollTimersByKey = Object.create(null);
       if (playerRatingsSearchAbort) {
         playerRatingsSearchAbort.abort();
       }

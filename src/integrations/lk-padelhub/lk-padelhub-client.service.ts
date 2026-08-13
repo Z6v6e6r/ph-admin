@@ -1,6 +1,20 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  ServiceUnavailableException
+} from '@nestjs/common';
 import { Community, CommunityStatus } from '../../communities/communities.types';
-import { Game, GameStatus } from '../../games/games.types';
+import {
+  Game,
+  GamePlayerRemovalRequest,
+  GamePlayerRemovalRefundPolicy,
+  GamePlayerRemovalStatus,
+  GameStatus
+} from '../../games/games.types';
 import { Tournament, TournamentStatus } from '../../tournaments/tournaments.types';
 import { LkRawRecord } from './lk-padelhub.types';
 
@@ -16,7 +30,44 @@ export class LkPadelHubClientService {
   private readonly communityByIdUrlTemplate =
     process.env.LK_PADELHUB_COMMUNITY_BY_ID_URL_TEMPLATE;
   private readonly token = process.env.LK_PADELHUB_API_TOKEN;
+  private readonly staffApiBaseUrl = process.env.LK_PADELHUB_STAFF_API_BASE_URL?.trim().replace(/\/+$/, '');
+  private readonly staffIntegrationToken = process.env.LK_PADELHUB_STAFF_INTEGRATION_TOKEN;
+  private readonly staffRequestTimeoutMs = this.resolveStaffRequestTimeoutMs();
   private readonly mode: ClientMode = this.resolveMode();
+
+  async createGamePlayerRemovalRequest(
+    gameId: string,
+    request: {
+      target: { bookingId: string; clientId: string };
+      expectedMembershipVersion: string;
+      visitAction: GamePlayerRemovalRefundPolicy;
+      idempotencyKey: string;
+      staffActor: { id: string };
+      reason: 'CUP_STAFF_REMOVAL';
+    }
+  ): Promise<GamePlayerRemovalRequest> {
+    const { idempotencyKey, ...payload } = request;
+    return this.requestGamePlayerRemoval(
+      `/lk/internal/staff/games/${encodeURIComponent(gameId)}/player-leaves`,
+      'POST',
+      payload,
+      { gameId, playerId: request.target.clientId, refundPolicy: request.visitAction },
+      idempotencyKey
+    );
+  }
+
+  async getGamePlayerRemovalRequest(
+    gameId: string,
+    playerId: string,
+    operationId: string
+  ): Promise<GamePlayerRemovalRequest> {
+    return this.requestGamePlayerRemoval(
+      `/lk/internal/staff/games/${encodeURIComponent(gameId)}/player-leaves/${encodeURIComponent(operationId)}`,
+      'GET',
+      undefined,
+      { gameId, playerId }
+    );
+  }
 
   async listGames(): Promise<Game[]> {
     const payload =
@@ -99,6 +150,139 @@ export class LkPadelHubClientService {
       return 'http';
     }
     return 'mock';
+  }
+
+  private resolveStaffRequestTimeoutMs(): number {
+    const configured = Number(process.env.LK_PADELHUB_STAFF_REQUEST_TIMEOUT_MS);
+    if (!Number.isFinite(configured)) {
+      return 8000;
+    }
+    return Math.min(30000, Math.max(1000, Math.floor(configured)));
+  }
+
+  private getStaffRemovalConfig(): { baseUrl: string; token: string } {
+    const baseUrl = this.staffApiBaseUrl;
+    const token = this.staffIntegrationToken?.trim();
+    if (!baseUrl || !token) {
+      throw new InternalServerErrorException(
+        'LK staff player removal integration is not configured'
+      );
+    }
+    return { baseUrl, token };
+  }
+
+  private async requestGamePlayerRemoval(
+    path: string,
+    method: 'GET' | 'POST',
+    body: unknown,
+    expected: {
+      gameId: string;
+      playerId: string;
+      refundPolicy?: GamePlayerRemovalRefundPolicy;
+    },
+    idempotencyKey?: string
+  ): Promise<GamePlayerRemovalRequest> {
+    const config = this.getStaffRemovalConfig();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.staffRequestTimeoutMs);
+    let response: Response;
+
+    try {
+      response = await fetch(config.baseUrl + path, {
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+          Authorization: `Bearer ${config.token}`,
+          ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new ServiceUnavailableException('LK player removal service timed out');
+      }
+      this.logger.error(`LK player removal request failed: ${String(error)}`);
+      throw new BadGatewayException('LK player removal service is unavailable');
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      await response.text().catch(() => '');
+      if (response.status === 400 || response.status === 422) {
+        throw new BadRequestException('LK rejected the player removal request');
+      }
+      if (response.status === 404 || response.status === 409) {
+        throw new ConflictException('The player removal request is no longer current');
+      }
+      if (response.status === 429 || response.status >= 500) {
+        throw new ServiceUnavailableException('LK player removal service is temporarily unavailable');
+      }
+      throw new BadGatewayException('LK player removal request failed');
+    }
+
+    const payload = await response.json().catch(() => {
+      throw new BadGatewayException('LK player removal service returned invalid JSON');
+    });
+    return this.parseGamePlayerRemovalRequest(payload, expected);
+  }
+
+  private parseGamePlayerRemovalRequest(
+    payload: unknown,
+    expected: {
+      gameId: string;
+      playerId: string;
+      refundPolicy?: GamePlayerRemovalRefundPolicy;
+    }
+  ): GamePlayerRemovalRequest {
+    if (!this.isRecord(payload)) {
+      throw new BadGatewayException('LK player removal service returned an invalid response');
+    }
+
+    const operationId = this.readString(payload.operationId);
+    const gameId = this.readString(payload.gameId);
+    const playerId = this.readString(payload.playerId);
+    const visitAction = this.readString(payload.visitAction) as GamePlayerRemovalRefundPolicy | undefined;
+    const refundPolicy = visitAction ?? expected.refundPolicy;
+    const ownerState = this.readString(payload.state) ?? this.readString(payload.status);
+    const status = this.mapOwnerRemovalState(ownerState);
+    if (
+      !operationId ||
+      !gameId ||
+      !playerId ||
+      (refundPolicy !== 'RETURN_VISIT' && refundPolicy !== 'NO_RETURN') ||
+      !status ||
+      gameId !== expected.gameId ||
+      playerId !== expected.playerId
+    ) {
+      throw new BadGatewayException('LK player removal service returned an invalid operation');
+    }
+
+    const retryAfterMs = this.readNumber(payload.retryAfterMs);
+    return {
+      operationId,
+      gameId,
+      playerId,
+      refundPolicy,
+      status,
+      ...(this.readString(payload.message) ? { message: this.readString(payload.message)! } : {}),
+      ...(retryAfterMs !== undefined && retryAfterMs >= 0 ? { retryAfterMs } : {})
+    };
+  }
+
+  private mapOwnerRemovalState(state: string | undefined): GamePlayerRemovalStatus | null {
+    if (state === 'IN_PROGRESS' || state === 'FINALIZING' || state === 'RETRY_REQUIRED') {
+      return 'PENDING';
+    }
+    if (state === 'DONE') {
+      return 'DONE';
+    }
+    if (state === 'ATTENTION_REQUIRED') {
+      return 'FAILED';
+    }
+    return null;
   }
 
   private async fetchGamesPayload(): Promise<unknown> {

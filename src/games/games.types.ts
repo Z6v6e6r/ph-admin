@@ -7,12 +7,30 @@ export enum GameStatus {
 }
 
 export interface GameParticipantDetails {
+  id?: string;
   name: string;
   phone?: string;
   rating?: string | number;
   status?: string;
   role?: string;
   photo?: string;
+}
+
+export type GamePlayerRemovalRefundPolicy = 'RETURN_VISIT' | 'NO_RETURN';
+export type GamePlayerRemovalStatus = 'PENDING' | 'DONE' | 'FAILED';
+
+/**
+ * The durable leave operation is owned by LK. CUP deliberately does not
+ * maintain a local operation or roster projection for it.
+ */
+export interface GamePlayerRemovalRequest {
+  operationId: string;
+  gameId: string;
+  playerId: string;
+  refundPolicy: GamePlayerRemovalRefundPolicy;
+  status: GamePlayerRemovalStatus;
+  message?: string;
+  retryAfterMs?: number;
 }
 
 export interface Game {

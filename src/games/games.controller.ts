@@ -16,6 +16,7 @@ import { Roles } from '../common/rbac/roles.decorator';
 import { Permissions } from '../common/rbac/permissions.decorator';
 import { CreateGameChatMessageDto } from './dto/create-game-chat-message.dto';
 import { RemoveGamePublicationPlayerDto } from './dto/remove-game-publication-player.dto';
+import { RequestGamePlayerRemovalDto } from './dto/request-game-player-removal.dto';
 import { UpdateGameMetadataDto } from './dto/update-game-metadata.dto';
 import { GamesService } from './games.service';
 import {
@@ -28,7 +29,8 @@ import {
   GameEventListFilters,
   GameEventListResult,
   GameListFilters,
-  GameListResult
+  GameListResult,
+  GamePlayerRemovalRequest
 } from './games.types';
 
 @Controller('games')
@@ -185,6 +187,36 @@ export class GamesController {
     @CurrentUser() user?: RequestUser
   ): Promise<Game> {
     return this.gamesService.removePlayerFromPublication(id, dto, user);
+  }
+
+  @Post(':id/players/:playerId/removal-requests')
+  @Permissions('games:write')
+  @Roles(Role.SUPER_ADMIN, Role.GAME_MANAGER, Role.MANAGER)
+  requestPlayerRemoval(
+    @Param('id') id: string,
+    @Param('playerId') playerId: string,
+    @Body() dto: RequestGamePlayerRemovalDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<GamePlayerRemovalRequest> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.gamesService.requestPlayerRemoval(id, playerId, dto, user);
+  }
+
+  @Get(':id/players/:playerId/removal-requests/:operationId')
+  @Permissions('games:write')
+  @Roles(Role.SUPER_ADMIN, Role.GAME_MANAGER, Role.MANAGER)
+  getPlayerRemovalRequest(
+    @Param('id') id: string,
+    @Param('playerId') playerId: string,
+    @Param('operationId') operationId: string,
+    @CurrentUser() user?: RequestUser
+  ): Promise<GamePlayerRemovalRequest> {
+    if (!user) {
+      throw new UnauthorizedException('User context is missing');
+    }
+    return this.gamesService.getPlayerRemovalRequest(id, playerId, operationId, user);
   }
 
   @Post(':id/publication/hide-game')

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -35,6 +36,8 @@ import {
   GameListSortDirection,
   GameListSortField,
   GameParticipantDetails,
+  GamePlayerRemovalRequest,
+  GamePlayerRemovalRefundPolicy,
   GameStatus
 } from './games.types';
 
@@ -76,6 +79,7 @@ interface MongoGameDoc {
     rating?: unknown;
   };
   participants?: MongoGameParticipant[];
+  waitlist?: MongoGameParticipant[];
   participantPhones?: unknown;
   relatedPhones?: unknown;
   allRelatedPhones?: unknown;
@@ -455,6 +459,219 @@ export class GamesService implements OnModuleDestroy {
       throw new InternalServerErrorException('Failed to reload updated game');
     }
     return updated;
+  }
+
+  /**
+   * CUP is a facade here: LK owns cancellation, retries, the roster mutation,
+   * and any subscription-visit return. Do not add a Mongo write to this path.
+   */
+  async requestPlayerRemoval(
+    id: string,
+    playerId: string,
+    request: {
+      refundPolicy: GamePlayerRemovalRefundPolicy;
+      idempotencyKey: string;
+    },
+    user: RequestUser
+  ): Promise<GamePlayerRemovalRequest> {
+    const gameId = this.readString(id);
+    const normalizedPlayerId = this.readString(playerId);
+    if (!gameId || !normalizedPlayerId) {
+      throw new BadRequestException('Game and player identifiers are required');
+    }
+
+    const collection = await this.getMongoCollection();
+    const existing = (await collection.findOne(this.buildMongoGameIdFilter(gameId))) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${gameId} not found`);
+    }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
+
+    const organizerId = this.readParticipantClientId(this.toRecord(existing.organizer));
+    const participant = Array.isArray(existing.participants)
+      ? existing.participants.find(
+          (item) =>
+            this.normalizeRemovalIdentity(this.readParticipantClientId(item)) ===
+            this.normalizeRemovalIdentity(normalizedPlayerId)
+        )
+      : undefined;
+    if (!participant) {
+      throw new NotFoundException('Player is not a current game participant');
+    }
+
+    const participantRole =
+      this.readString(participant.role) ?? this.readString(participant.source) ?? '';
+    if (
+      this.normalizeRemovalIdentity(organizerId) === this.normalizeRemovalIdentity(normalizedPlayerId) ||
+      participantRole.trim().toUpperCase() === 'ORGANIZER'
+    ) {
+      throw new BadRequestException('The game organizer cannot be removed through this action');
+    }
+
+    const target = this.resolvePlayerRemovalTarget(existing, participant, normalizedPlayerId);
+
+    return this.lkPadelHubClient.createGamePlayerRemovalRequest(gameId, {
+      target: {
+        bookingId: target.bookingId,
+        clientId: target.clientId
+      },
+      expectedMembershipVersion: target.membershipVersion,
+      visitAction: request.refundPolicy,
+      idempotencyKey: request.idempotencyKey.trim(),
+      staffActor: { id: user.id },
+      reason: 'CUP_STAFF_REMOVAL'
+    });
+  }
+
+  async getPlayerRemovalRequest(
+    id: string,
+    playerId: string,
+    operationId: string,
+    user: RequestUser
+  ): Promise<GamePlayerRemovalRequest> {
+    const gameId = this.readString(id);
+    const normalizedPlayerId = this.readString(playerId);
+    const normalizedOperationId = this.readString(operationId);
+    if (!gameId || !normalizedPlayerId || !normalizedOperationId) {
+      throw new BadRequestException('Game and removal operation identifiers are required');
+    }
+
+    const collection = await this.getMongoCollection();
+    const existing = (await collection.findOne(this.buildMongoGameIdFilter(gameId))) as MongoGameDoc | null;
+    if (!existing) {
+      throw new NotFoundException(`Game with id ${gameId} not found`);
+    }
+    this.ensureMongoGameVisibleForUser(existing, user, 'games:write');
+
+    return this.lkPadelHubClient.getGamePlayerRemovalRequest(
+      gameId,
+      normalizedPlayerId,
+      normalizedOperationId
+    );
+  }
+
+  private resolvePlayerRemovalTarget(
+    game: MongoGameDoc,
+    participant: MongoGameParticipant,
+    requestedPlayerId: string
+  ): { bookingId: string; clientId: string; membershipVersion: string } {
+    const clientId = this.readParticipantClientId(participant);
+    if (!clientId || this.normalizeRemovalIdentity(clientId) !== this.normalizeRemovalIdentity(requestedPlayerId)) {
+      throw new ConflictException('Player identity is not current');
+    }
+
+    const metadata = this.toRecord(game.metadata);
+    const splitPayment = this.toRecord(metadata.splitPayment);
+    const payments = Array.isArray(splitPayment.payments)
+      ? splitPayment.payments.map((item) => this.toRecord(item)).filter((item) => Object.keys(item).length > 0)
+      : [];
+    const targetPayments = payments.filter(
+      (payment) =>
+        !this.isInactiveRemovalMember(payment.status) &&
+        this.normalizeRemovalIdentity(this.readParticipantClientId(payment)) ===
+          this.normalizeRemovalIdentity(clientId)
+    );
+    if (targetPayments.length === 0) {
+      throw new ConflictException('No active payment for this participant was found');
+    }
+
+    const bookingIds = Array.from(
+      new Set(
+        targetPayments
+          .flatMap((payment) => [
+            ...this.toStringArray(payment.bookingIds),
+            this.readString(payment.bookingId)
+          ])
+          .filter((bookingId): bookingId is string => Boolean(bookingId))
+      )
+    );
+    if (bookingIds.length !== 1) {
+      throw new ConflictException('The participant payment must have exactly one active booking');
+    }
+
+    const activeParticipants = (Array.isArray(game.participants) ? game.participants : []).filter(
+      (item) =>
+        !this.isInactiveRemovalMember(item.status) &&
+        this.normalizeRemovalIdentity(this.readParticipantClientId(item)) ===
+          this.normalizeRemovalIdentity(clientId)
+    );
+    if (activeParticipants.length === 0) {
+      throw new ConflictException('Player is no longer an active participant');
+    }
+    const activeWaitlist = (Array.isArray(game.waitlist) ? game.waitlist : []).filter(
+      (item) =>
+        !this.isInactiveRemovalMember(item.status) &&
+        this.normalizeRemovalIdentity(this.readParticipantClientId(item)) ===
+          this.normalizeRemovalIdentity(clientId)
+    );
+    const participantPhone = this.normalizePhone(
+      this.readString(participant.phoneNorm) ?? this.readString(participant.phone)
+    );
+    const joinResponses = this.toRecord(metadata.joinResponses);
+    const joinResponse = participantPhone ? this.toRecord(joinResponses[participantPhone]) : {};
+    const activeJoinResponse =
+      Object.keys(joinResponse).length > 0 && !this.isInactiveRemovalMember(joinResponse.status)
+        ? joinResponse
+        : {};
+    const membershipVersion = this.stableRemovalMembershipVersion([
+      ...targetPayments.flatMap((item) => [
+        item.membershipId,
+        ...this.toStringArray(item.bookingIds),
+        item.bookingId,
+        item.paymentRef
+      ]),
+      ...activeParticipants.flatMap((item) => [item.membershipId, item.bookingId, item.paymentRef]),
+      ...activeWaitlist.flatMap((item) => [item.membershipId, item.bookingId, item.paymentRef]),
+      activeJoinResponse.membershipId,
+      activeJoinResponse.paymentRef
+    ]);
+    if (!membershipVersion) {
+      throw new ConflictException('Unable to establish the current participant membership version');
+    }
+
+    return {
+      bookingId: bookingIds[0],
+      clientId,
+      membershipVersion
+    };
+  }
+
+  private readParticipantClientId(participant: Record<string, unknown>): string | null {
+    return (
+      this.readString(participant.clientId) ??
+      this.readString(participant.playerId) ??
+      this.readString(participant.userId) ??
+      this.readString(participant.id)
+    );
+  }
+
+  private normalizeRemovalIdentity(value: string | null): string | null {
+    return value ? value.trim().toLowerCase() || null : null;
+  }
+
+  private isInactiveRemovalMember(status: unknown): boolean {
+    return /CANCEL|DECLIN|FAIL|ERROR|EXPIRE|REFUND|REJECT|VOID|CLOSE|ARCHIVE|LEFT|REMOV/i.test(
+      String(status ?? '')
+    );
+  }
+
+  private stableRemovalMembershipVersion(parts: unknown[]): string | null {
+    const stableParts = Array.from(
+      new Set(parts.map((item) => this.readString(item)).filter((item): item is string => Boolean(item)))
+    ).sort();
+    if (stableParts.length === 0) {
+      return null;
+    }
+    const hashPart = (value: string) => {
+      let hash = 2166136261;
+      for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    };
+    const seed = stableParts.join('|');
+    return `${hashPart(seed)}${hashPart([...seed].reverse().join(''))}`;
   }
 
   async hideGameFromPublicList(id: string, user?: RequestUser): Promise<Game> {
@@ -3338,6 +3555,7 @@ export class GamesService implements OnModuleDestroy {
             this.readString(participant?.role) ?? this.readString(participant?.source);
           const photo = this.readString(participant?.photo);
           const value: GameParticipantDetails = {
+            ...(this.readParticipantClientId(participant) ? { id: this.readParticipantClientId(participant)! } : {}),
             name,
             ...(phone ? { phone } : {}),
             ...(rating !== null ? { rating } : {}),
