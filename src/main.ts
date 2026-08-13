@@ -23,6 +23,8 @@ async function bootstrap(): Promise<void> {
     allowedHeaders: [
       'Content-Type',
       'Authorization',
+      'Idempotency-Key',
+      'X-Correlation-Id',
       'x-user-id',
       'x-user-login',
       'x-user-name',
@@ -41,7 +43,8 @@ async function bootstrap(): Promise<void> {
       'x-connector-routes',
       'x-station-id',
       'x-station-ids'
-    ]
+    ],
+    exposedHeaders: ['X-Correlation-Id', 'Idempotency-Replayed']
   });
   app.useGlobalPipes(
     new ValidationPipe({

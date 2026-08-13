@@ -7,6 +7,8 @@
     "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
     "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
+    "subscriptions:indexes:check": "node scripts/managed-subscriptions-indexes.mjs --check",
+    "subscriptions:indexes:apply": "node scripts/managed-subscriptions-indexes.mjs --apply",
     "postcheck:viva-shadow": "node scripts/viva-shadow-postcheck.mjs",
     "support:cleanup-outbox": "node scripts/support-outbox-cleanup.mjs",
     "test:americano-schedule": "ts-node test/americano-schedule.test.ts",
@@ -20,6 +22,7 @@
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",
     "test:auth-rbac": "ts-node test/auth-rbac.test.ts",
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts",
+    "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts"

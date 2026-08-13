@@ -12,6 +12,7 @@ import { TelegramConnectorModule } from './integrations/telegram/telegram-connec
 import { MessengerModule } from './messenger/messenger.module';
 import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
 import { SupportModule } from './support/support.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { RolesGuard } from './common/rbac/roles.guard';
 import { SystemController } from './system/system.controller';
 import { TournamentsModule } from './tournaments/tournaments.module';
@@ -28,6 +29,7 @@ import { WebPushModule } from './web-push/web-push.module';
     TournamentsModule,
     MessengerModule,
     PlayerRatingsModule,
+    SubscriptionsModule,
     SupportModule,
     TelegramConnectorModule,
     WebPushModule

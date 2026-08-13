@@ -17,7 +17,10 @@ export const ADMIN_PERMISSION_CATALOG = [
   { key: 'player-ratings:read', label: 'Уровни игроков: просмотр' },
   { key: 'player-ratings:write', label: 'Уровни игроков: изменение' },
   { key: 'advertising:read', label: 'Реклама: просмотр' },
-  { key: 'advertising:write', label: 'Реклама: изменение' }
+  { key: 'advertising:write', label: 'Реклама: изменение' },
+  { key: 'subscriptions:read', label: 'Подписки: просмотр' },
+  { key: 'subscriptions:catalog:write', label: 'Подписки: типы и правила' },
+  { key: 'subscriptions:release:write', label: 'Подписки: программы выпуска' }
 ] as const;
 
 export type AdminPermission = (typeof ADMIN_PERMISSION_CATALOG)[number]['key'];

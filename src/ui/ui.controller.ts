@@ -366,6 +366,10 @@ export class UiController {
         Number.isFinite(pollIntervalMs) && pollIntervalMs > 0 ? pollIntervalMs : 8000,
       playerRatingAdminEnabled:
         String(process.env.PLAYER_RATING_ADMIN_ENABLED ?? '').trim().toLowerCase() === 'true',
+      subscriptionAdminEnabled:
+        ['1', 'true', 'yes'].includes(
+          String(process.env.SUBSCRIPTIONS_ADMIN_ENABLED ?? '').trim().toLowerCase()
+        ),
       notificationApiBaseUrl:
         query.notificationApiBaseUrl?.trim() ||
         String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim() ||
