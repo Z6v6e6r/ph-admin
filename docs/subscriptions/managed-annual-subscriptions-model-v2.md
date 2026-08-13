@@ -6,6 +6,29 @@
 
 Новые policy сохраняются с `schemaVersion=2` и возвращают `modelVersion=2`. Клиент v1 может не присылать `capabilities`: сервер добавит безопасные значения по умолчанию. Существующие документы schema v1 не переписываются и должны сосуществовать с v2 до отдельного migration gate.
 
+## Привязка к продукту Viva
+
+Версия правил может содержать не более одной необязательной привязки:
+
+```json
+{
+  "providerBinding": {
+    "provider": "VIVA",
+    "externalId": "<Viva productId>",
+    "referenceKind": "PRODUCT_CANDIDATE",
+    "evidenceState": "UNVERIFIED"
+  }
+}
+```
+
+- `externalId` в этом контексте — кандидат на `productId` продукта подписки из каталога Viva.
+- `evidenceState` назначает сервер; интерфейс не может объявить ID проверенным.
+- Привязка является частью неизменяемой DRAFT policy version. Смена ID создаёт новую версию правил.
+- Поле не выбирает подписку клиента, не подтверждает оплату или активацию, не вызывает Viva и не участвует в публикации, покупке или списании.
+- `clientSubscriptionId` запрещён в policy: это идентификатор экземпляра подписки конкретного клиента. В наблюдаемой интеграции он может присутствовать и у неоплаченной транзакции, поэтому его наличие не является доказательством активной подписки.
+
+До включения runtime Golden HAR должен подтвердить JSON paths, tenant/studio/station scope `productId`, момент создания `clientSubscriptionId`, статусы оплаты и активации, баланс, срок, отмену, списание, возврат, retry/idempotency и read-after-write. После этого `UNVERIFIED` заменяется отдельным reviewed publish/mapping-контрактом, а не редактированием существующей policy.
+
 ## Управляемые возможности
 
 ### Жизненный цикл
@@ -77,6 +100,8 @@
 
 Состояния каталога, policy, программы выпуска и клиентского экземпляра нельзя объединять в одно поле.
 
+Экземпляр должен отдельно хранить canonical ID ЦУП, `subscriptionTypeId`, `policyVersion`, `providerProductId`, `providerClientId` и `clientSubscriptionId`. Он не должен менять общую `providerBinding` версии правил.
+
 ## Будущий immutable ledger
 
 История должна быть append-only и содержать как минимум:
@@ -114,6 +139,8 @@ Ledger и снимок цены должны позволять считать:
 6. Любое списание/возврат идемпотентно, аудитируемо и подтверждается read-back из источника истины.
 7. В DRAFT оператор может сохранить только ID-кандидаты с явной пометкой о необходимости проверки; публикация обязана разрешить station/event type IDs через канонический справочник и отклонить неизвестные значения.
 8. `FIXED_DATE` хранит UTC instant вместе с policy timezone. Первая версия интерфейса фиксирует `Europe/Moscow`; расширение списка timezone требует отдельной миграции и тестов DST.
+9. В одной policy допускается только один Viva product candidate. `clientSubscriptionId`, transaction/payment ID, баланс, цена и provider status в policy запрещены.
+10. Payload с `providerBinding` не может replay-нуть старую idempotency-запись без этой привязки; это `IDEMPOTENCY_CONFLICT`.
 
 ## Дополнительные тесты перед runtime-включением
 
@@ -127,3 +154,4 @@ Ledger и снимок цены должны позволять считать:
 8. Ledger: duplicate event, out-of-order delivery, compensation и reconciliation.
 9. Analytics: сумма ledger равна финансовому snapshot; LTV не удваивается после retry/refund.
 10. Compatibility: старый payload без `capabilities`, schema v1 read и v2 write/read-back.
+11. Provider binding: trim/blank/length, запрет `clientSubscriptionId`, прежний payload без binding, idempotency conflict при смене ID и отсутствие Viva-вызовов.

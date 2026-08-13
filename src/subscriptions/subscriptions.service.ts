@@ -220,7 +220,7 @@ export class SubscriptionsService implements OnModuleDestroy {
       subscriptionTypeId: normalizedTypeId,
       policy: normalized
     });
-    const legacyRequestHash = dto.capabilities === undefined
+    const legacyRequestHash = dto.capabilities === undefined && dto.providerBinding === undefined
       ? this.requestHash('createSubscriptionPolicyVersion', {
         subscriptionTypeId: normalizedTypeId,
         policy: this.legacyPolicyShape(normalized)
@@ -457,6 +457,9 @@ export class SubscriptionsService implements OnModuleDestroy {
           priority: rule.priority
         }))
         .sort((a, b) => a.priority - b.priority || a.ruleId.localeCompare(b.ruleId)),
+      ...(dto.providerBinding
+        ? { providerBinding: this.normalizeProviderBinding(dto.providerBinding) }
+        : {}),
       capabilities: this.normalizeCapabilities(dto.capabilities, dto.validityDays)
     };
   }
@@ -572,6 +575,24 @@ export class SubscriptionsService implements OnModuleDestroy {
         ...input.analytics,
         attributionTag: input.analytics.attributionTag?.trim() || null
       }
+    };
+  }
+
+  private normalizeProviderBinding(
+    input: NonNullable<CreatePolicyVersionDto['providerBinding'] | SubscriptionPolicyVersion['providerBinding']>
+  ): NonNullable<SubscriptionPolicyVersion['providerBinding']> {
+    const externalId = input.externalId.trim();
+    if (!externalId) {
+      throw this.domainError(
+        'PROVIDER_PRODUCT_ID_REQUIRED',
+        'Для привязки Viva укажите productId подписки'
+      );
+    }
+    return {
+      provider: 'VIVA' as const,
+      externalId,
+      referenceKind: 'PRODUCT_CANDIDATE' as const,
+      evidenceState: 'UNVERIFIED' as const
     };
   }
 
@@ -725,12 +746,16 @@ export class SubscriptionsService implements OnModuleDestroy {
       schemaVersion: _schemaVersion,
       idempotency: _idempotency,
       capabilities,
+      providerBinding,
       modelVersion: _modelVersion,
       ...policy
     } = row;
     return {
       ...policy,
       modelVersion: 2,
+      ...(providerBinding
+        ? { providerBinding: this.normalizeProviderBinding(providerBinding) }
+        : {}),
       capabilities: this.normalizeCapabilities(capabilities, row.validityDays)
     };
   }

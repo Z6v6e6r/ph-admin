@@ -9424,6 +9424,8 @@
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
       '<div class="phab-subscriptions-benefits" data-subscription-benefits></div>' +
       '<div class="phab-subscriptions-note">Скидка на игру по умолчанию отключена. Здесь сохраняются только ID-кандидаты для DRAFT; публикация должна сверить Viva event type IDs и station IDs с каноническим справочником.</div>' +
+      '<label class="phab-subscriptions-field is-wide"><span>Viva productId подписки</span><input class="phab-admin-input" type="text" maxlength="160" aria-describedby="subscription-viva-binding-help" placeholder="Например, UUID продукта подписки в Viva" data-subscription-viva-binding></label>' +
+      '<div class="phab-subscriptions-note" id="subscription-viva-binding-help">Необязательная привязка версии правил. Сохраняется только в DRAFT со статусом UNVERIFIED и не участвует в продаже или списании. Не указывайте clientSubscriptionId конкретного клиента.</div>' +
       '<div class="phab-subscriptions-capabilities" data-subscription-capabilities>' +
       '<details open><summary>Жизненный цикл и заморозка</summary><div class="phab-subscriptions-capabilities-grid">' +
       '<label class="phab-subscriptions-field"><span>Активация</span><select class="phab-admin-input" data-cap="activation-mode"><option value="PURCHASE">Сразу после покупки</option><option value="FIRST_USE">С первого посещения</option><option value="FIXED_DATE">С заданной даты</option></select></label>' +
@@ -9533,6 +9535,7 @@
     var subscriptionActiveScopeInput = subscriptionsSection.querySelector('[data-subscription-active-scope]');
     var subscriptionUnitInputs = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscription-unit]'));
     var subscriptionBenefits = subscriptionsSection.querySelector('[data-subscription-benefits]');
+    var subscriptionVivaBindingInput = subscriptionsSection.querySelector('[data-subscription-viva-binding]');
     var subscriptionCapabilities = subscriptionsSection.querySelector('[data-subscription-capabilities]');
     var subscriptionPolicyCreateBtn = subscriptionsSection.querySelector('[data-subscription-policy-create]');
     var subscriptionPolicyResult = subscriptionsSection.querySelector('[data-subscription-policy-result]');
@@ -12916,6 +12919,7 @@
       subscriptionActiveScopeInput: subscriptionActiveScopeInput,
       subscriptionUnitInputs: subscriptionUnitInputs,
       subscriptionBenefits: subscriptionBenefits,
+      subscriptionVivaBindingInput: subscriptionVivaBindingInput,
       subscriptionCapabilities: subscriptionCapabilities,
       subscriptionPolicyCreateBtn: subscriptionPolicyCreateBtn,
       subscriptionPolicyResult: subscriptionPolicyResult,
@@ -36056,11 +36060,15 @@
         var capabilities = state.subscriptions.lastPolicy.capabilities || {};
         var lifecycle = capabilities.lifecycle || {};
         var commerce = capabilities.commerce || {};
+        var providerBinding = state.subscriptions.lastPolicy.providerBinding || null;
         policyMeta.textContent = String(state.subscriptions.lastPolicy.validityDays) +
           ' дней · окно ' + String(state.subscriptions.lastPolicy.bookingWindowDays) +
           ' дней · лимит ' + String(state.subscriptions.lastPolicy.maxActiveServices) +
           ' · активация ' + String(lifecycle.activationMode || 'PURCHASE') +
-          ' · продление ' + String(commerce.renewalMode || 'MANUAL');
+          ' · продление ' + String(commerce.renewalMode || 'MANUAL') +
+          ' · Viva productId ' + (providerBinding
+            ? String(providerBinding.externalId) + ' UNVERIFIED'
+            : 'не указан');
         policyCard.appendChild(policyTitle);
         policyCard.appendChild(policyMeta);
         dom.subscriptionPolicyResult.appendChild(policyCard);
@@ -36287,6 +36295,14 @@
         benefitRules: subscriptionBenefitRulesPayload(),
         capabilities: subscriptionCapabilitiesPayload()
       };
+      var vivaProductId = String(dom.subscriptionVivaBindingInput.value || '').trim();
+      if (vivaProductId) {
+        payload.providerBinding = {
+          provider: 'VIVA',
+          externalId: vivaProductId,
+          referenceKind: 'PRODUCT_CANDIDATE'
+        };
+      }
       var createdPolicy = await api.createSubscriptionPolicyVersion(
         dom.subscriptionPolicyTypeInput.value,
         payload,

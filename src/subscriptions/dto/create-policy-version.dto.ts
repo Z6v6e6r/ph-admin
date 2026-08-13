@@ -15,6 +15,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   Matches,
   ValidateNested
 } from 'class-validator';
@@ -437,6 +438,20 @@ export class SubscriptionCapabilitiesDto {
   analytics!: SubscriptionAnalyticsPolicyDto;
 }
 
+export class SubscriptionProviderBindingCandidateDto {
+  @IsIn(['VIVA'])
+  provider!: 'VIVA';
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  @Matches(/\S/)
+  externalId!: string;
+
+  @IsIn(['PRODUCT_CANDIDATE'])
+  referenceKind!: 'PRODUCT_CANDIDATE';
+}
+
 export class CreatePolicyVersionDto {
   @IsISO8601()
   effectiveAt!: string;
@@ -487,6 +502,12 @@ export class CreatePolicyVersionDto {
   @ValidateNested({ each: true })
   @Type(() => BenefitRuleDto)
   benefitRules!: BenefitRuleDto[];
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => SubscriptionProviderBindingCandidateDto)
+  providerBinding?: SubscriptionProviderBindingCandidateDto;
 
   @IsOptional()
   @IsObject()

@@ -15,6 +15,9 @@ export type SubscriptionCrossStationMode =
   | 'ALLOWED'
   | 'ALLOWED_WITH_SURCHARGE';
 export type SubscriptionReschedulePolicy = 'KEEP_RESERVATION' | 'REVALIDATE';
+export type SubscriptionProvider = 'VIVA';
+export type SubscriptionProviderReferenceKind = 'PRODUCT_CANDIDATE';
+export type SubscriptionProviderEvidenceState = 'UNVERIFIED';
 export type EventCategory = 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
 export type BenefitKind =
   | 'FREE_ENTITLEMENT'
@@ -54,6 +57,13 @@ export interface BenefitRule {
   valueMinor: number | null;
   percentage: number | null;
   priority: number;
+}
+
+export interface SubscriptionProviderBindingCandidate {
+  provider: SubscriptionProvider;
+  externalId: string;
+  referenceKind: SubscriptionProviderReferenceKind;
+  evidenceState: SubscriptionProviderEvidenceState;
 }
 
 export interface SubscriptionCapabilities {
@@ -161,6 +171,7 @@ export interface SubscriptionPolicyVersion {
   activeServiceScope: ActiveServiceScope;
   usageUnitsByDuration: { '60': number; '90': number; '120': number };
   benefitRules: BenefitRule[];
+  providerBinding?: SubscriptionProviderBindingCandidate;
   capabilities: SubscriptionCapabilities;
   createdAt: string;
   createdBy: string;

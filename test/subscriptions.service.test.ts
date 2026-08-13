@@ -113,6 +113,12 @@ const policyDraft = () => ({
   benefitRules: []
 });
 
+const providerBindingDraft = () => ({
+  provider: 'VIVA' as const,
+  externalId: ' viva-annual-product-2026 ',
+  referenceKind: 'PRODUCT_CANDIDATE' as const
+});
+
 const capabilitiesDraft = () => ({
   lifecycle: {
     activationMode: 'FIRST_USE' as const,
@@ -256,7 +262,12 @@ async function main(): Promise<void> {
   );
   const policyTwo = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
-    { ...policyDraft(), bookingWindowDays: 5, capabilities: capabilitiesDraft() },
+    {
+      ...policyDraft(),
+      bookingWindowDays: 5,
+      providerBinding: providerBindingDraft(),
+      capabilities: capabilitiesDraft()
+    },
     command('policy-b'),
     globalAdmin
   );
@@ -274,6 +285,14 @@ async function main(): Promise<void> {
   assert.equal(policyTwo.item.capabilities.usage.crossStationSurchargeMinor, 50000);
   assert.equal(policyTwo.item.capabilities.commerce.familySeats, 4);
   assert.equal(policyTwo.item.capabilities.analytics.attributionTag, 'annual-launch-2026');
+  assert.deepEqual(policyTwo.item.providerBinding, {
+    provider: 'VIVA',
+    externalId: 'viva-annual-product-2026',
+    referenceKind: 'PRODUCT_CANDIDATE',
+    evidenceState: 'UNVERIFIED'
+  });
+  assert.deepEqual(repository.policies[1].providerBinding, policyTwo.item.providerBinding);
+  assert.equal('providerBinding' in policyOne.item, false);
 
   const legacyCommand = command('policy-legacy-v1');
   const legacyCreated = await service.createPolicyVersion(
@@ -317,6 +336,15 @@ async function main(): Promise<void> {
   assert.equal(repository.policies.length, policyCountBeforeLegacyReplay);
   assert.equal(legacyReplay.item.modelVersion, 2);
   assert.equal(legacyReplay.item.capabilities.lifecycle.activationMode, 'PURCHASE');
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      { ...policyDraft(), providerBinding: providerBindingDraft() },
+      legacyCommand,
+      globalAdmin
+    ),
+    ConflictException
+  );
 
   const policyReplay = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
@@ -330,6 +358,15 @@ async function main(): Promise<void> {
     () => service.createPolicyVersion(
       typeResult.item.subscriptionTypeId,
       { ...policyDraft(), bookingWindowDays: 3 },
+      command('policy-a'),
+      globalAdmin
+    ),
+    ConflictException
+  );
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      { ...policyDraft(), providerBinding: providerBindingDraft() },
       command('policy-a'),
       globalAdmin
     ),
@@ -501,9 +538,32 @@ async function main(): Promise<void> {
 
   const validV2Dto = plainToInstance(CreatePolicyVersionDto, {
     ...policyDraft(),
+    providerBinding: providerBindingDraft(),
     capabilities: capabilitiesDraft()
   });
   assert.deepEqual(await validate(validV2Dto), []);
+  const clientInstanceInPolicyDto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    providerBinding: {
+      ...providerBindingDraft(),
+      clientSubscriptionId: 'client-instance-must-not-be-stored'
+    }
+  });
+  const clientInstanceErrors = await validate(clientInstanceInPolicyDto, {
+    whitelist: true,
+    forbidNonWhitelisted: true
+  });
+  assert.ok(clientInstanceErrors.some((error) => error.property === 'providerBinding'));
+  const blankProviderBindingDto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    providerBinding: {
+      provider: 'VIVA',
+      externalId: '   ',
+      referenceKind: 'PRODUCT_CANDIDATE'
+    }
+  });
+  const blankProviderBindingErrors = await validate(blankProviderBindingDto);
+  assert.ok(blankProviderBindingErrors.some((error) => error.property === 'providerBinding'));
   const invalidV2Dto = plainToInstance(CreatePolicyVersionDto, {
     ...policyDraft(),
     capabilities: {
