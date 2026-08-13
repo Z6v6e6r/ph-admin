@@ -22,6 +22,7 @@ import {
   ReleasePhase,
   ReleaseProgram,
   ReleaseProgramPage,
+  SubscriptionCapabilities,
   StoredReleaseProgram,
   StoredSubscriptionPolicyVersion,
   StoredSubscriptionType,
@@ -33,6 +34,83 @@ import {
 
 const PAGE_SIZE = 50;
 const POLICY_VERSION_INSERT_ATTEMPTS = 5;
+
+const defaultSubscriptionCapabilities = (): SubscriptionCapabilities => ({
+  lifecycle: {
+    activationMode: 'PURCHASE',
+    activationWindowDays: 0,
+    fixedActivationAt: null,
+    fixedActivationTimeZone: 'Europe/Moscow',
+    gracePeriodDays: 0,
+    allowBookingsAfterExpiry: false,
+    freeze: {
+      enabled: false,
+      maxDaysPerYear: 0,
+      maxPeriodsPerYear: 0,
+      minDaysPerPeriod: 0,
+      extendsValidity: true
+    },
+    adminExtension: { enabled: true, maxDays: 30, reasonRequired: true }
+  },
+  usage: {
+    weeklyUsageLimit: null,
+    monthlyUsageLimit: null,
+    maxFutureBookings: null,
+    minHoursBetweenUses: 0,
+    guestPassesPerMonth: 0,
+    earlyBookingAccessHours: 0,
+    waitlistPriority: false,
+    crossStationMode: 'ALLOWED',
+    crossStationSurchargeMinor: 0,
+    blackoutDates: []
+  },
+  cancellation: {
+    freeCancellationHours: { GAME: 24, GROUP_TRAINING: 24, TOURNAMENT: 48 },
+    lateCancellationUsageUnits: 1,
+    noShowUsageUnits: 1,
+    noShowBlockDays: 0,
+    stationCancellationRestoresUsage: true,
+    reschedulePolicy: 'REVALIDATE'
+  },
+  commerce: {
+    renewalMode: 'MANUAL',
+    renewalWindowDays: 30,
+    priceLockEnabled: false,
+    renewalDiscountPercent: 0,
+    purchaseLimitPerClient: 1,
+    reservationTtlMinutes: 15,
+    waitlistWhenSoldOut: true,
+    promoCodesAllowed: false,
+    installmentsAllowed: false,
+    upgradeDowngradeMode: 'DISABLED',
+    terminationRefundMode: 'MANUAL',
+    coolingOffDays: 0,
+    giftable: false,
+    transferable: false,
+    familySeats: 1,
+    corporateSeats: 1,
+    maxConcurrentSubscriptions: 1,
+    consumptionPriority: 'EXPIRING_FIRST'
+  },
+  engagement: {
+    showSavings: true,
+    showBreakEvenProgress: true,
+    expirationReminderDays: [30, 14, 7, 1],
+    referralEnabled: false,
+    renewalBonusEnabled: false,
+    personalizedRecommendationsEnabled: false
+  },
+  analytics: {
+    trackRevenue: true,
+    trackRefunds: true,
+    trackBreakage: true,
+    trackMargin: true,
+    trackPeakLoad: true,
+    trackChurn: true,
+    trackCohorts: true,
+    attributionTag: null
+  }
+});
 
 interface CommandHeaders {
   idempotencyKey: string | undefined;
@@ -142,10 +220,18 @@ export class SubscriptionsService implements OnModuleDestroy {
       subscriptionTypeId: normalizedTypeId,
       policy: normalized
     });
+    const legacyRequestHash = dto.capabilities === undefined
+      ? this.requestHash('createSubscriptionPolicyVersion', {
+        subscriptionTypeId: normalizedTypeId,
+        policy: this.legacyPolicyShape(normalized)
+      })
+      : null;
     const existing = await this.call(() =>
       this.repository.policyByIdempotency(actorId, command.idempotencyKey)
     );
-    if (existing) return this.replay(existing, requestHash, this.publicPolicy(existing));
+    if (existing) {
+      return this.replayPolicy(existing, requestHash, legacyRequestHash, this.publicPolicy(existing));
+    }
     const parent = await this.call(() => this.repository.subscriptionTypeById(normalizedTypeId));
     if (!parent) throw new NotFoundException('Subscription type not found');
     if (parent.state !== 'DRAFT') {
@@ -156,7 +242,7 @@ export class SubscriptionsService implements OnModuleDestroy {
       const version = (await this.call(() => this.repository.latestPolicyVersion(normalizedTypeId))) + 1;
       const now = new Date().toISOString();
       const row: StoredSubscriptionPolicyVersion = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         subscriptionTypeId: normalizedTypeId,
         version,
         revision: 1,
@@ -179,7 +265,9 @@ export class SubscriptionsService implements OnModuleDestroy {
         const raced = await this.call(() =>
           this.repository.policyByIdempotency(actorId, command.idempotencyKey)
         );
-        if (raced) return this.replay(raced, requestHash, this.publicPolicy(raced));
+        if (raced) {
+          return this.replayPolicy(raced, requestHash, legacyRequestHash, this.publicPolicy(raced));
+        }
       }
     }
     throw this.conflict(
@@ -338,6 +426,7 @@ export class SubscriptionsService implements OnModuleDestroy {
 
   private normalizePolicy(dto: CreatePolicyVersionDto): Omit<SubscriptionPolicyVersion, 'subscriptionTypeId' | 'version' | 'revision' | 'status' | 'createdAt' | 'createdBy'> {
     return {
+      modelVersion: 2,
       effectiveAt: new Date(dto.effectiveAt).toISOString(),
       applyTo: dto.applyTo,
       validityDays: dto.validityDays,
@@ -367,7 +456,8 @@ export class SubscriptionsService implements OnModuleDestroy {
           percentage: rule.percentage ?? null,
           priority: rule.priority
         }))
-        .sort((a, b) => a.priority - b.priority || a.ruleId.localeCompare(b.ruleId))
+        .sort((a, b) => a.priority - b.priority || a.ruleId.localeCompare(b.ruleId)),
+      capabilities: this.normalizeCapabilities(dto.capabilities, dto.validityDays)
     };
   }
 
@@ -409,6 +499,123 @@ export class SubscriptionsService implements OnModuleDestroy {
         ) {
           throw this.domainError('AMBIGUOUS_BENEFIT_PRIORITY', 'Пересекающиеся льготы должны иметь разный приоритет');
         }
+      }
+    }
+    this.validateCapabilities(policy.capabilities, policy.validityDays);
+  }
+
+  private normalizeCapabilities(
+    input: CreatePolicyVersionDto['capabilities'] | SubscriptionCapabilities | undefined,
+    validityDays: number
+  ): SubscriptionCapabilities {
+    const defaults = defaultSubscriptionCapabilities();
+    if (!input) {
+      return {
+        ...defaults,
+        engagement: {
+          ...defaults.engagement,
+          expirationReminderDays: defaults.engagement.expirationReminderDays
+            .filter((days) => days <= validityDays)
+        }
+      };
+    }
+    return {
+      lifecycle: {
+        activationMode: input.lifecycle.activationMode,
+        activationWindowDays: input.lifecycle.activationWindowDays,
+        fixedActivationAt: input.lifecycle.activationMode === 'FIXED_DATE' && input.lifecycle.fixedActivationAt
+          ? new Date(input.lifecycle.fixedActivationAt).toISOString()
+          : null,
+        fixedActivationTimeZone: input.lifecycle.fixedActivationTimeZone || 'Europe/Moscow',
+        gracePeriodDays: input.lifecycle.gracePeriodDays,
+        allowBookingsAfterExpiry: input.lifecycle.allowBookingsAfterExpiry,
+        freeze: input.lifecycle.freeze.enabled
+          ? { ...input.lifecycle.freeze }
+          : {
+            enabled: false,
+            maxDaysPerYear: 0,
+            maxPeriodsPerYear: 0,
+            minDaysPerPeriod: 0,
+            extendsValidity: input.lifecycle.freeze.extendsValidity
+          },
+        adminExtension: { ...input.lifecycle.adminExtension }
+      },
+      usage: {
+        weeklyUsageLimit: input.usage.weeklyUsageLimit ?? null,
+        monthlyUsageLimit: input.usage.monthlyUsageLimit ?? null,
+        maxFutureBookings: input.usage.maxFutureBookings ?? null,
+        minHoursBetweenUses: input.usage.minHoursBetweenUses,
+        guestPassesPerMonth: input.usage.guestPassesPerMonth,
+        earlyBookingAccessHours: input.usage.earlyBookingAccessHours,
+        waitlistPriority: input.usage.waitlistPriority,
+        crossStationMode: input.usage.crossStationMode,
+        crossStationSurchargeMinor: input.usage.crossStationMode === 'ALLOWED_WITH_SURCHARGE'
+          ? input.usage.crossStationSurchargeMinor
+          : 0,
+        blackoutDates: this.uniqueStrings(input.usage.blackoutDates).sort()
+      },
+      cancellation: {
+        freeCancellationHours: { ...input.cancellation.freeCancellationHours },
+        lateCancellationUsageUnits: input.cancellation.lateCancellationUsageUnits,
+        noShowUsageUnits: input.cancellation.noShowUsageUnits,
+        noShowBlockDays: input.cancellation.noShowBlockDays,
+        stationCancellationRestoresUsage: input.cancellation.stationCancellationRestoresUsage,
+        reschedulePolicy: input.cancellation.reschedulePolicy
+      },
+      commerce: { ...input.commerce },
+      engagement: {
+        ...input.engagement,
+        expirationReminderDays: [...new Set(input.engagement.expirationReminderDays)]
+          .sort((a, b) => b - a)
+      },
+      analytics: {
+        ...input.analytics,
+        attributionTag: input.analytics.attributionTag?.trim() || null
+      }
+    };
+  }
+
+  private validateCapabilities(capabilities: SubscriptionCapabilities, validityDays: number): void {
+    const lifecycle = capabilities.lifecycle;
+    if (lifecycle.activationMode === 'FIXED_DATE' && !lifecycle.fixedActivationAt) {
+      throw this.domainError('FIXED_ACTIVATION_DATE_REQUIRED', 'Для фиксированной активации укажите дату');
+    }
+    if (lifecycle.activationMode !== 'FIXED_DATE' && lifecycle.fixedActivationAt) {
+      throw this.domainError('FIXED_ACTIVATION_DATE_FORBIDDEN', 'Дата активации разрешена только для режима FIXED_DATE');
+    }
+    if (!lifecycle.freeze.enabled) {
+      const freeze = lifecycle.freeze;
+      if (freeze.maxDaysPerYear || freeze.maxPeriodsPerYear || freeze.minDaysPerPeriod) {
+        throw this.domainError('FREEZE_LIMITS_FORBIDDEN', 'Для отключённой заморозки лимиты должны быть нулевыми');
+      }
+    } else if (
+      lifecycle.freeze.maxDaysPerYear < 1
+      || lifecycle.freeze.maxPeriodsPerYear < 1
+      || lifecycle.freeze.minDaysPerPeriod < 1
+      || lifecycle.freeze.minDaysPerPeriod > lifecycle.freeze.maxDaysPerYear
+    ) {
+      throw this.domainError('INVALID_FREEZE_LIMITS', 'Проверьте количество и длительность периодов заморозки');
+    }
+    if (
+      capabilities.usage.crossStationMode === 'ALLOWED_WITH_SURCHARGE'
+      && capabilities.usage.crossStationSurchargeMinor <= 0
+    ) {
+      throw this.domainError('CROSS_STATION_SURCHARGE_REQUIRED', 'Для посещения с доплатой укажите сумму');
+    }
+    if (
+      capabilities.usage.crossStationMode !== 'ALLOWED_WITH_SURCHARGE'
+      && capabilities.usage.crossStationSurchargeMinor !== 0
+    ) {
+      throw this.domainError('CROSS_STATION_SURCHARGE_FORBIDDEN', 'Доплата разрешена только для режима ALLOWED_WITH_SURCHARGE');
+    }
+    const reminders = capabilities.engagement.expirationReminderDays;
+    if (reminders.some((days) => days > validityDays)) {
+      throw this.domainError('EXPIRATION_REMINDER_OUTSIDE_VALIDITY', 'Напоминание не может быть позже срока подписки');
+    }
+    for (const date of capabilities.usage.blackoutDates) {
+      const parsed = new Date(`${date}T00:00:00.000Z`);
+      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+        throw this.domainError('INVALID_BLACKOUT_DATE', 'Blackout-даты должны быть календарными датами YYYY-MM-DD');
       }
     }
   }
@@ -514,8 +721,18 @@ export class SubscriptionsService implements OnModuleDestroy {
   }
 
   private publicPolicy(row: StoredSubscriptionPolicyVersion): SubscriptionPolicyVersion {
-    const { schemaVersion: _schemaVersion, idempotency: _idempotency, ...policy } = row;
-    return policy;
+    const {
+      schemaVersion: _schemaVersion,
+      idempotency: _idempotency,
+      capabilities,
+      modelVersion: _modelVersion,
+      ...policy
+    } = row;
+    return {
+      ...policy,
+      modelVersion: 2,
+      capabilities: this.normalizeCapabilities(capabilities, row.validityDays)
+    };
   }
 
   private publicProgram(row: StoredReleaseProgram): ReleaseProgram {
@@ -546,6 +763,28 @@ export class SubscriptionsService implements OnModuleDestroy {
       throw this.conflict('IDEMPOTENCY_CONFLICT', 'Idempotency-Key уже использован для другого запроса');
     }
     return { item, replayed: true, correlationId: row.idempotency.correlationId };
+  }
+
+  private replayPolicy<TPublic>(
+    row: StoredSubscriptionPolicyVersion,
+    requestHash: string,
+    legacyRequestHash: string | null,
+    item: TPublic
+  ): SubscriptionCreateResult<TPublic> {
+    if (
+      row.idempotency.requestHash !== requestHash
+      && (!legacyRequestHash || row.idempotency.requestHash !== legacyRequestHash)
+    ) {
+      throw this.conflict('IDEMPOTENCY_CONFLICT', 'Idempotency-Key уже использован для другого запроса');
+    }
+    return { item, replayed: true, correlationId: row.idempotency.correlationId };
+  }
+
+  private legacyPolicyShape(
+    policy: ReturnType<SubscriptionsService['normalizePolicy']>
+  ): Omit<ReturnType<SubscriptionsService['normalizePolicy']>, 'modelVersion' | 'capabilities'> {
+    const { modelVersion: _modelVersion, capabilities: _capabilities, ...legacy } = policy;
+    return legacy;
   }
 
   private uniqueStrings(values: string[]): string[] {

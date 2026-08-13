@@ -1,10 +1,13 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { RequestUser } from '../src/common/rbac/request-user.interface';
 import { Role } from '../src/common/rbac/role.enum';
 import { SubscriptionsController } from '../src/subscriptions/subscriptions.controller';
+import { CreatePolicyVersionDto } from '../src/subscriptions/dto/create-policy-version.dto';
 import {
   SUBSCRIPTION_REQUIRED_INDEXES,
   subscriptionIndexMatches,
@@ -110,6 +113,83 @@ const policyDraft = () => ({
   benefitRules: []
 });
 
+const capabilitiesDraft = () => ({
+  lifecycle: {
+    activationMode: 'FIRST_USE' as const,
+    activationWindowDays: 30,
+    fixedActivationAt: null,
+    fixedActivationTimeZone: 'Europe/Moscow' as const,
+    gracePeriodDays: 3,
+    allowBookingsAfterExpiry: false,
+    freeze: {
+      enabled: true,
+      maxDaysPerYear: 30,
+      maxPeriodsPerYear: 2,
+      minDaysPerPeriod: 7,
+      extendsValidity: true
+    },
+    adminExtension: { enabled: true, maxDays: 30, reasonRequired: true }
+  },
+  usage: {
+    weeklyUsageLimit: 7,
+    monthlyUsageLimit: 24,
+    maxFutureBookings: 3,
+    minHoursBetweenUses: 6,
+    guestPassesPerMonth: 2,
+    earlyBookingAccessHours: 24,
+    waitlistPriority: true,
+    crossStationMode: 'ALLOWED_WITH_SURCHARGE' as const,
+    crossStationSurchargeMinor: 50000,
+    blackoutDates: ['2027-01-01', '2026-12-31']
+  },
+  cancellation: {
+    freeCancellationHours: { GAME: 24, GROUP_TRAINING: 24, TOURNAMENT: 48 },
+    lateCancellationUsageUnits: 1,
+    noShowUsageUnits: 1,
+    noShowBlockDays: 7,
+    stationCancellationRestoresUsage: true,
+    reschedulePolicy: 'REVALIDATE' as const
+  },
+  commerce: {
+    renewalMode: 'MANUAL' as const,
+    renewalWindowDays: 30,
+    priceLockEnabled: true,
+    renewalDiscountPercent: 10,
+    purchaseLimitPerClient: 1,
+    reservationTtlMinutes: 15,
+    waitlistWhenSoldOut: true,
+    promoCodesAllowed: true,
+    installmentsAllowed: false,
+    upgradeDowngradeMode: 'PRORATED' as const,
+    terminationRefundMode: 'PRORATED' as const,
+    coolingOffDays: 14,
+    giftable: true,
+    transferable: false,
+    familySeats: 4,
+    corporateSeats: 1,
+    maxConcurrentSubscriptions: 1,
+    consumptionPriority: 'EXPIRING_FIRST' as const
+  },
+  engagement: {
+    showSavings: true,
+    showBreakEvenProgress: true,
+    expirationReminderDays: [1, 30, 7, 14],
+    referralEnabled: true,
+    renewalBonusEnabled: true,
+    personalizedRecommendationsEnabled: true
+  },
+  analytics: {
+    trackRevenue: true,
+    trackRefunds: true,
+    trackBreakage: true,
+    trackMargin: true,
+    trackPeakLoad: true,
+    trackChurn: true,
+    trackCohorts: true,
+    attributionTag: ' annual-launch-2026 '
+  }
+});
+
 async function expectException(action: () => Promise<unknown>, type: Function): Promise<unknown> {
   try {
     await action();
@@ -176,13 +256,68 @@ async function main(): Promise<void> {
   );
   const policyTwo = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
-    { ...policyDraft(), bookingWindowDays: 5 },
+    { ...policyDraft(), bookingWindowDays: 5, capabilities: capabilitiesDraft() },
     command('policy-b'),
     globalAdmin
   );
   assert.deepEqual([policyOne.item.version, policyTwo.item.version], [1, 2]);
   assert.equal(policyOne.item.maxActiveServices, 3);
   assert.equal(policyOne.item.dailyUsageLimit, 1);
+  assert.equal(policyOne.item.modelVersion, 2);
+  assert.equal(policyOne.item.capabilities.lifecycle.activationMode, 'PURCHASE');
+  assert.equal(policyOne.item.capabilities.lifecycle.freeze.enabled, false);
+  assert.equal(policyOne.item.capabilities.commerce.reservationTtlMinutes, 15);
+  assert.deepEqual(policyOne.item.capabilities.engagement.expirationReminderDays, [30, 14, 7, 1]);
+  assert.equal(repository.policies[0].schemaVersion, 2);
+  assert.equal(policyTwo.item.capabilities.lifecycle.activationMode, 'FIRST_USE');
+  assert.deepEqual(policyTwo.item.capabilities.usage.blackoutDates, ['2026-12-31', '2027-01-01']);
+  assert.equal(policyTwo.item.capabilities.usage.crossStationSurchargeMinor, 50000);
+  assert.equal(policyTwo.item.capabilities.commerce.familySeats, 4);
+  assert.equal(policyTwo.item.capabilities.analytics.attributionTag, 'annual-launch-2026');
+
+  const legacyCommand = command('policy-legacy-v1');
+  const legacyCreated = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    policyDraft(),
+    legacyCommand,
+    globalAdmin
+  );
+  const legacyStored = repository.policies.find(
+    (row) => row.version === legacyCreated.item.version
+  ) as unknown as {
+    schemaVersion: 1 | 2;
+    modelVersion?: number;
+    capabilities?: unknown;
+    idempotency: { requestHash: string };
+  };
+  legacyStored.schemaVersion = 1;
+  delete legacyStored.modelVersion;
+  delete legacyStored.capabilities;
+  const normalizedLegacyPolicy = (service as unknown as {
+    normalizePolicy(dto: ReturnType<typeof policyDraft>): unknown;
+    legacyPolicyShape(policy: unknown): unknown;
+    requestHash(operation: string, payload: unknown): string;
+  }).normalizePolicy(policyDraft());
+  legacyStored.idempotency.requestHash = (service as unknown as {
+    legacyPolicyShape(policy: unknown): unknown;
+    requestHash(operation: string, payload: unknown): string;
+  }).requestHash('createSubscriptionPolicyVersion', {
+    subscriptionTypeId: typeResult.item.subscriptionTypeId,
+    policy: (service as unknown as { legacyPolicyShape(policy: unknown): unknown })
+      .legacyPolicyShape(normalizedLegacyPolicy)
+  });
+  const policyCountBeforeLegacyReplay = repository.policies.length;
+  const legacyReplay = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    policyDraft(),
+    legacyCommand,
+    globalAdmin
+  );
+  assert.equal(legacyReplay.replayed, true);
+  assert.equal(repository.policies.length, policyCountBeforeLegacyReplay);
+  assert.equal(legacyReplay.item.modelVersion, 2);
+  assert.equal(legacyReplay.item.capabilities.lifecycle.activationMode, 'PURCHASE');
+
   const policyReplay = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
     policyDraft(),
@@ -209,6 +344,56 @@ async function main(): Promise<void> {
       globalAdmin
     ),
     UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        capabilities: {
+          ...capabilitiesDraft(),
+          lifecycle: {
+            ...capabilitiesDraft().lifecycle,
+            activationMode: 'FIXED_DATE',
+            fixedActivationAt: null
+          }
+        }
+      },
+      command('policy-fixed-date'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        capabilities: {
+          ...capabilitiesDraft(),
+          usage: {
+            ...capabilitiesDraft().usage,
+            crossStationSurchargeMinor: 0
+          }
+        }
+      },
+      command('policy-surcharge'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  const shortLegacyPolicy = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    { ...policyDraft(), validityDays: 7 },
+    command('policy-short-legacy'),
+    globalAdmin
+  );
+  assert.deepEqual(
+    shortLegacyPolicy.item.capabilities.engagement.expirationReminderDays,
+    [7, 1]
   );
 
   const ladder = await service.createReleaseProgram(
@@ -313,6 +498,22 @@ async function main(): Promise<void> {
     repositoryWithColdStart.connect()
   ]);
   assert.equal(initializationCount, 1);
+
+  const validV2Dto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    capabilities: capabilitiesDraft()
+  });
+  assert.deepEqual(await validate(validV2Dto), []);
+  const invalidV2Dto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    capabilities: {
+      ...capabilitiesDraft(),
+      usage: { ...capabilitiesDraft().usage, blackoutDates: ['2026-02-30'] },
+      commerce: { ...capabilitiesDraft().commerce, reservationTtlMinutes: 0 }
+    }
+  });
+  const invalidV2Errors = await validate(invalidV2Dto);
+  assert.ok(invalidV2Errors.some((error) => error.property === 'capabilities'));
 
   const filter = new SubscriptionsExceptionFilter();
   const filterHeaders: Record<string, string> = {};

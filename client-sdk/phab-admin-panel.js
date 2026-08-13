@@ -7478,9 +7478,15 @@
       .phab-subscriptions-phase .phab-subscriptions-field{font-size:9px}
       .phab-subscriptions-phase-remove{min-height:36px}
       .phab-subscriptions-note{grid-column:1/-1;border-radius:11px;background:rgba(182,253,255,.24);padding:9px;font-size:10px;line-height:1.45;color:rgba(51,0,32,.7)}
+      .phab-subscriptions-capabilities{grid-column:1/-1;display:grid;gap:9px}
+      .phab-subscriptions-capabilities details{border:1px solid rgba(51,0,32,.12);border-radius:12px;background:rgba(255,255,255,.58);padding:10px}
+      .phab-subscriptions-capabilities summary{cursor:pointer;font-size:11px;font-weight:900;color:var(--cup-wine)}
+      .phab-subscriptions-capabilities-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:10px}
+      .phab-subscriptions-capabilities-grid .phab-subscriptions-field.is-wide{grid-column:1/-1}
       @media (max-width:900px){
         .phab-admin-notifications-grid{grid-template-columns:1fr}
         .phab-subscriptions-grid,.phab-subscriptions-benefits{grid-template-columns:1fr}
+        .phab-subscriptions-capabilities-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
         .phab-subscriptions-phase{grid-template-columns:42px 1fr 1fr}
       }
       @media (max-width:640px){
@@ -7531,6 +7537,7 @@
         .phab-admin-notifications-row{align-items:stretch;flex-direction:column}
         .phab-subscriptions-hero{flex-direction:column}
         .phab-subscriptions-form{grid-template-columns:1fr}
+        .phab-subscriptions-capabilities-grid{grid-template-columns:1fr}
         .phab-subscriptions-field.is-wide,.phab-subscriptions-actions{grid-column:1}
       }
     `;
@@ -9416,7 +9423,82 @@
       '<label class="phab-subscriptions-field"><span>Что считать активной услугой</span><select class="phab-admin-input" data-subscription-active-scope><option value="SUBSCRIPTION_BENEFIT_ONLY">Только услуги по подписке</option><option value="ALL_BOOKINGS">Все записи</option></select></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
       '<div class="phab-subscriptions-benefits" data-subscription-benefits></div>' +
-      '<div class="phab-subscriptions-note">Скидка на игру по умолчанию отключена. Включайте категорию только после указания точных Viva event type IDs и station IDs.</div>' +
+      '<div class="phab-subscriptions-note">Скидка на игру по умолчанию отключена. Здесь сохраняются только ID-кандидаты для DRAFT; публикация должна сверить Viva event type IDs и station IDs с каноническим справочником.</div>' +
+      '<div class="phab-subscriptions-capabilities" data-subscription-capabilities>' +
+      '<details open><summary>Жизненный цикл и заморозка</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<label class="phab-subscriptions-field"><span>Активация</span><select class="phab-admin-input" data-cap="activation-mode"><option value="PURCHASE">Сразу после покупки</option><option value="FIRST_USE">С первого посещения</option><option value="FIXED_DATE">С заданной даты</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Срок на активацию, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="activation-window"></label>' +
+      '<label class="phab-subscriptions-field"><span>Фиксированная дата (Москва, UTC+3)</span><input class="phab-admin-input" type="datetime-local" data-cap="fixed-activation-at"></label>' +
+      '<label class="phab-subscriptions-field"><span>Grace period, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="grace-period"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="book-after-expiry">Разрешать заранее созданные записи после окончания</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="freeze-enabled">Разрешить заморозку</label>' +
+      '<label class="phab-subscriptions-field"><span>Заморозка, дней в год</span><input class="phab-admin-input" type="number" min="0" value="0" placeholder="Например, 30" data-cap="freeze-days"></label>' +
+      '<label class="phab-subscriptions-field"><span>Периодов заморозки</span><input class="phab-admin-input" type="number" min="0" value="0" placeholder="Например, 2" data-cap="freeze-periods"></label>' +
+      '<label class="phab-subscriptions-field"><span>Минимум дней за период</span><input class="phab-admin-input" type="number" min="0" value="0" placeholder="Например, 7" data-cap="freeze-min-days"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="freeze-extends">Продлевать срок на заморозку</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="admin-extension-enabled">Разрешить ручное продление</label>' +
+      '<label class="phab-subscriptions-field"><span>Макс. ручное продление, дней</span><input class="phab-admin-input" type="number" min="0" value="30" data-cap="admin-extension-days"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="admin-extension-reason">Причина продления обязательна</label>' +
+      '</div></details>' +
+      '<details><summary>Лимиты, станции и приоритет</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<label class="phab-subscriptions-field"><span>Лимит в неделю</span><input class="phab-admin-input" type="number" min="1" placeholder="Без доп. лимита" data-cap="weekly-limit"></label>' +
+      '<label class="phab-subscriptions-field"><span>Лимит в месяц</span><input class="phab-admin-input" type="number" min="1" placeholder="Без доп. лимита" data-cap="monthly-limit"></label>' +
+      '<label class="phab-subscriptions-field"><span>Будущих записей максимум</span><input class="phab-admin-input" type="number" min="1" placeholder="Без доп. лимита" data-cap="future-bookings"></label>' +
+      '<label class="phab-subscriptions-field"><span>Интервал между услугами, часов</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="min-hours-between"></label>' +
+      '<label class="phab-subscriptions-field"><span>Гостевых проходов в месяц</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="guest-passes"></label>' +
+      '<label class="phab-subscriptions-field"><span>Ранний доступ, часов</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="early-access"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="waitlist-priority">Приоритет в листе ожидания</label>' +
+      '<label class="phab-subscriptions-field"><span>Другие станции</span><select class="phab-admin-input" data-cap="cross-station-mode"><option value="ALLOWED">Разрешены</option><option value="HOME_ONLY">Только домашняя</option><option value="ALLOWED_WITH_SURCHARGE">С доплатой</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Доплата за другую станцию, ₽</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="cross-station-surcharge"></label>' +
+      '<label class="phab-subscriptions-field is-wide"><span>Blackout-даты</span><textarea class="phab-admin-input" placeholder="2026-12-31, 2027-01-01" data-cap="blackout-dates"></textarea></label>' +
+      '</div></details>' +
+      '<details><summary>Отмена, no-show и перенос</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<label class="phab-subscriptions-field"><span>Бесплатная отмена игры, часов</span><input class="phab-admin-input" type="number" min="0" value="24" data-cap="cancel-game-hours"></label>' +
+      '<label class="phab-subscriptions-field"><span>Тренировка, часов</span><input class="phab-admin-input" type="number" min="0" value="24" data-cap="cancel-group-hours"></label>' +
+      '<label class="phab-subscriptions-field"><span>Турнир, часов</span><input class="phab-admin-input" type="number" min="0" value="48" data-cap="cancel-tournament-hours"></label>' +
+      '<label class="phab-subscriptions-field"><span>Поздняя отмена, единиц</span><input class="phab-admin-input" type="number" min="0" value="1" data-cap="late-cancel-units"></label>' +
+      '<label class="phab-subscriptions-field"><span>No-show, единиц</span><input class="phab-admin-input" type="number" min="0" value="1" data-cap="no-show-units"></label>' +
+      '<label class="phab-subscriptions-field"><span>Блокировка за no-show, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="no-show-block-days"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="station-cancel-restores">Отмена станцией возвращает услугу</label>' +
+      '<label class="phab-subscriptions-field"><span>При переносе</span><select class="phab-admin-input" data-cap="reschedule-policy"><option value="REVALIDATE">Проверить правила заново</option><option value="KEEP_RESERVATION">Сохранить резерв</option></select></label>' +
+      '</div></details>' +
+      '<details><summary>Продажа, продление и владение</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<label class="phab-subscriptions-field"><span>Продление</span><select class="phab-admin-input" data-cap="renewal-mode"><option value="MANUAL">Ручное</option><option value="AUTO">Автопродление</option><option value="DISABLED">Отключено</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Окно продления, дней</span><input class="phab-admin-input" type="number" min="0" value="30" data-cap="renewal-window"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="price-lock">Сохранять цену</label>' +
+      '<label class="phab-subscriptions-field"><span>Скидка на продление, %</span><input class="phab-admin-input" type="number" min="0" max="100" value="0" data-cap="renewal-discount"></label>' +
+      '<label class="phab-subscriptions-field"><span>Покупок на клиента</span><input class="phab-admin-input" type="number" min="1" value="1" data-cap="purchase-limit"></label>' +
+      '<label class="phab-subscriptions-field"><span>Резерв оплаты, минут</span><input class="phab-admin-input" type="number" min="1" value="15" data-cap="reservation-ttl"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="sold-out-waitlist">Лист ожидания после распродажи</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="promo-codes">Промокоды</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="installments">Рассрочка</label>' +
+      '<label class="phab-subscriptions-field"><span>Upgrade / downgrade</span><select class="phab-admin-input" data-cap="upgrade-mode"><option value="DISABLED">Отключено</option><option value="MANUAL">Вручную</option><option value="PRORATED">Пропорционально</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Досрочный возврат</span><select class="phab-admin-input" data-cap="refund-mode"><option value="MANUAL">Вручную</option><option value="PRORATED">Пропорционально</option><option value="NONE">Запрещён</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Cooling-off, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="cooling-off-days"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="giftable">Можно подарить</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="transferable">Можно передать</label>' +
+      '<label class="phab-subscriptions-field"><span>Мест в семейной</span><input class="phab-admin-input" type="number" min="1" value="1" data-cap="family-seats"></label>' +
+      '<label class="phab-subscriptions-field"><span>Мест в корпоративной</span><input class="phab-admin-input" type="number" min="1" value="1" data-cap="corporate-seats"></label>' +
+      '<label class="phab-subscriptions-field"><span>Одновременных подписок</span><input class="phab-admin-input" type="number" min="1" value="1" data-cap="concurrent-subscriptions"></label>' +
+      '<label class="phab-subscriptions-field"><span>Приоритет списания</span><select class="phab-admin-input" data-cap="consumption-priority"><option value="EXPIRING_FIRST">Сначала истекающая</option><option value="SUBSCRIPTION_FIRST">Сначала подписка</option><option value="MANUAL">Выбор клиента</option></select></label>' +
+      '</div></details>' +
+      '<details><summary>Удержание и аналитика</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="show-savings">Показывать экономию</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="show-break-even">Показывать окупаемость</label>' +
+      '<label class="phab-subscriptions-field"><span>Напоминания до окончания, дней</span><input class="phab-admin-input" value="30, 14, 7, 1" data-cap="reminder-days"></label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="referral-enabled">Реферальная механика</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="renewal-bonus">Бонус за продление</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" data-cap="recommendations">Персональные рекомендации</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-revenue">Выручка</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-refunds">Возвраты</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-breakage">Неиспользованный остаток</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-margin">Маржинальность</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-peak">Пиковая загрузка</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-churn">Churn</label>' +
+      '<label class="phab-subscriptions-check"><input type="checkbox" checked data-cap="track-cohorts">Когорты партий</label>' +
+      '<label class="phab-subscriptions-field"><span>Тег атрибуции</span><input class="phab-admin-input" maxlength="120" placeholder="annual-2026" data-cap="attribution-tag"></label>' +
+      '</div></details>' +
+      '</div>' +
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-policy-create>Сохранить версию правил</button></div>' +
       '</form><div class="phab-subscriptions-list" data-subscription-policy-result></div></section>' +
       '<section class="phab-subscriptions-card"><h3>Программа выпуска</h3><p>Лестница цен или ежедневная выдача. Счётчики в DRAFT всегда нулевые.</p>' +
@@ -9451,6 +9533,7 @@
     var subscriptionActiveScopeInput = subscriptionsSection.querySelector('[data-subscription-active-scope]');
     var subscriptionUnitInputs = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscription-unit]'));
     var subscriptionBenefits = subscriptionsSection.querySelector('[data-subscription-benefits]');
+    var subscriptionCapabilities = subscriptionsSection.querySelector('[data-subscription-capabilities]');
     var subscriptionPolicyCreateBtn = subscriptionsSection.querySelector('[data-subscription-policy-create]');
     var subscriptionPolicyResult = subscriptionsSection.querySelector('[data-subscription-policy-result]');
     var subscriptionReleaseForm = subscriptionsSection.querySelector('[data-subscription-release-form]');
@@ -12833,6 +12916,7 @@
       subscriptionActiveScopeInput: subscriptionActiveScopeInput,
       subscriptionUnitInputs: subscriptionUnitInputs,
       subscriptionBenefits: subscriptionBenefits,
+      subscriptionCapabilities: subscriptionCapabilities,
       subscriptionPolicyCreateBtn: subscriptionPolicyCreateBtn,
       subscriptionPolicyResult: subscriptionPolicyResult,
       subscriptionReleaseForm: subscriptionReleaseForm,
@@ -35969,7 +36053,14 @@
         var policyTitle = document.createElement('strong');
         policyTitle.textContent = 'Версия ' + String(state.subscriptions.lastPolicy.version) + ' · ' + state.subscriptions.lastPolicy.status;
         var policyMeta = document.createElement('small');
-        policyMeta.textContent = String(state.subscriptions.lastPolicy.validityDays) + ' дней · окно ' + String(state.subscriptions.lastPolicy.bookingWindowDays) + ' дней · лимит ' + String(state.subscriptions.lastPolicy.maxActiveServices);
+        var capabilities = state.subscriptions.lastPolicy.capabilities || {};
+        var lifecycle = capabilities.lifecycle || {};
+        var commerce = capabilities.commerce || {};
+        policyMeta.textContent = String(state.subscriptions.lastPolicy.validityDays) +
+          ' дней · окно ' + String(state.subscriptions.lastPolicy.bookingWindowDays) +
+          ' дней · лимит ' + String(state.subscriptions.lastPolicy.maxActiveServices) +
+          ' · активация ' + String(lifecycle.activationMode || 'PURCHASE') +
+          ' · продление ' + String(commerce.renewalMode || 'MANUAL');
         policyCard.appendChild(policyTitle);
         policyCard.appendChild(policyMeta);
         dom.subscriptionPolicyResult.appendChild(policyCard);
@@ -35997,6 +36088,113 @@
           return rule;
         })
         .filter(Boolean);
+    }
+
+    function subscriptionCapabilitiesPayload() {
+      function field(name) {
+        return dom.subscriptionCapabilities.querySelector('[data-cap="' + name + '"]');
+      }
+      function number(name) {
+        return Number(field(name).value || 0);
+      }
+      function optionalNumber(name) {
+        var value = String(field(name).value || '').trim();
+        return value ? Number(value) : null;
+      }
+      function checked(name) {
+        return Boolean(field(name).checked);
+      }
+      var activationMode = field('activation-mode').value;
+      var fixedActivationValue = String(field('fixed-activation-at').value || '').trim();
+      var fixedActivationAt = null;
+      if (activationMode === 'FIXED_DATE' && fixedActivationValue) {
+        fixedActivationAt = new Date(fixedActivationValue + ':00+03:00').toISOString();
+      }
+      return {
+        lifecycle: {
+          activationMode: activationMode,
+          activationWindowDays: number('activation-window'),
+          fixedActivationAt: fixedActivationAt,
+          fixedActivationTimeZone: 'Europe/Moscow',
+          gracePeriodDays: number('grace-period'),
+          allowBookingsAfterExpiry: checked('book-after-expiry'),
+          freeze: {
+            enabled: checked('freeze-enabled'),
+            maxDaysPerYear: number('freeze-days'),
+            maxPeriodsPerYear: number('freeze-periods'),
+            minDaysPerPeriod: number('freeze-min-days'),
+            extendsValidity: checked('freeze-extends')
+          },
+          adminExtension: {
+            enabled: checked('admin-extension-enabled'),
+            maxDays: number('admin-extension-days'),
+            reasonRequired: checked('admin-extension-reason')
+          }
+        },
+        usage: {
+          weeklyUsageLimit: optionalNumber('weekly-limit'),
+          monthlyUsageLimit: optionalNumber('monthly-limit'),
+          maxFutureBookings: optionalNumber('future-bookings'),
+          minHoursBetweenUses: number('min-hours-between'),
+          guestPassesPerMonth: number('guest-passes'),
+          earlyBookingAccessHours: number('early-access'),
+          waitlistPriority: checked('waitlist-priority'),
+          crossStationMode: field('cross-station-mode').value,
+          crossStationSurchargeMinor: Math.round(number('cross-station-surcharge') * 100),
+          blackoutDates: splitSubscriptionIds(field('blackout-dates').value)
+        },
+        cancellation: {
+          freeCancellationHours: {
+            GAME: number('cancel-game-hours'),
+            GROUP_TRAINING: number('cancel-group-hours'),
+            TOURNAMENT: number('cancel-tournament-hours')
+          },
+          lateCancellationUsageUnits: number('late-cancel-units'),
+          noShowUsageUnits: number('no-show-units'),
+          noShowBlockDays: number('no-show-block-days'),
+          stationCancellationRestoresUsage: checked('station-cancel-restores'),
+          reschedulePolicy: field('reschedule-policy').value
+        },
+        commerce: {
+          renewalMode: field('renewal-mode').value,
+          renewalWindowDays: number('renewal-window'),
+          priceLockEnabled: checked('price-lock'),
+          renewalDiscountPercent: number('renewal-discount'),
+          purchaseLimitPerClient: number('purchase-limit'),
+          reservationTtlMinutes: number('reservation-ttl'),
+          waitlistWhenSoldOut: checked('sold-out-waitlist'),
+          promoCodesAllowed: checked('promo-codes'),
+          installmentsAllowed: checked('installments'),
+          upgradeDowngradeMode: field('upgrade-mode').value,
+          terminationRefundMode: field('refund-mode').value,
+          coolingOffDays: number('cooling-off-days'),
+          giftable: checked('giftable'),
+          transferable: checked('transferable'),
+          familySeats: number('family-seats'),
+          corporateSeats: number('corporate-seats'),
+          maxConcurrentSubscriptions: number('concurrent-subscriptions'),
+          consumptionPriority: field('consumption-priority').value
+        },
+        engagement: {
+          showSavings: checked('show-savings'),
+          showBreakEvenProgress: checked('show-break-even'),
+          expirationReminderDays: splitSubscriptionIds(field('reminder-days').value)
+            .map(function (value) { return Number(value); }),
+          referralEnabled: checked('referral-enabled'),
+          renewalBonusEnabled: checked('renewal-bonus'),
+          personalizedRecommendationsEnabled: checked('recommendations')
+        },
+        analytics: {
+          trackRevenue: checked('track-revenue'),
+          trackRefunds: checked('track-refunds'),
+          trackBreakage: checked('track-breakage'),
+          trackMargin: checked('track-margin'),
+          trackPeakLoad: checked('track-peak'),
+          trackChurn: checked('track-churn'),
+          trackCohorts: checked('track-cohorts'),
+          attributionTag: String(field('attribution-tag').value || '').trim() || null
+        }
+      };
     }
 
     async function loadSubscriptions() {
@@ -36086,7 +36284,8 @@
         dailyUsageLimit: Number(dom.subscriptionDailyLimitInput.value || 0),
         activeServiceScope: dom.subscriptionActiveScopeInput.value,
         usageUnitsByDuration: usageUnits,
-        benefitRules: subscriptionBenefitRulesPayload()
+        benefitRules: subscriptionBenefitRulesPayload(),
+        capabilities: subscriptionCapabilitiesPayload()
       };
       var createdPolicy = await api.createSubscriptionPolicyVersion(
         dom.subscriptionPolicyTypeInput.value,

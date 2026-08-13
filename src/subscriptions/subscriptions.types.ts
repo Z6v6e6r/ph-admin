@@ -2,6 +2,19 @@ export type SubscriptionTypeState = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
 export type SubscriptionPolicyStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
 export type SubscriptionPolicyApplyTo = 'NEW_ONLY' | 'ACTIVE_AND_NEW';
 export type ActiveServiceScope = 'SUBSCRIPTION_BENEFIT_ONLY' | 'ALL_BOOKINGS';
+export type SubscriptionActivationMode = 'PURCHASE' | 'FIRST_USE' | 'FIXED_DATE';
+export type SubscriptionRenewalMode = 'DISABLED' | 'MANUAL' | 'AUTO';
+export type SubscriptionRefundMode = 'NONE' | 'MANUAL' | 'PRORATED';
+export type SubscriptionUpgradeMode = 'DISABLED' | 'MANUAL' | 'PRORATED';
+export type SubscriptionConsumptionPriority =
+  | 'EXPIRING_FIRST'
+  | 'SUBSCRIPTION_FIRST'
+  | 'MANUAL';
+export type SubscriptionCrossStationMode =
+  | 'HOME_ONLY'
+  | 'ALLOWED'
+  | 'ALLOWED_WITH_SURCHARGE';
+export type SubscriptionReschedulePolicy = 'KEEP_RESERVATION' | 'REVALIDATE';
 export type EventCategory = 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
 export type BenefitKind =
   | 'FREE_ENTITLEMENT'
@@ -43,7 +56,89 @@ export interface BenefitRule {
   priority: number;
 }
 
+export interface SubscriptionCapabilities {
+  lifecycle: {
+    activationMode: SubscriptionActivationMode;
+    activationWindowDays: number;
+    fixedActivationAt: string | null;
+    fixedActivationTimeZone: 'Europe/Moscow';
+    gracePeriodDays: number;
+    allowBookingsAfterExpiry: boolean;
+    freeze: {
+      enabled: boolean;
+      maxDaysPerYear: number;
+      maxPeriodsPerYear: number;
+      minDaysPerPeriod: number;
+      extendsValidity: boolean;
+    };
+    adminExtension: {
+      enabled: boolean;
+      maxDays: number;
+      reasonRequired: boolean;
+    };
+  };
+  usage: {
+    weeklyUsageLimit: number | null;
+    monthlyUsageLimit: number | null;
+    maxFutureBookings: number | null;
+    minHoursBetweenUses: number;
+    guestPassesPerMonth: number;
+    earlyBookingAccessHours: number;
+    waitlistPriority: boolean;
+    crossStationMode: SubscriptionCrossStationMode;
+    crossStationSurchargeMinor: number;
+    blackoutDates: string[];
+  };
+  cancellation: {
+    freeCancellationHours: Record<EventCategory, number>;
+    lateCancellationUsageUnits: number;
+    noShowUsageUnits: number;
+    noShowBlockDays: number;
+    stationCancellationRestoresUsage: boolean;
+    reschedulePolicy: SubscriptionReschedulePolicy;
+  };
+  commerce: {
+    renewalMode: SubscriptionRenewalMode;
+    renewalWindowDays: number;
+    priceLockEnabled: boolean;
+    renewalDiscountPercent: number;
+    purchaseLimitPerClient: number;
+    reservationTtlMinutes: number;
+    waitlistWhenSoldOut: boolean;
+    promoCodesAllowed: boolean;
+    installmentsAllowed: boolean;
+    upgradeDowngradeMode: SubscriptionUpgradeMode;
+    terminationRefundMode: SubscriptionRefundMode;
+    coolingOffDays: number;
+    giftable: boolean;
+    transferable: boolean;
+    familySeats: number;
+    corporateSeats: number;
+    maxConcurrentSubscriptions: number;
+    consumptionPriority: SubscriptionConsumptionPriority;
+  };
+  engagement: {
+    showSavings: boolean;
+    showBreakEvenProgress: boolean;
+    expirationReminderDays: number[];
+    referralEnabled: boolean;
+    renewalBonusEnabled: boolean;
+    personalizedRecommendationsEnabled: boolean;
+  };
+  analytics: {
+    trackRevenue: boolean;
+    trackRefunds: boolean;
+    trackBreakage: boolean;
+    trackMargin: boolean;
+    trackPeakLoad: boolean;
+    trackChurn: boolean;
+    trackCohorts: boolean;
+    attributionTag: string | null;
+  };
+}
+
 export interface SubscriptionPolicyVersion {
+  modelVersion: 2;
   subscriptionTypeId: string;
   version: number;
   revision: number;
@@ -66,6 +161,7 @@ export interface SubscriptionPolicyVersion {
   activeServiceScope: ActiveServiceScope;
   usageUnitsByDuration: { '60': number; '90': number; '120': number };
   benefitRules: BenefitRule[];
+  capabilities: SubscriptionCapabilities;
   createdAt: string;
   createdBy: string;
 }
@@ -126,7 +222,7 @@ export interface StoredSubscriptionType extends SubscriptionType {
 }
 
 export interface StoredSubscriptionPolicyVersion extends SubscriptionPolicyVersion {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   idempotency: SubscriptionIdempotency;
 }
 
