@@ -65,9 +65,17 @@ function createCustomTournament(id: string, sourceTournamentId: string, startsAt
   };
 }
 
-function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
+function withSnapshotEnv<T>(
+  callback: () => Promise<T>,
+  options?: {
+    refreshEnabled?: boolean;
+    publicRevalidationEnabled?: boolean | null;
+  }
+): Promise<T> {
   const originalReadModelEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL;
   const originalRefreshEnabled = process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED;
+  const originalPublicRevalidationEnabled =
+    process.env.VIVA_TOURNAMENT_SNAPSHOT_PUBLIC_REVALIDATION_ENABLED;
   const originalTick = process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS;
   const originalPastDays = process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS;
   const originalHydrateRetryMs = process.env.VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS;
@@ -75,7 +83,14 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   const originalTournamentsMongoUri = process.env.TOURNAMENTS_MONGODB_URI;
   const originalMongoUriFallback = process.env.MONGODB_URI;
   process.env.VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL = 'true';
-  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = 'true';
+  process.env.VIVA_TOURNAMENT_SNAPSHOT_ENABLED = String(options?.refreshEnabled ?? true);
+  if (options?.publicRevalidationEnabled === null) {
+    delete process.env.VIVA_TOURNAMENT_SNAPSHOT_PUBLIC_REVALIDATION_ENABLED;
+  } else {
+    process.env.VIVA_TOURNAMENT_SNAPSHOT_PUBLIC_REVALIDATION_ENABLED = String(
+      options?.publicRevalidationEnabled ?? true
+    );
+  }
   process.env.VIVA_TOURNAMENT_SNAPSHOT_TICK_MS = '600000';
   process.env.VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS = '10000';
   delete process.env.VIVA_TOURNAMENT_SNAPSHOT_MONGODB_URI;
@@ -85,6 +100,10 @@ function withSnapshotEnv<T>(callback: () => Promise<T>): Promise<T> {
   return callback().finally(() => {
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', originalReadModelEnabled);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_ENABLED', originalRefreshEnabled);
+    restoreEnv(
+      'VIVA_TOURNAMENT_SNAPSHOT_PUBLIC_REVALIDATION_ENABLED',
+      originalPublicRevalidationEnabled
+    );
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_TICK_MS', originalTick);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_PAST_DAYS', originalPastDays);
     restoreEnv('VIVA_TOURNAMENT_SNAPSHOT_HYDRATE_RETRY_MS', originalHydrateRetryMs);
@@ -248,6 +267,12 @@ async function testManualDayRefreshWorksWithBackgroundRefreshDisabled(): Promise
   delete process.env.MONGODB_URI;
 
   let calls = 0;
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
   const snapshotService = new VivaTournamentSnapshotService({
     listTournaments: async () => {
       calls += 1;
@@ -784,6 +809,67 @@ async function testPublicDateRevalidationCoalescesConcurrentPageLoads(): Promise
   });
 }
 
+async function testPublicDateRevalidationWorksWithBackgroundRefreshDisabled(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    const date = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async (options?: { date?: string; includePast?: boolean }) => {
+        calls += 1;
+        assert.deepEqual(options, { date, includePast: true });
+        return [createTournament('public-background-off', `${date}T19:00:00+03:00`)];
+      }
+    } as never);
+
+    try {
+      const result = await snapshotService.revalidateDateIfStale(date);
+      assert.equal(result.enabled, true);
+      assert.equal(result.refreshed, true);
+      assert.equal(result.reason, 'refreshed');
+      assert.equal(calls, 1);
+      assert.equal(snapshotService.getDiagnostics().refreshEnabled, false);
+      assert.equal(snapshotService.getDiagnostics().publicDateRevalidationEnabled, true);
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  }, { refreshEnabled: false, publicRevalidationEnabled: null });
+}
+
+async function testPublicDateRevalidationCanBeDisabledIndependently(): Promise<void> {
+  await withSnapshotEnv(async () => {
+    let calls = 0;
+    const date = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const snapshotService = new VivaTournamentSnapshotService({
+      listTournaments: async () => {
+        calls += 1;
+        return [];
+      }
+    } as never);
+
+    try {
+      const result = await snapshotService.revalidateDateIfStale(date);
+      assert.equal(result.enabled, false);
+      assert.equal(result.refreshed, false);
+      assert.equal(result.reason, 'disabled');
+      assert.equal(calls, 0);
+      assert.equal(snapshotService.getDiagnostics().refreshEnabled, true);
+      assert.equal(snapshotService.getDiagnostics().publicDateRevalidationEnabled, false);
+    } finally {
+      await snapshotService.onModuleDestroy();
+    }
+  }, { publicRevalidationEnabled: false });
+}
+
 async function testPublicDateRevalidationBypassesManualCooldownForAnotherDate(): Promise<void> {
   await withSnapshotEnv(async () => {
     const today = new Intl.DateTimeFormat('en-CA', {
@@ -955,7 +1041,7 @@ async function testListEnvelopeWaitsForOnlyDayRefresh(): Promise<void> {
       getFreshnessMetadata: (requestedDate: string) => {
         freshnessDate = requestedDate;
         return {
-          refreshEnabled: true,
+          refreshEnabled: false,
           readModelEnabled: true,
           refreshInProgress: false,
           stale: false,
@@ -976,6 +1062,7 @@ async function testListEnvelopeWaitsForOnlyDayRefresh(): Promise<void> {
   assert.equal(response.refreshCompleted, true);
   assert.equal(response.refreshReason, 'refreshed');
   assert.equal(response.refreshInProgress, false);
+  assert.equal(response.snapshotRefreshEnabled, true);
   assert.equal(response.stale, false);
   assert.equal(liveVivaCalls, 0);
 }
@@ -994,6 +1081,8 @@ async function main(): Promise<void> {
   await testPublicDirectoryIncludesSnapshotFreshness();
   await testPublicDirectoryDoesNotFallbackToLiveViva();
   await testPublicDateRevalidationCoalescesConcurrentPageLoads();
+  await testPublicDateRevalidationWorksWithBackgroundRefreshDisabled();
+  await testPublicDateRevalidationCanBeDisabledIndependently();
   await testPublicDateRevalidationBypassesManualCooldownForAnotherDate();
   await testPublicDateRevalidationHasGlobalBudgetAcrossDates();
   await testListEnvelopeWaitsForOnlyDayRefresh();

@@ -394,7 +394,7 @@ export class TournamentsService {
             stale: freshness.stale,
             refreshInProgress: freshness.refreshInProgress,
             snapshotAvailable: freshness.snapshotAvailable,
-            snapshotRefreshEnabled: freshness.refreshEnabled,
+            snapshotRefreshEnabled: revalidation.enabled,
             snapshotReadModelEnabled: freshness.readModelEnabled,
             ...(freshness.snapshotAgeMs !== undefined
               ? { snapshotAgeMs: freshness.snapshotAgeMs }

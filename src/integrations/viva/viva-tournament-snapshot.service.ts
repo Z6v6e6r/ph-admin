@@ -25,6 +25,7 @@ export interface VivaTournamentSnapshot {
 export interface VivaTournamentSnapshotDiagnostics {
   enabled: boolean;
   refreshEnabled: boolean;
+  publicDateRevalidationEnabled: boolean;
   readModelEnabled: boolean;
   mongoEnabled: boolean;
   inProgress: boolean;
@@ -103,6 +104,10 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private readonly refreshEnabled = this.readBooleanEnv(
     'VIVA_TOURNAMENT_SNAPSHOT_ENABLED',
     this.readModelEnabled
+  );
+  private readonly publicDateRevalidationEnabled = this.readBooleanEnv(
+    'VIVA_TOURNAMENT_SNAPSHOT_PUBLIC_REVALIDATION_ENABLED',
+    this.refreshEnabled || this.readModelEnabled
   );
   private readonly activeRefreshIntervalMs = this.readPositiveNumberEnv(
     'VIVA_TOURNAMENT_SNAPSHOT_ACTIVE_REFRESH_MS',
@@ -225,7 +230,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       throw new Error('Public Viva tournament revalidation requires date in YYYY-MM-DD format');
     }
 
-    if (!this.refreshEnabled) {
+    if (!this.publicDateRevalidationEnabled) {
       return this.buildDayRevalidationResult('disabled', normalizedDate, false, false);
     }
 
@@ -452,8 +457,12 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       ? Date.parse(this.snapshot.lastSuccessfulAt) + intervalMs
       : undefined;
     return {
-      enabled: this.refreshEnabled,
+      enabled:
+        this.refreshEnabled
+        || this.readModelEnabled
+        || this.publicDateRevalidationEnabled,
       refreshEnabled: this.refreshEnabled,
+      publicDateRevalidationEnabled: this.publicDateRevalidationEnabled,
       readModelEnabled: this.readModelEnabled,
       mongoEnabled: Boolean(this.mongoUri),
       inProgress: Boolean(this.refreshPromise),
@@ -851,7 +860,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     const snapshotAgeMs = this.resolveSnapshotAgeMs(snapshot, Date.now(), date);
     const lastSuccessfulAt = this.resolveLastSuccessfulAt(snapshot, date);
     return {
-      enabled: this.refreshEnabled,
+      enabled: this.publicDateRevalidationEnabled,
       scheduled,
       refreshed,
       reason,
