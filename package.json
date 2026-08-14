@@ -23,6 +23,8 @@
     "test:auth-rbac": "ts-node test/auth-rbac.test.ts",
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts",
     "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
+    "test:subscriptions-runtime": "ts-node test/subscriptions-test-runtime.service.test.ts && ts-node test/subscriptions-test-runtime-ui.test.ts && npm run test:subscriptions-runtime:mongo",
+    "test:subscriptions-runtime:mongo": "ts-node test/subscriptions-test-runtime.mongodb.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts"

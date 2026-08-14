@@ -276,6 +276,20 @@ export class SubscriptionsService implements OnModuleDestroy {
     );
   }
 
+  async listPolicyVersions(
+    subscriptionTypeId: string,
+    user?: RequestUser
+  ): Promise<SubscriptionPolicyVersion[]> {
+    this.requireFeatureEnabled();
+    this.requireActor(user);
+    const normalizedTypeId = String(subscriptionTypeId ?? '').trim();
+    if (!normalizedTypeId) throw new NotFoundException('Subscription type not found');
+    const parent = await this.call(() => this.repository.subscriptionTypeById(normalizedTypeId));
+    if (!parent) throw new NotFoundException('Subscription type not found');
+    const rows = await this.call(() => this.repository.listPolicyVersions(normalizedTypeId));
+    return rows.map((row) => this.publicPolicy(row));
+  }
+
   async listReleasePrograms(
     stationId: string | undefined,
     cursor: string | undefined,

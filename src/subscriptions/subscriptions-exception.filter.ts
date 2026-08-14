@@ -17,6 +17,14 @@ const PUBLIC_ERROR_CODES = new Set([
   'NOT_FOUND',
   'POLICY_VERSION_CONFLICT',
   'IDEMPOTENCY_CONFLICT',
+  'SUBSCRIPTIONS_TEST_RUNTIME_DISABLED',
+  'SUBSCRIPTIONS_TEST_HASH_PEPPER_REQUIRED',
+  'TEST_OFFER_SOLD_OUT',
+  'TEST_PURCHASE_LIMIT_REACHED',
+  'TEST_PURCHASE_STATE_CONFLICT',
+  'TEST_INVENTORY_CONTENTION',
+  'TEST_RESERVATION_NOT_PENDING',
+  'TEST_ACTIVATION_BLOCKED',
   'UPSTREAM_UNAVAILABLE'
 ]);
 
@@ -42,6 +50,18 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     const details: Record<string, unknown> = {};
     if (domainCode && domainCode !== code) details.domainCode = domainCode;
     if (Array.isArray(body.message)) details.validationErrors = body.message.map(String);
+    const rawDetails = body.details && typeof body.details === 'object'
+      ? body.details as Record<string, unknown>
+      : null;
+    if (rawDetails && Array.isArray(rawDetails.blockers)) {
+      details.blockers = rawDetails.blockers.flatMap((item) => {
+        if (!item || typeof item !== 'object') return [];
+        const issue = item as Record<string, unknown>;
+        const target = issue.target === 'REAL' || issue.target === 'TEST' ? issue.target : null;
+        if (typeof issue.code !== 'string' || typeof issue.message !== 'string' || !target) return [];
+        return [{ code: issue.code, message: issue.message, target }];
+      });
+    }
 
     response.setHeader('X-Correlation-Id', correlationId);
     response.status(status).json({

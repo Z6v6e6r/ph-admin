@@ -3,6 +3,9 @@ import { MongoClient } from 'mongodb';
 const mode = process.argv.includes('--apply') ? 'apply' : 'check';
 const uri = String(process.env.SUBSCRIPTIONS_MONGODB_URI || process.env.MONGODB_URI || '').trim();
 const dbName = String(process.env.SUBSCRIPTIONS_MONGODB_DB || '').trim();
+const includeTestRuntimeIndexes = ['1', 'true', 'yes'].includes(
+  String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED || '').trim().toLowerCase()
+);
 
 const plan = [
   ['subscription_types', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_type_id_unique' }],
@@ -15,7 +18,26 @@ const plan = [
   ['subscription_release_programs', { releaseProgramId: 1 }, { unique: true, name: 'subscription_release_program_id_unique' }],
   ['subscription_release_programs', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_release_idempotency_unique' }],
   ['subscription_release_programs', { stationId: 1, state: 1, updatedAt: -1, releaseProgramId: 1 }, { name: 'subscription_release_station_list' }],
-  ['subscription_release_programs', { subscriptionTypeId: 1, stationId: 1, state: 1 }, { name: 'subscription_release_type_station_state' }]
+  ['subscription_release_programs', { subscriptionTypeId: 1, stationId: 1, state: 1 }, { name: 'subscription_release_type_station_state' }],
+  ...(includeTestRuntimeIndexes ? [
+    ['subscription_test_offers', { offerId: 1 }, { unique: true, name: 'subscription_test_offer_id_unique' }],
+    ['subscription_test_offers', { accessTokenHash: 1 }, { unique: true, name: 'subscription_test_offer_token_unique' }],
+    ['subscription_test_offers', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_test_offer_idempotency_unique' }],
+    ['subscription_test_offers', { releaseProgramId: 1, policyVersion: 1 }, { unique: true, name: 'subscription_test_offer_program_policy_unique' }],
+    ['subscription_test_offers', { stationId: 1, state: 1, updatedAt: -1 }, { name: 'subscription_test_offer_station_list' }],
+    ['subscription_test_inventories', { offerId: 1 }, { unique: true, name: 'subscription_test_inventory_offer_unique' }],
+    ['subscription_test_reservations', { reservationId: 1 }, { unique: true, name: 'subscription_test_reservation_id_unique' }],
+    ['subscription_test_reservations', { purchaseId: 1 }, { unique: true, name: 'subscription_test_reservation_purchase_unique' }],
+    ['subscription_test_reservations', { offerId: 1, status: 1, expiresAt: 1 }, { name: 'subscription_test_reservation_expiry' }],
+    ['subscription_test_purchases', { purchaseId: 1 }, { unique: true, name: 'subscription_test_purchase_id_unique' }],
+    ['subscription_test_purchases', { offerId: 1, 'idempotency.keyHash': 1 }, { unique: true, name: 'subscription_test_purchase_idempotency_unique' }],
+    ['subscription_test_purchases', { offerId: 1, clientRefHash: 1, status: 1 }, { name: 'subscription_test_purchase_client_status' }],
+    ['subscription_test_purchases', { offerId: 1, status: 1, expiresAt: 1 }, { name: 'subscription_test_purchase_expiry' }],
+    ['subscription_test_purchases', { offerId: 1, inventoryFinalizedAt: 1, updatedAt: 1, purchaseId: 1, status: 1 }, { name: 'subscription_test_purchase_reconciliation' }],
+    ['subscription_test_events', { eventId: 1 }, { unique: true, name: 'subscription_test_event_id_unique' }],
+    ['subscription_test_events', { offerId: 1, occurredAt: 1 }, { name: 'subscription_test_event_offer_time' }],
+    ['subscription_test_events', { purchaseId: 1, occurredAt: 1 }, { name: 'subscription_test_event_purchase_time' }]
+  ] : [])
 ];
 
 if (!uri || !dbName) {

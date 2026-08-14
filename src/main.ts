@@ -25,6 +25,7 @@ async function bootstrap(): Promise<void> {
       'Authorization',
       'Idempotency-Key',
       'X-Correlation-Id',
+      'X-Subscription-Test-Token',
       'x-user-id',
       'x-user-login',
       'x-user-name',

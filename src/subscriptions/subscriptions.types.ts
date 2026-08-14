@@ -257,3 +257,191 @@ export interface SubscriptionCreateResult<T> {
   replayed: boolean;
   correlationId: string;
 }
+
+export type SubscriptionTestOfferState = 'TEST_ACTIVE' | 'CLOSED';
+export type SubscriptionTestProviderMode = 'FAKE';
+export type SubscriptionTestPurchaseStatus =
+  | 'CREATING'
+  | 'PAYMENT_PENDING'
+  | 'PAID'
+  | 'FAILED'
+  | 'EXPIRED';
+
+export interface SubscriptionTestInventoryPhase {
+  phaseId: string;
+  order: number;
+  activation: ReleasePhaseActivation;
+  totalQuantity: number;
+  price: Money;
+  available: number;
+  reserved: number;
+  sold: number;
+  refunded: number;
+}
+
+export interface SubscriptionTestInventorySnapshot {
+  offerId: string;
+  currentPhaseOrder: number;
+  currentPhase: SubscriptionTestInventoryPhase | null;
+  phases: SubscriptionTestInventoryPhase[];
+  revision: number;
+  updatedAt: string;
+}
+
+export interface SubscriptionTestOfferView {
+  offerId: string;
+  title: string;
+  stationId: string;
+  testOnly: true;
+  providerMode: SubscriptionTestProviderMode;
+  policyVersion: number;
+  currentPhase: SubscriptionTestInventoryPhase | null;
+  phases: SubscriptionTestInventoryPhase[];
+  reservationTtlMinutes: number;
+}
+
+export interface SubscriptionTestActivationResult extends SubscriptionTestOfferView {
+  accessToken: string | null;
+  storefrontPath: string | null;
+  tokenIssued: boolean;
+  replayed: boolean;
+  correlationId: string;
+}
+
+export interface SubscriptionImpactIssue {
+  code: string;
+  message: string;
+  target: 'REAL' | 'TEST';
+}
+
+export interface SubscriptionPolicyImpactPreview {
+  subscriptionTypeId: string;
+  policyVersion: number;
+  policyStatus: SubscriptionPolicyStatus;
+  readOnly: true;
+  realPublication: {
+    blocked: boolean;
+    blockers: SubscriptionImpactIssue[];
+  };
+  testActivation: {
+    allowed: boolean;
+    blockers: SubscriptionImpactIssue[];
+  };
+  warnings: SubscriptionImpactIssue[];
+}
+
+export interface SubscriptionTestReservationResult {
+  purchaseId: string;
+  status: 'PAYMENT_PENDING';
+  priceSnapshot: Money;
+  expiresAt: string;
+}
+
+export interface SubscriptionTestPurchaseView {
+  purchaseId: string;
+  offerId: string;
+  status: Exclude<SubscriptionTestPurchaseStatus, 'CREATING'>;
+  priceSnapshot: Money;
+  expiresAt: string;
+  testOnly: true;
+  providerMode: SubscriptionTestProviderMode;
+  inventory?: SubscriptionTestInventorySnapshot;
+}
+
+export interface StoredSubscriptionTestOffer {
+  schemaVersion: 1;
+  offerId: string;
+  subscriptionTypeId: string;
+  releaseProgramId: string;
+  title: string;
+  stationId: string;
+  timezone: string;
+  state: SubscriptionTestOfferState;
+  testOnly: true;
+  providerMode: SubscriptionTestProviderMode;
+  accessTokenHash: string;
+  policyVersion: number;
+  policySnapshot: SubscriptionPolicyVersion;
+  releaseProgramSnapshot: ReleaseProgram;
+  reservationTtlMinutes: number;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  idempotency: SubscriptionIdempotency;
+}
+
+export interface StoredSubscriptionTestInventory {
+  schemaVersion: 1;
+  offerId: string;
+  currentPhaseOrder: number;
+  phases: SubscriptionTestInventoryPhase[];
+  purchaseMarkers: Record<string, {
+    phaseId: string;
+    clientClaimKey: string;
+    state: 'RESERVED' | 'PAID' | 'FAILED' | 'EXPIRED';
+    updatedAt: string;
+  }>;
+  clientClaimCounts: Record<string, number>;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoredSubscriptionTestReservation {
+  schemaVersion: 1;
+  reservationId: string;
+  purchaseId: string;
+  offerId: string;
+  phaseId: string;
+  clientRefHash: string;
+  status: 'PAYMENT_PENDING' | 'PAID' | 'FAILED' | 'EXPIRED';
+  priceSnapshot: Money;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoredSubscriptionTestPurchase {
+  schemaVersion: 1;
+  purchaseId: string;
+  offerId: string;
+  phaseId: string;
+  phaseOrder: number;
+  accessTokenHash: string;
+  clientRefHash: string;
+  status: SubscriptionTestPurchaseStatus;
+  priceSnapshot: Money;
+  expiresAt: string;
+  testOnly: true;
+  providerMode: SubscriptionTestProviderMode;
+  createdAt: string;
+  updatedAt: string;
+  inventoryFinalizedAt: string | null;
+  idempotency: {
+    keyHash: string;
+    requestHash: string;
+    correlationId: string;
+  };
+  confirmationCommands: Record<string, {
+    requestHash: string;
+    correlationId: string;
+    outcome: 'PAID' | 'FAILED' | 'PENDING';
+  }>;
+}
+
+export interface StoredSubscriptionTestEvent {
+  schemaVersion: 1;
+  eventId: string;
+  eventType:
+    | 'TEST_OFFER_ACTIVATED'
+    | 'PURCHASE_RESERVED'
+    | 'PURCHASE_CONFIRMED'
+    | 'PURCHASE_RELEASED';
+  offerId: string;
+  purchaseId: string | null;
+  stationId: string;
+  correlationId: string;
+  actorId: string | null;
+  occurredAt: string;
+  metadata: Record<string, string | number | boolean | null>;
+}

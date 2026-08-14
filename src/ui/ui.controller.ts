@@ -370,6 +370,10 @@ export class UiController {
         ['1', 'true', 'yes'].includes(
           String(process.env.SUBSCRIPTIONS_ADMIN_ENABLED ?? '').trim().toLowerCase()
         ),
+      subscriptionTestRuntimeEnabled:
+        ['1', 'true', 'yes'].includes(
+          String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase()
+        ),
       notificationApiBaseUrl:
         query.notificationApiBaseUrl?.trim() ||
         String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim() ||
@@ -459,6 +463,178 @@ export class UiController {
 </html>`;
 
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.send(html);
+  }
+
+  @Get('subscription-test')
+  subscriptionTest(
+    @Res() response: Response
+  ): void {
+    const testRuntimeEnabled = ['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase()
+    );
+    if (!testRuntimeEnabled) {
+      response.status(404).send('Subscription test runtime is disabled');
+      return;
+    }
+
+    const html = `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Тестовая покупка подписки</title>
+    ${this.renderBrandMetaTags()}
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; font-family: Inter, Arial, sans-serif; color: #330020; background: linear-gradient(135deg,#cfffb6,#ffe891); }
+      main { width: min(720px, calc(100% - 24px)); margin: 0 auto; padding: 24px 0 40px; }
+      .card { background: rgba(255,255,255,.94); border: 1px solid rgba(51,0,32,.16); border-radius: 20px; padding: 20px; box-shadow: 0 20px 45px rgba(51,0,32,.14); }
+      h1 { margin: 0 0 8px; font: 800 clamp(22px,5vw,34px)/1.05 Inter, Arial, sans-serif; }
+      .badge { display: inline-flex; margin-bottom: 16px; border-radius: 999px; padding: 7px 10px; background: #ddc8fc; font-size: 11px; font-weight: 800; }
+      .warning { margin: 14px 0; border-radius: 12px; padding: 12px; background: #fff4d2; font-size: 12px; line-height: 1.45; }
+      .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 14px 0; }
+      .metric { border-radius: 14px; padding: 12px; background: #f7f4f8; }
+      .metric small { display: block; color: rgba(51,0,32,.62); }
+      .metric strong { display: block; margin-top: 4px; font-size: 18px; }
+      label { display: block; margin: 15px 0 6px; font-size: 12px; font-weight: 800; }
+      input { width: 100%; border: 1px solid rgba(51,0,32,.22); border-radius: 12px; padding: 12px; font-size: 15px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+      button { border: 0; border-radius: 12px; padding: 11px 14px; background: #330020; color: white; font-weight: 800; cursor: pointer; }
+      button.secondary { background: #73536a; }
+      button.danger { background: #b3263f; }
+      button:disabled { opacity: .5; cursor: default; }
+      #status { min-height: 20px; margin-top: 14px; font-size: 13px; white-space: pre-wrap; }
+      #status.error { color: #a21531; }
+      .hidden { display: none; }
+      code { word-break: break-all; }
+      @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } main { padding-top: 12px; } .card { padding: 16px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <span class="badge">FAKE PAYMENT · TEST ONLY</span>
+        <h1 id="title">Тестовая подписка</h1>
+        <div class="warning">Деньги не списываются, Viva не вызывается, клиентская подписка не выпускается. Страница проверяет только тестовый snapshot, резерв, лимиты партии и состояния fake-оплаты.</div>
+        <div id="offer" class="grid"></div>
+        <label for="clientRef">Synthetic tester</label>
+        <input id="clientRef" value="synthetic:+79104303190" maxlength="120" autocomplete="off" />
+        <div class="actions">
+          <button id="reserve" type="button">Зарезервировать и начать покупку</button>
+        </div>
+        <div id="purchase" class="hidden">
+          <div id="purchaseMeta" class="warning"></div>
+          <div class="actions">
+            <button id="paid" type="button">Fake PAID</button>
+            <button id="pending" class="secondary" type="button">Оставить PENDING</button>
+            <button id="failed" class="danger" type="button">Fake FAILED</button>
+          </div>
+        </div>
+        <div id="status" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+    <script>
+      (function () {
+        var fragment = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+        var offerId = String(fragment.get('offerId') || '').trim();
+        var token = String(fragment.get('token') || '').trim();
+        var offer = null;
+        var purchase = null;
+        var reserveIntent = null;
+        var reserveIntentClientRef = '';
+        var confirmIntents = Object.create(null);
+        var statusEl = document.getElementById('status');
+        var reserveBtn = document.getElementById('reserve');
+        var purchaseWrap = document.getElementById('purchase');
+        var purchaseMeta = document.getElementById('purchaseMeta');
+
+        function text(value) { return value == null ? '' : String(value); }
+        function escape(value) { return text(value).replace(/[&<>"']/g, function (char) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]; }); }
+        function money(value) { return new Intl.NumberFormat('ru-RU').format(Math.max(0, Number(value) || 0) / 100) + ' ₽'; }
+        function id() { return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2); }
+        function commandHeaders(prefix, existing) {
+          if (existing) return existing;
+          var value = id();
+          return { 'Content-Type': 'application/json', 'X-Subscription-Test-Token': token, 'Idempotency-Key': prefix + '-' + value, 'X-Correlation-Id': 'test-' + value };
+        }
+        function setStatus(value, error) { statusEl.textContent = value || ''; statusEl.className = error ? 'error' : ''; }
+        async function request(path, options) {
+          var response = await fetch(path, options || {});
+          var body = await response.json().catch(function () { return null; });
+          if (!response.ok) throw new Error((body && body.error && body.error.message) || (body && body.message) || ('HTTP ' + response.status));
+          return body;
+        }
+        function phaseOf(value) { return value.currentPhase || (value.inventory && value.inventory.currentPhase) || null; }
+        function renderOffer(value) {
+          offer = value;
+          var phase = phaseOf(value) || {};
+          var price = phase.price || value.price || {};
+          document.getElementById('title').textContent = text(value.title || value.subscriptionTitle || 'Тестовая подписка');
+          document.getElementById('offer').innerHTML =
+            '<div class="metric"><small>Станция</small><strong>' + escape(value.stationId || '—') + '</strong></div>' +
+            '<div class="metric"><small>Текущая цена</small><strong>' + money(price.amountMinor) + '</strong></div>' +
+            '<div class="metric"><small>Фаза</small><strong>' + escape(phase.order || '—') + '</strong></div>' +
+            '<div class="metric"><small>Доступно / резерв / продано</small><strong>' + escape(phase.available || 0) + ' / ' + escape(phase.reserved || 0) + ' / ' + escape(phase.sold || 0) + '</strong></div>';
+        }
+        async function loadOffer() {
+          if (!offerId || !token) throw new Error('В ссылке отсутствует offerId или test token');
+          renderOffer(await request('/api/v1/subscription-test/offers/' + encodeURIComponent(offerId), {
+            headers: { 'X-Subscription-Test-Token': token }
+          }));
+        }
+        reserveBtn.addEventListener('click', async function () {
+          reserveBtn.disabled = true;
+          setStatus('Создаём атомарный тестовый резерв…', false);
+          try {
+            var clientRef = document.getElementById('clientRef').value;
+            if (!reserveIntent || reserveIntentClientRef !== clientRef) {
+              reserveIntent = commandHeaders('test-reserve', null);
+              reserveIntentClientRef = clientRef;
+            }
+            purchase = await request('/api/v1/subscription-test/offers/' + encodeURIComponent(offerId) + '/reservations', {
+              method: 'POST',
+              headers: reserveIntent,
+              body: JSON.stringify({ clientRef: clientRef })
+            });
+            purchaseWrap.classList.remove('hidden');
+            purchaseMeta.textContent = 'purchaseId: ' + text(purchase.purchaseId) + '\\nstatus: ' + text(purchase.status) + '\\nцена snapshot: ' + money((purchase.priceSnapshot || {}).amountMinor) + '\\nрезерв до: ' + text(purchase.expiresAt);
+            setStatus('Резерв создан. Выберите fake-результат оплаты.', false);
+            await loadOffer();
+          } catch (error) { setStatus(error.message || String(error), true); }
+          finally { reserveBtn.disabled = false; }
+        });
+        async function confirm(outcome) {
+          if (!purchase || !purchase.purchaseId) return;
+          setStatus('Применяем fake ' + outcome + '…', false);
+          try {
+            confirmIntents[outcome] = commandHeaders('test-confirm', confirmIntents[outcome]);
+            purchase = await request('/api/v1/subscription-test/purchases/' + encodeURIComponent(purchase.purchaseId) + '/fake-confirm', {
+              method: 'POST', headers: confirmIntents[outcome],
+              body: JSON.stringify({ outcome: outcome })
+            });
+            purchaseMeta.textContent = 'purchaseId: ' + text(purchase.purchaseId) + '\\nstatus: ' + text(purchase.status) + '\\nцена snapshot: ' + money((purchase.priceSnapshot || {}).amountMinor) + '\\nрезерв до: ' + text(purchase.expiresAt);
+            setStatus('Fake-статус: ' + text(purchase.status), false);
+            await loadOffer();
+          } catch (error) { setStatus(error.message || String(error), true); }
+        }
+        document.getElementById('paid').addEventListener('click', function () { void confirm('PAID'); });
+        document.getElementById('pending').addEventListener('click', function () { void confirm('PENDING'); });
+        document.getElementById('failed').addEventListener('click', function () { void confirm('FAILED'); });
+        loadOffer().catch(function (error) { setStatus(error.message || String(error), true); reserveBtn.disabled = true; });
+      })();
+    </script>
+  </body>
+</html>`;
+
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    );
     response.send(html);
   }
 

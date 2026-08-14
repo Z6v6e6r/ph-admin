@@ -15,6 +15,7 @@
     authToken: '',
     playerRatingAdminEnabled: false,
     subscriptionAdminEnabled: false,
+    subscriptionTestRuntimeEnabled: false,
     notificationApiBaseUrl: '',
     notificationTenantKey: 'local-padel',
     notificationAppVersion: 'phab-cup-local-0.1.0'
@@ -380,6 +381,9 @@
     cfg.subscriptionAdminEnabled =
       cfg.subscriptionAdminEnabled === true ||
       String(cfg.subscriptionAdminEnabled || '').trim().toLowerCase() === 'true';
+    cfg.subscriptionTestRuntimeEnabled =
+      cfg.subscriptionTestRuntimeEnabled === true ||
+      String(cfg.subscriptionTestRuntimeEnabled || '').trim().toLowerCase() === 'true';
     cfg.notificationApiBaseUrl = String(cfg.notificationApiBaseUrl || '').replace(/\/+$/, '');
     cfg.notificationTenantKey = String(cfg.notificationTenantKey || 'local-padel').trim();
     cfg.notificationAppVersion = String(
@@ -8292,6 +8296,20 @@
           { headers: commandHeaders }
         );
       },
+      getSubscriptionPolicyVersions: function (subscriptionTypeId) {
+        return request(
+          '/v1/admin/subscription-types/' + encodeURIComponent(subscriptionTypeId) + '/policy-versions',
+          'GET'
+        );
+      },
+      previewSubscriptionPolicyImpact: function (subscriptionTypeId, version, payload, commandHeaders) {
+        return request(
+          '/v1/admin/subscription-types/' + encodeURIComponent(subscriptionTypeId) + '/policy-versions/' + encodeURIComponent(version) + '/impact-preview',
+          'POST',
+          payload || {},
+          { headers: commandHeaders }
+        );
+      },
       getSubscriptionReleasePrograms: function (query) {
         var params = new URLSearchParams();
         if (query && query.stationId) params.set('stationId', String(query.stationId));
@@ -8301,6 +8319,20 @@
       },
       createSubscriptionReleaseProgram: function (payload, commandHeaders) {
         return request('/v1/admin/subscription-release-programs', 'POST', payload, { headers: commandHeaders });
+      },
+      activateSubscriptionReleaseProgramForTest: function (releaseProgramId, payload, commandHeaders) {
+        return request(
+          '/v1/admin/subscription-release-programs/' + encodeURIComponent(releaseProgramId) + '/test-activate',
+          'POST',
+          payload,
+          { headers: commandHeaders }
+        );
+      },
+      getSubscriptionTestInventory: function (releaseProgramId) {
+        return request(
+          '/v1/admin/subscription-release-programs/' + encodeURIComponent(releaseProgramId) + '/test-inventory',
+          'GET'
+        );
       },
       createQuickReplyRule: function (payload) {
         return request('/messenger/settings/quick-replies', 'POST', payload);
@@ -9417,8 +9449,10 @@
     subscriptionsSection.className = 'phab-subscriptions phab-admin-hidden';
     subscriptionsSection.innerHTML =
       '<section class="phab-subscriptions-hero">' +
-      '<div><h2>Управляемые подписки</h2><p>Черновики годовых правил и поэтапных выпусков. Публикация, продажи и Viva в этом срезе отключены.</p></div>' +
-      '<span class="phab-subscriptions-badge">DRAFT ONLY</span></section>' +
+      '<div><h2>Управляемые подписки</h2><p>Черновики годовых правил и поэтапных выпусков.' +
+      (cfg.subscriptionTestRuntimeEnabled ? ' Тестовый runtime проверяет резерв и fake-оплату без денег и Viva.' : ' Публикация и продажи отключены.') +
+      '</p></div>' +
+      '<span class="phab-subscriptions-badge">' + (cfg.subscriptionTestRuntimeEnabled ? 'DRAFT + TEST ONLY' : 'DRAFT ONLY') + '</span></section>' +
       '<div class="phab-subscriptions-grid">' +
       '<section class="phab-subscriptions-card"><h3>Новый тип подписки</h3><p>Создаётся только карточка каталога.</p>' +
       '<form class="phab-subscriptions-form" data-subscription-type-form>' +
@@ -9524,7 +9558,7 @@
       '</div>' +
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-policy-create>Сохранить версию правил</button></div>' +
       '</form><div class="phab-subscriptions-list" data-subscription-policy-result></div></section>' +
-      '<section class="phab-subscriptions-card"><h3>Программа выпуска</h3><p>Лестница цен или ежедневная выдача. Счётчики в DRAFT всегда нулевые.</p>' +
+      '<section class="phab-subscriptions-card"><h3>Программа выпуска</h3><p>Лестница цен или ежедневная выдача. Тестовый оффер создаётся отдельно и не меняет DRAFT.</p>' +
       '<form class="phab-subscriptions-form" data-subscription-release-form>' +
       '<label class="phab-subscriptions-field"><span>Тип подписки</span><select class="phab-admin-input" data-subscription-release-type required></select></label>' +
       '<label class="phab-subscriptions-field"><span>Station ID</span><input class="phab-admin-input" data-subscription-release-station required></label>' +
@@ -9532,7 +9566,7 @@
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-phase-add>+ Добавить фазу</button></div>' +
       '<div class="phab-subscriptions-phases" data-subscription-phases></div>' +
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-release-create>Сохранить программу DRAFT</button></div>' +
-      '</form><div class="phab-subscriptions-list" data-subscription-programs-list></div></section>';
+      '</form><div class="phab-subscriptions-note">Тестовая ссылка не списывает деньги, не вызывает Viva и не выпускает клиентскую подписку.</div><div class="phab-subscriptions-list" data-subscription-programs-list></div></section>';
     content.appendChild(subscriptionsSection);
     var subscriptionTypeForm = subscriptionsSection.querySelector('[data-subscription-type-form]');
     var subscriptionTypeCodeInput = subscriptionsSection.querySelector('[data-subscription-type-code]');
@@ -14210,6 +14244,9 @@
       subscriptions: {
         types: [],
         programs: [],
+        policyVersionsByType: Object.create(null),
+        testOffersByProgram: Object.create(null),
+        testActionByProgram: Object.create(null),
         lastPolicy: null,
         loaded: false,
         loading: false,
@@ -36252,6 +36289,59 @@
           }).join(' → ');
           card.appendChild(title);
           card.appendChild(meta);
+          if (cfg.subscriptionTestRuntimeEnabled) {
+            var versions = state.subscriptions.policyVersionsByType[program.subscriptionTypeId] || [];
+            var latestPolicy = versions.slice().sort(function (left, right) {
+              return Number(right.version || 0) - Number(left.version || 0);
+            })[0] || null;
+            var action = state.subscriptions.testActionByProgram[program.releaseProgramId] || null;
+            var controls = document.createElement('div');
+            controls.className = 'phab-subscriptions-actions';
+            var previewBtn = document.createElement('button');
+            previewBtn.className = 'phab-admin-btn-secondary';
+            previewBtn.type = 'button';
+            previewBtn.textContent = 'Проверить готовность';
+            previewBtn.disabled = !latestPolicy || Boolean(action && action.busy);
+            previewBtn.addEventListener('click', function () {
+              previewSubscriptionTestImpact(program, latestPolicy).catch(handleError);
+            });
+            controls.appendChild(previewBtn);
+            var activateBtn = document.createElement('button');
+            activateBtn.className = 'phab-admin-btn';
+            activateBtn.type = 'button';
+            activateBtn.textContent = 'Создать тестовую ссылку';
+            activateBtn.disabled = !canManageSubscriptionRelease(cfg) || !latestPolicy || Boolean(action && action.busy);
+            activateBtn.addEventListener('click', function () {
+              activateSubscriptionProgramForTest(program, latestPolicy).catch(handleError);
+            });
+            controls.appendChild(activateBtn);
+            card.appendChild(controls);
+            if (!latestPolicy) {
+              var missingPolicy = document.createElement('small');
+              missingPolicy.textContent = 'Сначала сохраните версию правил.';
+              card.appendChild(missingPolicy);
+            }
+            if (action && action.message) {
+              var actionMessage = document.createElement('small');
+              actionMessage.textContent = action.message;
+              card.appendChild(actionMessage);
+            }
+            var testOffer = state.subscriptions.testOffersByProgram[program.releaseProgramId] || null;
+            if (testOffer && testOffer.storefrontPath) {
+              var link = document.createElement('a');
+              link.className = 'phab-admin-btn-secondary';
+              link.href = testOffer.storefrontPath;
+              link.target = '_blank';
+              link.rel = 'noopener noreferrer';
+              link.textContent = 'Открыть тестовую покупку';
+              link.setAttribute('aria-label', 'Открыть тестовую покупку без списания денег');
+              card.appendChild(link);
+              var offerMeta = document.createElement('small');
+              offerMeta.textContent = 'TEST ONLY · offerId ' + String(testOffer.offerId || '—') +
+                (testOffer.accessToken ? ' · новая одноразово показанная ссылка' : ' · существующий оффер');
+              card.appendChild(offerMeta);
+            }
+          }
           dom.subscriptionProgramsList.appendChild(card);
         });
       }
@@ -36414,6 +36504,79 @@
       };
     }
 
+    async function previewSubscriptionTestImpact(program, policy) {
+      if (!program || !policy) return;
+      var programId = program.releaseProgramId;
+      state.subscriptions.testActionByProgram[programId] = { busy: true, message: 'Проверяем правила…' };
+      renderSubscriptions();
+      try {
+        var preview = await api.previewSubscriptionPolicyImpact(
+          program.subscriptionTypeId,
+          policy.version,
+          { releaseProgramId: programId },
+          subscriptionCommandHeaders('preview-' + programId)
+        );
+        var realBlockers = normalizeArray(preview && preview.realPublication && preview.realPublication.blockers);
+        var testBlockers = normalizeArray(preview && preview.testActivation && preview.testActivation.blockers);
+        var warnings = normalizeArray(preview && preview.warnings);
+        var lines = [
+          'Боевой запуск: ' + (preview && preview.realPublication && preview.realPublication.blocked ? 'ЗАБЛОКИРОВАН' : 'готов'),
+          'Тестовый запуск: ' + (preview && preview.testActivation && preview.testActivation.allowed ? 'разрешён' : 'заблокирован')
+        ];
+        realBlockers.concat(testBlockers).concat(warnings).slice(0, 8).forEach(function (item) {
+          lines.push(String(item.code || 'CHECK') + ': ' + String(item.message || ''));
+        });
+        state.subscriptions.testActionByProgram[programId] = { busy: false, message: lines.join(' · ') };
+        setStatus('Impact preview выполнен без публикации', false);
+      } catch (error) {
+        state.subscriptions.testActionByProgram[programId] = {
+          busy: false,
+          message: 'Проверка не выполнена: ' + String(error && error.message ? error.message : error)
+        };
+        throw error;
+      } finally {
+        if (state.subscriptions.testActionByProgram[programId] && state.subscriptions.testActionByProgram[programId].busy) {
+          state.subscriptions.testActionByProgram[programId].busy = false;
+        }
+        renderSubscriptions();
+      }
+    }
+
+    async function activateSubscriptionProgramForTest(program, policy) {
+      if (!program || !policy) return;
+      var programId = program.releaseProgramId;
+      var intent = 'test-activate-' + programId;
+      state.subscriptions.testActionByProgram[programId] = { busy: true, message: 'Создаём изолированный fake-оффер…' };
+      renderSubscriptions();
+      try {
+        var offer = await api.activateSubscriptionReleaseProgramForTest(
+          programId,
+          { policyVersion: Number(policy.version) },
+          subscriptionCommandHeaders(intent)
+        );
+        state.subscriptions.commandHeaders[intent] = null;
+        state.subscriptions.testOffersByProgram[programId] = offer;
+        state.subscriptions.testActionByProgram[programId] = {
+          busy: false,
+          message: offer && offer.storefrontPath
+            ? 'Ссылка создана. Она ведёт только в fake-контур.'
+            : 'Оффер уже существует; секретная ссылка повторно не раскрывается.'
+        };
+        setStatus('Тестовый оффер создан без Viva и реальной оплаты', false);
+      } catch (error) {
+        state.subscriptions.testActionByProgram[programId] = {
+          busy: false,
+          message: 'Тестовый оффер не создан: ' + String(error && error.message ? error.message : error)
+        };
+        throw error;
+      } finally {
+        if (state.subscriptions.testActionByProgram[programId] && state.subscriptions.testActionByProgram[programId].busy) {
+          state.subscriptions.testActionByProgram[programId].busy = false;
+        }
+        renderSubscriptions();
+      }
+    }
+
     async function loadSubscriptions() {
       if (!canAccessSubscriptions(cfg) || state.subscriptions.loading) return;
       state.subscriptions.loading = true;
@@ -36435,6 +36598,18 @@
         ]);
         state.subscriptions.types = results[0];
         state.subscriptions.programs = results[1];
+        state.subscriptions.policyVersionsByType = Object.create(null);
+        if (cfg.subscriptionTestRuntimeEnabled) {
+          var policyResponses = await Promise.all(state.subscriptions.types.map(function (type) {
+            return api.getSubscriptionPolicyVersions(type.subscriptionTypeId);
+          }));
+          state.subscriptions.types.forEach(function (type, index) {
+            var response = policyResponses[index];
+            state.subscriptions.policyVersionsByType[type.subscriptionTypeId] = normalizeArray(
+              response && response.items ? response.items : response
+            );
+          });
+        }
         state.subscriptions.loaded = true;
         renderSubscriptions();
       } finally {
@@ -36519,6 +36694,15 @@
       );
       state.subscriptions.commandHeaders.policy = null;
       state.subscriptions.lastPolicy = createdPolicy;
+      var policyTypeId = dom.subscriptionPolicyTypeInput.value;
+      if (!state.subscriptions.policyVersionsByType[policyTypeId]) {
+        state.subscriptions.policyVersionsByType[policyTypeId] = [];
+      }
+      if (!state.subscriptions.policyVersionsByType[policyTypeId].some(function (item) {
+        return Number(item.version) === Number(createdPolicy.version);
+      })) {
+        state.subscriptions.policyVersionsByType[policyTypeId].push(createdPolicy);
+      }
       setStatus('Версия правил сохранена как DRAFT', false);
       } finally {
         state.subscriptions.savingPolicy = false;
