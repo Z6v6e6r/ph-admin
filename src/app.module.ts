@@ -8,6 +8,7 @@ import { RequestMetricsInterceptor } from './common/observability/request-metric
 import { RequestMetricsService } from './common/observability/request-metrics.service';
 import { AdminAuditInterceptor } from './common/observability/admin-audit.interceptor';
 import { GamesModule } from './games/games.module';
+import { LkIdentityModule } from './lk-identity/lk-identity.module';
 import { TelegramConnectorModule } from './integrations/telegram/telegram-connector.module';
 import { MessengerModule } from './messenger/messenger.module';
 import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
@@ -26,6 +27,7 @@ import { WebPushModule } from './web-push/web-push.module';
     ClientScriptModule,
     CommunitiesModule,
     GamesModule,
+    LkIdentityModule,
     TournamentsModule,
     MessengerModule,
     PlayerRatingsModule,

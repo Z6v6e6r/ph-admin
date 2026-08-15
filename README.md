@@ -150,6 +150,10 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_PUBLIC_KEYCLOAK_BASE_URL=https://kc.vivacrm.ru` (опционально; база Keycloak/Viva auth для отправки и проверки SMS-кода)
 - `TOURNAMENTS_PUBLIC_KEYCLOAK_REALM=prod` (опционально; realm Keycloak)
 - `TOURNAMENTS_LK_KEYCLOAK_REALM=clients` (опционально; realm access-токена Viva LK для защищённых турнирных операций; по умолчанию `clients`)
+- внутренний verifier LK-токенов для частого чтения result state описан в
+  [`docs/lk-identity-verifier.md`](docs/lk-identity-verifier.md); он проверяет
+  подпись и обязательные claims локально по кешируемому JWKS и не вызывает
+  Viva `/profile` на каждый запрос.
 - `TOURNAMENTS_PUBLIC_TENANT_KEY=iSkq6G` (опционально; tenant/widget key для auth, по умолчанию `VIVA_END_USER_WIDGET_ID` или `iSkq6G`)
 - `TOURNAMENTS_PUBLIC_AUTH_CLIENT_ID=widget` (опционально; client_id для обмена phone+code на токен)
 - `TOURNAMENTS_PUBLIC_AUTH_CHANNEL=cascade` (опционально; канал отправки кода, как в LK)

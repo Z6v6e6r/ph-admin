@@ -21,6 +21,7 @@
     "test:support-dialog-resolution": "ts-node test/support-dialog-resolution.test.ts",
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",
     "test:auth-rbac": "ts-node test/auth-rbac.test.ts",
+    "test:lk-identity": "ts-node test/lk-identity.service.test.ts",
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts",
     "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
     "test:subscriptions-runtime": "ts-node test/subscriptions-test-runtime.service.test.ts && ts-node test/subscriptions-test-runtime-ui.test.ts && npm run test:subscriptions-runtime:mongo",
