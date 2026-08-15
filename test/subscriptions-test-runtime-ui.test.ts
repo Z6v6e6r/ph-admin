@@ -82,6 +82,29 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.match(source, /Источник экземпляров пока не подключён/);
   assert.match(source, /Метрики недоступны до подключения append-only ledger/);
   assert.match(source, /Отсутствующие данные обозначаются «недоступно», а не нулём/);
+  assert.match(source, /phab-subscriptions-card-head/);
+  assert.match(source, /aria-controls="phab-subscription-type-create" data-subscription-type-toggle>\+ Добавить тип/);
+  assert.match(source, /id="phab-subscription-type-create"[^>]+data-subscription-type-form/);
+  assert.match(source, /phab-subscriptions-type-create phab-admin-hidden/);
+  assert.match(source, /<h3>Настройка подписки<\/h3>/);
+  assert.doesNotMatch(source, /Одна неизменяемая версия-кандидат/);
+  assert.match(source, /data-subscription-booking-window>[\s\S]*?<option>1<\/option>[\s\S]*?<option>14<\/option>/);
+  assert.ok(
+    source.indexOf('<span>Присоединение к играм</span>')
+      < source.indexOf('<span>Разрешённый диапазон длительности</span>')
+  );
+  assert.match(source, /renderSubscriptionTypeOptions/);
+  assert.match(source, /Math\.min\(4, state\.subscriptions\.types\.length\)/);
+  assert.match(source, /policySummaryFailures\.push\(type\.subscriptionTypeId\)/);
+  assert.match(source, /state\.subscriptions\.loadGeneration !== loadGeneration/);
+  assert.doesNotMatch(source, /policyVersionsByType = Object\.create\(null\);\s*var nextPolicyTypeIndex/);
+  assert.match(source, /cachedSummaryState\.status === 'READY'/);
+  assert.match(source, /Date\.now\(\) - Number\(cachedSummaryState\.fetchedAt \|\| 0\) < 60000/);
+  assert.match(source, /\? 'STALE' : 'UNAVAILABLE'/);
+  assert.match(source, /Сводка правил недоступна/);
+  assert.match(source, /Правил станций:/);
+  assert.match(source, /rule && rule\.enabled && rule\.kind !== 'DISABLED'/);
+  assert.match(source, /else dom\.subscriptionTypeToggleBtn\.focus\(\)/);
   assert.match(source, /async function loadSubscriptionPolicyVersionsForType/);
   assert.match(source, /subscriptionPolicyTypeInput\.addEventListener\('change'/);
   assert.match(source, /state\.subscriptions\.lastPolicy = versions\.slice\(\)\.sort/);

@@ -7475,6 +7475,9 @@
       .phab-subscriptions-unavailable{border:1px dashed rgba(51,0,32,.24);border-radius:14px;background:rgba(255,248,239,.7);padding:18px;color:rgba(51,0,32,.7);line-height:1.5}
       .phab-subscriptions-grid{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(360px,1.2fr);gap:14px}
       .phab-subscriptions-card{padding:16px;min-width:0}
+      .phab-subscriptions-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+      .phab-subscriptions-card-head .phab-admin-btn-secondary{flex:0 0 auto}
+      .phab-subscriptions-type-create{margin-top:12px;padding:12px;border:1px solid rgba(51,0,32,.1);border-radius:12px;background:rgba(248,246,249,.72)}
       .phab-subscriptions-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
       .phab-subscriptions-field{display:flex;min-width:0;flex-direction:column;gap:5px;font-size:10px;font-weight:800}
       .phab-subscriptions-field.is-wide{grid-column:1/-1}
@@ -7486,6 +7489,13 @@
       .phab-subscriptions-item{border:1px solid rgba(51,0,32,.1);border-radius:12px;padding:10px;background:#fff}
       .phab-subscriptions-item strong,.phab-subscriptions-item small{display:block}
       .phab-subscriptions-item small{margin-top:4px;color:rgba(51,0,32,.58)}
+      .phab-subscriptions-type-row{display:flex;align-items:center;justify-content:space-between;gap:14px}
+      .phab-subscriptions-type-copy{min-width:0}
+      .phab-subscriptions-options{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+      .phab-subscriptions-option{display:inline-flex;align-items:center;gap:4px;min-height:25px;border:1px solid rgba(51,0,32,.1);border-radius:999px;background:rgba(182,253,255,.22);padding:3px 8px;color:rgba(51,0,32,.78);font-size:9px;font-weight:800;white-space:nowrap}
+      .phab-subscriptions-option-icon{display:grid;width:14px;height:14px;place-items:center;color:var(--cup-wine)}
+      .phab-subscriptions-option-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+      .phab-subscriptions-option.is-empty{background:rgba(221,200,252,.2);color:rgba(51,0,32,.58)}
       .phab-subscriptions-empty{padding:16px;border:1px dashed rgba(51,0,32,.2);border-radius:12px;color:rgba(51,0,32,.58);font-size:11px;text-align:center}
       .phab-subscriptions-benefits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;grid-column:1/-1}
       .phab-subscriptions-benefit{border:1px solid rgba(51,0,32,.1);border-radius:12px;padding:10px;background:rgba(248,246,249,.75)}
@@ -7553,6 +7563,9 @@
         .phab-admin-notifications-channels{grid-template-columns:1fr}
         .phab-admin-notifications-row{align-items:stretch;flex-direction:column}
         .phab-subscriptions-hero{flex-direction:column}
+        .phab-subscriptions-card-head,.phab-subscriptions-type-row{align-items:stretch;flex-direction:column}
+        .phab-subscriptions-card-head .phab-admin-btn-secondary{align-self:flex-start}
+        .phab-subscriptions-options{justify-content:flex-start}
         .phab-subscriptions-form{grid-template-columns:1fr}
         .phab-subscriptions-capabilities-grid{grid-template-columns:1fr}
         .phab-subscriptions-field.is-wide,.phab-subscriptions-actions{grid-column:1}
@@ -9460,27 +9473,23 @@
       '<span class="phab-subscriptions-badge">' + (cfg.subscriptionTestRuntimeEnabled ? 'DRAFT + TEST ONLY' : 'DRAFT ONLY') + '</span></section>' +
       '<nav class="phab-subscriptions-tabs" aria-label="Разделы подписок"><button class="phab-subscriptions-tab is-active" type="button" data-subscriptions-tab="settings">Настройка подписки</button><button class="phab-subscriptions-tab" type="button" data-subscriptions-tab="instances">Список подписок</button><button class="phab-subscriptions-tab" type="button" data-subscriptions-tab="analytics">Аналитика</button></nav>' +
       '<div class="phab-subscriptions-panel" data-subscriptions-panel="settings">' +
-      '<div class="phab-subscriptions-grid">' +
-      '<section class="phab-subscriptions-card"><h3>Новый тип подписки</h3><p>Создаётся только карточка каталога.</p>' +
-      '<form class="phab-subscriptions-form" data-subscription-type-form>' +
+      '<section class="phab-subscriptions-card"><div class="phab-subscriptions-card-head"><div><h3>Типы подписок</h3><p>Существующие и новые типы. На этом этапе — без активации.</p></div><button class="phab-admin-btn-secondary" type="button" aria-expanded="false" aria-controls="phab-subscription-type-create" data-subscription-type-toggle>+ Добавить тип</button></div>' +
+      '<form id="phab-subscription-type-create" class="phab-subscriptions-form phab-subscriptions-type-create phab-admin-hidden" data-subscription-type-form>' +
       '<label class="phab-subscriptions-field"><span>Код</span><input class="phab-admin-input" data-subscription-type-code placeholder="annual-kotelniki" required></label>' +
       '<label class="phab-subscriptions-field"><span>Название</span><input class="phab-admin-input" data-subscription-type-title placeholder="Годовая — Котельники" required></label>' +
       '<label class="phab-subscriptions-field is-wide"><span>Описание</span><textarea class="phab-admin-input" data-subscription-type-description></textarea></label>' +
-      '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-type-create>Создать черновик</button></div>' +
-      '</form></section>' +
-      '<section class="phab-subscriptions-card"><h3>Типы подписок</h3><p>Существующие и новые типы. На этом этапе — без активации.</p><div class="phab-subscriptions-list" data-subscription-types-list></div></section>' +
-      '</div>' +
-      '<section class="phab-subscriptions-card"><h3>Версия правил</h3><p>Одна неизменяемая версия-кандидат. Изменение действующих подписок появится только после impact preview.</p>' +
+      '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-type-create>Создать черновик</button><button class="phab-admin-btn-secondary" type="button" data-subscription-type-cancel>Отмена</button></div>' +
+      '</form><div class="phab-subscriptions-list" data-subscription-types-list></div></section>' +
+      '<section class="phab-subscriptions-card"><h3>Настройка подписки</h3>' +
       '<form class="phab-subscriptions-form" data-subscription-policy-form>' +
       '<label class="phab-subscriptions-field"><span>Тип подписки</span><select class="phab-admin-input" data-subscription-policy-type required></select></label>' +
       '<label class="phab-subscriptions-field"><span>Действует, дней</span><input class="phab-admin-input" type="number" min="1" max="3660" value="365" data-subscription-validity required></label>' +
       '<label class="phab-subscriptions-field"><span>Применение</span><select class="phab-admin-input" data-subscription-apply-to><option value="NEW_ONLY">Только новые</option><option value="ACTIVE_AND_NEW">Действующие и новые</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Дата-кандидат</span><input class="phab-admin-input" type="datetime-local" data-subscription-effective-at required></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Создание игр</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-create-enabled>Разрешено</label><div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" value="60" checked data-subscription-create-duration>60 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="90" checked data-subscription-create-duration>90 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="120" checked data-subscription-create-duration>120 мин</label></div></div>' +
-      '<label class="phab-subscriptions-field"><span>Присоединение к играм</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-join-enabled>Разрешено</label></label>' +
-      '<label class="phab-subscriptions-field"><span>Диапазон длительности</span><div class="phab-subscriptions-actions"><select class="phab-admin-input" data-subscription-join-min><option>60</option><option>90</option><option>120</option></select><select class="phab-admin-input" data-subscription-join-max><option>60</option><option>90</option><option selected>120</option></select></div></label>' +
+      '<div class="phab-subscriptions-field is-wide"><span>Присоединение к играм</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-join-enabled>Разрешено</label><label class="phab-subscriptions-field"><span>Разрешённый диапазон длительности</span><div class="phab-subscriptions-actions"><select class="phab-admin-input" data-subscription-join-min><option>60</option><option>90</option><option>120</option></select><select class="phab-admin-input" data-subscription-join-max><option>60</option><option>90</option><option selected>120</option></select></div></label></div>' +
       '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="3" data-subscription-active-limit></label>' +
-      '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-booking-window-enabled>Ограничивать</label><select class="phab-admin-input" data-subscription-booking-window><option>3</option><option selected>4</option><option>5</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-booking-window-enabled>Ограничивать</label><select class="phab-admin-input" data-subscription-booking-window><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option><option>13</option><option>14</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Использований в день</span><input class="phab-admin-input" type="number" min="0" value="1" data-subscription-daily-limit></label>' +
       '<label class="phab-subscriptions-field"><span>Что считать активной услугой</span><select class="phab-admin-input" data-subscription-active-scope><option value="SUBSCRIPTION_BENEFIT_ONLY">Только услуги по подписке</option><option value="ALL_BOOKINGS">Все записи</option></select></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
@@ -9582,6 +9591,8 @@
     var subscriptionSectionTabButtons = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscriptions-tab]'));
     var subscriptionSectionPanels = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscriptions-panel]'));
     var subscriptionTypeForm = subscriptionsSection.querySelector('[data-subscription-type-form]');
+    var subscriptionTypeToggleBtn = subscriptionsSection.querySelector('[data-subscription-type-toggle]');
+    var subscriptionTypeCancelBtn = subscriptionsSection.querySelector('[data-subscription-type-cancel]');
     var subscriptionTypeCodeInput = subscriptionsSection.querySelector('[data-subscription-type-code]');
     var subscriptionTypeTitleInput = subscriptionsSection.querySelector('[data-subscription-type-title]');
     var subscriptionTypeDescriptionInput = subscriptionsSection.querySelector('[data-subscription-type-description]');
@@ -12973,6 +12984,8 @@
       subscriptionSectionTabButtons: subscriptionSectionTabButtons,
       subscriptionSectionPanels: subscriptionSectionPanels,
       subscriptionTypeForm: subscriptionTypeForm,
+      subscriptionTypeToggleBtn: subscriptionTypeToggleBtn,
+      subscriptionTypeCancelBtn: subscriptionTypeCancelBtn,
       subscriptionTypeCodeInput: subscriptionTypeCodeInput,
       subscriptionTypeTitleInput: subscriptionTypeTitleInput,
       subscriptionTypeDescriptionInput: subscriptionTypeDescriptionInput,
@@ -14271,6 +14284,8 @@
         types: [],
         programs: [],
         policyVersionsByType: Object.create(null),
+        policySummaryStateByType: Object.create(null),
+        loadGeneration: 0,
         testOffersByProgram: Object.create(null),
         testActionByProgram: Object.create(null),
         lastPolicy: null,
@@ -36312,6 +36327,78 @@
       select.value = selectedValue || '';
     }
 
+    function latestSubscriptionPolicy(subscriptionTypeId) {
+      var versions = state.subscriptions.policyVersionsByType[subscriptionTypeId] || [];
+      return versions.slice().sort(function (left, right) {
+        return Number(right.version || 0) - Number(left.version || 0);
+      })[0] || null;
+    }
+
+    function appendSubscriptionOption(container, iconKey, label, empty) {
+      var option = document.createElement('span');
+      option.className = 'phab-subscriptions-option' + (empty ? ' is-empty' : '');
+      option.setAttribute('title', label);
+      option.setAttribute('aria-label', label);
+      var icon = document.createElement('span');
+      icon.className = 'phab-subscriptions-option-icon';
+      icon.innerHTML = getCommunityPreviewFeedSegmentIconMarkup(iconKey);
+      var text = document.createElement('span');
+      text.textContent = label;
+      option.appendChild(icon);
+      option.appendChild(text);
+      container.appendChild(option);
+    }
+
+    function renderSubscriptionTypeOptions(container, item) {
+      var policy = latestSubscriptionPolicy(item.subscriptionTypeId);
+      var summaryState = state.subscriptions.policySummaryStateByType[item.subscriptionTypeId] || null;
+      if (!policy) {
+        appendSubscriptionOption(
+          container,
+          'NEWS',
+          summaryState && (summaryState.status === 'UNAVAILABLE' || summaryState.status === 'STALE')
+            ? 'Сводка правил недоступна'
+            : 'Правила не настроены',
+          true
+        );
+        return;
+      }
+      if (policy.createGame && policy.createGame.enabled) {
+        appendSubscriptionOption(container, 'GAME', 'Создание игр');
+      }
+      if (policy.joinGame && policy.joinGame.enabled) {
+        appendSubscriptionOption(container, 'GAME', 'Запись на игры');
+      }
+      if (policy.activeServicesLimit && policy.activeServicesLimit.enabled) {
+        appendSubscriptionOption(container, 'NEWS', 'Активных: ' + String(policy.activeServicesLimit.max || '—'));
+      }
+      if (policy.bookingWindow && policy.bookingWindow.enabled) {
+        appendSubscriptionOption(container, 'EVENT', 'Окно: ' + String(policy.bookingWindow.days || '—') + ' д.');
+      }
+      var stationCount = normalizeArray(policy.stationAccessRules).filter(function (rule) { return rule && rule.enabled; }).length;
+      if (stationCount) {
+        appendSubscriptionOption(container, 'ALL', 'Правил станций: ' + String(stationCount));
+      }
+      var benefitCount = normalizeArray(policy.benefitRules).filter(function (rule) {
+        return rule && rule.enabled && rule.kind !== 'DISABLED';
+      }).length;
+      if (benefitCount) {
+        appendSubscriptionOption(container, 'TOURNAMENT', 'Правил льгот: ' + String(benefitCount));
+      }
+      if (summaryState && summaryState.status === 'STALE') {
+        appendSubscriptionOption(container, 'NEWS', 'Показаны последние данные', true);
+      }
+    }
+
+    function setSubscriptionTypeFormOpen(open) {
+      var isOpen = Boolean(open);
+      dom.subscriptionTypeForm.classList.toggle('phab-admin-hidden', !isOpen);
+      dom.subscriptionTypeToggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      dom.subscriptionTypeToggleBtn.textContent = isOpen ? 'Закрыть' : '+ Добавить тип';
+      if (isOpen) dom.subscriptionTypeCodeInput.focus();
+      else dom.subscriptionTypeToggleBtn.focus();
+    }
+
     function renderSubscriptions() {
       clearNode(dom.subscriptionTypesList);
       if (!state.subscriptions.types.length) {
@@ -36319,13 +36406,20 @@
       } else {
         state.subscriptions.types.forEach(function (item) {
           var card = document.createElement('div');
-          card.className = 'phab-subscriptions-item';
+          card.className = 'phab-subscriptions-item phab-subscriptions-type-row';
+          var copy = document.createElement('div');
+          copy.className = 'phab-subscriptions-type-copy';
           var title = document.createElement('strong');
           title.textContent = item.title;
           var meta = document.createElement('small');
           meta.textContent = item.code + ' · ' + item.state + ' · rev ' + String(item.revision || 1);
-          card.appendChild(title);
-          card.appendChild(meta);
+          copy.appendChild(title);
+          copy.appendChild(meta);
+          var options = document.createElement('div');
+          options.className = 'phab-subscriptions-options';
+          renderSubscriptionTypeOptions(options, item);
+          card.appendChild(copy);
+          card.appendChild(options);
           dom.subscriptionTypesList.appendChild(card);
         });
       }
@@ -36414,6 +36508,7 @@
         });
       }
       dom.subscriptionTypeCreateBtn.disabled = !canManageSubscriptionCatalog(cfg) || state.subscriptions.savingType;
+      dom.subscriptionTypeToggleBtn.disabled = !canManageSubscriptionCatalog(cfg) || state.subscriptions.savingType;
       dom.subscriptionPolicyCreateBtn.disabled = !canManageSubscriptionCatalog(cfg) || !state.subscriptions.types.length || state.subscriptions.savingPolicy;
       dom.subscriptionReleaseCreateBtn.disabled = !canManageSubscriptionRelease(cfg) || !state.subscriptions.types.length || state.subscriptions.savingRelease;
       dom.subscriptionPhaseAddBtn.disabled = !canManageSubscriptionRelease(cfg);
@@ -36453,10 +36548,23 @@
       }
       renderSubscriptions();
       if (!Object.prototype.hasOwnProperty.call(state.subscriptions.policyVersionsByType, normalizedTypeId)) {
-        var response = await api.getSubscriptionPolicyVersions(normalizedTypeId);
-        state.subscriptions.policyVersionsByType[normalizedTypeId] = normalizeArray(
-          response && response.items ? response.items : response
-        );
+        try {
+          var response = await api.getSubscriptionPolicyVersions(normalizedTypeId);
+          state.subscriptions.policyVersionsByType[normalizedTypeId] = normalizeArray(
+            response && response.items ? response.items : response
+          );
+          state.subscriptions.policySummaryStateByType[normalizedTypeId] = {
+            status: 'READY',
+            fetchedAt: Date.now()
+          };
+        } catch (error) {
+          state.subscriptions.policySummaryStateByType[normalizedTypeId] = {
+            status: 'UNAVAILABLE',
+            failedAt: Date.now()
+          };
+          renderSubscriptions();
+          throw error;
+        }
       }
       if (dom.subscriptionPolicyTypeInput.value !== normalizedTypeId) return;
       var versions = state.subscriptions.policyVersionsByType[normalizedTypeId] || [];
@@ -36707,6 +36815,8 @@
 
     async function loadSubscriptions() {
       if (!canAccessSubscriptions(cfg) || state.subscriptions.loading) return;
+      var loadGeneration = Number(state.subscriptions.loadGeneration || 0) + 1;
+      state.subscriptions.loadGeneration = loadGeneration;
       state.subscriptions.loading = true;
       try {
         async function loadAllPages(fetchPage) {
@@ -36724,24 +36834,66 @@
           loadAllPages(function (cursor) { return api.getSubscriptionTypes({ cursor: cursor }); }),
           loadAllPages(function (cursor) { return api.getSubscriptionReleasePrograms({ cursor: cursor }); })
         ]);
+        if (state.subscriptions.loadGeneration !== loadGeneration) return;
         state.subscriptions.types = results[0];
         state.subscriptions.programs = results[1];
-        state.subscriptions.policyVersionsByType = Object.create(null);
-        if (cfg.subscriptionTestRuntimeEnabled) {
-          var policyResponses = await Promise.all(state.subscriptions.types.map(function (type) {
-            return api.getSubscriptionPolicyVersions(type.subscriptionTypeId);
-          }));
-          state.subscriptions.types.forEach(function (type, index) {
-            var response = policyResponses[index];
-            state.subscriptions.policyVersionsByType[type.subscriptionTypeId] = normalizeArray(
-              response && response.items ? response.items : response
-            );
-          });
+        var nextPolicyTypeIndex = 0;
+        var policySummaryFailures = [];
+        async function loadNextPolicyType() {
+          while (
+            state.subscriptions.loadGeneration === loadGeneration
+            && nextPolicyTypeIndex < state.subscriptions.types.length
+          ) {
+            var type = state.subscriptions.types[nextPolicyTypeIndex];
+            nextPolicyTypeIndex += 1;
+            var cachedSummaryState = state.subscriptions.policySummaryStateByType[type.subscriptionTypeId] || null;
+            if (
+              cachedSummaryState
+              && cachedSummaryState.status === 'READY'
+              && Date.now() - Number(cachedSummaryState.fetchedAt || 0) < 60000
+            ) {
+              continue;
+            }
+            try {
+              var response = await api.getSubscriptionPolicyVersions(type.subscriptionTypeId);
+              if (state.subscriptions.loadGeneration !== loadGeneration) return;
+              state.subscriptions.policyVersionsByType[type.subscriptionTypeId] = normalizeArray(
+                response && response.items ? response.items : response
+              );
+              state.subscriptions.policySummaryStateByType[type.subscriptionTypeId] = {
+                status: 'READY',
+                fetchedAt: Date.now()
+              };
+            } catch (error) {
+              state.subscriptions.policySummaryStateByType[type.subscriptionTypeId] = {
+                status: Object.prototype.hasOwnProperty.call(
+                  state.subscriptions.policyVersionsByType,
+                  type.subscriptionTypeId
+                ) ? 'STALE' : 'UNAVAILABLE',
+                failedAt: Date.now(),
+                fetchedAt: cachedSummaryState && cachedSummaryState.fetchedAt || null
+              };
+              policySummaryFailures.push(type.subscriptionTypeId);
+            }
+          }
         }
+        var policyWorkerCount = Math.min(4, state.subscriptions.types.length);
+        await Promise.all(Array.from({ length: policyWorkerCount }, function () {
+          return loadNextPolicyType();
+        }));
+        if (state.subscriptions.loadGeneration !== loadGeneration) return;
         state.subscriptions.loaded = true;
         renderSubscriptions();
+        if (policySummaryFailures.length) {
+          setStatus(
+            'Типы загружены; для ' + String(policySummaryFailures.length) + ' сводок правил сохранены последние доступные данные',
+            true
+          );
+        }
       } finally {
-        state.subscriptions.loading = false;
+        if (state.subscriptions.loadGeneration === loadGeneration) {
+          state.subscriptions.loading = false;
+        }
       }
     }
 
@@ -36760,6 +36912,7 @@
           state.subscriptions.types.push(created);
         }
         dom.subscriptionTypeForm.reset();
+        setSubscriptionTypeFormOpen(false);
         renderSubscriptions();
         if (created && created.subscriptionTypeId) {
           dom.subscriptionPolicyTypeInput.value = created.subscriptionTypeId;
@@ -36845,6 +36998,10 @@
       })) {
         state.subscriptions.policyVersionsByType[policyTypeId].push(createdPolicy);
       }
+      state.subscriptions.policySummaryStateByType[policyTypeId] = {
+        status: 'READY',
+        fetchedAt: Date.now()
+      };
       setStatus('Версия правил сохранена как DRAFT', false);
       } finally {
         state.subscriptions.savingPolicy = false;
@@ -37297,6 +37454,13 @@
             panel.classList.toggle('phab-admin-hidden', panel.dataset.subscriptionsPanel !== section);
           });
         });
+      });
+      dom.subscriptionTypeToggleBtn.addEventListener('click', function () {
+        setSubscriptionTypeFormOpen(dom.subscriptionTypeToggleBtn.getAttribute('aria-expanded') !== 'true');
+      });
+      dom.subscriptionTypeCancelBtn.addEventListener('click', function () {
+        dom.subscriptionTypeForm.reset();
+        setSubscriptionTypeFormOpen(false);
       });
       dom.subscriptionTypeForm.addEventListener('submit', function (event) {
         event.preventDefault();
