@@ -36333,6 +36333,14 @@
       var releaseSelected = dom.subscriptionReleaseTypeInput.value;
       fillSubscriptionTypeSelect(dom.subscriptionPolicyTypeInput, policySelected);
       fillSubscriptionTypeSelect(dom.subscriptionReleaseTypeInput, releaseSelected);
+      var displayedPolicy = state.subscriptions.lastPolicy;
+      if (
+        displayedPolicy
+        && policySelected
+        && displayedPolicy.subscriptionTypeId !== policySelected
+      ) {
+        displayedPolicy = null;
+      }
 
       clearNode(dom.subscriptionProgramsList);
       if (!state.subscriptions.programs.length) {
@@ -36410,21 +36418,21 @@
       dom.subscriptionReleaseCreateBtn.disabled = !canManageSubscriptionRelease(cfg) || !state.subscriptions.types.length || state.subscriptions.savingRelease;
       dom.subscriptionPhaseAddBtn.disabled = !canManageSubscriptionRelease(cfg);
       clearNode(dom.subscriptionPolicyResult);
-      if (state.subscriptions.lastPolicy) {
+      if (displayedPolicy) {
         var policyCard = document.createElement('div');
         policyCard.className = 'phab-subscriptions-item';
         var policyTitle = document.createElement('strong');
-        policyTitle.textContent = 'Версия ' + String(state.subscriptions.lastPolicy.version) + ' · ' + state.subscriptions.lastPolicy.status;
+        policyTitle.textContent = 'Версия ' + String(displayedPolicy.version) + ' · ' + displayedPolicy.status;
         var policyMeta = document.createElement('small');
-        var capabilities = state.subscriptions.lastPolicy.capabilities || {};
+        var capabilities = displayedPolicy.capabilities || {};
         var lifecycle = capabilities.lifecycle || {};
         var commerce = capabilities.commerce || {};
-        var providerBinding = state.subscriptions.lastPolicy.providerBinding || null;
-        var activeLimit = state.subscriptions.lastPolicy.activeServicesLimit || {};
-        var bookingWindow = state.subscriptions.lastPolicy.bookingWindow || {};
-        policyMeta.textContent = String(state.subscriptions.lastPolicy.validityDays) +
-          ' дней · окно ' + (bookingWindow.enabled === false ? 'выкл.' : String(bookingWindow.days || state.subscriptions.lastPolicy.bookingWindowDays) + ' дней') +
-          ' · лимит ' + (activeLimit.enabled === false ? 'выкл.' : String(activeLimit.max || state.subscriptions.lastPolicy.maxActiveServices)) +
+        var providerBinding = displayedPolicy.providerBinding || null;
+        var activeLimit = displayedPolicy.activeServicesLimit || {};
+        var bookingWindow = displayedPolicy.bookingWindow || {};
+        policyMeta.textContent = String(displayedPolicy.validityDays) +
+          ' дней · окно ' + (bookingWindow.enabled === false ? 'выкл.' : String(bookingWindow.days || displayedPolicy.bookingWindowDays) + ' дней') +
+          ' · лимит ' + (activeLimit.enabled === false ? 'выкл.' : String(activeLimit.max || displayedPolicy.maxActiveServices)) +
           ' · активация ' + String(lifecycle.activationMode || 'PURCHASE') +
           ' · продление ' + String(commerce.renewalMode || 'MANUAL') +
           ' · Viva productId ' + (providerBinding
@@ -36434,6 +36442,28 @@
         policyCard.appendChild(policyMeta);
         dom.subscriptionPolicyResult.appendChild(policyCard);
       }
+    }
+
+    async function loadSubscriptionPolicyVersionsForType(subscriptionTypeId) {
+      var normalizedTypeId = String(subscriptionTypeId || '').trim();
+      state.subscriptions.lastPolicy = null;
+      if (!normalizedTypeId) {
+        renderSubscriptions();
+        return;
+      }
+      renderSubscriptions();
+      if (!Object.prototype.hasOwnProperty.call(state.subscriptions.policyVersionsByType, normalizedTypeId)) {
+        var response = await api.getSubscriptionPolicyVersions(normalizedTypeId);
+        state.subscriptions.policyVersionsByType[normalizedTypeId] = normalizeArray(
+          response && response.items ? response.items : response
+        );
+      }
+      if (dom.subscriptionPolicyTypeInput.value !== normalizedTypeId) return;
+      var versions = state.subscriptions.policyVersionsByType[normalizedTypeId] || [];
+      state.subscriptions.lastPolicy = versions.slice().sort(function (left, right) {
+        return Number(right.version || 0) - Number(left.version || 0);
+      })[0] || null;
+      renderSubscriptions();
     }
 
     function subscriptionBenefitRulesPayload() {
@@ -37275,6 +37305,9 @@
       dom.subscriptionPolicyForm.addEventListener('submit', function (event) {
         event.preventDefault();
         createSubscriptionPolicyFromForm().catch(handleError);
+      });
+      dom.subscriptionPolicyTypeInput.addEventListener('change', function () {
+        loadSubscriptionPolicyVersionsForType(dom.subscriptionPolicyTypeInput.value).catch(handleError);
       });
       dom.subscriptionReleaseForm.addEventListener('submit', function (event) {
         event.preventDefault();

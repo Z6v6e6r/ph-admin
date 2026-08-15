@@ -82,6 +82,9 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.match(source, /Источник экземпляров пока не подключён/);
   assert.match(source, /Метрики недоступны до подключения append-only ledger/);
   assert.match(source, /Отсутствующие данные обозначаются «недоступно», а не нулём/);
+  assert.match(source, /async function loadSubscriptionPolicyVersionsForType/);
+  assert.match(source, /subscriptionPolicyTypeInput\.addEventListener\('change'/);
+  assert.match(source, /state\.subscriptions\.lastPolicy = versions\.slice\(\)\.sort/);
   assert.doesNotMatch(source, /data-subscriptions-panel="instances"[\s\S]{0,500}>0 активн/);
 }
 
