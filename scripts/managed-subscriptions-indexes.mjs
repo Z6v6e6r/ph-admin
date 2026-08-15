@@ -6,6 +6,9 @@ const dbName = String(process.env.SUBSCRIPTIONS_MONGODB_DB || '').trim();
 const includeTestRuntimeIndexes = ['1', 'true', 'yes'].includes(
   String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED || '').trim().toLowerCase()
 );
+const includeRuntimeContractIndexes = ['1', 'true', 'yes'].includes(
+  String(process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED || '').trim().toLowerCase()
+);
 
 const plan = [
   ['subscription_types', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_type_id_unique' }],
@@ -19,6 +22,34 @@ const plan = [
   ['subscription_release_programs', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_release_idempotency_unique' }],
   ['subscription_release_programs', { stationId: 1, state: 1, updatedAt: -1, releaseProgramId: 1 }, { name: 'subscription_release_station_list' }],
   ['subscription_release_programs', { subscriptionTypeId: 1, stationId: 1, state: 1 }, { name: 'subscription_release_type_station_state' }],
+  ...(includeRuntimeContractIndexes ? [
+    ['subscription_provider_mappings', { mappingId: 1 }, { unique: true, name: 'subscription_mapping_id_unique' }],
+    ['subscription_provider_mappings', { tenantId: 1, provider: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1 }, { unique: true, name: 'subscription_mapping_provider_scope_unique' }],
+    ['subscription_provider_mappings', { tenantId: 1, 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_mapping_idempotency_unique' }],
+    ['subscription_provider_mappings', { subscriptionTypeId: 1, state: 1, updatedAt: -1 }, { name: 'subscription_mapping_type_state' }],
+    ['subscription_policy_publications', { publicationId: 1 }, { unique: true, name: 'subscription_publication_id_unique' }],
+    ['subscription_policy_publications', { subscriptionTypeId: 1, policyVersion: 1 }, { unique: true, name: 'subscription_publication_policy_version_unique' }],
+    ['subscription_policy_publications', { subscriptionTypeId: 1, state: 1, effectiveAt: -1 }, { name: 'subscription_publication_runtime_lookup' }],
+    ['subscription_policy_publications', { policyDigest: 1, publicationId: 1 }, { name: 'subscription_publication_digest' }],
+    ['subscription_instances', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_instance_id_unique' }],
+    ['subscription_instances', { tenantId: 1, providerClientId: 1, clientSubscriptionId: 1 }, { unique: true, name: 'subscription_instance_provider_identity_unique' }],
+    ['subscription_instances', { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_type_state_expiry' }],
+    ['subscription_instances', { homeStationId: 1, state: 1, updatedAt: -1 }, { name: 'subscription_instance_station_state' }],
+    ['subscription_instances', { clientRefHash: 1, state: 1, updatedAt: -1 }, { name: 'subscription_instance_client_state' }],
+    ['subscription_entitlement_aggregates', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_entitlement_aggregate_instance_unique' }],
+    ['subscription_entitlement_aggregates', { 'reconciliation.state': 1, updatedAt: 1, subscriptionInstanceId: 1 }, { name: 'subscription_entitlement_aggregate_reconciliation' }],
+    ['subscription_operations', { operationId: 1 }, { unique: true, name: 'subscription_operation_id_unique' }],
+    ['subscription_operations', { tenantId: 1, 'actor.actorId': 1, kind: 1, 'idempotency.keyHash': 1 }, { unique: true, name: 'subscription_operation_idempotency_unique' }],
+    ['subscription_operations', { subscriptionInstanceId: 1, createdAt: -1, operationId: 1 }, { name: 'subscription_operation_instance_time' }],
+    ['subscription_operations', { state: 1, nextAttemptAt: 1, updatedAt: 1, operationId: 1 }, { name: 'subscription_operation_reconciliation' }],
+    ['subscription_usage_ledger', { eventId: 1 }, { unique: true, name: 'subscription_usage_event_id_unique' }],
+    ['subscription_usage_ledger', { subscriptionInstanceId: 1, occurredAt: 1, eventId: 1 }, { name: 'subscription_usage_instance_time' }],
+    ['subscription_usage_ledger', { correlationId: 1, occurredAt: 1, eventId: 1 }, { name: 'subscription_usage_correlation_time' }],
+    ['subscription_usage_ledger', { eventType: 1, occurredAt: 1, eventId: 1 }, { name: 'subscription_usage_type_time' }],
+    ['subscription_outbox', { outboxEventId: 1 }, { unique: true, name: 'subscription_outbox_event_id_unique' }],
+    ['subscription_outbox', { ledgerEventId: 1 }, { unique: true, name: 'subscription_outbox_ledger_event_unique' }],
+    ['subscription_outbox', { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 }, { name: 'subscription_outbox_delivery' }]
+  ] : []),
   ...(includeTestRuntimeIndexes ? [
     ['subscription_test_offers', { offerId: 1 }, { unique: true, name: 'subscription_test_offer_id_unique' }],
     ['subscription_test_offers', { accessTokenHash: 1 }, { unique: true, name: 'subscription_test_offer_token_unique' }],

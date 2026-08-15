@@ -20,6 +20,7 @@ export const ADMIN_PERMISSION_CATALOG = [
   { key: 'advertising:write', label: 'Реклама: изменение' },
   { key: 'subscriptions:read', label: 'Подписки: просмотр' },
   { key: 'subscriptions:catalog:write', label: 'Подписки: типы и правила' },
+  { key: 'subscriptions:publication:write', label: 'Подписки: публикация правил' },
   { key: 'subscriptions:release:write', label: 'Подписки: программы выпуска' },
   { key: 'subscriptions:instances:read', label: 'Подписки: экземпляры клиентов' },
   { key: 'subscriptions:instances:manage', label: 'Подписки: управление экземплярами' },

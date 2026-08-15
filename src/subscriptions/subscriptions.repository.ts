@@ -2,15 +2,32 @@ import { Injectable } from '@nestjs/common';
 import { Collection, Db, Filter, MongoClient, MongoServerError } from 'mongodb';
 import {
   StoredReleaseProgram,
+  StoredSubscriptionEntitlementAggregate,
+  StoredSubscriptionInstance,
+  StoredSubscriptionOutboxEvent,
+  StoredSubscriptionPolicyPublication,
   StoredSubscriptionPolicyVersion,
+  StoredSubscriptionProviderMapping,
+  StoredSubscriptionRuntimeOperation,
   StoredSubscriptionTestEvent,
   StoredSubscriptionTestInventory,
   StoredSubscriptionTestOffer,
   StoredSubscriptionTestPurchase,
   StoredSubscriptionTestReservation,
   StoredSubscriptionType,
+  StoredSubscriptionUsageLedgerEvent,
   SubscriptionTestPurchaseStatus
 } from './subscriptions.types';
+import {
+  SubscriptionRuntimeContractError,
+  validateStoredSubscriptionEntitlementAggregate,
+  validateStoredSubscriptionInstance,
+  validateStoredSubscriptionOutboxEvent,
+  validateStoredSubscriptionPolicyPublication,
+  validateStoredSubscriptionProviderMapping,
+  validateStoredSubscriptionRuntimeOperation,
+  validateStoredSubscriptionUsageLedgerEvent
+} from './subscription-runtime-contracts';
 
 export const SUBSCRIPTION_REQUIRED_INDEXES = {
   types: [
@@ -59,6 +76,140 @@ export const SUBSCRIPTION_TEST_REQUIRED_INDEXES = {
     { name: 'subscription_test_event_id_unique', key: { eventId: 1 }, unique: true },
     { name: 'subscription_test_event_offer_time', key: { offerId: 1, occurredAt: 1 }, unique: false },
     { name: 'subscription_test_event_purchase_time', key: { purchaseId: 1, occurredAt: 1 }, unique: false }
+  ]
+} as const;
+
+export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
+  mappings: [
+    { name: 'subscription_mapping_id_unique', key: { mappingId: 1 }, unique: true },
+    {
+      name: 'subscription_mapping_provider_scope_unique',
+      key: {
+        tenantId: 1,
+        provider: 1,
+        providerProductId: 1,
+        'providerScope.kind': 1,
+        'providerScope.scopeId': 1
+      },
+      unique: true
+    },
+    {
+      name: 'subscription_mapping_idempotency_unique',
+      key: { tenantId: 1, 'idempotency.actorId': 1, 'idempotency.key': 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_mapping_type_state',
+      key: { subscriptionTypeId: 1, state: 1, updatedAt: -1 },
+      unique: false
+    }
+  ],
+  publications: [
+    { name: 'subscription_publication_id_unique', key: { publicationId: 1 }, unique: true },
+    {
+      name: 'subscription_publication_policy_version_unique',
+      key: { subscriptionTypeId: 1, policyVersion: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_publication_runtime_lookup',
+      key: { subscriptionTypeId: 1, state: 1, effectiveAt: -1 },
+      unique: false
+    },
+    {
+      name: 'subscription_publication_digest',
+      key: { policyDigest: 1, publicationId: 1 },
+      unique: false
+    }
+  ],
+  instances: [
+    {
+      name: 'subscription_instance_id_unique',
+      key: { subscriptionInstanceId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_instance_provider_identity_unique',
+      key: { tenantId: 1, providerClientId: 1, clientSubscriptionId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_instance_type_state_expiry',
+      key: { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 },
+      unique: false
+    },
+    {
+      name: 'subscription_instance_station_state',
+      key: { homeStationId: 1, state: 1, updatedAt: -1 },
+      unique: false
+    },
+    {
+      name: 'subscription_instance_client_state',
+      key: { clientRefHash: 1, state: 1, updatedAt: -1 },
+      unique: false
+    }
+  ],
+  aggregates: [
+    {
+      name: 'subscription_entitlement_aggregate_instance_unique',
+      key: { subscriptionInstanceId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_entitlement_aggregate_reconciliation',
+      key: { 'reconciliation.state': 1, updatedAt: 1, subscriptionInstanceId: 1 },
+      unique: false
+    }
+  ],
+  operations: [
+    { name: 'subscription_operation_id_unique', key: { operationId: 1 }, unique: true },
+    {
+      name: 'subscription_operation_idempotency_unique',
+      key: {
+        tenantId: 1,
+        'actor.actorId': 1,
+        kind: 1,
+        'idempotency.keyHash': 1
+      },
+      unique: true
+    },
+    {
+      name: 'subscription_operation_instance_time',
+      key: { subscriptionInstanceId: 1, createdAt: -1, operationId: 1 },
+      unique: false
+    },
+    {
+      name: 'subscription_operation_reconciliation',
+      key: { state: 1, nextAttemptAt: 1, updatedAt: 1, operationId: 1 },
+      unique: false
+    }
+  ],
+  ledger: [
+    { name: 'subscription_usage_event_id_unique', key: { eventId: 1 }, unique: true },
+    {
+      name: 'subscription_usage_instance_time',
+      key: { subscriptionInstanceId: 1, occurredAt: 1, eventId: 1 },
+      unique: false
+    },
+    {
+      name: 'subscription_usage_correlation_time',
+      key: { correlationId: 1, occurredAt: 1, eventId: 1 },
+      unique: false
+    },
+    {
+      name: 'subscription_usage_type_time',
+      key: { eventType: 1, occurredAt: 1, eventId: 1 },
+      unique: false
+    }
+  ],
+  outbox: [
+    { name: 'subscription_outbox_event_id_unique', key: { outboxEventId: 1 }, unique: true },
+    { name: 'subscription_outbox_ledger_event_unique', key: { ledgerEventId: 1 }, unique: true },
+    {
+      name: 'subscription_outbox_delivery',
+      key: { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 },
+      unique: false
+    }
   ]
 } as const;
 
@@ -254,6 +405,191 @@ export class SubscriptionsRepository {
       .find(filter, { projection: { _id: 0 } })
       .sort({ stationId: 1, releaseProgramId: 1 })
       .toArray();
+  }
+
+  async runtimeProviderMappingById(
+    mappingId: string
+  ): Promise<StoredSubscriptionProviderMapping | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeMappings().findOne({ mappingId }, { projection: { _id: 0 } });
+  }
+
+  async runtimeProviderMappingByProviderIdentity(input: {
+    tenantId: string;
+    provider: 'VIVA';
+    providerProductId: string;
+    providerScopeKind: StoredSubscriptionProviderMapping['providerScope']['kind'];
+    providerScopeId: string;
+  }): Promise<StoredSubscriptionProviderMapping | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeMappings().findOne(
+      {
+        tenantId: input.tenantId,
+        provider: input.provider,
+        providerProductId: input.providerProductId,
+        'providerScope.kind': input.providerScopeKind,
+        'providerScope.scopeId': input.providerScopeId
+      },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async insertRuntimeProviderMapping(document: StoredSubscriptionProviderMapping): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionProviderMapping(document);
+    await this.runtimeMappings().insertOne(document);
+  }
+
+  async runtimePolicyPublicationByVersion(
+    subscriptionTypeId: string,
+    policyVersion: number
+  ): Promise<StoredSubscriptionPolicyPublication | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimePublications().findOne(
+      { subscriptionTypeId, policyVersion },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async insertRuntimePolicyPublication(
+    document: StoredSubscriptionPolicyPublication
+  ): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionPolicyPublication(document);
+    await this.runtimePublications().insertOne(document);
+  }
+
+  async runtimeInstanceById(
+    subscriptionInstanceId: string
+  ): Promise<StoredSubscriptionInstance | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeInstances().findOne(
+      { subscriptionInstanceId },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async runtimeInstanceByProviderIdentity(input: {
+    tenantId: string;
+    providerClientId: string;
+    clientSubscriptionId: string;
+  }): Promise<StoredSubscriptionInstance | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeInstances().findOne(input, { projection: { _id: 0 } });
+  }
+
+  async insertRuntimeInstance(document: StoredSubscriptionInstance): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionInstance(document);
+    await this.runtimeInstances().insertOne(document);
+  }
+
+  async runtimeEntitlementAggregateByInstance(
+    subscriptionInstanceId: string
+  ): Promise<StoredSubscriptionEntitlementAggregate | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeAggregates().findOne(
+      { subscriptionInstanceId },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async insertRuntimeEntitlementAggregate(
+    document: StoredSubscriptionEntitlementAggregate
+  ): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionEntitlementAggregate(document);
+    await this.runtimeAggregates().insertOne(document);
+  }
+
+  async runtimeOperationById(operationId: string): Promise<StoredSubscriptionRuntimeOperation | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeOperations().findOne({ operationId }, { projection: { _id: 0 } });
+  }
+
+  async runtimeOperationByIdempotency(input: {
+    tenantId: string;
+    actorId: string;
+    kind: StoredSubscriptionRuntimeOperation['kind'];
+    keyHash: string;
+  }): Promise<StoredSubscriptionRuntimeOperation | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeOperations().findOne(
+      {
+        tenantId: input.tenantId,
+        'actor.actorId': input.actorId,
+        kind: input.kind,
+        'idempotency.keyHash': input.keyHash
+      },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async insertRuntimeOperation(document: StoredSubscriptionRuntimeOperation): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionRuntimeOperation(document);
+    await this.runtimeOperations().insertOne(document);
+  }
+
+  async runtimeLedgerEventById(
+    eventId: string
+  ): Promise<StoredSubscriptionUsageLedgerEvent | null> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeLedger().findOne({ eventId }, { projection: { _id: 0 } });
+  }
+
+  async appendRuntimeLedgerEventWithOutbox(input: {
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<boolean> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    if (input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.ledger.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_OUTBOX_LEDGER_LINK_MISMATCH');
+    }
+    const session = this.requireClient().startSession();
+    let inserted = false;
+    try {
+      await session.withTransaction(async () => {
+        inserted = false;
+        const existingLedger = await this.runtimeLedger().findOne(
+          { eventId: input.ledger.eventId },
+          { projection: { _id: 0 }, session }
+        );
+        if (existingLedger) {
+          if (existingLedger.eventHash !== input.ledger.eventHash) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTION_LEDGER_IDEMPOTENCY_CONFLICT',
+              { eventId: input.ledger.eventId }
+            );
+          }
+        } else {
+          await this.runtimeLedger().insertOne(input.ledger, { session });
+          inserted = true;
+        }
+
+        const existingOutbox = await this.runtimeOutbox().findOne(
+          { ledgerEventId: input.ledger.eventId },
+          { projection: { _id: 0 }, session }
+        );
+        if (existingOutbox) {
+          this.assertSameOutboxIdentity(existingOutbox, input.outbox);
+        } else {
+          await this.runtimeOutbox().insertOne(input.outbox, { session });
+        }
+      });
+      return inserted;
+    } catch (error) {
+      if (!this.isDuplicateKey(error)) throw error;
+      if (await this.runtimeAppendAlreadyCommitted(input)) return false;
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_LEDGER_IDEMPOTENCY_CONFLICT', {
+        eventId: input.ledger.eventId
+      });
+    } finally {
+      await session.endSession();
+    }
   }
 
   async testOfferByIdempotency(
@@ -624,6 +960,34 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredReleaseProgram>('subscription_release_programs');
   }
 
+  private runtimeMappings(): Collection<StoredSubscriptionProviderMapping> {
+    return this.requireDb().collection<StoredSubscriptionProviderMapping>('subscription_provider_mappings');
+  }
+
+  private runtimePublications(): Collection<StoredSubscriptionPolicyPublication> {
+    return this.requireDb().collection<StoredSubscriptionPolicyPublication>('subscription_policy_publications');
+  }
+
+  private runtimeInstances(): Collection<StoredSubscriptionInstance> {
+    return this.requireDb().collection<StoredSubscriptionInstance>('subscription_instances');
+  }
+
+  private runtimeAggregates(): Collection<StoredSubscriptionEntitlementAggregate> {
+    return this.requireDb().collection<StoredSubscriptionEntitlementAggregate>('subscription_entitlement_aggregates');
+  }
+
+  private runtimeOperations(): Collection<StoredSubscriptionRuntimeOperation> {
+    return this.requireDb().collection<StoredSubscriptionRuntimeOperation>('subscription_operations');
+  }
+
+  private runtimeLedger(): Collection<StoredSubscriptionUsageLedgerEvent> {
+    return this.requireDb().collection<StoredSubscriptionUsageLedgerEvent>('subscription_usage_ledger');
+  }
+
+  private runtimeOutbox(): Collection<StoredSubscriptionOutboxEvent> {
+    return this.requireDb().collection<StoredSubscriptionOutboxEvent>('subscription_outbox');
+  }
+
   private testOffers(): Collection<StoredSubscriptionTestOffer> {
     return this.requireDb().collection<StoredSubscriptionTestOffer>('subscription_test_offers');
   }
@@ -647,6 +1011,41 @@ export class SubscriptionsRepository {
   private requireDb(): Db {
     if (!this.db) throw new Error('Subscriptions MongoDB is not connected');
     return this.db;
+  }
+
+  private requireClient(): MongoClient {
+    if (!this.client) throw new Error('Subscriptions MongoDB is not connected');
+    return this.client;
+  }
+
+  private assertSameOutboxIdentity(
+    existing: StoredSubscriptionOutboxEvent,
+    expected: StoredSubscriptionOutboxEvent
+  ): void {
+    if (existing.outboxEventId !== expected.outboxEventId
+      || existing.ledgerEventId !== expected.ledgerEventId
+      || existing.subscriptionInstanceId !== expected.subscriptionInstanceId
+      || existing.topic !== expected.topic) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_OUTBOX_IDEMPOTENCY_CONFLICT', {
+        ledgerEventId: expected.ledgerEventId
+      });
+    }
+  }
+
+  private async runtimeAppendAlreadyCommitted(input: {
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<boolean> {
+    const [ledger, outbox] = await Promise.all([
+      this.runtimeLedger().findOne({ eventId: input.ledger.eventId }, { projection: { _id: 0 } }),
+      this.runtimeOutbox().findOne(
+        { ledgerEventId: input.ledger.eventId },
+        { projection: { _id: 0 } }
+      )
+    ]);
+    if (!ledger || ledger.eventHash !== input.ledger.eventHash || !outbox) return false;
+    this.assertSameOutboxIdentity(outbox, input.outbox);
+    return true;
   }
 
   private async ensureIndexes(): Promise<void> {
@@ -696,6 +1095,9 @@ export class SubscriptionsRepository {
         { name: SUBSCRIPTION_REQUIRED_INDEXES.programs[3].name }
       )
     ]);
+    // Runtime indexes are intentionally verify-only in application startup.
+    // Creation is permitted only through the guarded index script with duplicate preflight.
+    if (this.runtimeContractsEnabled()) await this.verifyRuntimeIndexes();
     if (this.testRuntimeEnabled()) await this.ensureTestIndexes();
   }
 
@@ -715,12 +1117,68 @@ export class SubscriptionsRepository {
     if (missing.length) {
       throw new Error(`SUBSCRIPTIONS_INDEXES_NOT_READY:${missing.join(',')}`);
     }
+    if (this.runtimeContractsEnabled()) await this.verifyRuntimeIndexes();
     if (this.testRuntimeEnabled()) await this.verifyTestIndexes();
+  }
+
+  private runtimeContractsEnabled(): boolean {
+    const value = String(process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED ?? '')
+      .trim()
+      .toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes';
+  }
+
+  private assertRuntimeContractsEnabled(): void {
+    if (!this.runtimeContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_RUNTIME_CONTRACTS_DISABLED');
+    }
   }
 
   private testRuntimeEnabled(): boolean {
     const value = String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase();
     return value === '1' || value === 'true' || value === 'yes';
+  }
+
+  private async verifyRuntimeIndexes(): Promise<void> {
+    const groups = [
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.mappings,
+        actual: await this.runtimeMappings().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.publications,
+        actual: await this.runtimePublications().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.instances,
+        actual: await this.runtimeInstances().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.aggregates,
+        actual: await this.runtimeAggregates().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.operations,
+        actual: await this.runtimeOperations().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.ledger,
+        actual: await this.runtimeLedger().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.outbox,
+        actual: await this.runtimeOutbox().listIndexes().toArray()
+      }
+    ];
+    const missing = groups.flatMap(({ required, actual }) => required
+      .filter((expected) => !subscriptionIndexMatches(
+        actual.find((item) => item.name === expected.name),
+        expected
+      ))
+      .map((expected) => expected.name));
+    if (missing.length) {
+      throw new Error(`SUBSCRIPTIONS_RUNTIME_INDEXES_NOT_READY:${missing.join(',')}`);
+    }
   }
 
   private async ensureTestIndexes(): Promise<void> {

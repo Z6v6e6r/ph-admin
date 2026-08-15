@@ -481,3 +481,322 @@ export interface StoredSubscriptionTestEvent {
   occurredAt: string;
   metadata: Record<string, string | number | boolean | null>;
 }
+
+export type SubscriptionProviderMappingState = 'DRAFT' | 'VERIFIED' | 'DISABLED';
+export type SubscriptionProviderScopeKind = 'TENANT' | 'STUDIO' | 'STATION';
+export type SubscriptionPublicationState =
+  | 'PUBLISHED'
+  | 'SUPERSEDED'
+  | 'DISABLED_FOR_NEW_OPERATIONS';
+export type SubscriptionInstanceState =
+  | 'PENDING_ACTIVATION'
+  | 'CANCELLED_PRE_ACTIVATION'
+  | 'REFUNDED_PRE_ACTIVATION'
+  | 'ACTIVE'
+  | 'FROZEN'
+  | 'EXPIRED'
+  | 'CANCELLED'
+  | 'REFUNDED'
+  | 'REVOKED';
+export type SubscriptionReconciliationState = 'CURRENT' | 'STALE' | 'REQUIRED';
+export type SubscriptionRuntimeOperationKind =
+  | 'PURCHASE'
+  | 'BOOKING'
+  | 'CANCELLATION'
+  | 'REFUND'
+  | 'FREEZE'
+  | 'UNFREEZE'
+  | 'ADMIN_ADJUSTMENT';
+export type SubscriptionRuntimeOperationState =
+  | 'CREATED'
+  | 'RESERVED'
+  | 'PROVIDER_SENT'
+  | 'PROVIDER_PENDING'
+  | 'CONFIRMED'
+  | 'COMPENSATION_PENDING'
+  | 'COMPENSATED'
+  | 'FAILED'
+  | 'MANUAL_RECONCILIATION';
+export type SubscriptionRuntimeActorType = 'CLIENT' | 'ADMIN' | 'SYSTEM';
+export type SubscriptionUsageLedgerEventType =
+  | 'PURCHASE_RESERVED'
+  | 'PURCHASE_PAID'
+  | 'PURCHASE_FAILED'
+  | 'PURCHASE_EXPIRED'
+  | 'PURCHASE_REFUNDED'
+  | 'INSTANCE_ACTIVATED'
+  | 'INSTANCE_FROZEN'
+  | 'INSTANCE_UNFROZEN'
+  | 'INSTANCE_EXPIRED'
+  | 'INSTANCE_REVOKED'
+  | 'INSTANCE_RENEWED'
+  | 'QUOTE_ELIGIBLE'
+  | 'QUOTE_BLOCKED'
+  | 'ENTITLEMENT_RESERVED'
+  | 'ENTITLEMENT_RELEASED'
+  | 'ENTITLEMENT_CONSUMED'
+  | 'ENTITLEMENT_RESTORED'
+  | 'BOOKING_CONFIRMED'
+  | 'BOOKING_CANCELLED'
+  | 'BOOKING_RESCHEDULED'
+  | 'ATTENDANCE_CONSUMED'
+  | 'ATTENDANCE_RETURNED'
+  | 'LATE_CANCELLATION_APPLIED'
+  | 'LATE_CANCELLATION_REVERSED'
+  | 'NO_SHOW_CONFIRMED'
+  | 'NO_SHOW_REVERSED'
+  | 'SURCHARGE_CHARGED'
+  | 'SURCHARGE_REFUNDED'
+  | 'ADD_ON_CHARGED'
+  | 'ADD_ON_REFUNDED'
+  | 'ADMIN_ADJUSTED';
+
+export interface SubscriptionProviderScope {
+  kind: SubscriptionProviderScopeKind;
+  scopeId: string;
+}
+
+export interface StoredSubscriptionProviderMapping {
+  schemaVersion: 1;
+  mappingId: string;
+  tenantId: string;
+  provider: SubscriptionProvider;
+  providerProductId: string;
+  providerScope: SubscriptionProviderScope;
+  subscriptionTypeId: string;
+  state: SubscriptionProviderMappingState;
+  evidenceRef: string | null;
+  verifiedAt: string | null;
+  verifiedBy: string | null;
+  revision: number;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
+  idempotency: SubscriptionIdempotency;
+}
+
+export interface SubscriptionRuntimeProjectionSnapshot {
+  runtimeSchemaVersion: 1;
+  subscriptionTypeId: string;
+  policyVersion: number;
+  status: 'PUBLISHED';
+  effectiveAt: string;
+  timeZone: 'Europe/Moscow';
+  createGame: SubscriptionPolicyVersion['createGame'];
+  joinGame: SubscriptionPolicyVersion['joinGame'];
+  activeServicesLimit: NonNullable<SubscriptionPolicyVersion['activeServicesLimit']>;
+  bookingWindow: NonNullable<SubscriptionPolicyVersion['bookingWindow']>;
+  dailyUsageLimit: number;
+  usageUnitsByDuration: SubscriptionPolicyVersion['usageUnitsByDuration'];
+  stationAccessRules: SubscriptionStationAccessRule[];
+  benefitRules: BenefitRule[];
+  lifecycle: { allowBookingsAfterExpiry: boolean };
+  usage: {
+    weeklyUsageLimit: number | null;
+    monthlyUsageLimit: number | null;
+    maxFutureBookings: number | null;
+    minHoursBetweenUses: number;
+    blackoutDates: string[];
+  };
+}
+
+export interface StoredSubscriptionPolicyPublication {
+  schemaVersion: 1;
+  publicationId: string;
+  subscriptionTypeId: string;
+  policyVersion: number;
+  policyDigest: string;
+  mappingId: string;
+  dictionaryRevision: string;
+  runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
+  state: SubscriptionPublicationState;
+  effectiveAt: string;
+  publishedAt: string;
+  publishedBy: string;
+  supersededAt: string | null;
+  supersededBy: string | null;
+  impactPreviewRef: string;
+  approvalAuditRef: string;
+}
+
+export interface SubscriptionInstanceEvidence {
+  paymentEvidenceRef: string | null;
+  providerInstanceEvidenceRef: string | null;
+  lastReadBackEvidenceRef: string | null;
+}
+
+export interface StoredSubscriptionInstance {
+  schemaVersion: 1;
+  subscriptionInstanceId: string;
+  tenantId: string;
+  subscriptionTypeId: string;
+  policyVersion: number;
+  policyDigest: string;
+  mappingId: string;
+  provider: SubscriptionProvider;
+  providerProductId: string;
+  providerClientId: string;
+  clientSubscriptionId: string;
+  clientRefHash: string;
+  homeStationId: string;
+  releaseProgramId: string;
+  releasePhaseId: string;
+  purchasePrice: Money;
+  state: SubscriptionInstanceState;
+  purchasedAt: string;
+  activeFrom: string | null;
+  activeTo: string | null;
+  frozenUntil: string | null;
+  renewalPredecessorId: string | null;
+  renewalSuccessorId: string | null;
+  evidence: SubscriptionInstanceEvidence;
+  reconciliation: {
+    state: SubscriptionReconciliationState;
+    asOf: string | null;
+    evidenceRef: string | null;
+  };
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubscriptionEntitlementReservation {
+  operationId: string;
+  targetId: string;
+  startsAt: string;
+  usageUnits: number;
+  state: 'RESERVED' | 'CONFIRMED';
+}
+
+export interface StoredSubscriptionEntitlementAggregate {
+  schemaVersion: 1;
+  subscriptionInstanceId: string;
+  revision: number;
+  activeServiceCount: number;
+  activeServices: SubscriptionEntitlementReservation[];
+  dailyUsage: Record<string, number>;
+  weeklyUsage: Record<string, number>;
+  monthlyUsage: Record<string, number>;
+  futureBookingCount: number;
+  futureServiceStartsAt: string[];
+  remainingUnits: number | null;
+  reconciliation: {
+    state: SubscriptionReconciliationState;
+    asOf: string | null;
+    evidenceRef: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubscriptionRuntimeEntitlementDecisionSnapshot {
+  decisionKind: 'ENTITLEMENT';
+  policyVersion: number;
+  policyDigest: string;
+  action: SubscriptionAction;
+  target: {
+    targetId: string;
+    stationId: string;
+    eventTypeId: string | null;
+    productTypeId: string | null;
+    durationMinutes: number;
+    startsAt: string;
+  };
+  usageUnits: number;
+  money: {
+    basePriceMinor: number | null;
+    discountMinor: number;
+    surchargeMinor: number;
+    finalPriceMinor: number | null;
+    currency: 'RUB';
+  };
+}
+
+export interface SubscriptionRuntimePurchaseDecisionSnapshot {
+  decisionKind: 'PURCHASE';
+  policyVersion: number;
+  policyDigest: string;
+  mappingId: string;
+  providerProductId: string;
+  releaseProgramId: string;
+  releasePhaseId: string;
+  stationId: string;
+  quantity: 1;
+  price: Money;
+}
+
+export type SubscriptionRuntimeDecisionSnapshot =
+  | SubscriptionRuntimeEntitlementDecisionSnapshot
+  | SubscriptionRuntimePurchaseDecisionSnapshot;
+
+export interface StoredSubscriptionRuntimeOperation {
+  schemaVersion: 1;
+  operationId: string;
+  revision: number;
+  tenantId: string;
+  subscriptionInstanceId: string | null;
+  kind: SubscriptionRuntimeOperationKind;
+  state: SubscriptionRuntimeOperationState;
+  actor: {
+    type: SubscriptionRuntimeActorType;
+    actorId: string;
+  };
+  idempotency: {
+    keyHash: string;
+    requestHash: string;
+  };
+  correlationId: string;
+  decision: SubscriptionRuntimeDecisionSnapshot | null;
+  providerCorrelationId: string | null;
+  providerEvidenceRefs: string[];
+  attempts: number;
+  nextAttemptAt: string | null;
+  compensationState: 'NONE' | 'PENDING' | 'APPLIED' | 'MANUAL_REVIEW';
+  lastReconciledAt: string | null;
+  lastReconciliationResult: string | null;
+  createdAt: string;
+  updatedAt: string;
+  terminalAt: string | null;
+}
+
+export interface StoredSubscriptionUsageLedgerEvent {
+  schemaVersion: 1;
+  eventId: string;
+  eventHash: string;
+  eventType: SubscriptionUsageLedgerEventType;
+  tenantId: string;
+  subscriptionInstanceId: string | null;
+  operationId: string;
+  correlationId: string;
+  policyVersion: number;
+  policyDigest: string;
+  stationId: string | null;
+  eventTypeId: string | null;
+  productTypeId: string | null;
+  moneyDeltaMinor: number;
+  currency: 'RUB';
+  usageDelta: number;
+  providerEvidenceRef: string | null;
+  actor: {
+    type: SubscriptionRuntimeActorType;
+    actorId: string;
+  };
+  occurredAt: string;
+  recordedAt: string;
+}
+
+export interface StoredSubscriptionOutboxEvent {
+  schemaVersion: 1;
+  outboxEventId: string;
+  ledgerEventId: string;
+  subscriptionInstanceId: string | null;
+  topic: 'SUBSCRIPTION_LEDGER_EVENT';
+  status: 'PENDING' | 'DELIVERED' | 'DEAD_LETTER';
+  attempts: number;
+  nextAttemptAt: string | null;
+  deliveredAt: string | null;
+  lastErrorCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

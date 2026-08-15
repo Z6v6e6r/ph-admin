@@ -1,34 +1,11 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import {
-  BenefitRule,
+  SubscriptionRuntimeProjectionSnapshot,
   SubscriptionPolicyVersion,
   SubscriptionStationAccessRule
 } from './subscriptions.types';
 
-export interface SubscriptionRuntimeProjectionV1 {
-  runtimeSchemaVersion: 1;
-  subscriptionTypeId: string;
-  policyVersion: number;
-  status: 'PUBLISHED';
-  effectiveAt: string;
-  timeZone: 'Europe/Moscow';
-  createGame: SubscriptionPolicyVersion['createGame'];
-  joinGame: SubscriptionPolicyVersion['joinGame'];
-  activeServicesLimit: NonNullable<SubscriptionPolicyVersion['activeServicesLimit']>;
-  bookingWindow: NonNullable<SubscriptionPolicyVersion['bookingWindow']>;
-  dailyUsageLimit: number;
-  usageUnitsByDuration: SubscriptionPolicyVersion['usageUnitsByDuration'];
-  stationAccessRules: SubscriptionStationAccessRule[];
-  benefitRules: BenefitRule[];
-  lifecycle: { allowBookingsAfterExpiry: boolean };
-  usage: {
-    weeklyUsageLimit: number | null;
-    monthlyUsageLimit: number | null;
-    maxFutureBookings: number | null;
-    minHoursBetweenUses: number;
-    blackoutDates: string[];
-  };
-}
+export type SubscriptionRuntimeProjectionV1 = SubscriptionRuntimeProjectionSnapshot;
 
 /**
  * Pure compiler for the LK evaluator contract. It deliberately has no provider,
