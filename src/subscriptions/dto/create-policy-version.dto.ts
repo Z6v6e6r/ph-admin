@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
-  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -60,6 +59,18 @@ export class UsageUnitsByDurationDto {
   '120'!: number;
 }
 
+export class PartialPriceDto {
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  numerator!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  denominator!: number;
+}
+
 export class BenefitRuleDto {
   @IsString()
   @MaxLength(120)
@@ -68,8 +79,27 @@ export class BenefitRuleDto {
   @IsBoolean()
   enabled!: boolean;
 
-  @IsIn(['GAME', 'GROUP_TRAINING', 'TOURNAMENT'])
-  category!: 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
+  @IsIn(['GAME', 'GROUP_TRAINING', 'TOURNAMENT', 'ADD_ON_PRODUCT'])
+  category!: 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT' | 'ADD_ON_PRODUCT';
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ArrayUnique()
+  @IsIn([
+    'CREATE_GAME',
+    'JOIN_GAME',
+    'BOOK_GROUP_TRAINING',
+    'BOOK_TOURNAMENT',
+    'PURCHASE_ADD_ON_PRODUCT'
+  ], { each: true })
+  actions?: Array<
+    | 'CREATE_GAME'
+    | 'JOIN_GAME'
+    | 'BOOK_GROUP_TRAINING'
+    | 'BOOK_TOURNAMENT'
+    | 'PURCHASE_ADD_ON_PRODUCT'
+  >;
 
   @IsArray()
   @ArrayMaxSize(200)
@@ -77,8 +107,22 @@ export class BenefitRuleDto {
   @MaxLength(160, { each: true })
   externalEventTypeIds!: string[];
 
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MaxLength(160, { each: true })
+  productTypeIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ArrayUnique()
+  @IsIn([60, 90, 120], { each: true })
+  durationMinutes?: Array<60 | 90 | 120>;
+
+  @IsArray()
   @ArrayMaxSize(100)
   @IsString({ each: true })
   @MaxLength(160, { each: true })
@@ -89,6 +133,7 @@ export class BenefitRuleDto {
     'FIXED_PRICE',
     'PERCENT_DISCOUNT',
     'FIXED_DISCOUNT',
+    'PARTIAL_PRICE_PERCENT_DISCOUNT',
     'DISABLED'
   ])
   kind!:
@@ -96,6 +141,7 @@ export class BenefitRuleDto {
     | 'FIXED_PRICE'
     | 'PERCENT_DISCOUNT'
     | 'FIXED_DISCOUNT'
+    | 'PARTIAL_PRICE_PERCENT_DISCOUNT'
     | 'DISABLED';
 
   @IsOptional()
@@ -109,8 +155,83 @@ export class BenefitRuleDto {
   @Max(100)
   percentage?: number | null;
 
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PartialPriceDto)
+  partialPrice?: PartialPriceDto | null;
+
   @IsInt()
   priority!: number;
+}
+
+export class ActiveServicesLimitDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  max?: number | null;
+
+  @IsIn(['SUBSCRIPTION_BENEFIT_ONLY', 'ALL_BOOKINGS'])
+  scope!: 'SUBSCRIPTION_BENEFIT_ONLY' | 'ALL_BOOKINGS';
+}
+
+export class BookingWindowDto {
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(31)
+  days?: number | null;
+}
+
+export class StationAccessSelectorDto {
+  @IsIn(['HOME_STATION', 'STATION_LIST', 'ALL_STATIONS'])
+  kind!: 'HOME_STATION' | 'STATION_LIST' | 'ALL_STATIONS';
+
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MaxLength(160, { each: true })
+  stationIds!: string[];
+}
+
+export class StationAccessSurchargeDto {
+  @IsIn(['NONE', 'FIXED'])
+  kind!: 'NONE' | 'FIXED';
+
+  @IsInt()
+  @Min(0)
+  @Max(1000000000)
+  amountMinor!: number;
+}
+
+export class StationAccessRuleDto {
+  @IsString()
+  @MaxLength(120)
+  ruleId!: string;
+
+  @IsBoolean()
+  enabled!: boolean;
+
+  @IsInt()
+  priority!: number;
+
+  @IsObject()
+  @ValidateNested()
+  @Type(() => StationAccessSelectorDto)
+  selector!: StationAccessSelectorDto;
+
+  @IsObject()
+  @ValidateNested()
+  @Type(() => StationAccessSurchargeDto)
+  surcharge!: StationAccessSurchargeDto;
 }
 
 export class SubscriptionFreezePolicyDto {
@@ -479,10 +600,22 @@ export class CreatePolicyVersionDto {
   @Max(1000)
   maxActiveServices!: number;
 
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ActiveServicesLimitDto)
+  activeServicesLimit?: ActiveServicesLimitDto;
+
   @IsInt()
   @Min(1)
   @Max(31)
   bookingWindowDays!: number;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => BookingWindowDto)
+  bookingWindow?: BookingWindowDto;
 
   @IsInt()
   @Min(0)
@@ -496,6 +629,13 @@ export class CreatePolicyVersionDto {
   @ValidateNested()
   @Type(() => UsageUnitsByDurationDto)
   usageUnitsByDuration!: UsageUnitsByDurationDto;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => StationAccessRuleDto)
+  stationAccessRules?: StationAccessRuleDto[];
 
   @IsArray()
   @ArrayMaxSize(200)

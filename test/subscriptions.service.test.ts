@@ -14,6 +14,7 @@ import {
   SubscriptionsRepository
 } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionsService } from '../src/subscriptions/subscriptions.service';
+import { compileSubscriptionRuntimeProjection } from '../src/subscriptions/subscription-runtime-projection';
 import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions-exception.filter';
 import {
   StoredReleaseProgram,
@@ -275,13 +276,19 @@ async function main(): Promise<void> {
   assert.deepEqual([policyOne.item.version, policyTwo.item.version], [1, 2]);
   assert.equal(policyOne.item.maxActiveServices, 3);
   assert.equal(policyOne.item.dailyUsageLimit, 1);
-  assert.equal(policyOne.item.modelVersion, 2);
+  assert.equal(policyOne.item.modelVersion, 3);
+  assert.deepEqual(policyOne.item.activeServicesLimit, {
+    enabled: true,
+    max: 3,
+    scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+  });
+  assert.deepEqual(policyOne.item.bookingWindow, { enabled: true, days: 4 });
   assert.equal('_id' in policyOne.item, false);
   assert.equal(policyOne.item.capabilities.lifecycle.activationMode, 'PURCHASE');
   assert.equal(policyOne.item.capabilities.lifecycle.freeze.enabled, false);
   assert.equal(policyOne.item.capabilities.commerce.reservationTtlMinutes, 15);
   assert.deepEqual(policyOne.item.capabilities.engagement.expirationReminderDays, [30, 14, 7, 1]);
-  assert.equal(repository.policies[0].schemaVersion, 2);
+  assert.equal(repository.policies[0].schemaVersion, 3);
   assert.equal(policyTwo.item.capabilities.lifecycle.activationMode, 'FIRST_USE');
   assert.deepEqual(policyTwo.item.capabilities.usage.blackoutDates, ['2026-12-31', '2027-01-01']);
   assert.equal(policyTwo.item.capabilities.usage.crossStationSurchargeMinor, 50000);
@@ -295,6 +302,59 @@ async function main(): Promise<void> {
   });
   assert.deepEqual(repository.policies[1].providerBinding, policyTwo.item.providerBinding);
   assert.equal('providerBinding' in policyOne.item, false);
+
+  const previousStored = repository.policies[1] as StoredSubscriptionPolicyVersion & {
+    activeServicesLimit?: unknown;
+    bookingWindow?: unknown;
+    stationAccessRules?: unknown;
+  };
+  previousStored.schemaVersion = 2;
+  previousStored.modelVersion = 2;
+  delete previousStored.activeServicesLimit;
+  delete previousStored.bookingWindow;
+  delete previousStored.stationAccessRules;
+  const previousDto = {
+    ...policyDraft(),
+    bookingWindowDays: 5,
+    providerBinding: providerBindingDraft(),
+    capabilities: capabilitiesDraft()
+  };
+  const normalizedPreviousPolicy = (service as unknown as {
+    normalizePolicy(dto: typeof previousDto): unknown;
+  }).normalizePolicy(previousDto);
+  previousStored.idempotency.requestHash = (service as unknown as {
+    previousPolicyShape(policy: unknown): unknown;
+    requestHash(operation: string, payload: unknown): string;
+  }).requestHash('createSubscriptionPolicyVersion', {
+    subscriptionTypeId: typeResult.item.subscriptionTypeId,
+    policy: (service as unknown as { previousPolicyShape(policy: unknown): unknown })
+      .previousPolicyShape(normalizedPreviousPolicy)
+  });
+  const previousReplay = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    previousDto,
+    command('policy-b'),
+    globalAdmin
+  );
+  assert.equal(previousReplay.replayed, true);
+  assert.equal(previousReplay.item.modelVersion, 2);
+  assert.deepEqual(previousReplay.item.bookingWindow, { enabled: true, days: 5 });
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...previousDto,
+        activeServicesLimit: {
+          enabled: false,
+          max: null,
+          scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+        }
+      },
+      command('policy-b'),
+      globalAdmin
+    ),
+    ConflictException
+  );
 
   const legacyCommand = command('policy-legacy-v1');
   const legacyCreated = await service.createPolicyVersion(
@@ -347,6 +407,22 @@ async function main(): Promise<void> {
     ),
     ConflictException
   );
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        activeServicesLimit: {
+          enabled: true,
+          max: 3,
+          scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+        }
+      },
+      legacyCommand,
+      globalAdmin
+    ),
+    ConflictException
+  );
 
   const policyReplay = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
@@ -380,6 +456,278 @@ async function main(): Promise<void> {
       typeResult.item.subscriptionTypeId,
       { ...policyDraft(), createGame: { enabled: false, durationsMinutes: [60] } },
       command('policy-invalid'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        activeServicesLimit: {
+          enabled: false,
+          max: 3,
+          scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+        }
+      },
+      command('policy-disabled-active-limit-with-value'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        bookingWindow: { enabled: false, days: 4 }
+      },
+      command('policy-disabled-booking-window-with-value'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        stationAccessRules: [{
+          ruleId: 'home-with-explicit-station',
+          enabled: true,
+          priority: 100,
+          selector: { kind: 'HOME_STATION', stationIds: ['station-a'] },
+          surcharge: { kind: 'NONE', amountMinor: 0 }
+        }]
+      },
+      command('policy-home-with-station-list'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        stationAccessRules: [{
+          ruleId: 'home-with-hidden-surcharge',
+          enabled: true,
+          priority: 100,
+          selector: { kind: 'HOME_STATION', stationIds: [] },
+          surcharge: { kind: 'NONE', amountMinor: 100 }
+        }]
+      },
+      command('policy-none-with-surcharge'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        stationAccessRules: [
+          {
+            ruleId: 'home-overlap',
+            enabled: true,
+            priority: 100,
+            selector: { kind: 'HOME_STATION', stationIds: [] },
+            surcharge: { kind: 'NONE', amountMinor: 0 }
+          },
+          {
+            ruleId: 'list-overlap',
+            enabled: true,
+            priority: 100,
+            selector: { kind: 'STATION_LIST', stationIds: ['station-a'] },
+            surcharge: { kind: 'NONE', amountMinor: 0 }
+          }
+        ]
+      },
+      command('policy-station-overlap'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  const disabledBenefitsPolicy = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    {
+      ...policyDraft(),
+      stationAccessRules: [{
+        ruleId: 'home',
+        enabled: true,
+        priority: 100,
+        selector: { kind: 'HOME_STATION', stationIds: [] },
+        surcharge: { kind: 'NONE', amountMinor: 0 }
+      }],
+      benefitRules: [{
+        ruleId: 'game-disabled',
+        enabled: false,
+        category: 'GAME',
+        actions: ['JOIN_GAME'],
+        externalEventTypeIds: [],
+        productTypeIds: [],
+        durationMinutes: [],
+        stationIds: [],
+        kind: 'PERCENT_DISCOUNT',
+        percentage: 0,
+        priority: 100
+      }]
+    },
+    command('policy-disabled-benefit'),
+    globalAdmin
+  );
+  assert.equal(disabledBenefitsPolicy.item.benefitRules[0].enabled, false);
+
+  const legacyBenefitPolicy = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    {
+      ...policyDraft(),
+      benefitRules: [{
+        ruleId: 'legacy-game-discount',
+        enabled: true,
+        category: 'GAME',
+        externalEventTypeIds: ['open-game'],
+        stationIds: ['station-a'],
+        kind: 'PERCENT_DISCOUNT',
+        percentage: 10,
+        priority: 100
+      }]
+    },
+    command('policy-legacy-benefit'),
+    globalAdmin
+  );
+  assert.deepEqual(legacyBenefitPolicy.item.benefitRules[0].actions, ['JOIN_GAME']);
+  assert.deepEqual(legacyBenefitPolicy.item.benefitRules[0].durationMinutes, [60, 90, 120]);
+
+  const managedPolicy = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    {
+      ...policyDraft(),
+      activeServicesLimit: {
+        enabled: false,
+        max: null,
+        scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+      },
+      bookingWindow: { enabled: false, days: null },
+      stationAccessRules: [
+        {
+          ruleId: 'home-free',
+          enabled: true,
+          priority: 300,
+          selector: { kind: 'HOME_STATION', stationIds: [] },
+          surcharge: { kind: 'NONE', amountMinor: 0 }
+        },
+        {
+          ruleId: 'selected-plus-150',
+          enabled: true,
+          priority: 200,
+          selector: { kind: 'STATION_LIST', stationIds: ['station-b', 'station-a'] },
+          surcharge: { kind: 'FIXED', amountMinor: 15000 }
+        }
+      ],
+      benefitRules: [
+        {
+          ruleId: 'create-60-free',
+          enabled: true,
+          category: 'GAME',
+          actions: ['CREATE_GAME'],
+          externalEventTypeIds: ['open-game'],
+          productTypeIds: [],
+          durationMinutes: [60],
+          stationIds: ['station-a'],
+          kind: 'FREE_ENTITLEMENT',
+          priority: 100
+        },
+        {
+          ruleId: 'create-90-quarter-minus-20',
+          enabled: true,
+          category: 'GAME',
+          actions: ['CREATE_GAME'],
+          externalEventTypeIds: ['open-game'],
+          productTypeIds: [],
+          durationMinutes: [90],
+          stationIds: ['station-a'],
+          kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+          percentage: 20,
+          partialPrice: { numerator: 1, denominator: 4 },
+          priority: 90
+        },
+        {
+          ruleId: 'racket-discount',
+          enabled: true,
+          category: 'ADD_ON_PRODUCT',
+          actions: ['PURCHASE_ADD_ON_PRODUCT'],
+          externalEventTypeIds: ['rental-event'],
+          productTypeIds: ['racket-rental'],
+          durationMinutes: [60],
+          stationIds: ['station-a'],
+          kind: 'PERCENT_DISCOUNT',
+          percentage: 10,
+          priority: 80
+        }
+      ]
+    },
+    command('policy-managed-v3'),
+    globalAdmin
+  );
+  assert.equal(managedPolicy.item.modelVersion, 3);
+  assert.deepEqual(managedPolicy.item.activeServicesLimit, {
+    enabled: false,
+    max: null,
+    scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+  });
+  assert.deepEqual(managedPolicy.item.bookingWindow, { enabled: false, days: null });
+  assert.deepEqual(
+    managedPolicy.item.stationAccessRules?.[1].selector,
+    { kind: 'STATION_LIST', stationIds: ['station-a', 'station-b'] }
+  );
+  assert.equal(
+    managedPolicy.item.benefitRules.find((rule) => rule.ruleId === 'create-90-quarter-minus-20')
+      ?.partialPrice?.denominator,
+    4
+  );
+  assert.deepEqual(
+    managedPolicy.item.benefitRules.find((rule) => rule.ruleId === 'racket-discount')
+      ?.productTypeIds,
+    ['racket-rental']
+  );
+  assert.throws(
+    () => compileSubscriptionRuntimeProjection(managedPolicy.item),
+    UnprocessableEntityException
+  );
+  const runtimeProjection = compileSubscriptionRuntimeProjection({
+    ...managedPolicy.item,
+    status: 'PUBLISHED'
+  });
+  assert.equal(runtimeProjection.runtimeSchemaVersion, 1);
+  assert.deepEqual(runtimeProjection.bookingWindow, { enabled: false, days: null });
+  assert.equal(
+    runtimeProjection.benefitRules.find((rule) => rule.ruleId === 'create-90-quarter-minus-20')
+      ?.kind,
+    'PARTIAL_PRICE_PERCENT_DISCOUNT'
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        activeServicesLimit: {
+          enabled: true,
+          max: null,
+          scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+        }
+      },
+      command('policy-active-limit-required'),
       globalAdmin
     ),
     UnprocessableEntityException

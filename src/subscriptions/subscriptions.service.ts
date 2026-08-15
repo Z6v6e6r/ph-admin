@@ -19,10 +19,13 @@ import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   BenefitRule,
+  BenefitCategory,
   ReleasePhase,
   ReleaseProgram,
   ReleaseProgramPage,
   SubscriptionCapabilities,
+  SubscriptionAction,
+  SubscriptionStationAccessRule,
   StoredReleaseProgram,
   StoredSubscriptionPolicyVersion,
   StoredSubscriptionType,
@@ -214,13 +217,33 @@ export class SubscriptionsService implements OnModuleDestroy {
     const normalizedTypeId = String(subscriptionTypeId ?? '').trim();
     if (!normalizedTypeId) throw new NotFoundException('Subscription type not found');
     const command = this.validateCommandHeaders(headers);
+    this.validateRawPolicyControls(dto);
     const normalized = this.normalizePolicy(dto);
     this.validatePolicy(normalized);
     const requestHash = this.requestHash('createSubscriptionPolicyVersion', {
       subscriptionTypeId: normalizedTypeId,
       policy: normalized
     });
-    const legacyRequestHash = dto.capabilities === undefined && dto.providerBinding === undefined
+    const hasV3PolicyInput = dto.activeServicesLimit !== undefined
+      || dto.bookingWindow !== undefined
+      || dto.stationAccessRules !== undefined
+      || dto.benefitRules.some((rule) => (
+        rule.actions !== undefined
+        || rule.productTypeIds !== undefined
+        || rule.durationMinutes !== undefined
+        || rule.partialPrice !== undefined
+        || rule.category === 'ADD_ON_PRODUCT'
+        || rule.kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT'
+      ));
+    const previousRequestHash = hasV3PolicyInput
+      ? null
+      : this.requestHash('createSubscriptionPolicyVersion', {
+        subscriptionTypeId: normalizedTypeId,
+        policy: this.previousPolicyShape(normalized)
+      });
+    const legacyRequestHash = !hasV3PolicyInput
+      && dto.capabilities === undefined
+      && dto.providerBinding === undefined
       ? this.requestHash('createSubscriptionPolicyVersion', {
         subscriptionTypeId: normalizedTypeId,
         policy: this.legacyPolicyShape(normalized)
@@ -230,7 +253,11 @@ export class SubscriptionsService implements OnModuleDestroy {
       this.repository.policyByIdempotency(actorId, command.idempotencyKey)
     );
     if (existing) {
-      return this.replayPolicy(existing, requestHash, legacyRequestHash, this.publicPolicy(existing));
+      return this.replayPolicy(
+        existing,
+        [requestHash, ...(previousRequestHash ? [previousRequestHash] : []), ...(legacyRequestHash ? [legacyRequestHash] : [])],
+        this.publicPolicy(existing)
+      );
     }
     const parent = await this.call(() => this.repository.subscriptionTypeById(normalizedTypeId));
     if (!parent) throw new NotFoundException('Subscription type not found');
@@ -242,7 +269,7 @@ export class SubscriptionsService implements OnModuleDestroy {
       const version = (await this.call(() => this.repository.latestPolicyVersion(normalizedTypeId))) + 1;
       const now = new Date().toISOString();
       const row: StoredSubscriptionPolicyVersion = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         subscriptionTypeId: normalizedTypeId,
         version,
         revision: 1,
@@ -266,7 +293,11 @@ export class SubscriptionsService implements OnModuleDestroy {
           this.repository.policyByIdempotency(actorId, command.idempotencyKey)
         );
         if (raced) {
-          return this.replayPolicy(raced, requestHash, legacyRequestHash, this.publicPolicy(raced));
+          return this.replayPolicy(
+            raced,
+            [requestHash, ...(previousRequestHash ? [previousRequestHash] : []), ...(legacyRequestHash ? [legacyRequestHash] : [])],
+            this.publicPolicy(raced)
+          );
         }
       }
     }
@@ -440,7 +471,7 @@ export class SubscriptionsService implements OnModuleDestroy {
 
   private normalizePolicy(dto: CreatePolicyVersionDto): Omit<SubscriptionPolicyVersion, 'subscriptionTypeId' | 'version' | 'revision' | 'status' | 'createdAt' | 'createdBy'> {
     return {
-      modelVersion: 2,
+      modelVersion: 3,
       effectiveAt: new Date(dto.effectiveAt).toISOString(),
       applyTo: dto.applyTo,
       validityDays: dto.validityDays,
@@ -455,19 +486,62 @@ export class SubscriptionsService implements OnModuleDestroy {
       },
       maxActiveServices: dto.maxActiveServices,
       bookingWindowDays: dto.bookingWindowDays,
+      activeServicesLimit: dto.activeServicesLimit
+        ? {
+          enabled: dto.activeServicesLimit.enabled,
+          max: dto.activeServicesLimit.enabled ? dto.activeServicesLimit.max ?? null : null,
+          scope: dto.activeServicesLimit.scope
+        }
+        : {
+          enabled: dto.maxActiveServices > 0,
+          max: dto.maxActiveServices > 0 ? dto.maxActiveServices : null,
+          scope: dto.activeServiceScope
+        },
+      bookingWindow: dto.bookingWindow
+        ? {
+          enabled: dto.bookingWindow.enabled,
+          days: dto.bookingWindow.enabled ? dto.bookingWindow.days ?? null : null
+        }
+        : { enabled: true, days: dto.bookingWindowDays },
       dailyUsageLimit: dto.dailyUsageLimit,
       activeServiceScope: dto.activeServiceScope,
       usageUnitsByDuration: { ...dto.usageUnitsByDuration },
+      stationAccessRules: (dto.stationAccessRules ?? [])
+        .map((rule) => ({
+          ruleId: rule.ruleId.trim(),
+          enabled: rule.enabled,
+          priority: rule.priority,
+          selector: rule.selector.kind === 'STATION_LIST'
+            ? {
+              kind: 'STATION_LIST' as const,
+              stationIds: this.uniqueStrings(rule.selector.stationIds)
+            }
+            : {
+              kind: rule.selector.kind,
+              stationIds: [] as []
+            },
+          surcharge: rule.surcharge.kind === 'FIXED'
+            ? { kind: 'FIXED' as const, amountMinor: rule.surcharge.amountMinor }
+            : { kind: 'NONE' as const, amountMinor: 0 }
+        }))
+        .sort((a, b) => b.priority - a.priority || a.ruleId.localeCompare(b.ruleId)),
       benefitRules: dto.benefitRules
         .map((rule) => ({
           ruleId: rule.ruleId.trim(),
           enabled: rule.enabled,
           category: rule.category,
+          actions: this.normalizeBenefitActions(rule.category, rule.actions),
           externalEventTypeIds: this.uniqueStrings(rule.externalEventTypeIds),
+          productTypeIds: this.uniqueStrings(rule.productTypeIds ?? []),
+          durationMinutes: [...new Set(rule.durationMinutes === undefined ? [60, 90, 120] : rule.durationMinutes)]
+            .sort((a, b) => a - b),
           stationIds: this.uniqueStrings(rule.stationIds),
           kind: rule.kind,
           valueMinor: rule.valueMinor ?? null,
           percentage: rule.percentage ?? null,
+          partialPrice: rule.partialPrice
+            ? { numerator: rule.partialPrice.numerator, denominator: rule.partialPrice.denominator }
+            : null,
           priority: rule.priority
         }))
         .sort((a, b) => a.priority - b.priority || a.ruleId.localeCompare(b.ruleId)),
@@ -476,6 +550,66 @@ export class SubscriptionsService implements OnModuleDestroy {
         : {}),
       capabilities: this.normalizeCapabilities(dto.capabilities, dto.validityDays)
     };
+  }
+
+  private validateRawPolicyControls(dto: CreatePolicyVersionDto): void {
+    if (dto.activeServicesLimit) {
+      if (dto.activeServicesLimit.enabled && dto.activeServicesLimit.max == null) {
+        throw this.domainError(
+          'ACTIVE_SERVICE_LIMIT_REQUIRED',
+          'Для включённого лимита укажите максимум активных услуг'
+        );
+      }
+      if (!dto.activeServicesLimit.enabled && dto.activeServicesLimit.max != null) {
+        throw this.domainError(
+          'ACTIVE_SERVICE_LIMIT_FORBIDDEN',
+          'Для отключённого лимита максимум должен быть пустым'
+        );
+      }
+    }
+    if (dto.bookingWindow) {
+      if (dto.bookingWindow.enabled && dto.bookingWindow.days == null) {
+        throw this.domainError(
+          'BOOKING_WINDOW_REQUIRED',
+          'Для включённого окна записи укажите количество дней'
+        );
+      }
+      if (!dto.bookingWindow.enabled && dto.bookingWindow.days != null) {
+        throw this.domainError(
+          'BOOKING_WINDOW_FORBIDDEN',
+          'Для отключённого окна записи количество дней должно быть пустым'
+        );
+      }
+    }
+    for (const rule of dto.stationAccessRules ?? []) {
+      const stationIds = rule.selector.stationIds
+        .map((stationId) => stationId.trim())
+        .filter(Boolean);
+      if (rule.selector.kind === 'STATION_LIST' && stationIds.length === 0) {
+        throw this.domainError(
+          'STATION_LIST_REQUIRED',
+          'Для строки станций выберите хотя бы одну станцию'
+        );
+      }
+      if (rule.selector.kind !== 'STATION_LIST' && stationIds.length > 0) {
+        throw this.domainError(
+          'STATION_LIST_FORBIDDEN',
+          'Список станций разрешён только для типа STATION_LIST'
+        );
+      }
+      if (rule.surcharge.kind === 'FIXED' && rule.surcharge.amountMinor <= 0) {
+        throw this.domainError(
+          'STATION_SURCHARGE_REQUIRED',
+          'Для строки с доплатой укажите сумму больше нуля'
+        );
+      }
+      if (rule.surcharge.kind === 'NONE' && rule.surcharge.amountMinor !== 0) {
+        throw this.domainError(
+          'STATION_SURCHARGE_FORBIDDEN',
+          'Для строки без доплаты сумма должна быть нулевой'
+        );
+      }
+    }
   }
 
   private validatePolicy(policy: ReturnType<SubscriptionsService['normalizePolicy']>): void {
@@ -494,16 +628,47 @@ export class SubscriptionsService implements OnModuleDestroy {
     ) {
       throw this.domainError('INVALID_JOIN_GAME_DURATION', 'Диапазон присоединения должен использовать 60, 90 или 120 минут');
     }
+    if (!policy.activeServicesLimit || !policy.bookingWindow || !policy.stationAccessRules) {
+      throw this.domainError('RUNTIME_CONTROLS_REQUIRED', 'Не заполнены управляемые ограничения подписки');
+    }
+    if (policy.activeServicesLimit.enabled && !policy.activeServicesLimit.max) {
+      throw this.domainError('ACTIVE_SERVICE_LIMIT_REQUIRED', 'Для включённого лимита укажите максимум активных услуг');
+    }
+    if (!policy.activeServicesLimit.enabled && policy.activeServicesLimit.max !== null) {
+      throw this.domainError('ACTIVE_SERVICE_LIMIT_FORBIDDEN', 'Для отключённого лимита максимум должен быть пустым');
+    }
+    if (policy.bookingWindow.enabled && !policy.bookingWindow.days) {
+      throw this.domainError('BOOKING_WINDOW_REQUIRED', 'Для включённого окна записи укажите количество дней');
+    }
+    if (!policy.bookingWindow.enabled && policy.bookingWindow.days !== null) {
+      throw this.domainError('BOOKING_WINDOW_FORBIDDEN', 'Для отключённого окна записи количество дней должно быть пустым');
+    }
+    this.validateStationAccessRules(policy.stationAccessRules);
     const ruleIds = new Set<string>();
     for (const rule of policy.benefitRules) {
       if (!rule.ruleId || ruleIds.has(rule.ruleId)) {
         throw this.domainError('DUPLICATE_BENEFIT_RULE_ID', 'Идентификаторы правил льгот должны быть уникальны');
       }
       ruleIds.add(rule.ruleId);
+      if (rule.enabled && rule.actions.length === 0) {
+        throw this.domainError('BENEFIT_ACTIONS_REQUIRED', 'Для активной льготы выберите действие');
+      }
+      if (rule.enabled && !this.benefitActionsMatchCategory(rule.category, rule.actions)) {
+        throw this.domainError('BENEFIT_ACTION_CATEGORY_MISMATCH', 'Действие льготы не соответствует категории');
+      }
+      if (rule.enabled && rule.category === 'ADD_ON_PRODUCT' && rule.productTypeIds.length === 0) {
+        throw this.domainError('BENEFIT_PRODUCT_TYPES_REQUIRED', 'Для доппродукта выберите product type IDs');
+      }
       if (rule.enabled && rule.externalEventTypeIds.length === 0) {
         throw this.domainError('BENEFIT_EVENT_TYPES_REQUIRED', 'Для активной льготы выберите типы событий');
       }
-      this.validateBenefitValue(rule);
+      if (rule.enabled && rule.durationMinutes.length === 0) {
+        throw this.domainError('BENEFIT_DURATIONS_REQUIRED', 'Для активной льготы выберите длительности');
+      }
+      if (rule.enabled && rule.stationIds.length === 0) {
+        throw this.domainError('BENEFIT_STATIONS_REQUIRED', 'Для активной льготы выберите станции');
+      }
+      if (rule.enabled) this.validateBenefitValue(rule);
     }
     for (let left = 0; left < policy.benefitRules.length; left += 1) {
       for (let right = left + 1; right < policy.benefitRules.length; right += 1) {
@@ -655,22 +820,109 @@ export class SubscriptionsService implements OnModuleDestroy {
     }
   }
 
+  private normalizeBenefitActions(
+    category: BenefitCategory,
+    actions: SubscriptionAction[] | undefined
+  ): SubscriptionAction[] {
+    if (actions?.length) return [...new Set(actions)].sort();
+    if (category === 'GAME') return ['JOIN_GAME'];
+    if (category === 'GROUP_TRAINING') return ['BOOK_GROUP_TRAINING'];
+    if (category === 'TOURNAMENT') return ['BOOK_TOURNAMENT'];
+    return ['PURCHASE_ADD_ON_PRODUCT'];
+  }
+
+  private benefitActionsMatchCategory(
+    category: BenefitCategory,
+    actions: SubscriptionAction[]
+  ): boolean {
+    const allowed: Record<BenefitCategory, SubscriptionAction[]> = {
+      GAME: ['CREATE_GAME', 'JOIN_GAME'],
+      GROUP_TRAINING: ['BOOK_GROUP_TRAINING'],
+      TOURNAMENT: ['BOOK_TOURNAMENT'],
+      ADD_ON_PRODUCT: ['PURCHASE_ADD_ON_PRODUCT']
+    };
+    return actions.every((action) => allowed[category].includes(action));
+  }
+
+  private validateStationAccessRules(rules: SubscriptionStationAccessRule[]): void {
+    const ids = new Set<string>();
+    for (const rule of rules) {
+      if (!rule.ruleId || ids.has(rule.ruleId)) {
+        throw this.domainError('DUPLICATE_STATION_RULE_ID', 'Идентификаторы правил станций должны быть уникальны');
+      }
+      ids.add(rule.ruleId);
+      if (rule.selector.kind === 'STATION_LIST' && rule.selector.stationIds.length === 0) {
+        throw this.domainError('STATION_LIST_REQUIRED', 'Для строки станций выберите хотя бы одну станцию');
+      }
+      if (rule.selector.kind !== 'STATION_LIST' && rule.selector.stationIds.length > 0) {
+        throw this.domainError('STATION_LIST_FORBIDDEN', 'Список станций разрешён только для типа STATION_LIST');
+      }
+      if (rule.surcharge.kind === 'FIXED' && rule.surcharge.amountMinor <= 0) {
+        throw this.domainError('STATION_SURCHARGE_REQUIRED', 'Для строки с доплатой укажите сумму больше нуля');
+      }
+      if (rule.surcharge.kind === 'NONE' && rule.surcharge.amountMinor !== 0) {
+        throw this.domainError('STATION_SURCHARGE_FORBIDDEN', 'Для строки без доплаты сумма должна быть нулевой');
+      }
+    }
+    for (let left = 0; left < rules.length; left += 1) {
+      for (let right = left + 1; right < rules.length; right += 1) {
+        const a = rules[left];
+        const b = rules[right];
+        if (!a.enabled || !b.enabled || a.priority !== b.priority) continue;
+        if (a.selector.kind === 'ALL_STATIONS' || b.selector.kind === 'ALL_STATIONS') {
+          throw this.domainError('AMBIGUOUS_STATION_PRIORITY', 'Пересекающиеся правила станций должны иметь разный приоритет');
+        }
+        if (a.selector.kind === b.selector.kind && a.selector.kind === 'HOME_STATION') {
+          throw this.domainError('AMBIGUOUS_STATION_PRIORITY', 'Домашняя станция не может иметь два правила одного приоритета');
+        }
+        if (a.selector.kind === 'HOME_STATION' || b.selector.kind === 'HOME_STATION') {
+          throw this.domainError(
+            'AMBIGUOUS_STATION_PRIORITY',
+            'Домашнее правило и список станций должны иметь разный приоритет'
+          );
+        }
+        if (
+          a.selector.kind === 'STATION_LIST'
+          && b.selector.kind === 'STATION_LIST'
+          && this.intersects(a.selector.stationIds, b.selector.stationIds)
+        ) {
+          throw this.domainError('AMBIGUOUS_STATION_PRIORITY', 'Пересекающиеся списки станций должны иметь разный приоритет');
+        }
+      }
+    }
+  }
+
   private validateBenefitValue(rule: BenefitRule): void {
     const hasMoney = rule.valueMinor !== null;
     const hasPercentage = rule.percentage !== null;
     if (rule.kind === 'FIXED_PRICE' || rule.kind === 'FIXED_DISCOUNT') {
-      if (!hasMoney || hasPercentage) {
+      if (!hasMoney || hasPercentage || rule.partialPrice) {
         throw this.domainError('INVALID_BENEFIT_VALUE', 'Денежная льгота требует только valueMinor');
       }
       return;
     }
     if (rule.kind === 'PERCENT_DISCOUNT') {
-      if (!hasPercentage || hasMoney || Number(rule.percentage) <= 0) {
+      if (!hasPercentage || hasMoney || Number(rule.percentage) <= 0 || rule.partialPrice) {
         throw this.domainError('INVALID_BENEFIT_VALUE', 'Процентная льгота требует только percentage больше нуля');
       }
       return;
     }
-    if (hasMoney || hasPercentage) {
+    if (rule.kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT') {
+      if (
+        !hasPercentage
+        || hasMoney
+        || Number(rule.percentage) <= 0
+        || !rule.partialPrice
+        || rule.partialPrice.numerator >= rule.partialPrice.denominator
+      ) {
+        throw this.domainError(
+          'INVALID_PARTIAL_PRICE_BENEFIT',
+          'Частичная цена требует долю меньше единицы и скидку больше нуля'
+        );
+      }
+      return;
+    }
+    if (hasMoney || hasPercentage || rule.partialPrice) {
       throw this.domainError('INVALID_BENEFIT_VALUE', 'Для выбранного типа льготы value не используется');
     }
   }
@@ -767,7 +1019,24 @@ export class SubscriptionsService implements OnModuleDestroy {
     } = row as StoredSubscriptionPolicyVersion & { _id?: unknown };
     return {
       ...policy,
-      modelVersion: 2,
+      modelVersion: row.modelVersion === 3 ? 3 : 2,
+      activeServicesLimit: row.activeServicesLimit ?? {
+        enabled: row.maxActiveServices > 0,
+        max: row.maxActiveServices > 0 ? row.maxActiveServices : null,
+        scope: row.activeServiceScope
+      },
+      bookingWindow: row.bookingWindow ?? {
+        enabled: true,
+        days: row.bookingWindowDays
+      },
+      stationAccessRules: row.stationAccessRules ?? [],
+      benefitRules: (row.benefitRules ?? []).map((rule) => ({
+        ...rule,
+        actions: rule.actions ?? this.normalizeBenefitActions(rule.category, undefined),
+        productTypeIds: rule.productTypeIds ?? [],
+        durationMinutes: rule.durationMinutes ?? [],
+        partialPrice: rule.partialPrice ?? null
+      })),
       ...(providerBinding
         ? { providerBinding: this.normalizeProviderBinding(providerBinding) }
         : {}),
@@ -807,24 +1076,64 @@ export class SubscriptionsService implements OnModuleDestroy {
 
   private replayPolicy<TPublic>(
     row: StoredSubscriptionPolicyVersion,
-    requestHash: string,
-    legacyRequestHash: string | null,
+    acceptedRequestHashes: string[],
     item: TPublic
   ): SubscriptionCreateResult<TPublic> {
-    if (
-      row.idempotency.requestHash !== requestHash
-      && (!legacyRequestHash || row.idempotency.requestHash !== legacyRequestHash)
-    ) {
+    if (!acceptedRequestHashes.includes(row.idempotency.requestHash)) {
       throw this.conflict('IDEMPOTENCY_CONFLICT', 'Idempotency-Key уже использован для другого запроса');
     }
     return { item, replayed: true, correlationId: row.idempotency.correlationId };
   }
 
+  private previousPolicyShape(
+    policy: ReturnType<SubscriptionsService['normalizePolicy']>
+  ): unknown {
+    const {
+      activeServicesLimit: _activeServicesLimit,
+      bookingWindow: _bookingWindow,
+      stationAccessRules: _stationAccessRules,
+      ...previous
+    } = policy;
+    return {
+      ...previous,
+      modelVersion: 2,
+      benefitRules: previous.benefitRules.map((rule) => {
+        const {
+          actions: _actions,
+          productTypeIds: _productTypeIds,
+          durationMinutes: _durationMinutes,
+          partialPrice: _partialPrice,
+          ...previousRule
+        } = rule;
+        return previousRule;
+      })
+    };
+  }
+
   private legacyPolicyShape(
     policy: ReturnType<SubscriptionsService['normalizePolicy']>
-  ): Omit<ReturnType<SubscriptionsService['normalizePolicy']>, 'modelVersion' | 'capabilities'> {
-    const { modelVersion: _modelVersion, capabilities: _capabilities, ...legacy } = policy;
-    return legacy;
+  ): unknown {
+    const {
+      modelVersion: _modelVersion,
+      capabilities: _capabilities,
+      activeServicesLimit: _activeServicesLimit,
+      bookingWindow: _bookingWindow,
+      stationAccessRules: _stationAccessRules,
+      ...legacy
+    } = policy;
+    return {
+      ...legacy,
+      benefitRules: legacy.benefitRules.map((rule) => {
+        const {
+          actions: _actions,
+          productTypeIds: _productTypeIds,
+          durationMinutes: _durationMinutes,
+          partialPrice: _partialPrice,
+          ...legacyRule
+        } = rule;
+        return legacyRule;
+      })
+    };
   }
 
   private uniqueStrings(values: string[]): string[] {

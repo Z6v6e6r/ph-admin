@@ -7468,6 +7468,11 @@
       .phab-subscriptions-hero h2,.phab-subscriptions-card h3{margin:0;color:var(--cup-wine)}
       .phab-subscriptions-hero p,.phab-subscriptions-card p{margin:6px 0 0;color:rgba(51,0,32,.64);font-size:12px;line-height:1.45}
       .phab-subscriptions-badge{align-self:flex-start;border-radius:999px;background:rgba(221,200,252,.45);padding:7px 10px;font-size:10px;font-weight:900}
+      .phab-subscriptions-tabs{display:flex;gap:7px;flex-wrap:wrap}
+      .phab-subscriptions-tab{border:1px solid rgba(51,0,32,.14);border-radius:999px;background:#fff;color:var(--cup-wine);padding:8px 12px;font-size:11px;font-weight:900;cursor:pointer}
+      .phab-subscriptions-tab.is-active{background:var(--cup-wine);color:#fff;border-color:var(--cup-wine)}
+      .phab-subscriptions-panel{display:flex;flex-direction:column;gap:14px}
+      .phab-subscriptions-unavailable{border:1px dashed rgba(51,0,32,.24);border-radius:14px;background:rgba(255,248,239,.7);padding:18px;color:rgba(51,0,32,.7);line-height:1.5}
       .phab-subscriptions-grid{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(360px,1.2fr);gap:14px}
       .phab-subscriptions-card{padding:16px;min-width:0}
       .phab-subscriptions-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
@@ -7482,7 +7487,7 @@
       .phab-subscriptions-item strong,.phab-subscriptions-item small{display:block}
       .phab-subscriptions-item small{margin-top:4px;color:rgba(51,0,32,.58)}
       .phab-subscriptions-empty{padding:16px;border:1px dashed rgba(51,0,32,.2);border-radius:12px;color:rgba(51,0,32,.58);font-size:11px;text-align:center}
-      .phab-subscriptions-benefits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;grid-column:1/-1}
+      .phab-subscriptions-benefits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;grid-column:1/-1}
       .phab-subscriptions-benefit{border:1px solid rgba(51,0,32,.1);border-radius:12px;padding:10px;background:rgba(248,246,249,.75)}
       .phab-subscriptions-benefit-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
       .phab-subscriptions-phases{display:flex;flex-direction:column;gap:8px;grid-column:1/-1}
@@ -9453,6 +9458,8 @@
       (cfg.subscriptionTestRuntimeEnabled ? ' Тестовый runtime проверяет резерв и fake-оплату без денег и Viva.' : ' Публикация и продажи отключены.') +
       '</p></div>' +
       '<span class="phab-subscriptions-badge">' + (cfg.subscriptionTestRuntimeEnabled ? 'DRAFT + TEST ONLY' : 'DRAFT ONLY') + '</span></section>' +
+      '<nav class="phab-subscriptions-tabs" aria-label="Разделы подписок"><button class="phab-subscriptions-tab is-active" type="button" data-subscriptions-tab="settings">Настройка подписки</button><button class="phab-subscriptions-tab" type="button" data-subscriptions-tab="instances">Список подписок</button><button class="phab-subscriptions-tab" type="button" data-subscriptions-tab="analytics">Аналитика</button></nav>' +
+      '<div class="phab-subscriptions-panel" data-subscriptions-panel="settings">' +
       '<div class="phab-subscriptions-grid">' +
       '<section class="phab-subscriptions-card"><h3>Новый тип подписки</h3><p>Создаётся только карточка каталога.</p>' +
       '<form class="phab-subscriptions-form" data-subscription-type-form>' +
@@ -9472,11 +9479,13 @@
       '<div class="phab-subscriptions-field is-wide"><span>Создание игр</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-create-enabled>Разрешено</label><div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" value="60" checked data-subscription-create-duration>60 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="90" checked data-subscription-create-duration>90 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="120" checked data-subscription-create-duration>120 мин</label></div></div>' +
       '<label class="phab-subscriptions-field"><span>Присоединение к играм</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-join-enabled>Разрешено</label></label>' +
       '<label class="phab-subscriptions-field"><span>Диапазон длительности</span><div class="phab-subscriptions-actions"><select class="phab-admin-input" data-subscription-join-min><option>60</option><option>90</option><option>120</option></select><select class="phab-admin-input" data-subscription-join-max><option>60</option><option>90</option><option selected>120</option></select></div></label>' +
-      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><input class="phab-admin-input" type="number" min="0" value="3" data-subscription-active-limit></label>' +
-      '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><select class="phab-admin-input" data-subscription-booking-window><option>3</option><option selected>4</option><option>5</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="3" data-subscription-active-limit></label>' +
+      '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-booking-window-enabled>Ограничивать</label><select class="phab-admin-input" data-subscription-booking-window><option>3</option><option selected>4</option><option>5</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Использований в день</span><input class="phab-admin-input" type="number" min="0" value="1" data-subscription-daily-limit></label>' +
       '<label class="phab-subscriptions-field"><span>Что считать активной услугой</span><select class="phab-admin-input" data-subscription-active-scope><option value="SUBSCRIPTION_BENEFIT_ONLY">Только услуги по подписке</option><option value="ALL_BOOKINGS">Все записи</option></select></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
+      '<div class="phab-subscriptions-field is-wide"><span>Доступ по станциям</span><div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-station-rule-add>+ Строка станций</button></div><div class="phab-subscriptions-phases" data-subscription-station-rules></div></div>' +
+      '<div class="phab-subscriptions-field is-wide"><span>Льготы на события и доппродукты</span><div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-benefit-add>+ Добавить льготу</button></div></div>' +
       '<div class="phab-subscriptions-benefits" data-subscription-benefits></div>' +
       '<div class="phab-subscriptions-note">Скидка на игру по умолчанию отключена. Здесь сохраняются только ID-кандидаты для DRAFT; публикация должна сверить Viva event type IDs и station IDs с каноническим справочником.</div>' +
       '<label class="phab-subscriptions-field is-wide"><span>Viva productId подписки</span><input class="phab-admin-input" type="text" maxlength="160" aria-describedby="subscription-viva-binding-help" placeholder="Например, UUID продукта подписки в Viva" data-subscription-viva-binding></label>' +
@@ -9509,7 +9518,7 @@
       '<label class="phab-subscriptions-field"><span>Доплата за другую станцию, ₽</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="cross-station-surcharge"></label>' +
       '<label class="phab-subscriptions-field is-wide"><span>Blackout-даты</span><textarea class="phab-admin-input" placeholder="2026-12-31, 2027-01-01" data-cap="blackout-dates"></textarea></label>' +
       '</div></details>' +
-      '<details><summary>Отмена, no-show и перенос</summary><div class="phab-subscriptions-capabilities-grid">' +
+      '<details><summary>Отмена, no-show и перенос</summary><div class="phab-subscriptions-capabilities-grid"><div class="phab-subscriptions-note">No-show — подтверждённая неявка клиента на занятие без своевременной отмены. Она может списать единицы подписки и временно заблокировать льготы; сам факт неявки должен прийти из проверенного статуса посещения Viva, а не определяться по отсутствию записи.</div>' +
       '<label class="phab-subscriptions-field"><span>Бесплатная отмена игры, часов</span><input class="phab-admin-input" type="number" min="0" value="24" data-cap="cancel-game-hours"></label>' +
       '<label class="phab-subscriptions-field"><span>Тренировка, часов</span><input class="phab-admin-input" type="number" min="0" value="24" data-cap="cancel-group-hours"></label>' +
       '<label class="phab-subscriptions-field"><span>Турнир, часов</span><input class="phab-admin-input" type="number" min="0" value="48" data-cap="cancel-tournament-hours"></label>' +
@@ -9566,8 +9575,12 @@
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-phase-add>+ Добавить фазу</button></div>' +
       '<div class="phab-subscriptions-phases" data-subscription-phases></div>' +
       '<div class="phab-subscriptions-actions"><button class="phab-admin-btn" type="submit" data-subscription-release-create>Сохранить программу DRAFT</button></div>' +
-      '</form><div class="phab-subscriptions-note">Тестовая ссылка не списывает деньги, не вызывает Viva и не выпускает клиентскую подписку.</div><div class="phab-subscriptions-list" data-subscription-programs-list></div></section>';
+      '</form><div class="phab-subscriptions-note">Тестовая ссылка не списывает деньги, не вызывает Viva и не выпускает клиентскую подписку.</div><div class="phab-subscriptions-list" data-subscription-programs-list></div></section></div>' +
+      '<div class="phab-subscriptions-panel phab-admin-hidden" data-subscriptions-panel="instances"><section class="phab-subscriptions-card"><h3>Список подписок</h3><div class="phab-subscriptions-unavailable"><strong>Источник экземпляров пока не подключён.</strong><br>Раздел не показывает фиктивный пустой список: синхронизация Viva productId → clientSubscriptionId, состояние оплаты и pinned policy требуют проверенного provider-контракта. До этого freeze, revoke, refund и ручное изменение остатка отключены.</div></section></div>' +
+      '<div class="phab-subscriptions-panel phab-admin-hidden" data-subscriptions-panel="analytics"><section class="phab-subscriptions-card"><h3>Аналитика подписок</h3><div class="phab-subscriptions-unavailable"><strong>Метрики недоступны до подключения append-only ledger.</strong><br>Активные подписки, непродление 7/14/21/30 дней, новые и продлившие клиенты, посещения, LTV, загрузка слотов, ёмкость овердрафта, выручка и возвраты будут показываться только из сверенного источника. Отсутствующие данные обозначаются «недоступно», а не нулём.</div></section></div>';
     content.appendChild(subscriptionsSection);
+    var subscriptionSectionTabButtons = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscriptions-tab]'));
+    var subscriptionSectionPanels = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscriptions-panel]'));
     var subscriptionTypeForm = subscriptionsSection.querySelector('[data-subscription-type-form]');
     var subscriptionTypeCodeInput = subscriptionsSection.querySelector('[data-subscription-type-code]');
     var subscriptionTypeTitleInput = subscriptionsSection.querySelector('[data-subscription-type-title]');
@@ -9585,11 +9598,16 @@
     var subscriptionJoinMinInput = subscriptionsSection.querySelector('[data-subscription-join-min]');
     var subscriptionJoinMaxInput = subscriptionsSection.querySelector('[data-subscription-join-max]');
     var subscriptionActiveLimitInput = subscriptionsSection.querySelector('[data-subscription-active-limit]');
+    var subscriptionActiveLimitEnabledInput = subscriptionsSection.querySelector('[data-subscription-active-limit-enabled]');
     var subscriptionBookingWindowInput = subscriptionsSection.querySelector('[data-subscription-booking-window]');
+    var subscriptionBookingWindowEnabledInput = subscriptionsSection.querySelector('[data-subscription-booking-window-enabled]');
     var subscriptionDailyLimitInput = subscriptionsSection.querySelector('[data-subscription-daily-limit]');
     var subscriptionActiveScopeInput = subscriptionsSection.querySelector('[data-subscription-active-scope]');
     var subscriptionUnitInputs = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscription-unit]'));
     var subscriptionBenefits = subscriptionsSection.querySelector('[data-subscription-benefits]');
+    var subscriptionBenefitAddBtn = subscriptionsSection.querySelector('[data-subscription-benefit-add]');
+    var subscriptionStationRules = subscriptionsSection.querySelector('[data-subscription-station-rules]');
+    var subscriptionStationRuleAddBtn = subscriptionsSection.querySelector('[data-subscription-station-rule-add]');
     var subscriptionVivaBindingInput = subscriptionsSection.querySelector('[data-subscription-viva-binding]');
     var subscriptionCapabilities = subscriptionsSection.querySelector('[data-subscription-capabilities]');
     var subscriptionPolicyCreateBtn = subscriptionsSection.querySelector('[data-subscription-policy-create]');
@@ -12952,6 +12970,8 @@
       settingsSection: settingsSection,
       advertisingSection: advertisingSection,
       subscriptionsSection: subscriptionsSection,
+      subscriptionSectionTabButtons: subscriptionSectionTabButtons,
+      subscriptionSectionPanels: subscriptionSectionPanels,
       subscriptionTypeForm: subscriptionTypeForm,
       subscriptionTypeCodeInput: subscriptionTypeCodeInput,
       subscriptionTypeTitleInput: subscriptionTypeTitleInput,
@@ -12969,11 +12989,16 @@
       subscriptionJoinMinInput: subscriptionJoinMinInput,
       subscriptionJoinMaxInput: subscriptionJoinMaxInput,
       subscriptionActiveLimitInput: subscriptionActiveLimitInput,
+      subscriptionActiveLimitEnabledInput: subscriptionActiveLimitEnabledInput,
       subscriptionBookingWindowInput: subscriptionBookingWindowInput,
+      subscriptionBookingWindowEnabledInput: subscriptionBookingWindowEnabledInput,
       subscriptionDailyLimitInput: subscriptionDailyLimitInput,
       subscriptionActiveScopeInput: subscriptionActiveScopeInput,
       subscriptionUnitInputs: subscriptionUnitInputs,
       subscriptionBenefits: subscriptionBenefits,
+      subscriptionBenefitAddBtn: subscriptionBenefitAddBtn,
+      subscriptionStationRules: subscriptionStationRules,
+      subscriptionStationRuleAddBtn: subscriptionStationRuleAddBtn,
       subscriptionVivaBindingInput: subscriptionVivaBindingInput,
       subscriptionCapabilities: subscriptionCapabilities,
       subscriptionPolicyCreateBtn: subscriptionPolicyCreateBtn,
@@ -14242,6 +14267,7 @@
         }
       },
       subscriptions: {
+        activeSection: 'settings',
         types: [],
         programs: [],
         policyVersionsByType: Object.create(null),
@@ -36103,20 +36129,54 @@
         { category: 'GAME', title: 'Игра' },
         { category: 'GROUP_TRAINING', title: 'Групповая тренировка' },
         { category: 'TOURNAMENT', title: 'Турнир' }
-      ].forEach(function (definition) {
-        var card = document.createElement('div');
-        card.className = 'phab-subscriptions-benefit';
-        card.dataset.category = definition.category;
-        card.innerHTML =
-          '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-enabled>' + definition.title + '</label>' +
-          '<div class="phab-subscriptions-benefit-grid">' +
-          '<label class="phab-subscriptions-field"><span>Льгота</span><select class="phab-admin-input" data-benefit-kind><option value="PERCENT_DISCOUNT">Скидка, %</option><option value="FIXED_PRICE">Фикс. цена</option><option value="FIXED_DISCOUNT">Скидка, ₽</option><option value="FREE_ENTITLEMENT">Без списания денег</option></select></label>' +
-          '<label class="phab-subscriptions-field"><span>Значение</span><input class="phab-admin-input" type="number" min="0" data-benefit-value></label>' +
-          '<label class="phab-subscriptions-field is-wide"><span>Viva event type IDs</span><textarea class="phab-admin-input" data-benefit-event-types placeholder="ID через запятую"></textarea></label>' +
-          '<label class="phab-subscriptions-field is-wide"><span>Station IDs</span><textarea class="phab-admin-input" data-benefit-stations placeholder="ID через запятую"></textarea></label>' +
-          '</div>';
-        dom.subscriptionBenefits.appendChild(card);
-      });
+      ].forEach(addSubscriptionBenefitEditor);
+    }
+
+    function addSubscriptionBenefitEditor(definition) {
+      definition = definition || { category: 'ADD_ON_PRODUCT', title: 'Доппродукт' };
+      var card = document.createElement('div');
+      card.className = 'phab-subscriptions-benefit';
+      card.innerHTML =
+        '<div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" data-benefit-enabled>Включить</label><button class="phab-admin-btn-secondary" type="button" data-benefit-remove>−</button></div>' +
+        '<div class="phab-subscriptions-benefit-grid">' +
+        '<label class="phab-subscriptions-field"><span>Категория</span><select class="phab-admin-input" data-benefit-category><option value="GAME">Игра</option><option value="GROUP_TRAINING">Групповая</option><option value="TOURNAMENT">Турнир</option><option value="ADD_ON_PRODUCT">Доппродукт</option></select></label>' +
+        '<label class="phab-subscriptions-field"><span>Действие</span><select class="phab-admin-input" data-benefit-action><option value="CREATE_GAME">Создание игры</option><option value="JOIN_GAME">Запись на игру</option><option value="BOOK_GROUP_TRAINING">Групповая</option><option value="BOOK_TOURNAMENT">Турнир</option><option value="PURCHASE_ADD_ON_PRODUCT">Покупка доппродукта</option></select></label>' +
+        '<label class="phab-subscriptions-field"><span>Льгота</span><select class="phab-admin-input" data-benefit-kind><option value="PERCENT_DISCOUNT">Скидка, %</option><option value="FIXED_PRICE">Фикс. цена</option><option value="FIXED_DISCOUNT">Скидка, ₽</option><option value="FREE_ENTITLEMENT">Бесплатно</option><option value="PARTIAL_PRICE_PERCENT_DISCOUNT">Доля цены − скидка %</option><option value="DISABLED">Отключено</option></select></label>' +
+        '<label class="phab-subscriptions-field"><span>Значение / скидка %</span><input class="phab-admin-input" type="number" min="0" data-benefit-value></label>' +
+        '<label class="phab-subscriptions-field"><span>Доля цены</span><div class="phab-subscriptions-actions"><input class="phab-admin-input" type="number" min="1" value="1" aria-label="Числитель" data-benefit-partial-numerator><span>/</span><input class="phab-admin-input" type="number" min="1" value="4" aria-label="Знаменатель" data-benefit-partial-denominator></div></label>' +
+        '<label class="phab-subscriptions-field"><span>Длительности, мин</span><input class="phab-admin-input" data-benefit-durations placeholder="60, 90"></label>' +
+        '<label class="phab-subscriptions-field is-wide"><span>Viva event type IDs</span><textarea class="phab-admin-input" data-benefit-event-types placeholder="ID через запятую"></textarea></label>' +
+        '<label class="phab-subscriptions-field is-wide"><span>Viva product type IDs</span><textarea class="phab-admin-input" data-benefit-product-types placeholder="Для доппродуктов"></textarea></label>' +
+        '<label class="phab-subscriptions-field is-wide"><span>Station IDs</span><textarea class="phab-admin-input" data-benefit-stations placeholder="ID через запятую"></textarea></label>' +
+        '</div>';
+      var category = card.querySelector('[data-benefit-category]');
+      var action = card.querySelector('[data-benefit-action]');
+      category.value = definition.category;
+      action.value = definition.category === 'GAME' ? 'JOIN_GAME'
+        : definition.category === 'GROUP_TRAINING' ? 'BOOK_GROUP_TRAINING'
+          : definition.category === 'TOURNAMENT' ? 'BOOK_TOURNAMENT'
+            : 'PURCHASE_ADD_ON_PRODUCT';
+      card.querySelector('[data-benefit-remove]').addEventListener('click', function () { card.remove(); });
+      dom.subscriptionBenefits.appendChild(card);
+    }
+
+    function addSubscriptionStationRule(definition) {
+      definition = definition || { selectorKind: 'STATION_LIST', surchargeKind: 'FIXED', amountRubles: 0 };
+      var row = document.createElement('div');
+      row.className = 'phab-subscriptions-phase';
+      row.innerHTML =
+        '<label class="phab-subscriptions-check"><input type="checkbox" checked data-station-rule-enabled>Вкл.</label>' +
+        '<label class="phab-subscriptions-field"><span>Доступ</span><select class="phab-admin-input" data-station-rule-kind><option value="HOME_STATION">Домашняя</option><option value="STATION_LIST">Выбранные</option><option value="ALL_STATIONS">Все</option></select></label>' +
+        '<label class="phab-subscriptions-field"><span>Station IDs</span><input class="phab-admin-input" data-station-rule-stations placeholder="ID через запятую"></label>' +
+        '<label class="phab-subscriptions-field"><span>Доплата</span><select class="phab-admin-input" data-station-rule-surcharge-kind><option value="NONE">Нет</option><option value="FIXED">Фиксированная</option></select></label>' +
+        '<label class="phab-subscriptions-field"><span>Доплата, ₽</span><input class="phab-admin-input" type="number" min="0" value="0" data-station-rule-surcharge></label>' +
+        '<label class="phab-subscriptions-field"><span>Приоритет</span><input class="phab-admin-input" type="number" value="100" data-station-rule-priority></label>' +
+        '<button class="phab-admin-btn-secondary phab-subscriptions-phase-remove" type="button" aria-label="Удалить правило станции" data-station-rule-remove>×</button>';
+      row.querySelector('[data-station-rule-kind]').value = definition.selectorKind;
+      row.querySelector('[data-station-rule-surcharge-kind]').value = definition.surchargeKind;
+      row.querySelector('[data-station-rule-surcharge]').value = String(definition.amountRubles || 0);
+      row.querySelector('[data-station-rule-remove]').addEventListener('click', function () { row.remove(); });
+      dom.subscriptionStationRules.appendChild(row);
     }
 
     function subscriptionField(labelText, input) {
@@ -36360,9 +36420,11 @@
         var lifecycle = capabilities.lifecycle || {};
         var commerce = capabilities.commerce || {};
         var providerBinding = state.subscriptions.lastPolicy.providerBinding || null;
+        var activeLimit = state.subscriptions.lastPolicy.activeServicesLimit || {};
+        var bookingWindow = state.subscriptions.lastPolicy.bookingWindow || {};
         policyMeta.textContent = String(state.subscriptions.lastPolicy.validityDays) +
-          ' дней · окно ' + String(state.subscriptions.lastPolicy.bookingWindowDays) +
-          ' дней · лимит ' + String(state.subscriptions.lastPolicy.maxActiveServices) +
+          ' дней · окно ' + (bookingWindow.enabled === false ? 'выкл.' : String(bookingWindow.days || state.subscriptions.lastPolicy.bookingWindowDays) + ' дней') +
+          ' · лимит ' + (activeLimit.enabled === false ? 'выкл.' : String(activeLimit.max || state.subscriptions.lastPolicy.maxActiveServices)) +
           ' · активация ' + String(lifecycle.activationMode || 'PURCHASE') +
           ' · продление ' + String(commerce.renewalMode || 'MANUAL') +
           ' · Viva productId ' + (providerBinding
@@ -36378,23 +36440,59 @@
       return Array.prototype.slice.call(dom.subscriptionBenefits.querySelectorAll('.phab-subscriptions-benefit'))
         .map(function (card, index) {
           var enabled = card.querySelector('[data-benefit-enabled]').checked;
-          if (!enabled) return null;
+          var category = card.querySelector('[data-benefit-category]').value;
+          var action = card.querySelector('[data-benefit-action]').value;
           var kind = card.querySelector('[data-benefit-kind]').value;
           var rawValue = Number(card.querySelector('[data-benefit-value]').value || 0);
           var rule = {
-            ruleId: String(card.dataset.category || '').toLowerCase() + '-rule-' + String(index + 1),
-            enabled: true,
-            category: card.dataset.category,
+            ruleId: String(category).toLowerCase() + '-' + String(action).toLowerCase() + '-' + String(index + 1),
+            enabled: enabled,
+            category: category,
+            actions: [action],
             externalEventTypeIds: splitSubscriptionIds(card.querySelector('[data-benefit-event-types]').value),
+            productTypeIds: splitSubscriptionIds(card.querySelector('[data-benefit-product-types]').value),
+            durationMinutes: splitSubscriptionIds(card.querySelector('[data-benefit-durations]').value)
+              .map(function (value) { return Number(value); })
+              .filter(function (value) { return value === 60 || value === 90 || value === 120; }),
             stationIds: splitSubscriptionIds(card.querySelector('[data-benefit-stations]').value),
             kind: kind,
-            priority: index + 1
+            priority: 1000 - index
           };
-          if (kind === 'PERCENT_DISCOUNT') rule.percentage = rawValue;
+          if (kind === 'PERCENT_DISCOUNT' || kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT') rule.percentage = rawValue;
           if (kind === 'FIXED_PRICE' || kind === 'FIXED_DISCOUNT') rule.valueMinor = Math.round(rawValue * 100);
+          if (kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT') {
+            rule.partialPrice = {
+              numerator: Number(card.querySelector('[data-benefit-partial-numerator]').value || 1),
+              denominator: Number(card.querySelector('[data-benefit-partial-denominator]').value || 4)
+            };
+          }
           return rule;
-        })
-        .filter(Boolean);
+        });
+    }
+
+    function subscriptionStationRulesPayload() {
+      return Array.prototype.slice.call(dom.subscriptionStationRules.querySelectorAll('.phab-subscriptions-phase'))
+        .map(function (row, index) {
+          var kind = row.querySelector('[data-station-rule-kind]').value;
+          var surchargeKind = row.querySelector('[data-station-rule-surcharge-kind]').value;
+          return {
+            ruleId: 'station-rule-' + String(index + 1),
+            enabled: Boolean(row.querySelector('[data-station-rule-enabled]').checked),
+            priority: Number(row.querySelector('[data-station-rule-priority]').value || 0),
+            selector: {
+              kind: kind,
+              stationIds: kind === 'STATION_LIST'
+                ? splitSubscriptionIds(row.querySelector('[data-station-rule-stations]').value)
+                : []
+            },
+            surcharge: {
+              kind: surchargeKind,
+              amountMinor: surchargeKind === 'FIXED'
+                ? Math.round(Number(row.querySelector('[data-station-rule-surcharge]').value || 0) * 100)
+                : 0
+            }
+          };
+        });
     }
 
     function subscriptionCapabilitiesPayload() {
@@ -36673,9 +36771,23 @@
         },
         maxActiveServices: Number(dom.subscriptionActiveLimitInput.value || 0),
         bookingWindowDays: Number(dom.subscriptionBookingWindowInput.value || 0),
+        activeServicesLimit: {
+          enabled: Boolean(dom.subscriptionActiveLimitEnabledInput.checked),
+          max: dom.subscriptionActiveLimitEnabledInput.checked
+            ? Number(dom.subscriptionActiveLimitInput.value || 0)
+            : null,
+          scope: dom.subscriptionActiveScopeInput.value
+        },
+        bookingWindow: {
+          enabled: Boolean(dom.subscriptionBookingWindowEnabledInput.checked),
+          days: dom.subscriptionBookingWindowEnabledInput.checked
+            ? Number(dom.subscriptionBookingWindowInput.value || 0)
+            : null
+        },
         dailyUsageLimit: Number(dom.subscriptionDailyLimitInput.value || 0),
         activeServiceScope: dom.subscriptionActiveScopeInput.value,
         usageUnitsByDuration: usageUnits,
+        stationAccessRules: subscriptionStationRulesPayload(),
         benefitRules: subscriptionBenefitRulesPayload(),
         capabilities: subscriptionCapabilitiesPayload()
       };
@@ -37144,6 +37256,18 @@
         switchTab('subscriptions');
         loadSubscriptions().catch(handleError);
       });
+      dom.subscriptionSectionTabButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          var section = String(button.dataset.subscriptionsTab || 'settings');
+          state.subscriptions.activeSection = section;
+          dom.subscriptionSectionTabButtons.forEach(function (item) {
+            item.classList.toggle('is-active', item === button);
+          });
+          dom.subscriptionSectionPanels.forEach(function (panel) {
+            panel.classList.toggle('phab-admin-hidden', panel.dataset.subscriptionsPanel !== section);
+          });
+        });
+      });
       dom.subscriptionTypeForm.addEventListener('submit', function (event) {
         event.preventDefault();
         createSubscriptionTypeFromForm().catch(handleError);
@@ -37174,6 +37298,21 @@
       }
       dom.subscriptionCreateEnabledInput.addEventListener('change', syncSubscriptionCreateDurations);
       syncSubscriptionCreateDurations();
+      function syncSubscriptionSwitchableLimits() {
+        dom.subscriptionActiveLimitInput.disabled = !dom.subscriptionActiveLimitEnabledInput.checked;
+        dom.subscriptionBookingWindowInput.disabled = !dom.subscriptionBookingWindowEnabledInput.checked;
+      }
+      dom.subscriptionActiveLimitEnabledInput.addEventListener('change', syncSubscriptionSwitchableLimits);
+      dom.subscriptionBookingWindowEnabledInput.addEventListener('change', syncSubscriptionSwitchableLimits);
+      syncSubscriptionSwitchableLimits();
+      dom.subscriptionBenefitAddBtn.addEventListener('click', function () {
+        state.subscriptions.commandHeaders.policy = null;
+        addSubscriptionBenefitEditor({ category: 'ADD_ON_PRODUCT', title: 'Доппродукт' });
+      });
+      dom.subscriptionStationRuleAddBtn.addEventListener('click', function () {
+        state.subscriptions.commandHeaders.policy = null;
+        addSubscriptionStationRule();
+      });
       dom.subscriptionPhaseAddBtn.addEventListener('click', function () {
         state.subscriptions.commandHeaders.release = null;
         state.subscriptions.releasePhases.push({
@@ -38205,6 +38344,7 @@
     async function init() {
       populateMobileTabSelect();
       renderSubscriptionBenefitEditors();
+      addSubscriptionStationRule({ selectorKind: 'HOME_STATION', surchargeKind: 'NONE', amountRubles: 0 });
       renderSubscriptionPhases();
       renderSubscriptions();
       hydrateGamesFiltersFromUrl();

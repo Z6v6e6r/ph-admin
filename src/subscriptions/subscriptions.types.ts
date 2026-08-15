@@ -18,12 +18,20 @@ export type SubscriptionReschedulePolicy = 'KEEP_RESERVATION' | 'REVALIDATE';
 export type SubscriptionProvider = 'VIVA';
 export type SubscriptionProviderReferenceKind = 'PRODUCT_CANDIDATE';
 export type SubscriptionProviderEvidenceState = 'UNVERIFIED';
+export type SubscriptionAction =
+  | 'CREATE_GAME'
+  | 'JOIN_GAME'
+  | 'BOOK_GROUP_TRAINING'
+  | 'BOOK_TOURNAMENT'
+  | 'PURCHASE_ADD_ON_PRODUCT';
 export type EventCategory = 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
+export type BenefitCategory = EventCategory | 'ADD_ON_PRODUCT';
 export type BenefitKind =
   | 'FREE_ENTITLEMENT'
   | 'FIXED_PRICE'
   | 'PERCENT_DISCOUNT'
   | 'FIXED_DISCOUNT'
+  | 'PARTIAL_PRICE_PERCENT_DISCOUNT'
   | 'DISABLED';
 export type ReleasePhaseMode = 'BULK' | 'DAILY_DROP' | 'MANUAL';
 export type ReleasePhaseActivation = 'MANUAL' | 'SCHEDULED' | 'PREVIOUS_SOLD_OUT';
@@ -50,13 +58,31 @@ export interface SubscriptionType {
 export interface BenefitRule {
   ruleId: string;
   enabled: boolean;
-  category: EventCategory;
+  category: BenefitCategory;
+  actions: SubscriptionAction[];
   externalEventTypeIds: string[];
+  productTypeIds: string[];
+  durationMinutes: number[];
   stationIds: string[];
   kind: BenefitKind;
   valueMinor: number | null;
   percentage: number | null;
+  partialPrice: { numerator: number; denominator: number } | null;
   priority: number;
+}
+
+export interface SubscriptionStationAccessRule {
+  ruleId: string;
+  enabled: boolean;
+  priority: number;
+  selector:
+    | { kind: 'HOME_STATION'; stationIds: [] }
+    | { kind: 'STATION_LIST'; stationIds: string[] }
+    | { kind: 'ALL_STATIONS'; stationIds: [] };
+  surcharge: {
+    kind: 'NONE' | 'FIXED';
+    amountMinor: number;
+  };
 }
 
 export interface SubscriptionProviderBindingCandidate {
@@ -148,7 +174,7 @@ export interface SubscriptionCapabilities {
 }
 
 export interface SubscriptionPolicyVersion {
-  modelVersion: 2;
+  modelVersion: 2 | 3;
   subscriptionTypeId: string;
   version: number;
   revision: number;
@@ -167,9 +193,19 @@ export interface SubscriptionPolicyVersion {
   };
   maxActiveServices: number;
   bookingWindowDays: number;
+  activeServicesLimit?: {
+    enabled: boolean;
+    max: number | null;
+    scope: ActiveServiceScope;
+  };
+  bookingWindow?: {
+    enabled: boolean;
+    days: number | null;
+  };
   dailyUsageLimit: number;
   activeServiceScope: ActiveServiceScope;
   usageUnitsByDuration: { '60': number; '90': number; '120': number };
+  stationAccessRules?: SubscriptionStationAccessRule[];
   benefitRules: BenefitRule[];
   providerBinding?: SubscriptionProviderBindingCandidate;
   capabilities: SubscriptionCapabilities;
@@ -233,7 +269,7 @@ export interface StoredSubscriptionType extends SubscriptionType {
 }
 
 export interface StoredSubscriptionPolicyVersion extends SubscriptionPolicyVersion {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   idempotency: SubscriptionIdempotency;
 }
 

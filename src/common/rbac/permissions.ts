@@ -20,7 +20,12 @@ export const ADMIN_PERMISSION_CATALOG = [
   { key: 'advertising:write', label: 'Реклама: изменение' },
   { key: 'subscriptions:read', label: 'Подписки: просмотр' },
   { key: 'subscriptions:catalog:write', label: 'Подписки: типы и правила' },
-  { key: 'subscriptions:release:write', label: 'Подписки: программы выпуска' }
+  { key: 'subscriptions:release:write', label: 'Подписки: программы выпуска' },
+  { key: 'subscriptions:instances:read', label: 'Подписки: экземпляры клиентов' },
+  { key: 'subscriptions:instances:manage', label: 'Подписки: управление экземплярами' },
+  { key: 'subscriptions:financial:write', label: 'Подписки: возвраты и финансовые операции' },
+  { key: 'subscriptions:analytics:read', label: 'Подписки: аналитика' },
+  { key: 'subscriptions:analytics:export', label: 'Подписки: экспорт аналитики и PII' }
 ] as const;
 
 export type AdminPermission = (typeof ADMIN_PERMISSION_CATALOG)[number]['key'];

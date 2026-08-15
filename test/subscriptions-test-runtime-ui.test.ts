@@ -68,6 +68,24 @@ function testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes(): void {
   assert.doesNotMatch(page, /payment-provider|checkout|acquir/i);
 }
 
+function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
+  const source = readFileSync(resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'), 'utf8');
+  assert.match(source, /data-subscriptions-tab="settings"[^>]*>Настройка подписки/);
+  assert.match(source, /data-subscriptions-tab="instances"[^>]*>Список подписок/);
+  assert.match(source, /data-subscriptions-tab="analytics"[^>]*>Аналитика/);
+  assert.match(source, /data-subscription-active-limit-enabled/);
+  assert.match(source, /data-subscription-booking-window-enabled/);
+  assert.match(source, /data-subscription-station-rule-add/);
+  assert.match(source, /PARTIAL_PRICE_PERCENT_DISCOUNT/);
+  assert.match(source, /PURCHASE_ADD_ON_PRODUCT/);
+  assert.match(source, /No-show — подтверждённая неявка клиента/);
+  assert.match(source, /Источник экземпляров пока не подключён/);
+  assert.match(source, /Метрики недоступны до подключения append-only ledger/);
+  assert.match(source, /Отсутствующие данные обозначаются «недоступно», а не нулём/);
+  assert.doesNotMatch(source, /data-subscriptions-panel="instances"[\s\S]{0,500}>0 активн/);
+}
+
 testDisabledPageIsNotServed();
 testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes();
+testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit();
 console.log('Subscription test runtime UI safety tests passed');
