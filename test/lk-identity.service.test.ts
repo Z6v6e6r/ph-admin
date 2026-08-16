@@ -124,6 +124,7 @@ async function main(): Promise<void> {
     const valid = await service.verify(bearer(signToken(keyA)), integrationToken);
     assert.equal(valid.ok, true);
     assert.deepEqual(valid.actor, {
+      issuer,
       subject: 'keycloak-subject-1',
       clientId: 'viva-client-1',
       phoneNorm: '79000000001',
@@ -142,6 +143,7 @@ async function main(): Promise<void> {
       bearer(signToken(legacyKey, { iss: legacyIssuer })),
       integrationToken
     );
+    assert.equal(legacyValid.actor.issuer, legacyIssuer);
     assert.equal(legacyValid.actor.phoneNorm, '79000000001');
     assert.equal(fetchCalls.get(legacyJwksUrl), 1);
 

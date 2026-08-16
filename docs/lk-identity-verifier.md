@@ -28,6 +28,8 @@ The verifier fails closed and requires:
 
 `sub` is never treated as a Viva `clientId`. A `clientId` is returned only when
 the signed token contains an explicit supported client-id claim.
+The response includes the verified allowlisted `issuer` together with `subject`, so a downstream
+service can resolve the exact `(issuer, subject)` identity mapping without trusting a phone lookup.
 
 LK currently has two explicit trusted profiles: the current `clients` realm and
 the former `prod` realm used by retained `LegacyAuthProvider` sessions. The

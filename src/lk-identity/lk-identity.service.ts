@@ -362,6 +362,7 @@ export class LkIdentityService {
     return {
       ok: true,
       actor: {
+        issuer,
         subject,
         ...(clientId ? { clientId } : {}),
         phoneNorm,
