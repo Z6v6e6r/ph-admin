@@ -6,6 +6,7 @@ import {
 } from '../src/common/rbac/permissions';
 import { Role } from '../src/common/rbac/role.enum';
 import {
+  computeSubscriptionRuntimeProjectionDigest,
   computeSubscriptionUsageLedgerEventHash,
   SubscriptionRuntimeContractError,
   validateStoredSubscriptionEntitlementAggregate,
@@ -60,15 +61,16 @@ const mappingFixture = (): StoredSubscriptionProviderMapping => ({
   }
 });
 
-const publicationFixture = (): StoredSubscriptionPolicyPublication => ({
-  schemaVersion: 1,
-  publicationId: 'publication:friendship-12m-v3',
-  subscriptionTypeId: 'subscription_type:friendship-12m',
-  policyVersion: 3,
-  policyDigest: DIGEST,
-  mappingId: 'mapping:friendship-12m',
-  dictionaryRevision: 'dictionary:2026-08-15',
-  runtimeProjection: {
+const publicationFixture = (): StoredSubscriptionPolicyPublication => {
+  const document: StoredSubscriptionPolicyPublication = {
+    schemaVersion: 1,
+    publicationId: 'publication:friendship-12m-v3',
+    subscriptionTypeId: 'subscription_type:friendship-12m',
+    policyVersion: 3,
+    policyDigest: DIGEST,
+    mappingId: 'mapping:friendship-12m',
+    dictionaryRevision: 'dictionary:2026-08-15',
+    runtimeProjection: {
     runtimeSchemaVersion: 1,
     subscriptionTypeId: 'subscription_type:friendship-12m',
     policyVersion: 3,
@@ -111,16 +113,19 @@ const publicationFixture = (): StoredSubscriptionPolicyPublication => ({
       minHoursBetweenUses: 0,
       blackoutDates: []
     }
-  },
-  state: 'PUBLISHED',
-  effectiveAt: '2026-08-16T00:00:00.000Z',
-  publishedAt: NOW,
-  publishedBy: 'admin:subscriptions',
-  supersededAt: null,
-  supersededBy: null,
-  impactPreviewRef: 'impact:friendship-12m-v3',
-  approvalAuditRef: 'audit:friendship-12m-v3'
-});
+    },
+    state: 'PUBLISHED',
+    effectiveAt: '2026-08-16T00:00:00.000Z',
+    publishedAt: NOW,
+    publishedBy: 'admin:subscriptions',
+    supersededAt: null,
+    supersededBy: null,
+    impactPreviewRef: 'impact:friendship-12m-v3',
+    approvalAuditRef: 'audit:friendship-12m-v3'
+  };
+  document.policyDigest = computeSubscriptionRuntimeProjectionDigest(document.runtimeProjection);
+  return document;
+};
 
 const instanceFixture = (): StoredSubscriptionInstance => ({
   schemaVersion: 1,
@@ -128,7 +133,7 @@ const instanceFixture = (): StoredSubscriptionInstance => ({
   tenantId: 'iSkq6G',
   subscriptionTypeId: 'subscription_type:friendship-12m',
   policyVersion: 3,
-  policyDigest: DIGEST,
+  policyDigest: publicationFixture().policyDigest,
   mappingId: 'mapping:friendship-12m',
   provider: 'VIVA',
   providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
@@ -161,6 +166,7 @@ const aggregateFixture = (): StoredSubscriptionEntitlementAggregate => ({
   schemaVersion: 1,
   subscriptionInstanceId: 'subscription_instance:synthetic-1',
   revision: 1,
+  activeServiceScope: 'SUBSCRIPTION_BENEFIT_ONLY',
   activeServiceCount: 1,
   activeServices: [{
     operationId: 'operation:booking-1',
@@ -194,7 +200,7 @@ const operationFixture = (): StoredSubscriptionRuntimeOperation => ({
   decision: {
     decisionKind: 'ENTITLEMENT',
     policyVersion: 3,
-    policyDigest: DIGEST,
+    policyDigest: publicationFixture().policyDigest,
     action: 'CREATE_GAME',
     target: {
       targetId: 'exercise:synthetic-1',
@@ -236,7 +242,7 @@ const ledgerFixture = (): StoredSubscriptionUsageLedgerEvent => {
     operationId: 'operation:booking-1',
     correlationId: 'corr:booking-1',
     policyVersion: 3,
-    policyDigest: DIGEST,
+    policyDigest: publicationFixture().policyDigest,
     stationId: 'station:yasenevo',
     eventTypeId: 'event_type:open-game',
     productTypeId: null,
@@ -289,6 +295,13 @@ const hasCode = (code: string) => (error: unknown): boolean =>
 async function run(): Promise<void> {
   validateStoredSubscriptionProviderMapping(mappingFixture());
   validateStoredSubscriptionPolicyPublication(publicationFixture());
+  const reorderedProjection = Object.fromEntries(
+    Object.entries(publicationFixture().runtimeProjection).reverse()
+  ) as StoredSubscriptionPolicyPublication['runtimeProjection'];
+  assert.equal(
+    computeSubscriptionRuntimeProjectionDigest(reorderedProjection),
+    publicationFixture().policyDigest
+  );
   validateStoredSubscriptionInstance(instanceFixture());
   validateStoredSubscriptionEntitlementAggregate(aggregateFixture());
   validateStoredSubscriptionRuntimeOperation(operationFixture());
@@ -299,7 +312,7 @@ async function run(): Promise<void> {
     decision: {
       decisionKind: 'PURCHASE',
       policyVersion: 3,
-      policyDigest: DIGEST,
+      policyDigest: publicationFixture().policyDigest,
       mappingId: 'mapping:friendship-12m',
       providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
       releaseProgramId: 'release_program:friendship-2026',
@@ -348,6 +361,13 @@ async function run(): Promise<void> {
       runtimeProjection: { ...publicationFixture().runtimeProjection, policyVersion: 4 }
     }),
     hasCode('SUBSCRIPTION_PUBLICATION_PROJECTION_MISMATCH')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...publicationFixture(),
+      policyDigest: `sha256:${OTHER_HASH}`
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_DIGEST_MISMATCH')
   );
   assert.throws(
     () => validateStoredSubscriptionPolicyPublication({
@@ -448,6 +468,13 @@ async function run(): Promise<void> {
   assert.throws(
     () => validateStoredSubscriptionEntitlementAggregate({
       ...aggregateFixture(),
+      activeServiceScope: 'UNKNOWN' as any
+    }),
+    hasCode('SUBSCRIPTION_AGGREGATE_ACTIVE_SCOPE_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionEntitlementAggregate({
+      ...aggregateFixture(),
       dailyUsage: { '2026-08-22': -1 }
     }),
     hasCode('SUBSCRIPTION_RUNTIME_COUNTER_INVALID')
@@ -458,6 +485,19 @@ async function run(): Promise<void> {
       idempotency: { ...operationFixture().idempotency, requestHash: 'not-a-hash' }
     }),
     hasCode('SUBSCRIPTION_RUNTIME_HASH_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionRuntimeOperation({
+      ...operationFixture(),
+      decision: {
+        ...operationFixture().decision!,
+        money: {
+          ...(operationFixture().decision as any).money,
+          finalPriceMinor: 1
+        }
+      } as any
+    }),
+    hasCode('SUBSCRIPTION_OPERATION_MONEY_INVARIANT_INVALID')
   );
   assert.throws(
     () => validateStoredSubscriptionRuntimeOperation({
@@ -590,6 +630,54 @@ async function run(): Promise<void> {
   process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = 'true';
   assert.equal(repository.runtimeContractsEnabled(), true);
 
+  const connectionModes: string[] = [];
+  const coldRepository = Object.create(SubscriptionsRepository.prototype) as any;
+  coldRepository.initialize = async (mode: string) => { connectionModes.push(mode); };
+  await coldRepository.connectReadOnly();
+  await coldRepository.connect();
+  assert.deepEqual(connectionModes, ['VERIFY_ONLY', 'DEFAULT']);
+
+  let releaseDefaultConnection!: () => void;
+  const pendingDefaultConnection = new Promise<void>((resolve) => {
+    releaseDefaultConnection = resolve;
+  });
+  const racingRepository = Object.create(SubscriptionsRepository.prototype) as any;
+  racingRepository.initialize = async (mode: string) => {
+    assert.equal(mode, 'DEFAULT');
+    await pendingDefaultConnection;
+  };
+  const defaultConnect = racingRepository.connect();
+  await assert.rejects(
+    racingRepository.connectReadOnly(),
+    hasCode('SUBSCRIPTIONS_CONNECTION_MODE_CONFLICT')
+  );
+  releaseDefaultConnection();
+  await defaultConnect;
+
+  let releaseReadOnlyConnection!: () => void;
+  const pendingReadOnlyConnection = new Promise<void>((resolve) => {
+    releaseReadOnlyConnection = resolve;
+  });
+  const reverseRacingRepository = Object.create(SubscriptionsRepository.prototype) as any;
+  reverseRacingRepository.initialize = async (mode: string) => {
+    assert.equal(mode, 'VERIFY_ONLY');
+    await pendingReadOnlyConnection;
+  };
+  const readOnlyConnect = reverseRacingRepository.connectReadOnly();
+  await assert.rejects(
+    reverseRacingRepository.connect(),
+    hasCode('SUBSCRIPTIONS_CONNECTION_MODE_CONFLICT')
+  );
+  releaseReadOnlyConnection();
+  await readOnlyConnect;
+
+  const repositoryConnectionSource = fs.readFileSync(
+    'src/subscriptions/subscriptions.repository.ts',
+    'utf8'
+  );
+  assert.match(repositoryConnectionSource, /connectReadOnly[\s\S]*connectWithMode\('VERIFY_ONLY'\)/);
+  assert.match(repositoryConnectionSource, /mode === 'DEFAULT' && \(rawAutoCreate/);
+
   let insertedMappings = 0;
   repository.runtimeMappings = () => ({
     insertOne: async () => { insertedMappings += 1; }
@@ -601,6 +689,13 @@ async function run(): Promise<void> {
     hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
   );
   assert.equal(insertedMappings, 1);
+  repository.runtimeMappings = () => ({
+    findOne: async () => ({ ...mappingFixture(), providerProductId: 123 })
+  });
+  await assert.rejects(
+    repository.runtimeProviderMappingById('mapping:friendship-12m'),
+    hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
+  );
 
   let storedLedger: StoredSubscriptionUsageLedgerEvent | null = null;
   let storedOutbox: StoredSubscriptionOutboxEvent | null = null;

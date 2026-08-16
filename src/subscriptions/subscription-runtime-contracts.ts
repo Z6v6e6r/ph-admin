@@ -71,6 +71,28 @@ export class SubscriptionRuntimeContractError extends Error {
   }
 }
 
+const canonicalStringify = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+    return `{${entries.map(([key, item]) => (
+      `${JSON.stringify(key)}:${canonicalStringify(item)}`
+    )).join(',')}}`;
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new SubscriptionRuntimeContractError('SUBSCRIPTION_RUNTIME_CANONICAL_VALUE_INVALID');
+  }
+  return serialized;
+};
+
+export function computeSubscriptionRuntimeProjectionDigest(
+  value: StoredSubscriptionPolicyPublication['runtimeProjection']
+): string {
+  return `sha256:${createHash('sha256').update(canonicalStringify(value)).digest('hex')}`;
+}
+
 const fail = (
   code: string,
   details: Record<string, string | number | boolean | null> = {}
@@ -563,6 +585,9 @@ export function validateStoredSubscriptionPolicyPublication(
     fail('SUBSCRIPTION_PUBLICATION_PROJECTION_MISMATCH');
   }
   validateRuntimeProjection(value.runtimeProjection);
+  if (computeSubscriptionRuntimeProjectionDigest(value.runtimeProjection) !== value.policyDigest) {
+    fail('SUBSCRIPTION_PUBLICATION_DIGEST_MISMATCH');
+  }
   if (value.state === 'SUPERSEDED') {
     requiredInstant(value.supersededAt, 'supersededAt');
     requiredId(value.supersededBy, 'supersededBy');
@@ -647,6 +672,12 @@ export function validateStoredSubscriptionEntitlementAggregate(
   if (value.schemaVersion !== 1) fail('SUBSCRIPTION_AGGREGATE_SCHEMA_INVALID');
   requiredId(value.subscriptionInstanceId, 'subscriptionInstanceId');
   positiveInteger(value.revision, 'revision');
+  oneOf(
+    value.activeServiceScope,
+    ['SUBSCRIPTION_BENEFIT_ONLY', 'ALL_BOOKINGS'],
+    'SUBSCRIPTION_AGGREGATE_ACTIVE_SCOPE_INVALID',
+    'activeServiceScope'
+  );
   nonNegativeInteger(value.activeServiceCount, 'activeServiceCount');
   nonNegativeInteger(value.futureBookingCount, 'futureBookingCount');
   if (!Array.isArray(value.activeServices)
@@ -790,6 +821,13 @@ export function validateStoredSubscriptionRuntimeOperation(
       }
       nonNegativeInteger(money?.discountMinor, 'decision.money.discountMinor');
       nonNegativeInteger(money?.surchargeMinor, 'decision.money.surchargeMinor');
+      if (money.basePriceMinor !== null && money.finalPriceMinor !== null) {
+        if (money.discountMinor > money.basePriceMinor
+          || BigInt(money.basePriceMinor) - BigInt(money.discountMinor)
+            + BigInt(money.surchargeMinor) !== BigInt(money.finalPriceMinor)) {
+          fail('SUBSCRIPTION_OPERATION_MONEY_INVARIANT_INVALID');
+        }
+      }
     } else {
       requiredId(value.decision.mappingId, 'decision.mappingId');
       requiredId(value.decision.providerProductId, 'decision.providerProductId');

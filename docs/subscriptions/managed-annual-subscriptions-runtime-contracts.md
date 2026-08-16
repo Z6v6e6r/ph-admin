@@ -154,8 +154,13 @@ Recovery:
 - Old and new application versions can coexist because no runtime document is
   created and new index checks are opt-in.
 
-## Next gate
+## Shadow quote checkpoint
 
-The next checkpoint is shadow quote. It may read a verified mapping,
-publication, instance and aggregate, but it must remain read-only and must not
-reserve counters or call a provider mutation endpoint.
+The internal, default-off candidate is specified in
+`managed-annual-subscriptions-shadow-quote.md`. It reads a verified mapping,
+publication, instance and aggregate, remains non-binding and does not reserve
+counters or call a provider mutation endpoint. It intentionally has no HTTP
+route until authoritative LK identity and server target resolvers are ready.
+
+The next gate is that authenticated shadow-only adapter; atomic reservation and
+provider confirmation remain separate later checkpoints.

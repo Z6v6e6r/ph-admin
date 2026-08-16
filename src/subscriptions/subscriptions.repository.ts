@@ -232,20 +232,40 @@ export class SubscriptionsRepository {
   private client?: MongoClient;
   private db?: Db;
   private connectionPromise?: Promise<void>;
+  private connectionPromiseMode?: 'DEFAULT' | 'VERIFY_ONLY';
 
   async connect(): Promise<void> {
-    if (this.connectionPromise) return this.connectionPromise;
+    return this.connectWithMode('DEFAULT');
+  }
+
+  async connectReadOnly(): Promise<void> {
+    return this.connectWithMode('VERIFY_ONLY');
+  }
+
+  private async connectWithMode(mode: 'DEFAULT' | 'VERIFY_ONLY'): Promise<void> {
+    if (this.connectionPromise) {
+      if (this.connectionPromiseMode !== mode) {
+        throw new SubscriptionRuntimeContractError(
+          'SUBSCRIPTIONS_CONNECTION_MODE_CONFLICT'
+        );
+      }
+      return this.connectionPromise;
+    }
     if (this.db) return;
-    const pending = this.initialize();
+    const pending = this.initialize(mode);
     this.connectionPromise = pending;
+    this.connectionPromiseMode = mode;
     try {
       await pending;
     } finally {
-      if (this.connectionPromise === pending) this.connectionPromise = undefined;
+      if (this.connectionPromise === pending) {
+        this.connectionPromise = undefined;
+        this.connectionPromiseMode = undefined;
+      }
     }
   }
 
-  private async initialize(): Promise<void> {
+  private async initialize(mode: 'DEFAULT' | 'VERIFY_ONLY'): Promise<void> {
     if (!this.mongoUri) throw new Error('SUBSCRIPTIONS_MONGODB_URI or MONGODB_URI is required');
     if (!this.dbName) throw new Error('SUBSCRIPTIONS_MONGODB_DB is required');
     const client = new MongoClient(this.mongoUri, {
@@ -256,9 +276,9 @@ export class SubscriptionsRepository {
     this.client = client;
     this.db = client.db(this.dbName);
     const rawAutoCreate = String(process.env.SUBSCRIPTIONS_AUTO_CREATE_INDEXES ?? '').trim();
-    const autoCreate = rawAutoCreate
+    const autoCreate = mode === 'DEFAULT' && (rawAutoCreate
       ? rawAutoCreate === '1' || rawAutoCreate.toLowerCase() === 'true'
-      : process.env.NODE_ENV !== 'production';
+      : process.env.NODE_ENV !== 'production');
     try {
       if (autoCreate) await this.ensureIndexes();
       else await this.verifyIndexes();
@@ -411,7 +431,9 @@ export class SubscriptionsRepository {
     mappingId: string
   ): Promise<StoredSubscriptionProviderMapping | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeMappings().findOne({ mappingId }, { projection: { _id: 0 } });
+    const row = await this.runtimeMappings().findOne({ mappingId }, { projection: { _id: 0 } });
+    if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
   }
 
   async runtimeProviderMappingByProviderIdentity(input: {
@@ -422,7 +444,7 @@ export class SubscriptionsRepository {
     providerScopeId: string;
   }): Promise<StoredSubscriptionProviderMapping | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeMappings().findOne(
+    const row = await this.runtimeMappings().findOne(
       {
         tenantId: input.tenantId,
         provider: input.provider,
@@ -432,6 +454,8 @@ export class SubscriptionsRepository {
       },
       { projection: { _id: 0 } }
     );
+    if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
   }
 
   async insertRuntimeProviderMapping(document: StoredSubscriptionProviderMapping): Promise<void> {
@@ -445,10 +469,12 @@ export class SubscriptionsRepository {
     policyVersion: number
   ): Promise<StoredSubscriptionPolicyPublication | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimePublications().findOne(
+    const row = await this.runtimePublications().findOne(
       { subscriptionTypeId, policyVersion },
       { projection: { _id: 0 } }
     );
+    if (row) validateStoredSubscriptionPolicyPublication(row);
+    return row;
   }
 
   async insertRuntimePolicyPublication(
@@ -463,10 +489,25 @@ export class SubscriptionsRepository {
     subscriptionInstanceId: string
   ): Promise<StoredSubscriptionInstance | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeInstances().findOne(
+    const row = await this.runtimeInstances().findOne(
       { subscriptionInstanceId },
       { projection: { _id: 0 } }
     );
+    if (row) validateStoredSubscriptionInstance(row);
+    return row;
+  }
+
+  async runtimeInstanceByTenantAndId(
+    tenantId: string,
+    subscriptionInstanceId: string
+  ): Promise<StoredSubscriptionInstance | null> {
+    this.assertRuntimeContractsEnabled();
+    const row = await this.runtimeInstances().findOne(
+      { tenantId, subscriptionInstanceId },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionInstance(row);
+    return row;
   }
 
   async runtimeInstanceByProviderIdentity(input: {
@@ -475,7 +516,9 @@ export class SubscriptionsRepository {
     clientSubscriptionId: string;
   }): Promise<StoredSubscriptionInstance | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeInstances().findOne(input, { projection: { _id: 0 } });
+    const row = await this.runtimeInstances().findOne(input, { projection: { _id: 0 } });
+    if (row) validateStoredSubscriptionInstance(row);
+    return row;
   }
 
   async insertRuntimeInstance(document: StoredSubscriptionInstance): Promise<void> {
@@ -488,10 +531,12 @@ export class SubscriptionsRepository {
     subscriptionInstanceId: string
   ): Promise<StoredSubscriptionEntitlementAggregate | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeAggregates().findOne(
+    const row = await this.runtimeAggregates().findOne(
       { subscriptionInstanceId },
       { projection: { _id: 0 } }
     );
+    if (row) validateStoredSubscriptionEntitlementAggregate(row);
+    return row;
   }
 
   async insertRuntimeEntitlementAggregate(
@@ -504,7 +549,12 @@ export class SubscriptionsRepository {
 
   async runtimeOperationById(operationId: string): Promise<StoredSubscriptionRuntimeOperation | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeOperations().findOne({ operationId }, { projection: { _id: 0 } });
+    const row = await this.runtimeOperations().findOne(
+      { operationId },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionRuntimeOperation(row);
+    return row;
   }
 
   async runtimeOperationByIdempotency(input: {
@@ -514,7 +564,7 @@ export class SubscriptionsRepository {
     keyHash: string;
   }): Promise<StoredSubscriptionRuntimeOperation | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeOperations().findOne(
+    const row = await this.runtimeOperations().findOne(
       {
         tenantId: input.tenantId,
         'actor.actorId': input.actorId,
@@ -523,6 +573,8 @@ export class SubscriptionsRepository {
       },
       { projection: { _id: 0 } }
     );
+    if (row) validateStoredSubscriptionRuntimeOperation(row);
+    return row;
   }
 
   async insertRuntimeOperation(document: StoredSubscriptionRuntimeOperation): Promise<void> {
@@ -535,7 +587,9 @@ export class SubscriptionsRepository {
     eventId: string
   ): Promise<StoredSubscriptionUsageLedgerEvent | null> {
     this.assertRuntimeContractsEnabled();
-    return this.runtimeLedger().findOne({ eventId }, { projection: { _id: 0 } });
+    const row = await this.runtimeLedger().findOne({ eventId }, { projection: { _id: 0 } });
+    if (row) validateStoredSubscriptionUsageLedgerEvent(row);
+    return row;
   }
 
   async appendRuntimeLedgerEventWithOutbox(input: {

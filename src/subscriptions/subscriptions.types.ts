@@ -673,6 +673,7 @@ export interface StoredSubscriptionEntitlementAggregate {
   schemaVersion: 1;
   subscriptionInstanceId: string;
   revision: number;
+  activeServiceScope: ActiveServiceScope;
   activeServiceCount: number;
   activeServices: SubscriptionEntitlementReservation[];
   dailyUsage: Record<string, number>;
@@ -688,6 +689,81 @@ export interface StoredSubscriptionEntitlementAggregate {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SubscriptionShadowQuoteIdentityContext {
+  resolutionSource: 'LK_IDENTITY';
+  tenantId: string;
+  clientRefHash: string;
+  evidenceRef: string;
+  verifiedAt: string;
+}
+
+export interface SubscriptionShadowQuoteResolvedTarget {
+  resolutionSource: 'SERVER';
+  targetId: string;
+  stationId: string;
+  category: BenefitCategory;
+  externalEventTypeId: string;
+  productTypeId: string | null;
+  durationMinutes: number;
+  startsAt: string;
+  basePriceMinor: number | null;
+  currency: 'RUB';
+  dictionaryRevision: string;
+  evidenceRef: string;
+  priceEvidenceRef: string | null;
+  resolvedAt: string;
+}
+
+export interface SubscriptionShadowQuoteRequest {
+  identity: SubscriptionShadowQuoteIdentityContext;
+  subscriptionInstanceId: string;
+  action: SubscriptionAction;
+  target: SubscriptionShadowQuoteResolvedTarget;
+}
+
+export interface SubscriptionShadowQuoteBlocker {
+  code: string;
+  message: string;
+  details: Record<string, string | number | boolean | null> | null;
+}
+
+export interface SubscriptionShadowQuoteAppliedBenefit {
+  kind: Exclude<BenefitKind, 'DISABLED'> | 'NONE';
+  ruleId: string | null;
+  stationRuleId: string | null;
+  basePriceMinor: number | null;
+  discountMinor: number;
+  surchargeMinor: number;
+  finalPriceMinor: number | null;
+  partialPriceCalculation: {
+    numerator: number;
+    denominator: number;
+    chargeBeforeDiscountMinor: number;
+    percentageDiscountMinor: number;
+  } | null;
+  currency: 'RUB';
+}
+
+export interface SubscriptionShadowQuoteResult {
+  quoteKind: 'SHADOW';
+  nonBinding: true;
+  requiresReservationRecheck: true;
+  eligible: boolean;
+  blockers: SubscriptionShadowQuoteBlocker[];
+  subscriptionInstanceId: string;
+  policyVersion: number | null;
+  policyDigest: string | null;
+  aggregateRevision: number | null;
+  evaluatedAt: string;
+  usageUnits: number | null;
+  activeServices: number | null;
+  maxActiveServices: number | null;
+  dailyUsed: number | null;
+  dailyLimit: number | null;
+  benefit: SubscriptionShadowQuoteAppliedBenefit | null;
+  decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }
 
 export interface SubscriptionRuntimeEntitlementDecisionSnapshot {
