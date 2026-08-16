@@ -77,12 +77,15 @@ async function main(): Promise<void> {
     'LK_IDENTITY_KEYCLOAK_JWKS_URL',
     'LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER',
     'LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL',
+    'LK_IDENTITY_LEGACY_EXPECTED_AUDIENCES',
     'LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE',
     'LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY',
+    'LK_IDENTITY_EXPECTED_AUDIENCES',
     'LK_IDENTITY_EXPECTED_AUDIENCE',
     'LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY',
     'LK_IDENTITY_EXPECTED_TENANT_KEY',
-    'LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS'
+    'LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS',
+    'LK_IDENTITY_FAILURE_LOG_ENABLED'
   ];
   const previousEnv = new Map(envNames.map((name) => [name, process.env[name]]));
   const originalFetch = globalThis.fetch;
@@ -105,6 +108,7 @@ async function main(): Promise<void> {
   process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY = 'widget';
   process.env.LK_IDENTITY_EXPECTED_TENANT_KEY = 'iSkq6G';
   process.env.LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS = '1000';
+  process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '0';
   globalThis.fetch = async (input) => {
     const requestUrl = String(input);
     fetchCalls.set(requestUrl, (fetchCalls.get(requestUrl) ?? 0) + 1);
@@ -145,6 +149,17 @@ async function main(): Promise<void> {
     assert.equal(legacyValid.actor.phoneNorm, '79000000001');
     assert.equal(fetchCalls.get(legacyJwksUrl), 1);
 
+    const legacyKeycloakAccountAudience = await service.verify(
+      bearer(signToken(legacyKey, {
+        iss: legacyIssuer,
+        aud: 'account',
+        phone_number: undefined,
+        preferred_username: '79000000001'
+      })),
+      integrationToken
+    );
+    assert.equal(legacyKeycloakAccountAudience.actor.phoneNorm, '79000000001');
+
     await service.verify(
       bearer(signToken(legacyKey, { iss: legacyIssuer })),
       integrationToken
@@ -160,6 +175,31 @@ async function main(): Promise<void> {
     assert.equal(rotated.actor.phoneNorm, '79000000001');
     assert.equal(fetchCalls.get(jwksUrl), 2, 'unknown kid refreshes only clients JWKS');
     assert.equal(fetchCalls.get(legacyJwksUrl), 1, 'clients rotation does not refresh prod JWKS');
+
+    const keycloakAccountAudience = await service.verify(
+      bearer(signToken(keyB, {
+        aud: 'account',
+        phone_number: undefined,
+        name: undefined,
+        preferred_username: '+7 (900) 000-00-01'
+      })),
+      integrationToken
+    );
+    assert.equal(keycloakAccountAudience.actor.phoneNorm, '79000000001');
+    assert.equal(
+      keycloakAccountAudience.actor.name,
+      undefined,
+      'a phone-shaped preferred_username is identity, not a display name'
+    );
+
+    const namedPreferredUsername = await service.verify(
+      bearer(signToken(keyB, {
+        name: undefined,
+        preferred_username: 'player-one'
+      })),
+      integrationToken
+    );
+    assert.equal(namedPreferredUsername.actor.name, 'player-one');
 
     await expectStatus(
       service.verify(bearer(signToken(legacyKey, {
@@ -205,6 +245,47 @@ async function main(): Promise<void> {
       service.verify(bearer(signToken(keyB, { tenant_key: 'other-tenant' })), integrationToken),
       401
     );
+
+    process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '1';
+    const diagnosticService = new LkIdentityService();
+    const diagnosticMessages: string[] = [];
+    (diagnosticService as unknown as { logger: { warn: (message: string) => void } }).logger = {
+      warn: (message) => diagnosticMessages.push(message)
+    };
+    await expectStatus(
+      diagnosticService.verify(
+        bearer(signToken(keyB, { tenant_key: 'other-tenant' })),
+        integrationToken
+      ),
+      401
+    );
+    assert.deepEqual(diagnosticMessages, [JSON.stringify({
+      type: 'lk_identity_verification_failure',
+      stage: 'tenant',
+      issuerProfile: 'clients'
+    })]);
+    assert.ok(
+      !diagnosticMessages[0].includes('other-tenant')
+        && !diagnosticMessages[0].includes('79000000001')
+        && !diagnosticMessages[0].includes('keycloak-subject-1'),
+      'failure diagnostics never include claim values or identity data'
+    );
+    process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '0';
+
+    process.env.LK_IDENTITY_EXPECTED_AUDIENCES = 'account';
+    const explicitAudienceService = new LkIdentityService();
+    await explicitAudienceService.verify(
+      bearer(signToken(keyB, { aud: 'account' })),
+      integrationToken
+    );
+    await expectStatus(
+      explicitAudienceService.verify(
+        bearer(signToken(keyB, { aud: 'widget' })),
+        integrationToken
+      ),
+      401
+    );
+    delete process.env.LK_IDENTITY_EXPECTED_AUDIENCES;
     await expectStatus(
       service.verify(bearer(signToken(keyB, { exp: Math.floor(Date.now() / 1000) - 300 })), integrationToken),
       401

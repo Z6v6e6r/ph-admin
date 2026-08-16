@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
@@ -37,7 +38,7 @@ interface JwksCache {
 interface TrustedIssuerProfile {
   issuer: string;
   jwksUrl: string;
-  expectedAudience: string;
+  expectedAudiences: Set<string>;
   expectedAuthorizedParty: string;
 }
 
@@ -49,6 +50,7 @@ interface JwksState {
 
 @Injectable()
 export class LkIdentityService {
+  private readonly logger = new Logger(LkIdentityService.name);
   private readonly trustedIssuers = this.createTrustedIssuerProfiles();
   private readonly expectedTenantKey = String(
     process.env.LK_IDENTITY_EXPECTED_TENANT_KEY ?? 'iSkq6G'
@@ -86,6 +88,9 @@ export class LkIdentityService {
     0,
     120
   );
+  private readonly failureLogEnabled = ['1', 'true', 'yes'].includes(
+    String(process.env.LK_IDENTITY_FAILURE_LOG_ENABLED ?? '').trim().toLowerCase()
+  );
 
   private readonly jwksStates = new Map<string, JwksState>();
 
@@ -101,7 +106,10 @@ export class LkIdentityService {
     const issuer = this.pickString(parts.claims.iss);
     const issuerProfile = issuer ? this.trustedIssuers.get(issuer) : undefined;
     if (algorithm !== 'RS256' || !kid || !issuerProfile) {
-      throw this.invalidToken();
+      throw this.invalidToken(
+        'header_or_issuer',
+        issuerProfile ? this.issuerProfileLabel(issuerProfile) : 'unknown'
+      );
     }
 
     const key = await this.resolveSigningKey(issuerProfile, kid);
@@ -124,7 +132,7 @@ export class LkIdentityService {
       });
     }
     if (!validSignature) {
-      throw this.invalidToken();
+      throw this.invalidToken('signature', this.issuerProfileLabel(issuerProfile));
     }
 
     return this.validateClaims(parts.claims, issuerProfile);
@@ -165,7 +173,7 @@ export class LkIdentityService {
   private decodeJwt(token: string): JwtParts {
     const encoded = token.split('.');
     if (encoded.length !== 3 || encoded.some((part) => !part)) {
-      throw this.invalidToken();
+      throw this.invalidToken('jwt_structure');
     }
     try {
       const header = this.toRecord(
@@ -184,7 +192,7 @@ export class LkIdentityService {
         signature: Buffer.from(encoded[2], 'base64url')
       };
     } catch (_error) {
-      throw this.invalidToken();
+      throw this.invalidToken('jwt_structure');
     }
   }
 
@@ -201,7 +209,7 @@ export class LkIdentityService {
       matches = keys.filter((key) => key.kid === kid);
     }
     if (matches.length !== 1) {
-      throw this.invalidToken();
+      throw this.invalidToken('signing_key', this.issuerProfileLabel(profile));
     }
     return matches[0];
   }
@@ -324,10 +332,14 @@ export class LkIdentityService {
       || (hasNotBefore && notBefore === undefined)
       || (notBefore !== undefined && notBefore > nowSeconds + this.clockSkewSeconds)
       || issuedAt > nowSeconds + this.clockSkewSeconds
-      || authorizedParty !== profile.expectedAuthorizedParty
-      || !audience.includes(profile.expectedAudience)
     ) {
-      throw this.invalidToken();
+      throw this.invalidToken('claims_core', this.issuerProfileLabel(profile));
+    }
+    if (authorizedParty !== profile.expectedAuthorizedParty) {
+      throw this.invalidToken('authorized_party', this.issuerProfileLabel(profile));
+    }
+    if (!audience.some((value) => profile.expectedAudiences.has(value))) {
+      throw this.invalidToken('audience', this.issuerProfileLabel(profile));
     }
 
     const tenantKey = this.resolveConsistentString([
@@ -340,6 +352,7 @@ export class LkIdentityService {
       claims.phone_number,
       claims.phone,
       claims.mobile,
+      this.normalizePhone(claims.preferred_username) ? claims.preferred_username : undefined,
       client?.phone_number,
       client?.phone,
       client?.mobile
@@ -352,12 +365,18 @@ export class LkIdentityService {
       client?.id,
       client?.clientId
     ]);
-    if (tenantKey !== this.expectedTenantKey || !phoneNorm) {
-      throw this.invalidToken();
+    if (tenantKey !== this.expectedTenantKey) {
+      throw this.invalidToken('tenant', this.issuerProfileLabel(profile));
+    }
+    if (!phoneNorm) {
+      throw this.invalidToken('phone', this.issuerProfileLabel(profile));
     }
 
+    const preferredUsername = this.pickString(claims.preferred_username);
     const name = this.pickString(
-      claims.name ?? claims.full_name ?? claims.preferred_username
+      claims.name
+        ?? claims.full_name
+        ?? (this.normalizePhone(preferredUsername) ? undefined : preferredUsername)
     );
     return {
       ok: true,
@@ -382,7 +401,7 @@ export class LkIdentityService {
       .map((value) => this.pickString(value))
       .filter((value): value is string => Boolean(value));
     if (new Set(normalized).size > 1) {
-      throw this.invalidToken();
+      throw this.invalidToken('alias_conflict');
     }
     return normalized[0];
   }
@@ -391,11 +410,11 @@ export class LkIdentityService {
     const present = values.filter((value) => this.pickString(value) !== undefined);
     const normalized = present.map((value) => this.normalizePhone(value));
     if (normalized.some((value) => !value)) {
-      throw this.invalidToken();
+      throw this.invalidToken('phone_claims');
     }
     const phones = normalized.filter((value): value is string => Boolean(value));
     if (new Set(phones).size > 1) {
-      throw this.invalidToken();
+      throw this.invalidToken('phone_claims');
     }
     return phones[0];
   }
@@ -418,7 +437,14 @@ export class LkIdentityService {
     return /^7\d{10}$/.test(normalized) ? normalized : undefined;
   }
 
-  private invalidToken(): UnauthorizedException {
+  private invalidToken(stage = 'unspecified', issuerProfile = 'unresolved'): UnauthorizedException {
+    if (this.failureLogEnabled) {
+      this.logger.warn(JSON.stringify({
+        type: 'lk_identity_verification_failure',
+        stage,
+        issuerProfile
+      }));
+    }
     return new UnauthorizedException({
       code: 'LK_IDENTITY_TOKEN_INVALID',
       message: 'LK auth token is invalid'
@@ -457,9 +483,10 @@ export class LkIdentityService {
         process.env.LK_IDENTITY_KEYCLOAK_JWKS_URL
           ?? `${primaryIssuer}/protocol/openid-connect/certs`
       ).trim(),
-      expectedAudience: String(
-        process.env.LK_IDENTITY_EXPECTED_AUDIENCE ?? 'widget'
-      ).trim(),
+      expectedAudiences: this.readExpectedAudiences(
+        process.env.LK_IDENTITY_EXPECTED_AUDIENCES
+          ?? `${process.env.LK_IDENTITY_EXPECTED_AUDIENCE ?? 'widget'},account`
+      ),
       expectedAuthorizedParty: String(
         process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY ?? 'widget'
       ).trim()
@@ -476,10 +503,13 @@ export class LkIdentityService {
           process.env.LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL
             ?? `${legacyIssuer}/protocol/openid-connect/certs`
         ).trim(),
-        expectedAudience: String(
-          process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE
-            ?? primaryProfile.expectedAudience
-        ).trim(),
+        expectedAudiences: this.readExpectedAudiences(
+          process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCES
+            ?? (process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE
+              ? `${process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE},account`
+              : undefined)
+            ?? Array.from(primaryProfile.expectedAudiences).join(',')
+        ),
         expectedAuthorizedParty: String(
           process.env.LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY
             ?? primaryProfile.expectedAuthorizedParty
@@ -489,7 +519,7 @@ export class LkIdentityService {
     if (profiles.some((profile) => (
       !profile.issuer
       || !profile.jwksUrl
-      || !profile.expectedAudience
+      || profile.expectedAudiences.size === 0
       || !profile.expectedAuthorizedParty
     ))) {
       throw new Error('LK identity issuer profile is incomplete');
@@ -501,6 +531,21 @@ export class LkIdentityService {
       throw new Error('LK identity issuer profiles must be unique');
     }
     return trustedIssuers;
+  }
+
+  private readExpectedAudiences(value: string): Set<string> {
+    return new Set(
+      String(value ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    );
+  }
+
+  private issuerProfileLabel(profile: TrustedIssuerProfile): 'clients' | 'prod' | 'trusted' {
+    if (profile.issuer.endsWith('/realms/clients')) return 'clients';
+    if (profile.issuer.endsWith('/realms/prod')) return 'prod';
+    return 'trusted';
   }
 
   private getJwksState(issuer: string): JwksState {
