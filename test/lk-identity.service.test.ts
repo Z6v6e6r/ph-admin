@@ -85,6 +85,7 @@ async function main(): Promise<void> {
     'LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY',
     'LK_IDENTITY_EXPECTED_TENANT_KEY',
     'LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS',
+    'LK_IDENTITY_DIAGNOSTICS_ENABLED',
     'LK_IDENTITY_FAILURE_LOG_ENABLED'
   ];
   const previousEnv = new Map(envNames.map((name) => [name, process.env[name]]));
@@ -108,6 +109,7 @@ async function main(): Promise<void> {
   process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY = 'widget';
   process.env.LK_IDENTITY_EXPECTED_TENANT_KEY = 'iSkq6G';
   process.env.LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS = '1000';
+  process.env.LK_IDENTITY_DIAGNOSTICS_ENABLED = 'false';
   process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '0';
   globalThis.fetch = async (input) => {
     const requestUrl = String(input);
@@ -246,41 +248,96 @@ async function main(): Promise<void> {
       401
     );
 
-    process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '1';
+    process.env.LK_IDENTITY_DIAGNOSTICS_ENABLED = 'true';
     const diagnosticService = new LkIdentityService();
     const diagnosticMessages: string[] = [];
     (diagnosticService as unknown as { logger: { warn: (message: string) => void } }).logger = {
       warn: (message) => diagnosticMessages.push(message)
     };
+    const rejectedToken = signToken(keyB, { tenant_key: 'other-tenant' });
+    try {
+      await diagnosticService.verify(bearer(rejectedToken), integrationToken);
+      assert.fail('diagnostic token must be rejected');
+    } catch (error) {
+      const candidate = error as {
+        getStatus?: () => number;
+        getResponse?: () => unknown;
+      };
+      assert.equal(candidate.getStatus?.(), 401);
+      assert.deepEqual(candidate.getResponse?.(), {
+        code: 'LK_IDENTITY_TOKEN_INVALID',
+        message: 'LK auth token is invalid'
+      });
+    }
     await expectStatus(
-      diagnosticService.verify(
-        bearer(signToken(keyB, { tenant_key: 'other-tenant' })),
-        integrationToken
-      ),
+      diagnosticService.verify(bearer(rejectedToken), integrationToken),
+      401
+    );
+    const secondDiagnosticService = new LkIdentityService();
+    await expectStatus(
+      secondDiagnosticService.verify(bearer(rejectedToken), integrationToken),
       401
     );
     assert.deepEqual(diagnosticMessages, [JSON.stringify({
-      type: 'lk_identity_verification_failure',
-      stage: 'tenant',
-      issuerProfile: 'clients'
+      type: 'lk_identity_token_rejected',
+      reason: 'TENANT_MISMATCH',
+      issuerProfile: 'primary'
     })]);
     assert.ok(
       !diagnosticMessages[0].includes('other-tenant')
         && !diagnosticMessages[0].includes('79000000001')
-        && !diagnosticMessages[0].includes('keycloak-subject-1'),
+        && !diagnosticMessages[0].includes('keycloak-subject-1')
+        && !diagnosticMessages[0].includes(rejectedToken),
       'failure diagnostics never include claim values or identity data'
     );
+    process.env.LK_IDENTITY_DIAGNOSTICS_ENABLED = 'false';
+
+    process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '1';
+    const aliasDiagnosticService = new LkIdentityService();
+    const aliasDiagnosticMessages: string[] = [];
+    (aliasDiagnosticService as unknown as { logger: { warn: (message: string) => void } }).logger = {
+      warn: (message) => aliasDiagnosticMessages.push(message)
+    };
+    await expectStatus(
+      aliasDiagnosticService.verify(
+        bearer(signToken(keyB, { aud: 'other-client' })),
+        integrationToken
+      ),
+      401
+    );
+    assert.deepEqual(aliasDiagnosticMessages, [JSON.stringify({
+      type: 'lk_identity_token_rejected',
+      reason: 'AUDIENCE_MISMATCH',
+      issuerProfile: 'primary'
+    })]);
     process.env.LK_IDENTITY_FAILURE_LOG_ENABLED = '0';
 
-    process.env.LK_IDENTITY_EXPECTED_AUDIENCES = 'account';
+    process.env.LK_IDENTITY_EXPECTED_AUDIENCES = ' , ';
+    assert.throws(
+      () => new LkIdentityService(),
+      /LK identity issuer profile is incomplete/,
+      'an explicitly empty allowlist fails closed'
+    );
+    process.env.LK_IDENTITY_EXPECTED_AUDIENCES = 'account,custom-primary';
     const explicitAudienceService = new LkIdentityService();
     await explicitAudienceService.verify(
       bearer(signToken(keyB, { aud: 'account' })),
       integrationToken
     );
+    await explicitAudienceService.verify(
+      bearer(signToken(keyB, { aud: 'custom-primary' })),
+      integrationToken
+    );
     await expectStatus(
       explicitAudienceService.verify(
         bearer(signToken(keyB, { aud: 'widget' })),
+        integrationToken
+      ),
+      401
+    );
+    await expectStatus(
+      explicitAudienceService.verify(
+        bearer(signToken(legacyKey, { iss: legacyIssuer, aud: 'custom-primary' })),
         integrationToken
       ),
       401

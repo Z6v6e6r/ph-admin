@@ -61,8 +61,16 @@ LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY=widget
 LK_IDENTITY_EXPECTED_AUDIENCES=widget,account
 LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY=widget
 LK_IDENTITY_EXPECTED_TENANT_KEY=iSkq6G
+LK_IDENTITY_DIAGNOSTICS_ENABLED=false
+# Backward-compatible alias during rollout:
 LK_IDENTITY_FAILURE_LOG_ENABLED=0
 ```
+
+The plural audience settings are explicit, issuer-specific allowlists. They
+are deduplicated and match when at least one signed JWT `aud` value is present
+in the selected profile's allowlist. Primary values are not inherited by the
+legacy profile; each issuer must be changed explicitly. An explicitly empty
+allowlist fails closed.
 
 Before enabling production traffic, decode one current `clients` token and one
 retained `prod` token locally without logging or retaining either token. Confirm
@@ -71,9 +79,13 @@ Update the issuer-specific audience/authorized-party allowlists if the real
 signed contract differs; do not relax claim checks to make an unknown token
 pass. The old singular `*_EXPECTED_AUDIENCE` variables remain compatible and
 also include `account`; prefer the plural variables for an explicit policy.
-During a canary, `LK_IDENTITY_FAILURE_LOG_ENABLED=1` emits only the bounded
-failure stage and issuer profile (`clients`, `prod`, or `unknown`), never token
-contents, claims, phone, client ID or subject. Set
+During a canary, `LK_IDENTITY_DIAGNOSTICS_ENABLED=true` emits at most one
+warning for each `(issuerProfile, reason)` pair during the process lifetime.
+The warning contains only the fixed event type, an enum rejection reason and
+the profile alias `primary`, `legacy` or `unresolved`. It never contains a
+token, `kid`, issuer URL, claim value, phone, client ID or subject. The old
+`LK_IDENTITY_FAILURE_LOG_ENABLED=1` flag remains a compatible alias. HTTP 401
+responses stay generic and never expose the internal reason. Set
 `LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER=` to disable the compatibility profile after
 all legacy sessions have been retired.
 
