@@ -209,7 +209,7 @@ export class TournamentsController {
 
   @Get(':id/registration/me')
   @Roles()
-  getMyRegistration(
+  async getMyRegistration(
     @Param('id') id: string,
     @Req() request: Request,
     @CurrentUser() user?: RequestUser
@@ -221,7 +221,7 @@ export class TournamentsController {
     canCancel: boolean;
     message: string;
   }> {
-    const client = this.resolveLkClient(request, user);
+    const client = await this.resolveLkClient(request, user);
     return this.tournamentsService.getPublicRegistrationByTournamentRef(id, client.phone);
   }
 
@@ -240,7 +240,7 @@ export class TournamentsController {
     canCancel: boolean;
     message: string;
   }> {
-    const client = this.resolveLkClient(request, user, body);
+    const client = await this.resolveLkClient(request, user, body);
     if (!client.phone) {
       return {
         status: 'NONE',
@@ -262,7 +262,7 @@ export class TournamentsController {
 
   @Delete(':id/register')
   @Roles()
-  cancelLkWidgetRegistration(
+  async cancelLkWidgetRegistration(
     @Param('id') id: string,
     @Req() request: Request,
     @CurrentUser() user?: RequestUser
@@ -272,7 +272,7 @@ export class TournamentsController {
     canCancel: false;
     message: string;
   }> {
-    const client = this.resolveLkClient(request, user);
+    const client = await this.resolveLkClient(request, user);
     return this.tournamentsService.cancelPublicRegistrationByTournamentRef(id, client.phone);
   }
 
@@ -402,70 +402,14 @@ export class TournamentsController {
     };
   }
 
-  private resolveLkClient(
+  private async resolveLkClient(
     request: Request,
-    user?: RequestUser,
-    body?: Record<string, unknown>
-  ): { name: string; phone?: string; levelLabel?: string } {
-    const claims = this.decodeBearerClaims(request.headers.authorization);
-    const phone =
-      this.pickString(body?.phone) ??
-      this.pickString(request.headers['x-user-phone']) ??
-      this.pickString(request.headers['x-user-primary-phone']) ??
-      this.pickString(claims?.phone_number) ??
-      this.pickString(claims?.phone) ??
-      this.pickString(claims?.mobile) ??
-      this.pickPhoneLike(claims?.preferred_username);
-    const name =
-      this.pickString(body?.name) ??
-      this.pickString(request.headers['x-user-name']) ??
-      this.pickString(request.headers['x-user-title']) ??
-      this.pickString(claims?.name) ??
-      this.pickString(claims?.given_name) ??
-      this.pickString(claims?.preferred_username) ??
-      user?.title ??
-      user?.login ??
-      phone ??
-      'Игрок PadelHub';
-    const levelLabel =
-      this.pickString(body?.levelLabel) ??
-      this.pickString(request.headers['x-user-level-label']) ??
-      this.pickString(request.headers['x-user-level']) ??
-      this.pickString(claims?.levelLabel) ??
-      this.pickString(claims?.level);
-
-    return {
-      name,
-      phone,
-      levelLabel
-    };
-  }
-
-  private decodeBearerClaims(authorization: unknown): Record<string, unknown> | null {
-    const value = this.pickString(authorization);
-    const match = value?.match(/^Bearer\s+([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/i);
-    if (!match?.[2]) {
-      return null;
-    }
-
-    try {
-      const payload = Buffer.from(match[2], 'base64url').toString('utf8');
-      const parsed = JSON.parse(payload);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : null;
-    } catch (_error) {
-      return null;
-    }
-  }
-
-  private pickPhoneLike(value: unknown): string | undefined {
-    const normalized = this.pickString(value);
-    if (!normalized) {
-      return undefined;
-    }
-    const digits = normalized.replace(/\D/g, '');
-    return digits.length >= 10 ? normalized : undefined;
+    _user?: RequestUser,
+    _body?: Record<string, unknown>
+  ): Promise<{ name: string; phone: string; levelLabel?: string }> {
+    return this.tournamentsService.resolveTrustedLkRegistrationClient(
+      this.pickString(request.headers.authorization)
+    );
   }
 
   private pickString(value: unknown): string | undefined {

@@ -17,6 +17,8 @@ import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
+import { LkIdentityService } from '../lk-identity/lk-identity.service';
+import { PlayerRatingsService } from '../player-ratings/player-ratings.service';
 import {
   VivaAdminService,
   VivaAdminTournamentEnergyCheckoutResult,
@@ -285,8 +287,59 @@ export class TournamentsService {
     private readonly americanoRatingSimulationService: AmericanoRatingSimulationService,
     @Optional() private readonly vivaAdminService?: VivaAdminService,
     @Optional() private readonly communitiesService?: CommunitiesService,
-    @Optional() private readonly vivaTournamentSnapshotService?: VivaTournamentSnapshotService
+    @Optional() private readonly vivaTournamentSnapshotService?: VivaTournamentSnapshotService,
+    @Optional() private readonly lkIdentityService?: LkIdentityService,
+    @Optional() private readonly playerRatingsService?: PlayerRatingsService
   ) {}
+
+  async resolveTrustedLkRegistrationClient(
+    authorizationHeader?: string
+  ): Promise<{ name: string; phone: string; levelLabel?: string }> {
+    if (!this.lkIdentityService || !this.playerRatingsService) {
+      throw new ServiceUnavailableException({
+        code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED',
+        message: 'Trusted tournament identity and rating services are unavailable'
+      });
+    }
+    const verification = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
+    const actor = verification.actor;
+    const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
+      clientId: actor.clientId,
+      phone: actor.phoneNorm
+    });
+    return {
+      name: actor.name || actor.phoneNorm,
+      phone: actor.phoneNorm,
+      ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
+    };
+  }
+
+  async resolveCanonicalLkRegistrationClientByVerifiedPhone(input: {
+    phone?: string;
+    name?: string;
+  }): Promise<{ name: string; phone: string; levelLabel?: string }> {
+    if (!this.playerRatingsService) {
+      throw new ServiceUnavailableException({
+        code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED',
+        message: 'Canonical tournament rating service is unavailable'
+      });
+    }
+    const phone = this.normalizePhone(input.phone);
+    if (!phone) {
+      throw new UnauthorizedException({
+        code: 'TOURNAMENT_VERIFIED_PHONE_REQUIRED',
+        message: 'Verified tournament client phone is required'
+      });
+    }
+    const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
+      phone
+    });
+    return {
+      name: this.pickString(input.name) ?? phone,
+      phone,
+      ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
+    };
+  }
 
   async generateSchedule(
     input: AmericanoGenerateScheduleInput

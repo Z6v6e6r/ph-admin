@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { CommunitiesModule } from '../communities/communities.module';
 import { GamesModule } from '../games/games.module';
 import { LkPadelHubModule } from '../integrations/lk-padelhub/lk-padelhub.module';
+import { LkIdentityModule } from '../lk-identity/lk-identity.module';
+import { PlayerRatingsModule } from '../player-ratings/player-ratings.module';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
 import { VivaReferenceCacheService } from '../integrations/viva/viva-reference-cache.service';
 import { VivaRequestGovernorService } from '../integrations/viva/viva-request-governor.service';
@@ -19,7 +21,7 @@ import { TournamentsService } from './tournaments.service';
 import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync.service';
 
 @Module({
-  imports: [LkPadelHubModule, GamesModule, CommunitiesModule],
+  imports: [LkPadelHubModule, GamesModule, CommunitiesModule, LkIdentityModule, PlayerRatingsModule],
   controllers: [TournamentsController, TournamentsPublicController],
   providers: [
     AmericanoScheduleService,

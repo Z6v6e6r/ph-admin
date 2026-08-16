@@ -285,11 +285,12 @@ export class TournamentsPublicController {
     @Query('paymentsuccess') paymentSuccess?: string,
     @Query('paymentfailed') paymentFailed?: string
   ): Promise<void> {
-    const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
+    const sessionClient = this.tournamentsPublicSessionService.ensureAuthorizedClient(
       request,
       response,
       user
     );
+    const client = await this.resolveCanonicalJoinClient(request, sessionClient);
 
     if (this.parseBoolean(paymentSuccess)) {
       const outcome = await this.tournamentsService.confirmPublicJoinAfterPayment(slug, {
@@ -388,13 +389,13 @@ export class TournamentsPublicController {
       }
       clientForRemember = verifiedClient;
     }
-    const client = this.tournamentsPublicSessionService.rememberClient(
+    const rememberedClient = this.tournamentsPublicSessionService.rememberClient(
       request,
       response,
       clientForRemember,
       submission
     );
-    await this.trySyncAuthorizedClientLevel(request, client, submission.levelLabel);
+    const client = await this.resolveCanonicalJoinClient(request, rememberedClient);
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
         requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
@@ -602,11 +603,22 @@ export class TournamentsPublicController {
   }
 
   @Post(':slug/registrations')
-  registerParticipant(
+  async registerParticipant(
     @Param('slug') slug: string,
+    @Req() request: Request,
     @Body() dto: RegisterTournamentParticipantDto
   ): Promise<TournamentRegistrationResponse> {
-    return this.tournamentsService.registerPublicParticipant(slug, dto);
+    const client = await this.tournamentsService.resolveTrustedLkRegistrationClient(
+      this.pickString(request.headers.authorization) ?? undefined
+    );
+    return this.tournamentsService.registerPublicParticipant(slug, {
+      name: client.name,
+      phone: client.phone,
+      levelLabel: client.levelLabel,
+      notes: dto.notes,
+      selectedPurchaseOptionId: dto.selectedPurchaseOptionId,
+      vivaAuthorizationHeader: this.pickString(request.headers.authorization) ?? undefined
+    });
   }
 
   @Post(':slug/mechanics-access')
@@ -1991,62 +2003,49 @@ export class TournamentsPublicController {
     return accept.includes('application/json');
   }
 
-  private async trySyncAuthorizedClientLevel(
+  private async resolveCanonicalJoinClient(
     request: Request,
-    client: TournamentPublicClientProfile,
-    submittedLevel?: string
-  ): Promise<void> {
-    if (!client.authorized) {
-      return;
-    }
-
-    const normalizedLevel = normalizeTournamentLevelOptionToken(
-      submittedLevel ?? client.levelLabel
-    );
-    if (!normalizedLevel) {
-      return;
-    }
-
-    const authCookie = this.pickString(request.headers.cookie);
+    client: TournamentPublicClientProfile
+  ): Promise<TournamentPublicClientProfile> {
     const authHeader = this.pickString(request.headers.authorization);
-    if (!authCookie && !authHeader) {
-      return;
-    }
-
-    const profileUrl = new URL(
-      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
-      `${this.vivaEndUserApiBaseUrl}/`
-    ).toString();
-    const payload = {
-      levelLabel: normalizedLevel,
-      level: normalizedLevel
-    };
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    };
-
-    if (authCookie) {
-      headers.Cookie = authCookie;
-    }
     if (authHeader) {
-      headers.Authorization = authHeader;
+      const canonical = await this.tournamentsService.resolveTrustedLkRegistrationClient(
+        authHeader
+      );
+      return {
+        ...client,
+        authorized: true,
+        phoneVerified: true,
+        name: canonical.name,
+        phone: canonical.phone,
+        levelLabel: canonical.levelLabel,
+        onboardingCompleted: Boolean(canonical.levelLabel)
+      };
     }
-
-    for (const method of ['PATCH', 'PUT'] as const) {
-      try {
-        const response = await fetch(profileUrl, {
-          method,
-          headers,
-          body: JSON.stringify(payload)
+    if (client.authSource === 'cookie' && client.phoneVerified && client.phone) {
+      const canonical = await this.tournamentsService
+        .resolveCanonicalLkRegistrationClientByVerifiedPhone({
+          phone: client.phone,
+          name: client.name
         });
-        if (response.ok) {
-          return;
-        }
-      } catch (_error) {
-        // Ignore sync errors: tournament join flow should not depend on profile update.
-      }
+      return {
+        ...client,
+        authorized: true,
+        phoneVerified: true,
+        name: canonical.name,
+        phone: canonical.phone,
+        levelLabel: canonical.levelLabel,
+        onboardingCompleted: Boolean(canonical.levelLabel)
+      };
     }
+    return {
+      ...client,
+      authorized: false,
+      phoneVerified: false,
+      levelLabel: undefined,
+      onboardingCompleted: false,
+      subscriptions: []
+    };
   }
 
   private wantsHtml(request: Request, format?: string): boolean {

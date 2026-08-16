@@ -4,6 +4,7 @@ import { LkIdentityService } from './lk-identity.service';
 
 @Module({
   controllers: [LkIdentityController],
-  providers: [LkIdentityService]
+  providers: [LkIdentityService],
+  exports: [LkIdentityService]
 })
 export class LkIdentityModule {}

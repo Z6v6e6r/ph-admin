@@ -1,6 +1,6 @@
 # project-fixed 6 -> PH AB tournaments auth contract
 
-Updated: April 21, 2026
+Updated: August 16, 2026
 
 ## Scope
 
@@ -13,32 +13,50 @@ This contract describes how `project-fixed 6` should authenticate users for tour
 
 ## Auth transport
 
-PH AB resolves user context in this order:
+PH AB accepts either:
 
-1. `Authorization: Bearer <token>` (or auth cookie)
-2. Fallback to `x-user-*` headers
+1. an LK Keycloak `Authorization: Bearer <token>` verified by the CUP RS256/JWKS
+   identity verifier; or
+2. a CUP-signed public tournament session whose phone was verified by the LK
+   one-time-code flow.
 
-For `project-fixed 6` integration the expected transport is `x-user-*` headers.
+`x-user-*` headers, request-body `phone`, `name`, `levelLabel`, subscriptions and
+unsigned JWT payloads are not trusted registration identity or eligibility
+inputs. A request that only has those values remains unauthenticated.
 
-## Headers contract
+## Canonical level contract
 
-Required in header-mode:
+After trusted identity resolution, PH AB reads `player_rating_state` by the
+verified Viva client id and/or normalized verified phone:
 
-- `x-user-id: <string>`
+- exactly zero matching states means the player has no level and the join flow
+  returns onboarding-required;
+- one state must have `ownership=CUP_CANONICAL`, a valid numeric rating and the
+  matching derived grade;
+- two states, conflicting client-id/phone aliases, or an inconsistent rating
+  state fail closed;
+- tournament access receives the canonical numeric rating, preserving the
+  finer range boundaries used by tournament cards.
 
-Recommended for seamless join flow:
+The join controller no longer PATCHes or PUTs a browser-selected level to Viva.
+Level assessment must be completed through the canonical profile/onboarding
+command before registration is retried.
 
-- `x-user-name: <display name>` or `x-user-title: <display name>`
-- `x-user-phone: <phone>` or `x-user-primary-phone: <phone>`
-- `x-user-level-label: <level>` or `x-user-level: <level>`
-- `x-user-subscriptions: <json-array-or-semicolon-list>`
+## Mutation routes
 
-`x-user-subscriptions` formats:
+- `GET /api/tournaments/:id/registration/me`,
+  `POST /api/tournaments/:id/register` and
+  `DELETE /api/tournaments/:id/register` require the verified LK bearer.
+- `POST /api/tournaments/public/:slug/registrations` also requires the verified
+  LK bearer and ignores body identity, body level, body subscriptions and
+  `purchaseConfirmed`.
+- Browser-friendly `GET/POST /api/tournaments/public/:slug/join` accepts the
+  verified bearer or the signed session after successful phone OTP. A level
+  stored in an older session cookie is ignored and replaced by the CUP value.
 
-- JSON array:
-  `[{"id":"tour-pass","label":"Турнирный абонемент","remainingUses":2}]`
-- Semicolon list:
-  `Турнирный абонемент; Разовое участие`
+Notes and a selected purchase option remain request inputs. Payment entitlement
+and subscription use still require their own server-side verification; this
+identity contract does not turn client payment flags into evidence.
 
 ## LK auth round-trip
 
@@ -53,20 +71,9 @@ When `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` and user is not authenticated:
 3. After successful login, `project-fixed 6` must return browser to `returnUrl`.
 4. Client polls `authCheckUrl` until response code is not `AUTH_REQUIRED`.
 
-## CORS requirement
-
-Browser clients must be allowed to send:
-
-- `x-user-subscriptions`
-
-This header is now included in backend CORS `allowedHeaders`.
-
 ## Minimal request example
 
 ```bash
 curl "https://padlhub.ru/api/tournaments/public/weekend-cup/join?format=json" \
-  -H "x-user-id: user-123" \
-  -H "x-user-phone: +7 999 123-45-67" \
-  -H "x-user-level-label: C" \
-  -H 'x-user-subscriptions: [{"id":"tour-pass","label":"Tournament pass","remainingUses":1}]'
+  -H "Authorization: Bearer <LK Keycloak JWT>"
 ```

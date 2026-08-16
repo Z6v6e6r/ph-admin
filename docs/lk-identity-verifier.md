@@ -11,6 +11,13 @@ The endpoint does not read or write player rating data and does not call Viva
 `/profile`. Canonical rating remains in CUP MongoDB (`player_rating_state` and
 `rating_events`); Viva is only a compatibility projection.
 
+The same verifier is reused in-process by tournament registration. The HTTP
+endpoint still requires `X-CUP-Integration-Token`; the in-process call is not a
+second HTTP route and performs the identical signature and claim validation.
+After identity verification, tournament registration resolves the current
+numeric level from the CUP canonical rating state. Browser body fields,
+`x-user-*` headers and unsigned JWT payloads are not rating sources.
+
 ## Validation contract
 
 The verifier fails closed and requires:

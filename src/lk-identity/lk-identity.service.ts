@@ -94,6 +94,16 @@ export class LkIdentityService {
     suppliedIntegrationToken?: string
   ): Promise<LkIdentityVerificationResult> {
     this.assertIntegrationAccess(suppliedIntegrationToken);
+    return this.verifyTrustedBearer(authorizationHeader);
+  }
+
+  /**
+   * Verifies an LK bearer for in-process consumers. This method is intentionally
+   * not exposed as a public HTTP route without the integration-token boundary.
+   */
+  async verifyTrustedBearer(
+    authorizationHeader?: string
+  ): Promise<LkIdentityVerificationResult> {
     const token = this.extractBearerToken(authorizationHeader);
     const parts = this.decodeJwt(token);
     const algorithm = this.pickString(parts.header.alg);
