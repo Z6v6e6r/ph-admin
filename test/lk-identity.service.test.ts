@@ -9,6 +9,9 @@ import { LkIdentityService } from '../src/lk-identity/lk-identity.service';
 
 const integrationToken = 'test-cup-integration-token-32-bytes-minimum';
 const issuer = 'https://kc.vivacrm.ru/realms/clients';
+const legacyIssuer = 'https://kc.vivacrm.ru/realms/prod';
+const jwksUrl = `${issuer}/protocol/openid-connect/certs`;
+const legacyJwksUrl = `${legacyIssuer}/protocol/openid-connect/certs`;
 
 interface SigningFixture {
   kid: string;
@@ -72,6 +75,10 @@ async function main(): Promise<void> {
     'LK_IDENTITY_INTEGRATION_TOKEN',
     'LK_IDENTITY_KEYCLOAK_ISSUER',
     'LK_IDENTITY_KEYCLOAK_JWKS_URL',
+    'LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER',
+    'LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL',
+    'LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE',
+    'LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY',
     'LK_IDENTITY_EXPECTED_AUDIENCE',
     'LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY',
     'LK_IDENTITY_EXPECTED_TENANT_KEY',
@@ -81,20 +88,33 @@ async function main(): Promise<void> {
   const originalFetch = globalThis.fetch;
   const keyA = createSigningFixture('key-a');
   const keyB = createSigningFixture('key-b');
+  const legacyKey = createSigningFixture('legacy-key');
+  const crossRealmKey = createSigningFixture(legacyKey.kid);
   let keys = [keyA.jwk];
-  let fetchCalls = 0;
+  const legacyKeys = [legacyKey.jwk];
+  const fetchCalls = new Map<string, number>();
 
   process.env.LK_IDENTITY_INTEGRATION_TOKEN = integrationToken;
   process.env.LK_IDENTITY_KEYCLOAK_ISSUER = issuer;
-  process.env.LK_IDENTITY_KEYCLOAK_JWKS_URL = `${issuer}/protocol/openid-connect/certs`;
+  process.env.LK_IDENTITY_KEYCLOAK_JWKS_URL = jwksUrl;
+  process.env.LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER = legacyIssuer;
+  process.env.LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL = legacyJwksUrl;
+  process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE = 'widget';
+  process.env.LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY = 'widget';
   process.env.LK_IDENTITY_EXPECTED_AUDIENCE = 'widget';
   process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY = 'widget';
   process.env.LK_IDENTITY_EXPECTED_TENANT_KEY = 'iSkq6G';
   process.env.LK_IDENTITY_JWKS_FORCE_REFRESH_MIN_INTERVAL_MS = '1000';
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    return new Response(JSON.stringify({ keys }), {
-      status: 200,
+  globalThis.fetch = async (input) => {
+    const requestUrl = String(input);
+    fetchCalls.set(requestUrl, (fetchCalls.get(requestUrl) ?? 0) + 1);
+    const responseKeys = requestUrl === jwksUrl
+      ? keys
+      : requestUrl === legacyJwksUrl
+        ? legacyKeys
+        : null;
+    return new Response(JSON.stringify({ keys: responseKeys ?? [] }), {
+      status: responseKeys ? 200 : 404,
       headers: { 'Content-Type': 'application/json' }
     });
   };
@@ -113,15 +133,61 @@ async function main(): Promise<void> {
       verified: true,
       source: 'cup-keycloak-jwt'
     });
-    assert.equal(fetchCalls, 1);
+    assert.equal(fetchCalls.get(jwksUrl), 1);
 
     await service.verify(bearer(signToken(keyA)), integrationToken);
-    assert.equal(fetchCalls, 1, 'fresh JWKS cache avoids one Keycloak call per poll');
+    assert.equal(fetchCalls.get(jwksUrl), 1, 'fresh clients JWKS cache avoids one call per poll');
+
+    const legacyValid = await service.verify(
+      bearer(signToken(legacyKey, { iss: legacyIssuer })),
+      integrationToken
+    );
+    assert.equal(legacyValid.actor.phoneNorm, '79000000001');
+    assert.equal(fetchCalls.get(legacyJwksUrl), 1);
+
+    await service.verify(
+      bearer(signToken(legacyKey, { iss: legacyIssuer })),
+      integrationToken
+    );
+    assert.equal(
+      fetchCalls.get(legacyJwksUrl),
+      1,
+      'legacy prod issuer has an independent fresh JWKS cache'
+    );
 
     keys = [keyB.jwk];
     const rotated = await service.verify(bearer(signToken(keyB)), integrationToken);
     assert.equal(rotated.actor.phoneNorm, '79000000001');
-    assert.equal(fetchCalls, 2, 'unknown kid triggers one bounded JWKS refresh');
+    assert.equal(fetchCalls.get(jwksUrl), 2, 'unknown kid refreshes only clients JWKS');
+    assert.equal(fetchCalls.get(legacyJwksUrl), 1, 'clients rotation does not refresh prod JWKS');
+
+    await expectStatus(
+      service.verify(bearer(signToken(legacyKey, {
+        iss: legacyIssuer,
+        aud: 'other-client'
+      })), integrationToken),
+      401
+    );
+    await expectStatus(
+      service.verify(
+        bearer(signToken(crossRealmKey, { iss: legacyIssuer })),
+        integrationToken
+      ),
+      401
+    );
+    const fetchesBeforeUnknownIssuer = Array.from(fetchCalls.values())
+      .reduce((total, count) => total + count, 0);
+    await expectStatus(
+      service.verify(bearer(signToken(keyB, {
+        iss: 'https://untrusted.example/realms/other'
+      })), integrationToken),
+      401
+    );
+    assert.equal(
+      Array.from(fetchCalls.values()).reduce((total, count) => total + count, 0),
+      fetchesBeforeUnknownIssuer,
+      'unknown issuers are rejected without an outbound JWKS request'
+    );
 
     await expectStatus(
       service.verify(bearer(signToken(keyB, { aud: 'other-client' })), integrationToken),
@@ -174,6 +240,24 @@ async function main(): Promise<void> {
     );
     assert.equal(keyWithoutClient.actor.subject, 'keycloak-subject-1');
     assert.equal(keyWithoutClient.actor.clientId, undefined, 'sub is never promoted to Viva clientId');
+
+    process.env.LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER = '';
+    const fetchesBeforeDisabledLegacy = Array.from(fetchCalls.values())
+      .reduce((total, count) => total + count, 0);
+    const currentOnlyService = new LkIdentityService();
+    await expectStatus(
+      currentOnlyService.verify(
+        bearer(signToken(legacyKey, { iss: legacyIssuer })),
+        integrationToken
+      ),
+      401
+    );
+    assert.equal(
+      Array.from(fetchCalls.values()).reduce((total, count) => total + count, 0),
+      fetchesBeforeDisabledLegacy,
+      'an empty legacy issuer disables prod compatibility without a JWKS request'
+    );
+    process.env.LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER = legacyIssuer;
 
     keys = [keyA.jwk];
     globalThis.fetch = async () => new Response(JSON.stringify({ keys }), {

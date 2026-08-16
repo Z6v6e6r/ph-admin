@@ -34,22 +34,22 @@ interface JwksCache {
   staleUntil: number;
 }
 
+interface TrustedIssuerProfile {
+  issuer: string;
+  jwksUrl: string;
+  expectedAudience: string;
+  expectedAuthorizedParty: string;
+}
+
+interface JwksState {
+  cache?: JwksCache;
+  refreshInFlight?: Promise<JwksKey[]>;
+  lastForcedRefreshAt: number;
+}
+
 @Injectable()
 export class LkIdentityService {
-  private readonly issuer = this.normalizeUrl(
-    process.env.LK_IDENTITY_KEYCLOAK_ISSUER
-      ?? 'https://kc.vivacrm.ru/realms/clients'
-  );
-  private readonly jwksUrl = String(
-    process.env.LK_IDENTITY_KEYCLOAK_JWKS_URL
-      ?? `${this.issuer}/protocol/openid-connect/certs`
-  ).trim();
-  private readonly expectedAudience = String(
-    process.env.LK_IDENTITY_EXPECTED_AUDIENCE ?? 'widget'
-  ).trim();
-  private readonly expectedAuthorizedParty = String(
-    process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY ?? 'widget'
-  ).trim();
+  private readonly trustedIssuers = this.createTrustedIssuerProfiles();
   private readonly expectedTenantKey = String(
     process.env.LK_IDENTITY_EXPECTED_TENANT_KEY ?? 'iSkq6G'
   ).trim();
@@ -87,9 +87,7 @@ export class LkIdentityService {
     120
   );
 
-  private jwksCache?: JwksCache;
-  private jwksRefreshInFlight?: Promise<JwksKey[]>;
-  private lastForcedRefreshAt = 0;
+  private readonly jwksStates = new Map<string, JwksState>();
 
   async verify(
     authorizationHeader?: string,
@@ -100,11 +98,13 @@ export class LkIdentityService {
     const parts = this.decodeJwt(token);
     const algorithm = this.pickString(parts.header.alg);
     const kid = this.pickString(parts.header.kid);
-    if (algorithm !== 'RS256' || !kid) {
+    const issuer = this.pickString(parts.claims.iss);
+    const issuerProfile = issuer ? this.trustedIssuers.get(issuer) : undefined;
+    if (algorithm !== 'RS256' || !kid || !issuerProfile) {
       throw this.invalidToken();
     }
 
-    const key = await this.resolveSigningKey(kid);
+    const key = await this.resolveSigningKey(issuerProfile, kid);
     let validSignature = false;
     try {
       const keyObject = createPublicKey({
@@ -127,7 +127,7 @@ export class LkIdentityService {
       throw this.invalidToken();
     }
 
-    return this.validateClaims(parts.claims);
+    return this.validateClaims(parts.claims, issuerProfile);
   }
 
   private assertIntegrationAccess(suppliedToken?: string): void {
@@ -188,12 +188,16 @@ export class LkIdentityService {
     }
   }
 
-  private async resolveSigningKey(kid: string): Promise<JwksKey> {
-    const hadCache = Boolean(this.jwksCache);
-    let keys = await this.loadJwks(false);
+  private async resolveSigningKey(
+    profile: TrustedIssuerProfile,
+    kid: string
+  ): Promise<JwksKey> {
+    const state = this.getJwksState(profile.issuer);
+    const hadCache = Boolean(state.cache);
+    let keys = await this.loadJwks(profile, false);
     let matches = keys.filter((key) => key.kid === kid);
     if (matches.length === 0 && hadCache) {
-      keys = await this.loadJwks(true);
+      keys = await this.loadJwks(profile, true);
       matches = keys.filter((key) => key.kid === kid);
     }
     if (matches.length !== 1) {
@@ -202,28 +206,32 @@ export class LkIdentityService {
     return matches[0];
   }
 
-  private async loadJwks(forceRefresh: boolean): Promise<JwksKey[]> {
+  private async loadJwks(
+    profile: TrustedIssuerProfile,
+    forceRefresh: boolean
+  ): Promise<JwksKey[]> {
+    const state = this.getJwksState(profile.issuer);
     const now = Date.now();
-    if (!forceRefresh && this.jwksCache && this.jwksCache.expiresAt > now) {
-      return this.jwksCache.keys;
+    if (!forceRefresh && state.cache && state.cache.expiresAt > now) {
+      return state.cache.keys;
     }
-    if (this.jwksRefreshInFlight) {
-      return this.jwksRefreshInFlight;
+    if (state.refreshInFlight) {
+      return state.refreshInFlight;
     }
     if (
       forceRefresh
-      && this.jwksCache
-      && now - this.lastForcedRefreshAt < this.forcedRefreshMinIntervalMs
+      && state.cache
+      && now - state.lastForcedRefreshAt < this.forcedRefreshMinIntervalMs
     ) {
-      return this.jwksCache.keys;
+      return state.cache.keys;
     }
     if (forceRefresh) {
-      this.lastForcedRefreshAt = now;
+      state.lastForcedRefreshAt = now;
     }
 
-    this.jwksRefreshInFlight = this.fetchJwks().catch((error) => {
-      if (!forceRefresh && this.jwksCache && this.jwksCache.staleUntil > Date.now()) {
-        return this.jwksCache.keys;
+    state.refreshInFlight = this.fetchJwks(profile, state).catch((error) => {
+      if (!forceRefresh && state.cache && state.cache.staleUntil > Date.now()) {
+        return state.cache.keys;
       }
       if (error instanceof ServiceUnavailableException) {
         throw error;
@@ -233,16 +241,19 @@ export class LkIdentityService {
         message: 'LK identity signing keys are unavailable'
       });
     }).finally(() => {
-      this.jwksRefreshInFlight = undefined;
+      state.refreshInFlight = undefined;
     });
-    return this.jwksRefreshInFlight;
+    return state.refreshInFlight;
   }
 
-  private async fetchJwks(): Promise<JwksKey[]> {
+  private async fetchJwks(
+    profile: TrustedIssuerProfile,
+    state: JwksState
+  ): Promise<JwksKey[]> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
-      const response = await fetch(this.jwksUrl, {
+      const response = await fetch(profile.jwksUrl, {
         headers: { Accept: 'application/json' },
         signal: controller.signal
       });
@@ -258,7 +269,7 @@ export class LkIdentityService {
         throw new Error('JWKS has no usable RS256 keys');
       }
       const now = Date.now();
-      this.jwksCache = {
+      state.cache = {
         keys,
         expiresAt: now + this.cacheTtlMs,
         staleUntil: now + this.cacheTtlMs + this.staleGraceMs
@@ -287,7 +298,10 @@ export class LkIdentityService {
       && (!alg || alg === 'RS256');
   }
 
-  private validateClaims(claims: Record<string, unknown>): LkIdentityVerificationResult {
+  private validateClaims(
+    claims: Record<string, unknown>,
+    profile: TrustedIssuerProfile
+  ): LkIdentityVerificationResult {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const issuer = this.pickString(claims.iss);
     const subject = this.pickString(claims.sub);
@@ -300,7 +314,7 @@ export class LkIdentityService {
 
     if (
       !issuer
-      || issuer !== this.issuer
+      || issuer !== profile.issuer
       || !subject
       || expiresAt === undefined
       || expiresAt <= nowSeconds - this.clockSkewSeconds
@@ -310,8 +324,8 @@ export class LkIdentityService {
       || (hasNotBefore && notBefore === undefined)
       || (notBefore !== undefined && notBefore > nowSeconds + this.clockSkewSeconds)
       || issuedAt > nowSeconds + this.clockSkewSeconds
-      || authorizedParty !== this.expectedAuthorizedParty
-      || !audience.includes(this.expectedAudience)
+      || authorizedParty !== profile.expectedAuthorizedParty
+      || !audience.includes(profile.expectedAudience)
     ) {
       throw this.invalidToken();
     }
@@ -430,6 +444,71 @@ export class LkIdentityService {
 
   private normalizeUrl(value: string): string {
     return String(value ?? '').trim().replace(/\/+$/, '');
+  }
+
+  private createTrustedIssuerProfiles(): Map<string, TrustedIssuerProfile> {
+    const primaryIssuer = this.normalizeUrl(
+      process.env.LK_IDENTITY_KEYCLOAK_ISSUER
+        ?? 'https://kc.vivacrm.ru/realms/clients'
+    );
+    const primaryProfile: TrustedIssuerProfile = {
+      issuer: primaryIssuer,
+      jwksUrl: String(
+        process.env.LK_IDENTITY_KEYCLOAK_JWKS_URL
+          ?? `${primaryIssuer}/protocol/openid-connect/certs`
+      ).trim(),
+      expectedAudience: String(
+        process.env.LK_IDENTITY_EXPECTED_AUDIENCE ?? 'widget'
+      ).trim(),
+      expectedAuthorizedParty: String(
+        process.env.LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY ?? 'widget'
+      ).trim()
+    };
+    const legacyIssuer = this.normalizeUrl(
+      process.env.LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER
+        ?? 'https://kc.vivacrm.ru/realms/prod'
+    );
+    const profiles = [primaryProfile];
+    if (legacyIssuer) {
+      profiles.push({
+        issuer: legacyIssuer,
+        jwksUrl: String(
+          process.env.LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL
+            ?? `${legacyIssuer}/protocol/openid-connect/certs`
+        ).trim(),
+        expectedAudience: String(
+          process.env.LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE
+            ?? primaryProfile.expectedAudience
+        ).trim(),
+        expectedAuthorizedParty: String(
+          process.env.LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY
+            ?? primaryProfile.expectedAuthorizedParty
+        ).trim()
+      });
+    }
+    if (profiles.some((profile) => (
+      !profile.issuer
+      || !profile.jwksUrl
+      || !profile.expectedAudience
+      || !profile.expectedAuthorizedParty
+    ))) {
+      throw new Error('LK identity issuer profile is incomplete');
+    }
+    const trustedIssuers = new Map(
+      profiles.map((profile) => [profile.issuer, profile] as const)
+    );
+    if (trustedIssuers.size !== profiles.length) {
+      throw new Error('LK identity issuer profiles must be unique');
+    }
+    return trustedIssuers;
+  }
+
+  private getJwksState(issuer: string): JwksState {
+    const current = this.jwksStates.get(issuer);
+    if (current) return current;
+    const created: JwksState = { lastForcedRefreshAt: 0 };
+    this.jwksStates.set(issuer, created);
+    return created;
   }
 
   private readBoundedNumber(

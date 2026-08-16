@@ -20,7 +20,8 @@ The verifier fails closed and requires:
 - one matching RSA signing key whose `use` is `sig` and whose `alg` is `RS256`
   when those JWK fields are present;
 - a valid signature;
-- exact `iss`, `azp`, expected audience and tenant;
+- an exact allowlisted `iss`, with the matching issuer-specific JWKS, `azp`
+  and audience policy;
 - mandatory `sub`, numeric `iat`/`exp`, and a normalized Russian phone claim;
 - a valid optional `nbf` timestamp;
 - no conflicting phone, tenant or explicit Viva client-id aliases.
@@ -28,10 +29,18 @@ The verifier fails closed and requires:
 `sub` is never treated as a Viva `clientId`. A `clientId` is returned only when
 the signed token contains an explicit supported client-id claim.
 
-JWKS is cached for ten minutes with request single-flight. An unknown `kid`
-causes one rate-limited refresh. The last known good key set may be used for at
-most one additional hour during a Keycloak JWKS outage; without a usable cache
-the endpoint returns `503`.
+LK currently has two explicit trusted profiles: the current `clients` realm and
+the former `prod` realm used by retained `LegacyAuthProvider` sessions. The
+unverified `iss` claim is used only to select one of these preconfigured
+profiles; an unknown issuer is rejected without an outbound request. Signature
+verification then uses only the selected profile's JWKS, so a token cannot be
+cross-signed with a key from the other realm.
+
+JWKS is cached independently per issuer for ten minutes with request
+single-flight. An unknown `kid` causes one rate-limited refresh of that issuer
+only. The last known good key set may be used for at most one additional hour
+during a Keycloak JWKS outage; without a usable cache the endpoint returns
+`503`.
 
 ## Configuration
 
@@ -41,15 +50,22 @@ Required on CUP/ph-ab:
 LK_IDENTITY_INTEGRATION_TOKEN=<dedicated-random-value-at-least-32-bytes>
 LK_IDENTITY_KEYCLOAK_ISSUER=https://kc.vivacrm.ru/realms/clients
 LK_IDENTITY_KEYCLOAK_JWKS_URL=https://kc.vivacrm.ru/realms/clients/protocol/openid-connect/certs
+LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER=https://kc.vivacrm.ru/realms/prod
+LK_IDENTITY_LEGACY_KEYCLOAK_JWKS_URL=https://kc.vivacrm.ru/realms/prod/protocol/openid-connect/certs
+LK_IDENTITY_LEGACY_EXPECTED_AUDIENCE=widget
+LK_IDENTITY_LEGACY_EXPECTED_AUTHORIZED_PARTY=widget
 LK_IDENTITY_EXPECTED_AUDIENCE=widget
 LK_IDENTITY_EXPECTED_AUTHORIZED_PARTY=widget
 LK_IDENTITY_EXPECTED_TENANT_KEY=iSkq6G
 ```
 
-Before enabling production traffic, decode one current LK access token locally
-without logging or retaining it and confirm the real `iss`, `aud`, `azp`, tenant,
-phone and explicit client-id claim names. Update the expected values if the real
-contract differs; do not relax claim checks to make an unknown token pass.
+Before enabling production traffic, decode one current `clients` token and one
+retained `prod` token locally without logging or retaining either token. Confirm
+their `iss`, `aud`, `azp`, tenant, phone and explicit client-id claim names.
+Update the issuer-specific audience/authorized-party values if the real signed
+contract differs; do not relax claim checks to make an unknown token pass. Set
+`LK_IDENTITY_LEGACY_KEYCLOAK_ISSUER=` to disable the compatibility profile after
+all legacy sessions have been retired.
 
 Node-RED uses the matching secret in `CUP_LK_IDENTITY_TOKEN`, CUP base URL in
 `CUP_API_BASE_URL`, and explicitly enables the state path with
