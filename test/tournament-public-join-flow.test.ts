@@ -330,7 +330,8 @@ async function main(): Promise<void> {
     },
     { requireAuth: true }
   );
-  assert.equal(unauthorizedFlow.code, 'PROFILE_REQUIRED');
+  assert.equal(unauthorizedFlow.code, 'AUTH_REQUIRED');
+  assert.deepEqual(unauthorizedFlow.missingFields, []);
 
   const unverifiedPhoneFlow = await service.getPublicJoinFlow(
     tournament.slug,
@@ -344,7 +345,7 @@ async function main(): Promise<void> {
     },
     { requireAuth: true }
   );
-  assert.equal(unverifiedPhoneFlow.code, 'PHONE_VERIFICATION_REQUIRED');
+  assert.equal(unverifiedPhoneFlow.code, 'AUTH_REQUIRED');
 
   const missingLevelFlow = await service.getPublicJoinFlow(tournament.slug, {
     id: 'user-without-level',

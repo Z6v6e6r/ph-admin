@@ -64,7 +64,7 @@ identity contract does not turn client payment flags into evidence.
 
 ## LK auth round-trip
 
-When `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` and user is not authenticated:
+When the user is not authenticated, the public join flow always fails closed before registration:
 
 1. Join API returns `code=AUTH_REQUIRED` with:
    - `authUrl`
@@ -73,7 +73,10 @@ When `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` and user is not authenticated:
    - `returnUrl=<absolute /join URL>`
    - `source=tournament_join`
 3. After successful login, `project-fixed 6` must return browser to `returnUrl`.
-4. Client polls `authCheckUrl` until response code is not `AUTH_REQUIRED`.
+4. On the same PadlHub origin, the join endpoint reads the standard LK access-token cookie and
+   verifies that token through the canonical LK identity service before evaluating eligibility.
+5. Client polls `authCheckUrl` until response code is not `AUTH_REQUIRED`.
+6. The tournament card never renders or accepts its own phone/OTP authorization form.
 
 ## Minimal request example
 

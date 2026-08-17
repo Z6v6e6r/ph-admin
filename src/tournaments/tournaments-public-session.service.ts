@@ -233,7 +233,7 @@ export class TournamentsPublicSessionService {
     request: Request,
     client: TournamentPublicClientProfile
   ): string | undefined {
-    const directAuthorization = this.pickString(request.headers.authorization);
+    const directAuthorization = this.resolveLkAuthorizationHeader(request);
     if (directAuthorization) {
       return directAuthorization;
     }
@@ -247,6 +247,29 @@ export class TournamentsPublicSessionService {
       return undefined;
     }
     return `Bearer ${cached.token}`;
+  }
+
+  resolveLkAuthorizationHeader(request: Request): string | undefined {
+    const directAuthorization = this.pickString(request.headers.authorization);
+    if (directAuthorization) {
+      return directAuthorization;
+    }
+
+    const cookieNames = String(
+      process.env.TOURNAMENTS_PUBLIC_LK_AUTH_COOKIE_NAMES
+      ?? `padlhubAuthToken,${this.authTenantKey}AuthToken`
+    )
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    for (const cookieName of cookieNames) {
+      const token = this.pickString(this.readCookieValue(request, cookieName));
+      if (token) {
+        return `Bearer ${token}`;
+      }
+    }
+
+    return undefined;
   }
 
   private resolveHeaderClient(

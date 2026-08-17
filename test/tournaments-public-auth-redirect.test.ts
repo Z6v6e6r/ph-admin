@@ -177,11 +177,31 @@ async function main(): Promise<void> {
       undefined
     );
 
-    const html = capture.getHtml();
-    assert.ok(html, 'HTML payload should be returned for browser join requests');
-    assert.match(html ?? '', /phab-tournament-join-card/);
-    assert.match(html ?? '', /Войти через LK/);
-    assert.match(html ?? '', /https:\/\/padlhub\.ru\/lk_new/);
+    assert.equal(capture.getHtml(), null);
+    const redirectUrl = new URL(String(capture.getRedirect()));
+    assert.equal(redirectUrl.origin + redirectUrl.pathname, 'https://padlhub.ru/lk_new');
+    assert.equal(redirectUrl.searchParams.get('source'), 'tournament_join');
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+  }
+
+  {
+    const capture = createResponseCapture();
+    await controller.submitJoinPage(
+      'weekend-cup',
+      createRequest(),
+      capture.response,
+      undefined,
+      {
+        phone: '+7 999 999-99-99',
+        authCode: '123456',
+        format: 'json'
+      }
+    );
+
+    const payload = capture.getJson() as TournamentJoinFlowResponse;
+    assert.equal(payload.code, 'AUTH_REQUIRED');
+    assert.equal(payload.authRequired, true);
+    assert.equal(new URL(String(payload.authUrl)).searchParams.get('returnUrl'), expectedJoinUrl);
   }
 
   {
@@ -275,12 +295,9 @@ async function main(): Promise<void> {
       undefined
     );
 
-    const html = capture.getHtml();
-    assert.match(html ?? '', /https:\/\/project-fixed6\.example\/tournaments/);
-    assert.match(
-      html ?? '',
-      /returnUrl=https%3A%2F%2Fproject-fixed6\.example%2Fapi%2Ftournaments%2Fpublic%2Fweekend-cup%2Fjoin/
-    );
+    assert.equal(capture.getHtml(), null);
+    const redirectUrl = new URL(String(capture.getRedirect()));
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), fixedJoinUrl);
   }
 
   console.log('Tournament public auth redirect test passed');

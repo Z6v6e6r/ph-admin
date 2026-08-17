@@ -1111,18 +1111,15 @@ export class TournamentsService {
     if (requireAuth && !normalizedClient.authorized && !normalizedClient.phoneVerified) {
       return {
         ok: false,
-        code: normalizedPhone ? 'PHONE_VERIFICATION_REQUIRED' : 'PROFILE_REQUIRED',
-        message:
-          normalizedPhone
-            ? 'Подтвердите номер телефона кодом, чтобы продолжить запись.'
-            : 'Чтобы присоединиться к турниру, укажите номер телефона.',
+        code: 'AUTH_REQUIRED',
+        message: 'Войдите в личный кабинет, чтобы продолжить запись. После входа вы вернётесь к этому турниру.',
         tournament: publicTournament,
         client: normalizedClient,
         access,
-        missingFields: normalizedPhone ? [] : ['phone'],
+        missingFields: [],
         waitlistAllowed: false,
         payment,
-        authRequired: false
+        authRequired: true
       };
     }
 

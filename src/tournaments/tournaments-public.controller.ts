@@ -86,8 +86,6 @@ type JoinSubmission = {
   notes?: string;
   selectedSubscriptionId?: string;
   selectedPurchaseOptionId?: string;
-  authCode?: string;
-  forceAuthCode?: boolean;
   purchaseConfirmed: boolean;
   waitlist: boolean;
   format?: string;
@@ -278,7 +276,7 @@ export class TournamentsPublicController {
     @Res() response: Response,
     @CurrentUser() user?: RequestUser,
     @Query('format') format?: string,
-    @Query('autoAuth') autoAuth?: string,
+    @Query('autoAuth') _autoAuth?: string,
     @Query('paymentsuccess') paymentSuccess?: string,
     @Query('paymentfailed') paymentFailed?: string
   ): Promise<void> {
@@ -324,7 +322,7 @@ export class TournamentsPublicController {
 
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
-        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+        requireAuth: true
       }),
       request,
       user
@@ -334,7 +332,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (flow.code === 'AUTH_REQUIRED' && this.parseBoolean(autoAuth) && flow.authUrl) {
+    if (flow.code === 'AUTH_REQUIRED' && flow.authUrl) {
       response.redirect(flow.authUrl);
       return;
     }
@@ -356,73 +354,21 @@ export class TournamentsPublicController {
       user
     );
     const submission = this.normalizeJoinSubmission(body);
-    let clientForRemember = currentClient;
-    if (submission.authCode) {
-      const verifiedClient = await this.tournamentsPublicSessionService.verifyPhoneCode(
-        request,
-        response,
-        currentClient,
-        submission.phone ?? currentClient.phone,
-        submission.authCode
-      );
-      if (!verifiedClient) {
-        const flow = this.enrichJoinFlow(
-          await this.tournamentsService.getPublicJoinFlow(slug, currentClient, {
-            requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
-          }),
-          request,
-          user
-        );
-        const payload = {
-          ...flow,
-          code: 'PHONE_VERIFICATION_REQUIRED' as const,
-          ok: false,
-          message: 'Код подтверждения не подошёл или устарел.'
-        };
-        if (this.wantsJson(request, submission.format)) {
-          response.json(payload);
-          return;
-        }
-        this.sendHtml(response, this.renderJoinHtml(payload, request, user));
-        return;
-      }
-      clientForRemember = verifiedClient;
-    }
-    const rememberedClient = this.tournamentsPublicSessionService.rememberClient(
-      request,
-      response,
-      clientForRemember,
-      submission
-    );
-    const client = await this.resolveCanonicalJoinClient(request, rememberedClient);
+    const client = await this.resolveCanonicalJoinClient(request, currentClient);
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
-        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+        requireAuth: true
       }),
       request,
       user
     );
 
-    if (flow.code === 'PHONE_VERIFICATION_REQUIRED' && submission.phone && !submission.authCode) {
-      const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
-        request,
-        response,
-        client,
-        submission.phone
-      );
-      const nextFlow = {
-        ...flow,
-        message: codeResult.ok
-          ? 'Введите код подтверждения, отправленный на номер телефона.'
-          : codeResult.message,
-        phoneVerification: codeResult
-      };
+    if (flow.code === 'AUTH_REQUIRED' && flow.authUrl) {
       if (this.wantsJson(request, submission.format)) {
-        response.json(nextFlow);
+        response.json(flow);
         return;
       }
-
-      this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+      response.redirect(flow.authUrl);
       return;
     }
 
@@ -451,30 +397,18 @@ export class TournamentsPublicController {
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
       const vivaAuthorizationHeader = this.tournamentsPublicSessionService
         .resolveExternalAuthorizationHeader(request, client);
-      if (
-        !vivaAuthorizationHeader || submission.forceAuthCode
-      ) {
-        const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
-          request,
-          response,
-          client,
-          client.phone ?? submission.phone
-        );
-        const nextFlow = {
+      if (!vivaAuthorizationHeader) {
+        const nextFlow = this.enrichJoinFlow({
           ...flow,
-          code: 'PHONE_VERIFICATION_REQUIRED' as const,
+          code: 'AUTH_REQUIRED',
           ok: false,
-          message: codeResult.ok
-            ? 'Введите код подтверждения, отправленный на номер телефона.'
-            : codeResult.message,
-          phoneVerification: codeResult
-        };
+          message: 'Обновите авторизацию в личном кабинете. После входа вы вернётесь к этому турниру.'
+        }, request, user);
         if (this.wantsJson(request, submission.format)) {
           response.json(nextFlow);
           return;
         }
-
-        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+        response.redirect(nextFlow.authUrl || this.lkAuthUrl);
         return;
       }
       const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
@@ -612,17 +546,29 @@ export class TournamentsPublicController {
     request: Request,
     user?: RequestUser
   ): TournamentJoinFlowResponse {
-    const authRequired = flow.code === 'AUTH_REQUIRED';
-    const joinUrl = this.buildCanonicalPublicJoinUrl(flow.tournament, request, user);
+    const effectiveFlow = (
+      flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED'
+    )
+      ? {
+          ...flow,
+          ok: false,
+          code: 'AUTH_REQUIRED' as const,
+          message: 'Войдите в личный кабинет, чтобы продолжить запись. После входа вы вернётесь к этому турниру.',
+          missingFields: [],
+          authRequired: true
+        }
+      : flow;
+    const authRequired = effectiveFlow.code === 'AUTH_REQUIRED';
+    const joinUrl = this.buildCanonicalPublicJoinUrl(effectiveFlow.tournament, request, user);
     const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
     const vivaAuthorizationHeader = this.tournamentsPublicSessionService
-      .resolveExternalAuthorizationHeader(request, flow.client);
-    const levelRecovery = flow.code === 'PLAYER_LEVEL_REQUIRED'
-      ? this.buildLevelRecoveryContext(joinUrl, flow.tournament)
+      .resolveExternalAuthorizationHeader(request, effectiveFlow.client);
+    const levelRecovery = effectiveFlow.code === 'PLAYER_LEVEL_REQUIRED'
+      ? this.buildLevelRecoveryContext(joinUrl, effectiveFlow.tournament)
       : undefined;
 
     return {
-      ...flow,
+      ...effectiveFlow,
       authRequired,
       authCheckUrl,
       authPollMs: authRequired ? this.lkPollMs : undefined,
@@ -679,7 +625,6 @@ export class TournamentsPublicController {
       defaultActionLabel,
       flow
     );
-    const actionScript = this.renderPublicTournamentActionScript(absoluteJoinUrl);
     const participantCards =
       displayParticipants.length > 0
         ? displayParticipants
@@ -1294,7 +1239,6 @@ export class TournamentsPublicController {
         });
       })();
     </script>
-    ${actionScript}
   </body>
 </html>`;
   }
@@ -1367,40 +1311,10 @@ export class TournamentsPublicController {
     flow?: TournamentJoinFlowResponse
   ): string {
     const flowCode = flow?.code ?? '';
-    const phoneValue = this.escapeHtml(this.formatPhone(flow?.client.phone));
-    const showPhoneForm =
-      tournament.registrationOpen
-      && (flowCode === 'PROFILE_REQUIRED' || flowCode === 'PHONE_VERIFICATION_REQUIRED');
-
-    if (showPhoneForm) {
-      return `<section class="public-action" data-phab-public-action>
-          <p class="public-action__status">Проверяем авторизацию...</p>
-          <form class="public-action__phone" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
-            <p class="public-action__title">Введите номер телефона, чтобы записаться</p>
-            <div class="public-action__row">
-              <label>
-                Телефон
-                <input
-                  type="tel"
-                  name="phone"
-                  value="${phoneValue}"
-                  inputmode="tel"
-                  autocomplete="tel"
-                  placeholder="+7"
-                  required
-                />
-              </label>
-            </div>
-            <button class="public-action__button" type="submit">Продолжить</button>
-            <p class="public-action__hint">
-              Указывая код, вы соглашаетесь с условиями Публичной Оферты и Обработкой Персональных Данных
-            </p>
-          </form>
-        </section>`;
-    }
-
     const actionLabel =
-      tournament.registrationOpen
+      flowCode === 'AUTH_REQUIRED'
+        ? 'Войти и продолжить'
+        : tournament.registrationOpen
         ? 'Записаться на турнир'
         : defaultActionLabel;
     const actionHref =
@@ -1966,8 +1880,6 @@ export class TournamentsPublicController {
       notes: this.pickString(record.notes) ?? undefined,
       selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
       selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
-      authCode: this.pickString(record.authCode) ?? undefined,
-      forceAuthCode: this.parseBoolean(record.forceAuthCode),
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
       format: this.pickString(record.format) ?? undefined
@@ -1986,7 +1898,8 @@ export class TournamentsPublicController {
     request: Request,
     client: TournamentPublicClientProfile
   ): Promise<TournamentPublicClientProfile> {
-    const authHeader = this.pickString(request.headers.authorization);
+    const authHeader = this.tournamentsPublicSessionService.resolveLkAuthorizationHeader?.(request)
+      ?? this.pickString(request.headers.authorization);
     if (authHeader) {
       const canonical = await this.tournamentsService.resolveTrustedLkRegistrationClient(
         authHeader
@@ -2151,24 +2064,11 @@ export class TournamentsPublicController {
         ? 'Списать абонемент и записаться'
         : flow.code === 'PURCHASE_REQUIRED'
           ? 'Подтвердить покупку и записаться'
-          : flow.code === 'PHONE_VERIFICATION_REQUIRED'
-            ? 'Подтвердить код'
           : flow.code === 'READY_TO_JOIN'
         ? tournament.skin.ctaLabel || 'Записаться'
         : flow.code === 'LEVEL_NOT_ALLOWED'
           ? flow.waitlistAllowed ? 'Проверить уровень ещё раз' : 'Подобрать турнир по уровню'
           : 'Продолжить';
-    const showPhoneInput =
-      flow.code === 'PROFILE_REQUIRED'
-      || flow.code === 'PHONE_VERIFICATION_REQUIRED'
-      || !this.formatPhone(client.phone);
-    const showAuthCodeInput =
-      flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED';
-    const authCodeRequiredAttr = flow.code === 'PHONE_VERIFICATION_REQUIRED' ? ' required' : '';
-    const isPurchaseVerification =
-      flow.code === 'PHONE_VERIFICATION_REQUIRED'
-      && flow.payment.required
-      && flow.payment.code === 'PURCHASE_REQUIRED';
     const selectedPurchaseOptionId =
       this.escapeHtml(flow.payment.purchaseOptions[0]?.id || '');
     const cardFormHtml =
@@ -2176,37 +2076,7 @@ export class TournamentsPublicController {
         ? ''
         : `<form id="phab-tournament-join-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}" class="phab-tournament-join-card__form">
             <input type="hidden" name="name" value="${nameValue}" />
-            ${
-              showPhoneInput
-                ? `<label class="phab-tournament-join-card__field">
-              <span>Телефон</span>
-              <input
-                type="tel"
-                name="phone"
-                maxlength="30"
-                value="${phoneValue}"
-                placeholder="+7 999 123-45-67"
-                required
-              />
-            </label>`
-                : `<input type="hidden" name="phone" value="${phoneValue}" />`
-            }
-            ${
-              showAuthCodeInput
-                ? `<label class="phab-tournament-join-card__field">
-              <span>Код авторизации</span>
-              <input
-                type="text"
-                name="authCode"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                maxlength="8"
-                placeholder="Введите код из SMS"
-               ${authCodeRequiredAttr}
-              />
-            </label>`
-                : ''
-            }
+            <input type="hidden" name="phone" value="${phoneValue}" />
             <input type="hidden" name="notes" value="" />
             ${
               flow.code === 'SUBSCRIPTION_AVAILABLE'
@@ -2214,7 +2084,7 @@ export class TournamentsPublicController {
                 : ''
             }
             ${
-              flow.code === 'PURCHASE_REQUIRED' || isPurchaseVerification
+              flow.code === 'PURCHASE_REQUIRED'
                 ? `<input type="hidden" name="purchaseConfirmed" value="1" />
             ${
               flow.payment.purchaseOptions.length > 0
@@ -2419,7 +2289,7 @@ export class TournamentsPublicController {
           <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К турнирам</a>
         </div>
         <p class="footnote">
-          После входа в личный кабинет вернитесь к этой ссылке или повторно нажмите кнопку турнира на Tilda-странице.
+          После успешного входа личный кабинет автоматически вернёт вас к этой карточке.
         </p>
       </section>
     </main>
