@@ -1,6 +1,14 @@
 (function () {
   var STYLE_ID = 'phab-tournaments-showcase-style';
   var DEFAULT_API_BASE_URL = inferApiBaseUrl(document.currentScript && document.currentScript.src);
+  var LK_ACCESS_TOKEN_COOKIE = 'padlhubAuthToken';
+  var LK_ACCESS_TOKEN_STORAGE_KEY = 'padlhub_auth_token_v1';
+  var TRUSTED_PADLHUB_API_ORIGINS = {
+    'https://padlhub.ru': true,
+    'https://www.padlhub.ru': true,
+    'https://padlhub.su': true,
+    'https://www.padlhub.su': true
+  };
   var LEVEL_BASE_OPTIONS = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
   var LEVEL_DIVISION_COUNT = 4;
   var LEVEL_BANDS = [
@@ -3650,15 +3658,98 @@
     }
   }
 
+  function isLoopbackHostname(hostname) {
+    var normalized = String(hostname || '').trim().toLowerCase();
+    return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '[::1]';
+  }
+
+  function isTrustedPadlHubApiUrl(value) {
+    try {
+      var target = new URL(value, window.location.href);
+      var targetHostname = target.hostname.toLowerCase();
+      var currentHostname = window.location.hostname.toLowerCase();
+      if (!target.pathname.startsWith('/api/')) return false;
+      var trustedHttps = Boolean(TRUSTED_PADLHUB_API_ORIGINS[target.origin.toLowerCase()]);
+      var trustedLoopback = target.protocol === 'http:'
+        && isLoopbackHostname(targetHostname)
+        && isLoopbackHostname(currentHostname);
+      return trustedHttps || trustedLoopback;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function normalizeAccessToken(value) {
+    var token = String(value || '').trim();
+    return token || '';
+  }
+
+  function readCookie(name) {
+    var prefix = String(name || '') + '=';
+    var rows = String(document.cookie || '').split(';');
+    for (var index = 0; index < rows.length; index += 1) {
+      var row = rows[index].trim();
+      if (row.indexOf(prefix) !== 0) continue;
+      try {
+        return normalizeAccessToken(decodeURIComponent(row.slice(prefix.length)));
+      } catch (_error) {
+        return normalizeAccessToken(row.slice(prefix.length));
+      }
+    }
+    return '';
+  }
+
+  function readStoredAccessToken() {
+    try {
+      var raw = normalizeAccessToken(window.localStorage.getItem(LK_ACCESS_TOKEN_STORAGE_KEY));
+      if (!raw) return '';
+      try {
+        var parsed = JSON.parse(raw);
+        if (typeof parsed === 'string') return normalizeAccessToken(parsed);
+        if (!parsed || typeof parsed !== 'object') return '';
+        if (Number.isFinite(parsed.expiresAt) && parsed.expiresAt <= Date.now()) return '';
+        return normalizeAccessToken(parsed.token);
+      } catch (_error) {
+        return raw;
+      }
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  function readLkAccessToken() {
+    return readCookie(LK_ACCESS_TOKEN_COOKIE) || readStoredAccessToken();
+  }
+
+  function hasAuthorizationHeader(headers) {
+    return Object.keys(headers || {}).some(function (name) {
+      return String(name).toLowerCase() === 'authorization';
+    });
+  }
+
+  function resolveRequestCredentials(url) {
+    try {
+      return new URL(url, window.location.href).origin === window.location.origin
+        ? 'include'
+        : 'omit';
+    } catch (_error) {
+      return 'same-origin';
+    }
+  }
+
   function jsonFetch(url, options) {
     var requestOptions = options || {};
     if (!requestOptions.credentials) {
-      requestOptions.credentials = 'include';
+      requestOptions.credentials = resolveRequestCredentials(url);
     }
     requestOptions.headers = Object.assign(
       { Accept: 'application/json' },
       requestOptions.headers || {}
     );
+    var lkAccessToken = isTrustedPadlHubApiUrl(url) ? readLkAccessToken() : '';
+    if (lkAccessToken && !hasAuthorizationHeader(requestOptions.headers)) {
+      requestOptions.headers.Authorization = 'Bearer ' + lkAccessToken;
+    }
 
     return fetch(url, requestOptions).then(function (response) {
       if (!response.ok) {
@@ -3771,6 +3862,47 @@
     } catch (_error) {
       return false;
     }
+  }
+
+  function readTournamentReturnTarget() {
+    try {
+      var params = new URL(window.location.href).searchParams;
+      var tournamentId = String(params.get('tournamentId') || '').trim();
+      var slug = String(params.get('slug') || '').trim();
+      var dateKey = String(params.get('date') || '').trim();
+      if (!tournamentId && !slug) return null;
+      return {
+        tournamentId: tournamentId,
+        slug: slug,
+        dateKey: isValidDayKey(dateKey) ? dateKey : ''
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function findTournamentReturnItem(payload, target) {
+    if (!target) return null;
+    var items = normalizeArray(normalizeObject(payload).items);
+    if (target.tournamentId) {
+      var byId = items.find(function (item) {
+        return String(normalizeObject(item).id || '') === target.tournamentId;
+      });
+      if (byId) return byId;
+    }
+    if (!target.slug) return null;
+    return items.find(function (item) {
+      return String(normalizeObject(item).slug || '') === target.slug;
+    }) || null;
+  }
+
+  function restoreTournamentReturnTarget(mount, state) {
+    if (state.returnTargetRestored || !state.returnTarget) return false;
+    var item = findTournamentReturnItem(state.payload, state.returnTarget);
+    if (!item) return false;
+    state.returnTargetRestored = true;
+    openTournamentDetails(mount, state, item);
+    return true;
   }
 
   function syncDraft(state, flow) {
@@ -5434,6 +5566,7 @@
       return;
     }
 
+    var returnTarget = readTournamentReturnTarget();
     var state = {
       config: config,
       crossOriginApi: isCrossOriginApi(config),
@@ -5467,12 +5600,29 @@
       loadingDayKeys: {},
       dayRailScrollLeft: 0,
       dayRailShiftDirection: 0,
-      dayRailShiftPending: false
+      dayRailShiftPending: false,
+      returnTarget: returnTarget,
+      returnTargetRestored: false
     };
 
     mount.__phabTournamentsInitialized = true;
     mount.__phabTournamentsState = state;
-    loadTournaments(mount, state, { forwardDays: config.initialForwardDays });
+    loadTournaments(mount, state, { forwardDays: config.initialForwardDays })
+      .then(function () {
+        if (restoreTournamentReturnTarget(mount, state)) return;
+        if (
+          state.returnTarget
+          && state.returnTarget.dateKey
+          && shouldLoadDayOnDemand(state, state.returnTarget.dateKey)
+        ) {
+          return loadTournaments(mount, state, {
+            dateKey: state.returnTarget.dateKey,
+            background: true
+          }).then(function () {
+            restoreTournamentReturnTarget(mount, state);
+          });
+        }
+      });
 
     if (config.refreshMs > 0) {
       mount.__phabTournamentsRefreshTimer = window.setInterval(function () {

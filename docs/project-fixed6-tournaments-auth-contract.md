@@ -70,13 +70,14 @@ When the user is not authenticated, the public join flow always fails closed bef
    - `authUrl`
    - `authCheckUrl`
 2. `authUrl` points to `TOURNAMENTS_PUBLIC_LK_AUTH_URL` (currently `https://padlhub.ru/lk_new`) and always contains:
-   - `returnUrl=<absolute /join URL>`
+   - `returnUrl=<absolute tournament card URL>`
    - `source=tournament_join`
-3. After successful login, `project-fixed 6` must return browser to `returnUrl`.
-4. On the same PadlHub origin, the join endpoint reads the standard LK access-token cookie and
-   verifies that token through the canonical LK identity service before evaluating eligibility.
-5. Client polls `authCheckUrl` until response code is not `AUTH_REQUIRED`.
-6. The tournament card never renders or accepts its own phone/OTP authorization form.
+3. After successful login, `project-fixed 6` returns the browser to the original tournament card.
+4. The tournament showcase reads the standard LK access token stored by `project-fixed 6` on
+   `padlhub.ru` and sends it as `Authorization: Bearer` only to an allowlisted PadlHub API host.
+5. The join endpoint verifies that token through the canonical LK identity service before evaluating eligibility.
+6. Client polls `authCheckUrl` until response code is not `AUTH_REQUIRED`.
+7. The tournament card never renders or accepts its own phone/OTP authorization form.
 
 ## Minimal request example
 

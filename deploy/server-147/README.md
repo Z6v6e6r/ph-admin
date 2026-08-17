@@ -62,6 +62,22 @@ sudo systemctl restart phab-api
 Use snippet from:
 - `deploy/server-147/nginx-api-snippet.conf`
 
+The production `location ^~ /api/tournaments/public/` compatibility block must be
+patched from an audited server preimage before reload. Build a candidate first:
+
+```bash
+node scripts/patch-tournament-public-nginx.mjs build \
+  --source /etc/nginx/sites-enabled/padlhub.su \
+  --output /tmp/padlhub.su.candidate \
+  --expected-source-sha256 <audited-source-sha256>
+```
+
+Run `nginx -t` against a temporary config that includes the candidate, inspect the
+diff, and only during the separately approved deploy stage apply it with an unused
+sibling backup path and the printed candidate SHA-256. The managed block preserves
+the exact legacy card redirect while proxying nested public tournament API routes
+such as `/join` to ph-admin with the same CORS/auth headers as `/api/`.
+
 Add it into your `server { listen 443 ssl; ... }` block, then:
 
 ```bash

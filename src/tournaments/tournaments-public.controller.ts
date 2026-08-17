@@ -560,6 +560,10 @@ export class TournamentsPublicController {
       : flow;
     const authRequired = effectiveFlow.code === 'AUTH_REQUIRED';
     const joinUrl = this.buildCanonicalPublicJoinUrl(effectiveFlow.tournament, request, user);
+    const activityReturnUrl = this.buildPublicCardRedirectUrl(
+      effectiveFlow.tournament.slug,
+      effectiveFlow.tournament
+    );
     const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
     const vivaAuthorizationHeader = this.tournamentsPublicSessionService
       .resolveExternalAuthorizationHeader(request, effectiveFlow.client);
@@ -573,7 +577,7 @@ export class TournamentsPublicController {
       authCheckUrl,
       authPollMs: authRequired ? this.lkPollMs : undefined,
       cabinetUrl: this.lkAuthUrl,
-      authUrl: authRequired ? this.buildLkAuthUrl(joinUrl) : undefined,
+      authUrl: authRequired ? this.buildLkAuthUrl(activityReturnUrl) : undefined,
       levelRecovery,
       vivaAuthorizationHeader
     };

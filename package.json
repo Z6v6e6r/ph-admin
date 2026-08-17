@@ -23,6 +23,7 @@
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",
     "test:auth-rbac": "ts-node test/auth-rbac.test.ts",
     "test:lk-identity": "ts-node test/lk-identity.service.test.ts",
+    "test:tournaments-public-auth": "ts-node test/tournaments-public-auth-redirect.test.ts && node --test test/tournaments-showcase-standard-auth.test.mjs && node --test test/tournament-public-nginx-patch.test.mjs",
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts",
     "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
     "test:subscriptions-runtime-contracts": "ts-node test/subscriptions-runtime-contracts.test.ts",

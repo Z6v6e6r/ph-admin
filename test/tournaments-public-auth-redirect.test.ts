@@ -132,6 +132,7 @@ async function main(): Promise<void> {
   );
 
   const expectedJoinUrl = 'https://padlhub.ru/api/tournaments/public/weekend-cup/join';
+  const expectedCardUrl = 'https://padlhub.ru/tournaments?tournamentId=t-1&slug=weekend-cup';
   const fixedJoinUrl = 'https://project-fixed6.example/api/tournaments/public/weekend-cup/join';
   const fixedUser: RequestUser = {
     id: 'pf6-user-1',
@@ -163,7 +164,7 @@ async function main(): Promise<void> {
     const authUrl = new URL(String(payload.authUrl || ''));
     assert.equal(authUrl.origin + authUrl.pathname, 'https://padlhub.ru/lk_new');
     assert.equal(authUrl.searchParams.get('source'), 'tournament_join');
-    assert.equal(authUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+    assert.equal(authUrl.searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   {
@@ -181,7 +182,7 @@ async function main(): Promise<void> {
     const redirectUrl = new URL(String(capture.getRedirect()));
     assert.equal(redirectUrl.origin + redirectUrl.pathname, 'https://padlhub.ru/lk_new');
     assert.equal(redirectUrl.searchParams.get('source'), 'tournament_join');
-    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   {
@@ -201,7 +202,7 @@ async function main(): Promise<void> {
     const payload = capture.getJson() as TournamentJoinFlowResponse;
     assert.equal(payload.code, 'AUTH_REQUIRED');
     assert.equal(payload.authRequired, true);
-    assert.equal(new URL(String(payload.authUrl)).searchParams.get('returnUrl'), expectedJoinUrl);
+    assert.equal(new URL(String(payload.authUrl)).searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   {
@@ -218,7 +219,7 @@ async function main(): Promise<void> {
     const redirectUrl = new URL(String(capture.getRedirect()));
     assert.equal(redirectUrl.origin + redirectUrl.pathname, 'https://padlhub.ru/lk_new');
     assert.equal(redirectUrl.searchParams.get('source'), 'tournament_join');
-    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   {
@@ -281,7 +282,7 @@ async function main(): Promise<void> {
     const payload = capture.getJson() as TournamentJoinFlowResponse;
     assert.equal(payload.authCheckUrl, `${fixedJoinUrl}?format=json`);
     const authUrl = new URL(String(payload.authUrl || ''));
-    assert.equal(authUrl.searchParams.get('returnUrl'), fixedJoinUrl);
+    assert.equal(authUrl.searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   {
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
 
     assert.equal(capture.getHtml(), null);
     const redirectUrl = new URL(String(capture.getRedirect()));
-    assert.equal(redirectUrl.searchParams.get('returnUrl'), fixedJoinUrl);
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedCardUrl);
   }
 
   console.log('Tournament public auth redirect test passed');
