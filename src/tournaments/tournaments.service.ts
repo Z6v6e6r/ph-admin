@@ -211,7 +211,7 @@ const TOURNAMENT_LEVEL_BANDS = [
   { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
   { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
   { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
-  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+  { base: 'A', min: 5.5, max: 7, display: '5.5+' }
 ] as const;
 const TOURNAMENT_LEVEL_LEGACY_ALIASES = [
   { offset: 0.25, aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
@@ -6682,7 +6682,7 @@ export class TournamentsService {
         base,
         step: null,
         label: base,
-        rank: baseIndex * TOURNAMENT_LEVEL_DIVISION_COUNT,
+        rank: Math.round(baseRange.start * 1000),
         minScore: baseRange.start,
         maxScore: baseRange.end
       };
@@ -6722,12 +6722,15 @@ export class TournamentsService {
       return null;
     }
 
+    const discreteRank = this.findLevelRankByToken(token);
     return {
       token,
       base,
-      step: Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT),
+      step: discreteRank >= 0
+        ? Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT)
+        : null,
       label: base,
-      rank: this.findLevelRankByToken(token),
+      rank: Math.round(numericScore * 1000),
       minScore: numericScore,
       maxScore: numericScore
     };
@@ -6781,8 +6784,7 @@ export class TournamentsService {
       return null;
     }
 
-    const token = this.formatLevelScoreToken(numeric);
-    return this.findLevelRankByToken(token) >= 0 ? token : null;
+    return this.formatLevelScoreToken(numeric);
   }
 
   private resolveLegacyLevelScore(base: string, value: string): number | null {

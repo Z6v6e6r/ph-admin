@@ -136,6 +136,23 @@ async function main(): Promise<void> {
   const tournament = createTournament();
   const service = createService(tournament);
   const originalFetch = globalThis.fetch;
+
+  const canonicalFractionalAccess = await service.checkPublicAccess(
+    tournament.slug,
+    '3.2'
+  );
+  assert.equal(canonicalFractionalAccess.code, 'OK');
+  assert.equal(canonicalFractionalAccess.levelLabel, '3.2');
+
+  tournament.accessLevels = ['A'];
+  const canonicalUpperAAccess = await service.checkPublicAccess(
+    tournament.slug,
+    '6.8'
+  );
+  assert.equal(canonicalUpperAAccess.code, 'OK');
+  assert.equal(canonicalUpperAAccess.levelLabel, '6.8');
+  tournament.accessLevels = ['D+', 'C'];
+
   const defaultVivaFetch = (async (url: RequestInfo | URL) => {
     const value = String(url);
     if (value.includes('/bookings/payment-types')) {

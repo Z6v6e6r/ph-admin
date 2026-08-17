@@ -26,7 +26,7 @@ const TOURNAMENT_LEVEL_BANDS = [
   { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
   { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
   { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
-  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+  { base: 'A', min: 5.5, max: 7, display: '5.5+' }
 ] as const;
 const TOURNAMENT_LEVEL_OPTIONS = buildTournamentLevelOptions();
 const TOURNAMENT_LEVEL_SUPERSCRIPTS = ['¹', '²', '³', '⁴'] as const;
