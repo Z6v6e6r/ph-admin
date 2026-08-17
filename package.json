@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
-    "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
+  "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
+  "tournaments:pending-payments:reconcile": "node scripts/reconcile-public-tournament-pending-payments.mjs",
     "subscriptions:indexes:check": "node scripts/managed-subscriptions-indexes.mjs --check",
     "subscriptions:indexes:apply": "node scripts/managed-subscriptions-indexes.mjs --apply",
     "postcheck:viva-shadow": "node scripts/viva-shadow-postcheck.mjs",

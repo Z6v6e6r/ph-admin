@@ -24,7 +24,6 @@
   var DIRECTORY_REQUEST_TIMEOUT_MS = 12000;
   var DIRECTORY_REQUEST_RETRY_COUNT = 2;
   var SMS_RESEND_COOLDOWN_MS = 30000;
-  var VIVA_API_BASE_URL = 'https://api.vivacrm.ru';
   var DEFAULTS = {
     apiBaseUrl: DEFAULT_API_BASE_URL,
     stationIds: [],
@@ -3785,7 +3784,6 @@
     if (client.levelLabel) {
       state.draft.levelLabel = String(client.levelLabel);
     }
-    state.vivaAuthorizationHeader = String(flow.vivaAuthorizationHeader || '').trim();
     var phoneVerification = normalizeObject(flow.phoneVerification);
     if (phoneVerification.ok) {
       state.phoneVerificationMessage = String(phoneVerification.message || '').trim();
@@ -4939,7 +4937,7 @@
         purchaseButton.addEventListener('click', function () {
           readDraftFromDialog(dialog, state);
           state.draft.selectedPurchaseOptionId = purchaseId;
-          startDirectVivaPurchase(mount, state, purchase);
+          submitJoin(mount, state, false);
         });
         purchaseList.appendChild(purchaseButton);
       });
@@ -5214,20 +5212,6 @@
     }
 
     clearAuth(state);
-    if (
-      flow.code === 'PURCHASE_REQUIRED'
-      && state.vivaAuthorizationHeader
-      && state.draft.selectedPurchaseOptionId
-    ) {
-      var directPurchase = normalizeArray(normalizeObject(flow.payment).purchaseOptions).find(function (item) {
-        return String(normalizeObject(item).id || '').trim() === state.draft.selectedPurchaseOptionId;
-      });
-      if (directPurchase) {
-        state.flow = flow;
-        startDirectVivaPurchase(mount, state, directPurchase);
-        return;
-      }
-    }
     if (flow.code === 'ALREADY_REGISTERED' || flow.code === 'ALREADY_WAITLISTED') {
       state.flow = null;
       state.outcome = {
@@ -5256,7 +5240,6 @@
     state.draft.authCode = '';
     state.draft.selectedSubscriptionId = '';
     state.draft.selectedPurchaseOptionId = '';
-    state.vivaAuthorizationHeader = '';
     clearAuth(state);
     renderTournaments(mount, state.payload, state);
 
@@ -5331,7 +5314,6 @@
       authCode: state.draft.authCode,
       selectedSubscriptionId: state.draft.selectedSubscriptionId,
       selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
-      directViva: state.draft.selectedPurchaseOptionId ? '1' : '0',
       purchaseConfirmed:
         state.flow && (
           state.flow.code === 'PURCHASE_REQUIRED'
@@ -5351,216 +5333,6 @@
         };
         renderTournaments(mount, state.payload, state);
       });
-  }
-
-  function startDirectVivaPurchase(mount, state, purchaseOption) {
-    var flow = normalizeObject(state.flow);
-    var tournament = normalizeObject(flow.tournament);
-    var booking = normalizeObject(tournament.booking);
-    var widgetId = String(booking.vivaWidgetId || 'iSkq6G').trim();
-    var exerciseId = String(booking.vivaExerciseId || '').trim();
-    var studioId = String(booking.vivaStudioId || '').trim();
-    var purchase = normalizeObject(purchaseOption);
-    var productId = String(purchase.id || state.draft.selectedPurchaseOptionId || '').trim();
-    var productType = normalizeVivaTransactionProductType(purchase.productType);
-    var productName = String(purchase.label || '').trim();
-
-    if (!widgetId || !exerciseId || !studioId || !productId) {
-      state.outcome = {
-        ok: false,
-        message: 'Не хватает данных Viva для покупки участия.'
-      };
-      renderTournaments(mount, state.payload, state);
-      return;
-    }
-
-    createVivaTransaction({
-      widgetId: widgetId,
-      exerciseId: exerciseId,
-      studioId: studioId,
-      productId: productId,
-      productName: productType === 'SERVICE' ? productName : '',
-      productType: productType,
-      discountAmount: Number(purchase.discountAmount || 0) || 0,
-      phone: state.draft.phone,
-      authorizationHeader: state.vivaAuthorizationHeader,
-      successUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
-      failUrl: buildPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed')
-    })
-      .then(function (transaction) {
-        var transactionId = findVivaTransactionId(transaction);
-        var checkoutUrl = findVivaCheckoutUrl(transaction);
-        if (!transactionId || !checkoutUrl) {
-          throw new Error('Viva не вернула ссылку оплаты или номер транзакции.');
-        }
-        return formFetch(state.activeJoinUrl, {
-          format: 'json',
-          name: state.draft.name,
-          phone: state.draft.phone,
-          levelLabel: state.draft.levelLabel,
-          notes: state.draft.notes,
-          selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
-          directTransactionId: transactionId,
-          directCheckoutUrl: checkoutUrl,
-          purchaseConfirmed: '1',
-          waitlist: '0'
-        });
-      })
-      .then(function (payload) {
-        handleJoinResponse(mount, state, payload);
-      })
-      .catch(function (error) {
-        if (error && error.status === 401) {
-          state.vivaAuthorizationHeader = '';
-          formFetch(state.activeJoinUrl, {
-            format: 'json',
-            name: state.draft.name,
-            phone: state.draft.phone,
-            levelLabel: state.draft.levelLabel,
-            notes: state.draft.notes,
-            selectedPurchaseOptionId: state.draft.selectedPurchaseOptionId,
-            directViva: '1',
-            forceAuthCode: '1',
-            purchaseConfirmed: '1',
-            waitlist: '0'
-          })
-            .then(function (payload) {
-              handleJoinResponse(mount, state, payload);
-            })
-            .catch(function (retryError) {
-              state.outcome = {
-                ok: false,
-                message: 'Не удалось запросить авторизацию Viva: ' + retryError.message
-              };
-              renderTournaments(mount, state.payload, state);
-            });
-          return;
-        }
-        state.outcome = {
-          ok: false,
-          message: 'Не удалось создать оплату Viva: ' + error.message
-        };
-        renderTournaments(mount, state.payload, state);
-      });
-  }
-
-  function createVivaTransaction(options) {
-    var url = new URL(
-      '/end-user/api/v1/' + encodeURIComponent(options.widgetId) + '/transactions',
-      VIVA_API_BASE_URL + '/'
-    );
-    var payload = {
-      products: [
-        {
-          id: options.productId,
-          ...(options.productName ? { name: options.productName } : {}),
-          type: options.productType,
-          count: 1,
-          ...(options.discountAmount ? { discountAmount: options.discountAmount } : {}),
-          bookingRequests: [
-            {
-              exerciseId: options.exerciseId,
-              client: null,
-              comment: null,
-              marketingAttribution: {}
-            }
-          ]
-        }
-      ],
-      clientPhone: String(options.phone || '').replace(/\D+/g, ''),
-      paymentMethod: 'WIDGET',
-      successUrl: options.successUrl,
-      failUrl: options.failUrl,
-      exerciseId: options.exerciseId,
-      studioId: options.studioId,
-      promoCode: null
-    };
-
-    return fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(options.authorizationHeader ? { Authorization: options.authorizationHeader } : {})
-      },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    }).then(function (response) {
-      return response.json().catch(function () {
-        return {};
-      }).then(function (payload) {
-        if (!response.ok) {
-          var error = new Error(String(payload.message || payload.error || 'status ' + response.status));
-          error.status = response.status;
-          throw error;
-        }
-        return payload;
-      });
-    });
-  }
-
-  function normalizeVivaTransactionProductType(value) {
-    return String(value || '').toUpperCase() === 'SUBSCRIPTION' ? 'SUBSCRIPTION' : 'SERVICE';
-  }
-
-  function buildPaymentReturnUrl(exerciseId, flag) {
-    var url = new URL('https://padlhub.ru/padel_torneos');
-    url.searchParams.set('TorneosPADL_exercise', exerciseId);
-    url.searchParams.set(flag, 'true');
-    return url.toString();
-  }
-
-  function findVivaCheckoutUrl(payload) {
-    return findFirstMatchingString(payload, function (key, value) {
-      var normalizedKey = String(key || '').toLowerCase().replace(/[\s-]+/g, '_');
-      if (!/^https?:\/\//i.test(value)) {
-        return false;
-      }
-      if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
-        return false;
-      }
-      return /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
-        || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
-    });
-  }
-
-  function findVivaTransactionId(payload) {
-    return findFirstMatchingString(payload, function (key, value) {
-      var normalizedKey = String(key || '').toLowerCase().replace(/[\s-]+/g, '_');
-      return Boolean(value) && /^(id|transactionid|transaction_id|orderid|order_id)$/.test(normalizedKey);
-    });
-  }
-
-  function findFirstMatchingString(value, matches, key, seen) {
-    var currentKey = key || '';
-    var visited = seen || [];
-    if (typeof value === 'string' && value.trim() && matches(currentKey, value.trim())) {
-      return value.trim();
-    }
-    if (!value || typeof value !== 'object' || visited.indexOf(value) >= 0) {
-      return '';
-    }
-    visited.push(value);
-
-    if (Array.isArray(value)) {
-      for (var index = 0; index < value.length; index += 1) {
-        var arrayFound = findFirstMatchingString(value[index], matches, currentKey, visited);
-        if (arrayFound) {
-          return arrayFound;
-        }
-      }
-      return '';
-    }
-
-    var keys = Object.keys(value);
-    for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-      var childKey = keys[keyIndex];
-      var found = findFirstMatchingString(value[childKey], matches, childKey, visited);
-      if (found) {
-        return found;
-      }
-    }
-    return '';
   }
 
   function loadTournaments(mount, state, options) {
@@ -5679,7 +5451,6 @@
         selectedSubscriptionId: '',
         selectedPurchaseOptionId: ''
       },
-      vivaAuthorizationHeader: '',
       phoneVerificationMessage: '',
       smsResendAvailableAt: 0,
       activeJoinUrl: '',

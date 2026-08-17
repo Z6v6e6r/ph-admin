@@ -87,7 +87,10 @@ function createTournament(): CustomTournament {
   };
 }
 
-function createService(tournament: CustomTournament): TournamentsService {
+function createService(
+  tournament: CustomTournament,
+  readAdminBookings: () => Record<string, unknown>[] = () => []
+): TournamentsService {
   return new TournamentsService(
     { listTournaments: async () => [] } as never,
     { listTournaments: async () => [] } as never,
@@ -100,6 +103,121 @@ function createService(tournament: CustomTournament): TournamentsService {
         slug === tournament.slug ? tournament : null,
       findCustomTournamentBySourceTournamentId: async (sourceTournamentId: string) =>
         sourceTournamentId === tournament.sourceTournamentId ? tournament : null,
+      reservePublicJoinPayment: async (_id: string, pending: Record<string, unknown>) => {
+        const details = tournament.details ?? {};
+        const booking = (details.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        if (current.some((item) => (
+          item.phone === pending.phone
+          && item.state !== 'EXPIRED'
+        ))) return null;
+        booking.pendingJoinPayments = [...current, pending];
+        tournament.details = { ...details, booking };
+        return tournament;
+      },
+      claimPublicJoinSubscriptionBooking: async (
+        _id: string,
+        operationId: string,
+        phone: string,
+        claimId: string,
+        claimedAt: string,
+        claimExpiresAt: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === operationId
+          && item.phone === phone
+          && item.state === 'PENDING_PAYMENT'
+          && !item.providerBookingId
+        ));
+        if (!pending) return null;
+        pending.state = 'BOOKING_CREATION_IN_PROGRESS';
+        pending.bookingClaimId = claimId;
+        pending.bookingClaimExpiresAt = claimExpiresAt;
+        pending.providerCreateAttemptedAt = claimedAt;
+        return tournament;
+      },
+      bindPublicJoinSubscriptionBooking: async (
+        _id: string,
+        operationId: string,
+        phone: string,
+        providerBookingId: string
+      ) => {
+        const details = tournament.details ?? {};
+        const booking = (details.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === operationId && item.phone === phone
+        ));
+        if (!pending) return null;
+        pending.providerBookingId = providerBookingId;
+        pending.state = 'PENDING_PAYMENT';
+        delete pending.bookingClaimId;
+        delete pending.bookingClaimExpiresAt;
+        return tournament;
+      },
+      markPublicJoinPaymentPaid: async (
+        _id: string,
+        operationId: string,
+        phone: string,
+        verifiedPayment: Record<string, unknown>
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === operationId && item.phone === phone
+        ));
+        if (!pending) return null;
+        pending.state = 'PAID_PENDING_FINALIZATION';
+        pending.verifiedPayment = verifiedPayment;
+        return tournament;
+      },
+      finalizePublicJoinPayment: async (
+        _id: string,
+        operationId: string,
+        phone: string,
+        participant: typeof tournament.participants[number]
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === operationId
+          && item.phone === phone
+          && item.state === 'PAID_PENDING_FINALIZATION'
+        ));
+        if (!pending) return null;
+        tournament.participants = [...tournament.participants, participant];
+        booking.pendingJoinPayments = current.filter((item) => item !== pending);
+        tournament.participantsCount = tournament.participants.length;
+        tournament.paidParticipantsCount = tournament.participants.filter(
+          (item) => item.paymentStatus === 'PAID'
+        ).length;
+        return tournament;
+      },
+      appendPublicParticipantIfCapacity: async (
+        _id: string,
+        phone: string,
+        participant: typeof tournament.participants[number]
+      ) => {
+        if (tournament.participants.some((item) => item.phone === phone)) return null;
+        tournament.participants = [...tournament.participants, participant];
+        tournament.participantsCount = tournament.participants.length;
+        tournament.paidParticipantsCount = tournament.participants.filter(
+          (item) => item.paymentStatus === 'PAID'
+        ).length;
+        return tournament;
+      },
       updateCustomTournament: async (_id: string, mutation: { participants?: unknown; waitlist?: unknown }) => {
         if (Array.isArray(mutation.participants)) {
           tournament.participants = mutation.participants as typeof tournament.participants;
@@ -116,7 +234,11 @@ function createService(tournament: CustomTournament): TournamentsService {
       }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,
-    { simulateRating: () => { throw new Error('Not used in test'); } } as never
+    { simulateRating: () => { throw new Error('Not used in test'); } } as never,
+    {
+      listExerciseBookings: async () => readAdminBookings(),
+      lookupClientCabinetByPhone: async () => null
+    } as never
   );
 }
 
@@ -134,7 +256,8 @@ function buildSubscriptions(): TournamentClientSubscription[] {
 
 async function main(): Promise<void> {
   const tournament = createTournament();
-  const service = createService(tournament);
+  let adminBookings: Record<string, unknown>[] = [];
+  const service = createService(tournament, () => adminBookings);
   const originalFetch = globalThis.fetch;
 
   const canonicalFractionalAccess = await service.checkPublicAccess(
@@ -277,7 +400,7 @@ async function main(): Promise<void> {
   assert.equal(purchaseFlow.payment.purchaseOptions.length, 2);
 
   tournament.skin.priceLabel = '2 500 ₽';
-  let energyBookingRequest:
+  let energyTransactionRequest:
     | { url: string; headers: Record<string, string>; body: Record<string, unknown> }
     | undefined;
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -311,16 +434,20 @@ async function main(): Promise<void> {
         json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
       } as Response;
     }
-    energyBookingRequest = {
+    energyTransactionRequest = {
       url: value,
       headers: init?.headers as Record<string, string>,
       body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
     };
     return {
       ok: true,
-      status: 202,
+      status: 200,
+      headers: new Headers(),
       json: async () => ({
-        correlationId: 'corr-energy-1'
+        transactionId: 'tx-energy-1',
+        paymentUrl: 'https://pay.example/energy-1',
+        toPay: 250000,
+        paymentDueDate: new Date(Date.now() + 20 * 60_000).toISOString()
       })
     } as Response;
   }) as typeof fetch;
@@ -351,19 +478,21 @@ async function main(): Promise<void> {
     successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
     failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
   });
-  assert.equal(energyPurchaseStart.code, 'REGISTERED');
-  assert.equal(energyPurchaseStart.participant?.paymentStatus, 'PAID');
+  assert.equal(energyPurchaseStart.code, 'PURCHASE_STARTED');
+  assert.equal(energyPurchaseStart.payment?.transactionId, 'tx-energy-1');
   assert.equal(
-    energyBookingRequest?.url,
-    'https://api.vivacrm.ru/end-user/api/v2/iSkq6G/bookings'
+    energyTransactionRequest?.url,
+    'https://api.vivacrm.ru/end-user/api/v1/iSkq6G/transactions'
   );
-  assert.equal(energyBookingRequest?.body.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
-  assert.equal(energyBookingRequest?.body.paymentType, 'SUBSCRIPTION');
-  assert.equal(energyBookingRequest?.headers.Authorization, undefined);
+  const energyProducts = energyTransactionRequest?.body.products as Array<Record<string, unknown>>;
+  assert.equal(energyProducts[0]?.id, 'energy-tournaments');
+  assert.equal(energyProducts[0]?.type, 'SUBSCRIPTION');
+  assert.equal(energyTransactionRequest?.headers.Authorization, undefined);
   tournament.skin.priceLabel = undefined;
   globalThis.fetch = defaultVivaFetch;
 
-  globalThis.fetch = (async (url: RequestInfo | URL) => {
+  let subscriptionBookingRequest: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const value = String(url);
     if (value.includes('/products/subscriptions')) {
       return {
@@ -410,7 +539,7 @@ async function main(): Promise<void> {
   assert.equal(vivaSubscriptionFlow.code, 'SUBSCRIPTION_AVAILABLE');
   assert.equal(vivaSubscriptionFlow.payment.selectedSubscription?.id, 'viva-pass');
 
-  globalThis.fetch = (async (url: RequestInfo | URL) => {
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const value = String(url);
     if (value.includes('/products/subscriptions')) {
       return {
@@ -433,23 +562,257 @@ async function main(): Promise<void> {
         json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
       } as Response;
     }
+    subscriptionBookingRequest = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    adminBookings = [{
+      id: 'write-off-1',
+      exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+      clientSubscriptionId: 'tournament-pass',
+      paymentType: 'SUBSCRIPTION',
+      isCancelled: false,
+      cancelled: false,
+      client: {
+        id: 'viva-client-25',
+        phone: '+79990001125'
+      }
+    }];
     return {
       ok: true,
       status: 200,
       json: async () => ({ id: 'write-off-1' })
     } as Response;
   }) as typeof fetch;
-  const subscriptionRegistration = await service.registerPublicParticipant(tournament.slug, {
+  const staleSubscriptionSelection = await service.createPublicJoinPurchaseTransaction(
+    tournament.slug,
+    {
+      clientId: 'viva-client-24',
+      name: 'Игрок со stale выбором',
+      phone: '+7 999 000-11-24',
+      levelLabel: 'C',
+      selectedSubscriptionId: 'stale-subscription-id',
+      subscriptions: [
+        ...buildSubscriptions(),
+        {
+          id: 'tournament-pass-second',
+          label: 'Второй турнирный абонемент',
+          remainingUses: 1,
+          compatibleTournamentTypes: ['Американо'],
+          compatibleAccessLevels: ['C']
+        }
+      ],
+      successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+      failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+    }
+  );
+  assert.equal(staleSubscriptionSelection.code, 'PURCHASE_REQUIRED');
+  assert.equal(Boolean(subscriptionBookingRequest), false);
+  const subscriptionRegistration = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    clientId: 'viva-client-25',
     name: 'Игорь Махнов',
     phone: '+7 999 000-11-25',
     levelLabel: 'C',
     selectedSubscriptionId: 'tournament-pass',
-    subscriptions: buildSubscriptions()
+    subscriptions: buildSubscriptions(),
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
   });
   globalThis.fetch = defaultVivaFetch;
   assert.equal(subscriptionRegistration.code, 'REGISTERED');
   assert.equal(subscriptionRegistration.participant?.paymentStatus, 'PAID');
-  assert.match(subscriptionRegistration.participant?.notes ?? '', /Абонемент списан/);
+  assert.equal(subscriptionBookingRequest?.exerciseId, 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c');
+  assert.equal(subscriptionBookingRequest?.clientSubscriptionId, 'tournament-pass');
+  assert.equal(subscriptionBookingRequest?.paymentType, 'SUBSCRIPTION');
+
+  let subscriptionPostCount = 0;
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const value = String(url);
+    if (value.includes('/products/subscriptions')) {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    if (value.includes('/products/one-times')) {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    if (value.includes('/bookings/payment-types')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
+      } as Response;
+    }
+    subscriptionPostCount += 1;
+    adminBookings = [{
+      id: 'write-off-recovery',
+      exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+      clientSubscriptionId: 'tournament-pass',
+      paymentType: 'SUBSCRIPTION',
+      isCancelled: false,
+      cancelled: false,
+      client: { id: 'different-client', phone: '+79990001126' }
+    }];
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'write-off-recovery' })
+    } as Response;
+  }) as typeof fetch;
+  const subscriptionMismatch = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    clientId: 'viva-client-26',
+    name: 'Игрок recovery абонемента',
+    phone: '+7 999 000-11-26',
+    levelLabel: 'C',
+    selectedSubscriptionId: 'tournament-pass',
+    subscriptions: buildSubscriptions(),
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+  });
+  assert.equal(subscriptionMismatch.code, 'BOOKING_FAILED');
+  assert.equal(subscriptionPostCount, 1);
+
+  adminBookings = [{
+    id: 'write-off-recovery',
+    exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+    clientSubscriptionId: 'tournament-pass',
+    paymentType: 'SUBSCRIPTION',
+    isCancelled: false,
+    cancelled: false,
+    client: { id: 'viva-client-26', phone: '+79990001126' }
+  }];
+  const subscriptionRecovered = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    clientId: 'viva-client-26',
+    name: 'Игрок recovery абонемента',
+    phone: '+7 999 000-11-26',
+    levelLabel: 'C',
+    selectedSubscriptionId: 'tournament-pass',
+    subscriptions: buildSubscriptions(),
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+  });
+  globalThis.fetch = defaultVivaFetch;
+  assert.equal(subscriptionRecovered.code, 'REGISTERED');
+  assert.equal(subscriptionPostCount, 1);
+
+  adminBookings = [];
+  let concurrentSubscriptionPostCount = 0;
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const value = String(url);
+    if (value.includes('/products/subscriptions')) {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    if (value.includes('/products/one-times')) {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    if (value.includes('/bookings/payment-types')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ paymentTypes: ['ON_PLACE'], subscriptions: [] })
+      } as Response;
+    }
+    concurrentSubscriptionPostCount += 1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    adminBookings = [{
+      id: 'write-off-concurrent',
+      exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+      clientSubscriptionId: 'tournament-pass',
+      paymentType: 'SUBSCRIPTION',
+      isCancelled: false,
+      cancelled: false,
+      client: { id: 'viva-client-27', phone: '+79990001127' }
+    }];
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'write-off-concurrent' })
+    } as Response;
+  }) as typeof fetch;
+  const concurrentSubscriptionInput = {
+    clientId: 'viva-client-27',
+    name: 'Параллельный игрок',
+    phone: '+7 999 000-11-27',
+    levelLabel: 'C',
+    selectedSubscriptionId: 'tournament-pass',
+    subscriptions: buildSubscriptions(),
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+  };
+  const concurrentSubscriptionResults = await Promise.all([
+    service.createPublicJoinPurchaseTransaction(tournament.slug, concurrentSubscriptionInput),
+    service.createPublicJoinPurchaseTransaction(tournament.slug, concurrentSubscriptionInput)
+  ]);
+  globalThis.fetch = defaultVivaFetch;
+  assert.equal(concurrentSubscriptionPostCount, 1);
+  assert.ok(concurrentSubscriptionResults.some((result) => result.code === 'REGISTERED'));
+
+  const pendingBooking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+  const pendingPayments = Array.isArray(pendingBooking.pendingJoinPayments)
+    ? pendingBooking.pendingJoinPayments as Array<Record<string, unknown>>
+    : [];
+  pendingBooking.pendingJoinPayments = [...pendingPayments, {
+    transactionId: 'subscription:ambiguous-readback',
+    state: 'BOOKING_CREATION_IN_PROGRESS',
+    operationType: 'SUBSCRIPTION_BOOKING',
+    clientId: 'viva-client-29',
+    phone: '79990001129',
+    name: 'Ambiguous readback',
+    levelLabel: 'C',
+    selectedPurchaseOptionId: 'tournament-pass',
+    productType: 'SUBSCRIPTION',
+    exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+    studioId: '588b6151-f4f5-47d9-9449-80edf8cbc748',
+    widgetId: 'iSkq6G',
+    amountMinor: 0,
+    currency: 'RUB',
+    eligibilitySnapshot: {
+      decisionId: 'decision-ambiguous',
+      playerId: '79990001129',
+      activityId: tournament.id,
+      activityType: 'TOURNAMENT',
+      policyVersion: 0,
+      levelScaleVersion: 1,
+      result: 'ALLOWED',
+      reasonCode: 'LEVEL_ALLOWED',
+      evaluatedAt: new Date().toISOString()
+    },
+    bookingClaimId: 'claim-ambiguous',
+    bookingClaimExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+    providerCreateAttemptedAt: new Date().toISOString(),
+    paymentExpiresAt: new Date(Date.now() + 600_000).toISOString(),
+    createdAt: new Date().toISOString()
+  }];
+  adminBookings = ['provider-duplicate-1', 'provider-duplicate-2'].map((id) => ({
+    id,
+    exerciseId: 'ee4aef31-7fc9-4dbc-976c-86ecbde5a11c',
+    clientSubscriptionId: 'tournament-pass',
+    paymentType: 'SUBSCRIPTION',
+    isCancelled: false,
+    cancelled: false,
+    client: { id: 'viva-client-29', phone: '+79990001129' }
+  }));
+  let ambiguousReadbackPostCount = 0;
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const value = String(url);
+    if (
+      value.includes('/products/subscriptions')
+      || value.includes('/products/one-times')
+      || value.includes('/bookings/payment-types')
+    ) {
+      return { ok: true, status: 200, json: async () => ({ items: [] }) } as Response;
+    }
+    ambiguousReadbackPostCount += 1;
+    return { ok: true, status: 200, json: async () => ({ id: 'must-not-exist' }) } as Response;
+  }) as typeof fetch;
+  const ambiguousReadback = await service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    clientId: 'viva-client-29',
+    name: 'Ambiguous readback',
+    phone: '+7 999 000-11-29',
+    levelLabel: 'C',
+    selectedSubscriptionId: 'tournament-pass',
+    subscriptions: buildSubscriptions(),
+    successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+    failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+  });
+  globalThis.fetch = defaultVivaFetch;
+  assert.equal(ambiguousReadback.code, 'BOOKING_FAILED');
+  assert.equal(ambiguousReadbackPostCount, 0);
 
   const lkWidgetRegistration = await service.registerPublicParticipantByTournamentRef(tournament.id, {
     name: 'LK Игрок',
@@ -459,7 +822,7 @@ async function main(): Promise<void> {
     selectedPurchaseOptionId: 'single-entry',
     subscriptions: []
   });
-  assert.equal(lkWidgetRegistration.code, 'REGISTERED');
+  assert.equal(lkWidgetRegistration.code, 'PURCHASE_REQUIRED');
 
   const lkWidgetTournamentDetail = await service.findById(tournament.id);
   assert.equal(lkWidgetTournamentDetail.format, 'Американо');
@@ -470,7 +833,7 @@ async function main(): Promise<void> {
     tournament.id,
     '+7 999 000-11-28'
   );
-  assert.equal(lkWidgetRegistrationStatus.status, 'REGISTERED');
+  assert.equal(lkWidgetRegistrationStatus.status, 'NONE');
 
   const lkWidgetCancelStatus = await service.cancelPublicRegistrationByTournamentRef(
     tournament.id,
@@ -521,12 +884,10 @@ async function main(): Promise<void> {
       ok: true,
       status: 200,
       json: async () => ({
-        data: {
-          id: 'tx-1',
-          payment: {
-            formUrl: 'https://pay.tbank.ru/Yk04YJoQ'
-          }
-        }
+        transactionId: 'tx-1',
+        paymentUrl: 'https://pay.tbank.ru/Yk04YJoQ',
+        toPay: 250000,
+        paymentDueDate: new Date(Date.now() + 20 * 60_000).toISOString()
       })
     } as Response;
   }) as typeof fetch;
@@ -558,11 +919,11 @@ async function main(): Promise<void> {
     assert.equal(bookingRequests[0]?.paymentType, undefined);
     assert.equal(
       transactionRequest?.body.successUrl,
-      'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentsuccess=true'
+      'https://padlhub.ru/padel_torneos?paymentsuccess=true'
     );
     assert.equal(
       transactionRequest?.body.failUrl,
-      'https://padlhub.ru/padel_torneos?TorneosPADL_exercise=ee4aef31-7fc9-4dbc-976c-86ecbde5a11c&TorneosPADL_paymentfailed=true'
+      'https://padlhub.ru/padel_torneos?paymentfailed=true'
     );
     assert.equal(transactionRequest?.body.studioId, '588b6151-f4f5-47d9-9449-80edf8cbc748');
   } finally {
@@ -577,9 +938,8 @@ async function main(): Promise<void> {
     selectedPurchaseOptionId: 'catalog-subscription',
     subscriptions: []
   });
-  assert.equal(paidRegistration.code, 'REGISTERED');
-  assert.equal(paidRegistration.participant?.paymentStatus, 'PAID');
-  assert.match(paidRegistration.participant?.notes ?? '', /catalog-subscription/);
+  assert.equal(paidRegistration.code, 'PURCHASE_REQUIRED');
+  assert.equal(paidRegistration.participant, undefined);
 
   globalThis.fetch = originalFetch;
 

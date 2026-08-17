@@ -434,6 +434,8 @@ export interface TournamentClientSubscription {
 
 export interface TournamentPublicClientProfile {
   id: string;
+  /** Authoritative Viva client id resolved by a trusted backend identity lookup. */
+  clientId?: string;
   authorized: boolean;
   authSource: 'cookie' | 'headers' | 'anonymous';
   name?: string;

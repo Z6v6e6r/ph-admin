@@ -86,10 +86,7 @@ type JoinSubmission = {
   notes?: string;
   selectedSubscriptionId?: string;
   selectedPurchaseOptionId?: string;
-  directTransactionId?: string;
-  directCheckoutUrl?: string;
   authCode?: string;
-  directViva?: boolean;
   forceAuthCode?: boolean;
   purchaseConfirmed: boolean;
   waitlist: boolean;
@@ -296,7 +293,9 @@ export class TournamentsPublicController {
       const outcome = await this.tournamentsService.confirmPublicJoinAfterPayment(slug, {
         phone: client.phone,
         fallbackName: client.name ?? undefined,
-        fallbackLevelLabel: client.levelLabel ?? undefined
+        fallbackLevelLabel: client.levelLabel ?? undefined,
+        vivaAuthorizationHeader: this.tournamentsPublicSessionService
+          .resolveExternalAuthorizationHeader(request, client)
       });
       if (this.wantsJson(request, format)) {
         response.json(outcome);
@@ -443,15 +442,17 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (flow.code === 'PURCHASE_REQUIRED' && submission.purchaseConfirmed) {
+    if (
+      (flow.code === 'PURCHASE_REQUIRED' || flow.code === 'SUBSCRIPTION_AVAILABLE')
+      && submission.purchaseConfirmed
+    ) {
       const joinUrl = this.buildCanonicalPublicJoinUrl(flow.tournament, request, user);
       const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
       const vivaAuthorizationHeader = this.tournamentsPublicSessionService
         .resolveExternalAuthorizationHeader(request, client);
       if (
-        !submission.directTransactionId
-        && (!vivaAuthorizationHeader || submission.forceAuthCode)
+        !vivaAuthorizationHeader || submission.forceAuthCode
       ) {
         const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
           request,
@@ -476,34 +477,13 @@ export class TournamentsPublicController {
         this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
         return;
       }
-      if (submission.directViva && !submission.directTransactionId) {
-        const nextFlow = {
-          ...flow,
-          vivaAuthorizationHeader
-        };
-        if (this.wantsJson(request, submission.format)) {
-          response.json(nextFlow);
-          return;
-        }
-
-        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
-        return;
-      }
-      const outcome = submission.directTransactionId
-        ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
-          name: client.name ?? '',
-          phone: client.phone ?? '',
-          levelLabel: client.levelLabel,
-          notes: submission.notes,
-          selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
-          transactionId: submission.directTransactionId,
-          checkoutUrl: submission.directCheckoutUrl
-        })
-        : await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+      const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+        clientId: client.clientId,
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
         notes: submission.notes,
+        selectedSubscriptionId: submission.selectedSubscriptionId,
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: true,
         subscriptions: client.subscriptions,
@@ -526,10 +506,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (
-      flow.code === 'READY_TO_JOIN'
-      || flow.code === 'SUBSCRIPTION_AVAILABLE'
-    ) {
+    if (flow.code === 'READY_TO_JOIN') {
       const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
         name: client.name ?? '',
         phone: client.phone ?? '',
@@ -612,6 +589,7 @@ export class TournamentsPublicController {
       this.pickString(request.headers.authorization) ?? undefined
     );
     return this.tournamentsService.registerPublicParticipant(slug, {
+      clientId: client.clientId,
       name: client.name,
       phone: client.phone,
       levelLabel: client.levelLabel,
@@ -1988,10 +1966,7 @@ export class TournamentsPublicController {
       notes: this.pickString(record.notes) ?? undefined,
       selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
       selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
-      directTransactionId: this.pickString(record.directTransactionId) ?? undefined,
-      directCheckoutUrl: this.pickString(record.directCheckoutUrl) ?? undefined,
       authCode: this.pickString(record.authCode) ?? undefined,
-      directViva: this.parseBoolean(record.directViva),
       forceAuthCode: this.parseBoolean(record.forceAuthCode),
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
@@ -2018,6 +1993,7 @@ export class TournamentsPublicController {
       );
       return {
         ...client,
+        clientId: canonical.clientId,
         authorized: true,
         phoneVerified: true,
         name: canonical.name,
@@ -2034,6 +2010,7 @@ export class TournamentsPublicController {
         });
       return {
         ...client,
+        clientId: canonical.clientId,
         authorized: true,
         phoneVerified: true,
         name: canonical.name,
@@ -2044,6 +2021,7 @@ export class TournamentsPublicController {
     }
     return {
       ...client,
+      clientId: undefined,
       authorized: false,
       phoneVerified: false,
       levelLabel: undefined,

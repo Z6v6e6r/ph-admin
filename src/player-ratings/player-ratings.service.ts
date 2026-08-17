@@ -80,6 +80,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
     phone: string;
   }): Promise<{
     playerKey: string;
+    clientId?: string;
     levelLabel: string;
     ratingNumeric: number;
   } | null> {
@@ -128,6 +129,7 @@ export class PlayerRatingsService implements OnModuleDestroy {
     }
     return {
       playerKey: state.playerKey,
+      ...(state.clientId ? { clientId: state.clientId } : {}),
       levelLabel: String(normalizedRating),
       ratingNumeric: normalizedRating
     };

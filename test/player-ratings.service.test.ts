@@ -41,6 +41,7 @@ async function main(): Promise<void> {
   });
   assert.deepEqual(canonicalLevel, {
     playerKey: 'player:1',
+    clientId: 'client-1',
     levelLabel: '3.2',
     ratingNumeric: 3.2
   });
