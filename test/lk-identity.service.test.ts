@@ -130,6 +130,7 @@ async function main(): Promise<void> {
     const valid = await service.verify(bearer(signToken(keyA)), integrationToken);
     assert.equal(valid.ok, true);
     assert.deepEqual(valid.actor, {
+      issuer,
       subject: 'keycloak-subject-1',
       clientId: 'viva-client-1',
       phoneNorm: '79000000001',
@@ -141,6 +142,14 @@ async function main(): Promise<void> {
     });
     assert.equal(fetchCalls.get(jwksUrl), 1);
 
+    const inProcessValid = await service.verifyTrustedBearer(bearer(signToken(keyA)));
+    assert.equal(inProcessValid.actor.phoneNorm, '79000000001');
+    assert.equal(
+      fetchCalls.get(jwksUrl),
+      1,
+      'in-process verification uses the same signature and claims checks'
+    );
+
     await service.verify(bearer(signToken(keyA)), integrationToken);
     assert.equal(fetchCalls.get(jwksUrl), 1, 'fresh clients JWKS cache avoids one call per poll');
 
@@ -148,6 +157,7 @@ async function main(): Promise<void> {
       bearer(signToken(legacyKey, { iss: legacyIssuer })),
       integrationToken
     );
+    assert.equal(legacyValid.actor.issuer, legacyIssuer);
     assert.equal(legacyValid.actor.phoneNorm, '79000000001');
     assert.equal(fetchCalls.get(legacyJwksUrl), 1);
 
@@ -370,6 +380,10 @@ async function main(): Promise<void> {
       401
     );
     await expectStatus(service.verify('Bearer not-a-jwt', integrationToken), 401);
+    const forgedParts = signToken(keyB).split('.');
+    forgedParts[2] = `${forgedParts[2][0] === 'A' ? 'B' : 'A'}${forgedParts[2].slice(1)}`;
+    const forgedToken = forgedParts.join('.');
+    await expectStatus(service.verifyTrustedBearer(bearer(forgedToken)), 401);
     await expectStatus(service.verify(bearer(signToken(keyB)), 'wrong-token'), 403);
 
     const keyWithoutClient = await service.verify(

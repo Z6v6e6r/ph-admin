@@ -142,6 +142,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     ?? 'https://padlhub.ru/tournaments';
   private client?: MongoClient;
   private db?: Db;
+  private connectionPromise?: Promise<Db>;
   private indexesEnsured = false;
 
   isEnabled(): boolean {
@@ -155,6 +156,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     await this.client.close().catch(() => undefined);
     this.client = undefined;
     this.db = undefined;
+    this.connectionPromise = undefined;
     this.indexesEnsured = false;
   }
 
@@ -443,6 +445,387 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return this.toCustomTournament(nextDocument);
   }
 
+  async reservePublicJoinPayment(
+    id: string,
+    pending: Record<string, unknown>
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const phone = this.pickString(pending.phone);
+    const transactionId = this.pickString(pending.transactionId);
+    if (!phone || !transactionId) {
+      return null;
+    }
+    const updatedAt = new Date().toISOString();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
+        participants: { $not: { $elemMatch: { phone } } },
+        waitlist: { $not: { $elemMatch: { phone } } },
+        'details.booking.pendingJoinPayments': {
+          $not: {
+            $elemMatch: {
+              $or: [
+                { transactionId },
+                {
+                  phone,
+                  $or: [
+                    {
+                      state: {
+                        $in: [
+                          'PENDING_PAYMENT',
+                          'BOOKING_CREATION_IN_PROGRESS',
+                          'PAID_PENDING_FINALIZATION'
+                        ]
+                      }
+                    },
+                    { state: { $exists: false } }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        $expr: {
+          $lt: [
+            {
+              $add: [
+                { $size: { $ifNull: ['$participants', []] } },
+                {
+                  $size: {
+                    $filter: {
+                      input: { $ifNull: ['$details.booking.pendingJoinPayments', []] },
+                      as: 'payment',
+                      cond: {
+                        $or: [
+                          {
+                            $in: [
+                              '$$payment.state',
+                              [
+                                'PENDING_PAYMENT',
+                                'BOOKING_CREATION_IN_PROGRESS',
+                                'PAID_PENDING_FINALIZATION'
+                              ]
+                            ]
+                          },
+                          { $eq: [{ $ifNull: ['$$payment.state', null] }, null] }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            { $max: [2, { $ifNull: ['$maxPlayers', 8] }] }
+          ]
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $push: { 'details.booking.pendingJoinPayments': pending },
+        $set: { updatedAt }
+      } as Document,
+      { returnDocument: 'after' }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async markPublicJoinPaymentPaid(
+    id: string,
+    transactionId: string,
+    phone: string,
+    verifiedPayment: Record<string, unknown>
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const updatedAt = new Date().toISOString();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        'details.booking.pendingJoinPayments': {
+          $elemMatch: {
+            transactionId,
+            phone,
+            state: {
+              $in: [
+                'PENDING_PAYMENT',
+                'BOOKING_CREATION_IN_PROGRESS',
+                'PAID_PENDING_FINALIZATION'
+              ]
+            }
+          }
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $set: {
+          'details.booking.pendingJoinPayments.$[payment].state': 'PAID_PENDING_FINALIZATION',
+          'details.booking.pendingJoinPayments.$[payment].verifiedPayment': verifiedPayment,
+          updatedAt
+        }
+      } as Document,
+      {
+        arrayFilters: [{
+          'payment.transactionId': transactionId,
+          'payment.phone': phone,
+          'payment.state': {
+            $in: [
+              'PENDING_PAYMENT',
+              'BOOKING_CREATION_IN_PROGRESS',
+              'PAID_PENDING_FINALIZATION'
+            ]
+          }
+        }],
+        returnDocument: 'after'
+      }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async claimPublicJoinSubscriptionBooking(
+    id: string,
+    operationId: string,
+    phone: string,
+    claimId: string,
+    claimedAt: string,
+    claimExpiresAt: string
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        'details.booking.pendingJoinPayments': {
+          $elemMatch: {
+            transactionId: operationId,
+            phone,
+            operationType: 'SUBSCRIPTION_BOOKING',
+            state: 'PENDING_PAYMENT',
+            providerBookingId: { $exists: false }
+          }
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $set: {
+          'details.booking.pendingJoinPayments.$[payment].state':
+            'BOOKING_CREATION_IN_PROGRESS',
+          'details.booking.pendingJoinPayments.$[payment].bookingClaimId': claimId,
+          'details.booking.pendingJoinPayments.$[payment].bookingClaimExpiresAt': claimExpiresAt,
+          'details.booking.pendingJoinPayments.$[payment].providerCreateAttemptedAt': claimedAt,
+          updatedAt: claimedAt
+        }
+      } as Document,
+      {
+        arrayFilters: [{
+          'payment.transactionId': operationId,
+          'payment.phone': phone,
+          'payment.operationType': 'SUBSCRIPTION_BOOKING',
+          'payment.state': 'PENDING_PAYMENT',
+          'payment.providerBookingId': { $exists: false }
+        }],
+        returnDocument: 'after'
+      }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async bindPublicJoinSubscriptionBooking(
+    id: string,
+    operationId: string,
+    phone: string,
+    providerBookingId: string
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const updatedAt = new Date().toISOString();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        'details.booking.pendingJoinPayments': {
+          $elemMatch: {
+            transactionId: operationId,
+            phone,
+            operationType: 'SUBSCRIPTION_BOOKING',
+            state: { $in: ['PENDING_PAYMENT', 'BOOKING_CREATION_IN_PROGRESS'] },
+            $or: [
+              { providerBookingId: { $exists: false } },
+              { providerBookingId }
+            ]
+          }
+        },
+        $nor: [{
+          'details.booking.pendingJoinPayments': {
+            $elemMatch: {
+              transactionId: { $ne: operationId },
+              providerBookingId
+            }
+          }
+        }]
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $set: {
+          'details.booking.pendingJoinPayments.$[payment].providerBookingId': providerBookingId,
+          'details.booking.pendingJoinPayments.$[payment].state': 'PENDING_PAYMENT',
+          updatedAt
+        },
+        $unset: {
+          'details.booking.pendingJoinPayments.$[payment].bookingClaimId': '',
+          'details.booking.pendingJoinPayments.$[payment].bookingClaimExpiresAt': ''
+        }
+      } as Document,
+      {
+        arrayFilters: [{
+          'payment.transactionId': operationId,
+          'payment.phone': phone,
+          'payment.operationType': 'SUBSCRIPTION_BOOKING',
+          'payment.state': { $in: ['PENDING_PAYMENT', 'BOOKING_CREATION_IN_PROGRESS'] }
+        }],
+        returnDocument: 'after'
+      }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async expirePublicJoinPayment(
+    id: string,
+    transactionId: string,
+    phone: string,
+    expiredAt: string
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        'details.booking.pendingJoinPayments': {
+          $elemMatch: { transactionId, phone, state: 'PENDING_PAYMENT' }
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $set: {
+          'details.booking.pendingJoinPayments.$[payment].state': 'EXPIRED',
+          'details.booking.pendingJoinPayments.$[payment].expiredAt': expiredAt,
+          updatedAt: expiredAt
+        }
+      } as Document,
+      {
+        arrayFilters: [{
+          'payment.transactionId': transactionId,
+          'payment.phone': phone,
+          'payment.state': 'PENDING_PAYMENT'
+        }],
+        returnDocument: 'after'
+      }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async appendPublicParticipantIfCapacity(
+    id: string,
+    phone: string,
+    participant: TournamentParticipant
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const updatedAt = new Date().toISOString();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
+        participants: { $not: { $elemMatch: { phone } } },
+        waitlist: { $not: { $elemMatch: { phone } } },
+        'details.booking.pendingJoinPayments': {
+          $not: {
+            $elemMatch: {
+              phone,
+              $or: [
+                {
+                  state: {
+                    $in: [
+                      'PENDING_PAYMENT',
+                      'BOOKING_CREATION_IN_PROGRESS',
+                      'PAID_PENDING_FINALIZATION'
+                    ]
+                  }
+                },
+                { state: { $exists: false } }
+              ]
+            }
+          }
+        },
+        $expr: {
+          $lt: [
+            {
+              $add: [
+                { $size: { $ifNull: ['$participants', []] } },
+                {
+                  $size: {
+                    $filter: {
+                      input: { $ifNull: ['$details.booking.pendingJoinPayments', []] },
+                      as: 'payment',
+                      cond: {
+                        $or: [
+                          {
+                            $in: [
+                              '$$payment.state',
+                              [
+                                'PENDING_PAYMENT',
+                                'BOOKING_CREATION_IN_PROGRESS',
+                                'PAID_PENDING_FINALIZATION'
+                              ]
+                            ]
+                          },
+                          { $eq: [{ $ifNull: ['$$payment.state', null] }, null] }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            { $max: [2, { $ifNull: ['$maxPlayers', 8] }] }
+          ]
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $push: { participants: participant },
+        $set: { updatedAt }
+      } as Document,
+      { returnDocument: 'after' }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
+  async finalizePublicJoinPayment(
+    id: string,
+    transactionId: string,
+    phone: string,
+    participant: TournamentParticipant
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const updatedAt = new Date().toISOString();
+    const document = await collection.findOneAndUpdate(
+      {
+        ...this.buildIdFilter(id),
+        status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
+        participants: { $not: { $elemMatch: { phone } } },
+        'details.booking.pendingJoinPayments': {
+          $elemMatch: {
+            transactionId,
+            phone,
+            state: 'PAID_PENDING_FINALIZATION'
+          }
+        },
+        $expr: {
+          $lt: [
+            { $size: { $ifNull: ['$participants', []] } },
+            { $max: [2, { $ifNull: ['$maxPlayers', 8] }] }
+          ]
+        }
+      } as Filter<MongoCustomTournamentDocument>,
+      {
+        $push: { participants: participant },
+        $pull: { 'details.booking.pendingJoinPayments': { transactionId, phone } },
+        $set: { updatedAt }
+      } as Document,
+      { returnDocument: 'after' }
+    );
+    return document ? this.toCustomTournament(document) : null;
+  }
+
   private async collection(): Promise<Collection<MongoCustomTournamentDocument>> {
     if (!this.mongoUri) {
       throw new InternalServerErrorException(
@@ -450,13 +833,25 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       );
     }
 
-    if (!this.client) {
-      this.client = new MongoClient(this.mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        maxPoolSize: 10
-      });
-      await this.client.connect();
-      this.db = this.client.db(this.mongoDbName);
+    if (!this.db) {
+      if (!this.connectionPromise) {
+        const client = new MongoClient(this.mongoUri, {
+          serverSelectionTimeoutMS: 5000,
+          maxPoolSize: 10
+        });
+        this.client = client;
+        this.connectionPromise = client.connect()
+          .then(() => client.db(this.mongoDbName))
+          .catch((error) => {
+            if (this.client === client) {
+              this.client = undefined;
+              this.db = undefined;
+              this.connectionPromise = undefined;
+            }
+            throw error;
+          });
+      }
+      this.db = await this.connectionPromise;
     }
 
     const collection = this.requireDb().collection<MongoCustomTournamentDocument>(this.collectionName);

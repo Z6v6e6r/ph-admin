@@ -177,11 +177,31 @@ async function main(): Promise<void> {
       undefined
     );
 
-    const html = capture.getHtml();
-    assert.ok(html, 'HTML payload should be returned for browser join requests');
-    assert.match(html ?? '', /phab-tournament-join-card/);
-    assert.match(html ?? '', /Войти через LK/);
-    assert.match(html ?? '', /https:\/\/padlhub\.ru\/lk_new/);
+    assert.equal(capture.getHtml(), null);
+    const redirectUrl = new URL(String(capture.getRedirect()));
+    assert.equal(redirectUrl.origin + redirectUrl.pathname, 'https://padlhub.ru/lk_new');
+    assert.equal(redirectUrl.searchParams.get('source'), 'tournament_join');
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+  }
+
+  {
+    const capture = createResponseCapture();
+    await controller.submitJoinPage(
+      'weekend-cup',
+      createRequest(),
+      capture.response,
+      undefined,
+      {
+        phone: '+7 999 999-99-99',
+        authCode: '123456',
+        format: 'json'
+      }
+    );
+
+    const payload = capture.getJson() as TournamentJoinFlowResponse;
+    assert.equal(payload.code, 'AUTH_REQUIRED');
+    assert.equal(payload.authRequired, true);
+    assert.equal(new URL(String(payload.authUrl)).searchParams.get('returnUrl'), expectedJoinUrl);
   }
 
   {
@@ -221,6 +241,32 @@ async function main(): Promise<void> {
   }
 
   {
+    currentFlowCode = 'PLAYER_LEVEL_REQUIRED';
+    const capture = createResponseCapture();
+    await controller.renderJoinPage(
+      'weekend-cup',
+      createRequest(),
+      capture.response,
+      undefined,
+      'json',
+      undefined
+    );
+
+    const payload = capture.getJson() as TournamentJoinFlowResponse;
+    assert.equal(payload.levelRecovery?.reasonCode, 'PLAYER_LEVEL_REQUIRED');
+    assert.equal(payload.levelRecovery?.returnActivityType, 'TOURNAMENT');
+    assert.equal(payload.levelRecovery?.returnActivityId, 't-1');
+    assert.equal(payload.levelRecovery?.returnAction, 'REGISTER');
+    assert.equal(payload.levelRecovery?.returnUrl, expectedJoinUrl);
+    const selfDeclaredUrl = new URL(String(payload.levelRecovery?.selfDeclaredUrl || ''));
+    assert.equal(selfDeclaredUrl.searchParams.get('levelRecoveryMode'), 'SELF_DECLARED');
+    assert.equal(selfDeclaredUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+    const onboardingUrl = new URL(String(payload.levelRecovery?.onboardingUrl || ''));
+    assert.equal(onboardingUrl.searchParams.get('levelRecoveryMode'), 'ONBOARDING');
+    assert.equal(onboardingUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+  }
+
+  {
     currentFlowCode = 'AUTH_REQUIRED';
     const capture = createResponseCapture();
     await controller.renderJoinPage(
@@ -249,12 +295,9 @@ async function main(): Promise<void> {
       undefined
     );
 
-    const html = capture.getHtml();
-    assert.match(html ?? '', /https:\/\/project-fixed6\.example\/tournaments/);
-    assert.match(
-      html ?? '',
-      /returnUrl=https%3A%2F%2Fproject-fixed6\.example%2Fapi%2Ftournaments%2Fpublic%2Fweekend-cup%2Fjoin/
-    );
+    assert.equal(capture.getHtml(), null);
+    const redirectUrl = new URL(String(capture.getRedirect()));
+    assert.equal(redirectUrl.searchParams.get('returnUrl'), fixedJoinUrl);
   }
 
   console.log('Tournament public auth redirect test passed');

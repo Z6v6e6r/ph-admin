@@ -83,6 +83,58 @@ async function main(): Promise<void> {
     'permission-protected tournament routes must remain closed to anonymous clients'
   );
 
+  let trustedAuthorization: string | undefined;
+  let registrationInput: Record<string, unknown> | undefined;
+  const tournamentsService = {
+    resolveTrustedLkRegistrationClient: async (authorization?: string) => {
+      trustedAuthorization = authorization;
+      return {
+        name: 'Trusted Player',
+        phone: '79000000001',
+        levelLabel: 'C'
+      };
+    },
+    registerPublicParticipantByTournamentRef: async (
+      _id: string,
+      input: Record<string, unknown>
+    ) => {
+      registrationInput = input;
+      return {
+        ok: true,
+        code: 'REGISTERED',
+        message: 'registered',
+        participant: { status: 'REGISTERED' }
+      };
+    }
+  };
+  const controller = new TournamentsController(
+    tournamentsService as never,
+    {} as never,
+    {} as never
+  );
+  const registration = await controller.registerFromLkWidget(
+    'tournament-1',
+    {
+      headers: {
+        authorization: 'Bearer trusted-token',
+        'x-user-phone': '79999999999',
+        'x-user-level-label': 'A'
+      }
+    } as never,
+    {
+      phone: '78888888888',
+      name: 'Forged Player',
+      levelLabel: 'A',
+      notes: 'left handed'
+    }
+  );
+  assert.equal(registration.status, 'REGISTERED');
+  assert.equal(trustedAuthorization, 'Bearer trusted-token');
+  assert.equal(registrationInput?.phone, '79000000001');
+  assert.equal(registrationInput?.name, 'Trusted Player');
+  assert.equal(registrationInput?.levelLabel, 'C');
+  assert.equal(registrationInput?.notes, 'left handed');
+
   console.log('Tournaments controller public routes test passed');
 }
 

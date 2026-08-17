@@ -75,6 +75,66 @@ export class PlayerRatingsService implements OnModuleDestroy {
     };
   }
 
+  async resolveCanonicalLevelByIdentity(input: {
+    clientId?: string;
+    phone: string;
+  }): Promise<{
+    playerKey: string;
+    clientId?: string;
+    levelLabel: string;
+    ratingNumeric: number;
+  } | null> {
+    const clientId = String(input.clientId ?? '').trim() || undefined;
+    const phoneNorm = normalizePlayerPhone(input.phone) ?? undefined;
+    if (!clientId && !phoneNorm) {
+      return null;
+    }
+    const states = await this.call(() => this.repository.statesByIdentity({
+      clientId,
+      phoneNorm
+    }));
+    if (states.length > 1) {
+      throw new ConflictException({
+        code: 'RATING_IDENTITY_CONFLICT',
+        message: 'Canonical rating identity is inconsistent'
+      });
+    }
+    const state = states[0];
+    if (!state) {
+      return null;
+    }
+    if (
+      (clientId && state.clientId && state.clientId !== clientId)
+      || (phoneNorm && state.phoneNorm && state.phoneNorm !== phoneNorm)
+    ) {
+      throw new ConflictException({
+        code: 'RATING_IDENTITY_CONFLICT',
+        message: 'Canonical rating identity is inconsistent'
+      });
+    }
+    const normalizedRating = normalizeRatingNumeric(state.ratingNumeric);
+    const expectedGrade = normalizedRating === null
+      ? null
+      : ratingNumericToGrade(normalizedRating);
+    if (
+      state.ownership !== 'CUP_CANONICAL'
+      || normalizedRating === null
+      || !expectedGrade
+      || state.rating !== expectedGrade
+    ) {
+      throw new ConflictException({
+        code: 'RATING_STATE_NOT_CANONICAL',
+        message: 'Canonical rating state is invalid'
+      });
+    }
+    return {
+      playerKey: state.playerKey,
+      ...(state.clientId ? { clientId: state.clientId } : {}),
+      levelLabel: String(normalizedRating),
+      ratingNumeric: normalizedRating
+    };
+  }
+
   async events(playerKey: string, input: { limit?: number; cursor?: string; eventType?: string; dateFrom?: string; dateTo?: string }): Promise<PlayerRatingEventsResult> {
     await this.findState(playerKey);
     const limit = this.clampLimit(input.limit);

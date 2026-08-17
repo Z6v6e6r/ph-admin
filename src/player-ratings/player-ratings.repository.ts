@@ -44,6 +44,23 @@ export class PlayerRatingRepository {
     return this.states().findOne({ playerKey }, { projection: { _id: 0 } });
   }
 
+  async statesByIdentity(input: {
+    clientId?: string;
+    phoneNorm?: string;
+  }): Promise<PlayerRatingStateDocument[]> {
+    const identity = [
+      ...(input.clientId ? [{ clientId: input.clientId }] : []),
+      ...(input.phoneNorm ? [{ phoneNorm: input.phoneNorm }] : [])
+    ];
+    if (identity.length === 0) {
+      return [];
+    }
+    return this.states()
+      .find({ $or: identity }, { projection: { _id: 0 } })
+      .limit(2)
+      .toArray();
+  }
+
   async eventById(id: string): Promise<PlayerRatingEventDocument | null> {
     return this.events().findOne({ id }, { projection: { _id: 0 } });
   }

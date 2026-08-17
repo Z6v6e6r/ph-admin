@@ -26,7 +26,7 @@ const TOURNAMENT_LEVEL_BANDS = [
   { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
   { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
   { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
-  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+  { base: 'A', min: 5.5, max: 7, display: '5.5+' }
 ] as const;
 const TOURNAMENT_LEVEL_OPTIONS = buildTournamentLevelOptions();
 const TOURNAMENT_LEVEL_SUPERSCRIPTS = ['¹', '²', '³', '⁴'] as const;
@@ -86,11 +86,6 @@ type JoinSubmission = {
   notes?: string;
   selectedSubscriptionId?: string;
   selectedPurchaseOptionId?: string;
-  directTransactionId?: string;
-  directCheckoutUrl?: string;
-  authCode?: string;
-  directViva?: boolean;
-  forceAuthCode?: boolean;
   purchaseConfirmed: boolean;
   waitlist: boolean;
   format?: string;
@@ -281,21 +276,24 @@ export class TournamentsPublicController {
     @Res() response: Response,
     @CurrentUser() user?: RequestUser,
     @Query('format') format?: string,
-    @Query('autoAuth') autoAuth?: string,
+    @Query('autoAuth') _autoAuth?: string,
     @Query('paymentsuccess') paymentSuccess?: string,
     @Query('paymentfailed') paymentFailed?: string
   ): Promise<void> {
-    const client = this.tournamentsPublicSessionService.ensureAuthorizedClient(
+    const sessionClient = this.tournamentsPublicSessionService.ensureAuthorizedClient(
       request,
       response,
       user
     );
+    const client = await this.resolveCanonicalJoinClient(request, sessionClient);
 
     if (this.parseBoolean(paymentSuccess)) {
       const outcome = await this.tournamentsService.confirmPublicJoinAfterPayment(slug, {
         phone: client.phone,
         fallbackName: client.name ?? undefined,
-        fallbackLevelLabel: client.levelLabel ?? undefined
+        fallbackLevelLabel: client.levelLabel ?? undefined,
+        vivaAuthorizationHeader: this.tournamentsPublicSessionService
+          .resolveExternalAuthorizationHeader(request, client)
       });
       if (this.wantsJson(request, format)) {
         response.json(outcome);
@@ -324,7 +322,7 @@ export class TournamentsPublicController {
 
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
-        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+        requireAuth: true
       }),
       request,
       user
@@ -334,7 +332,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (flow.code === 'AUTH_REQUIRED' && this.parseBoolean(autoAuth) && flow.authUrl) {
+    if (flow.code === 'AUTH_REQUIRED' && flow.authUrl) {
       response.redirect(flow.authUrl);
       return;
     }
@@ -356,73 +354,21 @@ export class TournamentsPublicController {
       user
     );
     const submission = this.normalizeJoinSubmission(body);
-    let clientForRemember = currentClient;
-    if (submission.authCode) {
-      const verifiedClient = await this.tournamentsPublicSessionService.verifyPhoneCode(
-        request,
-        response,
-        currentClient,
-        submission.phone ?? currentClient.phone,
-        submission.authCode
-      );
-      if (!verifiedClient) {
-        const flow = this.enrichJoinFlow(
-          await this.tournamentsService.getPublicJoinFlow(slug, currentClient, {
-            requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
-          }),
-          request,
-          user
-        );
-        const payload = {
-          ...flow,
-          code: 'PHONE_VERIFICATION_REQUIRED' as const,
-          ok: false,
-          message: 'Код подтверждения не подошёл или устарел.'
-        };
-        if (this.wantsJson(request, submission.format)) {
-          response.json(payload);
-          return;
-        }
-        this.sendHtml(response, this.renderJoinHtml(payload, request, user));
-        return;
-      }
-      clientForRemember = verifiedClient;
-    }
-    const client = this.tournamentsPublicSessionService.rememberClient(
-      request,
-      response,
-      clientForRemember,
-      submission
-    );
-    await this.trySyncAuthorizedClientLevel(request, client, submission.levelLabel);
+    const client = await this.resolveCanonicalJoinClient(request, currentClient);
     const flow = this.enrichJoinFlow(
       await this.tournamentsService.getPublicJoinFlow(slug, client, {
-        requireAuth: this.tournamentsPublicSessionService.requiresRealAuth()
+        requireAuth: true
       }),
       request,
       user
     );
 
-    if (flow.code === 'PHONE_VERIFICATION_REQUIRED' && submission.phone && !submission.authCode) {
-      const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
-        request,
-        response,
-        client,
-        submission.phone
-      );
-      const nextFlow = {
-        ...flow,
-        message: codeResult.ok
-          ? 'Введите код подтверждения, отправленный на номер телефона.'
-          : codeResult.message,
-        phoneVerification: codeResult
-      };
+    if (flow.code === 'AUTH_REQUIRED' && flow.authUrl) {
       if (this.wantsJson(request, submission.format)) {
-        response.json(nextFlow);
+        response.json(flow);
         return;
       }
-
-      this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+      response.redirect(flow.authUrl);
       return;
     }
 
@@ -442,67 +388,36 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (flow.code === 'PURCHASE_REQUIRED' && submission.purchaseConfirmed) {
-      const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
+    if (
+      (flow.code === 'PURCHASE_REQUIRED' || flow.code === 'SUBSCRIPTION_AVAILABLE')
+      && submission.purchaseConfirmed
+    ) {
+      const joinUrl = this.buildCanonicalPublicJoinUrl(flow.tournament, request, user);
       const successUrl = this.appendQueryParam(joinUrl, 'paymentsuccess', 'true');
       const failUrl = this.appendQueryParam(joinUrl, 'paymentfailed', 'true');
       const vivaAuthorizationHeader = this.tournamentsPublicSessionService
         .resolveExternalAuthorizationHeader(request, client);
-      if (
-        !submission.directTransactionId
-        && (!vivaAuthorizationHeader || submission.forceAuthCode)
-      ) {
-        const codeResult = await this.tournamentsPublicSessionService.createPhoneCode(
-          request,
-          response,
-          client,
-          client.phone ?? submission.phone
-        );
-        const nextFlow = {
+      if (!vivaAuthorizationHeader) {
+        const nextFlow = this.enrichJoinFlow({
           ...flow,
-          code: 'PHONE_VERIFICATION_REQUIRED' as const,
+          code: 'AUTH_REQUIRED',
           ok: false,
-          message: codeResult.ok
-            ? 'Введите код подтверждения, отправленный на номер телефона.'
-            : codeResult.message,
-          phoneVerification: codeResult
-        };
+          message: 'Обновите авторизацию в личном кабинете. После входа вы вернётесь к этому турниру.'
+        }, request, user);
         if (this.wantsJson(request, submission.format)) {
           response.json(nextFlow);
           return;
         }
-
-        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
+        response.redirect(nextFlow.authUrl || this.lkAuthUrl);
         return;
       }
-      if (submission.directViva && !submission.directTransactionId) {
-        const nextFlow = {
-          ...flow,
-          vivaAuthorizationHeader
-        };
-        if (this.wantsJson(request, submission.format)) {
-          response.json(nextFlow);
-          return;
-        }
-
-        this.sendHtml(response, this.renderJoinHtml(nextFlow, request, user));
-        return;
-      }
-      const outcome = submission.directTransactionId
-        ? await this.tournamentsService.rememberPublicJoinPurchaseTransaction(slug, {
-          name: client.name ?? '',
-          phone: client.phone ?? '',
-          levelLabel: client.levelLabel,
-          notes: submission.notes,
-          selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
-          transactionId: submission.directTransactionId,
-          checkoutUrl: submission.directCheckoutUrl
-        })
-        : await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+      const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+        clientId: client.clientId,
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
         notes: submission.notes,
+        selectedSubscriptionId: submission.selectedSubscriptionId,
         selectedPurchaseOptionId: submission.selectedPurchaseOptionId,
         purchaseConfirmed: true,
         subscriptions: client.subscriptions,
@@ -525,10 +440,7 @@ export class TournamentsPublicController {
       return;
     }
 
-    if (
-      flow.code === 'READY_TO_JOIN'
-      || flow.code === 'SUBSCRIPTION_AVAILABLE'
-    ) {
+    if (flow.code === 'READY_TO_JOIN') {
       const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
         name: client.name ?? '',
         phone: client.phone ?? '',
@@ -602,11 +514,23 @@ export class TournamentsPublicController {
   }
 
   @Post(':slug/registrations')
-  registerParticipant(
+  async registerParticipant(
     @Param('slug') slug: string,
+    @Req() request: Request,
     @Body() dto: RegisterTournamentParticipantDto
   ): Promise<TournamentRegistrationResponse> {
-    return this.tournamentsService.registerPublicParticipant(slug, dto);
+    const client = await this.tournamentsService.resolveTrustedLkRegistrationClient(
+      this.pickString(request.headers.authorization) ?? undefined
+    );
+    return this.tournamentsService.registerPublicParticipant(slug, {
+      clientId: client.clientId,
+      name: client.name,
+      phone: client.phone,
+      levelLabel: client.levelLabel,
+      notes: dto.notes,
+      selectedPurchaseOptionId: dto.selectedPurchaseOptionId,
+      vivaAuthorizationHeader: this.pickString(request.headers.authorization) ?? undefined
+    });
   }
 
   @Post(':slug/mechanics-access')
@@ -622,19 +546,35 @@ export class TournamentsPublicController {
     request: Request,
     user?: RequestUser
   ): TournamentJoinFlowResponse {
-    const authRequired = flow.code === 'AUTH_REQUIRED';
-    const joinUrl = this.toAbsoluteUrl(flow.tournament.joinUrl, request, user);
+    const effectiveFlow = (
+      flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED'
+    )
+      ? {
+          ...flow,
+          ok: false,
+          code: 'AUTH_REQUIRED' as const,
+          message: 'Войдите в личный кабинет, чтобы продолжить запись. После входа вы вернётесь к этому турниру.',
+          missingFields: [],
+          authRequired: true
+        }
+      : flow;
+    const authRequired = effectiveFlow.code === 'AUTH_REQUIRED';
+    const joinUrl = this.buildCanonicalPublicJoinUrl(effectiveFlow.tournament, request, user);
     const authCheckUrl = this.appendQueryParam(joinUrl, 'format', 'json');
     const vivaAuthorizationHeader = this.tournamentsPublicSessionService
-      .resolveExternalAuthorizationHeader(request, flow.client);
+      .resolveExternalAuthorizationHeader(request, effectiveFlow.client);
+    const levelRecovery = effectiveFlow.code === 'PLAYER_LEVEL_REQUIRED'
+      ? this.buildLevelRecoveryContext(joinUrl, effectiveFlow.tournament)
+      : undefined;
 
     return {
-      ...flow,
+      ...effectiveFlow,
       authRequired,
       authCheckUrl,
       authPollMs: authRequired ? this.lkPollMs : undefined,
       cabinetUrl: this.lkAuthUrl,
       authUrl: authRequired ? this.buildLkAuthUrl(joinUrl) : undefined,
+      levelRecovery,
       vivaAuthorizationHeader
     };
   }
@@ -655,7 +595,7 @@ export class TournamentsPublicController {
     const absoluteTrainerAvatarUrl = trainerAvatarUrl
       ? this.toAbsoluteUrl(trainerAvatarUrl, request, user)
       : '';
-    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteJoinUrl = this.buildCanonicalPublicJoinUrl(tournament, request, user);
     const participants = Array.isArray(tournament.participants) ? tournament.participants : [];
     const waitlist = Array.isArray(tournament.waitlist) ? tournament.waitlist : [];
     const maxPlayers = Math.max(1, Number(tournament.maxPlayers) || 1);
@@ -685,7 +625,6 @@ export class TournamentsPublicController {
       defaultActionLabel,
       flow
     );
-    const actionScript = this.renderPublicTournamentActionScript(absoluteJoinUrl);
     const participantCards =
       displayParticipants.length > 0
         ? displayParticipants
@@ -1300,7 +1239,6 @@ export class TournamentsPublicController {
         });
       })();
     </script>
-    ${actionScript}
   </body>
 </html>`;
   }
@@ -1373,40 +1311,10 @@ export class TournamentsPublicController {
     flow?: TournamentJoinFlowResponse
   ): string {
     const flowCode = flow?.code ?? '';
-    const phoneValue = this.escapeHtml(this.formatPhone(flow?.client.phone));
-    const showPhoneForm =
-      tournament.registrationOpen
-      && (flowCode === 'PROFILE_REQUIRED' || flowCode === 'PHONE_VERIFICATION_REQUIRED');
-
-    if (showPhoneForm) {
-      return `<section class="public-action" data-phab-public-action>
-          <p class="public-action__status">Проверяем авторизацию...</p>
-          <form class="public-action__phone" method="post" action="${this.escapeHtml(absoluteJoinUrl)}">
-            <p class="public-action__title">Введите номер телефона, чтобы записаться</p>
-            <div class="public-action__row">
-              <label>
-                Телефон
-                <input
-                  type="tel"
-                  name="phone"
-                  value="${phoneValue}"
-                  inputmode="tel"
-                  autocomplete="tel"
-                  placeholder="+7"
-                  required
-                />
-              </label>
-            </div>
-            <button class="public-action__button" type="submit">Продолжить</button>
-            <p class="public-action__hint">
-              Указывая код, вы соглашаетесь с условиями Публичной Оферты и Обработкой Персональных Данных
-            </p>
-          </form>
-        </section>`;
-    }
-
     const actionLabel =
-      tournament.registrationOpen
+      flowCode === 'AUTH_REQUIRED'
+        ? 'Войти и продолжить'
+        : tournament.registrationOpen
         ? 'Записаться на турнир'
         : defaultActionLabel;
     const actionHref =
@@ -1648,7 +1556,7 @@ export class TournamentsPublicController {
         : 'Оплата не требуется';
     const imageUrl = this.pickString(tournament.skin.imageUrl);
     const absolutePublicUrl = this.toAbsoluteUrl(tournament.publicUrl, request, user);
-    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteJoinUrl = this.buildCanonicalPublicJoinUrl(tournament, request, user);
     const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
     const actionLabel = tournament.registrationOpen
       ? this.pickString(tournament.skin.ctaLabel) ?? 'Открыть запись'
@@ -1972,11 +1880,6 @@ export class TournamentsPublicController {
       notes: this.pickString(record.notes) ?? undefined,
       selectedSubscriptionId: this.pickString(record.selectedSubscriptionId) ?? undefined,
       selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
-      directTransactionId: this.pickString(record.directTransactionId) ?? undefined,
-      directCheckoutUrl: this.pickString(record.directCheckoutUrl) ?? undefined,
-      authCode: this.pickString(record.authCode) ?? undefined,
-      directViva: this.parseBoolean(record.directViva),
-      forceAuthCode: this.parseBoolean(record.forceAuthCode),
       purchaseConfirmed: this.parseBoolean(record.purchaseConfirmed),
       waitlist: this.parseBoolean(record.waitlist),
       format: this.pickString(record.format) ?? undefined
@@ -1991,62 +1894,53 @@ export class TournamentsPublicController {
     return accept.includes('application/json');
   }
 
-  private async trySyncAuthorizedClientLevel(
+  private async resolveCanonicalJoinClient(
     request: Request,
-    client: TournamentPublicClientProfile,
-    submittedLevel?: string
-  ): Promise<void> {
-    if (!client.authorized) {
-      return;
-    }
-
-    const normalizedLevel = normalizeTournamentLevelOptionToken(
-      submittedLevel ?? client.levelLabel
-    );
-    if (!normalizedLevel) {
-      return;
-    }
-
-    const authCookie = this.pickString(request.headers.cookie);
-    const authHeader = this.pickString(request.headers.authorization);
-    if (!authCookie && !authHeader) {
-      return;
-    }
-
-    const profileUrl = new URL(
-      `/end-user/api/v1/${encodeURIComponent(this.vivaEndUserWidgetId)}/profile`,
-      `${this.vivaEndUserApiBaseUrl}/`
-    ).toString();
-    const payload = {
-      levelLabel: normalizedLevel,
-      level: normalizedLevel
-    };
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    };
-
-    if (authCookie) {
-      headers.Cookie = authCookie;
-    }
+    client: TournamentPublicClientProfile
+  ): Promise<TournamentPublicClientProfile> {
+    const authHeader = this.tournamentsPublicSessionService.resolveLkAuthorizationHeader?.(request)
+      ?? this.pickString(request.headers.authorization);
     if (authHeader) {
-      headers.Authorization = authHeader;
+      const canonical = await this.tournamentsService.resolveTrustedLkRegistrationClient(
+        authHeader
+      );
+      return {
+        ...client,
+        clientId: canonical.clientId,
+        authorized: true,
+        phoneVerified: true,
+        name: canonical.name,
+        phone: canonical.phone,
+        levelLabel: canonical.levelLabel,
+        onboardingCompleted: Boolean(canonical.levelLabel)
+      };
     }
-
-    for (const method of ['PATCH', 'PUT'] as const) {
-      try {
-        const response = await fetch(profileUrl, {
-          method,
-          headers,
-          body: JSON.stringify(payload)
+    if (client.authSource === 'cookie' && client.phoneVerified && client.phone) {
+      const canonical = await this.tournamentsService
+        .resolveCanonicalLkRegistrationClientByVerifiedPhone({
+          phone: client.phone,
+          name: client.name
         });
-        if (response.ok) {
-          return;
-        }
-      } catch (_error) {
-        // Ignore sync errors: tournament join flow should not depend on profile update.
-      }
+      return {
+        ...client,
+        clientId: canonical.clientId,
+        authorized: true,
+        phoneVerified: true,
+        name: canonical.name,
+        phone: canonical.phone,
+        levelLabel: canonical.levelLabel,
+        onboardingCompleted: Boolean(canonical.levelLabel)
+      };
     }
+    return {
+      ...client,
+      clientId: undefined,
+      authorized: false,
+      phoneVerified: false,
+      levelLabel: undefined,
+      onboardingCompleted: false,
+      subscriptions: []
+    };
   }
 
   private wantsHtml(request: Request, format?: string): boolean {
@@ -2070,6 +1964,44 @@ export class TournamentsPublicController {
     url.searchParams.set('returnUrl', returnUrl);
     url.searchParams.set('source', 'tournament_join');
     return url.toString();
+  }
+
+  private buildLevelRecoveryContext(
+    returnUrl: string,
+    tournament: TournamentPublicView
+  ): NonNullable<TournamentJoinFlowResponse['levelRecovery']> {
+    const buildUrl = (mode: 'SELF_DECLARED' | 'ONBOARDING'): string => {
+      const url = /^https?:\/\//i.test(this.lkAuthUrl)
+        ? new URL(this.lkAuthUrl)
+        : new URL(this.lkAuthUrl, new URL(returnUrl).origin);
+      url.searchParams.set('source', 'tournament_level_recovery');
+      url.searchParams.set('levelRecoveryMode', mode);
+      url.searchParams.set('returnActivityType', 'TOURNAMENT');
+      url.searchParams.set('returnActivityId', tournament.id);
+      url.searchParams.set('returnAction', 'REGISTER');
+      url.searchParams.set('returnUrl', returnUrl);
+      return url.toString();
+    };
+
+    return {
+      reasonCode: 'PLAYER_LEVEL_REQUIRED',
+      returnActivityType: 'TOURNAMENT',
+      returnActivityId: tournament.id,
+      returnAction: 'REGISTER',
+      returnUrl,
+      selfDeclaredUrl: buildUrl('SELF_DECLARED'),
+      onboardingUrl: buildUrl('ONBOARDING')
+    };
+  }
+
+  private buildCanonicalPublicJoinUrl(
+    tournament: TournamentPublicView,
+    request: Request,
+    user?: RequestUser
+  ): string {
+    const apiBasePath = this.resolveApiBasePath(request).replace(/\/+$/, '');
+    const path = `${apiBasePath}/tournaments/public/${encodeURIComponent(tournament.slug)}/join`;
+    return new URL(path, this.getRequestBaseUrl(request, user)).toString();
   }
 
   private toAbsoluteUrl(value: string, request: Request, user?: RequestUser): string {
@@ -2121,42 +2053,22 @@ export class TournamentsPublicController {
   ): string {
     const tournament = flow.tournament;
     const client = flow.client;
-    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteJoinUrl = this.buildCanonicalPublicJoinUrl(tournament, request, user);
     const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
-    const needsLevel = tournament.accessLevels.length > 0;
     const phoneValue = this.escapeHtml(this.formatPhone(client.phone));
     const nameValue = this.escapeHtml(String(client.name ?? ''));
     const rawLevelValue = String(client.levelLabel ?? '').trim();
     const levelValue = rawLevelValue.toUpperCase();
-    const showLevelInput =
-      needsLevel
-      && (
-        flow.missingFields.includes('levelLabel')
-        || !rawLevelValue
-      );
     const actionLabel =
       flow.code === 'SUBSCRIPTION_AVAILABLE'
         ? 'Списать абонемент и записаться'
         : flow.code === 'PURCHASE_REQUIRED'
           ? 'Подтвердить покупку и записаться'
-          : flow.code === 'PHONE_VERIFICATION_REQUIRED'
-            ? 'Подтвердить код'
           : flow.code === 'READY_TO_JOIN'
         ? tournament.skin.ctaLabel || 'Записаться'
         : flow.code === 'LEVEL_NOT_ALLOWED'
           ? flow.waitlistAllowed ? 'Проверить уровень ещё раз' : 'Подобрать турнир по уровню'
           : 'Продолжить';
-    const showPhoneInput =
-      flow.code === 'PROFILE_REQUIRED'
-      || flow.code === 'PHONE_VERIFICATION_REQUIRED'
-      || !this.formatPhone(client.phone);
-    const showAuthCodeInput =
-      flow.code === 'PROFILE_REQUIRED' || flow.code === 'PHONE_VERIFICATION_REQUIRED';
-    const authCodeRequiredAttr = flow.code === 'PHONE_VERIFICATION_REQUIRED' ? ' required' : '';
-    const isPurchaseVerification =
-      flow.code === 'PHONE_VERIFICATION_REQUIRED'
-      && flow.payment.required
-      && flow.payment.code === 'PURCHASE_REQUIRED';
     const selectedPurchaseOptionId =
       this.escapeHtml(flow.payment.purchaseOptions[0]?.id || '');
     const cardFormHtml =
@@ -2164,50 +2076,7 @@ export class TournamentsPublicController {
         ? ''
         : `<form id="phab-tournament-join-form" method="post" action="${this.escapeHtml(absoluteJoinUrl)}" class="phab-tournament-join-card__form">
             <input type="hidden" name="name" value="${nameValue}" />
-            ${
-              showPhoneInput
-                ? `<label class="phab-tournament-join-card__field">
-              <span>Телефон</span>
-              <input
-                type="tel"
-                name="phone"
-                maxlength="30"
-                value="${phoneValue}"
-                placeholder="+7 999 123-45-67"
-                required
-              />
-            </label>`
-                : `<input type="hidden" name="phone" value="${phoneValue}" />`
-            }
-            ${
-              showAuthCodeInput
-                ? `<label class="phab-tournament-join-card__field">
-              <span>Код авторизации</span>
-              <input
-                type="text"
-                name="authCode"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                maxlength="8"
-                placeholder="Введите код из SMS"
-               ${authCodeRequiredAttr}
-              />
-            </label>`
-                : ''
-            }
-            ${
-              showLevelInput
-                ? `<label class="phab-tournament-join-card__field">
-              <span>Уровень игрока</span>
-              <select name="levelLabel" required>
-                <option value="">Выберите уровень</option>
-                ${this.renderLevelOptions(levelValue)}
-              </select>
-            </label>`
-                : needsLevel && rawLevelValue
-                  ? `<input type="hidden" name="levelLabel" value="${this.escapeHtml(rawLevelValue)}" />`
-                  : ''
-            }
+            <input type="hidden" name="phone" value="${phoneValue}" />
             <input type="hidden" name="notes" value="" />
             ${
               flow.code === 'SUBSCRIPTION_AVAILABLE'
@@ -2215,7 +2084,7 @@ export class TournamentsPublicController {
                 : ''
             }
             ${
-              flow.code === 'PURCHASE_REQUIRED' || isPurchaseVerification
+              flow.code === 'PURCHASE_REQUIRED'
                 ? `<input type="hidden" name="purchaseConfirmed" value="1" />
             ${
               flow.payment.purchaseOptions.length > 0
@@ -2249,6 +2118,15 @@ export class TournamentsPublicController {
     const cardActionHtml =
       flow.code === 'AUTH_REQUIRED'
         ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(flow.authUrl || this.lkAuthUrl)}">Войти через LK</a>`
+        : flow.code === 'PLAYER_LEVEL_REQUIRED' && flow.levelRecovery
+          ? `<section class="phab-tournament-level-recovery" aria-labelledby="phab-tournament-level-recovery-title">
+            <h2 id="phab-tournament-level-recovery-title">Укажите уровень, чтобы присоединиться</h2>
+            <p>Мы сохраним этот турнир и вернём вас к записи после подтверждения уровня.</p>
+            <div class="phab-tournament-level-recovery__actions">
+              <a class="phab-tournament-join-card__cta" href="${this.escapeHtml(flow.levelRecovery.selfDeclaredUrl)}">Знаю свой уровень</a>
+              <a class="phab-tournament-join-card__cta phab-tournament-join-card__cta--secondary" href="${this.escapeHtml(flow.levelRecovery.onboardingUrl)}">Пройти определение уровня</a>
+            </div>
+          </section>`
         : flow.code === 'LEVEL_NOT_ALLOWED' && !flow.waitlistAllowed
           ? `<a class="phab-tournament-join-card__cta" href="${this.escapeHtml(
             this.appendQueryParam(absoluteDirectoryUrl, 'level', levelValue || String(client.levelLabel ?? ''))
@@ -2411,7 +2289,7 @@ export class TournamentsPublicController {
           <a class="button-secondary" href="${this.escapeHtml(absoluteDirectoryUrl)}">К турнирам</a>
         </div>
         <p class="footnote">
-          После входа в личный кабинет вернитесь к этой ссылке или повторно нажмите кнопку турнира на Tilda-странице.
+          После успешного входа личный кабинет автоматически вернёт вас к этой карточке.
         </p>
       </section>
     </main>
@@ -3046,6 +2924,35 @@ export class TournamentsPublicController {
         background: #e8e8e9;
         color: #1f1e20;
       }
+      .phab-tournament-level-recovery {
+        display: grid;
+        width: 100%;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid rgba(135, 102, 235, 0.24);
+        border-radius: 12px;
+        background: rgba(135, 102, 235, 0.06);
+      }
+      .phab-tournament-level-recovery h2,
+      .phab-tournament-level-recovery p {
+        margin: 0;
+      }
+      .phab-tournament-level-recovery h2 {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+      .phab-tournament-level-recovery p {
+        color: #6f6d74;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .phab-tournament-level-recovery__actions {
+        display: grid;
+        gap: 8px;
+      }
+      .phab-tournament-level-recovery__actions .phab-tournament-join-card__cta--secondary {
+        margin-top: 0;
+      }
       .phab-tournament-join-card__footer {
         align-items: center;
         min-height: 24px;
@@ -3091,7 +2998,7 @@ export class TournamentsPublicController {
     user?: RequestUser
   ): string {
     const absoluteDirectoryUrl = this.toAbsoluteUrl(this.directoryUrl, request, user);
-    const absoluteJoinUrl = this.toAbsoluteUrl(tournament.joinUrl, request, user);
+    const absoluteJoinUrl = this.buildCanonicalPublicJoinUrl(tournament, request, user);
     const success =
       outcome.code === 'REGISTERED'
       || outcome.code === 'WAITLISTED'

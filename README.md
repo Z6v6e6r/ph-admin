@@ -144,7 +144,7 @@ API работает на `http://localhost:3000/api`.
 - `TOURNAMENTS_MONGODB_COLLECTION=custom_tournaments` (опционально; коллекция кастомных турниров)
 - `TOURNAMENTS_PUBLIC_BASE_URL=https://padlhub.su/api/tournaments/public/` (опционально; база для генерации публичной ссылки на турнир; для директории `/tournaments` ссылка теперь включает `tournamentId`, `date` и `slug`, для legacy API-базы сохраняется формат `/api/tournaments/public/:slug`)
 - `TOURNAMENTS_PUBLIC_DIRECTORY_URL=https://padlhub.ru/tournaments` (опционально; куда вести пользователя после успешной заявки или из join-flow)
-- `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true|false` (опционально; по умолчанию `true`. Если `true`, join-flow сначала требует реальную авторизацию через LK PadelHub)
+- `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` (устаревший compatibility-параметр; публичный join-flow теперь всегда требует штатную авторизацию через LK PadelHub)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_URL=https://padlhub.ru/lk_new` (опционально; куда вести пользователя для реальной авторизации LK; на 9 апреля 2026 актуальная точка входа именно `padlhub.ru/lk_new`)
 - `TOURNAMENTS_PUBLIC_LK_AUTH_POLL_MS=1500` (опционально; рекомендованный интервал polling для Tilda-блока после открытия LK в popup)
 - `TOURNAMENTS_PUBLIC_KEYCLOAK_BASE_URL=https://kc.vivacrm.ru` (опционально; база Keycloak/Viva auth для отправки и проверки SMS-кода)
@@ -168,7 +168,7 @@ API работает на `http://localhost:3000/api`.
 - `GET /api/tournaments/public`
 - `GET /api/tournaments/public/list`
 - `GET /api/tournaments/public/:slug` - browser-friendly публичная карточка турнира для запросов с `Accept: text/html` (или `format=html`): редиректит на deeplink вида `/tournaments?tournamentId=<id>&date=YYYY-MM-DD&slug=<slug>`; при `Accept: application/json` или `format=json` вернет JSON
-- `GET /api/tournaments/public/:slug/join` - browser-friendly join flow для ссылки с Tilda; при `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH=true` сначала проверяет реальную авторизацию в LK, затем телефон/уровень и ведет до записи или waitlist
+- `GET /api/tournaments/public/:slug/join` - browser-friendly join flow для ссылки с Tilda; всегда требует штатную авторизацию в LK, возвращает пользователя по точному `returnUrl`, затем проверяет уровень и ведет до записи или waitlist
 - `POST /api/tournaments/public/:slug/join` - submit join-flow (поддерживает HTML form и JSON; при `Accept: application/json` или `format=json` вернет JSON)
 - `POST /api/tournaments/public/:slug/access-check` - проверка допуска по уровню (`levelLabel`); если уровень не передан, сервис вернет статус онбординга
 - `POST /api/tournaments/public/:slug/registrations` - запись участника в турнир или waitlist
@@ -312,10 +312,10 @@ https://example.com/api/tournaments/public/showcase?stationId=nagatino&limit=6&r
 Join-flow внутри виджета делает следующее:
 
 - при первом заходе создает защищенную cookie-сессию с черновиком турнирных данных
-- если включен `TOURNAMENTS_PUBLIC_REQUIRE_LK_AUTH` и пользователь не авторизован в LK, возвращает `AUTH_REQUIRED`, `authUrl` (на `TOURNAMENTS_PUBLIC_LK_AUTH_URL`) и `authCheckUrl`
+- если пользователь не авторизован в LK, возвращает `AUTH_REQUIRED`, `authUrl` (на `TOURNAMENTS_PUBLIC_LK_AUTH_URL`) и `authCheckUrl`; встроенная форма телефона/SMS-кода в карточке не используется
 - `authUrl` всегда содержит `returnUrl=<absolute_join_url>` и `source=tournament_join`; после логина в `lk_new` пользователь возвращается в этот `returnUrl`
 - после возврата из `lk_new` виджет poll'ит `authCheckUrl` до тех пор, пока ответ не перестанет быть `AUTH_REQUIRED`
-- если телефона нет, просит указать его
+- телефон и профиль получает только из подтверждённой LK identity после возврата
 - если для турнира задан `accessLevels` и уровень не определен, просит выбрать свой уровень
 - если уровень подходит, записывает в турнир
 - если уровень не подходит, предлагает оставить заявку в `waitlist`

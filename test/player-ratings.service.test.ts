@@ -21,6 +21,8 @@ async function main(): Promise<void> {
     eventById: async (id: string) => events.find((event) => event.id === id) ?? null,
     eventByIdempotencyKey: async (key: string) => events.find((event) => event.idempotencyKey === key) ?? null,
     latestOutbox: async () => written?.outbox ?? null,
+    statesByIdentity: async (identity: { clientId?: string; phoneNorm?: string }) =>
+      identity.clientId === state.clientId || identity.phoneNorm === state.phoneNorm ? [state] : [],
     searchStates: async () => [written?.nextState ?? state],
     listEvents: async () => events,
     runAtomicChange: async (input: any) => { events.push(input.event); written = input; return 'ok'; },
@@ -32,6 +34,23 @@ async function main(): Promise<void> {
   const found = await service.search('Анна');
   assert.equal(found.items.length, 1, 'search reads canonical local state');
   assert.equal(found.items[0].ratingNumeric, 3.2);
+
+  const canonicalLevel = await service.resolveCanonicalLevelByIdentity({
+    clientId: 'client-1',
+    phone: '+7 (999) 000-00-00'
+  });
+  assert.deepEqual(canonicalLevel, {
+    playerKey: 'player:1',
+    clientId: 'client-1',
+    levelLabel: '3.2',
+    ratingNumeric: 3.2
+  });
+
+  const missingCanonicalLevel = await service.resolveCanonicalLevelByIdentity({
+    clientId: 'missing-client',
+    phone: '+7 (999) 111-22-33'
+  });
+  assert.equal(missingCanonicalLevel, null, 'missing CUP rating remains missing');
 
   const changed = await service.change('player:1', {
     ratingNumeric: 3.45,

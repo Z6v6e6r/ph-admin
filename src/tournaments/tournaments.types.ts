@@ -19,7 +19,7 @@ export type TournamentParticipantStatus = 'REGISTERED' | 'WAITLIST';
 export type TournamentWaitlistReason = 'FULL' | 'LEVEL_MISMATCH' | 'MANUAL';
 export type TournamentAccessCheckCode =
   | 'OK'
-  | 'ONBOARDING_REQUIRED'
+  | 'PLAYER_LEVEL_REQUIRED'
   | 'LEVEL_NOT_ALLOWED'
   | 'PHONE_REQUIRED'
   | 'TOURNAMENT_NOT_FOUND';
@@ -434,6 +434,8 @@ export interface TournamentClientSubscription {
 
 export interface TournamentPublicClientProfile {
   id: string;
+  /** Authoritative Viva client id resolved by a trusted backend identity lookup. */
+  clientId?: string;
   authorized: boolean;
   authSource: 'cookie' | 'headers' | 'anonymous';
   name?: string;
@@ -448,7 +450,7 @@ export type TournamentJoinFlowCode =
   | 'AUTH_REQUIRED'
   | 'PHONE_VERIFICATION_REQUIRED'
   | 'PROFILE_REQUIRED'
-  | 'ONBOARDING_REQUIRED'
+  | 'PLAYER_LEVEL_REQUIRED'
   | 'READY_TO_JOIN'
   | 'SUBSCRIPTION_AVAILABLE'
   | 'PURCHASE_REQUIRED'
@@ -478,6 +480,15 @@ export interface TournamentJoinFlowResponse {
   client: TournamentPublicClientProfile;
   access: TournamentAccessCheckResponse;
   missingFields: Array<'phone' | 'levelLabel'>;
+  levelRecovery?: {
+    reasonCode: 'PLAYER_LEVEL_REQUIRED';
+    returnActivityType: 'TOURNAMENT';
+    returnActivityId: string;
+    returnAction: 'REGISTER';
+    returnUrl: string;
+    selfDeclaredUrl: string;
+    onboardingUrl: string;
+  };
   waitlistAllowed: boolean;
   payment: TournamentJoinPaymentState;
   authRequired?: boolean;

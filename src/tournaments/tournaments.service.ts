@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
-import { createHash, createPublicKey, verify as verifySignature } from 'crypto';
+import { createHash, createPublicKey, randomUUID, verify as verifySignature } from 'crypto';
 import type { JsonWebKey } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { getStationScopeForPermission } from '../common/rbac/permissions';
@@ -17,6 +17,8 @@ import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
 import { LkPadelHubClientService } from '../integrations/lk-padelhub/lk-padelhub-client.service';
+import { LkIdentityService } from '../lk-identity/lk-identity.service';
+import { PlayerRatingsService } from '../player-ratings/player-ratings.service';
 import {
   VivaAdminService,
   VivaAdminTournamentEnergyCheckoutResult,
@@ -77,6 +79,7 @@ import {
 } from './tournaments.types';
 
 interface RegistrationInput {
+  clientId?: string;
   name: string;
   phone: string;
   levelLabel?: string;
@@ -124,20 +127,81 @@ type LkJwksKey = JsonWebKey & {
 interface VivaJoinTransactionResponse {
   transactionId?: string;
   checkoutUrl?: string;
+  amountMinor?: number;
+  paymentExpiresAt?: string;
 }
 
 interface VivaJoinBookingResponse {
-  correlationId?: string;
+  bookingId?: string;
+}
+
+interface VivaTransactionVerification {
+  status: 'PAID' | 'UNPAID' | 'UNKNOWN';
+  evidence?: {
+    operationId: string;
+    status: 'PAID';
+    verifiedAt: string;
+  };
 }
 
 interface PendingJoinPayment {
   transactionId: string;
+  state?:
+    | 'PENDING_PAYMENT'
+    | 'BOOKING_CREATION_IN_PROGRESS'
+    | 'PAID_PENDING_FINALIZATION'
+    | 'EXPIRED';
+  operationType?: 'TRANSACTION' | 'SUBSCRIPTION_BOOKING';
+  clientId?: string;
+  providerBookingId?: string;
+  bookingClaimId?: string;
+  bookingClaimExpiresAt?: string;
+  providerCreateAttemptedAt?: string;
   phone: string;
   name?: string;
   avatarUrl?: string | null;
   levelLabel?: string;
   notes?: string;
   selectedPurchaseOptionId?: string;
+  productType?: 'SERVICE' | 'SUBSCRIPTION';
+  exerciseId?: string;
+  studioId?: string;
+  widgetId?: string;
+  amountMinor?: number;
+  currency?: 'RUB';
+  checkoutUrl?: string;
+  paymentExpiresAt?: string;
+  eligibilitySnapshot?: {
+    decisionId: string;
+    playerId: string;
+    activityId: string;
+    activityType: 'TOURNAMENT';
+    playerLevelRank?: number;
+    activityMinRank?: number;
+    activityMaxRank?: number;
+    effectiveMinRank?: number;
+    effectiveMaxRank?: number;
+    policyVersion: number;
+    levelScaleVersion: number;
+    result: 'ALLOWED' | 'WARNING';
+    reasonCode: 'LEVEL_ALLOWED' | 'LEVEL_NOT_RESTRICTED';
+    evaluatedAt: string;
+  };
+  verifiedPayment?: {
+    provider: 'VIVA';
+    operationType: 'TRANSACTION' | 'SUBSCRIPTION_BOOKING';
+    operationId: string;
+    bookingId?: string;
+    clientId?: string;
+    clientSubscriptionId?: string;
+    status: 'PAID' | 'ACTIVE';
+    exerciseId: string;
+    phone: string;
+    amountMinor: number;
+    currency: 'RUB';
+    verifiedAt: string;
+  };
+  expiredAt?: string;
   createdAt: string;
 }
 
@@ -209,7 +273,7 @@ const TOURNAMENT_LEVEL_BANDS = [
   { base: 'C+', min: 3.5, max: 4, display: '3.5-4.0' },
   { base: 'B', min: 4, max: 4.7, display: '4.0-4.7' },
   { base: 'B+', min: 4.7, max: 5.5, display: '4.7-5.5' },
-  { base: 'A', min: 5.5, max: 6.3, display: '5.5+' }
+  { base: 'A', min: 5.5, max: 7, display: '5.5+' }
 ] as const;
 const TOURNAMENT_LEVEL_LEGACY_ALIASES = [
   { offset: 0.25, aliases: ['BEGINNER', 'НОВИЧ', 'НАЧИН'] },
@@ -285,8 +349,61 @@ export class TournamentsService {
     private readonly americanoRatingSimulationService: AmericanoRatingSimulationService,
     @Optional() private readonly vivaAdminService?: VivaAdminService,
     @Optional() private readonly communitiesService?: CommunitiesService,
-    @Optional() private readonly vivaTournamentSnapshotService?: VivaTournamentSnapshotService
+    @Optional() private readonly vivaTournamentSnapshotService?: VivaTournamentSnapshotService,
+    @Optional() private readonly lkIdentityService?: LkIdentityService,
+    @Optional() private readonly playerRatingsService?: PlayerRatingsService
   ) {}
+
+  async resolveTrustedLkRegistrationClient(
+    authorizationHeader?: string
+  ): Promise<{ clientId?: string; name: string; phone: string; levelLabel?: string }> {
+    if (!this.lkIdentityService || !this.playerRatingsService) {
+      throw new ServiceUnavailableException({
+        code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED',
+        message: 'Trusted tournament identity and rating services are unavailable'
+      });
+    }
+    const verification = await this.lkIdentityService.verifyTrustedBearer(authorizationHeader);
+    const actor = verification.actor;
+    const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
+      clientId: actor.clientId,
+      phone: actor.phoneNorm
+    });
+    return {
+      clientId: actor.clientId,
+      name: actor.name || actor.phoneNorm,
+      phone: actor.phoneNorm,
+      ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
+    };
+  }
+
+  async resolveCanonicalLkRegistrationClientByVerifiedPhone(input: {
+    phone?: string;
+    name?: string;
+  }): Promise<{ clientId?: string; name: string; phone: string; levelLabel?: string }> {
+    if (!this.playerRatingsService) {
+      throw new ServiceUnavailableException({
+        code: 'TOURNAMENT_ELIGIBILITY_NOT_CONFIGURED',
+        message: 'Canonical tournament rating service is unavailable'
+      });
+    }
+    const phone = this.normalizePhone(input.phone);
+    if (!phone) {
+      throw new UnauthorizedException({
+        code: 'TOURNAMENT_VERIFIED_PHONE_REQUIRED',
+        message: 'Verified tournament client phone is required'
+      });
+    }
+    const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
+      phone
+    });
+    return {
+      ...(canonicalLevel?.clientId ? { clientId: canonicalLevel.clientId } : {}),
+      name: this.pickString(input.name) ?? phone,
+      phone,
+      ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
+    };
+  }
 
   async generateSchedule(
     input: AmericanoGenerateScheduleInput
@@ -994,18 +1111,15 @@ export class TournamentsService {
     if (requireAuth && !normalizedClient.authorized && !normalizedClient.phoneVerified) {
       return {
         ok: false,
-        code: normalizedPhone ? 'PHONE_VERIFICATION_REQUIRED' : 'PROFILE_REQUIRED',
-        message:
-          normalizedPhone
-            ? 'Подтвердите номер телефона кодом, чтобы продолжить запись.'
-            : 'Чтобы присоединиться к турниру, укажите номер телефона.',
+        code: 'AUTH_REQUIRED',
+        message: 'Войдите в личный кабинет, чтобы продолжить запись. После входа вы вернётесь к этому турниру.',
         tournament: publicTournament,
         client: normalizedClient,
         access,
-        missingFields: normalizedPhone ? [] : ['phone'],
+        missingFields: [],
         waitlistAllowed: false,
         payment,
-        authRequired: false
+        authRequired: true
       };
     }
 
@@ -1071,9 +1185,9 @@ export class TournamentsService {
     if (missingFields.includes('levelLabel')) {
       return {
         ok: false,
-        code: 'ONBOARDING_REQUIRED',
+        code: 'PLAYER_LEVEL_REQUIRED',
         message:
-          'Для участия в этом турнире нужно определить игровой уровень. Выберите его перед записью.',
+          'Укажите уровень, чтобы присоединиться к турниру.',
         tournament: publicTournament,
         client: normalizedClient,
         access,
@@ -1193,7 +1307,7 @@ export class TournamentsService {
       await this.fetchVivaJoinPurchaseOptions(tournament)
     );
 
-    if (payment.required && payment.code === 'PURCHASE_REQUIRED' && input.purchaseConfirmed !== true) {
+    if (payment.required && payment.code === 'PURCHASE_REQUIRED') {
       return {
         ok: false,
         code: 'PURCHASE_REQUIRED',
@@ -1205,42 +1319,14 @@ export class TournamentsService {
     }
 
     if (payment.required && payment.code === 'SUBSCRIPTION_AVAILABLE') {
-      const booking = this.resolveBookingConfig(tournament);
-      const subscription =
-        this.resolveSelectedClientSubscription(
-          payment.availableSubscriptions,
-          input.selectedSubscriptionId
-        ) ?? payment.selectedSubscription;
-      if (subscription && this.canCreateVivaTransaction(booking)) {
-        const transaction = await this.createVivaJoinTransaction({
-          booking,
-          purchaseOption: {
-            id: subscription.id,
-            label: subscription.label,
-            priceLabel: '0',
-            productType: subscription.productType ?? 'SUBSCRIPTION'
-          },
-          tournament,
-          phone: normalizedPhone,
-          successUrl: this.buildPublicJoinUrl(tournament.publicUrl),
-          failUrl: this.buildPublicJoinUrl(tournament.publicUrl)
-        });
-        if (transaction.checkoutUrl) {
-          return {
-            ok: true,
-            code: 'PURCHASE_STARTED',
-            message: 'Списание создано. Перейдите к подтверждению, чтобы завершить запись.',
-            tournamentId: tournament.id,
-            tournamentSlug: tournament.slug,
-            payment: {
-              ...payment,
-              selectedSubscription: subscription,
-              checkoutUrl: transaction.checkoutUrl,
-              transactionId: transaction.transactionId
-            }
-          };
-        }
-      }
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Списание абонемента выполняется только через защищённую join-операцию.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
     }
 
     const participant = await this.enrichTournamentParticipantWithViva({
@@ -1290,7 +1376,10 @@ export class TournamentsService {
     }
 
     const maxPlayers = Math.max(2, Number(tournament.maxPlayers || 0) || 8);
-    if (tournament.participants.length >= maxPlayers) {
+    const reservedPaymentSeats = this.getPendingJoinPayments(tournament).filter(
+      (item) => this.isCapacityHoldingPendingJoinPayment(item)
+    ).length;
+    if (tournament.participants.length + reservedPaymentSeats >= maxPlayers) {
       const nextWaitlist: TournamentParticipant[] = [
         ...tournament.waitlist,
         {
@@ -1330,10 +1419,35 @@ export class TournamentsService {
       };
     }
 
-    const nextParticipants = [...tournament.participants, participant];
-    await this.updateCustom(tournament.id, {
-      participants: nextParticipants
-    });
+    const appended = await this.tournamentsPersistence.appendPublicParticipantIfCapacity(
+      tournament.id,
+      normalizedPhone,
+      participant
+    );
+    if (!appended) {
+      const current = await this.requireCustomBySlug(tournament.slug);
+      const currentParticipant = this.findParticipantByPhone(current.participants, normalizedPhone);
+      if (currentParticipant) {
+        return {
+          ok: true,
+          code: 'ALREADY_REGISTERED',
+          message: 'Игрок уже записан в турнир.',
+          tournamentId: current.id,
+          tournamentSlug: current.slug,
+          participant: currentParticipant,
+          payment
+        };
+      }
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Состав турнира изменился во время записи. Внешняя запись требует reconciliation, локальное место не было переписано.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+    this.invalidatePublicDirectoryCache();
     return {
       ok: true,
       code: 'REGISTERED',
@@ -1634,15 +1748,50 @@ export class TournamentsService {
       await this.fetchVivaJoinPurchaseOptions(tournament)
     );
 
-    if (!payment.required || payment.code !== 'PURCHASE_REQUIRED') {
+    if (
+      !payment.required
+      || (payment.code !== 'PURCHASE_REQUIRED' && payment.code !== 'SUBSCRIPTION_AVAILABLE')
+    ) {
       return this.registerPublicParticipant(slug, input);
     }
 
     const booking = this.resolveBookingConfig(tournament);
-    const purchaseOption = this.resolveSelectedPurchaseOption(
-      payment.purchaseOptions,
-      input.selectedPurchaseOptionId
-    );
+    const requestedSubscriptionId = this.pickString(input.selectedSubscriptionId);
+    const explicitlySelectedSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
+      && requestedSubscriptionId
+      ? this.resolveSelectedClientSubscription(
+          payment.availableSubscriptions,
+          requestedSubscriptionId
+        )
+      : null;
+    if (
+      payment.code === 'SUBSCRIPTION_AVAILABLE'
+      && requestedSubscriptionId
+      && !explicitlySelectedSubscription
+    ) {
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Выбранный абонемент больше недоступен. Обновите список и выберите его заново.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+    const selectedClientSubscription = payment.code === 'SUBSCRIPTION_AVAILABLE'
+      ? (explicitlySelectedSubscription ?? payment.selectedSubscription)
+      : null;
+    const purchaseOption = selectedClientSubscription
+      ? {
+          id: selectedClientSubscription.id,
+          label: selectedClientSubscription.label,
+          priceLabel: '0',
+          productType: 'SUBSCRIPTION' as const
+        }
+      : this.resolveSelectedPurchaseOption(
+          payment.purchaseOptions,
+          input.selectedPurchaseOptionId
+        );
     if (!purchaseOption) {
       return {
         ok: false,
@@ -1653,19 +1802,110 @@ export class TournamentsService {
       };
     }
 
-    if (this.resolveVivaTransactionProductType(purchaseOption.productType) === 'SUBSCRIPTION') {
-      await this.createVivaJoinBookingWithSubscription({
+    const existingPending = this.findPendingJoinPayment(tournament, normalizedPhone);
+    if (existingPending) {
+      if (
+        existingPending.state === 'PAID_PENDING_FINALIZATION'
+        && this.hasDurableVerifiedPayment(existingPending, tournament, normalizedPhone)
+      ) {
+        return this.finalizePaidPublicJoin(tournament, existingPending, {
+          fallbackName: input.name,
+          fallbackLevelLabel: normalizedLevel
+        });
+      }
+      if (
+        existingPending.operationType === 'SUBSCRIPTION_BOOKING'
+        && (
+          existingPending.state === 'PENDING_PAYMENT'
+          || existingPending.state === 'BOOKING_CREATION_IN_PROGRESS'
+        )
+        && this.isPendingJoinPaymentBoundToTournament(existingPending, tournament, normalizedPhone)
+      ) {
+        return this.continuePublicJoinSubscriptionBooking(
+          tournament,
+          existingPending,
+          input
+        );
+      }
+      if (this.isPendingJoinPaymentReusable(existingPending, tournament, normalizedPhone)) {
+        return {
+          ok: true,
+          code: 'PURCHASE_STARTED',
+          message: 'Оплата уже создана. Завершите её, чтобы подтвердить участие.',
+          tournamentId: tournament.id,
+          tournamentSlug: tournament.slug,
+          payment: {
+            ...payment,
+            checkoutUrl: existingPending.checkoutUrl,
+            transactionId: existingPending.transactionId
+          }
+        };
+      }
+      if (
+        existingPending.state === 'PENDING_PAYMENT'
+        && existingPending.operationType === 'TRANSACTION'
+        && this.isPendingJoinPaymentBoundToTournament(existingPending, tournament, normalizedPhone)
+        && !this.isFutureIsoDateTime(existingPending.paymentExpiresAt)
+      ) {
+        const verification = await this.verifyVivaTransaction({
+          booking: this.resolveBookingConfig(tournament),
+          transactionId: existingPending.transactionId,
+          authorizationHeader: input.vivaAuthorizationHeader
+        });
+        if (verification.status === 'PAID' && verification.evidence) {
+          const marked = await this.markPendingJoinPaymentPaid(
+            tournament,
+            existingPending,
+            verification.evidence
+          );
+          if (!marked) {
+            return this.buildPaidJoinRecoveryRequired(tournament);
+          }
+          return this.finalizePaidPublicJoin(marked.tournament, marked.pending, {
+            fallbackName: input.name,
+            fallbackLevelLabel: normalizedLevel
+          });
+        }
+        if (verification.status === 'UNPAID') {
+          const expiredAt = new Date().toISOString();
+          const expired = await this.tournamentsPersistence.expirePublicJoinPayment(
+            tournament.id,
+            existingPending.transactionId,
+            normalizedPhone,
+            expiredAt
+          );
+          if (expired) {
+            this.invalidatePublicDirectoryCache();
+            return {
+              ok: false,
+              code: 'PURCHASE_REQUIRED',
+              message: 'Срок предыдущей неоплаченной операции истёк. Место освобождено, повторите создание оплаты.',
+              tournamentId: tournament.id,
+              tournamentSlug: tournament.slug,
+              payment
+            };
+          }
+        }
+      }
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Найдена незавершённая операция оплаты без безопасного продолжения. Требуется recovery, новая оплата не создана.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        payment
+      };
+    }
+
+    if (selectedClientSubscription) {
+      return this.startPublicJoinSubscriptionBooking(
+        tournament,
         booking,
-        phone: normalizedPhone,
-        authorizationHeader: input.vivaAuthorizationHeader
-      });
-      return this.registerPublicParticipant(slug, {
-        ...input,
-        phone: normalizedPhone,
-        levelLabel: normalizedLevel,
-        purchaseConfirmed: true,
-        selectedPurchaseOptionId: purchaseOption.id
-      });
+        selectedClientSubscription,
+        normalizedPhone,
+        normalizedLevel,
+        input
+      );
     }
 
     const transaction = await this.createVivaJoinTransaction({
@@ -1678,23 +1918,67 @@ export class TournamentsService {
       authorizationHeader: input.vivaAuthorizationHeader
     });
 
-    if (transaction.transactionId) {
-      await this.savePendingJoinPayment(tournament, {
+    if (
+      transaction.transactionId
+      && transaction.checkoutUrl
+      && transaction.amountMinor !== undefined
+      && Number.isSafeInteger(transaction.amountMinor)
+      && transaction.amountMinor >= 0
+      && this.isFutureIsoDateTime(transaction.paymentExpiresAt)
+    ) {
+      const exerciseId = this.pickString(booking.vivaExerciseId);
+      const studioId = this.pickString(booking.vivaStudioId);
+      const widgetId = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+      if (!exerciseId || !studioId || !widgetId) {
+        throw new BadRequestException('Viva payment binding is incomplete');
+      }
+      const reserved = await this.savePendingJoinPayment(tournament, {
         transactionId: transaction.transactionId,
+        state: 'PENDING_PAYMENT',
+        operationType: 'TRANSACTION',
+        clientId: this.pickString(input.clientId) ?? undefined,
         phone: normalizedPhone,
         name: this.pickString(input.name) ?? undefined,
         levelLabel: normalizedLevel,
         notes: this.pickString(input.notes) ?? undefined,
         selectedPurchaseOptionId: purchaseOption.id,
+        productType: this.resolveVivaTransactionProductType(purchaseOption.productType),
+        exerciseId,
+        studioId,
+        widgetId,
+        amountMinor: transaction.amountMinor,
+        currency: 'RUB',
+        checkoutUrl: transaction.checkoutUrl,
+        paymentExpiresAt: transaction.paymentExpiresAt,
+        eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
+          tournament,
+          normalizedPhone,
+          normalizedLevel
+        ),
         createdAt: new Date().toISOString()
       });
+      if (!reserved) {
+        return {
+          ok: false,
+          code: 'BOOKING_FAILED',
+          message: 'Место уже занято или другая операция записи выполняется. Оплата не была показана пользователю.',
+          tournamentId: tournament.id,
+          tournamentSlug: tournament.slug,
+          payment
+        };
+      }
     }
 
-    if (!transaction.checkoutUrl) {
+    if (
+      !transaction.transactionId
+      || !transaction.checkoutUrl
+      || transaction.amountMinor === undefined
+      || !this.isFutureIsoDateTime(transaction.paymentExpiresAt)
+    ) {
       return {
         ok: false,
         code: 'PURCHASE_REQUIRED',
-        message: 'Viva создала транзакцию без ссылки на оплату. Попробуйте повторить позже.',
+        message: 'Viva вернула неполные данные транзакции. Попробуйте повторить позже.',
         tournamentSlug: tournament.slug,
         payment: {
           ...payment,
@@ -1717,98 +2001,13 @@ export class TournamentsService {
     };
   }
 
-  async rememberPublicJoinPurchaseTransaction(
-    slug: string,
-    input: RegistrationInput & {
-      transactionId?: string;
-      checkoutUrl?: string;
-    }
-  ): Promise<TournamentRegistrationResponse> {
-    this.ensurePersistenceEnabled();
-    const tournament = await this.requireCustomBySlug(slug);
-    const normalizedPhone = this.normalizePhone(input.phone);
-    const transactionId = this.pickString(input.transactionId);
-    if (!normalizedPhone) {
-      return {
-        ok: false,
-        code: 'PHONE_REQUIRED',
-        message: 'Для покупки участия нужен номер телефона.',
-        tournamentSlug: tournament.slug
-      };
-    }
-    if (!transactionId) {
-      return {
-        ok: false,
-        code: 'PURCHASE_REQUIRED',
-        message: 'Viva создала транзакцию без номера. Попробуйте повторить позже.',
-        tournamentSlug: tournament.slug
-      };
-    }
-
-    const access = this.evaluateAccess(tournament, input.levelLabel);
-    if (!access.ok) {
-      return {
-        ok: false,
-        code: access.code,
-        message: access.message,
-        tournamentSlug: tournament.slug
-      };
-    }
-
-    const payment = this.resolveJoinPayment(
-      tournament,
-      {
-        id: normalizedPhone,
-        authorized: true,
-        authSource: 'headers',
-        name: input.name,
-        phone: normalizedPhone,
-        levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
-        onboardingCompleted: Boolean(this.normalizeLevel(input.levelLabel)),
-        subscriptions: this.readClientSubscriptionsFromInput(input)
-      },
-      input.levelLabel,
-      await this.fetchVivaJoinPurchaseOptions(tournament)
-    );
-
-    if (!payment.required || payment.code !== 'PURCHASE_REQUIRED') {
-      return this.registerPublicParticipant(slug, input);
-    }
-
-    const purchaseOption = this.resolveSelectedPurchaseOption(
-      payment.purchaseOptions,
-      input.selectedPurchaseOptionId
-    );
-    await this.savePendingJoinPayment(tournament, {
-      transactionId,
-      phone: normalizedPhone,
-      name: this.pickString(input.name) ?? undefined,
-      levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
-      notes: this.pickString(input.notes) ?? undefined,
-      selectedPurchaseOptionId: purchaseOption?.id ?? this.pickString(input.selectedPurchaseOptionId) ?? undefined,
-      createdAt: new Date().toISOString()
-    });
-
-    return {
-      ok: true,
-      code: 'PURCHASE_STARTED',
-      message: 'Покупка участия создана. Перейдите к оплате, чтобы завершить запись.',
-      tournamentId: tournament.id,
-      tournamentSlug: tournament.slug,
-      payment: {
-        ...payment,
-        checkoutUrl: this.pickString(input.checkoutUrl) ?? undefined,
-        transactionId
-      }
-    };
-  }
-
   async confirmPublicJoinAfterPayment(
     slug: string,
     input: {
       phone?: string;
       fallbackName?: string;
       fallbackLevelLabel?: string;
+      vivaAuthorizationHeader?: string;
     }
   ): Promise<TournamentRegistrationResponse> {
     this.ensurePersistenceEnabled();
@@ -1823,6 +2022,21 @@ export class TournamentsService {
       };
     }
 
+    const existingParticipant = this.findParticipantByPhone(
+      tournament.participants,
+      normalizedPhone
+    );
+    if (existingParticipant) {
+      return {
+        ok: true,
+        code: 'ALREADY_REGISTERED',
+        message: 'Игрок уже записан в турнир.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        participant: existingParticipant
+      };
+    }
+
     const pending = this.findPendingJoinPayment(tournament, normalizedPhone);
     if (!pending) {
       return {
@@ -1833,11 +2047,38 @@ export class TournamentsService {
       };
     }
 
+    if (!this.isPendingJoinPaymentBoundToTournament(pending, tournament, normalizedPhone)) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'tournament_join_payment_binding_rejected',
+          tournamentId: tournament.id,
+          transactionId: pending.transactionId
+        })
+      );
+      return {
+        ok: false,
+        code: 'PURCHASE_REQUIRED',
+        message: 'Транзакция не соответствует операции записи. Создайте новую оплату.',
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    if (
+      pending.state === 'PAID_PENDING_FINALIZATION'
+      && this.hasDurableVerifiedPayment(pending, tournament, normalizedPhone)
+    ) {
+      return this.finalizePaidPublicJoin(tournament, pending, {
+        fallbackName: input.fallbackName,
+        fallbackLevelLabel: input.fallbackLevelLabel
+      });
+    }
+
     const verification = await this.verifyVivaTransaction({
       booking: this.resolveBookingConfig(tournament),
-      transactionId: pending.transactionId
+      transactionId: pending.transactionId,
+      authorizationHeader: input.vivaAuthorizationHeader
     });
-    if (!verification.paid) {
+    if (verification.status !== 'PAID' || !verification.evidence) {
       return {
         ok: false,
         code: 'PURCHASE_REQUIRED',
@@ -1846,14 +2087,18 @@ export class TournamentsService {
       };
     }
 
-    await this.removePendingJoinPayment(tournament, pending.transactionId);
-    return this.registerPublicParticipant(slug, {
-      name: pending.name ?? input.fallbackName ?? normalizedPhone,
-      phone: normalizedPhone,
-      levelLabel: pending.levelLabel ?? input.fallbackLevelLabel,
-      notes: pending.notes,
-      selectedPurchaseOptionId: pending.selectedPurchaseOptionId,
-      purchaseConfirmed: true
+    const marked = await this.markPendingJoinPaymentPaid(
+      tournament,
+      pending,
+      verification.evidence
+    );
+    if (!marked) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+
+    return this.finalizePaidPublicJoin(marked.tournament, marked.pending, {
+      fallbackName: input.fallbackName,
+      fallbackLevelLabel: input.fallbackLevelLabel
     });
   }
 
@@ -4885,8 +5130,8 @@ export class TournamentsService {
     if (!normalizedLevel) {
       return {
         ok: false,
-        code: 'ONBOARDING_REQUIRED',
-        message: 'Для записи нужен уровень игрока. Предложите пользователю пройти онбординг.',
+        code: 'PLAYER_LEVEL_REQUIRED',
+        message: 'Для записи нужен уровень игрока.',
         tournamentSlug: tournament.slug,
         accessLevels: tournament.accessLevels
       };
@@ -5320,8 +5565,8 @@ export class TournamentsService {
       ],
       clientPhone: input.phone,
       paymentMethod: 'WIDGET',
-      successUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentsuccess'),
-      failUrl: this.buildVivaWidgetPaymentReturnUrl(exerciseId, 'TorneosPADL_paymentfailed'),
+      successUrl: input.successUrl,
+      failUrl: input.failUrl,
       exerciseId,
       studioId,
       promoCode: null
@@ -5364,16 +5609,33 @@ export class TournamentsService {
       this.findVivaCheckoutUrl(responsePayload)
       ?? this.findVivaCheckoutUrlInHeaders(response.headers);
     const transactionId = this.findVivaTransactionId(responsePayload);
+    const responseRecord = this.toRecord(responsePayload) ?? {};
+    const responseData = this.toRecord(responseRecord.data) ?? {};
+    const amountMinor = this.pickNumber(
+      responseRecord.toPay
+      ?? responseRecord.toPayMinor
+      ?? responseData.toPay
+      ?? responseData.toPayMinor
+    );
+    const paymentExpiresAt = this.pickString(
+      responseRecord.paymentDueDate
+      ?? responseRecord.paymentExpiresAt
+      ?? responseData.paymentDueDate
+      ?? responseData.paymentExpiresAt
+    );
 
     return {
       transactionId,
-      checkoutUrl
+      checkoutUrl,
+      ...(amountMinor !== undefined && amountMinor >= 0 ? { amountMinor } : {}),
+      ...(paymentExpiresAt ? { paymentExpiresAt } : {})
     };
   }
 
   private async createVivaJoinBookingWithSubscription(input: {
     booking: TournamentBookingConfig;
     phone: string;
+    clientSubscriptionId: string;
     authorizationHeader?: string;
   }): Promise<VivaJoinBookingResponse> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
@@ -5391,6 +5653,7 @@ export class TournamentsService {
     const payload = {
       exerciseId,
       paymentType: 'SUBSCRIPTION',
+      clientSubscriptionId: input.clientSubscriptionId,
       comment: null,
       marketingAttribution: {}
     };
@@ -5427,56 +5690,19 @@ export class TournamentsService {
       );
     }
 
-    const correlationId =
-      this.pickString(this.toRecord(responsePayload)?.correlationId)
-      ?? this.pickString(this.toRecord(responsePayload)?.id)
-      ?? this.pickString(response.headers.get('x-correlation-id'));
-
-    return { correlationId };
-  }
-
-  private buildVivaWidgetPaymentReturnUrl(exerciseId: string, flag: string): string {
-    const url = new URL('https://padlhub.ru/padel_torneos');
-    url.searchParams.set('TorneosPADL_exercise', exerciseId);
-    url.searchParams.set(flag, 'true');
-    return url.toString();
+    const record = this.toRecord(responsePayload) ?? {};
+    const bookingId = this.pickString(record.bookingId) ?? this.pickString(record.id);
+    return { bookingId };
   }
 
   private findVivaCheckoutUrl(payload: unknown): string | undefined {
-    const exactKeys = new Set([
-      'paymenturl',
-      'payment_url',
-      'paymentlink',
-      'payment_link',
-      'checkouturl',
-      'checkout_url',
-      'redirecturl',
-      'redirect_url',
-      'confirmationurl',
-      'confirmation_url',
-      'formurl',
-      'form_url',
-      'href',
-      'link',
-      'payurl',
-      'pay_url',
-      'url'
-    ]);
-    return this.findFirstMatchingString(payload, (key, value) => {
-      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
-      if (!this.isHttpUrl(value)) {
-        return false;
-      }
-      if (/(success|fail|return|callback|webhook|cancel)/i.test(normalizedKey)) {
-        return false;
-      }
-      if (/[?&](?:paymentsuccess|paymentfailed|TorneosPADL_paymentsuccess|TorneosPADL_paymentfailed)=/i.test(value)) {
-        return false;
-      }
-      return exactKeys.has(normalizedKey)
-        || /(payment|checkout|redirect|confirmation|form|pay).*(url|link)/i.test(key)
-        || /(url|link).*(payment|checkout|redirect|confirmation|form|pay)/i.test(key);
-    });
+    const record = this.toRecord(payload) ?? {};
+    const data = this.toRecord(record.data) ?? {};
+    const value = this.pickString(record.paymentUrl)
+      ?? this.pickString(record.payment_url)
+      ?? this.pickString(data.paymentUrl)
+      ?? this.pickString(data.payment_url);
+    return value && this.isHttpUrl(value) ? value : undefined;
   }
 
   private findVivaCheckoutUrlInHeaders(headers?: Headers): string | undefined {
@@ -5493,94 +5719,69 @@ export class TournamentsService {
   }
 
   private findVivaTransactionId(payload: unknown): string | undefined {
-    const exactKeys = new Set(['id', 'transactionid', 'transaction_id', 'orderid', 'order_id']);
-    return this.findFirstMatchingString(payload, (key, value) => {
-      const normalizedKey = key.toLowerCase().replace(/[\s-]+/g, '_');
-      return Boolean(value) && exactKeys.has(normalizedKey);
-    });
-  }
-
-  private findFirstMatchingString(
-    value: unknown,
-    matches: (key: string, value: string) => boolean,
-    key = '',
-    seen = new Set<unknown>()
-  ): string | undefined {
-    const direct = this.pickString(value);
-    if (direct && matches(key, direct)) {
-      return direct;
-    }
-
-    if (!value || typeof value !== 'object' || seen.has(value)) {
-      return undefined;
-    }
-    seen.add(value);
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const found = this.findFirstMatchingString(item, matches, key, seen);
-        if (found) {
-          return found;
-        }
-      }
-      return undefined;
-    }
-
-    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
-      const found = this.findFirstMatchingString(childValue, matches, childKey, seen);
-      if (found) {
-        return found;
-      }
-    }
-    return undefined;
+    const record = this.toRecord(payload) ?? {};
+    const data = this.toRecord(record.data) ?? {};
+    return this.pickString(record.transactionId)
+      ?? this.pickString(record.transaction_id)
+      ?? this.pickString(data.transactionId)
+      ?? this.pickString(data.transaction_id);
   }
 
   private isHttpUrl(value: string): boolean {
     return /^https?:\/\//i.test(value);
   }
 
+  private isFutureIsoDateTime(value: unknown): boolean {
+    const normalized = this.pickIsoString(value);
+    return Boolean(normalized && Date.parse(normalized) > Date.now());
+  }
+
   private async verifyVivaTransaction(input: {
     booking: TournamentBookingConfig;
     transactionId: string;
-  }): Promise<{ paid: boolean }> {
+    authorizationHeader?: string;
+  }): Promise<VivaTransactionVerification> {
     const widgetId = this.pickString(input.booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
     if (!widgetId) {
-      return { paid: false };
+      return { status: 'UNKNOWN' };
     }
 
-    const candidates = [
-      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(input.transactionId)}`,
-      `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(input.transactionId)}/status`
-    ];
-
-    for (const path of candidates) {
-      try {
-        const url = new URL(path, `${this.vivaEndUserApiBaseUrl}/`);
-        const response = await fetch(url.toString(), {
-          headers: { Accept: 'application/json' },
-          signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
-        });
-        if (!response.ok) {
-          continue;
-        }
-        const payload = (await response.json().catch(() => null)) as unknown;
-        if (this.isVivaPaymentSuccessful(payload)) {
-          return { paid: true };
-        }
-      } catch {
-        continue;
+    try {
+      const url = new URL(
+        `/end-user/api/v1/${encodeURIComponent(widgetId)}/transactions/${encodeURIComponent(input.transactionId)}/status`,
+        `${this.vivaEndUserApiBaseUrl}/`
+      );
+      const response = await fetch(url.toString(), {
+        headers: {
+          Accept: 'application/json',
+          ...(input.authorizationHeader ? { Authorization: input.authorizationHeader } : {})
+        },
+        signal: this.buildAbortSignal(this.vivaEndUserRequestTimeoutMs)
+      });
+      if (!response.ok) {
+        return { status: 'UNKNOWN' };
       }
+      const payload = (await response.json().catch(() => null)) as unknown;
+      const record = this.toRecord(payload);
+      const responseTransactionId = this.pickString(record?.transactionId);
+      const transactionStatus = this.pickString(record?.transactionStatus)?.toUpperCase();
+      if (responseTransactionId !== input.transactionId) {
+        return { status: 'UNKNOWN' };
+      }
+      if (transactionStatus === 'PAID') {
+        return {
+          status: 'PAID',
+          evidence: {
+            operationId: input.transactionId,
+            status: 'PAID',
+            verifiedAt: new Date().toISOString()
+          }
+        };
+      }
+      return { status: transactionStatus === 'UNPAID' ? 'UNPAID' : 'UNKNOWN' };
+    } catch {
+      return { status: 'UNKNOWN' };
     }
-
-    return { paid: false };
-  }
-
-  private isVivaPaymentSuccessful(payload: unknown): boolean {
-    const normalized = JSON.stringify(payload ?? {}).toUpperCase();
-    return normalized.includes('"PAID"')
-      || normalized.includes('"SUCCEEDED"')
-      || normalized.includes('"SUCCESS"')
-      || normalized.includes('"COMPLETED"');
   }
 
   private findPendingJoinPayment(
@@ -5596,77 +5797,661 @@ export class TournamentsService {
     }
     for (const item of pending) {
       const record = this.toRecord(item);
-      if (!record) {
+      const parsed = this.parsePendingJoinPayment(record);
+      if (!parsed || parsed.phone !== normalizedPhone || parsed.state === 'EXPIRED') {
         continue;
       }
-      const itemPhone = this.normalizePhone(record.phone);
-      const transactionId = this.pickString(record.transactionId);
-      if (!itemPhone || !transactionId) {
-        continue;
-      }
-      if (itemPhone !== normalizedPhone) {
-        continue;
-      }
-      return {
-        transactionId,
-        phone: itemPhone,
-        name: this.pickString(record.name) ?? undefined,
-        avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo),
-        levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
-        notes: this.pickString(record.notes) ?? undefined,
-        selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
-        createdAt: this.pickString(record.createdAt) ?? new Date().toISOString()
-      };
+      return parsed;
     }
     return null;
+  }
+
+  private parsePendingJoinPayment(
+    record: Record<string, unknown> | null
+  ): PendingJoinPayment | null {
+    if (!record) {
+      return null;
+    }
+    const transactionId = this.pickString(record.transactionId);
+    const phone = this.normalizePhone(record.phone);
+    if (!transactionId || !phone) {
+      return null;
+    }
+    const rawSnapshot = this.toRecord(record.eligibilitySnapshot);
+    const snapshotResult = this.pickString(rawSnapshot?.result);
+    const snapshotActivityType = this.pickString(rawSnapshot?.activityType);
+    const snapshotReasonCode = this.pickString(rawSnapshot?.reasonCode);
+    const eligibilitySnapshot = rawSnapshot
+      && this.pickString(rawSnapshot.decisionId)
+      && this.pickString(rawSnapshot.playerId)
+      && this.pickString(rawSnapshot.activityId)
+      && snapshotActivityType === 'TOURNAMENT'
+      && (snapshotResult === 'ALLOWED' || snapshotResult === 'WARNING')
+      && (snapshotReasonCode === 'LEVEL_ALLOWED' || snapshotReasonCode === 'LEVEL_NOT_RESTRICTED')
+      ? {
+          decisionId: this.pickString(rawSnapshot.decisionId) as string,
+          playerId: this.pickString(rawSnapshot.playerId) as string,
+          activityId: this.pickString(rawSnapshot.activityId) as string,
+          activityType: 'TOURNAMENT' as const,
+          ...(this.pickNumber(rawSnapshot.playerLevelRank) !== undefined
+            ? { playerLevelRank: this.pickNumber(rawSnapshot.playerLevelRank) }
+            : {}),
+          ...(this.pickNumber(rawSnapshot.activityMinRank) !== undefined
+            ? { activityMinRank: this.pickNumber(rawSnapshot.activityMinRank) }
+            : {}),
+          ...(this.pickNumber(rawSnapshot.activityMaxRank) !== undefined
+            ? { activityMaxRank: this.pickNumber(rawSnapshot.activityMaxRank) }
+            : {}),
+          ...(this.pickNumber(rawSnapshot.effectiveMinRank) !== undefined
+            ? { effectiveMinRank: this.pickNumber(rawSnapshot.effectiveMinRank) }
+            : {}),
+          ...(this.pickNumber(rawSnapshot.effectiveMaxRank) !== undefined
+            ? { effectiveMaxRank: this.pickNumber(rawSnapshot.effectiveMaxRank) }
+            : {}),
+          policyVersion: this.pickNumber(rawSnapshot.policyVersion) ?? 0,
+          levelScaleVersion: this.pickNumber(rawSnapshot.levelScaleVersion) ?? 0,
+          result: snapshotResult as 'ALLOWED' | 'WARNING',
+          reasonCode: snapshotReasonCode as 'LEVEL_ALLOWED' | 'LEVEL_NOT_RESTRICTED',
+          evaluatedAt: this.pickString(rawSnapshot.evaluatedAt) ?? ''
+        }
+      : undefined;
+    const state = this.pickString(record.state);
+    const operationType = this.pickString(record.operationType);
+    const productType = this.pickString(record.productType);
+    const currency = this.pickString(record.currency);
+    const rawVerifiedPayment = this.toRecord(record.verifiedPayment);
+    const verifiedPayment = rawVerifiedPayment
+      && this.pickString(rawVerifiedPayment.provider) === 'VIVA'
+      && ['TRANSACTION', 'SUBSCRIPTION_BOOKING'].includes(
+        this.pickString(rawVerifiedPayment.operationType) ?? ''
+      )
+      && this.pickString(rawVerifiedPayment.operationId)
+      && ['PAID', 'ACTIVE'].includes(this.pickString(rawVerifiedPayment.status) ?? '')
+      && this.pickString(rawVerifiedPayment.exerciseId)
+      && this.normalizePhone(rawVerifiedPayment.phone)
+      && Number.isSafeInteger(this.pickNumber(rawVerifiedPayment.amountMinor))
+      && this.pickString(rawVerifiedPayment.currency) === 'RUB'
+      && this.pickIsoString(rawVerifiedPayment.verifiedAt)
+      ? {
+          provider: 'VIVA' as const,
+          operationType: this.pickString(rawVerifiedPayment.operationType) as
+            'TRANSACTION' | 'SUBSCRIPTION_BOOKING',
+          operationId: this.pickString(rawVerifiedPayment.operationId) as string,
+          ...(this.pickString(rawVerifiedPayment.bookingId)
+            ? { bookingId: this.pickString(rawVerifiedPayment.bookingId) as string }
+            : {}),
+          ...(this.pickString(rawVerifiedPayment.clientId)
+            ? { clientId: this.pickString(rawVerifiedPayment.clientId) as string }
+            : {}),
+          ...(this.pickString(rawVerifiedPayment.clientSubscriptionId)
+            ? {
+                clientSubscriptionId: this.pickString(
+                  rawVerifiedPayment.clientSubscriptionId
+                ) as string
+              }
+            : {}),
+          status: this.pickString(rawVerifiedPayment.status) as 'PAID' | 'ACTIVE',
+          exerciseId: this.pickString(rawVerifiedPayment.exerciseId) as string,
+          phone: this.normalizePhone(rawVerifiedPayment.phone) as string,
+          amountMinor: this.pickNumber(rawVerifiedPayment.amountMinor) as number,
+          currency: 'RUB' as const,
+          verifiedAt: this.pickIsoString(rawVerifiedPayment.verifiedAt) as string
+        }
+      : undefined;
+    return {
+      transactionId,
+      ...(state === 'PENDING_PAYMENT'
+        || state === 'BOOKING_CREATION_IN_PROGRESS'
+        || state === 'PAID_PENDING_FINALIZATION'
+        || state === 'EXPIRED'
+        ? { state }
+        : {}),
+      ...(operationType === 'TRANSACTION' || operationType === 'SUBSCRIPTION_BOOKING'
+        ? { operationType }
+        : {}),
+      clientId: this.pickString(record.clientId) ?? undefined,
+      providerBookingId: this.pickString(record.providerBookingId) ?? undefined,
+      bookingClaimId: this.pickString(record.bookingClaimId) ?? undefined,
+      bookingClaimExpiresAt: this.pickIsoString(record.bookingClaimExpiresAt),
+      providerCreateAttemptedAt: this.pickIsoString(record.providerCreateAttemptedAt),
+      phone,
+      name: this.pickString(record.name) ?? undefined,
+      avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo),
+      levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
+      notes: this.pickString(record.notes) ?? undefined,
+      selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
+      ...(productType === 'SERVICE' || productType === 'SUBSCRIPTION'
+        ? { productType }
+        : {}),
+      exerciseId: this.pickString(record.exerciseId) ?? undefined,
+      studioId: this.pickString(record.studioId) ?? undefined,
+      widgetId: this.pickString(record.widgetId) ?? undefined,
+      ...(this.pickNumber(record.amountMinor) !== undefined
+        ? { amountMinor: this.pickNumber(record.amountMinor) }
+        : {}),
+      ...(currency === 'RUB' ? { currency: 'RUB' as const } : {}),
+      checkoutUrl: this.pickString(record.checkoutUrl) ?? undefined,
+      paymentExpiresAt: this.pickString(record.paymentExpiresAt) ?? undefined,
+      ...(eligibilitySnapshot ? { eligibilitySnapshot } : {}),
+      ...(verifiedPayment ? { verifiedPayment } : {}),
+      expiredAt: this.pickIsoString(record.expiredAt),
+      createdAt: this.pickString(record.createdAt) ?? new Date().toISOString()
+    };
+  }
+
+  private buildTournamentEligibilitySnapshot(
+    tournament: CustomTournament,
+    playerId: string,
+    levelLabel?: string
+  ): NonNullable<PendingJoinPayment['eligibilitySnapshot']> {
+    const evaluatedAt = new Date().toISOString();
+    const playerLevel = this.parseLevelDescriptor(levelLabel);
+    const activityLevels = tournament.accessLevels
+      .map((value) => this.parseLevelDescriptor(value))
+      .filter((value): value is TournamentLevelDescriptor => Boolean(value));
+    const activityMinRank = activityLevels.length > 0
+      ? Math.min(...activityLevels.map((value) => value.minScore))
+      : undefined;
+    const activityMaxRank = activityLevels.length > 0
+      ? Math.max(...activityLevels.map((value) => value.maxScore))
+      : undefined;
+    return {
+      decisionId: randomUUID(),
+      playerId,
+      activityId: tournament.id,
+      activityType: 'TOURNAMENT',
+      ...(playerLevel ? { playerLevelRank: playerLevel.minScore } : {}),
+      ...(activityMinRank !== undefined ? { activityMinRank } : {}),
+      ...(activityMaxRank !== undefined ? { activityMaxRank } : {}),
+      ...(activityMinRank !== undefined ? { effectiveMinRank: activityMinRank } : {}),
+      ...(activityMaxRank !== undefined ? { effectiveMaxRank: activityMaxRank } : {}),
+      policyVersion: 0,
+      levelScaleVersion: 1,
+      result: 'ALLOWED',
+      reasonCode: activityLevels.length > 0 ? 'LEVEL_ALLOWED' : 'LEVEL_NOT_RESTRICTED',
+      evaluatedAt
+    };
+  }
+
+  private isPendingJoinPaymentBoundToTournament(
+    pending: PendingJoinPayment,
+    tournament: CustomTournament,
+    normalizedPhone: string
+  ): boolean {
+    const booking = this.resolveBookingConfig(tournament);
+    const snapshot = pending.eligibilitySnapshot;
+    return (
+      (pending.state === 'PENDING_PAYMENT'
+        || pending.state === 'BOOKING_CREATION_IN_PROGRESS'
+        || pending.state === 'PAID_PENDING_FINALIZATION')
+      && pending.phone === normalizedPhone
+      && (pending.operationType === 'TRANSACTION'
+        || pending.operationType === 'SUBSCRIPTION_BOOKING')
+      && pending.exerciseId === this.pickString(booking.vivaExerciseId)
+      && pending.studioId === this.pickString(booking.vivaStudioId)
+      && pending.widgetId === (this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId)
+      && Boolean(pending.selectedPurchaseOptionId)
+      && (pending.productType === 'SERVICE' || pending.productType === 'SUBSCRIPTION')
+      && pending.amountMinor !== undefined
+      && Number.isSafeInteger(pending.amountMinor)
+      && pending.amountMinor >= 0
+      && pending.currency === 'RUB'
+      && snapshot?.activityType === 'TOURNAMENT'
+      && snapshot.activityId === tournament.id
+      && snapshot.playerId === normalizedPhone
+      && (snapshot.result === 'ALLOWED' || snapshot.result === 'WARNING')
+      && Boolean(snapshot.decisionId)
+      && Boolean(snapshot.evaluatedAt)
+    );
+  }
+
+  private isPendingJoinPaymentReusable(
+    pending: PendingJoinPayment,
+    tournament: CustomTournament,
+    normalizedPhone: string
+  ): pending is PendingJoinPayment & { checkoutUrl: string } {
+    return pending.state === 'PENDING_PAYMENT'
+      && this.isPendingJoinPaymentBoundToTournament(pending, tournament, normalizedPhone)
+      && Boolean(pending.checkoutUrl && this.isHttpUrl(pending.checkoutUrl))
+      && this.isFutureIsoDateTime(pending.paymentExpiresAt);
+  }
+
+  private isCapacityHoldingPendingJoinPayment(pending: PendingJoinPayment): boolean {
+    return pending.state === undefined
+      || pending.state === 'PENDING_PAYMENT'
+      || pending.state === 'BOOKING_CREATION_IN_PROGRESS'
+      || pending.state === 'PAID_PENDING_FINALIZATION';
+  }
+
+  private hasDurableVerifiedPayment(
+    pending: PendingJoinPayment,
+    tournament: CustomTournament,
+    normalizedPhone: string
+  ): boolean {
+    const evidence = pending.verifiedPayment;
+    return pending.state === 'PAID_PENDING_FINALIZATION'
+      && this.isPendingJoinPaymentBoundToTournament(pending, tournament, normalizedPhone)
+      && evidence?.provider === 'VIVA'
+      && evidence.operationType === pending.operationType
+      && evidence.operationId === pending.transactionId
+      && (evidence.operationType === 'TRANSACTION'
+        ? evidence.status === 'PAID'
+        : evidence.status === 'ACTIVE'
+          && evidence.bookingId === pending.providerBookingId
+          && evidence.clientId === pending.clientId
+          && evidence.clientSubscriptionId === pending.selectedPurchaseOptionId)
+      && evidence.exerciseId === pending.exerciseId
+      && evidence.phone === normalizedPhone
+      && evidence.amountMinor === pending.amountMinor
+      && evidence.currency === pending.currency
+      && Boolean(this.pickIsoString(evidence.verifiedAt));
+  }
+
+  private async markPendingJoinPaymentPaid(
+    tournament: CustomTournament,
+    pending: PendingJoinPayment,
+    verification: NonNullable<VivaTransactionVerification['evidence']>
+  ): Promise<{ tournament: CustomTournament; pending: PendingJoinPayment } | null> {
+    if (
+      !pending.exerciseId
+      || pending.operationType !== 'TRANSACTION'
+      || pending.amountMinor === undefined
+      || pending.currency !== 'RUB'
+      || verification.operationId !== pending.transactionId
+      || verification.status !== 'PAID'
+    ) {
+      return null;
+    }
+    const verifiedPayment: NonNullable<PendingJoinPayment['verifiedPayment']> = {
+      provider: 'VIVA',
+      operationType: 'TRANSACTION',
+      operationId: pending.transactionId,
+      status: 'PAID',
+      exerciseId: pending.exerciseId,
+      phone: pending.phone,
+      amountMinor: pending.amountMinor,
+      currency: 'RUB',
+      verifiedAt: verification.verifiedAt
+    };
+    const updated = await this.tournamentsPersistence.markPublicJoinPaymentPaid(
+      tournament.id,
+      pending.transactionId,
+      pending.phone,
+      verifiedPayment as unknown as Record<string, unknown>
+    );
+    if (!updated) {
+      return null;
+    }
+    this.invalidatePublicDirectoryCache();
+    const durablePending = this.findPendingJoinPayment(updated, pending.phone);
+    if (!durablePending || !this.hasDurableVerifiedPayment(durablePending, updated, pending.phone)) {
+      return null;
+    }
+    return { tournament: updated, pending: durablePending };
+  }
+
+  private async startPublicJoinSubscriptionBooking(
+    tournament: CustomTournament,
+    booking: TournamentBookingConfig,
+    subscription: TournamentClientSubscription,
+    normalizedPhone: string,
+    normalizedLevel: string | undefined,
+    input: JoinPurchaseTransactionInput
+  ): Promise<TournamentRegistrationResponse> {
+    const clientId = this.pickString(input.clientId);
+    const exerciseId = this.pickString(booking.vivaExerciseId);
+    const studioId = this.pickString(booking.vivaStudioId);
+    const widgetId = this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId;
+    if (!clientId || !exerciseId || !studioId || !widgetId) {
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Для безопасного списания абонемента не хватает server-side client/exercise binding.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug
+      };
+    }
+    const pending: PendingJoinPayment = {
+      transactionId: `subscription:${randomUUID()}`,
+      state: 'PENDING_PAYMENT',
+      operationType: 'SUBSCRIPTION_BOOKING',
+      clientId,
+      phone: normalizedPhone,
+      name: this.pickString(input.name) ?? undefined,
+      levelLabel: normalizedLevel,
+      notes: this.pickString(input.notes) ?? undefined,
+      selectedPurchaseOptionId: subscription.id,
+      productType: 'SUBSCRIPTION',
+      exerciseId,
+      studioId,
+      widgetId,
+      amountMinor: 0,
+      currency: 'RUB',
+      paymentExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
+        tournament,
+        normalizedPhone,
+        normalizedLevel
+      ),
+      createdAt: new Date().toISOString()
+    };
+    if (!await this.savePendingJoinPayment(tournament, pending)) {
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Место уже занято или другая операция записи выполняется.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug
+      };
+    }
+    const reservedTournament = await this.requireCustomBySlug(tournament.slug);
+    const reservedPending = this.findPendingJoinPayment(reservedTournament, normalizedPhone);
+    if (!reservedPending) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    return this.continuePublicJoinSubscriptionBooking(
+      reservedTournament,
+      reservedPending,
+      input
+    );
+  }
+
+  private async continuePublicJoinSubscriptionBooking(
+    tournament: CustomTournament,
+    pending: PendingJoinPayment,
+    input: Pick<JoinPurchaseTransactionInput, 'vivaAuthorizationHeader' | 'name' | 'levelLabel'>
+  ): Promise<TournamentRegistrationResponse> {
+    if (
+      pending.operationType !== 'SUBSCRIPTION_BOOKING'
+      || (
+        pending.state !== 'PENDING_PAYMENT'
+        && pending.state !== 'BOOKING_CREATION_IN_PROGRESS'
+      )
+      || !pending.clientId
+      || !pending.exerciseId
+      || !pending.selectedPurchaseOptionId
+    ) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    const clientSubscriptionId = pending.selectedPurchaseOptionId;
+
+    let providerBookingId = pending.providerBookingId;
+    if (!providerBookingId) {
+      const discovered = await this.findVerifiedVivaSubscriptionBooking(pending, undefined);
+      if (discovered.status === 'FOUND') {
+        providerBookingId = discovered.bookingId;
+      } else {
+        if (
+          pending.state === 'BOOKING_CREATION_IN_PROGRESS'
+          || discovered.status !== 'NOT_FOUND'
+        ) {
+          return this.buildPaidJoinRecoveryRequired(tournament);
+        }
+        const claimId = randomUUID();
+        const claimedAt = new Date().toISOString();
+        const claimed = await this.tournamentsPersistence.claimPublicJoinSubscriptionBooking(
+          tournament.id,
+          pending.transactionId,
+          pending.phone,
+          claimId,
+          claimedAt,
+          new Date(Date.now() + 5 * 60_000).toISOString()
+        );
+        const claimedPending = claimed
+          ? this.findPendingJoinPayment(claimed, pending.phone)
+          : null;
+        if (
+          !claimed
+          || !claimedPending
+          || claimedPending.state !== 'BOOKING_CREATION_IN_PROGRESS'
+          || claimedPending.bookingClaimId !== claimId
+        ) {
+          return this.buildPaidJoinRecoveryRequired(tournament);
+        }
+        tournament = claimed;
+        pending = claimedPending;
+        const created = await this.createVivaJoinBookingWithSubscription({
+          booking: this.resolveBookingConfig(tournament),
+          phone: pending.phone,
+          clientSubscriptionId,
+          authorizationHeader: input.vivaAuthorizationHeader
+        });
+        providerBookingId = created.bookingId;
+      }
+      if (!providerBookingId) {
+        return this.buildPaidJoinRecoveryRequired(tournament);
+      }
+      const bound = await this.tournamentsPersistence.bindPublicJoinSubscriptionBooking(
+        tournament.id,
+        pending.transactionId,
+        pending.phone,
+        providerBookingId
+      );
+      if (!bound) {
+        return this.buildPaidJoinRecoveryRequired(tournament);
+      }
+      tournament = bound;
+      const rebound = this.findPendingJoinPayment(bound, pending.phone);
+      if (!rebound) {
+        return this.buildPaidJoinRecoveryRequired(tournament);
+      }
+      pending = rebound;
+    }
+
+    const verified = await this.findVerifiedVivaSubscriptionBooking(
+      pending,
+      providerBookingId
+    );
+    if (verified.status !== 'FOUND') {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    if (!pending.exerciseId) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    const verifiedPayment: NonNullable<PendingJoinPayment['verifiedPayment']> = {
+      provider: 'VIVA',
+      operationType: 'SUBSCRIPTION_BOOKING',
+      operationId: pending.transactionId,
+      bookingId: verified.bookingId,
+      clientId: pending.clientId,
+      clientSubscriptionId: pending.selectedPurchaseOptionId,
+      status: 'ACTIVE',
+      exerciseId: pending.exerciseId,
+      phone: pending.phone,
+      amountMinor: 0,
+      currency: 'RUB',
+      verifiedAt: new Date().toISOString()
+    };
+    const marked = await this.tournamentsPersistence.markPublicJoinPaymentPaid(
+      tournament.id,
+      pending.transactionId,
+      pending.phone,
+      verifiedPayment as unknown as Record<string, unknown>
+    );
+    if (!marked) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    const durablePending = this.findPendingJoinPayment(marked, pending.phone);
+    if (!durablePending || !this.hasDurableVerifiedPayment(durablePending, marked, pending.phone)) {
+      return this.buildPaidJoinRecoveryRequired(tournament);
+    }
+    return this.finalizePaidPublicJoin(marked, durablePending, {
+      fallbackName: input.name,
+      fallbackLevelLabel: input.levelLabel
+    });
+  }
+
+  private async findVerifiedVivaSubscriptionBooking(
+    pending: PendingJoinPayment,
+    expectedBookingId: string | undefined
+  ): Promise<
+    | { status: 'FOUND'; bookingId: string }
+    | { status: 'NOT_FOUND' | 'AMBIGUOUS' | 'UNAVAILABLE' }
+  > {
+    if (
+      !this.vivaAdminService
+      || !pending.exerciseId
+      || !pending.clientId
+      || !pending.selectedPurchaseOptionId
+    ) {
+      return { status: 'UNAVAILABLE' };
+    }
+    try {
+      const records = await this.vivaAdminService.listExerciseBookings(pending.exerciseId);
+      const matches = records.filter((item) => {
+        const record = this.toRecord(item) ?? {};
+        const client = this.toRecord(record.client) ?? {};
+        const exercise = this.toRecord(record.exercise) ?? {};
+        const subscription = this.toRecord(record.subscription) ?? {};
+        const bookingId = this.pickString(record.bookingId)
+          ?? this.pickString(record.id)
+          ?? this.pickString(record.uuid);
+        const exerciseId = this.pickString(record.exerciseId) ?? this.pickString(exercise.id);
+        const clientId = this.pickString(record.clientId) ?? this.pickString(client.id);
+        const clientPhone = this.normalizePhone(
+          record.clientPhone ?? record.phone ?? client.phone ?? client.phoneNumber
+        );
+        const clientSubscriptionId = this.pickString(record.clientSubscriptionId)
+          ?? this.pickString(record.subscriptionId)
+          ?? this.pickString(subscription.id);
+        const paymentType = this.pickString(
+          record.paymentType ?? record.detailedPaymentType
+        )?.toUpperCase();
+        return Boolean(
+          bookingId
+          && (!expectedBookingId || bookingId === expectedBookingId)
+          && exerciseId === pending.exerciseId
+          && clientId === pending.clientId
+          && clientPhone === pending.phone
+          && clientSubscriptionId === pending.selectedPurchaseOptionId
+          && paymentType === 'SUBSCRIPTION'
+          && record.isCancelled === false
+          && record.cancelled === false
+        );
+      });
+      if (matches.length === 0) {
+        return { status: 'NOT_FOUND' };
+      }
+      if (matches.length !== 1) {
+        return { status: 'AMBIGUOUS' };
+      }
+      const match = this.toRecord(matches[0]) ?? {};
+      const bookingId = this.pickString(match.bookingId)
+        ?? this.pickString(match.id)
+        ?? this.pickString(match.uuid);
+      return bookingId
+        ? { status: 'FOUND', bookingId }
+        : { status: 'UNAVAILABLE' };
+    } catch (error) {
+      this.logger.warn(`Failed to verify Viva subscription booking: ${String(error)}`);
+      return { status: 'UNAVAILABLE' };
+    }
+  }
+
+  private buildPaidJoinRecoveryRequired(
+    tournament: CustomTournament
+  ): TournamentRegistrationResponse {
+    return {
+      ok: false,
+      code: 'BOOKING_FAILED',
+      message: 'Оплата подтверждена, но durable recovery пока не зафиксирован. Повторите проверку позже.',
+      tournamentId: tournament.id,
+      tournamentSlug: tournament.slug
+    };
+  }
+
+  private async finalizePaidPublicJoin(
+    tournament: CustomTournament,
+    pending: PendingJoinPayment,
+    fallback: {
+      fallbackName?: string;
+      fallbackLevelLabel?: string;
+    }
+  ): Promise<TournamentRegistrationResponse> {
+    if (!this.isTournamentRegistrationOpen(tournament)) {
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Турнир закрыт или отменён. Оплата подтверждена, требуется ручное урегулирование.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug
+      };
+    }
+    const maxPlayers = Math.max(2, Number(tournament.maxPlayers || 0) || 8);
+    if (tournament.participants.length >= maxPlayers) {
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Зарезервированное место не удалось подтвердить. Оплата сохранена для recovery.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug
+      };
+    }
+
+    const paidAt = new Date().toISOString();
+    const participant = await this.enrichTournamentParticipantWithViva({
+      id: pending.transactionId,
+      name: pending.name ?? fallback.fallbackName ?? pending.phone,
+      phone: pending.phone,
+      levelLabel: pending.levelLabel ?? fallback.fallbackLevelLabel,
+      gender: 'MIXED',
+      paymentStatus: 'PAID',
+      status: 'REGISTERED',
+      registeredAt: paidAt,
+      paidAt,
+      notes: pending.notes
+    });
+    const finalized = await this.tournamentsPersistence.finalizePublicJoinPayment(
+      tournament.id,
+      pending.transactionId,
+      pending.phone,
+      participant
+    );
+    if (!finalized) {
+      const current = await this.requireCustomBySlug(tournament.slug);
+      const existing = this.findParticipantByPhone(current.participants, pending.phone);
+      if (existing) {
+        return {
+          ok: true,
+          code: 'ALREADY_REGISTERED',
+          message: 'Оплата уже была подтверждена, игрок записан в турнир.',
+          tournamentId: current.id,
+          tournamentSlug: current.slug,
+          participant: existing
+        };
+      }
+      return {
+        ok: false,
+        code: 'BOOKING_FAILED',
+        message: 'Оплата подтверждена, но финализация временно не завершена. Повторите recovery.',
+        tournamentId: tournament.id,
+        tournamentSlug: tournament.slug
+      };
+    }
+    this.invalidatePublicDirectoryCache();
+    return {
+      ok: true,
+      code: 'REGISTERED',
+      message: 'Оплата подтверждена, игрок записан в турнир.',
+      tournamentId: tournament.id,
+      tournamentSlug: tournament.slug,
+      participant
+    };
   }
 
   private async savePendingJoinPayment(
     tournament: CustomTournament,
     pending: PendingJoinPayment
-  ): Promise<void> {
+  ): Promise<boolean> {
     const enrichedPending = await this.enrichPendingJoinPaymentWithViva(pending);
-    const details = this.toRecord(tournament.details) ?? {};
-    const booking = this.toRecord(details.booking) ?? {};
-    const current = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
-    const next = [
-      ...current.filter((item) => {
-        const record = this.toRecord(item);
-        return this.pickString(record?.transactionId) !== enrichedPending.transactionId;
-      }),
-      enrichedPending
-    ];
-    await this.updateCustom(tournament.id, {
-      details: {
-        ...details,
-        booking: {
-          ...booking,
-          pendingJoinPayments: next
-        }
-      }
-    });
-  }
-
-  private async removePendingJoinPayment(
-    tournament: CustomTournament,
-    transactionId: string
-  ): Promise<void> {
-    const details = this.toRecord(tournament.details) ?? {};
-    const booking = this.toRecord(details.booking) ?? {};
-    const current = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
-    const next = current.filter((item) => {
-      const record = this.toRecord(item);
-      return this.pickString(record?.transactionId) !== transactionId;
-    });
-    await this.updateCustom(tournament.id, {
-      details: {
-        ...details,
-        booking: {
-          ...booking,
-          pendingJoinPayments: next
-        }
-      }
-    });
+    const reserved = await this.tournamentsPersistence.reservePublicJoinPayment(
+      tournament.id,
+      enrichedPending as unknown as Record<string, unknown>
+    );
+    if (reserved) {
+      this.invalidatePublicDirectoryCache();
+    }
+    return Boolean(reserved);
   }
 
   private normalizeClientSubscriptions(value: unknown): TournamentClientSubscription[] {
@@ -5870,14 +6655,6 @@ export class TournamentsService {
       return subscriptions.find((item) => item.id === selectedId) ?? null;
     }
     return subscriptions[0];
-  }
-
-  private canCreateVivaTransaction(booking: TournamentBookingConfig): boolean {
-    return Boolean(
-      (this.pickString(booking.vivaWidgetId) ?? this.vivaEndUserWidgetId)
-      && this.pickString(booking.vivaExerciseId)
-      && this.pickString(booking.vivaStudioId)
-    );
   }
 
   private isSubscriptionCompatible(
@@ -6277,24 +7054,26 @@ export class TournamentsService {
       }
     });
 
-    this.getPendingJoinPayments(tournament).forEach((payment, index) => {
-      const participant = this.pendingJoinPaymentToParticipant(payment, index);
-      const participantKey = this.buildParticipantKey(participant);
-      if (participantKey && seen.has(participantKey)) {
-        return;
-      }
-      if (participantKey) {
-        seen.add(participantKey);
-      }
-      const key = participant.id ? `pending:${participant.id}` : '';
-      if (key && seen.has(key)) {
-        return;
-      }
-      if (key) {
-        seen.add(key);
-      }
-      participants.push(participant);
-    });
+    this.getPendingJoinPayments(tournament)
+      .filter((payment) => this.isCapacityHoldingPendingJoinPayment(payment))
+      .forEach((payment, index) => {
+        const participant = this.pendingJoinPaymentToParticipant(payment, index);
+        const participantKey = this.buildParticipantKey(participant);
+        if (participantKey && seen.has(participantKey)) {
+          return;
+        }
+        if (participantKey) {
+          seen.add(participantKey);
+        }
+        const key = participant.id ? `pending:${participant.id}` : '';
+        if (key && seen.has(key)) {
+          return;
+        }
+        if (key) {
+          seen.add(key);
+        }
+        participants.push(participant);
+      });
 
     return participants;
   }
@@ -6305,25 +7084,7 @@ export class TournamentsService {
     const pending = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
     return pending
       .map((item): PendingJoinPayment | null => {
-        const record = this.toRecord(item);
-        if (!record) {
-          return null;
-        }
-        const transactionId = this.pickString(record.transactionId);
-        const phone = this.normalizePhone(record.phone);
-        if (!transactionId || !phone) {
-          return null;
-        }
-        return {
-          transactionId,
-          phone,
-          name: this.pickString(record.name) ?? undefined,
-          avatarUrl: this.pickNullableString(record.avatarUrl ?? record.photo),
-          levelLabel: this.normalizeLevel(this.pickString(record.levelLabel)) ?? undefined,
-          notes: this.pickString(record.notes) ?? undefined,
-          selectedPurchaseOptionId: this.pickString(record.selectedPurchaseOptionId) ?? undefined,
-          createdAt: this.pickString(record.createdAt) ?? new Date().toISOString()
-        };
+        return this.parsePendingJoinPayment(this.toRecord(item));
       })
       .filter((item): item is PendingJoinPayment => Boolean(item));
   }
@@ -6629,7 +7390,7 @@ export class TournamentsService {
         base,
         step: null,
         label: base,
-        rank: baseIndex * TOURNAMENT_LEVEL_DIVISION_COUNT,
+        rank: Math.round(baseRange.start * 1000),
         minScore: baseRange.start,
         maxScore: baseRange.end
       };
@@ -6669,12 +7430,15 @@ export class TournamentsService {
       return null;
     }
 
+    const discreteRank = this.findLevelRankByToken(token);
     return {
       token,
       base,
-      step: Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT),
+      step: discreteRank >= 0
+        ? Math.round((numericScore - baseRange.start) * TOURNAMENT_LEVEL_DIVISION_COUNT)
+        : null,
       label: base,
-      rank: this.findLevelRankByToken(token),
+      rank: Math.round(numericScore * 1000),
       minScore: numericScore,
       maxScore: numericScore
     };
@@ -6728,8 +7492,7 @@ export class TournamentsService {
       return null;
     }
 
-    const token = this.formatLevelScoreToken(numeric);
-    return this.findLevelRankByToken(token) >= 0 ? token : null;
+    return this.formatLevelScoreToken(numeric);
   }
 
   private resolveLegacyLevelScore(base: string, value: string): number | null {

@@ -1,4 +1,5 @@
 export interface LkIdentityActor {
+  issuer: string;
   subject: string;
   clientId?: string;
   phoneNorm: string;
