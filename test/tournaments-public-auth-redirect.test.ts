@@ -221,6 +221,32 @@ async function main(): Promise<void> {
   }
 
   {
+    currentFlowCode = 'PLAYER_LEVEL_REQUIRED';
+    const capture = createResponseCapture();
+    await controller.renderJoinPage(
+      'weekend-cup',
+      createRequest(),
+      capture.response,
+      undefined,
+      'json',
+      undefined
+    );
+
+    const payload = capture.getJson() as TournamentJoinFlowResponse;
+    assert.equal(payload.levelRecovery?.reasonCode, 'PLAYER_LEVEL_REQUIRED');
+    assert.equal(payload.levelRecovery?.returnActivityType, 'TOURNAMENT');
+    assert.equal(payload.levelRecovery?.returnActivityId, 't-1');
+    assert.equal(payload.levelRecovery?.returnAction, 'REGISTER');
+    assert.equal(payload.levelRecovery?.returnUrl, expectedJoinUrl);
+    const selfDeclaredUrl = new URL(String(payload.levelRecovery?.selfDeclaredUrl || ''));
+    assert.equal(selfDeclaredUrl.searchParams.get('levelRecoveryMode'), 'SELF_DECLARED');
+    assert.equal(selfDeclaredUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+    const onboardingUrl = new URL(String(payload.levelRecovery?.onboardingUrl || ''));
+    assert.equal(onboardingUrl.searchParams.get('levelRecoveryMode'), 'ONBOARDING');
+    assert.equal(onboardingUrl.searchParams.get('returnUrl'), expectedJoinUrl);
+  }
+
+  {
     currentFlowCode = 'AUTH_REQUIRED';
     const capture = createResponseCapture();
     await controller.renderJoinPage(

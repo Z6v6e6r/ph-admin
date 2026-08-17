@@ -302,10 +302,62 @@ async function main(): Promise<void> {
 
     const html = capture.getHtml();
     assert.doesNotMatch(html ?? '', /<select name="levelLabel" required>/);
-    assert.match(html ?? '', /<input type="hidden" name="levelLabel" value="D" \/>/);
+    assert.doesNotMatch(html ?? '', /name="levelLabel"/);
     assert.match(html ?? '', /<option value="energy-5" selected>Энергия 5 🎾 · 3 990 ₽<\/option>/);
     assert.match(html ?? '', /<option value="energy-flex">Энергия 🎾<\/option>/);
     assert.doesNotMatch(html ?? '', /Энергия 🎾 · —/);
+  }
+
+  {
+    const levelRequiredFlow = createFlow(tournament, 'PLAYER_LEVEL_REQUIRED', {
+      accessOk: false,
+      accessCode: 'PLAYER_LEVEL_REQUIRED',
+      accessMessage: 'Для записи нужен уровень игрока.'
+    });
+    levelRequiredFlow.client = {
+      ...levelRequiredFlow.client,
+      authorized: true,
+      phoneVerified: true,
+      onboardingCompleted: false,
+      phone: '79990001122',
+      levelLabel: undefined
+    };
+    levelRequiredFlow.missingFields = ['levelLabel'];
+    levelRequiredFlow.message = 'Укажите уровень, чтобы присоединиться к турниру.';
+    const controllerWithFlow = new TournamentsPublicController(
+      {
+        getPublicBySlug: async () => tournament,
+        getPublicJoinFlow: async () => levelRequiredFlow,
+        resolveCanonicalLkRegistrationClientByVerifiedPhone: async () => ({
+          name: 'Игрок без уровня',
+          phone: '79990001122'
+        })
+      } as never,
+      createSessionServiceMock({
+        ensureAuthorizedClient: () => levelRequiredFlow.client
+      }) as never
+    );
+    const capture = createResponseCapture();
+    await controllerWithFlow.renderJoinPage(
+      tournament.slug,
+      createRequest('text/html,application/xhtml+xml'),
+      capture.response,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    const html = capture.getHtml();
+    assert.match(html ?? '', /Укажите уровень, чтобы присоединиться/);
+    assert.match(html ?? '', />Знаю свой уровень<\/a>/);
+    assert.match(html ?? '', />Пройти определение уровня<\/a>/);
+    assert.doesNotMatch(html ?? '', /<select name="levelLabel"/);
+    assert.match(html ?? '', /levelRecoveryMode=SELF_DECLARED/);
+    assert.match(html ?? '', /levelRecoveryMode=ONBOARDING/);
+    assert.match(html ?? '', /returnActivityType=TOURNAMENT/);
+    assert.match(html ?? '', /returnAction=REGISTER/);
   }
 
   {

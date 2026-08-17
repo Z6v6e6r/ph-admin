@@ -223,6 +223,19 @@ async function main(): Promise<void> {
   );
   assert.equal(unverifiedPhoneFlow.code, 'PHONE_VERIFICATION_REQUIRED');
 
+  const missingLevelFlow = await service.getPublicJoinFlow(tournament.slug, {
+    id: 'user-without-level',
+    authorized: true,
+    authSource: 'headers',
+    name: 'Игрок без уровня',
+    phone: '+7 999 000-11-21',
+    onboardingCompleted: false,
+    subscriptions: []
+  });
+  assert.equal(missingLevelFlow.code, 'PLAYER_LEVEL_REQUIRED');
+  assert.equal(missingLevelFlow.access.code, 'PLAYER_LEVEL_REQUIRED');
+  assert.deepEqual(missingLevelFlow.missingFields, ['levelLabel']);
+
   const disallowedLevelFlow = await service.getPublicJoinFlow(tournament.slug, {
     id: 'user-1',
     authorized: true,

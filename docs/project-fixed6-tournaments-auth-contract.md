@@ -30,7 +30,7 @@ After trusted identity resolution, PH AB reads `player_rating_state` by the
 verified Viva client id and/or normalized verified phone:
 
 - exactly zero matching states means the player has no level and the join flow
-  returns onboarding-required;
+  returns `PLAYER_LEVEL_REQUIRED` with trusted-profile and onboarding recovery URLs;
 - one state must have `ownership=CUP_CANONICAL`, a valid numeric rating and the
   matching derived grade;
 - two states, conflicting client-id/phone aliases, or an inconsistent rating
@@ -41,6 +41,10 @@ verified Viva client id and/or normalized verified phone:
 The join controller no longer PATCHes or PUTs a browser-selected level to Viva.
 Level assessment must be completed through the canonical profile/onboarding
 command before registration is retried.
+
+The recovery URLs preserve `returnActivityType=TOURNAMENT`, `returnActivityId`,
+`returnAction=REGISTER` and the absolute tournament `returnUrl`. The public join
+form never persists a browser-selected level itself.
 
 ## Mutation routes
 

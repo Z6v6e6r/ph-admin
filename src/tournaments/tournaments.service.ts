@@ -1124,9 +1124,9 @@ export class TournamentsService {
     if (missingFields.includes('levelLabel')) {
       return {
         ok: false,
-        code: 'ONBOARDING_REQUIRED',
+        code: 'PLAYER_LEVEL_REQUIRED',
         message:
-          'Для участия в этом турнире нужно определить игровой уровень. Выберите его перед записью.',
+          'Укажите уровень, чтобы присоединиться к турниру.',
         tournament: publicTournament,
         client: normalizedClient,
         access,
@@ -4938,8 +4938,8 @@ export class TournamentsService {
     if (!normalizedLevel) {
       return {
         ok: false,
-        code: 'ONBOARDING_REQUIRED',
-        message: 'Для записи нужен уровень игрока. Предложите пользователю пройти онбординг.',
+        code: 'PLAYER_LEVEL_REQUIRED',
+        message: 'Для записи нужен уровень игрока.',
         tournamentSlug: tournament.slug,
         accessLevels: tournament.accessLevels
       };
