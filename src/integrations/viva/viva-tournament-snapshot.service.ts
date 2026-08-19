@@ -3,7 +3,7 @@ import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { Tournament } from '../../tournaments/tournaments.types';
 import { VivaTournamentsService } from './viva-tournaments.service';
 
-export const VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS = 7;
+export const VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS = 31;
 
 export interface VivaTournamentSnapshotListOptions {
   date?: string;

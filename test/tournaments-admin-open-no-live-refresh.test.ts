@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     /request\('\/tournaments\/snapshot\/admin-refresh-range', 'POST'/
   );
   assert.match(sdkSource, /tournamentsVivaRefreshToDateInput\.type = 'date'/);
-  assert.match(sdkSource, /Viva по \(до 7 дней\)/);
+  assert.match(sdkSource, /Viva по \(до 31 дня\)/);
   assert.match(sdkSource, /tournamentsVivaRefreshBtn\.textContent = '↻ Обновить из Viva'/);
   const refreshHandlerStart = sdkSource.indexOf(
     'async function refreshTournamentRangeFromViva()'
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   assert.ok(refreshHandlerStart >= 0 && refreshHandlerEnd > refreshHandlerStart);
   const refreshHandler = sdkSource.slice(refreshHandlerStart, refreshHandlerEnd);
   assert.match(refreshHandler, /refreshTournamentSnapshotAdminRange\(from, to\)/);
-  assert.match(refreshHandler, /requestedDays > 7/);
+  assert.match(refreshHandler, /requestedDays > 31/);
   assert.match(refreshHandler, /tournamentsVivaRefreshBtn\.disabled = true/);
   assert.match(refreshHandler, /tournamentsVivaRefreshToDateInput\.disabled = true/);
   assert.match(refreshHandler, /result\.reason === 'cooldown'/);

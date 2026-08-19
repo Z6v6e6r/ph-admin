@@ -91,10 +91,17 @@ async function main(): Promise<void> {
   );
   assert.equal(calls.length, 2, 'a one-day inclusive range must remain valid');
 
+  await service.refreshVivaTournamentSnapshotAdminRange(
+    from,
+    addUtcDays(from, 30),
+    createUser(null)
+  );
+  assert.equal(calls.length, 3, 'a 31-day inclusive range must remain valid');
+
   const invalidInputs: Array<[unknown, unknown]> = [
     ['2026-02-30', '2026-03-01'],
     [to, from],
-    [from, addUtcDays(from, 7)],
+    [from, addUtcDays(from, 31)],
     ['', to]
   ];
   for (const [invalidFrom, invalidTo] of invalidInputs) {
@@ -107,7 +114,7 @@ async function main(): Promise<void> {
       (error: any) => error?.getStatus?.() === 400
     );
   }
-  assert.equal(calls.length, 2, 'invalid ranges must fail before snapshot refresh');
+  assert.equal(calls.length, 3, 'invalid ranges must fail before snapshot refresh');
 
   const deniedUsers: Array<RequestUser | undefined> = [
     undefined,
@@ -123,7 +130,7 @@ async function main(): Promise<void> {
         && error?.getResponse?.()?.code === 'TOURNAMENT_VIVA_REFRESH_GLOBAL_SCOPE_REQUIRED'
     );
   }
-  assert.equal(calls.length, 2, 'authorization denial must happen before snapshot refresh');
+  assert.equal(calls.length, 3, 'authorization denial must happen before snapshot refresh');
 
   const unavailableService = createService();
   await assert.rejects(

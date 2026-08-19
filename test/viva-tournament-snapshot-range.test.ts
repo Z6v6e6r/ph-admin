@@ -180,8 +180,8 @@ async function testRangeRefreshSingleFlightCooldownAndValidation(): Promise<void
         /from <= to/
       );
       await assert.rejects(
-        () => snapshotService.refreshRange('2026-07-01', '2026-07-08'),
-        /cannot exceed 7 days/
+        () => snapshotService.refreshRange('2026-07-01', '2026-08-01'),
+        /cannot exceed 31 days/
       );
       assert.equal(calls, 2, 'invalid ranges must not call Viva');
     } finally {

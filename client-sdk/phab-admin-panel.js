@@ -10615,7 +10615,7 @@
 
     var tournamentsVivaRefreshToDateLabel = document.createElement('span');
     tournamentsVivaRefreshToDateLabel.className = 'phab-admin-settings-label';
-    tournamentsVivaRefreshToDateLabel.textContent = 'Viva по (до 7 дней)';
+    tournamentsVivaRefreshToDateLabel.textContent = 'Viva по (до 31 дня)';
     tournamentsVivaRefreshToDateWrap.appendChild(tournamentsVivaRefreshToDateLabel);
 
     var tournamentsVivaRefreshToDateInput = document.createElement('input');
@@ -23420,8 +23420,8 @@
         setStatus('Дата начала Viva должна быть не позже даты окончания.', true);
         return;
       }
-      if (requestedDays > 7) {
-        setStatus('За один запрос можно обновить не более 7 дней Viva.', true);
+      if (requestedDays > 31) {
+        setStatus('За один запрос можно обновить не более 31 дня Viva.', true);
         return;
       }
 
