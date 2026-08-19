@@ -21,11 +21,14 @@ function createService(
   );
 }
 
-function createUser(scope: string[] | null): RequestUser {
+function createUser(
+  scope: string[] | null,
+  permissions: string[] = ['tournaments:write']
+): RequestUser {
   return {
     id: 'admin:tournaments',
     roles: [Role.MANAGER],
-    permissions: ['tournaments:write'],
+    permissions,
     permissionStationScopes: { 'tournaments:write': scope },
     stationIds: scope ?? [],
     connectorRoutes: []
@@ -79,6 +82,13 @@ async function main(): Promise<void> {
   );
   await assert.rejects(
     () => service.refreshVivaTournamentSnapshotAdminDay(testDate, createUser([])),
+    (error: any) => error?.getStatus?.() === 403
+  );
+  await assert.rejects(
+    () => service.refreshVivaTournamentSnapshotAdminDay(
+      testDate,
+      createUser(null, ['tournaments:read'])
+    ),
     (error: any) => error?.getStatus?.() === 403
   );
   assert.equal(refreshCalls, 1, 'scoped admins must fail before snapshot refresh');

@@ -12,7 +12,7 @@ import {
 import { createHash, createPublicKey, randomUUID, verify as verifySignature } from 'crypto';
 import type { JsonWebKey } from 'crypto';
 import { RequestUser } from '../common/rbac/request-user.interface';
-import { getStationScopeForPermission } from '../common/rbac/permissions';
+import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import { CommunitiesService } from '../communities/communities.service';
 import { CommunityFeedItem } from '../communities/communities.types';
 import { GamesService } from '../games/games.service';
@@ -25,9 +25,11 @@ import {
   VivaExerciseStatusSnapshot
 } from '../integrations/viva/viva-admin.service';
 import {
+  VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS,
   VivaTournamentSnapshotDiagnostics,
   VivaTournamentSnapshotDayRefreshResult,
   VivaTournamentSnapshotDayRevalidationResult,
+  VivaTournamentSnapshotRangeRefreshResult,
   VivaTournamentSnapshotRefreshResult,
   VivaTournamentSnapshotService
 } from '../integrations/viva/viva-tournament-snapshot.service';
@@ -1071,15 +1073,7 @@ export class TournamentsService {
     }
   > {
     const date = this.requireManualTournamentRefreshDate(inputDate);
-    if (
-      !user ||
-      getStationScopeForPermission(user, 'tournaments:write') !== null
-    ) {
-      throw new ForbiddenException({
-        code: 'TOURNAMENT_VIVA_REFRESH_GLOBAL_SCOPE_REQUIRED',
-        message: 'Viva tournament refresh requires global tournament write scope'
-      });
-    }
+    this.assertGlobalTournamentRefreshAccess(user);
     if (!this.vivaTournamentSnapshotService) {
       throw new ServiceUnavailableException('Viva tournament snapshot service is unavailable');
     }
@@ -1095,6 +1089,44 @@ export class TournamentsService {
     return {
       ...metadata,
       tournamentsCount: tournaments.length
+    };
+  }
+
+  async refreshVivaTournamentSnapshotAdminRange(
+    inputFrom: unknown,
+    inputTo: unknown,
+    user?: RequestUser
+  ): Promise<VivaTournamentSnapshotRangeRefreshResult> {
+    const { from, to } = this.requireManualTournamentRefreshRange(inputFrom, inputTo);
+    this.assertGlobalTournamentRefreshAccess(user);
+    if (!this.vivaTournamentSnapshotService) {
+      throw new ServiceUnavailableException('Viva tournament snapshot service is unavailable');
+    }
+
+    const result = await this.vivaTournamentSnapshotService.refreshRange(
+      from,
+      to,
+      'admin_tournaments_manual_range_refresh'
+    );
+    if (result.refreshed) {
+      this.invalidatePublicDirectoryCache();
+    }
+    return {
+      enabled: result.enabled,
+      refreshed: result.refreshed,
+      reason: result.reason,
+      from: result.from,
+      to: result.to,
+      requestedDays: result.requestedDays,
+      refreshedDays: result.refreshedDays,
+      failedDays: result.failedDays,
+      refreshedDates: [...result.refreshedDates],
+      failedDates: [...result.failedDates],
+      tournamentsCount: result.tournamentsCount,
+      snapshotAvailable: result.snapshotAvailable,
+      ...(result.refreshedAt ? { refreshedAt: result.refreshedAt } : {}),
+      ...(result.retryAfterMs !== undefined ? { retryAfterMs: result.retryAfterMs } : {}),
+      ...(result.persisted !== undefined ? { persisted: result.persisted } : {})
     };
   }
 
@@ -7745,6 +7777,39 @@ export class TournamentsService {
       throw new BadRequestException('date is outside the allowed refresh window');
     }
     return text;
+  }
+
+  private requireManualTournamentRefreshRange(
+    inputFrom: unknown,
+    inputTo: unknown
+  ): { from: string; to: string } {
+    const from = this.requireManualTournamentRefreshDate(inputFrom);
+    const to = this.requireManualTournamentRefreshDate(inputTo);
+    if (from > to) {
+      throw new BadRequestException('from must be on or before to');
+    }
+    const fromUtc = Date.parse(`${from}T00:00:00.000Z`);
+    const toUtc = Date.parse(`${to}T00:00:00.000Z`);
+    const rangeDays = Math.round((toUtc - fromUtc) / 86_400_000) + 1;
+    if (rangeDays > VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS) {
+      throw new BadRequestException(
+        `date range cannot exceed ${VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS} days`
+      );
+    }
+    return { from, to };
+  }
+
+  private assertGlobalTournamentRefreshAccess(user?: RequestUser): void {
+    if (
+      !user
+      || !hasAdminPermission(user.permissions, 'tournaments:write')
+      || getStationScopeForPermission(user, 'tournaments:write') !== null
+    ) {
+      throw new ForbiddenException({
+        code: 'TOURNAMENT_VIVA_REFRESH_GLOBAL_SCOPE_REQUIRED',
+        message: 'Viva tournament refresh requires global tournament write scope'
+      });
+    }
   }
 
   private normalizeTournamentListDateTime(value?: string): string | undefined {

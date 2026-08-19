@@ -3,6 +3,8 @@ import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { Tournament } from '../../tournaments/tournaments.types';
 import { VivaTournamentsService } from './viva-tournaments.service';
 
+export const VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS = 7;
+
 export interface VivaTournamentSnapshotListOptions {
   date?: string;
   from?: string;
@@ -77,6 +79,24 @@ export interface VivaTournamentSnapshotDayRefreshResult {
   date: string;
   snapshotAvailable: boolean;
   tournaments: Tournament[];
+  refreshedAt?: string;
+  retryAfterMs?: number;
+  persisted?: boolean;
+}
+
+export interface VivaTournamentSnapshotRangeRefreshResult {
+  enabled: boolean;
+  refreshed: boolean;
+  reason: 'refreshed' | 'partial' | 'cooldown' | 'refresh_failed';
+  from: string;
+  to: string;
+  requestedDays: number;
+  refreshedDays: number;
+  failedDays: number;
+  refreshedDates: string[];
+  failedDates: string[];
+  tournamentsCount: number;
+  snapshotAvailable: boolean;
   refreshedAt?: string;
   retryAfterMs?: number;
   persisted?: boolean;
@@ -162,6 +182,8 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
   private refreshPromise?: Promise<VivaTournamentSnapshot | null>;
   private manualRefreshPromise?: Promise<VivaTournamentSnapshotDayRefreshResult>;
   private manualRefreshDate?: string;
+  private manualRangeRefreshPromise?: Promise<VivaTournamentSnapshotRangeRefreshResult>;
+  private manualRangeRefreshKey?: string;
   private hydrateAttempted = false;
   private lastHydrateFailureAt?: number;
   private indexesEnsured = false;
@@ -334,6 +356,10 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       throw new Error('Manual Viva tournament refresh requires date in YYYY-MM-DD format');
     }
 
+    if (this.manualRangeRefreshPromise) {
+      return this.buildManualRefreshCooldownResult(normalizedDate);
+    }
+
     if (this.manualRefreshPromise) {
       const activeDate = this.manualRefreshDate;
       const activeResult = await this.manualRefreshPromise;
@@ -345,6 +371,17 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
 
     if (this.refreshPromise) {
       await this.refreshPromise;
+      if (this.manualRangeRefreshPromise) {
+        return this.buildManualRefreshCooldownResult(normalizedDate);
+      }
+      if (this.manualRefreshPromise) {
+        const activeDate = this.manualRefreshDate;
+        const activeResult = await this.manualRefreshPromise;
+        if (activeDate === normalizedDate) {
+          return activeResult;
+        }
+        return this.buildManualRefreshCooldownResult(normalizedDate);
+      }
     }
 
     const now = Date.now();
@@ -356,6 +393,58 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     }
 
     return this.startDateRefresh(normalizedDate, reason);
+  }
+
+  async refreshRange(
+    from: string,
+    to: string,
+    reason = 'manual_range_refresh'
+  ): Promise<VivaTournamentSnapshotRangeRefreshResult> {
+    const dates = this.requireManualRefreshRange(from, to);
+    const normalizedFrom = dates[0];
+    const normalizedTo = dates[dates.length - 1];
+    const rangeKey = `${normalizedFrom}:${normalizedTo}`;
+
+    if (this.manualRangeRefreshPromise) {
+      if (this.manualRangeRefreshKey === rangeKey) {
+        return this.manualRangeRefreshPromise;
+      }
+      return this.buildManualRangeCooldownResult(normalizedFrom, normalizedTo, dates.length);
+    }
+
+    if (this.manualRefreshPromise) {
+      await this.manualRefreshPromise;
+      return this.buildManualRangeCooldownResult(normalizedFrom, normalizedTo, dates.length);
+    }
+
+    if (this.refreshPromise) {
+      await this.refreshPromise;
+      if (this.manualRangeRefreshPromise) {
+        if (this.manualRangeRefreshKey === rangeKey) {
+          return this.manualRangeRefreshPromise;
+        }
+        return this.buildManualRangeCooldownResult(normalizedFrom, normalizedTo, dates.length);
+      }
+      if (this.manualRefreshPromise) {
+        await this.manualRefreshPromise;
+        return this.buildManualRangeCooldownResult(normalizedFrom, normalizedTo, dates.length);
+      }
+    }
+
+    const now = Date.now();
+    const retryAfterMs = this.lastManualRefreshAttemptAt
+      ? Math.max(0, this.manualRefreshCooldownMs - (now - this.lastManualRefreshAttemptAt))
+      : 0;
+    if (retryAfterMs > 0) {
+      return this.buildManualRangeCooldownResult(
+        normalizedFrom,
+        normalizedTo,
+        dates.length,
+        retryAfterMs
+      );
+    }
+
+    return this.startRangeRefresh(dates, reason);
   }
 
   private startDateRefresh(
@@ -383,6 +472,33 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     return trackedResponsePromise;
   }
 
+  private startRangeRefresh(
+    dates: string[],
+    reason: string
+  ): Promise<VivaTournamentSnapshotRangeRefreshResult> {
+    const from = dates[0];
+    const to = dates[dates.length - 1];
+    this.lastManualRefreshAttemptAt = Date.now();
+    this.manualRangeRefreshKey = `${from}:${to}`;
+    const operation = this.refreshSnapshotRange(dates, reason);
+    const snapshotPromise = operation.then((result) => result.snapshot);
+    const trackedSnapshotPromise = snapshotPromise.finally(() => {
+      if (this.refreshPromise === trackedSnapshotPromise) {
+        this.refreshPromise = undefined;
+      }
+    });
+    this.refreshPromise = trackedSnapshotPromise;
+    const responsePromise = operation.then((result) => result.response);
+    const trackedResponsePromise = responsePromise.finally(() => {
+      if (this.manualRangeRefreshPromise === trackedResponsePromise) {
+        this.manualRangeRefreshPromise = undefined;
+        this.manualRangeRefreshKey = undefined;
+      }
+    });
+    this.manualRangeRefreshPromise = trackedResponsePromise;
+    return trackedResponsePromise;
+  }
+
   private async buildManualRefreshCooldownResult(
     date: string,
     retryAfterMs = this.lastManualRefreshAttemptAt
@@ -402,6 +518,38 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       tournaments: snapshot
         ? this.filterTournaments(snapshot.tournaments, { date })
         : [],
+      retryAfterMs,
+      ...(this.lastManualRefreshAt
+        ? { refreshedAt: new Date(this.lastManualRefreshAt).toISOString() }
+        : {})
+    };
+  }
+
+  private async buildManualRangeCooldownResult(
+    from: string,
+    to: string,
+    requestedDays: number,
+    retryAfterMs = this.lastManualRefreshAttemptAt
+      ? Math.max(
+          0,
+          this.manualRefreshCooldownMs - (Date.now() - this.lastManualRefreshAttemptAt)
+        )
+      : this.manualRefreshCooldownMs
+  ): Promise<VivaTournamentSnapshotRangeRefreshResult> {
+    const snapshot = await this.getCurrentSnapshot();
+    return {
+      enabled: true,
+      refreshed: false,
+      reason: 'cooldown',
+      from,
+      to,
+      requestedDays,
+      refreshedDays: 0,
+      failedDays: 0,
+      refreshedDates: [],
+      failedDates: [],
+      tournamentsCount: 0,
+      snapshotAvailable: Boolean(snapshot),
       retryAfterMs,
       ...(this.lastManualRefreshAt
         ? { refreshedAt: new Date(this.lastManualRefreshAt).toISOString() }
@@ -663,6 +811,94 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
         snapshot: previousSnapshot ?? null
       };
     }
+  }
+
+  private async refreshSnapshotRange(
+    dates: string[],
+    reason: string
+  ): Promise<{
+    response: VivaTournamentSnapshotRangeRefreshResult;
+    snapshot: VivaTournamentSnapshot | null;
+  }> {
+    const startedAt = Date.now();
+    this.lastStartedAt = new Date(startedAt).toISOString();
+    const previousSnapshot = await this.getCurrentSnapshot();
+    const refreshedAt = new Date().toISOString();
+    const refreshedDates: string[] = [];
+    const failedDates: string[] = [];
+    let tournamentsCount = 0;
+    let nextSnapshot = previousSnapshot;
+
+    for (const date of dates) {
+      try {
+        const tournaments = await this.vivaTournamentsService.listTournaments({
+          date,
+          includePast: true
+        });
+        if (!tournaments) {
+          throw new Error('Viva tournaments source returned no data');
+        }
+        nextSnapshot = this.mergeRefreshedDate(
+          nextSnapshot,
+          date,
+          tournaments,
+          refreshedAt,
+          reason
+        );
+        refreshedDates.push(date);
+        tournamentsCount += tournaments.length;
+      } catch (error) {
+        failedDates.push(date);
+        this.logger.warn(
+          JSON.stringify({
+            type: 'viva_tournament_snapshot_range_date_refresh_failed',
+            reason,
+            date,
+            error: this.formatError(error)
+          })
+        );
+      }
+    }
+
+    const refreshed = refreshedDates.length > 0;
+    const reasonCode = !refreshed
+      ? 'refresh_failed'
+      : failedDates.length > 0
+        ? 'partial'
+        : 'refreshed';
+    let persisted: boolean | undefined;
+    if (refreshed && nextSnapshot) {
+      this.snapshot = nextSnapshot;
+      this.lastManualRefreshAt = Date.now();
+      persisted = await this.persistSnapshot(nextSnapshot);
+    }
+
+    if (failedDates.length > 0) {
+      this.lastFailureAt = new Date().toISOString();
+      this.lastError = `Failed Viva tournament refresh dates: ${failedDates.join(', ')}`;
+    } else {
+      this.lastFailureAt = undefined;
+      this.lastError = undefined;
+    }
+
+    return {
+      response: {
+        enabled: true,
+        refreshed,
+        reason: reasonCode,
+        from: dates[0],
+        to: dates[dates.length - 1],
+        requestedDays: dates.length,
+        refreshedDays: refreshedDates.length,
+        failedDays: failedDates.length,
+        refreshedDates,
+        failedDates,
+        tournamentsCount,
+        snapshotAvailable: Boolean(nextSnapshot),
+        ...(refreshed ? { refreshedAt, persisted } : {})
+      },
+      snapshot: nextSnapshot ?? null
+    };
   }
 
   private mergeRefreshedDate(
@@ -943,6 +1179,37 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       month: '2-digit',
       day: '2-digit'
     }).format(date);
+  }
+
+  private requireManualRefreshRange(from: string, to: string): string[] {
+    const normalizedFrom = this.normalizeDateKey(from);
+    const normalizedTo = this.normalizeDateKey(to);
+    if (
+      !normalizedFrom
+      || !normalizedTo
+      || normalizedFrom !== from
+      || normalizedTo !== to
+      || this.toDateKey(this.dateFromKey(normalizedFrom)) !== normalizedFrom
+      || this.toDateKey(this.dateFromKey(normalizedTo)) !== normalizedTo
+    ) {
+      throw new Error('Manual Viva tournament refresh range requires valid YYYY-MM-DD dates');
+    }
+    if (normalizedFrom > normalizedTo) {
+      throw new Error('Manual Viva tournament refresh range must have from <= to');
+    }
+
+    const dates: string[] = [];
+    let cursor = normalizedFrom;
+    while (cursor <= normalizedTo) {
+      dates.push(cursor);
+      if (dates.length > VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS) {
+        throw new Error(
+          `Manual Viva tournament refresh range cannot exceed ${VIVA_TOURNAMENT_SNAPSHOT_MANUAL_RANGE_MAX_DAYS} days`
+        );
+      }
+      cursor = this.addDays(cursor, 1);
+    }
+    return dates;
   }
 
   private addDays(dateKey: string, days: number): string {

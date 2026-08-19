@@ -8101,6 +8101,12 @@
           date: String(date || '').trim()
         });
       },
+      refreshTournamentSnapshotAdminRange: function (from, to) {
+        return request('/tournaments/snapshot/admin-refresh-range', 'POST', {
+          from: String(from || '').trim(),
+          to: String(to || '').trim()
+        });
+      },
       getTournamentVivaStatusSyncDiagnostics: function () {
         return request('/tournaments/debug/viva-status-sync', 'GET');
       },
@@ -10592,7 +10598,7 @@
 
     var tournamentsVivaRefreshDateLabel = document.createElement('span');
     tournamentsVivaRefreshDateLabel.className = 'phab-admin-settings-label';
-    tournamentsVivaRefreshDateLabel.textContent = 'Дата Viva';
+    tournamentsVivaRefreshDateLabel.textContent = 'Viva с';
     tournamentsVivaRefreshDateWrap.appendChild(tournamentsVivaRefreshDateLabel);
 
     var tournamentsVivaRefreshDateInput = document.createElement('input');
@@ -10601,6 +10607,23 @@
     tournamentsVivaRefreshDateInput.value = getTodayDateInputValue();
     tournamentsVivaRefreshDateInput.style.width = '160px';
     tournamentsVivaRefreshDateWrap.appendChild(tournamentsVivaRefreshDateInput);
+
+    var tournamentsVivaRefreshToDateWrap = document.createElement('label');
+    tournamentsVivaRefreshToDateWrap.className = 'phab-admin-logs-filter';
+    tournamentsVivaRefreshToDateWrap.hidden = !hasPermission(cfg, 'tournaments:write');
+    tournamentsFilters.appendChild(tournamentsVivaRefreshToDateWrap);
+
+    var tournamentsVivaRefreshToDateLabel = document.createElement('span');
+    tournamentsVivaRefreshToDateLabel.className = 'phab-admin-settings-label';
+    tournamentsVivaRefreshToDateLabel.textContent = 'Viva по (до 7 дней)';
+    tournamentsVivaRefreshToDateWrap.appendChild(tournamentsVivaRefreshToDateLabel);
+
+    var tournamentsVivaRefreshToDateInput = document.createElement('input');
+    tournamentsVivaRefreshToDateInput.className = 'phab-admin-settings-input';
+    tournamentsVivaRefreshToDateInput.type = 'date';
+    tournamentsVivaRefreshToDateInput.value = getTodayDateInputValue();
+    tournamentsVivaRefreshToDateInput.style.width = '160px';
+    tournamentsVivaRefreshToDateWrap.appendChild(tournamentsVivaRefreshToDateInput);
 
     var tournamentsVivaRefreshBtn = document.createElement('button');
     tournamentsVivaRefreshBtn.className = 'phab-admin-btn-secondary';
@@ -13214,6 +13237,7 @@
       tournamentsResetBtn: tournamentsResetBtn,
       tournamentsExportBtn: tournamentsExportBtn,
       tournamentsVivaRefreshDateInput: tournamentsVivaRefreshDateInput,
+      tournamentsVivaRefreshToDateInput: tournamentsVivaRefreshToDateInput,
       tournamentsVivaRefreshBtn: tournamentsVivaRefreshBtn,
       tournamentsAddByVivaBtn: tournamentsAddByVivaBtn,
       tournamentsSummary: tournamentsSummary,
@@ -23382,22 +23406,35 @@
       await loadTournaments();
     }
 
-    async function refreshTournamentDayFromViva() {
-      var date = String(dom.tournamentsVivaRefreshDateInput.value || '').trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        setStatus('Выберите дату для обновления из Viva.', true);
+    async function refreshTournamentRangeFromViva() {
+      var from = String(dom.tournamentsVivaRefreshDateInput.value || '').trim();
+      var to = String(dom.tournamentsVivaRefreshToDateInput.value || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        setStatus('Выберите даты начала и окончания обновления из Viva.', true);
+        return;
+      }
+      var fromMs = Date.parse(from + 'T00:00:00.000Z');
+      var toMs = Date.parse(to + 'T00:00:00.000Z');
+      var requestedDays = Math.round((toMs - fromMs) / 86400000) + 1;
+      if (!Number.isFinite(requestedDays) || requestedDays < 1) {
+        setStatus('Дата начала Viva должна быть не позже даты окончания.', true);
+        return;
+      }
+      if (requestedDays > 7) {
+        setStatus('За один запрос можно обновить не более 7 дней Viva.', true);
         return;
       }
 
       var buttonLabel = String(dom.tournamentsVivaRefreshBtn.textContent || '↻ Обновить из Viva');
       dom.tournamentsVivaRefreshBtn.disabled = true;
       dom.tournamentsVivaRefreshDateInput.disabled = true;
+      dom.tournamentsVivaRefreshToDateInput.disabled = true;
       dom.tournamentsVivaRefreshBtn.textContent = 'Обновляем...';
       try {
-        var result = await api.refreshTournamentSnapshotAdminDay(date);
+        var result = await api.refreshTournamentSnapshotAdminRange(from, to);
         await loadTournaments();
         if (result && result.reason === 'refresh_failed') {
-          setStatus('Не удалось обновить турниры из Viva за ' + date + '.', true);
+          setStatus('Не удалось обновить турниры из Viva за выбранный диапазон.', true);
           return;
         }
         if (result && result.reason === 'cooldown') {
@@ -23407,23 +23444,39 @@
         }
 
         var tournamentsCount = Number(result && result.tournamentsCount) || 0;
+        var refreshedDays = Number(result && result.refreshedDays) || 0;
+        var failedDays = Number(result && result.failedDays) || 0;
         if (result && result.persisted === false) {
           setStatus(
-            'Viva обновлена за ' + date +
-              ' (турниров: ' + String(tournamentsCount) +
+            'Viva обновлена' + (result.reason === 'partial' ? ' частично' : '') +
+              ' за ' + from + ' — ' + to +
+              ' (дней: ' + String(refreshedDays) +
+              ', турниров: ' + String(tournamentsCount) +
               '), но snapshot не сохранён.',
             true
           );
           return;
         }
+        if (result && result.reason === 'partial') {
+          setStatus(
+            'Viva обновлена частично за ' + from + ' — ' + to +
+              '. Дней: ' + String(refreshedDays) + ' из ' + String(requestedDays) +
+              ', ошибок: ' + String(failedDays) +
+              ', турниров: ' + String(tournamentsCount) + '.',
+            true
+          );
+          return;
+        }
         setStatus(
-          'Viva обновлена за ' + date +
-            '. Турниров: ' + String(tournamentsCount) + '.',
+          'Viva обновлена за ' + from + ' — ' + to +
+            '. Дней: ' + String(refreshedDays) +
+            ', турниров: ' + String(tournamentsCount) + '.',
           false
         );
       } finally {
         dom.tournamentsVivaRefreshBtn.disabled = false;
         dom.tournamentsVivaRefreshDateInput.disabled = false;
+        dom.tournamentsVivaRefreshToDateInput.disabled = false;
         dom.tournamentsVivaRefreshBtn.textContent = buttonLabel;
       }
     }
@@ -38290,7 +38343,7 @@
         openTournamentExportModal().catch(handleError);
       });
       dom.tournamentsVivaRefreshBtn.addEventListener('click', function () {
-        refreshTournamentDayFromViva().catch(handleError);
+        refreshTournamentRangeFromViva().catch(handleError);
       });
       dom.tournamentsAddByVivaBtn.addEventListener('click', function () {
         createTournamentFromVivaLink().catch(handleError);

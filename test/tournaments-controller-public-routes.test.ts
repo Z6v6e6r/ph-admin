@@ -79,9 +79,20 @@ async function main(): Promise<void> {
     []
   );
   assert.deepEqual(
+    Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.refreshSnapshotAdminRange),
+    []
+  );
+  assert.deepEqual(
     Reflect.getMetadata(
       PERMISSIONS_KEY,
       TournamentsController.prototype.refreshSnapshotAdminDay
+    ),
+    ['tournaments:write']
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      TournamentsController.prototype.refreshSnapshotAdminRange
     ),
     ['tournaments:write']
   );
@@ -129,6 +140,13 @@ async function main(): Promise<void> {
     false,
     'admin Viva refresh must remain closed to anonymous clients'
   );
+  assert.equal(
+    await guard.canActivate(
+      createAnonymousContext(TournamentsController.prototype.refreshSnapshotAdminRange)
+    ),
+    false,
+    'admin Viva range refresh must remain closed to anonymous clients'
+  );
 
   const readOnlyAdmin = createAuthenticatedContext(
     TournamentsController.prototype.refreshSnapshotAdminDay,
@@ -152,14 +170,45 @@ async function main(): Promise<void> {
     true,
     'tournaments:write must authorize the bounded admin Viva refresh'
   );
+  const readOnlyRangeAdmin = createAuthenticatedContext(
+    TournamentsController.prototype.refreshSnapshotAdminRange,
+    ['tournaments:read']
+  );
+  assert.equal(
+    await new RolesGuard(new Reflector(), readOnlyRangeAdmin.authService).canActivate(
+      readOnlyRangeAdmin.context
+    ),
+    false,
+    'tournaments:read must not authorize a Viva range refresh mutation'
+  );
+  const writeRangeAdmin = createAuthenticatedContext(
+    TournamentsController.prototype.refreshSnapshotAdminRange,
+    ['tournaments:write']
+  );
+  assert.equal(
+    await new RolesGuard(new Reflector(), writeRangeAdmin.authService).canActivate(
+      writeRangeAdmin.context
+    ),
+    true,
+    'tournaments:write must authorize the bounded admin Viva range refresh'
+  );
 
   let trustedAuthorization: string | undefined;
   let registrationInput: Record<string, unknown> | undefined;
   let refreshAdminUser: unknown;
+  let refreshRangeAdminUser: unknown;
   const tournamentsService = {
     refreshVivaTournamentSnapshotAdminDay: async (date: unknown, user: unknown) => {
       refreshAdminUser = user;
       return { date };
+    },
+    refreshVivaTournamentSnapshotAdminRange: async (
+      from: unknown,
+      to: unknown,
+      user: unknown
+    ) => {
+      refreshRangeAdminUser = user;
+      return { from, to };
     },
     resolveTrustedLkRegistrationClient: async (authorization?: string) => {
       trustedAuthorization = authorization;
@@ -202,6 +251,21 @@ async function main(): Promise<void> {
     { date: '2026-09-02' }
   );
   assert.equal((refreshAdminUser as { id?: string })?.id, 'admin:tournaments');
+  assert.deepEqual(
+    await controller.refreshSnapshotAdminRange(
+      { from: '2026-09-02', to: '2026-09-04' },
+      {
+        id: 'admin:tournaments',
+        roles: [Role.MANAGER],
+        permissions: ['tournaments:write'],
+        permissionStationScopes: { 'tournaments:write': null },
+        stationIds: [],
+        connectorRoutes: []
+      }
+    ),
+    { from: '2026-09-02', to: '2026-09-04' }
+  );
+  assert.equal((refreshRangeAdminUser as { id?: string })?.id, 'admin:tournaments');
   const registration = await controller.registerFromLkWidget(
     'tournament-1',
     {
