@@ -7497,9 +7497,12 @@
       .phab-subscriptions-option-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
       .phab-subscriptions-option.is-empty{background:rgba(221,200,252,.2);color:rgba(51,0,32,.58)}
       .phab-subscriptions-empty{padding:16px;border:1px dashed rgba(51,0,32,.2);border-radius:12px;color:rgba(51,0,32,.58);font-size:11px;text-align:center}
-      .phab-subscriptions-benefits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;grid-column:1/-1}
-      .phab-subscriptions-benefit{border:1px solid rgba(51,0,32,.1);border-radius:12px;padding:10px;background:rgba(248,246,249,.75)}
-      .phab-subscriptions-benefit-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+      .phab-subscriptions-benefits{display:flex;flex-direction:column;gap:0;grid-column:1/-1}
+      .phab-subscriptions-benefit{padding:9px 0;border-top:1px solid rgba(51,0,32,.08);border-bottom:1px solid rgba(51,0,32,.08)}
+      .phab-subscriptions-benefit-main-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+      .phab-subscriptions-benefit-fraction{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:center;white-space:nowrap;min-width:0}
+      .phab-subscriptions-benefit-fraction .phab-admin-input{min-width:0}
+      .phab-subscriptions-benefit-ids-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:6px}
       .phab-subscriptions-phases{display:flex;flex-direction:column;gap:8px;grid-column:1/-1}
       .phab-subscriptions-phase{display:grid;grid-template-columns:42px 1fr 100px 120px 1fr 40px;gap:7px;align-items:end;border:1px solid rgba(51,0,32,.1);border-radius:12px;padding:9px}
       .phab-subscriptions-phase .phab-subscriptions-field{font-size:9px}
@@ -7535,6 +7538,8 @@
         }
         .phab-admin-tabs{padding:8px 8px 9px}
         .phab-admin-tab{font-size:10px;padding:7px 10px}
+        .phab-subscriptions-benefit-main-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .phab-subscriptions-benefit-ids-grid{grid-template-columns:1fr}
         .phab-admin-modal{
           padding:8px;
           align-items:flex-start;
@@ -36152,17 +36157,20 @@
       var card = document.createElement('div');
       card.className = 'phab-subscriptions-benefit';
       card.innerHTML =
-        '<div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" data-benefit-enabled>Включить</label><button class="phab-admin-btn-secondary" type="button" data-benefit-remove>−</button></div>' +
-        '<div class="phab-subscriptions-benefit-grid">' +
+        '<div class="phab-subscriptions-benefit-main-grid">' +
+        '<label class="phab-subscriptions-field"><span>Включить</span><div class="phab-subscriptions-check"><input type="checkbox" data-benefit-enabled></div></label>' +
         '<label class="phab-subscriptions-field"><span>Категория</span><select class="phab-admin-input" data-benefit-category><option value="GAME">Игра</option><option value="GROUP_TRAINING">Групповая</option><option value="TOURNAMENT">Турнир</option><option value="ADD_ON_PRODUCT">Доппродукт</option></select></label>' +
         '<label class="phab-subscriptions-field"><span>Действие</span><select class="phab-admin-input" data-benefit-action><option value="CREATE_GAME">Создание игры</option><option value="JOIN_GAME">Запись на игру</option><option value="BOOK_GROUP_TRAINING">Групповая</option><option value="BOOK_TOURNAMENT">Турнир</option><option value="PURCHASE_ADD_ON_PRODUCT">Покупка доппродукта</option></select></label>' +
         '<label class="phab-subscriptions-field"><span>Льгота</span><select class="phab-admin-input" data-benefit-kind><option value="PERCENT_DISCOUNT">Скидка, %</option><option value="FIXED_PRICE">Фикс. цена</option><option value="FIXED_DISCOUNT">Скидка, ₽</option><option value="FREE_ENTITLEMENT">Бесплатно</option><option value="PARTIAL_PRICE_PERCENT_DISCOUNT">Доля цены − скидка %</option><option value="DISABLED">Отключено</option></select></label>' +
         '<label class="phab-subscriptions-field"><span>Значение / скидка %</span><input class="phab-admin-input" type="number" min="0" data-benefit-value></label>' +
-        '<label class="phab-subscriptions-field"><span>Доля цены</span><div class="phab-subscriptions-actions"><input class="phab-admin-input" type="number" min="1" value="1" aria-label="Числитель" data-benefit-partial-numerator><span>/</span><input class="phab-admin-input" type="number" min="1" value="4" aria-label="Знаменатель" data-benefit-partial-denominator></div></label>' +
+        '<label class="phab-subscriptions-field"><span>Доля цены</span><div class="phab-subscriptions-benefit-fraction"><input class="phab-admin-input" type="number" min="1" value="1" aria-label="Числитель" data-benefit-partial-numerator><span>/</span><input class="phab-admin-input" type="number" min="1" value="4" aria-label="Знаменатель" data-benefit-partial-denominator></div></label>' +
         '<label class="phab-subscriptions-field"><span>Длительности, мин</span><input class="phab-admin-input" data-benefit-durations placeholder="60, 90"></label>' +
-        '<label class="phab-subscriptions-field is-wide"><span>Viva event type IDs</span><textarea class="phab-admin-input" data-benefit-event-types placeholder="ID через запятую"></textarea></label>' +
-        '<label class="phab-subscriptions-field is-wide"><span>Viva product type IDs</span><textarea class="phab-admin-input" data-benefit-product-types placeholder="Для доппродуктов"></textarea></label>' +
-        '<label class="phab-subscriptions-field is-wide"><span>Station IDs</span><textarea class="phab-admin-input" data-benefit-stations placeholder="ID через запятую"></textarea></label>' +
+        '<label class="phab-subscriptions-field"><span>Удаление</span><button class="phab-admin-btn-secondary" type="button" aria-label="Удалить льготу" data-benefit-remove>Удалить</button></label>' +
+        '</div>' +
+        '<div class="phab-subscriptions-benefit-ids-grid">' +
+        '<label class="phab-subscriptions-field"><span>Viva event type IDs</span><textarea class="phab-admin-input" data-benefit-event-types placeholder="ID через запятую"></textarea></label>' +
+        '<label class="phab-subscriptions-field"><span>Viva product type IDs</span><textarea class="phab-admin-input" data-benefit-product-types placeholder="Для доппродуктов"></textarea></label>' +
+        '<label class="phab-subscriptions-field"><span>Station IDs</span><textarea class="phab-admin-input" data-benefit-stations placeholder="ID через запятую"></textarea></label>' +
         '</div>';
       var category = card.querySelector('[data-benefit-category]');
       var action = card.querySelector('[data-benefit-action]');

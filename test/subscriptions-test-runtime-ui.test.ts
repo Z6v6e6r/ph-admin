@@ -111,7 +111,24 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.doesNotMatch(source, /data-subscriptions-panel="instances"[\s\S]{0,500}>0 активн/);
 }
 
+function testSubscriptionBenefitsUseSingleRowLayout(): void {
+  const source = readFileSync(resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'), 'utf8');
+  assert.match(source, /\.phab-subscriptions-benefits\{display:flex;flex-direction:column;gap:0;grid-column:1\/-1\}/);
+  assert.match(source, /\.phab-subscriptions-benefit-main-grid\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\);gap:7px\}/);
+  assert.match(source, /\.phab-subscriptions-benefit-ids-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\);gap:7px;margin-top:6px\}/);
+  assert.match(source, /\.phab-subscriptions-benefit-fraction\{display:grid;grid-template-columns:minmax\(0,1fr\)\s+auto\s+minmax\(0,1fr\);gap:6px;align-items:center;white-space:nowrap;min-width:0\}/);
+  assert.match(source, /\.phab-subscriptions-benefit-fraction \.phab-admin-input\{min-width:0\}/);
+  assert.match(source, /@media \(max-width:640px\)\{[\s\S]*?\.phab-subscriptions-benefit-main-grid\{[\s\S]*?grid-template-columns:\s*repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(source, /@media \(max-width:640px\)\{[\s\S]*?\.phab-subscriptions-benefit-ids-grid\{[\s\S]*?grid-template-columns:\s*1fr/);
+  assert.match(source, /data-benefit-remove[^>]*aria-label="Удалить льготу"|aria-label="Удалить льготу"[^>]*data-benefit-remove/);
+  assert.match(source, /<span>Доля цены<\/span><div class="phab-subscriptions-benefit-fraction">[\s\S]*?data-benefit-partial-numerator[\s\S]*?data-benefit-partial-denominator/);
+  assert.doesNotMatch(source, /\.phab-subscriptions-benefits\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.doesNotMatch(source, /\.phab-subscriptions-benefit-grid\{[^}]*grid-template-columns:1fr 1fr/);
+  assert.doesNotMatch(source, /\.phab-subscriptions-benefit\{[^}]*background:rgba\(248,246,249,.75\)/);
+}
+
 testDisabledPageIsNotServed();
 testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes();
 testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit();
+testSubscriptionBenefitsUseSingleRowLayout();
 console.log('Subscription test runtime UI safety tests passed');
