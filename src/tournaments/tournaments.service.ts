@@ -1062,6 +1062,42 @@ export class TournamentsService {
     return result;
   }
 
+  async refreshVivaTournamentSnapshotAdminDay(
+    inputDate: unknown,
+    user?: RequestUser
+  ): Promise<
+    Omit<VivaTournamentSnapshotDayRefreshResult, 'tournaments'> & {
+      tournamentsCount: number;
+    }
+  > {
+    const date = this.requireManualTournamentRefreshDate(inputDate);
+    if (
+      !user ||
+      getStationScopeForPermission(user, 'tournaments:write') !== null
+    ) {
+      throw new ForbiddenException({
+        code: 'TOURNAMENT_VIVA_REFRESH_GLOBAL_SCOPE_REQUIRED',
+        message: 'Viva tournament refresh requires global tournament write scope'
+      });
+    }
+    if (!this.vivaTournamentSnapshotService) {
+      throw new ServiceUnavailableException('Viva tournament snapshot service is unavailable');
+    }
+
+    const result = await this.vivaTournamentSnapshotService.refreshDate(
+      date,
+      'admin_tournaments_manual_day_refresh'
+    );
+    if (result.refreshed) {
+      this.invalidatePublicDirectoryCache();
+    }
+    const { tournaments, ...metadata } = result;
+    return {
+      ...metadata,
+      tournamentsCount: tournaments.length
+    };
+  }
+
   getVivaReferenceCacheDiagnostics(): ReturnType<VivaTournamentsService['getReferenceCacheDiagnostics']> {
     return this.vivaTournamentsService.getReferenceCacheDiagnostics();
   }

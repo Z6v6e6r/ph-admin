@@ -19,6 +19,35 @@ function createAnonymousContext(handler: (...args: never[]) => unknown): Executi
   } as unknown as ExecutionContext;
 }
 
+function createAuthenticatedContext(
+  handler: (...args: never[]) => unknown,
+  permissions: string[]
+): { context: ExecutionContext; authService: AuthService } {
+  const request = { headers: {} };
+  const authService = {
+    resolveUserFromRequest: async () => ({
+      source: 'token' as const,
+      user: {
+        id: 'admin:tournaments',
+        roles: [Role.MANAGER],
+        permissions,
+        stationIds: [],
+        connectorRoutes: []
+      }
+    }),
+    shouldRequireStaffToken: () => false,
+    hasStaffRole: () => true
+  } as unknown as AuthService;
+  const context = {
+    switchToHttp: () => ({
+      getRequest: () => request
+    }),
+    getHandler: () => handler,
+    getClass: () => TournamentsController
+  } as unknown as ExecutionContext;
+  return { context, authService };
+}
+
 async function main(): Promise<void> {
   const classRoles = Reflect.getMetadata(ROLES_KEY, TournamentsController);
   assert.deepEqual(classRoles, [
@@ -44,6 +73,17 @@ async function main(): Promise<void> {
   assert.deepEqual(
     Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.refreshSnapshotDay),
     []
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(ROLES_KEY, TournamentsController.prototype.refreshSnapshotAdminDay),
+    []
+  );
+  assert.deepEqual(
+    Reflect.getMetadata(
+      PERMISSIONS_KEY,
+      TournamentsController.prototype.refreshSnapshotAdminDay
+    ),
+    ['tournaments:write']
   );
   assert.deepEqual(
     Reflect.getMetadata(
@@ -82,10 +122,45 @@ async function main(): Promise<void> {
     false,
     'permission-protected tournament routes must remain closed to anonymous clients'
   );
+  assert.equal(
+    await guard.canActivate(
+      createAnonymousContext(TournamentsController.prototype.refreshSnapshotAdminDay)
+    ),
+    false,
+    'admin Viva refresh must remain closed to anonymous clients'
+  );
+
+  const readOnlyAdmin = createAuthenticatedContext(
+    TournamentsController.prototype.refreshSnapshotAdminDay,
+    ['tournaments:read']
+  );
+  assert.equal(
+    await new RolesGuard(new Reflector(), readOnlyAdmin.authService).canActivate(
+      readOnlyAdmin.context
+    ),
+    false,
+    'tournaments:read must not authorize a Viva refresh mutation'
+  );
+  const writeAdmin = createAuthenticatedContext(
+    TournamentsController.prototype.refreshSnapshotAdminDay,
+    ['tournaments:write']
+  );
+  assert.equal(
+    await new RolesGuard(new Reflector(), writeAdmin.authService).canActivate(
+      writeAdmin.context
+    ),
+    true,
+    'tournaments:write must authorize the bounded admin Viva refresh'
+  );
 
   let trustedAuthorization: string | undefined;
   let registrationInput: Record<string, unknown> | undefined;
+  let refreshAdminUser: unknown;
   const tournamentsService = {
+    refreshVivaTournamentSnapshotAdminDay: async (date: unknown, user: unknown) => {
+      refreshAdminUser = user;
+      return { date };
+    },
     resolveTrustedLkRegistrationClient: async (authorization?: string) => {
       trustedAuthorization = authorization;
       return {
@@ -112,6 +187,21 @@ async function main(): Promise<void> {
     {} as never,
     {} as never
   );
+  assert.deepEqual(
+    await controller.refreshSnapshotAdminDay(
+      { date: '2026-09-02' },
+      {
+        id: 'admin:tournaments',
+        roles: [Role.MANAGER],
+        permissions: ['tournaments:write'],
+        permissionStationScopes: { 'tournaments:write': null },
+        stationIds: [],
+        connectorRoutes: []
+      }
+    ),
+    { date: '2026-09-02' }
+  );
+  assert.equal((refreshAdminUser as { id?: string })?.id, 'admin:tournaments');
   const registration = await controller.registerFromLkWidget(
     'tournament-1',
     {

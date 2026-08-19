@@ -49,6 +49,34 @@ async function main(): Promise<void> {
   assert.doesNotMatch(openHandler, /refreshTournamentSnapshotOnOpen|refresh-on-open/);
   assert.match(openHandler, /await loadTournaments\(\)/);
 
+  assert.match(
+    sdkSource,
+    /request\('\/tournaments\/snapshot\/admin-refresh-day', 'POST'/
+  );
+  assert.match(sdkSource, /tournamentsVivaRefreshBtn\.textContent = '↻ Обновить из Viva'/);
+  const refreshHandlerStart = sdkSource.indexOf(
+    'async function refreshTournamentDayFromViva()'
+  );
+  const refreshHandlerEnd = sdkSource.indexOf(
+    'async function createTournamentFromVivaLink()',
+    refreshHandlerStart
+  );
+  assert.ok(refreshHandlerStart >= 0 && refreshHandlerEnd > refreshHandlerStart);
+  const refreshHandler = sdkSource.slice(refreshHandlerStart, refreshHandlerEnd);
+  assert.match(refreshHandler, /refreshTournamentSnapshotAdminDay\(date\)/);
+  assert.match(refreshHandler, /tournamentsVivaRefreshBtn\.disabled = true/);
+  assert.match(refreshHandler, /result\.reason === 'cooldown'/);
+  assert.match(refreshHandler, /result\.reason === 'refresh_failed'/);
+  assert.match(refreshHandler, /result\.persisted === false/);
+  assert.match(refreshHandler, /await loadTournaments\(\)/);
+  assert.ok(
+    refreshHandler.indexOf('await loadTournaments()') <
+      refreshHandler.indexOf("result.reason === 'refresh_failed'"),
+    'snapshot must be reread before handling a completed refresh response'
+  );
+  assert.match(refreshHandler, /result && result\.tournamentsCount/);
+  assert.doesNotMatch(refreshHandler, /result && result\.tournaments\)/);
+
   console.log('Tournament admin open snapshot-only test passed');
 }
 

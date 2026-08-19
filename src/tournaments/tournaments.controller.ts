@@ -121,6 +121,16 @@ export class TournamentsController {
     });
   }
 
+  @Post('snapshot/admin-refresh-day')
+  @Permissions('tournaments:write')
+  @Roles()
+  refreshSnapshotAdminDay(
+    @Body() body: Record<string, unknown> | undefined,
+    @CurrentUser() user?: RequestUser
+  ): ReturnType<TournamentsService['refreshVivaTournamentSnapshotAdminDay']> {
+    return this.tournamentsService.refreshVivaTournamentSnapshotAdminDay(body?.date, user);
+  }
+
   @Post('backfill/pricing-snapshots')
   @Permissions('access:manage')
   backfillPricingSnapshots(): Promise<{
