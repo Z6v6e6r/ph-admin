@@ -1,16 +1,31 @@
 import { Module } from '@nestjs/common';
-import { SubscriptionsController, SubscriptionTestController } from './subscriptions.controller';
+import { VivaAdminModule } from '../integrations/viva/viva-admin.module';
+import { LkIdentityModule } from '../lk-identity/lk-identity.module';
+import {
+  SubscriptionsController,
+  SubscriptionTestController,
+  SubscriptionTrustedShadowController
+} from './subscriptions.controller';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
+import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
+import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 
 @Module({
-  controllers: [SubscriptionsController, SubscriptionTestController],
+  imports: [LkIdentityModule, VivaAdminModule],
+  controllers: [
+    SubscriptionsController,
+    SubscriptionTestController,
+    SubscriptionTrustedShadowController
+  ],
   providers: [
     SubscriptionsService,
     SubscriptionShadowQuoteService,
+    SubscriptionProviderMappingPreviewService,
+    SubscriptionTrustedShadowAdapterService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter

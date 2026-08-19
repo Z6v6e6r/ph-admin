@@ -28,6 +28,7 @@
     "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
     "test:subscriptions-runtime-contracts": "ts-node test/subscriptions-runtime-contracts.test.ts",
     "test:subscriptions-shadow-quote": "ts-node test/subscriptions-shadow-quote.test.ts",
+    "test:subscriptions-trusted-shadow-adapter": "ts-node test/subscriptions-trusted-shadow-adapter.test.ts",
     "test:subscriptions-runtime": "ts-node test/subscriptions-test-runtime.service.test.ts && ts-node test/subscriptions-test-runtime-ui.test.ts && npm run test:subscriptions-runtime:mongo",
     "test:subscriptions-runtime:mongo": "ts-node test/subscriptions-test-runtime.mongodb.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",

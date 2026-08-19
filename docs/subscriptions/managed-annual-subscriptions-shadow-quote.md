@@ -1,10 +1,11 @@
 # Managed annual subscriptions: internal shadow quote
 
-Status: **checkpoint candidate / default off / internal only**.
+Status: **checkpoint candidate / default off / trusted internal adapter**.
 
 This checkpoint adds a deterministic, read-only eligibility and price calculation for a
-future LK adapter. It does not add an HTTP route or UI, and it does not publish a policy,
-reserve entitlement, call Viva, charge money, append ledger/outbox events, or mutate MongoDB.
+trusted LK server adapter. It does not add a browser/public quote route or UI, and it does not
+publish a policy, reserve entitlement, charge money, append ledger/outbox events, or mutate
+subscription MongoDB collections.
 
 ## Enablement
 
@@ -14,6 +15,10 @@ Both flags must be enabled and the freshness limit must be explicit:
 SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED=true
 SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED=true
 SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS=60
+SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED=true
+SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN=<at-least-32-bytes>
+SUBSCRIPTIONS_RUNTIME_TENANT_ID=iSkq6G
+SUBSCRIPTIONS_RUNTIME_HASH_PEPPER=<at-least-32-bytes>
 ```
 
 The accepted freshness range is 30 to 3600 seconds. Missing or invalid configuration fails
@@ -21,14 +26,48 @@ closed. These variables remain off/blank in the deployment example for this chec
 
 ## Trusted inputs
 
-The service accepts only an internal `SubscriptionShadowQuoteRequest` built from:
+`POST /api/internal/subscriptions/shadow-quote` accepts only a trusted server-to-server request.
+It requires both headers:
+
+- `Authorization: Bearer <LK JWT>`;
+- `X-Subscriptions-Integration-Token: <dedicated token>`.
+
+The browser must not call this endpoint directly. The adapter verifies the LK JWT in CUP, requires
+the verified canonical Viva client id, checks the configured tenant, and derives `clientRefHash`
+as HMAC-SHA256 with a versioned input. Phone, subject, provider client id, bearer and integration
+token are not returned. The same HMAC contract must be used when a future reconciler creates a
+runtime subscription instance.
+
+The service then builds an internal `SubscriptionShadowQuoteRequest` from:
 
 - `LK_IDENTITY`: tenant and one-way `clientRefHash` resolved from an authenticated LK session;
 - `SERVER`: canonical target, station, event/product type, duration, start, dictionary revision,
   base price and evidence references resolved by a future server adapter.
 
-None of these values may come directly from a browser body. Until those two authoritative
-resolvers exist, there is deliberately no public or admin endpoint.
+Identity fields never come from the body. Canonical target and price fields are accepted only from
+the caller holding the dedicated integration token and are revalidated for shape and freshness.
+There is deliberately no public/browser quote endpoint.
+
+## Viva product evidence preview
+
+The separate admin-only read endpoint
+`POST /api/v1/admin/subscription-types/:subscriptionTypeId/policy-versions/:version/provider-mapping-preview`
+is also default-off:
+
+```dotenv
+SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED=true
+SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID=<synthetic-viva-client-id>
+```
+
+It reads the exact DRAFT policy `providerBinding.externalId`, then performs only
+`GET /api/v1/products/subscriptions/{productId}` in Viva using the server-configured synthetic
+client and the supplied `providerStudioId` context. The admin body cannot select or enumerate Viva
+clients. The response is sanitized and always says
+`evidenceState=EVIDENCE_ONLY`, `persisted=false`, `verified=false`. It never stores a mapping and
+never treats `clientSubscriptionId` as a product id. Until an independently verified canonical
+studio-to-station mapping exists, the response includes blocking issues and cannot activate the
+runtime. The provider-reported cost is returned with `costUnit=UNVERIFIED`; it is not used as a
+minor-unit price until a HAR/API contract confirms its unit.
 
 ## Read boundary
 
@@ -82,8 +121,8 @@ group training, tournament and add-on product, no exact enabled benefit match bl
 
 ## Safe recovery and next gate
 
-Recovery is disabling `SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED`; there are no checkpoint-created data
-or indexes to roll back. Before exposing this to DEV LK, add the authenticated identity resolver and
-canonical event/price/dictionary resolver, then contract-test their output against this service.
-That adapter must remain shadow-only until a separate reviewed atomic reservation and provider
-confirmation flow is approved.
+Recovery is disabling `SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED` and
+`SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED`; there are no checkpoint-created data or indexes
+to roll back. The trusted caller still has to implement the canonical event/price/dictionary
+resolver and contract-test its output against this service. The adapter remains shadow-only until
+a separate reviewed atomic reservation and provider confirmation flow is approved.

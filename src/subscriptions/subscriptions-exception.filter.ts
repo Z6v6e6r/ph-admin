@@ -37,14 +37,15 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     const rawStatus = exception instanceof HttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR;
-    const status = rawStatus === HttpStatus.FORBIDDEN && !request.user
-      ? HttpStatus.UNAUTHORIZED
-      : rawStatus;
     const rawBody = exception instanceof HttpException ? exception.getResponse() : null;
     const body = rawBody && typeof rawBody === 'object'
       ? rawBody as Record<string, unknown>
       : {};
     const domainCode = typeof body.code === 'string' ? body.code : '';
+    const isIntegrationTokenRejection = domainCode === 'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN';
+    const status = rawStatus === HttpStatus.FORBIDDEN && !request.user && !isIntegrationTokenRejection
+      ? HttpStatus.UNAUTHORIZED
+      : rawStatus;
     const correlationId = this.correlationId(request);
     const code = this.publicCode(status, domainCode);
     const details: Record<string, unknown> = {};

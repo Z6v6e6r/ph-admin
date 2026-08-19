@@ -474,8 +474,15 @@ async function run(): Promise<void> {
     'src/subscriptions/subscription-shadow-quote.service.ts',
     'utf8'
   );
-  assert.doesNotMatch(controllerSource, /shadow[-_ ]quote/i);
+  const adapterSource = fs.readFileSync(
+    'src/subscriptions/subscription-trusted-shadow-adapter.service.ts',
+    'utf8'
+  );
+  assert.match(controllerSource, /@Controller\('internal\/subscriptions'\)/);
+  assert.match(controllerSource, /@Headers\('x-subscriptions-integration-token'\)/);
+  assert.doesNotMatch(controllerSource, /@Controller\('v1\/subscriptions\/shadow/i);
   assert.doesNotMatch(quoteServiceSource, /insertRuntime|appendRuntime|fetch\s*\(|vivacrm/i);
+  assert.doesNotMatch(adapterSource, /insertRuntime|appendRuntime|fetch\s*\(|vivacrm/i);
 
   console.log('subscriptions shadow quote tests: OK');
 }

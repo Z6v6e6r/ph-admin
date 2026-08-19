@@ -7,6 +7,7 @@ import {
   OnModuleInit,
   ServiceUnavailableException
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../../common/constants/dialogs-mongo.constants';
 
@@ -150,6 +151,17 @@ export interface VivaExerciseStatusSnapshot {
   canceled: boolean;
   timeFrom?: string;
   timeTo?: string;
+}
+
+export interface VivaSubscriptionProductEvidence {
+  provider: 'VIVA';
+  providerProductId: string;
+  name: string | null;
+  type: string | null;
+  providerReportedCost: number | null;
+  costUnit: 'UNVERIFIED';
+  observedAt: string;
+  evidenceRef: string;
 }
 
 interface VivaClientsSearchResponse {
@@ -518,6 +530,79 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     }
 
     return null;
+  }
+
+  async inspectSubscriptionProduct(input: {
+    productId: string;
+    clientId: string;
+    studioId: string;
+  }): Promise<VivaSubscriptionProductEvidence> {
+    const enabled = ['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED ?? '')
+        .trim()
+        .toLowerCase()
+    );
+    if (!enabled) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_DISABLED',
+        message: 'Viva subscription product preview is disabled'
+      });
+    }
+    const productId = this.normalizeOptional(input.productId);
+    const clientId = this.normalizeOptional(input.clientId);
+    const studioId = this.normalizeOptional(input.studioId);
+    if (!productId || !clientId || !studioId) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_INPUT_INVALID',
+        message: 'Viva productId, clientId and studioId are required'
+      });
+    }
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    let product: VivaAdminProductResolution | null;
+    try {
+      product = await this.resolveSubscriptionProductCard({
+        token,
+        baseUrl: resolved.config.baseUrl,
+        productId,
+        clientId,
+        studioId
+      });
+    } catch (_error) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_UNAVAILABLE',
+        message: 'Viva subscription product evidence is temporarily unavailable'
+      });
+    }
+    if (!product || product.id !== productId) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTIONS_PROVIDER_PRODUCT_NOT_CONFIRMED',
+        message: 'Viva subscription product was not confirmed by exact id'
+      });
+    }
+
+    const observedAt = new Date().toISOString();
+    const sanitized = {
+      provider: 'VIVA' as const,
+      providerProductId: product.id,
+      name: product.name ?? null,
+      type: product.type ?? null,
+      providerReportedCost: product.costMinor ?? null,
+      costUnit: 'UNVERIFIED' as const,
+      observedAt
+    };
+    const digest = createHash('sha256')
+      .update(JSON.stringify({
+        schemaVersion: 1,
+        studioContext: studioId,
+        ...sanitized
+      }))
+      .digest('hex');
+    return {
+      ...sanitized,
+      evidenceRef: `evidence:viva-product:${digest}`
+    };
   }
 
   async createTournamentEnergyCheckout(

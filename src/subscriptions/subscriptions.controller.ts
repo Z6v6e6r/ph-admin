@@ -4,6 +4,8 @@ import {
   Get,
   Header,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -19,17 +21,23 @@ import { Roles } from '../common/rbac/roles.decorator';
 import { CreatePolicyVersionDto } from './dto/create-policy-version.dto';
 import { CreateReleaseProgramDto } from './dto/create-release-program.dto';
 import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
+import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
+import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
 import { SubscriptionsService } from './subscriptions.service';
+import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
+import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 import {
   ReleaseProgram,
   ReleaseProgramPage,
   SubscriptionPolicyImpactPreview,
+  SubscriptionProviderMappingPreview,
+  SubscriptionShadowQuoteResult,
   SubscriptionPolicyVersion,
   SubscriptionTestActivationResult,
   SubscriptionTestInventorySnapshot,
@@ -46,7 +54,8 @@ import {
 export class SubscriptionsController {
   constructor(
     private readonly service: SubscriptionsService,
-    private readonly testRuntime: SubscriptionsTestRuntimeService
+    private readonly testRuntime: SubscriptionsTestRuntimeService,
+    private readonly providerMappingPreview: SubscriptionProviderMappingPreviewService
   ) {}
 
   @Get('subscription-types')
@@ -100,6 +109,20 @@ export class SubscriptionsController {
     @CurrentUser() user?: RequestUser
   ): Promise<SubscriptionPolicyVersion[]> {
     return this.service.listPolicyVersions(subscriptionTypeId, user);
+  }
+
+  @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/provider-mapping-preview')
+  @Permissions('subscriptions:catalog:write')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  previewProviderMapping(
+    @Param('subscriptionTypeId') subscriptionTypeId: string,
+    @Param('version') version: string,
+    @Body() dto: SubscriptionProviderMappingPreviewDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<SubscriptionProviderMappingPreview> {
+    return this.providerMappingPreview.preview(subscriptionTypeId, version, dto, user);
   }
 
   @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/impact-preview')
@@ -188,6 +211,25 @@ export class SubscriptionsController {
   private applyCommandHeaders(response: Response, correlationId: string, replayed: boolean): void {
     response.setHeader('X-Correlation-Id', correlationId);
     if (replayed) response.setHeader('Idempotency-Replayed', 'true');
+  }
+}
+
+@Controller('internal/subscriptions')
+@Roles()
+@UseFilters(SubscriptionsExceptionFilter)
+export class SubscriptionTrustedShadowController {
+  constructor(private readonly adapter: SubscriptionTrustedShadowAdapterService) {}
+
+  @Post('shadow-quote')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quote(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: SubscriptionShadowQuoteAdapterDto
+  ): Promise<SubscriptionShadowQuoteResult> {
+    return this.adapter.quote(authorization, integrationToken, dto);
   }
 }
 

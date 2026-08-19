@@ -766,6 +766,34 @@ export interface SubscriptionShadowQuoteResult {
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }
 
+export interface SubscriptionProviderProductEvidence {
+  provider: 'VIVA';
+  providerProductId: string;
+  name: string | null;
+  type: string | null;
+  providerReportedCost: number | null;
+  costUnit: 'UNVERIFIED';
+  observedAt: string;
+  evidenceRef: string;
+}
+
+export interface SubscriptionProviderMappingPreview {
+  subscriptionTypeId: string;
+  policyVersion: number;
+  policyStatus: SubscriptionPolicyStatus;
+  canonicalStationId: string;
+  providerStudioId: string;
+  providerBinding: SubscriptionProviderBindingCandidate;
+  evidenceState: 'EVIDENCE_ONLY';
+  persisted: false;
+  verified: false;
+  product: SubscriptionProviderProductEvidence;
+  blockers: Array<{
+    code: string;
+    message: string;
+  }>;
+}
+
 export interface SubscriptionRuntimeEntitlementDecisionSnapshot {
   decisionKind: 'ENTITLEMENT';
   policyVersion: number;
