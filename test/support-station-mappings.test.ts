@@ -14,6 +14,21 @@ assert.deepEqual(festival, {
   stationName: 'Фестивальный парк'
 });
 
+const expectedNewStations = [
+  { key: 'piter', stationId: 'Piter', stationName: 'Питер' },
+  { key: 'kotelniki', stationId: 'Kotelniki', stationName: 'Котельники' },
+  { key: 'shcherbinka', stationId: 'Shcherbinka', stationName: 'Щербинка' },
+  { key: 'lyubertsy', stationId: 'Lyubertsy', stationName: 'Люберцы' },
+  { key: 'kolomna', stationId: 'Kolomna', stationName: 'Коломна' }
+];
+
+for (const expected of expectedNewStations) {
+  assert.deepEqual(
+    DEFAULT_SUPPORT_STATION_MAPPINGS.find((mapping) => mapping.key === expected.key),
+    expected
+  );
+}
+
 const parsed = parseSupportStationMappings(
   JSON.stringify([
     {

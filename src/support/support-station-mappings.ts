@@ -16,8 +16,13 @@ export const DEFAULT_SUPPORT_STATION_MAPPINGS: SupportStationMapping[] = [
   { key: 'tereh', stationId: 'Terehovo', stationName: 'Терехово' },
   { key: 'kuncev', stationId: 'Skolkovo', stationName: 'Сколково' },
   { key: 'festival', stationId: 'FestivalPark', stationName: 'Фестивальный парк' },
+  { key: 'piter', stationId: 'Piter', stationName: 'Питер' },
   { key: 'sochi', stationId: 'Sochi', stationName: 'Сочи' },
   { key: 'seleger', stationId: 'seleger', stationName: 'Селигерская' },
+  { key: 'kotelniki', stationId: 'Kotelniki', stationName: 'Котельники' },
+  { key: 'shcherbinka', stationId: 'Shcherbinka', stationName: 'Щербинка' },
+  { key: 'lyubertsy', stationId: 'Lyubertsy', stationName: 'Люберцы' },
+  { key: 'kolomna', stationId: 'Kolomna', stationName: 'Коломна' },
   { key: 't-sbora', stationId: 'care_service', stationName: 'Точка сбора' }
 ];
 
