@@ -58,6 +58,11 @@ This checkpoint deliberately provides no snapshot write route. A separately revi
 projection producer must populate immutable revisions from canonical LK/Viva/CUP read models before
 the resolver can return a target; missing data fails closed.
 
+An operator-only synthetic fixture producer is documented in
+`managed-annual-subscriptions-activation-gate.md`. It is restricted to synthetic targets and
+DEV/TEST databases, has no controller route and does not establish provider truth. A real target
+remains unavailable until the Golden HAR contract is satisfied.
+
 ## Viva product evidence preview
 
 The separate admin-only read endpoint

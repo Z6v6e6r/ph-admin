@@ -32,6 +32,14 @@ references. Action/category mismatches, missing add-on product type, stale/expir
 rows fail closed. This checkpoint exposes read access only; it does not add an ingestion route or
 pretend that a provider payload is canonical.
 
+An operator-only synthetic producer can insert strict `synthetic:` fixtures into an explicitly
+guarded DEV/TEST database after the reviewed indexes exist. It has no HTTP route, requires gap-free
+revisions and makes a REVOKED revision terminal. Its write and index paths require a loopback-only
+dedicated Gate D database plus an exact, credential-free host/port/database fingerprint; current
+DEV and production databases are rejected before connect. The resolver accepts only the latest
+revision, so an older ACTIVE row cannot bypass a later revocation. This fixture path is not
+provider evidence.
+
 ### `subscription_provider_mappings`
 
 Reviewed identity mapping between a CUP subscription type and one provider

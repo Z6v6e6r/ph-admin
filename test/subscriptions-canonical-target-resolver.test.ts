@@ -59,6 +59,7 @@ async function run(): Promise<void> {
   let connectCalls = 0;
   let reads = 0;
   let current: StoredSubscriptionCanonicalTargetSnapshot | null = snapshotFixture();
+  let latest: StoredSubscriptionCanonicalTargetSnapshot | null = snapshotFixture();
   const repository = {
     connectReadOnly: async () => { connectCalls += 1; },
     runtimeCanonicalTargetSnapshot: async (input: unknown) => {
@@ -70,7 +71,8 @@ async function run(): Promise<void> {
         revision: 7
       });
       return current;
-    }
+    },
+    runtimeLatestCanonicalTargetSnapshot: async () => latest
   } as any;
   const resolver = new FixedClockResolver(repository);
   const reference = {
@@ -110,12 +112,25 @@ async function run(): Promise<void> {
     resolvedAt: '2026-08-19T09:59:50.000Z'
   });
 
+  latest = { ...snapshotFixture(), revision: 8 };
+  await assert.rejects(
+    resolver.resolve(reference),
+    hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_SUPERSEDED')
+  );
+  latest = { ...snapshotFixture(), revision: 8, state: 'REVOKED' };
+  await assert.rejects(
+    resolver.resolve(reference),
+    hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_REVOKED')
+  );
+  latest = snapshotFixture();
+
   current = null;
   await assert.rejects(
     resolver.resolve(reference),
     hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_NOT_FOUND')
   );
   current = { ...snapshotFixture(), state: 'REVOKED' };
+  latest = current;
   await assert.rejects(
     resolver.resolve(reference),
     hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_REVOKED')
@@ -125,11 +140,13 @@ async function run(): Promise<void> {
     observedAt: '2026-08-19T09:58:59.000Z',
     createdAt: '2026-08-19T09:59:00.000Z'
   };
+  latest = current;
   await assert.rejects(
     resolver.resolve(reference),
     hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_STALE')
   );
   current = { ...snapshotFixture(), expiresAt: '2026-08-19T10:00:00.000Z' };
+  latest = current;
   await assert.rejects(
     resolver.resolve(reference),
     hasDomainCode('SUBSCRIPTIONS_CANONICAL_TARGET_EXPIRED')

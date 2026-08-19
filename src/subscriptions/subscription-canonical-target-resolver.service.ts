@@ -35,7 +35,24 @@ export class SubscriptionCanonicalTargetResolverService {
         'Canonical subscription target is not available'
       );
     }
-    if (snapshot.state !== 'ACTIVE') {
+    const latest = await this.repository.runtimeLatestCanonicalTargetSnapshot({
+      tenantId: reference.tenantId,
+      targetId: reference.targetId,
+      action: reference.action
+    });
+    if (!latest || latest.revision !== reference.snapshotRevision) {
+      if (latest?.state === 'REVOKED') {
+        this.unavailable(
+          'SUBSCRIPTIONS_CANONICAL_TARGET_REVOKED',
+          'Canonical subscription target is not active'
+        );
+      }
+      this.unavailable(
+        'SUBSCRIPTIONS_CANONICAL_TARGET_SUPERSEDED',
+        'Canonical subscription target revision is not current'
+      );
+    }
+    if (latest.state !== 'ACTIVE') {
       this.unavailable(
         'SUBSCRIPTIONS_CANONICAL_TARGET_REVOKED',
         'Canonical subscription target is not active'

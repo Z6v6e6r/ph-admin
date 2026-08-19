@@ -470,6 +470,28 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimeLatestCanonicalTargetSnapshot(input: {
+    tenantId: string;
+    targetId: string;
+    action: StoredSubscriptionCanonicalTargetSnapshot['action'];
+  }): Promise<StoredSubscriptionCanonicalTargetSnapshot | null> {
+    this.assertRuntimeContractsEnabled();
+    const row = await this.runtimeCanonicalTargets().findOne(
+      input,
+      { projection: { _id: 0 }, sort: { revision: -1 } }
+    );
+    if (row) validateStoredSubscriptionCanonicalTargetSnapshot(row);
+    return row;
+  }
+
+  async insertRuntimeCanonicalTargetSnapshot(
+    document: StoredSubscriptionCanonicalTargetSnapshot
+  ): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionCanonicalTargetSnapshot(document);
+    await this.runtimeCanonicalTargets().insertOne(document);
+  }
+
   async runtimeProviderMappingByProviderIdentity(input: {
     tenantId: string;
     provider: 'VIVA';

@@ -742,6 +742,41 @@ async function run(): Promise<void> {
   }))?.snapshotId, canonicalTargetFixture().snapshotId);
   assert.equal(canonicalTargetReads, 1);
 
+  let latestCanonicalTargetReads = 0;
+  repository.runtimeCanonicalTargets = () => ({
+    findOne: async (query: unknown, options: unknown) => {
+      latestCanonicalTargetReads += 1;
+      assert.deepEqual(query, {
+        tenantId: 'iSkq6G',
+        targetId: 'exercise:synthetic-1',
+        action: 'JOIN_GAME'
+      });
+      assert.deepEqual(options, { projection: { _id: 0 }, sort: { revision: -1 } });
+      return canonicalTargetFixture();
+    }
+  });
+  assert.equal((await repository.runtimeLatestCanonicalTargetSnapshot({
+    tenantId: 'iSkq6G',
+    targetId: 'exercise:synthetic-1',
+    action: 'JOIN_GAME'
+  }))?.revision, 1);
+  assert.equal(latestCanonicalTargetReads, 1);
+
+  let insertedCanonicalTargets = 0;
+  repository.runtimeCanonicalTargets = () => ({
+    insertOne: async () => { insertedCanonicalTargets += 1; }
+  });
+  await repository.insertRuntimeCanonicalTargetSnapshot(canonicalTargetFixture());
+  assert.equal(insertedCanonicalTargets, 1);
+  await assert.rejects(
+    repository.insertRuntimeCanonicalTargetSnapshot({
+      ...canonicalTargetFixture(),
+      targetId: ' '
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
+  );
+  assert.equal(insertedCanonicalTargets, 1);
+
   let insertedMappings = 0;
   repository.runtimeMappings = () => ({
     insertOne: async () => { insertedMappings += 1; }

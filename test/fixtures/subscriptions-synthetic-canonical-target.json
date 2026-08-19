@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "sourceMode": "SYNTHETIC_FIXTURE",
+  "tenantId": "iSkq6G",
+  "targetId": "synthetic:open-game-20260820-0900",
+  "action": "JOIN_GAME",
+  "state": "ACTIVE",
+  "revision": 1,
+  "stationId": "station:yasenevo",
+  "category": "GAME",
+  "externalEventTypeId": "synthetic_event_type:open-game",
+  "productTypeId": null,
+  "durationMinutes": 60,
+  "startsAt": "2026-08-20T06:00:00.000Z",
+  "basePriceMinor": 400000,
+  "currency": "RUB",
+  "dictionaryRevision": "synthetic_dictionary:2026-08-19-r1",
+  "evidenceRef": "synthetic_evidence:target-open-game-1",
+  "priceEvidenceRef": "synthetic_price_evidence:target-open-game-1",
+  "observedAt": "2026-08-19T10:00:00.000Z",
+  "expiresAt": "2026-08-19T10:01:00.000Z"
+}
