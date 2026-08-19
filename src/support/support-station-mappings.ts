@@ -52,7 +52,13 @@ export function parseSupportStationMappings(
           );
 
         if (mappings.length > 0) {
-          return mappings;
+          const configuredKeys = new Set(mappings.map((mapping) => mapping.key));
+          return [
+            ...mappings,
+            ...DEFAULT_SUPPORT_STATION_MAPPINGS
+              .filter((mapping) => !configuredKeys.has(mapping.key))
+              .map((mapping) => ({ ...mapping }))
+          ];
         }
       }
     } catch (_error) {
