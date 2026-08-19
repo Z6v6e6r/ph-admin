@@ -12,6 +12,8 @@ const state: PlayerRatingStateDocument = {
 };
 
 async function main(): Promise<void> {
+  const previousProjectionEnabled = process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED;
+  process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED = 'true';
   const events: any[] = [];
   let written: any = null;
   const repository: any = {
@@ -63,6 +65,20 @@ async function main(): Promise<void> {
   assert.equal(changed.event.actor.id, 'admin-1', 'actor comes from current user, never request body');
   assert.equal(changed.state.ratingNumeric, 3.45);
   assert.equal(written.outbox.payload.vivaNumericFieldId, 'eabfe27b-3f72-4496-9185-1a2ec6e6465e');
+  assert.equal(written.nextState.padlHubProjectionRevision, 1);
+  assert.deepEqual(written.padlHubOutbox.desired, {
+    schemaVersion: 1,
+    sourceEventId: changed.event.id,
+    sourceRevision: 1,
+    occurredAt: changed.event.occurredAt,
+    player: { externalClientId: 'client-1' },
+    sportCode: 'PADEL',
+    level: { code: 'C', numericValue: 3.45 },
+    source: {
+      eventType: 'RATING_MANUALLY_CHANGED',
+      formulaVersion: 'padel-rating-grade-v1'
+    }
+  }, 'PadlHub projection is committed with the canonical rating change');
 
   const duplicate = await service.change('player:1', {
     ratingNumeric: 3.45, reason: 'Уточнение после контрольной игры', expectedLastEventId: 'rating_evt:old',
@@ -76,7 +92,28 @@ async function main(): Promise<void> {
     (error: any) => error?.status === 409
   );
   assert.equal(events.length, 1, 'CAS conflict does not write an event');
+
+  restoreProjectionEnabled(previousProjectionEnabled);
+  const previousState = written.nextState as PlayerRatingStateDocument;
+  const disabledService = new PlayerRatingsService(repository);
+  await disabledService.change('player:1', {
+    ratingNumeric: 3.55,
+    reason: 'Проверка выключенного контура проекции',
+    expectedLastEventId: previousState.lastEventId,
+    idempotencyKey: '33333333-3333-4333-8333-333333333333'
+  }, actor as any);
+  assert.equal(written.padlHubOutbox, undefined, 'disabled projection creates no PadlHub outbox');
+  assert.equal(
+    written.nextState.padlHubProjectionRevision,
+    previousState.padlHubProjectionRevision,
+    'disabled projection does not advance the PadlHub revision'
+  );
   console.log('Player ratings service test passed');
+}
+
+function restoreProjectionEnabled(value: string | undefined): void {
+  if (value === undefined) delete process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED;
+  else process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED = value;
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

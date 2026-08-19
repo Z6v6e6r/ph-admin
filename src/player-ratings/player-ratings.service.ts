@@ -27,6 +27,7 @@ import {
   PlayerRatingSearchResult,
   PlayerRatingStateDocument,
   PlayerRatingStateDto,
+  PadlHubPlayerLevelProjectionOutboxDocument,
   ratingNumericToGrade
 } from './player-ratings.types';
 
@@ -36,6 +37,10 @@ const MAX_LIMIT = 100;
 
 @Injectable()
 export class PlayerRatingsService implements OnModuleDestroy {
+  private readonly padlHubProjectionEnabled =
+    String(process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED ?? '').trim().toLowerCase() ===
+    'true';
+
   constructor(private readonly repository: PlayerRatingRepository) {}
 
   async onModuleDestroy(): Promise<void> {
@@ -200,7 +205,10 @@ export class PlayerRatingsService implements OnModuleDestroy {
       lastDelta: event.change.delta,
       updatedAt: now,
       ownership: 'CUP_CANONICAL',
-      source: 'CUP'
+      source: 'CUP',
+      ...(this.padlHubProjectionEnabled
+        ? { padlHubProjectionRevision: (current.padlHubProjectionRevision ?? 0) + 1 }
+        : {})
     };
     event.stateSnapshot = nextState;
     const outbox: PlayerRatingProjectionOutboxDocument = {
@@ -219,13 +227,17 @@ export class PlayerRatingsService implements OnModuleDestroy {
       updatedAt: now,
       payload: { vivaNumericFieldId: VIVA_NUMERIC_RATING_FIELD_ID, ratingNumeric: nextNumeric }
     };
+    const padlHubOutbox = this.padlHubProjectionEnabled && current.clientId
+      ? this.padlHubProjectionOutbox(nextState, event)
+      : undefined;
     try {
       const written = await this.call(() => this.repository.runAtomicChange({
         event,
         nextState,
         expectedLastEventId: dto.expectedLastEventId,
         compatibility: this.compatibilityProjection(nextState),
-        outbox
+        outbox,
+        ...(padlHubOutbox ? { padlHubOutbox } : {})
       }));
       if (written !== 'ok') throw await this.conflict(playerKey);
     } catch (error) {
@@ -244,6 +256,21 @@ export class PlayerRatingsService implements OnModuleDestroy {
     const outbox = await this.call(() => this.repository.retryLatestFailedProjection(playerKey, actor));
     if (!outbox) throw new NotFoundException('No failed Viva projection exists for this player');
     return { state: await this.toStateDto(state, outbox), projection: { status: 'PENDING' } };
+  }
+
+  async retryPlayerLevelProjection(
+    playerKey: string,
+    user?: RequestUser
+  ): Promise<{ status: 'PENDING' }> {
+    const actor = this.actorFromUser(user);
+    await this.findState(playerKey);
+    const outbox = await this.call(() =>
+      this.repository.retryPadlHubProjection(playerKey, actor)
+    );
+    if (!outbox) {
+      throw new NotFoundException('No failed PadlHub player-level projection exists for this player');
+    }
+    return { status: 'PENDING' };
   }
 
   private async findState(playerKey: string): Promise<PlayerRatingStateDocument> {
@@ -288,6 +315,37 @@ export class PlayerRatingsService implements OnModuleDestroy {
   private compatibilityProjection(state: PlayerRatingStateDocument): Record<string, unknown> {
     return { playerKey: state.playerKey, clientId: state.clientId, phoneNorm: state.phoneNorm, name: state.name, ratingNumeric: state.ratingNumeric, rating: state.rating, lastEventId: state.lastEventId, lastEventAt: state.lastEventAt, lastEventType: state.lastEventType, updatedAt: state.updatedAt, source: 'CUP_COMPATIBILITY_PROJECTION' };
   }
+  private padlHubProjectionOutbox(
+    state: PlayerRatingStateDocument,
+    event: PlayerRatingEventDocument
+  ): PadlHubPlayerLevelProjectionOutboxDocument {
+    const now = event.occurredAt;
+    const eventType = padlHubProjectionEventType(event.eventType);
+    return {
+      playerKey: state.playerKey,
+      desiredRevision: state.padlHubProjectionRevision ?? 0,
+      deliveredRevision: -1,
+      desired: {
+        schemaVersion: 1,
+        sourceEventId: event.id,
+        sourceRevision: state.padlHubProjectionRevision ?? 0,
+        occurredAt: event.occurredAt,
+        player: { externalClientId: state.clientId as string },
+        sportCode: 'PADEL',
+        level: { code: state.rating, numericValue: state.ratingNumeric },
+        source: {
+          eventType,
+          formulaVersion: 'padel-rating-grade-v1'
+        }
+      },
+      status: 'PENDING',
+      attempts: 0,
+      maxAttempts: 20,
+      nextAttemptAt: now,
+      createdAt: now,
+      updatedAt: now
+    };
+  }
   private clampLimit(value?: number): number { const n = Number(value); return Number.isFinite(n) ? Math.max(1, Math.min(MAX_LIMIT, Math.floor(n))) : DEFAULT_LIMIT; }
   private parseDate(value: string, field: string): string { const parsed = new Date(value); if (Number.isNaN(parsed.getTime())) throw new BadRequestException(`${field} must be an ISO date`); return parsed.toISOString(); }
   private encodeCursor(value: Record<string, string>): string { return Buffer.from(JSON.stringify(value)).toString('base64url'); }
@@ -298,3 +356,16 @@ export class PlayerRatingsService implements OnModuleDestroy {
 }
 
 function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+function padlHubProjectionEventType(
+  value: string
+): 'RATING_INITIAL_IMPORTED' | 'RATING_BOOTSTRAPPED_FROM_VIVA' | 'RATING_MANUALLY_CHANGED' {
+  if (
+    value === 'RATING_INITIAL_IMPORTED'
+    || value === 'RATING_BOOTSTRAPPED_FROM_VIVA'
+    || value === 'RATING_MANUALLY_CHANGED'
+  ) {
+    return value;
+  }
+  throw new InternalServerErrorException('Rating event type cannot be projected to PadlHub');
+}

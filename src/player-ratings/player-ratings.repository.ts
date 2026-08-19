@@ -9,12 +9,17 @@ import {
 } from 'mongodb';
 import {
   PlayerRatingEventDocument,
+  PadlHubPlayerLevelProjectionOutboxDocument,
+  PadlHubPlayerLevelProjectionPayload,
   PlayerRatingProjectionOutboxDocument,
   PlayerRatingStateDocument
 } from './player-ratings.types';
 import { PlayerRatingActor } from './player-ratings.types';
 
 export class PlayerRatingRepository {
+  private readonly padlHubProjectionEnabled = readBoolean(
+    process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED
+  );
   private readonly mongoUri = String(
     process.env.PLAYER_RATINGS_MONGODB_URI ?? process.env.MONGODB_URI ?? ''
   ).trim();
@@ -95,6 +100,7 @@ export class PlayerRatingRepository {
     expectedLastEventId: string;
     compatibility: Document;
     outbox: PlayerRatingProjectionOutboxDocument;
+    padlHubOutbox?: PadlHubPlayerLevelProjectionOutboxDocument;
   }): Promise<'ok' | 'conflict'> {
     const client = this.requireClient();
     const session = client.startSession();
@@ -121,6 +127,9 @@ export class PlayerRatingRepository {
           { upsert: true, session }
         );
         await this.outbox().insertOne(input.outbox, { session });
+        if (input.padlHubOutbox) {
+          await this.upsertPadlHubProjection(input.padlHubOutbox, session);
+        }
         result = 'ok';
       }, options);
     } finally {
@@ -146,6 +155,205 @@ export class PlayerRatingRepository {
     return error instanceof MongoServerError && error.code === 11000;
   }
 
+  async listStatesForPadlHubReconcile(afterPlayerKey: string | undefined, limit: number): Promise<PlayerRatingStateDocument[]> {
+    return this.states()
+      .find(
+        {
+          clientId: { $type: 'string' },
+          ...(afterPlayerKey ? { playerKey: { $gt: afterPlayerKey } } : {})
+        } as Filter<PlayerRatingStateDocument>,
+        { projection: { _id: 0 } }
+      )
+      .sort({ playerKey: 1 })
+      .limit(limit)
+      .toArray();
+  }
+
+  async ensurePadlHubProjectionDesired(
+    state: PlayerRatingStateDocument,
+    payload: PadlHubPlayerLevelProjectionPayload
+  ): Promise<void> {
+    const existing = await this.padlHubOutbox().findOne(
+      { playerKey: state.playerKey },
+      { projection: { _id: 0, desiredRevision: 1, 'desired.sourceEventId': 1 } }
+    );
+    if (existing && existing.desiredRevision >= payload.sourceRevision) {
+      if (existing.desired.sourceEventId === payload.sourceEventId) return;
+    }
+    const effectiveRevision = existing && existing.desired.sourceEventId !== payload.sourceEventId
+      ? Math.max(payload.sourceRevision, existing.desiredRevision + 1)
+      : payload.sourceRevision;
+    const stateRevision = await this.states().updateOne(
+      { playerKey: state.playerKey, lastEventId: state.lastEventId },
+      { $set: { padlHubProjectionRevision: effectiveRevision } }
+    );
+    if (stateRevision.matchedCount !== 1) return;
+    const effectivePayload: PadlHubPlayerLevelProjectionPayload = {
+      ...payload,
+      sourceRevision: effectiveRevision
+    };
+    const now = new Date().toISOString();
+    const document: PadlHubPlayerLevelProjectionOutboxDocument = {
+      playerKey: state.playerKey,
+      desiredRevision: effectiveRevision,
+      deliveredRevision: -1,
+      desired: effectivePayload,
+      status: 'PENDING',
+      attempts: 0,
+      maxAttempts: 20,
+      nextAttemptAt: now,
+      createdAt: now,
+      updatedAt: now
+    };
+    await this.upsertPadlHubProjection(document);
+  }
+
+  async claimPadlHubProjection(input: {
+    leaseOwner: string;
+    now: string;
+    leaseUntil: string;
+  }): Promise<PadlHubPlayerLevelProjectionOutboxDocument | null> {
+    const result = await this.padlHubOutbox().findOneAndUpdate(
+      {
+        $or: [
+          { status: { $in: ['PENDING', 'FAILED_RETRYABLE'] }, nextAttemptAt: { $lte: input.now } },
+          { status: 'DELIVERING', leaseUntil: { $lte: input.now } }
+        ]
+      } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
+      [
+        {
+          $set: {
+            status: 'DELIVERING',
+            leaseOwner: input.leaseOwner,
+            leaseUntil: input.leaseUntil,
+            inFlight: '$desired',
+            lastAttemptAt: input.now,
+            updatedAt: input.now,
+            attempts: { $add: [{ $ifNull: ['$attempts', 0] }, 1] }
+          }
+        }
+      ] as Document[],
+      { sort: { nextAttemptAt: 1, playerKey: 1 }, returnDocument: 'after', projection: { _id: 0 } }
+    );
+    return result;
+  }
+
+  async completePadlHubProjection(input: {
+    playerKey: string;
+    leaseOwner: string;
+    revision: number;
+    now: string;
+  }): Promise<boolean> {
+    const result = await this.padlHubOutbox().updateOne(
+      {
+        playerKey: input.playerKey,
+        status: 'DELIVERING',
+        leaseOwner: input.leaseOwner,
+        'inFlight.sourceRevision': input.revision
+      } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
+      [
+        {
+          $set: {
+            deliveredRevision: input.revision,
+            status: {
+              $cond: [{ $gt: ['$desiredRevision', input.revision] }, 'PENDING', 'SYNCED']
+            },
+            nextAttemptAt: input.now,
+            lastSuccessAt: input.now,
+            updatedAt: input.now,
+            leaseOwner: null,
+            leaseUntil: null,
+            inFlight: null,
+            lastErrorCode: null
+          }
+        }
+      ] as Document[]
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async failPadlHubProjection(input: {
+    playerKey: string;
+    leaseOwner: string;
+    revision: number;
+    now: string;
+    nextAttemptAt: string;
+    errorCode: string;
+  }): Promise<boolean> {
+    const result = await this.padlHubOutbox().updateOne(
+      {
+        playerKey: input.playerKey,
+        status: 'DELIVERING',
+        leaseOwner: input.leaseOwner,
+        'inFlight.sourceRevision': input.revision
+      } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
+      [
+        {
+          $set: {
+            status: {
+              $cond: [
+                { $gt: ['$desiredRevision', input.revision] },
+                'PENDING',
+                { $cond: [{ $gte: ['$attempts', '$maxAttempts'] }, 'DEAD', 'FAILED_RETRYABLE'] }
+              ]
+            },
+            attempts: {
+              $cond: [{ $gt: ['$desiredRevision', input.revision] }, 0, '$attempts']
+            },
+            nextAttemptAt: {
+              $cond: [
+                { $gt: ['$desiredRevision', input.revision] },
+                input.now,
+                input.nextAttemptAt
+              ]
+            },
+            updatedAt: input.now,
+            lastErrorCode: {
+              $cond: [
+                { $gt: ['$desiredRevision', input.revision] },
+                null,
+                input.errorCode
+              ]
+            },
+            leaseOwner: null,
+            leaseUntil: null,
+            inFlight: null
+          }
+        }
+      ] as Document[]
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async retryPadlHubProjection(
+    playerKey: string,
+    actor: PlayerRatingActor
+  ): Promise<PadlHubPlayerLevelProjectionOutboxDocument | null> {
+    const now = new Date().toISOString();
+    return this.padlHubOutbox().findOneAndUpdate(
+      {
+        playerKey,
+        status: { $in: ['DEAD', 'FAILED_RETRYABLE'] }
+      } as Filter<PadlHubPlayerLevelProjectionOutboxDocument>,
+      {
+        $set: {
+          status: 'PENDING',
+          attempts: 0,
+          nextAttemptAt: now,
+          updatedAt: now,
+          lastErrorCode: null,
+          leaseOwner: null,
+          leaseUntil: null,
+          inFlight: null,
+          lastManualRetryAt: now,
+          lastManualRetryBy: actor
+        },
+        $inc: { manualRetryCount: 1 }
+      },
+      { returnDocument: 'after', projection: { _id: 0 } }
+    );
+  }
+
   private states(): Collection<PlayerRatingStateDocument> {
     return this.requireDb().collection<PlayerRatingStateDocument>('player_rating_state');
   }
@@ -158,6 +366,63 @@ export class PlayerRatingRepository {
   private outbox(): Collection<PlayerRatingProjectionOutboxDocument> {
     return this.requireDb().collection<PlayerRatingProjectionOutboxDocument>('rating_projection_outbox');
   }
+  private padlHubOutbox(): Collection<PadlHubPlayerLevelProjectionOutboxDocument> {
+    return this.requireDb().collection<PadlHubPlayerLevelProjectionOutboxDocument>('player_level_projection_outbox');
+  }
+  private async upsertPadlHubProjection(
+    document: PadlHubPlayerLevelProjectionOutboxDocument,
+    session?: import('mongodb').ClientSession
+  ): Promise<void> {
+    const incomingIsNewer = {
+      $gt: [document.desiredRevision, { $ifNull: ['$desiredRevision', -1] }]
+    };
+    await this.padlHubOutbox().updateOne(
+      { playerKey: document.playerKey },
+      [
+        {
+          $set: {
+            playerKey: document.playerKey,
+            desiredRevision: {
+              $cond: [incomingIsNewer, document.desiredRevision, '$desiredRevision']
+            },
+            desired: { $cond: [incomingIsNewer, document.desired, '$desired'] },
+            deliveredRevision: { $ifNull: ['$deliveredRevision', document.deliveredRevision] },
+            status: {
+              $cond: [
+                incomingIsNewer,
+                { $cond: [{ $eq: ['$status', 'DELIVERING'] }, 'DELIVERING', 'PENDING'] },
+                '$status'
+              ]
+            },
+            attempts: {
+              $cond: [
+                incomingIsNewer,
+                0,
+                { $ifNull: ['$attempts', 0] }
+              ]
+            },
+            maxAttempts: { $ifNull: ['$maxAttempts', document.maxAttempts] },
+            nextAttemptAt: {
+              $cond: [
+                incomingIsNewer,
+                {
+                  $cond: [
+                    { $eq: ['$status', 'DELIVERING'] },
+                    '$nextAttemptAt',
+                    document.nextAttemptAt
+                  ]
+                },
+                '$nextAttemptAt'
+              ]
+            },
+            createdAt: { $ifNull: ['$createdAt', document.createdAt] },
+            updatedAt: { $cond: [incomingIsNewer, document.updatedAt, '$updatedAt'] }
+          }
+        }
+      ] as Document[],
+      { upsert: true, ...(session ? { session } : {}) }
+    );
+  }
   private requireDb(): Db {
     if (!this.db) throw new Error('Player ratings MongoDB is not connected');
     return this.db;
@@ -167,7 +432,7 @@ export class PlayerRatingRepository {
     return this.client;
   }
   private async ensureIndexes(): Promise<void> {
-    await Promise.all([
+    const indexes = [
       this.states().createIndex({ playerKey: 1 }, { unique: true }),
       this.states().createIndex({ clientId: 1 }, { unique: true, partialFilterExpression: { clientId: { $type: 'string' } } }),
       this.states().createIndex({ phoneNorm: 1 }, { unique: true, partialFilterExpression: { phoneNorm: { $type: 'string' } } }),
@@ -175,6 +440,17 @@ export class PlayerRatingRepository {
       this.events().createIndex({ idempotencyKey: 1 }, { unique: true }),
       this.events().createIndex({ 'player.key': 1, occurredAt: -1 }),
       this.outbox().createIndex({ status: 1, nextAttemptAt: 1 })
-    ]);
+    ];
+    if (this.padlHubProjectionEnabled) {
+      indexes.push(
+        this.padlHubOutbox().createIndex({ playerKey: 1 }, { unique: true }),
+        this.padlHubOutbox().createIndex({ status: 1, nextAttemptAt: 1, playerKey: 1 })
+      );
+    }
+    await Promise.all(indexes);
   }
+}
+
+function readBoolean(value: unknown): boolean {
+  return String(value ?? '').trim().toLowerCase() === 'true';
 }

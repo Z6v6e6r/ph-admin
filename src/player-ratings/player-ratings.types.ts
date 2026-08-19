@@ -51,6 +51,46 @@ export interface PlayerRatingStateDocument {
   team?: string | null;
   vivaCabinetUrl?: string;
   bootstrappedFromViva?: boolean;
+  padlHubProjectionRevision?: number;
+}
+
+export interface PadlHubPlayerLevelProjectionPayload {
+  schemaVersion: 1;
+  sourceEventId: string;
+  sourceRevision: number;
+  occurredAt: string;
+  player: { externalClientId: string };
+  sportCode: 'PADEL';
+  level: {
+    code: PlayerRatingGrade;
+    numericValue: number;
+  };
+  source: {
+    eventType: PlayerRatingEventType;
+    formulaVersion: 'padel-rating-grade-v1';
+  };
+}
+
+export interface PadlHubPlayerLevelProjectionOutboxDocument {
+  playerKey: string;
+  desiredRevision: number;
+  deliveredRevision: number;
+  desired: PadlHubPlayerLevelProjectionPayload;
+  status: 'PENDING' | 'DELIVERING' | 'SYNCED' | 'FAILED_RETRYABLE' | 'DEAD';
+  attempts: number;
+  maxAttempts: number;
+  nextAttemptAt: string;
+  createdAt: string;
+  updatedAt: string;
+  leaseOwner?: string | null;
+  leaseUntil?: string | null;
+  inFlight?: PadlHubPlayerLevelProjectionPayload | null;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastErrorCode?: string | null;
+  manualRetryCount?: number;
+  lastManualRetryAt?: string | null;
+  lastManualRetryBy?: PlayerRatingActor | null;
 }
 
 export interface PlayerRatingEventDocument {
