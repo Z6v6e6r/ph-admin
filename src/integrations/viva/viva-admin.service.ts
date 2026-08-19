@@ -586,9 +586,11 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     const sanitized = {
       provider: 'VIVA' as const,
       providerProductId: product.id,
-      name: product.name ?? null,
-      type: product.type ?? null,
-      providerReportedCost: product.costMinor ?? null,
+      name: product.name?.slice(0, 240) ?? null,
+      type: product.type?.slice(0, 120) ?? null,
+      providerReportedCost: Number.isSafeInteger(product.costMinor)
+        ? product.costMinor ?? null
+        : null,
       costUnit: 'UNVERIFIED' as const,
       observedAt
     };

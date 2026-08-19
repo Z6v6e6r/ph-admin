@@ -203,6 +203,12 @@ async function testTrustedAdapter(): Promise<void> {
     forbidNonWhitelisted: true
   });
   assert.ok(validationErrors.some((error) => error.property === 'identity'));
+  const unsafePriceDto = plainToInstance(SubscriptionShadowQuoteAdapterDto, {
+    ...quoteDto(),
+    target: { ...quoteDto().target, basePriceMinor: Number.MAX_SAFE_INTEGER + 1 }
+  });
+  const unsafePriceErrors = await validate(unsafePriceDto);
+  assert.ok(unsafePriceErrors.some((error) => error.property === 'target'));
 }
 
 async function testProviderMappingPreview(): Promise<void> {

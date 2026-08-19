@@ -63,6 +63,7 @@ export class SubscriptionShadowQuoteResolvedTargetDto {
 
   @IsInt()
   @Min(0)
+  @Max(Number.MAX_SAFE_INTEGER)
   basePriceMinor!: number;
 
   @IsIn(['RUB'])
