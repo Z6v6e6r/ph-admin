@@ -9,6 +9,7 @@ import {
   computeSubscriptionRuntimeProjectionDigest,
   computeSubscriptionUsageLedgerEventHash,
   SubscriptionRuntimeContractError,
+  validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
   validateStoredSubscriptionOutboxEvent,
@@ -22,6 +23,7 @@ import {
   SubscriptionsRepository
 } from '../src/subscriptions/subscriptions.repository';
 import {
+  StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
   StoredSubscriptionOutboxEvent,
@@ -35,6 +37,31 @@ const HASH = 'a'.repeat(64);
 const OTHER_HASH = 'b'.repeat(64);
 const DIGEST = `sha256:${HASH}`;
 const NOW = '2026-08-15T19:00:00.000Z';
+
+const canonicalTargetFixture = (): StoredSubscriptionCanonicalTargetSnapshot => ({
+  schemaVersion: 1,
+  snapshotId: 'target_snapshot:exercise-synthetic-1:r1',
+  tenantId: 'iSkq6G',
+  targetId: 'exercise:synthetic-1',
+  action: 'JOIN_GAME',
+  state: 'ACTIVE',
+  revision: 1,
+  stationId: 'station:yasenevo',
+  category: 'GAME',
+  externalEventTypeId: 'event_type:open-game',
+  productTypeId: null,
+  durationMinutes: 60,
+  startsAt: '2026-08-16T06:00:00.000Z',
+  basePriceMinor: 400000,
+  currency: 'RUB',
+  dictionaryRevision: 'dictionary:2026-08-15',
+  evidenceRef: 'evidence:canonical-target-read',
+  priceEvidenceRef: 'evidence:canonical-price-read',
+  sourceKind: 'CANONICAL_TARGET_PROJECTION',
+  observedAt: '2026-08-15T18:59:50.000Z',
+  expiresAt: '2026-08-15T19:00:50.000Z',
+  createdAt: NOW
+});
 
 const mappingFixture = (): StoredSubscriptionProviderMapping => ({
   schemaVersion: 1,
@@ -293,6 +320,7 @@ const hasCode = (code: string) => (error: unknown): boolean =>
   error instanceof SubscriptionRuntimeContractError && error.code === code;
 
 async function run(): Promise<void> {
+  validateStoredSubscriptionCanonicalTargetSnapshot(canonicalTargetFixture());
   validateStoredSubscriptionProviderMapping(mappingFixture());
   validateStoredSubscriptionPolicyPublication(publicationFixture());
   const reorderedProjection = Object.fromEntries(
@@ -332,6 +360,20 @@ async function run(): Promise<void> {
     subscriptionInstanceId: null
   });
 
+  assert.throws(
+    () => validateStoredSubscriptionCanonicalTargetSnapshot({
+      ...canonicalTargetFixture(),
+      category: 'TOURNAMENT'
+    }),
+    hasCode('SUBSCRIPTION_CANONICAL_TARGET_ACTION_CATEGORY_MISMATCH')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionCanonicalTargetSnapshot({
+      ...canonicalTargetFixture(),
+      createdAt: '2026-08-15T19:01:00.000Z'
+    }),
+    hasCode('SUBSCRIPTION_CANONICAL_TARGET_TIME_ORDER_INVALID')
+  );
   assert.throws(
     () => validateStoredSubscriptionProviderMapping({
       ...mappingFixture(),
@@ -582,6 +624,7 @@ async function run(): Promise<void> {
   const runtimeIndexBlockEnd = indexScript.indexOf('...(includeTestRuntimeIndexes ? [');
   assert.ok(runtimeIndexBlockStart >= 0 && runtimeIndexBlockEnd > runtimeIndexBlockStart);
   const collectionByGroup: Record<string, string> = {
+    canonicalTargets: 'subscription_canonical_target_snapshots',
     mappings: 'subscription_provider_mappings',
     publications: 'subscription_policy_publications',
     instances: 'subscription_instances',
@@ -677,6 +720,27 @@ async function run(): Promise<void> {
   );
   assert.match(repositoryConnectionSource, /connectReadOnly[\s\S]*connectWithMode\('VERIFY_ONLY'\)/);
   assert.match(repositoryConnectionSource, /mode === 'DEFAULT' && \(rawAutoCreate/);
+
+  let canonicalTargetReads = 0;
+  repository.runtimeCanonicalTargets = () => ({
+    findOne: async (query: unknown) => {
+      canonicalTargetReads += 1;
+      assert.deepEqual(query, {
+        tenantId: 'iSkq6G',
+        targetId: 'exercise:synthetic-1',
+        action: 'JOIN_GAME',
+        revision: 1
+      });
+      return canonicalTargetFixture();
+    }
+  });
+  assert.equal((await repository.runtimeCanonicalTargetSnapshot({
+    tenantId: 'iSkq6G',
+    targetId: 'exercise:synthetic-1',
+    action: 'JOIN_GAME',
+    revision: 1
+  }))?.snapshotId, canonicalTargetFixture().snapshotId);
+  assert.equal(canonicalTargetReads, 1);
 
   let insertedMappings = 0;
   repository.runtimeMappings = () => ({

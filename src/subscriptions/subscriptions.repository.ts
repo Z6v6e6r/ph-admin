@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Collection, Db, Filter, MongoClient, MongoServerError } from 'mongodb';
 import {
   StoredReleaseProgram,
+  StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
   StoredSubscriptionOutboxEvent,
@@ -20,6 +21,7 @@ import {
 } from './subscriptions.types';
 import {
   SubscriptionRuntimeContractError,
+  validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
   validateStoredSubscriptionOutboxEvent,
@@ -80,6 +82,23 @@ export const SUBSCRIPTION_TEST_REQUIRED_INDEXES = {
 } as const;
 
 export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
+  canonicalTargets: [
+    {
+      name: 'subscription_canonical_target_snapshot_id_unique',
+      key: { snapshotId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_canonical_target_identity_revision_unique',
+      key: { tenantId: 1, targetId: 1, action: 1, revision: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_canonical_target_active_lookup',
+      key: { tenantId: 1, targetId: 1, action: 1, state: 1, revision: -1 },
+      unique: false
+    }
+  ],
   mappings: [
     { name: 'subscription_mapping_id_unique', key: { mappingId: 1 }, unique: true },
     {
@@ -433,6 +452,21 @@ export class SubscriptionsRepository {
     this.assertRuntimeContractsEnabled();
     const row = await this.runtimeMappings().findOne({ mappingId }, { projection: { _id: 0 } });
     if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
+  }
+
+  async runtimeCanonicalTargetSnapshot(input: {
+    tenantId: string;
+    targetId: string;
+    action: StoredSubscriptionCanonicalTargetSnapshot['action'];
+    revision: number;
+  }): Promise<StoredSubscriptionCanonicalTargetSnapshot | null> {
+    this.assertRuntimeContractsEnabled();
+    const row = await this.runtimeCanonicalTargets().findOne(
+      input,
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionCanonicalTargetSnapshot(row);
     return row;
   }
 
@@ -1018,6 +1052,12 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionProviderMapping>('subscription_provider_mappings');
   }
 
+  private runtimeCanonicalTargets(): Collection<StoredSubscriptionCanonicalTargetSnapshot> {
+    return this.requireDb().collection<StoredSubscriptionCanonicalTargetSnapshot>(
+      'subscription_canonical_target_snapshots'
+    );
+  }
+
   private runtimePublications(): Collection<StoredSubscriptionPolicyPublication> {
     return this.requireDb().collection<StoredSubscriptionPolicyPublication>('subscription_policy_publications');
   }
@@ -1195,6 +1235,10 @@ export class SubscriptionsRepository {
 
   private async verifyRuntimeIndexes(): Promise<void> {
     const groups = [
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.canonicalTargets,
+        actual: await this.runtimeCanonicalTargets().listIndexes().toArray()
+      },
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.mappings,
         actual: await this.runtimeMappings().listIndexes().toArray()

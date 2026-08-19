@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
   StoredSubscriptionOutboxEvent,
@@ -37,6 +38,19 @@ const SUBSCRIPTION_ACTIONS = [
   'CREATE_GAME', 'JOIN_GAME', 'BOOK_GROUP_TRAINING', 'BOOK_TOURNAMENT',
   'PURCHASE_ADD_ON_PRODUCT'
 ] as const;
+const CANONICAL_TARGET_CATEGORIES = [
+  'GAME', 'GROUP_TRAINING', 'TOURNAMENT', 'ADD_ON_PRODUCT'
+] as const;
+const ACTION_CATEGORY: Record<
+  (typeof SUBSCRIPTION_ACTIONS)[number],
+  (typeof CANONICAL_TARGET_CATEGORIES)[number]
+> = {
+  CREATE_GAME: 'GAME',
+  JOIN_GAME: 'GAME',
+  BOOK_GROUP_TRAINING: 'GROUP_TRAINING',
+  BOOK_TOURNAMENT: 'TOURNAMENT',
+  PURCHASE_ADD_ON_PRODUCT: 'ADD_ON_PRODUCT'
+};
 const LEDGER_EVENT_TYPES = [
   'PURCHASE_RESERVED', 'PURCHASE_PAID', 'PURCHASE_FAILED', 'PURCHASE_EXPIRED',
   'PURCHASE_REFUNDED', 'INSTANCE_ACTIVATED', 'INSTANCE_FROZEN', 'INSTANCE_UNFROZEN',
@@ -559,6 +573,73 @@ export function validateStoredSubscriptionProviderMapping(
     optionalInstant(value.verifiedAt, 'verifiedAt');
     optionalId(value.verifiedBy, 'verifiedBy');
   }
+}
+
+export function validateStoredSubscriptionCanonicalTargetSnapshot(
+  value: StoredSubscriptionCanonicalTargetSnapshot
+): void {
+  if (value.schemaVersion !== 1
+    || value.sourceKind !== 'CANONICAL_TARGET_PROJECTION') {
+    fail('SUBSCRIPTION_CANONICAL_TARGET_SCHEMA_INVALID');
+  }
+  requiredId(value.snapshotId, 'snapshotId');
+  requiredId(value.tenantId, 'tenantId');
+  requiredId(value.targetId, 'targetId');
+  oneOf(
+    value.action,
+    SUBSCRIPTION_ACTIONS,
+    'SUBSCRIPTION_CANONICAL_TARGET_ACTION_INVALID',
+    'action'
+  );
+  oneOf(
+    value.state,
+    ['ACTIVE', 'REVOKED'],
+    'SUBSCRIPTION_CANONICAL_TARGET_STATE_INVALID',
+    'state'
+  );
+  positiveInteger(value.revision, 'revision');
+  requiredId(value.stationId, 'stationId');
+  oneOf(
+    value.category,
+    CANONICAL_TARGET_CATEGORIES,
+    'SUBSCRIPTION_CANONICAL_TARGET_CATEGORY_INVALID',
+    'category'
+  );
+  if (ACTION_CATEGORY[value.action] !== value.category) {
+    fail('SUBSCRIPTION_CANONICAL_TARGET_ACTION_CATEGORY_MISMATCH');
+  }
+  requiredId(value.externalEventTypeId, 'externalEventTypeId');
+  optionalId(value.productTypeId, 'productTypeId');
+  if (value.action === 'PURCHASE_ADD_ON_PRODUCT' && value.productTypeId === null) {
+    fail('SUBSCRIPTION_CANONICAL_TARGET_PRODUCT_TYPE_REQUIRED');
+  }
+  const durationMinutes = positiveInteger(value.durationMinutes, 'durationMinutes');
+  if (durationMinutes > 1440) {
+    fail('SUBSCRIPTION_CANONICAL_TARGET_DURATION_INVALID');
+  }
+  requiredInstant(value.startsAt, 'startsAt');
+  nonNegativeInteger(value.basePriceMinor, 'basePriceMinor');
+  if (value.currency !== 'RUB') {
+    fail('SUBSCRIPTION_CANONICAL_TARGET_CURRENCY_INVALID');
+  }
+  requiredId(value.dictionaryRevision, 'dictionaryRevision');
+  requiredId(value.evidenceRef, 'evidenceRef');
+  requiredId(value.priceEvidenceRef, 'priceEvidenceRef');
+  requiredInstant(value.observedAt, 'observedAt');
+  requiredInstant(value.expiresAt, 'expiresAt');
+  requiredInstant(value.createdAt, 'createdAt');
+  assertInstantOrder(
+    value.observedAt,
+    value.createdAt,
+    'SUBSCRIPTION_CANONICAL_TARGET_TIME_ORDER_INVALID',
+    'createdAt'
+  );
+  assertInstantOrder(
+    value.createdAt,
+    value.expiresAt,
+    'SUBSCRIPTION_CANONICAL_TARGET_TIME_ORDER_INVALID',
+    'expiresAt'
+  );
 }
 
 export function validateStoredSubscriptionPolicyPublication(

@@ -30,6 +30,8 @@ const ENV_NAMES = [
   'SUBSCRIPTIONS_ADMIN_ENABLED',
   'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED',
   'SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED',
+  'SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED',
+  'SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS',
   'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN',
   'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
   'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER',
@@ -53,18 +55,7 @@ const quoteDto = (): SubscriptionShadowQuoteAdapterDto => ({
   action: 'CREATE_GAME',
   target: {
     targetId: 'exercise:synthetic-1',
-    stationId: 'station:yasenevo',
-    category: 'GAME',
-    externalEventTypeId: 'event_type:open-game',
-    productTypeId: null,
-    durationMinutes: 60,
-    startsAt: '2026-08-20T06:00:00.000Z',
-    basePriceMinor: 400000,
-    currency: 'RUB',
-    dictionaryRevision: 'dictionary:2026-08-19',
-    evidenceRef: 'evidence:exercise-read',
-    priceEvidenceRef: 'evidence:price-read',
-    resolvedAt: '2026-08-19T09:59:50.000Z'
+    snapshotRevision: 7
   }
 });
 
@@ -77,6 +68,7 @@ class FixedClockAdapter extends SubscriptionTrustedShadowAdapterService {
 async function testTrustedAdapter(): Promise<void> {
   let identityCalls = 0;
   let quoteCalls = 0;
+  let resolverCalls = 0;
   let capturedRequest: any;
   const identity = {
     verifyTrustedBearer: async () => {
@@ -122,7 +114,34 @@ async function testTrustedAdapter(): Promise<void> {
       };
     }
   } as any;
-  const adapter = new FixedClockAdapter(identity, shadowQuote);
+  const targetResolver = {
+    resolve: async (reference: unknown) => {
+      resolverCalls += 1;
+      assert.deepEqual(reference, {
+        tenantId: 'iSkq6G',
+        targetId: 'exercise:synthetic-1',
+        action: 'CREATE_GAME',
+        snapshotRevision: 7
+      });
+      return {
+        resolutionSource: 'SERVER',
+        targetId: 'exercise:synthetic-1',
+        stationId: 'station:yasenevo',
+        category: 'GAME',
+        externalEventTypeId: 'event_type:open-game',
+        productTypeId: null,
+        durationMinutes: 60,
+        startsAt: '2026-08-20T06:00:00.000Z',
+        basePriceMinor: 400000,
+        currency: 'RUB',
+        dictionaryRevision: 'dictionary:2026-08-19',
+        evidenceRef: 'evidence:exercise-read',
+        priceEvidenceRef: 'evidence:price-read',
+        resolvedAt: '2026-08-19T09:59:50.000Z'
+      };
+    }
+  } as any;
+  const adapter = new FixedClockAdapter(identity, shadowQuote, targetResolver);
 
   delete process.env.SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED;
   await assert.rejects(adapter.quote('Bearer token', 'x'.repeat(32), quoteDto()), (error) => (
@@ -130,6 +149,7 @@ async function testTrustedAdapter(): Promise<void> {
   ));
   assert.equal(identityCalls, 0);
   assert.equal(quoteCalls, 0);
+  assert.equal(resolverCalls, 0);
 
   process.env.SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED = 'true';
   process.env.SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN = 'integration-token-'.repeat(3);
@@ -148,6 +168,7 @@ async function testTrustedAdapter(): Promise<void> {
   assert.equal(result.quoteKind, 'SHADOW');
   assert.equal(identityCalls, 1);
   assert.equal(quoteCalls, 1);
+  assert.equal(resolverCalls, 1);
   assert.equal(capturedRequest.identity.resolutionSource, 'LK_IDENTITY');
   assert.equal(capturedRequest.identity.tenantId, 'iSkq6G');
   assert.match(capturedRequest.identity.clientRefHash, /^[a-f0-9]{64}$/);
@@ -216,7 +237,10 @@ async function testTrustedAdapter(): Promise<void> {
     ...quoteDto(),
     target: { ...quoteDto().target, basePriceMinor: Number.MAX_SAFE_INTEGER + 1 }
   });
-  const unsafePriceErrors = await validate(unsafePriceDto);
+  const unsafePriceErrors = await validate(unsafePriceDto, {
+    whitelist: true,
+    forbidNonWhitelisted: true
+  });
   assert.ok(unsafePriceErrors.some((error) => error.property === 'target'));
 }
 

@@ -23,6 +23,15 @@ but still exposes no service/controller command.
 
 ## Collections
 
+### `subscription_canonical_target_snapshots`
+
+Immutable, PII-free target/price/dictionary projections consumed by the trusted shadow resolver.
+The unique identity is tenant + target + action + revision. A row contains the canonical station,
+event/product type, duration, start time, RUB base price and separate target/price evidence
+references. Action/category mismatches, missing add-on product type, stale/expired rows and revoked
+rows fail closed. This checkpoint exposes read access only; it does not add an ingestion route or
+pretend that a provider payload is canonical.
+
 ### `subscription_provider_mappings`
 
 Reviewed identity mapping between a CUP subscription type and one provider
@@ -122,6 +131,10 @@ Forward procedure for a later approved environment:
    `npm run subscriptions:indexes:apply`;
 6. rerun the read-only check;
 7. enable the flag for the application only after every expected index matches.
+
+The canonical target collection adds three reviewed indexes: unique snapshot id, unique
+tenant/target/action/revision, and the active revision lookup. They are included in the same guarded
+runtime plan and are never auto-created by application startup.
 
 Application startup is verify-only for these runtime indexes even when ordinary
 development index auto-creation is enabled. It cannot bypass the guarded apply

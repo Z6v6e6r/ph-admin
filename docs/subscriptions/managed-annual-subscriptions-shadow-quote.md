@@ -16,6 +16,7 @@ SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED=true
 SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED=true
 SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS=60
 SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED=true
+SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED=true
 SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN=<at-least-32-bytes>
 SUBSCRIPTIONS_RUNTIME_TENANT_ID=iSkq6G
 SUBSCRIPTIONS_RUNTIME_HASH_PEPPER=<at-least-32-bytes>
@@ -38,15 +39,24 @@ as HMAC-SHA256 with a versioned input. Phone, subject, provider client id, beare
 token are not returned. The same HMAC contract must be used when a future reconciler creates a
 runtime subscription instance.
 
+The request body contains only `subscriptionInstanceId`, `action` and a target reference with
+`targetId` plus `snapshotRevision`. Station, event/product type, duration, start, dictionary
+revision, price and evidence references are forbidden body fields.
+
 The service then builds an internal `SubscriptionShadowQuoteRequest` from:
 
 - `LK_IDENTITY`: tenant and one-way `clientRefHash` resolved from an authenticated LK session;
-- `SERVER`: canonical target, station, event/product type, duration, start, dictionary revision,
-  base price and evidence references resolved by a future server adapter.
+- `SERVER`: an exact immutable row from `subscription_canonical_target_snapshots`, selected by
+  tenant, target, action and revision.
 
-Identity fields never come from the body. Canonical target and price fields are accepted only from
-the caller holding the dedicated integration token and are revalidated for shape and freshness.
-There is deliberately no public/browser quote endpoint.
+Identity, station, dictionary and price fields never come from the body. The resolver accepts only
+an `ACTIVE`, non-expired snapshot whose `observedAt` is within the configured shadow freshness
+window. The snapshot validator requires action/category compatibility, RUB integer minor units and
+both target and price evidence references. There is deliberately no public/browser quote endpoint.
+
+This checkpoint deliberately provides no snapshot write route. A separately reviewed trusted
+projection producer must populate immutable revisions from canonical LK/Viva/CUP read models before
+the resolver can return a target; missing data fails closed.
 
 ## Viva product evidence preview
 
@@ -128,8 +138,10 @@ group training, tournament and add-on product, no exact enabled benefit match bl
 
 ## Safe recovery and next gate
 
-Recovery is disabling `SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED` and
+Recovery is disabling `SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED`,
+`SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED` and
 `SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED`; there are no checkpoint-created data or indexes
-to roll back. The trusted caller still has to implement the canonical event/price/dictionary
-resolver and contract-test its output against this service. The adapter remains shadow-only until
-a separate reviewed atomic reservation and provider confirmation flow is approved.
+to roll back at application level. Runtime indexes are retained if they were separately applied.
+The next gate is a trusted projection producer plus Golden HAR/dictionary proof and synthetic
+snapshots. The adapter remains shadow-only until a separate reviewed atomic reservation and
+provider confirmation flow is approved.

@@ -23,6 +23,9 @@ const plan = [
   ['subscription_release_programs', { stationId: 1, state: 1, updatedAt: -1, releaseProgramId: 1 }, { name: 'subscription_release_station_list' }],
   ['subscription_release_programs', { subscriptionTypeId: 1, stationId: 1, state: 1 }, { name: 'subscription_release_type_station_state' }],
   ...(includeRuntimeContractIndexes ? [
+    ['subscription_canonical_target_snapshots', { snapshotId: 1 }, { unique: true, name: 'subscription_canonical_target_snapshot_id_unique' }],
+    ['subscription_canonical_target_snapshots', { tenantId: 1, targetId: 1, action: 1, revision: 1 }, { unique: true, name: 'subscription_canonical_target_identity_revision_unique' }],
+    ['subscription_canonical_target_snapshots', { tenantId: 1, targetId: 1, action: 1, state: 1, revision: -1 }, { name: 'subscription_canonical_target_active_lookup' }],
     ['subscription_provider_mappings', { mappingId: 1 }, { unique: true, name: 'subscription_mapping_id_unique' }],
     ['subscription_provider_mappings', { tenantId: 1, provider: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1 }, { unique: true, name: 'subscription_mapping_provider_scope_unique' }],
     ['subscription_provider_mappings', { tenantId: 1, 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_mapping_idempotency_unique' }],

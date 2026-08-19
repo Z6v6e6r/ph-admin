@@ -7,6 +7,7 @@ import {
 import { createHmac, timingSafeEqual } from 'crypto';
 import { LkIdentityService } from '../lk-identity/lk-identity.service';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
+import { SubscriptionCanonicalTargetResolverService } from './subscription-canonical-target-resolver.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
 import { SubscriptionShadowQuoteResult } from './subscriptions.types';
 
@@ -29,7 +30,8 @@ export const computeSubscriptionClientRefHash = (input: {
 export class SubscriptionTrustedShadowAdapterService {
   constructor(
     private readonly identity: LkIdentityService,
-    private readonly shadowQuote: SubscriptionShadowQuoteService
+    private readonly shadowQuote: SubscriptionShadowQuoteService,
+    private readonly targetResolver: SubscriptionCanonicalTargetResolverService
   ) {}
 
   async quote(
@@ -81,6 +83,12 @@ export class SubscriptionTrustedShadowAdapterService {
         verifiedAt
       ].join('\0'))
       .digest('hex');
+    const target = await this.targetResolver.resolve({
+      tenantId,
+      targetId: dto.target.targetId,
+      action: dto.action,
+      snapshotRevision: dto.target.snapshotRevision
+    });
 
     return this.shadowQuote.quote({
       identity: {
@@ -92,22 +100,7 @@ export class SubscriptionTrustedShadowAdapterService {
       },
       subscriptionInstanceId: dto.subscriptionInstanceId,
       action: dto.action,
-      target: {
-        resolutionSource: 'SERVER',
-        targetId: dto.target.targetId,
-        stationId: dto.target.stationId,
-        category: dto.target.category,
-        externalEventTypeId: dto.target.externalEventTypeId,
-        productTypeId: dto.target.productTypeId,
-        durationMinutes: dto.target.durationMinutes,
-        startsAt: dto.target.startsAt,
-        basePriceMinor: dto.target.basePriceMinor,
-        currency: dto.target.currency,
-        dictionaryRevision: dto.target.dictionaryRevision,
-        evidenceRef: dto.target.evidenceRef,
-        priceEvidenceRef: dto.target.priceEvidenceRef,
-        resolvedAt: dto.target.resolvedAt
-      }
+      target
     });
   }
 

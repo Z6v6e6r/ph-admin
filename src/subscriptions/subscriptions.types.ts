@@ -716,6 +716,33 @@ export interface SubscriptionShadowQuoteResolvedTarget {
   resolvedAt: string;
 }
 
+export type SubscriptionCanonicalTargetSnapshotState = 'ACTIVE' | 'REVOKED';
+
+export interface StoredSubscriptionCanonicalTargetSnapshot {
+  schemaVersion: 1;
+  snapshotId: string;
+  tenantId: string;
+  targetId: string;
+  action: SubscriptionAction;
+  state: SubscriptionCanonicalTargetSnapshotState;
+  revision: number;
+  stationId: string;
+  category: BenefitCategory;
+  externalEventTypeId: string;
+  productTypeId: string | null;
+  durationMinutes: number;
+  startsAt: string;
+  basePriceMinor: number;
+  currency: 'RUB';
+  dictionaryRevision: string;
+  evidenceRef: string;
+  priceEvidenceRef: string;
+  sourceKind: 'CANONICAL_TARGET_PROJECTION';
+  observedAt: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface SubscriptionShadowQuoteRequest {
   identity: SubscriptionShadowQuoteIdentityContext;
   subscriptionInstanceId: string;
