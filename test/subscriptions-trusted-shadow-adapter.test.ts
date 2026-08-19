@@ -3,15 +3,24 @@ import {
   BadRequestException,
   ForbiddenException,
   ServiceUnavailableException,
-  UnauthorizedException
+  UnauthorizedException,
+  ValidationPipe
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { lastValueFrom, of } from 'rxjs';
+import { AdminAuditInterceptor } from '../src/common/observability/admin-audit.interceptor';
+import { RolesGuard } from '../src/common/rbac/roles.guard';
 import { VivaAdminService } from '../src/integrations/viva/viva-admin.service';
 import { SubscriptionProviderMappingPreviewDto } from '../src/subscriptions/dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from '../src/subscriptions/dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionProviderMappingPreviewService } from '../src/subscriptions/subscription-provider-mapping-preview.service';
 import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions-exception.filter';
+import {
+  SubscriptionsController,
+  SubscriptionTrustedShadowController
+} from '../src/subscriptions/subscriptions.controller';
 import {
   computeSubscriptionClientRefHash,
   SubscriptionTrustedShadowAdapterService
@@ -257,12 +266,17 @@ async function testProviderMappingPreview(): Promise<void> {
     canonicalStationId: 'station:yasenevo',
     providerStudioId: 'studio:yasenevo'
   };
-  const user = {
+  const scopedUser = {
     id: 'admin:subscriptions',
     roles: [],
     stationIds: ['station:yasenevo'],
     connectorRoutes: [],
     permissionStationScopes: { 'subscriptions:catalog:write': ['station:yasenevo'] }
+  } as any;
+  const user = {
+    ...scopedUser,
+    stationIds: [],
+    permissionStationScopes: { 'subscriptions:catalog:write': null }
   } as any;
 
   const clientSelectingDto = plainToInstance(SubscriptionProviderMappingPreviewDto, {
@@ -290,6 +304,13 @@ async function testProviderMappingPreview(): Promise<void> {
     policy.subscriptionTypeId,
     '3',
     dto,
+    scopedUser
+  ), (error) => error instanceof ForbiddenException);
+  assert.equal(connectCalls, 0);
+  await assert.rejects(service.preview(
+    policy.subscriptionTypeId,
+    '3',
+    dto,
     user
   ), (error) => error instanceof ServiceUnavailableException);
   assert.equal(connectCalls, 0);
@@ -312,7 +333,7 @@ async function testProviderMappingPreview(): Promise<void> {
   await assert.rejects(service.preview(policy.subscriptionTypeId, '3', {
     ...dto,
     canonicalStationId: 'station:other'
-  }, user), (error) => error instanceof ForbiddenException);
+  }, scopedUser), (error) => error instanceof ForbiddenException);
   assert.equal(connectCalls, 1);
 
   policy.providerBinding = undefined;
@@ -364,6 +385,24 @@ async function testVivaProductInspection(): Promise<void> {
     assert.equal(evidence.costUnit, 'UNVERIFIED');
     assert.match(evidence.evidenceRef, /^evidence:viva-product:[a-f0-9]{64}$/);
     assert.doesNotMatch(JSON.stringify(evidence), /clientSubscriptionId|must-not-leak/);
+
+    for (const [status, exceptionType, code] of [
+      [404, BadRequestException, 'SUBSCRIPTIONS_PROVIDER_PRODUCT_NOT_CONFIRMED'],
+      [401, ServiceUnavailableException, 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_AUTH_UNAVAILABLE'],
+      [403, ServiceUnavailableException, 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_AUTH_UNAVAILABLE'],
+      [429, ServiceUnavailableException, 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_UNAVAILABLE'],
+      [503, ServiceUnavailableException, 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_UNAVAILABLE']
+    ] as const) {
+      global.fetch = (async () => new Response('', { status })) as typeof fetch;
+      const failure = await viva.inspectSubscriptionProduct({
+        productId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+        clientId: 'provider_client:synthetic-1',
+        studioId: 'studio:yasenevo'
+      }).then(() => null, (error: unknown) => error);
+      assert.ok(failure instanceof exceptionType, `status=${status}`);
+      const response = (failure as BadRequestException | ServiceUnavailableException).getResponse();
+      assert.equal((response as Record<string, unknown>).code, code, `status=${status}`);
+    }
   } finally {
     global.fetch = previousFetch;
   }
@@ -399,12 +438,118 @@ function testIntegrationTokenErrorEnvelope(): void {
   );
 }
 
+async function testControllerBoundaries(): Promise<void> {
+  const reflector = new Reflector();
+  const globalAdmin = {
+    id: 'admin:subscriptions',
+    roles: [],
+    permissions: ['subscriptions:catalog:write'],
+    stationIds: [],
+    connectorRoutes: [],
+    permissionStationScopes: { 'subscriptions:catalog:write': null }
+  } as any;
+  let resolvedUser: any = globalAdmin;
+  const authService = {
+    resolveUserFromRequest: async () => ({
+      user: resolvedUser,
+      source: resolvedUser ? 'token' : 'anonymous'
+    }),
+    shouldRequireStaffToken: () => false,
+    hasStaffRole: () => false
+  } as any;
+  const makeContext = (
+    handler: (...args: any[]) => any,
+    controller: new (...args: any[]) => any,
+    request: Record<string, any>
+  ): any => ({
+    getType: () => 'http',
+    getHandler: () => handler,
+    getClass: () => controller,
+    switchToHttp: () => ({
+      getRequest: () => request,
+      getResponse: () => ({ statusCode: 200 })
+    })
+  });
+
+  const guard = new RolesGuard(reflector, authService);
+  const previewRequest: Record<string, any> = { headers: {} };
+  assert.equal(await guard.canActivate(makeContext(
+    SubscriptionsController.prototype.previewProviderMapping,
+    SubscriptionsController,
+    previewRequest
+  )), true);
+  resolvedUser = { ...globalAdmin, permissions: [] };
+  assert.equal(await guard.canActivate(makeContext(
+    SubscriptionsController.prototype.previewProviderMapping,
+    SubscriptionsController,
+    { headers: {} }
+  )), false);
+  resolvedUser = undefined;
+  assert.equal(await guard.canActivate(makeContext(
+    SubscriptionTrustedShadowController.prototype.quote,
+    SubscriptionTrustedShadowController,
+    { headers: {} }
+  )), true);
+
+  const pipe = new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true
+  });
+  await assert.rejects(pipe.transform({
+    canonicalStationId: 'station:yasenevo',
+    providerStudioId: 'studio:yasenevo',
+    providerClientId: 'provider_client:browser-selected'
+  }, {
+    type: 'body',
+    metatype: SubscriptionProviderMappingPreviewDto
+  }), (error) => error instanceof BadRequestException);
+  await assert.rejects(pipe.transform({
+    ...quoteDto(),
+    identity: { clientRefHash: 'browser-controlled' }
+  }, {
+    type: 'body',
+    metatype: SubscriptionShadowQuoteAdapterDto
+  }), (error) => error instanceof BadRequestException);
+
+  let auditWrites = 0;
+  const audit = new AdminAuditInterceptor({
+    appendAudit: async () => { auditWrites += 1; }
+  } as any, reflector);
+  const auditRequest = (path: string): Record<string, any> => ({
+    method: 'POST',
+    originalUrl: path,
+    headers: {},
+    params: {},
+    user: globalAdmin
+  });
+  await lastValueFrom(audit.intercept(makeContext(
+    SubscriptionsController.prototype.previewProviderMapping,
+    SubscriptionsController,
+    auditRequest('/api/v1/admin/subscription-types/type/policy-versions/1/provider-mapping-preview')
+  ), { handle: () => of({}) }));
+  await lastValueFrom(audit.intercept(makeContext(
+    SubscriptionTrustedShadowController.prototype.quote,
+    SubscriptionTrustedShadowController,
+    auditRequest('/api/internal/subscriptions/shadow-quote')
+  ), { handle: () => of({}) }));
+  assert.equal(auditWrites, 0);
+
+  await lastValueFrom(audit.intercept(makeContext(
+    SubscriptionsController.prototype.createType,
+    SubscriptionsController,
+    auditRequest('/api/v1/admin/subscription-types')
+  ), { handle: () => of({}) }));
+  assert.equal(auditWrites, 1);
+}
+
 async function run(): Promise<void> {
   try {
     await testTrustedAdapter();
     await testProviderMappingPreview();
     await testVivaProductInspection();
     testIntegrationTokenErrorEnvelope();
+    await testControllerBoundaries();
     console.log('subscriptions trusted shadow adapter tests: OK');
   } finally {
     restoreEnv();

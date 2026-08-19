@@ -62,12 +62,19 @@ SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID=<synthetic-viva-client-id>
 It reads the exact DRAFT policy `providerBinding.externalId`, then performs only
 `GET /api/v1/products/subscriptions/{productId}` in Viva using the server-configured synthetic
 client and the supplied `providerStudioId` context. The admin body cannot select or enumerate Viva
-clients. The response is sanitized and always says
+clients. Until canonical studio-to-station mapping exists, the endpoint additionally requires
+global `subscriptions:catalog:write` station scope; station-scoped administrators fail closed.
+The response is sanitized and always says
 `evidenceState=EVIDENCE_ONLY`, `persisted=false`, `verified=false`. It never stores a mapping and
 never treats `clientSubscriptionId` as a product id. Until an independently verified canonical
 studio-to-station mapping exists, the response includes blocking issues and cannot activate the
 runtime. The provider-reported cost is returned with `costUnit=UNVERIFIED`; it is not used as a
 minor-unit price until a HAR/API contract confirms its unit.
+
+Viva `404` is a non-retryable exact-product rejection. Provider `401/403`, `429`, `5xx` and network
+failures remain retryable upstream-unavailable responses; other provider `4xx` are non-retryable
+request rejections. Neither read-only POST participates in the generic mutation-audit interceptor,
+so a successful preview or shadow quote does not append an admin audit document.
 
 ## Read boundary
 

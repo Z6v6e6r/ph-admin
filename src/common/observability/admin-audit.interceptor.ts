@@ -1,16 +1,28 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'crypto';
 import { Observable, tap } from 'rxjs';
 import { AuthPersistenceService } from '../../auth/auth-persistence.service';
 import { RequestWithUser } from '../rbac/request-user.interface';
+import { SKIP_ADMIN_MUTATION_AUDIT_KEY } from './admin-audit.decorator';
 
 /** Records successful staff mutations without ever storing request bodies or secrets. */
 @Injectable()
 export class AdminAuditInterceptor implements NestInterceptor {
-  constructor(private readonly persistence: AuthPersistenceService) {}
+  constructor(
+    private readonly persistence: AuthPersistenceService,
+    private readonly reflector: Reflector
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') {
+      return next.handle();
+    }
+    const skipMutationAudit = this.reflector.getAllAndOverride<boolean>(
+      SKIP_ADMIN_MUTATION_AUDIT_KEY,
+      [context.getHandler(), context.getClass()]
+    );
+    if (skipMutationAudit) {
       return next.handle();
     }
     const request = context.switchToHttp().getRequest<RequestWithUser>();

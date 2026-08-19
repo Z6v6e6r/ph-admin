@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { SkipAdminMutationAudit } from '../common/observability/admin-audit.decorator';
 import { Permissions } from '../common/rbac/permissions.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { STAFF_ROLES } from '../common/rbac/role.enum';
@@ -113,6 +114,7 @@ export class SubscriptionsController {
 
   @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/provider-mapping-preview')
   @Permissions('subscriptions:catalog:write')
+  @SkipAdminMutationAudit()
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   @Header('Referrer-Policy', 'no-referrer')
@@ -221,6 +223,7 @@ export class SubscriptionTrustedShadowController {
   constructor(private readonly adapter: SubscriptionTrustedShadowAdapterService) {}
 
   @Post('shadow-quote')
+  @SkipAdminMutationAudit()
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   @Header('Referrer-Policy', 'no-referrer')

@@ -35,10 +35,10 @@ export class SubscriptionProviderMappingPreviewService {
       throw new NotFoundException('Subscription policy version not found');
     }
     const stationScope = getStationScopeForPermission(user, 'subscriptions:catalog:write');
-    if (stationScope !== null && !stationScope.includes(dto.canonicalStationId)) {
+    if (stationScope !== null) {
       throw new ForbiddenException({
-        code: 'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_STATION_FORBIDDEN',
-        message: 'Station is outside the subscription catalog scope'
+        code: 'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_GLOBAL_SCOPE_REQUIRED',
+        message: 'Viva product evidence preview requires global subscription catalog scope'
       });
     }
     const previewClientId = this.previewClientId();

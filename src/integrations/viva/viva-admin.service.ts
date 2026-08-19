@@ -198,6 +198,16 @@ interface VivaAdminProductResolution {
   raw?: Record<string, unknown>;
 }
 
+class VivaAdminHttpError extends Error {
+  constructor(
+    readonly status: number,
+    path: string
+  ) {
+    super(`Viva CRM request ${path} failed with status ${status}`);
+    this.name = 'VivaAdminHttpError';
+  }
+}
+
 interface VivaAdminTransactionResponseParseResult {
   subscriptionId?: string;
   transactionId?: string;
@@ -569,9 +579,26 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
         clientId,
         studioId
       });
-    } catch (_error) {
+    } catch (error) {
+      if (error instanceof VivaAdminHttpError && error.status === 404) {
+        throw new BadRequestException({
+          code: 'SUBSCRIPTIONS_PROVIDER_PRODUCT_NOT_CONFIRMED',
+          message: 'Viva subscription product was not confirmed by exact id'
+        });
+      }
+      if (error instanceof VivaAdminHttpError
+        && error.status >= 400
+        && error.status < 500
+        && ![401, 403, 429].includes(error.status)) {
+        throw new BadRequestException({
+          code: 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_REQUEST_REJECTED',
+          message: 'Viva rejected the subscription product evidence request'
+        });
+      }
       throw new ServiceUnavailableException({
-        code: 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_UNAVAILABLE',
+        code: error instanceof VivaAdminHttpError && [401, 403].includes(error.status)
+          ? 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_AUTH_UNAVAILABLE'
+          : 'SUBSCRIPTIONS_PROVIDER_EVIDENCE_UNAVAILABLE',
         message: 'Viva subscription product evidence is temporarily unavailable'
       });
     }
@@ -1467,7 +1494,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (!response.ok) {
-      throw new Error(`Viva CRM request ${path} failed with status ${response.status}`);
+      throw new VivaAdminHttpError(response.status, path);
     }
 
     return response.json().catch(() => null);
