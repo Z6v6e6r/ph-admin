@@ -49,7 +49,9 @@ Their stable names are `player_level_projection_player_uq` and
 name: production rating collections use managed names, and asking MongoDB to recreate the same key
 and options under an auto-generated name fails with `IndexOptionsConflict`. For compatibility with
 older development databases, an already existing index is accepted by key and significant options
-(`unique` and partial filter) regardless of its name; incompatible options remain a startup error.
+(`unique` and partial filter) regardless of its name. An incompatible index is never accepted:
+runtime creates the required index alongside it when MongoDB permits that, or fails startup if the
+required options cannot be enforced (for example, a unique index over duplicate values).
 
 After the first staging start, verify both index definitions and rerun the check after one restart to
 prove repeatability. If the collection already exists, first aggregate duplicate `playerKey` values
