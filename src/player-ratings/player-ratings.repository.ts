@@ -1,8 +1,10 @@
 import {
   Collection,
+  CreateIndexesOptions,
   Db,
   Document,
   Filter,
+  IndexSpecification,
   MongoClient,
   MongoServerError,
   TransactionOptions
@@ -433,24 +435,105 @@ export class PlayerRatingRepository {
   }
   private async ensureIndexes(): Promise<void> {
     const indexes = [
-      this.states().createIndex({ playerKey: 1 }, { unique: true }),
-      this.states().createIndex({ clientId: 1 }, { unique: true, partialFilterExpression: { clientId: { $type: 'string' } } }),
-      this.states().createIndex({ phoneNorm: 1 }, { unique: true, partialFilterExpression: { phoneNorm: { $type: 'string' } } }),
-      this.states().createIndex({ nameSearch: 1, lastEventAt: -1 }),
-      this.events().createIndex({ idempotencyKey: 1 }, { unique: true }),
-      this.events().createIndex({ 'player.key': 1, occurredAt: -1 }),
-      this.outbox().createIndex({ status: 1, nextAttemptAt: 1 })
+      this.ensureIndex(
+        this.states(),
+        { playerKey: 1 },
+        { unique: true, name: 'player_rating_state_key_uq' }
+      ),
+      this.ensureIndex(
+        this.states(),
+        { clientId: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { clientId: { $type: 'string' } },
+          name: 'player_rating_state_client_uq'
+        }
+      ),
+      this.ensureIndex(
+        this.states(),
+        { phoneNorm: 1 },
+        {
+          unique: true,
+          partialFilterExpression: { phoneNorm: { $type: 'string' } },
+          name: 'player_rating_state_phone_uq'
+        }
+      ),
+      this.ensureIndex(
+        this.states(),
+        { nameSearch: 1, lastEventAt: -1 },
+        { name: 'nameSearch_1_lastEventAt_-1' }
+      ),
+      this.ensureIndex(
+        this.events(),
+        { idempotencyKey: 1 },
+        { unique: true, name: 'rating_event_idempotency_uq' }
+      ),
+      this.ensureIndex(
+        this.events(),
+        { 'player.key': 1, occurredAt: -1 },
+        { name: 'rating_event_player_time' }
+      ),
+      this.ensureIndex(
+        this.outbox(),
+        { status: 1, nextAttemptAt: 1 },
+        { name: 'rating_projection_pending' }
+      )
     ];
     if (this.padlHubProjectionEnabled) {
       indexes.push(
-        this.padlHubOutbox().createIndex({ playerKey: 1 }, { unique: true }),
-        this.padlHubOutbox().createIndex({ status: 1, nextAttemptAt: 1, playerKey: 1 })
+        this.ensureIndex(
+          this.padlHubOutbox(),
+          { playerKey: 1 },
+          { unique: true, name: 'player_level_projection_player_uq' }
+        ),
+        this.ensureIndex(
+          this.padlHubOutbox(),
+          { status: 1, nextAttemptAt: 1, playerKey: 1 },
+          { name: 'player_level_projection_pending' }
+        )
       );
     }
     await Promise.all(indexes);
+  }
+
+  private async ensureIndex<T extends Document>(
+    collection: Collection<T>,
+    key: IndexSpecification,
+    options: CreateIndexesOptions
+  ): Promise<string> {
+    try {
+      const existing = await collection.listIndexes().toArray();
+      const equivalent = existing.find((index) => indexesAreEquivalent(index, key, options));
+      if (equivalent?.name) return equivalent.name;
+    } catch (error) {
+      if (!isNamespaceNotFound(error)) throw error;
+    }
+    return collection.createIndex(key, options);
   }
 }
 
 function readBoolean(value: unknown): boolean {
   return String(value ?? '').trim().toLowerCase() === 'true';
+}
+
+function indexesAreEquivalent(
+  existing: Document,
+  key: IndexSpecification,
+  options: CreateIndexesOptions
+): boolean {
+  return JSON.stringify(existing.key ?? null) === JSON.stringify(key)
+    && Boolean(existing.unique) === Boolean(options.unique)
+    && Boolean(existing.sparse) === Boolean(options.sparse)
+    && Boolean(existing.hidden) === Boolean(options.hidden)
+    && (existing.expireAfterSeconds ?? null) === (options.expireAfterSeconds ?? null)
+    && JSON.stringify(existing.partialFilterExpression ?? null)
+      === JSON.stringify(options.partialFilterExpression ?? null)
+    && JSON.stringify(existing.collation ?? null) === JSON.stringify(options.collation ?? null);
+}
+
+function isNamespaceNotFound(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && Number((error as { code?: unknown }).code) === 26;
 }

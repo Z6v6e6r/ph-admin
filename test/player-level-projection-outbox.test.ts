@@ -82,6 +82,7 @@ async function main(): Promise<void> {
     const disabledRepository = new PlayerRatingRepository();
     (disabledRepository as any).db = {
       collection: () => ({
+        listIndexes: () => ({ toArray: async () => [] }),
         createIndex: async (...args: unknown[]) => {
           disabledIndexes.push(args);
           return 'index';
@@ -90,12 +91,26 @@ async function main(): Promise<void> {
     };
     await (disabledRepository as any).ensureIndexes();
     assert.equal(disabledIndexes.length, 7, 'disabled worker creates no PadlHub outbox indexes');
+    assert.deepEqual(
+      disabledIndexes.map((args: any) => args[1]?.name),
+      [
+        'player_rating_state_key_uq',
+        'player_rating_state_client_uq',
+        'player_rating_state_phone_uq',
+        'nameSearch_1_lastEventAt_-1',
+        'rating_event_idempotency_uq',
+        'rating_event_player_time',
+        'rating_projection_pending'
+      ],
+      'runtime reuses the managed production index names instead of Mongo-generated names'
+    );
 
     process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED = 'true';
     const enabledIndexes: unknown[] = [];
     const enabledRepository = new PlayerRatingRepository();
     (enabledRepository as any).db = {
       collection: () => ({
+        listIndexes: () => ({ toArray: async () => [] }),
         createIndex: async (...args: unknown[]) => {
           enabledIndexes.push(args);
           return 'index';
@@ -104,6 +119,65 @@ async function main(): Promise<void> {
     };
     await (enabledRepository as any).ensureIndexes();
     assert.equal(enabledIndexes.length, 9, 'enabled worker creates exactly two PadlHub indexes');
+    assert.deepEqual(
+      enabledIndexes.slice(7).map((args: any) => args[1]?.name),
+      ['player_level_projection_player_uq', 'player_level_projection_pending'],
+      'new projection indexes also have stable explicit names'
+    );
+
+    for (const existingName of ['player_rating_state_key_uq', 'playerKey_1']) {
+      const createCalls: unknown[] = [];
+      const compatibleRepository = new PlayerRatingRepository();
+      const resolvedName = await (compatibleRepository as any).ensureIndex(
+        {
+          listIndexes: () => ({
+            toArray: async () => [{ name: existingName, key: { playerKey: 1 }, unique: true }]
+          }),
+          createIndex: async (...args: unknown[]) => {
+            createCalls.push(args);
+            return 'created';
+          }
+        },
+        { playerKey: 1 },
+        { unique: true, name: 'player_rating_state_key_uq' }
+      );
+      assert.equal(resolvedName, existingName);
+      assert.equal(createCalls.length, 0, 'an equivalent managed or auto-named index is reused');
+    }
+
+    const mismatchedCreateCalls: unknown[] = [];
+    const mismatchedRepository = new PlayerRatingRepository();
+    await (mismatchedRepository as any).ensureIndex(
+      {
+        listIndexes: () => ({
+          toArray: async () => [{ name: 'playerKey_1', key: { playerKey: 1 }, unique: false }]
+        }),
+        createIndex: async (...args: unknown[]) => {
+          mismatchedCreateCalls.push(args);
+          return 'created';
+        }
+      },
+      { playerKey: 1 },
+      { unique: true, name: 'player_rating_state_key_uq' }
+    );
+    assert.equal(mismatchedCreateCalls.length, 1, 'an index with incompatible options is not accepted');
+
+    const missingNamespaceCreateCalls: unknown[] = [];
+    const missingNamespaceRepository = new PlayerRatingRepository();
+    await (missingNamespaceRepository as any).ensureIndex(
+      {
+        listIndexes: () => ({
+          toArray: async () => { throw { code: 26 }; }
+        }),
+        createIndex: async (...args: unknown[]) => {
+          missingNamespaceCreateCalls.push(args);
+          return 'created';
+        }
+      },
+      { playerKey: 1 },
+      { unique: true, name: 'player_level_projection_player_uq' }
+    );
+    assert.equal(missingNamespaceCreateCalls.length, 1, 'a missing collection creates its first index');
   } finally {
     if (previousEnabled === undefined) delete process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED;
     else process.env.PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED = previousEnabled;

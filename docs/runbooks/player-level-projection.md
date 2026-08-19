@@ -44,6 +44,13 @@ worker intentionally creates only these repeatable indexes:
 - unique `{ playerKey: 1 }`;
 - due-work `{ status: 1, nextAttemptAt: 1, playerKey: 1 }`.
 
+Their stable names are `player_level_projection_player_uq` and
+`player_level_projection_pending`. Runtime index checks must always pass the reviewed explicit
+name: production rating collections use managed names, and asking MongoDB to recreate the same key
+and options under an auto-generated name fails with `IndexOptionsConflict`. For compatibility with
+older development databases, an already existing index is accepted by key and significant options
+(`unique` and partial filter) regardless of its name; incompatible options remain a startup error.
+
 After the first staging start, verify both index definitions and rerun the check after one restart to
 prove repeatability. If the collection already exists, first aggregate duplicate `playerKey` values
 and validate the required outbox fields/statuses; do not enable the worker or create the unique index
