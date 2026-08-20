@@ -292,13 +292,10 @@ export class UiController {
               throw new Error(errorText || ('HTTP ' + response.status));
             }
 
-            var data = await response.json().catch(function () { return null; });
-            if (data && data.accessToken) {
-              try {
-                window.localStorage.setItem('phab_admin_token', data.accessToken);
-              } catch (_error) {
-                // ignore localStorage errors
-              }
+            try {
+              window.localStorage.removeItem('phab_admin_token');
+            } catch (_error) {
+              // ignore localStorage errors
             }
 
             window.location.href = nextPath || '/api/ui/admin';
@@ -382,7 +379,8 @@ export class UiController {
         query.notificationTenantKey?.trim() ||
         String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim() ||
         'local-padel',
-      authToken: authToken || undefined
+      cookieAuthOnly: Boolean(authContext.user),
+      authToken: authContext.user ? undefined : authToken || undefined
     };
 
     const configJson = JSON.stringify(config).replace(/</g, '\\u003c');
@@ -463,6 +461,9 @@ export class UiController {
 </html>`;
 
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.setHeader('Vary', 'Cookie, Authorization');
     response.send(html);
   }
 

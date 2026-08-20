@@ -365,7 +365,29 @@ export class AuthService implements OnModuleInit {
     request: Request,
     options: { allowHeaderFallback?: boolean } = {}
   ): Promise<AuthResolvedUser> {
-    const token = this.extractToken(request);
+    const authorizationCredential = this.extractAuthorizationCredential(request);
+    const cookieCredential = this.extractCookieCredential(request);
+    if (
+      (authorizationCredential.present && !authorizationCredential.token) ||
+      (cookieCredential.present && !cookieCredential.token)
+    ) {
+      return { source: 'anonymous' };
+    }
+    const authorizationToken = authorizationCredential.token;
+    const cookieToken = cookieCredential.token;
+    if (authorizationToken && cookieToken) {
+      const authorizationPayload = this.verifyToken(authorizationToken);
+      const cookiePayload = this.verifyToken(cookieToken);
+      if (
+        authorizationPayload &&
+        cookiePayload &&
+        authorizationPayload.sub !== cookiePayload.sub
+      ) {
+        throw new UnauthorizedException('Conflicting authentication credentials');
+      }
+    }
+
+    const token = authorizationToken || cookieToken;
     if (token) {
       const payload = this.verifyToken(token);
       if (payload) {
@@ -374,6 +396,7 @@ export class AuthService implements OnModuleInit {
           return { user: this.toRequestUser(persisted, 'token'), source: 'token' };
         }
       }
+      return { source: 'anonymous' };
     }
 
     if (options.allowHeaderFallback === false) {
@@ -1011,17 +1034,26 @@ export class AuthService implements OnModuleInit {
     return createHmac('sha256', this.secret).update(value).digest('base64url');
   }
 
-  private extractToken(request: Request): string | null {
+  private extractAuthorizationCredential(request: Request): {
+    present: boolean;
+    token: string | null;
+  } {
     const authorization = request.headers.authorization;
-    if (authorization) {
-      const match = authorization.match(/^Bearer\s+(.+)$/i);
-      if (match?.[1]) {
-        return match[1].trim();
-      }
+    if (authorization === undefined) {
+      return { present: false, token: null };
     }
+    const match = String(authorization).match(/^Bearer\s+(.+)$/i);
+    const token = String(match?.[1] ?? '').trim();
+    return { present: true, token: token || null };
+  }
+
+  private extractCookieCredential(request: Request): {
+    present: boolean;
+    token: string | null;
+  } {
     const cookieHeader = request.headers.cookie;
     if (!cookieHeader) {
-      return null;
+      return { present: false, token: null };
     }
     for (const entry of cookieHeader.split(';')) {
       const [name, ...rest] = entry.split('=');
@@ -1030,15 +1062,16 @@ export class AuthService implements OnModuleInit {
       }
       const rawValue = rest.join('=').trim();
       if (!rawValue) {
-        return null;
+        return { present: true, token: null };
       }
       try {
-        return decodeURIComponent(rawValue);
+        const decoded = decodeURIComponent(rawValue).trim();
+        return { present: true, token: decoded || null };
       } catch (_error) {
-        return rawValue;
+        return { present: true, token: rawValue || null };
       }
     }
-    return null;
+    return { present: false, token: null };
   }
 
   private readBooleanEnv(name: string, fallback: boolean): boolean {

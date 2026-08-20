@@ -13,6 +13,7 @@
     pollIntervalMs: 8000,
     authHeaders: {},
     authToken: '',
+    cookieAuthOnly: false,
     playerRatingAdminEnabled: false,
     subscriptionAdminEnabled: false,
     subscriptionTestRuntimeEnabled: false,
@@ -367,7 +368,17 @@
       cfg.connectorRoutes = [];
     }
     cfg.authToken = String(cfg.authToken || '').trim();
-    if (!cfg.authToken) {
+    cfg.cookieAuthOnly =
+      cfg.cookieAuthOnly === true ||
+      String(cfg.cookieAuthOnly || '').trim().toLowerCase() === 'true';
+    if (cfg.cookieAuthOnly) {
+      cfg.authToken = '';
+      try {
+        window.localStorage.removeItem('phab_admin_token');
+      } catch (_error) {
+        // ignore localStorage errors
+      }
+    } else if (!cfg.authToken) {
       try {
         cfg.authToken = String(window.localStorage.getItem('phab_admin_token') || '').trim();
       } catch (_error) {

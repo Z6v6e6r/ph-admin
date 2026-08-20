@@ -102,6 +102,107 @@ async function main(): Promise<void> {
     await service.onModuleInit();
 
     const superAdmin = await service.login('root_admin', 'RootAdmin123');
+    const piterAdmin = await service.createAdminUser(
+      {
+        login: 'admin_piter',
+        password: 'PiterAdmin123',
+        title: 'Администратор Питер',
+        roleIds: ['STATION_ADMIN'],
+        stationIds: ['Piter'],
+        connectorRoutes: ['MAX_BOT', 'LK_WEB_MESSENGER']
+      },
+      superAdmin.user
+    );
+    const piterLogin = await service.login('admin_piter', 'PiterAdmin123');
+    assert.equal(piterLogin.user.id, piterAdmin.id);
+    assert.deepEqual(piterLogin.user.roles, ['STATION_ADMIN']);
+    assert.deepEqual(piterLogin.user.stationIds, ['Piter']);
+    assert.deepEqual(getStationScopeForPermission(piterLogin.user, 'dialogs:read'), ['Piter']);
+    assert.equal(piterLogin.user.permissions?.includes('settings:read'), false);
+    assert.equal(piterLogin.user.permissions?.includes('admin-users:read'), false);
+
+    const cookieOnlyPiter = await service.resolveUserFromRequest(
+      { headers: { cookie: `phab_admin_token=${piterLogin.accessToken}` } } as never,
+      { allowHeaderFallback: false }
+    );
+    assert.equal(cookieOnlyPiter.user?.id, piterAdmin.id);
+    assert.deepEqual(cookieOnlyPiter.user?.stationIds, ['Piter']);
+
+    const matchingCookieAndBearer = await service.resolveUserFromRequest(
+      {
+        headers: {
+          authorization: `Bearer ${piterLogin.accessToken}`,
+          cookie: `phab_admin_token=${piterLogin.accessToken}`
+        }
+      } as never,
+      { allowHeaderFallback: true }
+    );
+    assert.equal(matchingCookieAndBearer.user?.id, piterAdmin.id);
+
+    await assert.rejects(
+      service.resolveUserFromRequest(
+        {
+          headers: {
+            authorization: `Bearer ${superAdmin.accessToken}`,
+            cookie: `phab_admin_token=${piterLogin.accessToken}`
+          }
+        } as never,
+        { allowHeaderFallback: true }
+      ),
+      /Conflicting authentication credentials/
+    );
+
+    const invalidTokenWithPrivilegedHeaders = await service.resolveUserFromRequest(
+      {
+        headers: {
+          authorization: 'Bearer invalid-token',
+          'x-user-id': 'legacy-superadmin',
+          'x-user-roles': 'SUPER_ADMIN'
+        }
+      } as never,
+      { allowHeaderFallback: true }
+    );
+    assert.equal(invalidTokenWithPrivilegedHeaders.source, 'anonymous');
+    assert.equal(invalidTokenWithPrivilegedHeaders.user, undefined);
+
+    const invalidBearerWithValidCookie = await service.resolveUserFromRequest(
+      {
+        headers: {
+          authorization: 'Bearer invalid-token',
+          cookie: `phab_admin_token=${piterLogin.accessToken}`
+        }
+      } as never,
+      { allowHeaderFallback: true }
+    );
+    assert.equal(invalidBearerWithValidCookie.source, 'anonymous');
+    assert.equal(invalidBearerWithValidCookie.user, undefined);
+
+    const malformedBearerWithPrivilegedHeaders = await service.resolveUserFromRequest(
+      {
+        headers: {
+          authorization: 'Bearer   ',
+          'x-user-id': 'legacy-superadmin',
+          'x-user-roles': 'SUPER_ADMIN'
+        }
+      } as never,
+      { allowHeaderFallback: true }
+    );
+    assert.equal(malformedBearerWithPrivilegedHeaders.source, 'anonymous');
+    assert.equal(malformedBearerWithPrivilegedHeaders.user, undefined);
+
+    const emptyCookieWithPrivilegedHeaders = await service.resolveUserFromRequest(
+      {
+        headers: {
+          cookie: 'phab_admin_token=',
+          'x-user-id': 'legacy-superadmin',
+          'x-user-roles': 'SUPER_ADMIN'
+        }
+      } as never,
+      { allowHeaderFallback: true }
+    );
+    assert.equal(emptyCookieWithPrivilegedHeaders.source, 'anonymous');
+    assert.equal(emptyCookieWithPrivilegedHeaders.user, undefined);
+
     const role = await service.createAdminRole(
       {
         id: 'station-games-reader',

@@ -26,7 +26,7 @@
     "test:support-station-mappings": "ts-node test/support-station-mappings.test.ts",
     "test:support-dialog-resolution": "ts-node test/support-dialog-resolution.test.ts",
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",
-    "test:auth-rbac": "ts-node test/auth-rbac.test.ts",
+    "test:auth-rbac": "ts-node test/auth-rbac.test.ts && ts-node test/admin-ui-auth-isolation.test.ts",
     "test:lk-identity": "ts-node test/lk-identity.service.test.ts",
     "test:tournaments-public-auth": "ts-node test/tournaments-public-auth-redirect.test.ts && node --test test/tournaments-showcase-standard-auth.test.mjs && node --test test/tournament-public-nginx-patch.test.mjs",
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts && ts-node test/player-level-projection.service.test.ts && ts-node test/player-level-projection-outbox.test.ts",
