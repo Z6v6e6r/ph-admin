@@ -15,6 +15,7 @@ import {
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
+import { Permissions } from '../common/rbac/permissions.decorator';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { UpdateCabinetHomeAdvertisingDto } from './dto/update-cabinet-home-advertising.dto';
@@ -191,6 +192,7 @@ export class AdvertisingController {
   }
 
   @Get('split-payment-promo/admin')
+  @Permissions('advertising:write')
   @Roles(Role.SUPER_ADMIN, Role.MANAGER)
   async getSplitPaymentPromoAdmin(
     @CurrentUser() user?: RequestUser
@@ -272,6 +274,7 @@ export class AdvertisingController {
   }
 
   @Patch('split-payment-promo/admin')
+  @Permissions('advertising:write')
   @Roles(Role.SUPER_ADMIN, Role.MANAGER)
   async updateSplitPaymentPromoAdmin(
     @Body() dto: UpdateSplitPaymentPromoDto,

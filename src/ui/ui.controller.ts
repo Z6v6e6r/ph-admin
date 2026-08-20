@@ -355,7 +355,7 @@ export class UiController {
       userId: authContext.user?.id || query.userId?.trim() || 'local-admin',
       roles,
       roleIds: authContext.user?.roleIds || roles,
-      permissions: authContext.user?.permissions || [],
+      permissions: authContext.user ? authContext.user.permissions || [] : undefined,
       stationIds,
       connectorRoutes,
       title: query.title?.trim() || 'ЦУП Дворотека',

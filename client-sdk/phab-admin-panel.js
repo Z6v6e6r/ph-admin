@@ -7,6 +7,7 @@
     roles: [],
     roleIds: [],
     permissions: [],
+    permissionsAuthoritative: false,
     role: '',
     stationIds: [],
     connectorRoutes: [],
@@ -323,6 +324,9 @@
   }
 
   function normalizeConfig(raw) {
+    var permissionsAuthoritative = Boolean(
+      raw && Object.prototype.hasOwnProperty.call(raw, 'permissions')
+    );
     var cfg = Object.assign({}, DEFAULTS, raw || {});
     if (!cfg.apiBaseUrl) {
       throw new Error('PHAB admin panel: apiBaseUrl is required');
@@ -361,6 +365,7 @@
       .map(function (permission) { return String(permission || '').trim(); })
       .filter(Boolean)
       .filter(function (permission, index, list) { return list.indexOf(permission) === index; });
+    cfg.permissionsAuthoritative = permissionsAuthoritative;
     if (!Array.isArray(cfg.stationIds)) {
       cfg.stationIds = [];
     }
@@ -13646,7 +13651,11 @@
   }
 
   function hasPermission(cfg, permission) {
-    if (cfg && Array.isArray(cfg.permissions) && cfg.permissions.length > 0) {
+    if (
+      cfg &&
+      Array.isArray(cfg.permissions) &&
+      (cfg.permissionsAuthoritative === true || cfg.permissions.length > 0)
+    ) {
       return cfg.permissions.indexOf('*') >= 0 || cfg.permissions.indexOf(permission) >= 0;
     }
     var legacyPermissions = {

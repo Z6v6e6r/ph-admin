@@ -71,9 +71,10 @@ function parseAdminConfig(html: string): Record<string, unknown> {
 }
 
 async function main(): Promise<void> {
+  let resolvedUser: any = piterAdmin;
   const authService = {
     isEnabled: () => true,
-    resolveUserFromRequest: async () => ({ user: piterAdmin, source: 'token' as const }),
+    resolveUserFromRequest: async () => ({ user: resolvedUser, source: 'token' as const }),
     hasStaffAccess: () => true
   } as unknown as AuthService;
   const controller = new UiController(authService);
@@ -94,11 +95,45 @@ async function main(): Promise<void> {
   assert.equal(config.authToken, undefined);
   assert.equal(config.userId, piterAdmin.id);
   assert.deepEqual(config.roles, [Role.STATION_ADMIN]);
+  assert.deepEqual(config.permissions, piterAdmin.permissions);
   assert.deepEqual(config.stationIds, ['Piter']);
   assert.deepEqual(config.connectorRoutes, ['MAX_BOT', 'LK_WEB_MESSENGER']);
   assert.equal(panelCapture.getHeader('cache-control'), 'private, no-store');
   assert.equal(panelCapture.getHeader('referrer-policy'), 'no-referrer');
   assert.equal(panelCapture.getHeader('vary'), 'Cookie, Authorization');
+
+  resolvedUser = {
+    id: 'manager-revoked',
+    login: 'manager_revoked',
+    roles: [Role.MANAGER],
+    roleIds: [Role.MANAGER],
+    permissions: [],
+    stationIds: [],
+    connectorRoutes: [],
+    authSource: 'token'
+  };
+  const revokedManagerCapture = createResponseCapture();
+  await controller.adminPanel(createRequest(), revokedManagerCapture.response, {});
+  const revokedManagerConfig = parseAdminConfig(revokedManagerCapture.getHtml());
+  assert.ok(Object.prototype.hasOwnProperty.call(revokedManagerConfig, 'permissions'));
+  assert.deepEqual(revokedManagerConfig.permissions, []);
+
+  const legacyController = new UiController({
+    isEnabled: () => false,
+    resolveUserFromRequest: async () => ({ source: 'anonymous' as const }),
+    hasStaffAccess: () => false
+  } as unknown as AuthService);
+  const legacyCapture = createResponseCapture();
+  await legacyController.adminPanel(createRequest(), legacyCapture.response, {
+    roles: Role.MANAGER
+  });
+  const legacyConfig = parseAdminConfig(legacyCapture.getHtml());
+  assert.deepEqual(legacyConfig.roles, [Role.MANAGER]);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(legacyConfig, 'permissions'),
+    false,
+    'legacy local mode must omit permissions so role fallback remains explicit'
+  );
 
   const clientSource = readFileSync(
     resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'),
