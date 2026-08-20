@@ -14,6 +14,7 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import { SubscriptionRuntimeContextService } from './subscription-runtime-context.service';
 
 @Module({
   imports: [LkIdentityModule, VivaAdminModule],
@@ -28,6 +29,7 @@ import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-
     SubscriptionCanonicalTargetResolverService,
     SubscriptionProviderMappingPreviewService,
     SubscriptionTrustedShadowAdapterService,
+    SubscriptionRuntimeContextService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter

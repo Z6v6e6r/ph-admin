@@ -24,6 +24,7 @@ import { CreateReleaseProgramDto } from './dto/create-release-program.dto';
 import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
+import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
@@ -31,6 +32,10 @@ import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import {
+  SubscriptionRuntimeContextResult,
+  SubscriptionRuntimeContextService
+} from './subscription-runtime-context.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 import {
@@ -220,7 +225,10 @@ export class SubscriptionsController {
 @Roles()
 @UseFilters(SubscriptionsExceptionFilter)
 export class SubscriptionTrustedShadowController {
-  constructor(private readonly adapter: SubscriptionTrustedShadowAdapterService) {}
+  constructor(
+    private readonly adapter: SubscriptionTrustedShadowAdapterService,
+    private readonly runtimeContext: SubscriptionRuntimeContextService
+  ) {}
 
   @Post('shadow-quote')
   @SkipAdminMutationAudit()
@@ -233,6 +241,19 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionShadowQuoteAdapterDto
   ): Promise<SubscriptionShadowQuoteResult> {
     return this.adapter.quote(authorization, integrationToken, dto);
+  }
+
+  @Post('runtime-context')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  context(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: SubscriptionRuntimeContextDto
+  ): Promise<SubscriptionRuntimeContextResult> {
+    return this.runtimeContext.resolve(authorization, integrationToken, dto);
   }
 }
 

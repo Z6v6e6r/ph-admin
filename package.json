@@ -37,6 +37,7 @@
     "test:subscriptions-synthetic-projection": "ts-node test/subscriptions-synthetic-canonical-projection.test.ts",
     "test:subscriptions-synthetic-projection:mongo": "ts-node test/subscriptions-synthetic-canonical-projection.mongodb.test.ts",
     "test:subscriptions-trusted-shadow-adapter": "ts-node test/subscriptions-trusted-shadow-adapter.test.ts",
+    "test:subscriptions-runtime-context": "ts-node test/subscriptions-runtime-context.test.ts",
     "test:subscriptions-runtime": "ts-node test/subscriptions-test-runtime.service.test.ts && ts-node test/subscriptions-test-runtime-ui.test.ts && npm run test:subscriptions-runtime:mongo",
     "test:subscriptions-runtime:mongo": "ts-node test/subscriptions-test-runtime.mongodb.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
