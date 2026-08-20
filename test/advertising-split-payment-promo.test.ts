@@ -141,6 +141,10 @@ async function main(): Promise<void> {
   assert.match(adminUiSource, /Суммы задаются за одного участника за час/);
   assert.match(adminUiSource, /Полная оплата всегда остаётся по цене слота Viva/);
   assert.match(adminUiSource, /Цена участника при делении на 4 игроков, ₽\/час/);
+  assert.match(
+    adminUiSource,
+    /splitPromoGrid\.className\s*=\s*'phab-admin-settings-grid phab-admin-split-promo-grid'\s*\+\s*\(canManageAdvertisingSettings\(cfg\) \? '' : ' phab-admin-hidden'\)/
+  );
   assert.match(adminUiSource, /splitPromoSecondActiveFromInput/);
   assert.match(adminUiSource, /buildGameDateBoundaryFromDateInput/);
   assert.doesNotMatch(adminUiSource, /buildStartOfDayIsoFromDateInput/);

@@ -11296,7 +11296,8 @@
 
     var splitPromoGrid = document.createElement('div');
     splitPromoGrid.className =
-      'phab-admin-settings-grid phab-admin-split-promo-grid phab-admin-hidden';
+      'phab-admin-settings-grid phab-admin-split-promo-grid' +
+      (canManageAdvertisingSettings(cfg) ? '' : ' phab-admin-hidden');
     settingsSplitPromoPane.appendChild(splitPromoGrid);
 
     var splitPromoCard = document.createElement('div');
