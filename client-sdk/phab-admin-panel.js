@@ -9541,7 +9541,7 @@
       '<div class="phab-subscriptions-note" id="subscription-viva-binding-help">Необязательная привязка версии правил. Сохраняется только в DRAFT со статусом UNVERIFIED и не участвует в продаже или списании. Не указывайте clientSubscriptionId конкретного клиента.</div>' +
       '<div class="phab-subscriptions-capabilities" data-subscription-capabilities>' +
       '<details open><summary>Жизненный цикл и заморозка</summary><div class="phab-subscriptions-capabilities-grid">' +
-      '<label class="phab-subscriptions-field"><span>Активация</span><select class="phab-admin-input" data-cap="activation-mode"><option value="PURCHASE">Сразу после покупки</option><option value="FIRST_USE">С первого посещения</option><option value="FIXED_DATE">С заданной даты</option></select></label>' +
+      '<label class="phab-subscriptions-field"><span>Активация</span><select class="phab-admin-input" data-cap="activation-mode"><option value="PURCHASE">Сразу после покупки</option><option value="FIRST_USE">С первого посещения</option><option value="FIXED_DATE">С заданной даты</option><option value="FIRST_USE_OR_FIXED_DATE">С первой записи, но не позднее даты</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Срок на активацию, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="activation-window"></label>' +
       '<label class="phab-subscriptions-field"><span>Фиксированная дата (Москва, UTC+3)</span><input class="phab-admin-input" type="datetime-local" data-cap="fixed-activation-at"></label>' +
       '<label class="phab-subscriptions-field"><span>Grace period, дней</span><input class="phab-admin-input" type="number" min="0" value="0" data-cap="grace-period"></label>' +
@@ -36928,7 +36928,8 @@
       var activationMode = field('activation-mode').value;
       var fixedActivationValue = String(field('fixed-activation-at').value || '').trim();
       var fixedActivationAt = null;
-      if (activationMode === 'FIXED_DATE' && fixedActivationValue) {
+      if ((activationMode === 'FIXED_DATE' || activationMode === 'FIRST_USE_OR_FIXED_DATE')
+        && fixedActivationValue) {
         fixedActivationAt = new Date(fixedActivationValue + ':00+03:00').toISOString();
       }
       return {

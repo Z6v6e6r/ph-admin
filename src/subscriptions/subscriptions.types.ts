@@ -2,7 +2,11 @@ export type SubscriptionTypeState = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
 export type SubscriptionPolicyStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
 export type SubscriptionPolicyApplyTo = 'NEW_ONLY' | 'ACTIVE_AND_NEW';
 export type ActiveServiceScope = 'SUBSCRIPTION_BENEFIT_ONLY' | 'ALL_BOOKINGS';
-export type SubscriptionActivationMode = 'PURCHASE' | 'FIRST_USE' | 'FIXED_DATE';
+export type SubscriptionActivationMode =
+  | 'PURCHASE'
+  | 'FIRST_USE'
+  | 'FIXED_DATE'
+  | 'FIRST_USE_OR_FIXED_DATE';
 export type SubscriptionRenewalMode = 'DISABLED' | 'MANUAL' | 'AUTO';
 export type SubscriptionRefundMode = 'NONE' | 'MANUAL' | 'PRORATED';
 export type SubscriptionUpgradeMode = 'DISABLED' | 'MANUAL' | 'PRORATED';
@@ -591,7 +595,14 @@ export interface SubscriptionRuntimeProjectionSnapshot {
   usageUnitsByDuration: SubscriptionPolicyVersion['usageUnitsByDuration'];
   stationAccessRules: SubscriptionStationAccessRule[];
   benefitRules: BenefitRule[];
-  lifecycle: { allowBookingsAfterExpiry: boolean };
+  lifecycle: {
+    allowBookingsAfterExpiry: boolean;
+    activationMode?: SubscriptionActivationMode;
+    activationWindowDays?: number;
+    fixedActivationAt?: string | null;
+    fixedActivationTimeZone?: 'Europe/Moscow';
+    validityDays?: number;
+  };
   usage: {
     weeklyUsageLimit: number | null;
     monthlyUsageLimit: number | null;

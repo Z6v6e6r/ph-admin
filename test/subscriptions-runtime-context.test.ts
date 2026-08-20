@@ -62,7 +62,14 @@ const publicationFixture = (): StoredSubscriptionPolicyPublication => {
         partialPrice: null, priority: 2
       }
     ],
-    lifecycle: { allowBookingsAfterExpiry: false },
+    lifecycle: {
+      allowBookingsAfterExpiry: false,
+      activationMode: 'FIRST_USE_OR_FIXED_DATE',
+      activationWindowDays: 0,
+      fixedActivationAt: '2026-09-30T21:00:00.000Z',
+      fixedActivationTimeZone: 'Europe/Moscow',
+      validityDays: 365
+    },
     usage: {
       weeklyUsageLimit: null, monthlyUsageLimit: null, maxFutureBookings: null,
       minHoursBetweenUses: 0, blackoutDates: []
@@ -192,6 +199,14 @@ async function main(): Promise<void> {
   assert.equal(result.schemaVersion, 1);
   assert.equal(result.policy.createGame.durationsMinutes.length, 1);
   assert.equal(result.policy.joinGame.maxDurationMinutes, 120);
+  assert.deepEqual(result.policy.lifecycle, {
+    allowBookingsAfterExpiry: false,
+    activationMode: 'FIRST_USE_OR_FIXED_DATE',
+    activationWindowDays: 0,
+    fixedActivationAt: '2026-09-30T21:00:00.000Z',
+    fixedActivationTimeZone: 'Europe/Moscow',
+    validityDays: 365
+  });
   assert.equal(result.instance.subscriptionInstanceId, instance.subscriptionInstanceId);
   assert.equal(result.evidence.mappingRevision, 2);
   assert.doesNotMatch(JSON.stringify(result), /provider_client|clientRefHash|phone|paymentEvidence/);

@@ -514,6 +514,47 @@ const validateRuntimeProjection = (
     value.lifecycle?.allowBookingsAfterExpiry,
     'runtimeProjection.lifecycle.allowBookingsAfterExpiry'
   );
+  const lifecycle = value.lifecycle as StoredSubscriptionPolicyPublication['runtimeProjection']['lifecycle'];
+  const hasActivationContract = lifecycle.activationMode !== undefined
+    || lifecycle.activationWindowDays !== undefined
+    || lifecycle.fixedActivationAt !== undefined
+    || lifecycle.fixedActivationTimeZone !== undefined
+    || lifecycle.validityDays !== undefined;
+  if (hasActivationContract) {
+    oneOf(
+      lifecycle.activationMode,
+      ['PURCHASE', 'FIRST_USE', 'FIXED_DATE', 'FIRST_USE_OR_FIXED_DATE'],
+      'SUBSCRIPTION_PUBLICATION_ACTIVATION_MODE_INVALID',
+      'runtimeProjection.lifecycle.activationMode'
+    );
+    nonNegativeInteger(
+      lifecycle.activationWindowDays,
+      'runtimeProjection.lifecycle.activationWindowDays'
+    );
+    if (lifecycle.fixedActivationTimeZone !== 'Europe/Moscow') {
+      fail('SUBSCRIPTION_PUBLICATION_ACTIVATION_TIME_ZONE_INVALID');
+    }
+    positiveInteger(lifecycle.validityDays, 'runtimeProjection.lifecycle.validityDays');
+    const needsFixedDate = lifecycle.activationMode === 'FIXED_DATE'
+      || lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE';
+    if (needsFixedDate) {
+      requiredInstant(
+        lifecycle.fixedActivationAt,
+        'runtimeProjection.lifecycle.fixedActivationAt'
+      );
+    } else if (lifecycle.fixedActivationAt !== null) {
+      fail('SUBSCRIPTION_PUBLICATION_ACTIVATION_DATE_INVALID');
+    }
+    if (lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE'
+      && lifecycle.activationWindowDays !== 0) {
+      fail('SUBSCRIPTION_PUBLICATION_ACTIVATION_WINDOW_INVALID');
+    }
+    if (lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE'
+      && lifecycle.fixedActivationAt
+      && Date.parse(lifecycle.fixedActivationAt) < Date.parse(value.effectiveAt)) {
+      fail('SUBSCRIPTION_PUBLICATION_ACTIVATION_DATE_BEFORE_EFFECTIVE_AT');
+    }
+  }
   for (const field of ['weeklyUsageLimit', 'monthlyUsageLimit', 'maxFutureBookings'] as const) {
     if (value.usage?.[field] !== null) {
       positiveInteger(value.usage?.[field], `runtimeProjection.usage.${field}`);

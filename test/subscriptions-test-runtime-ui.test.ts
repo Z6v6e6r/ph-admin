@@ -118,6 +118,12 @@ function testSubscriptionBenefitsUseSingleRowLayout(): void {
   assert.match(source, /\.phab-subscriptions-benefit-ids-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\);gap:7px;margin-top:6px\}/);
   assert.match(source, /\.phab-subscriptions-benefit-fraction\{display:grid;grid-template-columns:minmax\(0,1fr\)\s+auto\s+minmax\(0,1fr\);gap:6px;align-items:center;white-space:nowrap;min-width:0\}/);
   assert.match(source, /\.phab-subscriptions-benefit-fraction \.phab-admin-input\{min-width:0\}/);
+  assert.match(source, /FIRST_USE_OR_FIXED_DATE/);
+  assert.match(source, /С первой записи, но не позднее даты/);
+  assert.match(
+    source,
+    /activationMode === 'FIXED_DATE' \|\| activationMode === 'FIRST_USE_OR_FIXED_DATE'/
+  );
   assert.match(source, /@media \(max-width:640px\)\{[\s\S]*?\.phab-subscriptions-benefit-main-grid\{[\s\S]*?grid-template-columns:\s*repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(source, /@media \(max-width:640px\)\{[\s\S]*?\.phab-subscriptions-benefit-ids-grid\{[\s\S]*?grid-template-columns:\s*1fr/);
   assert.match(source, /data-benefit-remove[^>]*aria-label="Удалить льготу"|aria-label="Удалить льготу"[^>]*data-benefit-remove/);

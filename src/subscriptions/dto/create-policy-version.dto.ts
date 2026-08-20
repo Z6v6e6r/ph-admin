@@ -271,8 +271,8 @@ export class SubscriptionAdminExtensionPolicyDto {
 }
 
 export class SubscriptionLifecyclePolicyDto {
-  @IsIn(['PURCHASE', 'FIRST_USE', 'FIXED_DATE'])
-  activationMode!: 'PURCHASE' | 'FIRST_USE' | 'FIXED_DATE';
+  @IsIn(['PURCHASE', 'FIRST_USE', 'FIXED_DATE', 'FIRST_USE_OR_FIXED_DATE'])
+  activationMode!: 'PURCHASE' | 'FIRST_USE' | 'FIXED_DATE' | 'FIRST_USE_OR_FIXED_DATE';
 
   @IsInt()
   @Min(0)

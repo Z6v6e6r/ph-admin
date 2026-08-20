@@ -683,7 +683,7 @@ export class SubscriptionsService implements OnModuleDestroy {
         }
       }
     }
-    this.validateCapabilities(policy.capabilities, policy.validityDays);
+    this.validateCapabilities(policy.capabilities, policy.validityDays, policy.effectiveAt);
   }
 
   private normalizeCapabilities(
@@ -705,7 +705,8 @@ export class SubscriptionsService implements OnModuleDestroy {
       lifecycle: {
         activationMode: input.lifecycle.activationMode,
         activationWindowDays: input.lifecycle.activationWindowDays,
-        fixedActivationAt: input.lifecycle.activationMode === 'FIXED_DATE' && input.lifecycle.fixedActivationAt
+        fixedActivationAt: ['FIXED_DATE', 'FIRST_USE_OR_FIXED_DATE'].includes(input.lifecycle.activationMode)
+          && input.lifecycle.fixedActivationAt
           ? new Date(input.lifecycle.fixedActivationAt).toISOString()
           : null,
         fixedActivationTimeZone: input.lifecycle.fixedActivationTimeZone || 'Europe/Moscow',
@@ -775,13 +776,42 @@ export class SubscriptionsService implements OnModuleDestroy {
     };
   }
 
-  private validateCapabilities(capabilities: SubscriptionCapabilities, validityDays: number): void {
+  private validateCapabilities(
+    capabilities: SubscriptionCapabilities,
+    validityDays: number,
+    effectiveAt: string
+  ): void {
     const lifecycle = capabilities.lifecycle;
     if (lifecycle.activationMode === 'FIXED_DATE' && !lifecycle.fixedActivationAt) {
       throw this.domainError('FIXED_ACTIVATION_DATE_REQUIRED', 'Для фиксированной активации укажите дату');
     }
-    if (lifecycle.activationMode !== 'FIXED_DATE' && lifecycle.fixedActivationAt) {
-      throw this.domainError('FIXED_ACTIVATION_DATE_FORBIDDEN', 'Дата активации разрешена только для режима FIXED_DATE');
+    if (lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE' && !lifecycle.fixedActivationAt) {
+      throw this.domainError(
+        'ACTIVATION_FALLBACK_DATE_REQUIRED',
+        'Для активации при первой записи укажите предельную дату'
+      );
+    }
+    if (!['FIXED_DATE', 'FIRST_USE_OR_FIXED_DATE'].includes(lifecycle.activationMode)
+      && lifecycle.fixedActivationAt) {
+      throw this.domainError(
+        'FIXED_ACTIVATION_DATE_FORBIDDEN',
+        'Дата активации разрешена только для фиксированного или комбинированного режима'
+      );
+    }
+    if (lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE'
+      && lifecycle.activationWindowDays !== 0) {
+      throw this.domainError(
+        'HYBRID_ACTIVATION_WINDOW_FORBIDDEN',
+        'Для комбинированной активации используется фиксированная дата, а не окно в днях'
+      );
+    }
+    if (lifecycle.activationMode === 'FIRST_USE_OR_FIXED_DATE'
+      && lifecycle.fixedActivationAt
+      && Date.parse(lifecycle.fixedActivationAt) < Date.parse(effectiveAt)) {
+      throw this.domainError(
+        'ACTIVATION_DATE_BEFORE_POLICY_EFFECTIVE_AT',
+        'Предельная дата активации не может быть раньше вступления правил в силу'
+      );
     }
     if (!lifecycle.freeze.enabled) {
       const freeze = lifecycle.freeze;

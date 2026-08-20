@@ -323,6 +323,58 @@ async function run(): Promise<void> {
   validateStoredSubscriptionCanonicalTargetSnapshot(canonicalTargetFixture());
   validateStoredSubscriptionProviderMapping(mappingFixture());
   validateStoredSubscriptionPolicyPublication(publicationFixture());
+  const hybridPublication = publicationFixture();
+  hybridPublication.runtimeProjection.lifecycle = {
+    allowBookingsAfterExpiry: false,
+    activationMode: 'FIRST_USE_OR_FIXED_DATE',
+    activationWindowDays: 0,
+    fixedActivationAt: '2026-09-30T21:00:00.000Z',
+    fixedActivationTimeZone: 'Europe/Moscow',
+    validityDays: 365
+  };
+  hybridPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    hybridPublication.runtimeProjection
+  );
+  validateStoredSubscriptionPolicyPublication(hybridPublication);
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...hybridPublication,
+      runtimeProjection: {
+        ...hybridPublication.runtimeProjection,
+        lifecycle: {
+          ...hybridPublication.runtimeProjection.lifecycle,
+          fixedActivationAt: null
+        }
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_TIMESTAMP_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...hybridPublication,
+      runtimeProjection: {
+        ...hybridPublication.runtimeProjection,
+        lifecycle: {
+          ...hybridPublication.runtimeProjection.lifecycle,
+          activationWindowDays: 1
+        }
+      }
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_ACTIVATION_WINDOW_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...hybridPublication,
+      runtimeProjection: {
+        ...hybridPublication.runtimeProjection,
+        lifecycle: {
+          ...hybridPublication.runtimeProjection.lifecycle,
+          fixedActivationAt: '2026-08-15T23:59:59.999Z'
+        }
+      }
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_ACTIVATION_DATE_BEFORE_EFFECTIVE_AT')
+  );
   const reorderedProjection = Object.fromEntries(
     Object.entries(publicationFixture().runtimeProjection).reverse()
   ) as StoredSubscriptionPolicyPublication['runtimeProjection'];

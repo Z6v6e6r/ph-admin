@@ -198,6 +198,16 @@ const capabilitiesDraft = () => ({
   }
 });
 
+const hybridActivationCapabilitiesDraft = () => ({
+  ...capabilitiesDraft(),
+  lifecycle: {
+    ...capabilitiesDraft().lifecycle,
+    activationMode: 'FIRST_USE_OR_FIXED_DATE' as const,
+    activationWindowDays: 0,
+    fixedActivationAt: '2026-10-01T00:00:00+03:00'
+  }
+});
+
 async function expectException(action: () => Promise<unknown>, type: Function): Promise<unknown> {
   try {
     await action();
@@ -716,6 +726,45 @@ async function main(): Promise<void> {
     'PARTIAL_PRICE_PERCENT_DISCOUNT'
   );
 
+  const hybridPolicy = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    {
+      ...policyDraft(),
+      activeServicesLimit: {
+        enabled: false,
+        max: null,
+        scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+      },
+      bookingWindow: { enabled: false, days: null },
+      stationAccessRules: [{
+        ruleId: 'hybrid-home-station',
+        enabled: true,
+        priority: 100,
+        selector: { kind: 'HOME_STATION', stationIds: [] },
+        surcharge: { kind: 'NONE', amountMinor: 0 }
+      }],
+      capabilities: hybridActivationCapabilitiesDraft()
+    },
+    command('policy-hybrid-activation'),
+    globalAdmin
+  );
+  assert.deepEqual(hybridPolicy.item.capabilities.lifecycle, {
+    ...hybridActivationCapabilitiesDraft().lifecycle,
+    fixedActivationAt: '2026-09-30T21:00:00.000Z'
+  });
+  const hybridRuntimeProjection = compileSubscriptionRuntimeProjection({
+    ...hybridPolicy.item,
+    status: 'PUBLISHED'
+  });
+  assert.deepEqual(hybridRuntimeProjection.lifecycle, {
+    allowBookingsAfterExpiry: false,
+    activationMode: 'FIRST_USE_OR_FIXED_DATE',
+    activationWindowDays: 0,
+    fixedActivationAt: '2026-09-30T21:00:00.000Z',
+    fixedActivationTimeZone: 'Europe/Moscow',
+    validityDays: 365
+  });
+
   await expectException(
     () => service.createPolicyVersion(
       typeResult.item.subscriptionTypeId,
@@ -731,6 +780,69 @@ async function main(): Promise<void> {
       globalAdmin
     ),
     UnprocessableEntityException
+  );
+
+  const missingHybridFallback = await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        capabilities: {
+          ...hybridActivationCapabilitiesDraft(),
+          lifecycle: {
+            ...hybridActivationCapabilitiesDraft().lifecycle,
+            fixedActivationAt: null
+          }
+        }
+      },
+      command('policy-hybrid-date-required'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal((missingHybridFallback.getResponse() as { code?: string }).code, 'ACTIVATION_FALLBACK_DATE_REQUIRED');
+
+  const hybridWindow = await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        capabilities: {
+          ...hybridActivationCapabilitiesDraft(),
+          lifecycle: {
+            ...hybridActivationCapabilitiesDraft().lifecycle,
+            activationWindowDays: 1
+          }
+        }
+      },
+      command('policy-hybrid-window-forbidden'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal((hybridWindow.getResponse() as { code?: string }).code, 'HYBRID_ACTIVATION_WINDOW_FORBIDDEN');
+
+  const hybridBeforePolicy = await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        capabilities: {
+          ...hybridActivationCapabilitiesDraft(),
+          lifecycle: {
+            ...hybridActivationCapabilitiesDraft().lifecycle,
+            fixedActivationAt: '2026-08-11T23:59:59.999Z'
+          }
+        }
+      },
+      command('policy-hybrid-before-effective'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal(
+    (hybridBeforePolicy.getResponse() as { code?: string }).code,
+    'ACTIVATION_DATE_BEFORE_POLICY_EFFECTIVE_AT'
   );
 
   await expectException(
@@ -892,6 +1004,23 @@ async function main(): Promise<void> {
     capabilities: capabilitiesDraft()
   });
   assert.deepEqual(await validate(validV2Dto), []);
+  const validHybridDto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    capabilities: hybridActivationCapabilitiesDraft()
+  });
+  assert.deepEqual(await validate(validHybridDto), []);
+  const invalidHybridModeDto = plainToInstance(CreatePolicyVersionDto, {
+    ...policyDraft(),
+    capabilities: {
+      ...hybridActivationCapabilitiesDraft(),
+      lifecycle: {
+        ...hybridActivationCapabilitiesDraft().lifecycle,
+        activationMode: 'FIRST_BOOKING_OR_FIXED_DATE'
+      }
+    }
+  });
+  const invalidHybridModeErrors = await validate(invalidHybridModeDto);
+  assert.ok(invalidHybridModeErrors.some((error) => error.property === 'capabilities'));
   const clientInstanceInPolicyDto = plainToInstance(CreatePolicyVersionDto, {
     ...policyDraft(),
     providerBinding: {

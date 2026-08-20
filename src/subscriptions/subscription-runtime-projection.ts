@@ -57,7 +57,12 @@ export function compileSubscriptionRuntimeProjection(
       partialPrice: rule.partialPrice ? { ...rule.partialPrice } : null
     })),
     lifecycle: {
-      allowBookingsAfterExpiry: policy.capabilities.lifecycle.allowBookingsAfterExpiry
+      allowBookingsAfterExpiry: policy.capabilities.lifecycle.allowBookingsAfterExpiry,
+      activationMode: policy.capabilities.lifecycle.activationMode,
+      activationWindowDays: policy.capabilities.lifecycle.activationWindowDays,
+      fixedActivationAt: policy.capabilities.lifecycle.fixedActivationAt,
+      fixedActivationTimeZone: policy.capabilities.lifecycle.fixedActivationTimeZone,
+      validityDays: policy.validityDays
     },
     usage: {
       weeklyUsageLimit: policy.capabilities.usage.weeklyUsageLimit,

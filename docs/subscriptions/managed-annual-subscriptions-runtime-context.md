@@ -83,5 +83,18 @@ The first LK-compatible policies must use:
 - disabled active/weekly/monthly/future/min-interval counters for the first
   activation.
 
+For Piter and HUB the catalog lifecycle may use
+`FIRST_USE_OR_FIXED_DATE` with `activationWindowDays=0`,
+`fixedActivationAt=2026-09-30T21:00:00.000Z` and
+`fixedActivationTimeZone=Europe/Moscow`. The additive runtime projection carries
+that mode, deadline and `validityDays=365`; legacy schema-v1 projections without
+those optional lifecycle fields remain readable.
+
+This projection does not activate a `SubscriptionInstance`. The production
+booking handshake, provider-confirmed activation command and durable deadline
+worker remain separate fail-closed gates. Until they exist, a
+`PENDING_ACTIVATION` instance must not be converted to `ACTIVE` by this read-only
+runtime-context endpoint.
+
 Create 90/120 add-ons, group training and tournament discounts remain closed
 until exact Viva prices, product/event ids and discount rules are published.
