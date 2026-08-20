@@ -138,7 +138,10 @@ export interface SplitPaymentPromoCampaignRecord {
   id: string;
   title: string;
   enabled: boolean;
+  activeFrom?: string;
   expiresAt?: string;
+  pricingMode: 'PER_PARTICIPANT_HOUR';
+  currency: 'RUB';
   stationIds: string[];
   stationNameIncludes: string[];
   roomIds: string[];
@@ -162,7 +165,9 @@ export interface SplitPaymentPromoSettingsRecord extends Omit<
 export type SplitPaymentPromoPublicSnapshot = Omit<
   SplitPaymentPromoSettingsRecord,
   'key' | 'updatedBy'
->;
+> & {
+  selectedPromoId?: string;
+};
 
 export type SplitPaymentPromoAdminSnapshot = Omit<
   SplitPaymentPromoSettingsRecord,

@@ -741,11 +741,18 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       ...promo,
       enabled: this.isSplitPaymentPromoActive(promo, forDate)
     }));
-    const primaryPromo = this.selectSplitPaymentPromoCampaign(promos, context) ?? promos[0];
+    const selectedPromo = this.selectSplitPaymentPromoCampaign(promos, context);
+    const hasContext = Object.values(context ?? {}).some((value) => Boolean(this.normalizeOptional(value)));
+    const primaryPromo = selectedPromo ?? promos[0];
     return {
-      ...this.toSplitPaymentPromoLegacyFields(primaryPromo),
+      ...this.toSplitPaymentPromoLegacyFields(
+        hasContext && !selectedPromo
+          ? { ...primaryPromo, enabled: false }
+          : primaryPromo
+      ),
       promos,
-      updatedAt: settings.updatedAt
+      updatedAt: settings.updatedAt,
+      ...(selectedPromo ? { selectedPromoId: selectedPromo.id } : {})
     };
   }
 
@@ -756,15 +763,13 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     if (settings.enabled !== true) {
       return false;
     }
-    if (!settings.expiresAt) {
-      return true;
+    const referenceDate = this.resolveReferenceGameDate(forDate);
+    const activeFrom = this.normalizeOptionalGameDate(settings.activeFrom);
+    if (activeFrom && referenceDate < activeFrom) {
+      return false;
     }
-    const expiresAtMs = new Date(settings.expiresAt).getTime();
-    if (Number.isNaN(expiresAtMs)) {
-      return true;
-    }
-    const referenceMs = this.resolveReferenceTimeMs(forDate);
-    return referenceMs <= expiresAtMs;
+    const expiresAt = this.normalizeOptionalGameDate(settings.expiresAt);
+    return !expiresAt || referenceDate <= expiresAt;
   }
 
   private selectSplitPaymentPromoCampaign(
@@ -827,16 +832,9 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return false;
   }
 
-  private resolveReferenceTimeMs(forDate?: string): number {
+  private resolveReferenceGameDate(forDate?: string): string {
     const normalized = String(forDate ?? '').trim();
-    if (!normalized) {
-      return Date.now();
-    }
-    const parsed = new Date(normalized);
-    if (Number.isNaN(parsed.getTime())) {
-      return Date.now();
-    }
-    return parsed.getTime();
+    return this.normalizeOptionalGameDate(normalized) ?? this.formatMoscowGameDate(new Date());
   }
 
   private normalizeSettingsRecord(
@@ -1025,7 +1023,10 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
         id: 'promo-2',
         title: 'Акция 2',
         enabled: false,
+        activeFrom: undefined,
         expiresAt: undefined,
+        pricingMode: 'PER_PARTICIPANT_HOUR',
+        currency: 'RUB',
         stationIds: [],
         stationNameIncludes: [],
         roomIds: [],
@@ -1044,7 +1045,10 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       id: 'promo-1',
       title: 'Акция 1',
       enabled: true,
+      activeFrom: undefined,
       expiresAt: undefined,
+      pricingMode: 'PER_PARTICIPANT_HOUR',
+      currency: 'RUB',
       stationIds: ['6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1'],
       stationNameIncludes: ['терехово', 'terekhovo'],
       roomIds: [],
@@ -1081,7 +1085,10 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
               id: 'promo-1',
               title: 'Акция 1',
               enabled: record.enabled,
+              activeFrom: record.activeFrom,
               expiresAt: record.expiresAt,
+              pricingMode: record.pricingMode,
+              currency: record.currency,
               stationIds: record.stationIds,
               stationNameIncludes: record.stationNameIncludes,
               roomIds: record.roomIds,
@@ -1120,16 +1127,27 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       id: this.normalizeOptional(record.id) ?? fallback.id ?? `promo-${index + 1}`,
       title: this.normalizeOptional(record.title) ?? fallback.title ?? `Акция ${index + 1}`,
       enabled: record.enabled === true || (record.enabled === undefined && fallback.enabled === true),
-      expiresAt: this.normalizeOptionalDateTime(record.expiresAt),
-      stationIds: this.normalizeStringList(record.stationIds, fallback.stationIds),
+      activeFrom: this.normalizeOptionalGameDate(record.activeFrom),
+      expiresAt: this.normalizeOptionalGameDate(record.expiresAt),
+      pricingMode: record.pricingMode === 'PER_PARTICIPANT_HOUR'
+        ? record.pricingMode
+        : fallback.pricingMode,
+      currency: record.currency === 'RUB' ? record.currency : fallback.currency,
+      stationIds: this.normalizeStringList(
+        record.stationIds,
+        record.stationIds === undefined ? fallback.stationIds : []
+      ),
       stationNameIncludes: this.normalizeStringList(
         record.stationNameIncludes,
-        fallback.stationNameIncludes
+        record.stationNameIncludes === undefined ? fallback.stationNameIncludes : []
       ),
-      roomIds: this.normalizeStringList(record.roomIds, fallback.roomIds),
+      roomIds: this.normalizeStringList(
+        record.roomIds,
+        record.roomIds === undefined ? fallback.roomIds : []
+      ),
       roomNameIncludes: this.normalizeStringList(
         record.roomNameIncludes,
-        fallback.roomNameIncludes
+        record.roomNameIncludes === undefined ? fallback.roomNameIncludes : []
       ),
       shareAmounts: {
         twoTeams: this.normalizeMoney(shareAmounts.twoTeams, fallback.shareAmounts.twoTeams),
@@ -1159,7 +1177,12 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       id: this.normalizeOptional(input.id) ?? fallback.id ?? `promo-${index + 1}`,
       title: this.normalizeOptional(input.title) ?? fallback.title ?? `Акция ${index + 1}`,
       enabled: input.enabled === true,
-      expiresAt: this.normalizeOptionalDateTime(input.expiresAt),
+      activeFrom: this.normalizeOptionalGameDate(input.activeFrom),
+      expiresAt: this.normalizeOptionalGameDate(input.expiresAt),
+      pricingMode: input.pricingMode === 'PER_PARTICIPANT_HOUR'
+        ? input.pricingMode
+        : fallback.pricingMode,
+      currency: input.currency === 'RUB' ? input.currency : fallback.currency,
       stationIds: this.normalizeStringList(input.stationIds),
       stationNameIncludes: this.normalizeStringList(input.stationNameIncludes),
       roomIds: this.normalizeStringList(input.roomIds),
@@ -1220,7 +1243,10 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
   ): Omit<SplitPaymentPromoCampaignRecord, 'id' | 'title'> {
     return {
       enabled: promo.enabled === true,
+      activeFrom: promo.activeFrom,
       expiresAt: promo.expiresAt,
+      pricingMode: promo.pricingMode,
+      currency: promo.currency,
       stationIds: promo.stationIds,
       stationNameIncludes: promo.stationNameIncludes,
       roomIds: promo.roomIds,
@@ -1450,16 +1476,42 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
     return Math.round(parsed);
   }
 
-  private normalizeOptionalDateTime(value: unknown): string | undefined {
+  private normalizeOptionalGameDate(value: unknown): string | undefined {
     const normalized = String(value ?? '').trim();
     if (!normalized) {
+      return undefined;
+    }
+    const dateOnly = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) {
+      const year = Number(dateOnly[1]);
+      const month = Number(dateOnly[2]);
+      const day = Number(dateOnly[3]);
+      const parsedDate = new Date(Date.UTC(year, month - 1, day));
+      if (
+        parsedDate.getUTCFullYear() === year
+        && parsedDate.getUTCMonth() === month - 1
+        && parsedDate.getUTCDate() === day
+      ) {
+        return normalized;
+      }
       return undefined;
     }
     const date = new Date(normalized);
     if (Number.isNaN(date.getTime())) {
       return undefined;
     }
-    return date.toISOString();
+    return this.formatMoscowGameDate(date);
+  }
+
+  private formatMoscowGameDate(date: Date): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Moscow',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
   }
 
   private normalizePositiveInteger(value: unknown, fallback: number): number {

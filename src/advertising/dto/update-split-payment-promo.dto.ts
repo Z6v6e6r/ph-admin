@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsDateString,
   IsInt,
+  IsIn,
   IsNumber,
   IsObject,
   IsOptional,
@@ -43,7 +44,19 @@ export class UpdateSplitPaymentPromoCampaignDto {
 
   @IsOptional()
   @IsDateString()
+  activeFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
   expiresAt?: string;
+
+  @IsOptional()
+  @IsIn(['PER_PARTICIPANT_HOUR'])
+  pricingMode?: 'PER_PARTICIPANT_HOUR';
+
+  @IsOptional()
+  @IsIn(['RUB'])
+  currency?: 'RUB';
 
   @IsArray()
   @ArrayMaxSize(20)

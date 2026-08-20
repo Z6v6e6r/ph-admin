@@ -8919,16 +8919,24 @@
     return year + '-' + month + '-' + day;
   }
 
-  function buildEndOfDayIsoFromDateInput(value) {
+  function buildGameDateBoundaryFromDateInput(value) {
     var normalized = String(value || '').trim();
-    if (!normalized) {
+    var matched = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) {
       return undefined;
     }
-    var date = new Date(normalized + 'T23:59:59');
-    if (Number.isNaN(date.getTime())) {
+    var year = Number(matched[1]);
+    var month = Number(matched[2]);
+    var day = Number(matched[3]);
+    var date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() !== year
+      || date.getUTCMonth() !== month - 1
+      || date.getUTCDate() !== day
+    ) {
       return undefined;
     }
-    return date.toISOString();
+    return normalized;
   }
 
   function getTodayDateInputValue() {
@@ -11300,6 +11308,11 @@
     splitPromoHead.textContent = 'Раздельная оплата игр';
     splitPromoCard.appendChild(splitPromoHead);
 
+    var splitPromoHint = document.createElement('div');
+    splitPromoHint.className = 'phab-admin-settings-row-meta';
+    splitPromoHint.textContent = 'Суммы задаются за одного участника за час. Полная оплата всегда остаётся по цене слота Viva.';
+    splitPromoCard.appendChild(splitPromoHint);
+
     var splitPromoList = document.createElement('div');
     splitPromoList.className = 'phab-admin-settings-list';
     splitPromoCard.appendChild(splitPromoList);
@@ -11313,6 +11326,24 @@
     splitPromoFirstTitle.textContent = 'Акция 1';
     splitPromoForm.appendChild(splitPromoFirstTitle);
 
+    var splitPromoIdLabel = document.createElement('label');
+    splitPromoIdLabel.className = 'phab-admin-settings-label';
+    splitPromoIdLabel.textContent = 'ID версии тарифа';
+    splitPromoForm.appendChild(splitPromoIdLabel);
+
+    var splitPromoIdInput = document.createElement('input');
+    splitPromoIdInput.className = 'phab-admin-settings-input';
+    splitPromoIdLabel.appendChild(splitPromoIdInput);
+
+    var splitPromoTitleLabel = document.createElement('label');
+    splitPromoTitleLabel.className = 'phab-admin-settings-label';
+    splitPromoTitleLabel.textContent = 'Название тарифа';
+    splitPromoForm.appendChild(splitPromoTitleLabel);
+
+    var splitPromoTitleInput = document.createElement('input');
+    splitPromoTitleInput.className = 'phab-admin-settings-input';
+    splitPromoTitleLabel.appendChild(splitPromoTitleInput);
+
     var splitPromoEnabledWrap = document.createElement('label');
     splitPromoEnabledWrap.className = 'phab-admin-check';
     splitPromoForm.appendChild(splitPromoEnabledWrap);
@@ -11321,6 +11352,16 @@
     splitPromoEnabledInput.type = 'checkbox';
     splitPromoEnabledWrap.appendChild(splitPromoEnabledInput);
     splitPromoEnabledWrap.appendChild(document.createTextNode('Акция включена'));
+
+    var splitPromoActiveFromLabel = document.createElement('label');
+    splitPromoActiveFromLabel.className = 'phab-admin-settings-label';
+    splitPromoActiveFromLabel.textContent = 'Действует на даты игр с (включительно)';
+    splitPromoForm.appendChild(splitPromoActiveFromLabel);
+
+    var splitPromoActiveFromInput = document.createElement('input');
+    splitPromoActiveFromInput.className = 'phab-admin-settings-input';
+    splitPromoActiveFromInput.type = 'date';
+    splitPromoActiveFromLabel.appendChild(splitPromoActiveFromInput);
 
     var splitPromoExpiresAtLabel = document.createElement('label');
     splitPromoExpiresAtLabel.className = 'phab-admin-settings-label';
@@ -11374,7 +11415,7 @@
 
     var splitPromoTwoTeamsLabel = document.createElement('label');
     splitPromoTwoTeamsLabel.className = 'phab-admin-settings-label';
-    splitPromoTwoTeamsLabel.textContent = 'Цена при делении на 2 команды';
+    splitPromoTwoTeamsLabel.textContent = 'Цена участника при делении на 2 команды, ₽/час';
     splitPromoForm.appendChild(splitPromoTwoTeamsLabel);
 
     var splitPromoTwoTeamsInput = document.createElement('input');
@@ -11386,7 +11427,7 @@
 
     var splitPromoFourPlayersLabel = document.createElement('label');
     splitPromoFourPlayersLabel.className = 'phab-admin-settings-label';
-    splitPromoFourPlayersLabel.textContent = 'Цена при делении на 4 игроков';
+    splitPromoFourPlayersLabel.textContent = 'Цена участника при делении на 4 игроков, ₽/час';
     splitPromoForm.appendChild(splitPromoFourPlayersLabel);
 
     var splitPromoFourPlayersInput = document.createElement('input');
@@ -11398,7 +11439,7 @@
 
     var splitPromoBaseShareLabel = document.createElement('label');
     splitPromoBaseShareLabel.className = 'phab-admin-settings-label';
-    splitPromoBaseShareLabel.textContent = 'Базовая цена участника';
+    splitPromoBaseShareLabel.textContent = 'Резервная базовая цена участника, ₽/час (legacy)';
     splitPromoForm.appendChild(splitPromoBaseShareLabel);
 
     var splitPromoBaseShareInput = document.createElement('input');
@@ -11437,6 +11478,24 @@
     splitPromoSecondTitle.textContent = 'Акция 2';
     splitPromoForm.appendChild(splitPromoSecondTitle);
 
+    var splitPromoSecondIdLabel = document.createElement('label');
+    splitPromoSecondIdLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondIdLabel.textContent = 'ID версии тарифа';
+    splitPromoForm.appendChild(splitPromoSecondIdLabel);
+
+    var splitPromoSecondIdInput = document.createElement('input');
+    splitPromoSecondIdInput.className = 'phab-admin-settings-input';
+    splitPromoSecondIdLabel.appendChild(splitPromoSecondIdInput);
+
+    var splitPromoSecondTitleLabel = document.createElement('label');
+    splitPromoSecondTitleLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondTitleLabel.textContent = 'Название тарифа';
+    splitPromoForm.appendChild(splitPromoSecondTitleLabel);
+
+    var splitPromoSecondTitleInput = document.createElement('input');
+    splitPromoSecondTitleInput.className = 'phab-admin-settings-input';
+    splitPromoSecondTitleLabel.appendChild(splitPromoSecondTitleInput);
+
     var splitPromoSecondEnabledWrap = document.createElement('label');
     splitPromoSecondEnabledWrap.className = 'phab-admin-check';
     splitPromoForm.appendChild(splitPromoSecondEnabledWrap);
@@ -11445,6 +11504,16 @@
     splitPromoSecondEnabledInput.type = 'checkbox';
     splitPromoSecondEnabledWrap.appendChild(splitPromoSecondEnabledInput);
     splitPromoSecondEnabledWrap.appendChild(document.createTextNode('Акция включена'));
+
+    var splitPromoSecondActiveFromLabel = document.createElement('label');
+    splitPromoSecondActiveFromLabel.className = 'phab-admin-settings-label';
+    splitPromoSecondActiveFromLabel.textContent = 'Действует на даты игр с (включительно)';
+    splitPromoForm.appendChild(splitPromoSecondActiveFromLabel);
+
+    var splitPromoSecondActiveFromInput = document.createElement('input');
+    splitPromoSecondActiveFromInput.className = 'phab-admin-settings-input';
+    splitPromoSecondActiveFromInput.type = 'date';
+    splitPromoSecondActiveFromLabel.appendChild(splitPromoSecondActiveFromInput);
 
     var splitPromoSecondExpiresAtLabel = document.createElement('label');
     splitPromoSecondExpiresAtLabel.className = 'phab-admin-settings-label';
@@ -11498,7 +11567,7 @@
 
     var splitPromoSecondTwoTeamsLabel = document.createElement('label');
     splitPromoSecondTwoTeamsLabel.className = 'phab-admin-settings-label';
-    splitPromoSecondTwoTeamsLabel.textContent = 'Цена при делении на 2 команды';
+    splitPromoSecondTwoTeamsLabel.textContent = 'Цена участника при делении на 2 команды, ₽/час';
     splitPromoForm.appendChild(splitPromoSecondTwoTeamsLabel);
 
     var splitPromoSecondTwoTeamsInput = document.createElement('input');
@@ -11510,7 +11579,7 @@
 
     var splitPromoSecondFourPlayersLabel = document.createElement('label');
     splitPromoSecondFourPlayersLabel.className = 'phab-admin-settings-label';
-    splitPromoSecondFourPlayersLabel.textContent = 'Цена при делении на 4 игроков';
+    splitPromoSecondFourPlayersLabel.textContent = 'Цена участника при делении на 4 игроков, ₽/час';
     splitPromoForm.appendChild(splitPromoSecondFourPlayersLabel);
 
     var splitPromoSecondFourPlayersInput = document.createElement('input');
@@ -11522,7 +11591,7 @@
 
     var splitPromoSecondBaseShareLabel = document.createElement('label');
     splitPromoSecondBaseShareLabel.className = 'phab-admin-settings-label';
-    splitPromoSecondBaseShareLabel.textContent = 'Базовая цена участника';
+    splitPromoSecondBaseShareLabel.textContent = 'Резервная базовая цена участника, ₽/час (legacy)';
     splitPromoForm.appendChild(splitPromoSecondBaseShareLabel);
 
     var splitPromoSecondBaseShareInput = document.createElement('input');
@@ -13355,7 +13424,10 @@
         advertisingModalHorizontalPreview
       ],
       splitPromoList: splitPromoList,
+      splitPromoIdInput: splitPromoIdInput,
+      splitPromoTitleInput: splitPromoTitleInput,
       splitPromoEnabledInput: splitPromoEnabledInput,
+      splitPromoActiveFromInput: splitPromoActiveFromInput,
       splitPromoExpiresAtInput: splitPromoExpiresAtInput,
       splitPromoStationIdsInput: splitPromoStationIdsInput,
       splitPromoStationNamesInput: splitPromoStationNamesInput,
@@ -13367,6 +13439,9 @@
       splitPromoDirectionInput: splitPromoDirectionInput,
       splitPromoExerciseTypeInput: splitPromoExerciseTypeInput,
       splitPromoSecondEnabledInput: splitPromoSecondEnabledInput,
+      splitPromoSecondIdInput: splitPromoSecondIdInput,
+      splitPromoSecondTitleInput: splitPromoSecondTitleInput,
+      splitPromoSecondActiveFromInput: splitPromoSecondActiveFromInput,
       splitPromoSecondExpiresAtInput: splitPromoSecondExpiresAtInput,
       splitPromoSecondStationIdsInput: splitPromoSecondStationIdsInput,
       splitPromoSecondStationNamesInput: splitPromoSecondStationNamesInput,
@@ -13826,14 +13901,28 @@
       id: String(source.id || defaults.id || ('promo-' + (index + 1))).trim(),
       title: String(source.title || defaults.title || ('Акция ' + (index + 1))).trim(),
       enabled: source.enabled === true || (source.enabled === undefined && defaults.enabled === true),
+      activeFrom: String(source.activeFrom || '').trim(),
       expiresAt: String(source.expiresAt || '').trim(),
-      stationIds: normalizeStringListSetting(source.stationIds, defaults.stationIds),
+      pricingMode: source.pricingMode === 'PER_PARTICIPANT_HOUR'
+        ? source.pricingMode
+        : 'PER_PARTICIPANT_HOUR',
+      currency: source.currency === 'RUB' ? source.currency : 'RUB',
+      stationIds: normalizeStringListSetting(
+        source.stationIds,
+        Object.prototype.hasOwnProperty.call(source, 'stationIds') ? [] : defaults.stationIds
+      ),
       stationNameIncludes: normalizeStringListSetting(
         source.stationNameIncludes,
-        defaults.stationNameIncludes
+        Object.prototype.hasOwnProperty.call(source, 'stationNameIncludes') ? [] : defaults.stationNameIncludes
       ),
-      roomIds: normalizeStringListSetting(source.roomIds, defaults.roomIds),
-      roomNameIncludes: normalizeStringListSetting(source.roomNameIncludes, defaults.roomNameIncludes),
+      roomIds: normalizeStringListSetting(
+        source.roomIds,
+        Object.prototype.hasOwnProperty.call(source, 'roomIds') ? [] : defaults.roomIds
+      ),
+      roomNameIncludes: normalizeStringListSetting(
+        source.roomNameIncludes,
+        Object.prototype.hasOwnProperty.call(source, 'roomNameIncludes') ? [] : defaults.roomNameIncludes
+      ),
       shareAmounts: {
         twoTeams: normalizeMoneySetting(shareAmounts.twoTeams, defaults.shareAmounts.twoTeams),
         fourPlayers: normalizeMoneySetting(shareAmounts.fourPlayers, defaults.shareAmounts.fourPlayers)
@@ -13868,7 +13957,10 @@
       id: primary.id,
       title: primary.title,
       enabled: primary.enabled,
+      activeFrom: primary.activeFrom,
       expiresAt: primary.expiresAt,
+      pricingMode: primary.pricingMode,
+      currency: primary.currency,
       stationIds: primary.stationIds,
       stationNameIncludes: primary.stationNameIncludes,
       roomIds: primary.roomIds,
@@ -33529,19 +33621,24 @@
         meta.textContent =
           'станции: ' +
           (promo.stationIds.length ? promo.stationIds.join(', ') : promo.stationNameIncludes.join(', ')) +
+          (promo.activeFrom ? ' · действует на даты игр с: ' + formatDateInputValue(promo.activeFrom) : '') +
           (promo.expiresAt ? ' · действует на даты игр до: ' + formatDateInputValue(promo.expiresAt) : '') +
           ' · корты: ' +
           (promo.roomIds.length ? promo.roomIds.join(', ') : promo.roomNameIncludes.join(', ')) +
           ' · 2 команды: ' +
           formatMoney(promo.shareAmounts.twoTeams) +
-          ' · 4 игрока: ' +
+          ' ₽/час · 4 игрока: ' +
           formatMoney(promo.shareAmounts.fourPlayers) +
+          ' ₽/час' +
           (settings.updatedAt ? ' · обновлено: ' + formatDateTimeFull(settings.updatedAt) : '') +
           (settings.updatedBy ? ' · кем: ' + settings.updatedBy : '');
         main.appendChild(meta);
       });
 
+      dom.splitPromoIdInput.value = firstPromo.id;
+      dom.splitPromoTitleInput.value = firstPromo.title;
       dom.splitPromoEnabledInput.checked = firstPromo.enabled === true;
+      dom.splitPromoActiveFromInput.value = formatDateInputValue(firstPromo.activeFrom);
       dom.splitPromoExpiresAtInput.value = formatDateInputValue(firstPromo.expiresAt);
       dom.splitPromoStationIdsInput.value = firstPromo.stationIds.join(', ');
       dom.splitPromoStationNamesInput.value = firstPromo.stationNameIncludes.join(', ');
@@ -33552,7 +33649,10 @@
       dom.splitPromoBaseShareInput.value = String(firstPromo.baseShareAmount);
       dom.splitPromoDirectionInput.value = String(firstPromo.vivaDirectionId);
       dom.splitPromoExerciseTypeInput.value = String(firstPromo.vivaExerciseTypeId);
+      dom.splitPromoSecondIdInput.value = secondPromo.id;
+      dom.splitPromoSecondTitleInput.value = secondPromo.title;
       dom.splitPromoSecondEnabledInput.checked = secondPromo.enabled === true;
+      dom.splitPromoSecondActiveFromInput.value = formatDateInputValue(secondPromo.activeFrom);
       dom.splitPromoSecondExpiresAtInput.value = formatDateInputValue(secondPromo.expiresAt);
       dom.splitPromoSecondStationIdsInput.value = secondPromo.stationIds.join(', ');
       dom.splitPromoSecondStationNamesInput.value = secondPromo.stationNameIncludes.join(', ');
@@ -33565,7 +33665,10 @@
       dom.splitPromoSecondExerciseTypeInput.value = String(secondPromo.vivaExerciseTypeId);
 
       [
+        dom.splitPromoIdInput,
+        dom.splitPromoTitleInput,
         dom.splitPromoEnabledInput,
+        dom.splitPromoActiveFromInput,
         dom.splitPromoExpiresAtInput,
         dom.splitPromoStationIdsInput,
         dom.splitPromoStationNamesInput,
@@ -33576,7 +33679,10 @@
         dom.splitPromoBaseShareInput,
         dom.splitPromoDirectionInput,
         dom.splitPromoExerciseTypeInput,
+        dom.splitPromoSecondIdInput,
+        dom.splitPromoSecondTitleInput,
         dom.splitPromoSecondEnabledInput,
+        dom.splitPromoSecondActiveFromInput,
         dom.splitPromoSecondExpiresAtInput,
         dom.splitPromoSecondStationIdsInput,
         dom.splitPromoSecondStationNamesInput,
@@ -33628,10 +33734,13 @@
       }
 
       return {
-        id: 'promo-' + (index + 1),
-        title: 'Акция ' + (index + 1),
+        id: String(section.idInput.value || ('promo-' + (index + 1))).trim(),
+        title: String(section.titleInput.value || ('Акция ' + (index + 1))).trim(),
         enabled: enabled,
-        expiresAt: buildEndOfDayIsoFromDateInput(section.expiresAtInput.value),
+        activeFrom: buildGameDateBoundaryFromDateInput(section.activeFromInput.value),
+        expiresAt: buildGameDateBoundaryFromDateInput(section.expiresAtInput.value),
+        pricingMode: 'PER_PARTICIPANT_HOUR',
+        currency: 'RUB',
         stationIds: stationIds,
         stationNameIncludes: stationNameIncludes,
         roomIds: parseCsvInput(section.roomIdsInput.value),
@@ -33648,7 +33757,10 @@
 
     function readSplitPaymentPromoForm() {
       var firstPromo = readSplitPaymentPromoFormSection({
+        idInput: dom.splitPromoIdInput,
+        titleInput: dom.splitPromoTitleInput,
         enabledInput: dom.splitPromoEnabledInput,
+        activeFromInput: dom.splitPromoActiveFromInput,
         expiresAtInput: dom.splitPromoExpiresAtInput,
         stationIdsInput: dom.splitPromoStationIdsInput,
         stationNamesInput: dom.splitPromoStationNamesInput,
@@ -33661,7 +33773,10 @@
         exerciseTypeInput: dom.splitPromoExerciseTypeInput
       }, 0);
       var secondPromo = readSplitPaymentPromoFormSection({
+        idInput: dom.splitPromoSecondIdInput,
+        titleInput: dom.splitPromoSecondTitleInput,
         enabledInput: dom.splitPromoSecondEnabledInput,
+        activeFromInput: dom.splitPromoSecondActiveFromInput,
         expiresAtInput: dom.splitPromoSecondExpiresAtInput,
         stationIdsInput: dom.splitPromoSecondStationIdsInput,
         stationNamesInput: dom.splitPromoSecondStationNamesInput,
@@ -33676,7 +33791,10 @@
 
       return {
         enabled: firstPromo.enabled,
+        activeFrom: firstPromo.activeFrom,
         expiresAt: firstPromo.expiresAt,
+        pricingMode: firstPromo.pricingMode,
+        currency: firstPromo.currency,
         stationIds: firstPromo.stationIds,
         stationNameIncludes: firstPromo.stationNameIncludes,
         roomIds: firstPromo.roomIds,
