@@ -11316,7 +11316,8 @@
 
     var splitPromoHint = document.createElement('div');
     splitPromoHint.className = 'phab-admin-settings-row-meta';
-    splitPromoHint.textContent = 'Суммы задаются за одного участника за час. Полная оплата всегда остаётся по цене слота Viva.';
+    splitPromoHint.textContent =
+      'Суммы задаются за одну долю оплаты в час: за команду при делении на 2 или за игрока при делении на 4. Полная оплата всегда остаётся по цене слота Viva.';
     splitPromoCard.appendChild(splitPromoHint);
 
     var splitPromoList = document.createElement('div');
@@ -11421,7 +11422,7 @@
 
     var splitPromoTwoTeamsLabel = document.createElement('label');
     splitPromoTwoTeamsLabel.className = 'phab-admin-settings-label';
-    splitPromoTwoTeamsLabel.textContent = 'Цена участника при делении на 2 команды, ₽/час';
+    splitPromoTwoTeamsLabel.textContent = 'Цена команды при делении на 2 команды, ₽/час';
     splitPromoForm.appendChild(splitPromoTwoTeamsLabel);
 
     var splitPromoTwoTeamsInput = document.createElement('input');
@@ -11573,7 +11574,7 @@
 
     var splitPromoSecondTwoTeamsLabel = document.createElement('label');
     splitPromoSecondTwoTeamsLabel.className = 'phab-admin-settings-label';
-    splitPromoSecondTwoTeamsLabel.textContent = 'Цена участника при делении на 2 команды, ₽/час';
+    splitPromoSecondTwoTeamsLabel.textContent = 'Цена команды при делении на 2 команды, ₽/час';
     splitPromoForm.appendChild(splitPromoSecondTwoTeamsLabel);
 
     var splitPromoSecondTwoTeamsInput = document.createElement('input');
@@ -33637,9 +33638,9 @@
           (promo.roomIds.length ? promo.roomIds.join(', ') : promo.roomNameIncludes.join(', ')) +
           ' · 2 команды: ' +
           formatMoney(promo.shareAmounts.twoTeams) +
-          ' ₽/час · 4 игрока: ' +
+          ' за команду/час · 4 игрока: ' +
           formatMoney(promo.shareAmounts.fourPlayers) +
-          ' ₽/час' +
+          ' за игрока/час' +
           (settings.updatedAt ? ' · обновлено: ' + formatDateTimeFull(settings.updatedAt) : '') +
           (settings.updatedBy ? ' · кем: ' + settings.updatedBy : '');
         main.appendChild(meta);

@@ -186,9 +186,22 @@ async function main(): Promise<void> {
 
   const adminUiSource = readFileSync(resolve('client-sdk/phab-admin-panel.js'), 'utf8');
   const clientHasPermission = loadClientPermissionCheck(adminUiSource);
-  assert.match(adminUiSource, /Суммы задаются за одного участника за час/);
+  assert.match(adminUiSource, /Суммы задаются за одну долю оплаты в час/);
   assert.match(adminUiSource, /Полная оплата всегда остаётся по цене слота Viva/);
+  assert.match(adminUiSource, /Цена команды при делении на 2 команды, ₽\/час/);
   assert.match(adminUiSource, /Цена участника при делении на 4 игроков, ₽\/час/);
+  assert.match(
+    adminUiSource,
+    /formatMoney\(promo\.shareAmounts\.twoTeams\)\s*\+\s*' за команду\/час · 4 игрока: '/
+  );
+  assert.match(
+    adminUiSource,
+    /formatMoney\(promo\.shareAmounts\.fourPlayers\)\s*\+\s*' за игрока\/час'/
+  );
+  assert.doesNotMatch(
+    adminUiSource,
+    /formatMoney\(promo\.shareAmounts\.(?:twoTeams|fourPlayers)\)\s*\+\s*' ₽\/час'/
+  );
   assert.match(
     adminUiSource,
     /splitPromoGrid\.className\s*=\s*'phab-admin-settings-grid phab-admin-split-promo-grid'\s*\+\s*\(canManageAdvertisingSettings\(cfg\) \? '' : ' phab-admin-hidden'\)/
