@@ -505,6 +505,7 @@ export type SubscriptionInstanceState =
 export type SubscriptionReconciliationState = 'CURRENT' | 'STALE' | 'REQUIRED';
 export type SubscriptionRuntimeOperationKind =
   | 'PURCHASE'
+  | 'ACTIVATION'
   | 'BOOKING'
   | 'CANCELLATION'
   | 'REFUND'

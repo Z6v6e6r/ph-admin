@@ -181,3 +181,39 @@ entitlement reservation, ledger/outbox append or admin audit write.
 5. preserve sanitized logs/correlation IDs for analysis.
 
 Operational reserve/provider-confirm/compensation remains a later independent gate.
+
+## Gate F — first-use activation handshake
+
+This gate requires a separately reviewed release, the complete runtime index
+set (including `subscription_instance_pending_activation_cursor`), provider-bound
+instances and policies, a separately provisioned activation integration token,
+and an LK gateway capable of retrying a provider-confirmed booking without
+creating it again. Enable the activation command only after all of those checks:
+
+```dotenv
+SUBSCRIPTIONS_ACTIVATION_ENABLED=true
+SUBSCRIPTIONS_ACTIVATION_INTEGRATION_TOKEN=<secret-reference>
+SUBSCRIPTIONS_ACTIVATION_MAX_STALENESS_SECONDS=<30..86400>
+```
+
+Acceptance requires one exact Viva booking read-back, one CAS transition,
+exactly one activation operation/ledger/outbox tuple, idempotent replay and a
+forced CUP-unavailable retry proving no second Viva booking. Keep the deadline
+worker disabled during this gate.
+
+## Gate G — fixed-date activation worker
+
+This is a separate feature activation. Before enabling it, reconcile every
+pending instance from the provider at or after the fixed deadline and retain
+only sanitized aggregate evidence. Then enable:
+
+```dotenv
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_WORKER_ENABLED=true
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_INTERVAL_MS=60000
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_BATCH_SIZE=50
+```
+
+The worker remains fail closed for missing or stale provider evidence. Verify
+scanned/activated/replayed/not-due/failed aggregates, concurrent-cycle exclusion,
+cursor rollover, CAS conflicts and exact `activeFrom`/`activeTo`. Disabling the
+worker stops new deadline scans; it does not revert already activated instances.

@@ -26,12 +26,17 @@ import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provid
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
+import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import {
+  SubscriptionActivationResult,
+  SubscriptionActivationService
+} from './subscription-activation.service';
 import {
   SubscriptionRuntimeContextResult,
   SubscriptionRuntimeContextService
@@ -227,7 +232,8 @@ export class SubscriptionsController {
 export class SubscriptionTrustedShadowController {
   constructor(
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
-    private readonly runtimeContext: SubscriptionRuntimeContextService
+    private readonly runtimeContext: SubscriptionRuntimeContextService,
+    private readonly activation: SubscriptionActivationService
   ) {}
 
   @Post('shadow-quote')
@@ -254,6 +260,25 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
+  }
+
+  @Post('activate-first-use')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  activateFirstUse(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: ActivateSubscriptionFirstUseDto
+  ): Promise<SubscriptionActivationResult> {
+    return this.activation.activateFirstUse(
+      authorization,
+      integrationToken,
+      dto,
+      { correlationId }
+    );
   }
 }
 

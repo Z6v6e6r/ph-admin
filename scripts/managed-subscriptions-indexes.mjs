@@ -39,6 +39,7 @@ const plan = [
     ['subscription_instances', { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_type_state_expiry' }],
     ['subscription_instances', { homeStationId: 1, state: 1, updatedAt: -1 }, { name: 'subscription_instance_station_state' }],
     ['subscription_instances', { clientRefHash: 1, state: 1, updatedAt: -1 }, { name: 'subscription_instance_client_state' }],
+    ['subscription_instances', { state: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_pending_activation_cursor' }],
     ['subscription_entitlement_aggregates', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_entitlement_aggregate_instance_unique' }],
     ['subscription_entitlement_aggregates', { 'reconciliation.state': 1, updatedAt: 1, subscriptionInstanceId: 1 }, { name: 'subscription_entitlement_aggregate_reconciliation' }],
     ['subscription_operations', { operationId: 1 }, { unique: true, name: 'subscription_operation_id_unique' }],

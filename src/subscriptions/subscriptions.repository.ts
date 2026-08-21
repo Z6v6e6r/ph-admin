@@ -166,6 +166,11 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       name: 'subscription_instance_client_state',
       key: { clientRefHash: 1, state: 1, updatedAt: -1 },
       unique: false
+    },
+    {
+      name: 'subscription_instance_pending_activation_cursor',
+      key: { state: 1, subscriptionInstanceId: 1 },
+      unique: false
     }
   ],
   aggregates: [
@@ -581,6 +586,126 @@ export class SubscriptionsRepository {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionInstance(document);
     await this.runtimeInstances().insertOne(document);
+  }
+
+  async runtimePendingActivationInstances(
+    afterId: string | null,
+    limit: number
+  ): Promise<StoredSubscriptionInstance[]> {
+    this.assertRuntimeContractsEnabled();
+    const rows = await this.runtimeInstances()
+      .find({
+        state: 'PENDING_ACTIVATION',
+        ...(afterId ? { subscriptionInstanceId: { $gt: afterId } } : {})
+      }, { projection: { _id: 0 } })
+      .sort({ subscriptionInstanceId: 1 })
+      .limit(limit)
+      .toArray();
+    rows.forEach(validateStoredSubscriptionInstance);
+    return rows;
+  }
+
+  async activateRuntimeInstance(input: {
+    tenantId: string;
+    subscriptionInstanceId: string;
+    expectedRevision: number;
+    activeFrom: string;
+    activeTo: string;
+    updatedAt: string;
+    providerEvidenceRef: string;
+    reconciliation: StoredSubscriptionInstance['reconciliation'];
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<{ instance: StoredSubscriptionInstance; activated: boolean }> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    if (input.operation.kind !== 'ACTIVATION'
+      || input.operation.state !== 'CONFIRMED'
+      || input.operation.subscriptionInstanceId !== input.subscriptionInstanceId
+      || input.ledger.eventType !== 'INSTANCE_ACTIVATED'
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    let result: { instance: StoredSubscriptionInstance; activated: boolean } | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const current = await this.runtimeInstances().findOne(
+          { tenantId: input.tenantId, subscriptionInstanceId: input.subscriptionInstanceId },
+          { projection: { _id: 0 }, session }
+        );
+        if (!current) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_INSTANCE_NOT_FOUND');
+        }
+        validateStoredSubscriptionInstance(current);
+        if (current.state === 'ACTIVE') {
+          result = { instance: current, activated: false };
+          return;
+        }
+        if (current.state !== 'PENDING_ACTIVATION'
+          || current.revision !== input.expectedRevision
+          || current.activeFrom !== null
+          || current.activeTo !== null) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_CAS_CONFLICT');
+        }
+
+        const updated = await this.runtimeInstances().findOneAndUpdate(
+          {
+            tenantId: input.tenantId,
+            subscriptionInstanceId: input.subscriptionInstanceId,
+            state: 'PENDING_ACTIVATION',
+            revision: input.expectedRevision,
+            activeFrom: null,
+            activeTo: null
+          },
+          {
+            $set: {
+              state: 'ACTIVE',
+              activeFrom: input.activeFrom,
+              activeTo: input.activeTo,
+              frozenUntil: null,
+              'evidence.lastReadBackEvidenceRef': input.providerEvidenceRef,
+              reconciliation: input.reconciliation,
+              updatedAt: input.updatedAt
+            },
+            $inc: { revision: 1 }
+          },
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!updated) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_CAS_CONFLICT');
+        }
+        validateStoredSubscriptionInstance(updated);
+        await this.runtimeOperations().insertOne(input.operation, { session });
+        await this.runtimeLedger().insertOne(input.ledger, { session });
+        await this.runtimeOutbox().insertOne(input.outbox, { session });
+        result = { instance: updated, activated: true };
+      });
+      if (!result) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_TRANSACTION_EMPTY');
+      }
+      return result;
+    } catch (error) {
+      if (!this.isDuplicateKey(error)) throw error;
+      const current = await this.runtimeInstances().findOne(
+        { tenantId: input.tenantId, subscriptionInstanceId: input.subscriptionInstanceId },
+        { projection: { _id: 0 } }
+      );
+      if (current?.state === 'ACTIVE') {
+        validateStoredSubscriptionInstance(current);
+        return { instance: current, activated: false };
+      }
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ACTIVATION_IDEMPOTENCY_CONFLICT');
+    } finally {
+      await session.endSession();
+    }
   }
 
   async runtimeEntitlementAggregateByInstance(

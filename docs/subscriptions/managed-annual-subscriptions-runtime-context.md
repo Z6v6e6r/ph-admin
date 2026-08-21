@@ -90,11 +90,52 @@ For Piter and HUB the catalog lifecycle may use
 that mode, deadline and `validityDays=365`; legacy schema-v1 projections without
 those optional lifecycle fields remain readable.
 
-This projection does not activate a `SubscriptionInstance`. The production
-booking handshake, provider-confirmed activation command and durable deadline
-worker remain separate fail-closed gates. Until they exist, a
-`PENDING_ACTIVATION` instance must not be converted to `ACTIVE` by this read-only
-runtime-context endpoint.
+This projection does not activate a `SubscriptionInstance`. The isolated
+activation candidate adds a separate provider-confirmed command and a durable
+deadline worker; both are disabled by default and remain independent release,
+index, secret-provisioning and enablement gates. A `PENDING_ACTIVATION` instance
+is never converted to `ACTIVE` by this read-only runtime-context endpoint.
+
+## Isolated activation candidate
+
+After LK has read back the exact Viva booking, its server-side gateway may call:
+
+```http
+POST /api/internal/subscriptions/activate-first-use
+Authorization: Bearer <same verified LK user token>
+X-Subscriptions-Integration-Token: <separate activation token>
+X-Correlation-Id: <stable LK operation id>
+
+{
+  "subscriptionInstanceId":"<exact CUP instance>",
+  "clientSubscriptionId":"<exact Viva client subscription>",
+  "providerBookingId":"<exact Viva booking>",
+  "expectedInstanceRevision":1
+}
+```
+
+CUP re-verifies tenant/client ownership, mapping/publication/instance freshness
+and the exact lifecycle. One Mongo transaction performs the revision-CAS state
+change, immutable `ACTIVATION` operation, `INSTANCE_ACTIVATED` ledger event and
+outbox append. A replay returns `ALREADY_ACTIVE`; a revision conflict never
+overwrites a newer state.
+
+The optional deadline worker scans only `PENDING_ACTIVATION` instances. It
+activates at `2026-09-30T21:00:00.000Z` only when the stored provider-instance
+evidence exists and reconciliation proves a provider read-back at or after the
+deadline. Missing/stale evidence increments a sanitized failure metric and
+leaves the instance pending for a later pass.
+
+Candidate-only configuration (all flags remain off until separate approval):
+
+```text
+SUBSCRIPTIONS_ACTIVATION_ENABLED=true
+SUBSCRIPTIONS_ACTIVATION_INTEGRATION_TOKEN=<at least 32 bytes>
+SUBSCRIPTIONS_ACTIVATION_MAX_STALENESS_SECONDS=<30..86400>
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_WORKER_ENABLED=true
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_INTERVAL_MS=<5000..3600000>
+SUBSCRIPTIONS_ACTIVATION_DEADLINE_BATCH_SIZE=<1..200>
+```
 
 Create 90/120 add-ons, group training and tournament discounts remain closed
 until exact Viva prices, product/event ids and discount rules are published.

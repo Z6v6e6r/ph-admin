@@ -25,6 +25,8 @@ const PUBLIC_ERROR_CODES = new Set([
   'TEST_INVENTORY_CONTENTION',
   'TEST_RESERVATION_NOT_PENDING',
   'TEST_ACTIVATION_BLOCKED',
+  'SUBSCRIPTIONS_ACTIVATION_REVISION_CONFLICT',
+  'SUBSCRIPTIONS_ACTIVATION_STATE_CONFLICT',
   'UPSTREAM_UNAVAILABLE'
 ]);
 
@@ -42,7 +44,10 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
       ? rawBody as Record<string, unknown>
       : {};
     const domainCode = typeof body.code === 'string' ? body.code : '';
-    const isIntegrationTokenRejection = domainCode === 'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN';
+    const isIntegrationTokenRejection = [
+      'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN',
+      'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN'
+    ].includes(domainCode);
     const status = rawStatus === HttpStatus.FORBIDDEN && !request.user && !isIntegrationTokenRejection
       ? HttpStatus.UNAUTHORIZED
       : rawStatus;
