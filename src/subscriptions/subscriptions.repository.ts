@@ -519,6 +519,24 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimeProviderMappingByIdempotency(input: {
+    tenantId: string;
+    actorId: string;
+    key: string;
+  }): Promise<StoredSubscriptionProviderMapping | null> {
+    this.assertRuntimeContractsEnabled();
+    const row = await this.runtimeMappings().findOne(
+      {
+        tenantId: input.tenantId,
+        'idempotency.actorId': input.actorId,
+        'idempotency.key': input.key
+      },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
+  }
+
   async insertRuntimeProviderMapping(document: StoredSubscriptionProviderMapping): Promise<void> {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionProviderMapping(document);
@@ -544,6 +562,89 @@ export class SubscriptionsRepository {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionPolicyPublication(document);
     await this.runtimePublications().insertOne(document);
+  }
+
+  async publishRuntimePolicy(input: {
+    mapping: StoredSubscriptionProviderMapping;
+    publication: StoredSubscriptionPolicyPublication;
+    expectedTypeRevision: number;
+    expectedPolicyRevision: number;
+  }): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionProviderMapping(input.mapping);
+    validateStoredSubscriptionPolicyPublication(input.publication);
+    if (input.mapping.state !== 'VERIFIED'
+      || input.publication.state !== 'PUBLISHED'
+      || input.mapping.mappingId !== input.publication.mappingId
+      || input.mapping.subscriptionTypeId !== input.publication.subscriptionTypeId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    try {
+      await session.withTransaction(async () => {
+        const [type, policy] = await Promise.all([
+          this.types().findOne(
+            { subscriptionTypeId: input.publication.subscriptionTypeId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.policies().findOne(
+            {
+              subscriptionTypeId: input.publication.subscriptionTypeId,
+              version: input.publication.policyVersion
+            },
+            { projection: { _id: 0 }, session }
+          )
+        ]);
+        if (!type || !policy) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_NOT_FOUND');
+        }
+        if (type.state !== 'DRAFT'
+          || type.currentPolicyVersion !== null
+          || type.revision !== input.expectedTypeRevision
+          || policy.status !== 'DRAFT'
+          || policy.modelVersion !== 3
+          || policy.revision !== input.expectedPolicyRevision
+          || policy.effectiveAt !== input.publication.effectiveAt) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+        }
+
+        await this.runtimeMappings().insertOne(input.mapping, { session });
+        await this.runtimePublications().insertOne(input.publication, { session });
+        const policyUpdate = await this.policies().updateOne(
+          {
+            subscriptionTypeId: policy.subscriptionTypeId,
+            version: policy.version,
+            status: 'DRAFT',
+            revision: input.expectedPolicyRevision
+          },
+          { $set: { status: 'PUBLISHED' }, $inc: { revision: 1 } },
+          { session }
+        );
+        const typeUpdate = await this.types().updateOne(
+          {
+            subscriptionTypeId: type.subscriptionTypeId,
+            state: 'DRAFT',
+            currentPolicyVersion: null,
+            revision: input.expectedTypeRevision
+          },
+          {
+            $set: {
+              state: 'ACTIVE',
+              currentPolicyVersion: policy.version,
+              updatedAt: input.publication.publishedAt
+            },
+            $inc: { revision: 1 }
+          },
+          { session }
+        );
+        if (policyUpdate.modifiedCount !== 1 || typeUpdate.modifiedCount !== 1) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_CAS_CONFLICT');
+        }
+      });
+    } finally {
+      await session.endSession();
+    }
   }
 
   async runtimeInstanceById(

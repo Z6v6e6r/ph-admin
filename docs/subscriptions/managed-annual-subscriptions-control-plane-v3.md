@@ -22,9 +22,12 @@ adds the exact selectors required by the LK evaluator:
 
 Old model-v2 rows remain readable. New writes use stored schema v3. Legacy and
 v2 idempotency request hashes remain replay-compatible. A pure compiler emits
-LK `runtimeSchemaVersion: 1` only for explicit `PUBLISHED` model-v3 fixtures;
-the current application exposes no publication command, so production runtime
-cannot be enabled accidentally.
+LK `runtimeSchemaVersion: 1` only for explicit `PUBLISHED` model-v3 policies.
+The isolated first-publication candidate is default-off, requires a matching
+read-only preview, exact Viva/dictionary evidence, durable approval audit and
+one Mongo transaction. See
+`managed-annual-subscriptions-publication-command.md`. No existing DRAFT is
+published merely by deploying the candidate.
 
 ## CUP sections
 

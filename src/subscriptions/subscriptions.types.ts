@@ -833,6 +833,35 @@ export interface SubscriptionProviderMappingPreview {
   }>;
 }
 
+export interface SubscriptionPolicyPublicationPreview {
+  subscriptionTypeId: string;
+  policyVersion: number;
+  policyStatus: 'DRAFT';
+  readOnly: true;
+  blocked: false;
+  blockers: [];
+  tenantId: string;
+  providerStudioId: string;
+  providerScope: SubscriptionProviderScope;
+  providerProductId: string;
+  providerEvidence: SubscriptionProviderProductEvidence;
+  dictionaryRevision: string;
+  dictionaryEvidenceRef: string;
+  policyDigest: string;
+  impactPreviewRef: string;
+  runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
+}
+
+export type SubscriptionProviderMappingView = Omit<
+  StoredSubscriptionProviderMapping,
+  'idempotency'
+>;
+
+export interface SubscriptionPolicyPublicationResult {
+  mapping: SubscriptionProviderMappingView;
+  publication: StoredSubscriptionPolicyPublication;
+}
+
 export interface SubscriptionRuntimeEntitlementDecisionSnapshot {
   decisionKind: 'ENTITLEMENT';
   policyVersion: number;

@@ -32,6 +32,7 @@
     "test:player-ratings": "ts-node test/player-ratings.service.test.ts && ts-node test/player-level-projection.service.test.ts && ts-node test/player-level-projection-outbox.test.ts",
     "test:subscriptions": "ts-node test/subscriptions.service.test.ts",
     "test:subscriptions-runtime-contracts": "ts-node test/subscriptions-runtime-contracts.test.ts",
+    "test:subscriptions-publication": "ts-node test/subscriptions-publication.service.test.ts",
     "test:subscriptions-shadow-quote": "ts-node test/subscriptions-shadow-quote.test.ts",
     "test:subscriptions-canonical-target-resolver": "ts-node test/subscriptions-canonical-target-resolver.test.ts",
     "test:subscriptions-synthetic-projection": "ts-node test/subscriptions-synthetic-canonical-projection.test.ts",

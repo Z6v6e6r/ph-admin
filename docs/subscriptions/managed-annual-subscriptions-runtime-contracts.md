@@ -166,11 +166,14 @@ Recovery:
 - Existing DRAFT policies, release programmes and fake test runtime collections
   are unchanged.
 - Existing startup behavior is unchanged while the new flag is absent/false.
-- No public DTO, route, response or client SDK contract changes.
-- No provider URL or Viva adapter is referenced by the new contracts.
-- Publication commands must later prove that the referenced mapping is
-  `VERIFIED`, the policy is the exact `PUBLISHED` version/digest, and every
-  station/event/product dictionary entry is canonical before inserting the
+- The persistence checkpoint itself changes no public DTO or client SDK. The
+  later publication candidate adds two authenticated admin routes behind
+  separate default-off flags.
+- The publication candidate reuses only the exact-ID, read-only Viva evidence
+  adapter; it adds no provider mutation endpoint.
+- The publication candidate proves that the inserted mapping is `VERIFIED`,
+  the policy is the exact `PUBLISHED` version/digest, and every enabled benefit
+  contains canonical station/event/product selectors before inserting the
   immutable envelope.
 - Old and new application versions can coexist because no runtime document is
   created and new index checks are opt-in.
@@ -185,3 +188,9 @@ route until authoritative LK identity and server target resolvers are ready.
 
 The next gate is that authenticated shadow-only adapter; atomic reservation and
 provider confirmation remain separate later checkpoints.
+
+The isolated first-publication candidate is documented in
+`managed-annual-subscriptions-publication-command.md`. It preserves the runtime
+validators and unique indexes, is disabled by separate preview/command flags,
+and creates no production document until an explicitly approved command is
+released and invoked.

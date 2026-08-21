@@ -30,8 +30,13 @@ import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-fir
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
+import {
+  PublishSubscriptionPolicyDto,
+  SubscriptionPolicyPublicationPreviewDto
+} from './dto/subscription-policy-publication.dto';
 import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
+import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import {
   SubscriptionActivationResult,
@@ -47,6 +52,8 @@ import {
   ReleaseProgram,
   ReleaseProgramPage,
   SubscriptionPolicyImpactPreview,
+  SubscriptionPolicyPublicationPreview,
+  SubscriptionPolicyPublicationResult,
   SubscriptionProviderMappingPreview,
   SubscriptionShadowQuoteResult,
   SubscriptionPolicyVersion,
@@ -66,7 +73,8 @@ export class SubscriptionsController {
   constructor(
     private readonly service: SubscriptionsService,
     private readonly testRuntime: SubscriptionsTestRuntimeService,
-    private readonly providerMappingPreview: SubscriptionProviderMappingPreviewService
+    private readonly providerMappingPreview: SubscriptionProviderMappingPreviewService,
+    private readonly publication: SubscriptionPublicationService
   ) {}
 
   @Get('subscription-types')
@@ -135,6 +143,44 @@ export class SubscriptionsController {
     @CurrentUser() user?: RequestUser
   ): Promise<SubscriptionProviderMappingPreview> {
     return this.providerMappingPreview.preview(subscriptionTypeId, version, dto, user);
+  }
+
+  @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/publication-preview')
+  @Permissions('subscriptions:publication:write')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  previewPublication(
+    @Param('subscriptionTypeId') subscriptionTypeId: string,
+    @Param('version') version: string,
+    @Body() dto: SubscriptionPolicyPublicationPreviewDto,
+    @CurrentUser() user?: RequestUser
+  ): Promise<SubscriptionPolicyPublicationPreview> {
+    return this.publication.preview(subscriptionTypeId, version, dto, user);
+  }
+
+  @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/publish')
+  @Permissions('subscriptions:publication:write')
+  @Header('Cache-Control', 'no-store')
+  async publishPolicy(
+    @Param('subscriptionTypeId') subscriptionTypeId: string,
+    @Param('version') version: string,
+    @Body() dto: PublishSubscriptionPolicyDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @CurrentUser() user: RequestUser | undefined,
+    @Res({ passthrough: true }) response: Response
+  ): Promise<SubscriptionPolicyPublicationResult> {
+    const result = await this.publication.publish(
+      subscriptionTypeId,
+      version,
+      dto,
+      { idempotencyKey, correlationId },
+      user
+    );
+    this.applyCommandHeaders(response, result.correlationId, result.replayed);
+    return result.item;
   }
 
   @Post('subscription-types/:subscriptionTypeId/policy-versions/:version/impact-preview')

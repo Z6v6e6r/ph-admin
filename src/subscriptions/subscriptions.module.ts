@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
 import { VivaAdminModule } from '../integrations/viva/viva-admin.module';
 import { LkIdentityModule } from '../lk-identity/lk-identity.module';
 import {
@@ -17,9 +18,10 @@ import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-
 import { SubscriptionRuntimeContextService } from './subscription-runtime-context.service';
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
+import { SubscriptionPublicationService } from './subscription-publication.service';
 
 @Module({
-  imports: [LkIdentityModule, VivaAdminModule],
+  imports: [AuthModule, LkIdentityModule, VivaAdminModule],
   controllers: [
     SubscriptionsController,
     SubscriptionTestController,
@@ -34,6 +36,7 @@ import { SubscriptionActivationDeadlineWorker } from './subscription-activation-
     SubscriptionRuntimeContextService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,
+    SubscriptionPublicationService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter
