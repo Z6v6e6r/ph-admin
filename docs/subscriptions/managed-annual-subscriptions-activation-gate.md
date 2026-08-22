@@ -16,6 +16,7 @@ Deploy only an immutable reviewed release with these flags absent or false:
 - `SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED`;
 - `SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED`;
 - `SUBSCRIPTIONS_SYNTHETIC_CANONICAL_PROJECTION_ENABLED`;
+- `SUBSCRIPTIONS_PROVIDER_CANONICAL_PROJECTION_ENABLED`;
 - `SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED`.
 
 Verify the served release SHA, `/api/health`, authenticated ЦУП and existing games/tournaments.
@@ -74,6 +75,26 @@ The trusted shadow endpoint cannot be enabled until a separate server component 
 
 There is intentionally no generic admin/browser insert route. Until this producer and a synthetic
 snapshot fixture are reviewed, the resolver must return unavailable.
+
+### Gate D0 — reviewed provider input, check only
+
+The repository contains a dormant reviewed-evidence projection core and a check-only CLI. It
+requires exact-shape `APPROVED` provider evidence with separately pinned dictionary, target, price
+and approval digests. `SANITIZED` evidence and unverified price units are rejected. Validate a
+privately retained input without connecting to MongoDB:
+
+```bash
+SUBSCRIPTIONS_PROVIDER_CANONICAL_PROJECTION_INPUT=/absolute/private/reviewed-input.json \
+npm run subscriptions:provider-projection:input-fingerprint
+
+SUBSCRIPTIONS_PROVIDER_CANONICAL_PROJECTION_INPUT=/absolute/private/reviewed-input.json \
+npm run subscriptions:provider-projection:check
+```
+
+Both commands are read-only and emit `write=false`. There is no package-level apply command, Nest
+registration or HTTP route. A provider read adapter and mutation CLI remain separate reviewed gates;
+the service-level mutation boundary must not be wired until the Golden HAR status is `APPROVED`,
+the exact fingerprint/approval/station attestations are provisioned and Gate C has passed.
 
 ### Gate D1 — synthetic fixture producer
 
@@ -138,7 +159,10 @@ The same tenant + target + action + revision with identical content is an idempo
 changed content at that identity is an immutable conflict. This producer does not prove canonical
 station mapping, provider event semantics or price units and therefore does not satisfy Gate D for
 real targets. Those fields remain blocked by the Golden HAR contract in
-`managed-annual-subscriptions-golden-har-contract.md`.
+`managed-annual-subscriptions-golden-har-contract.md`. The stricter reviewed-evidence input and
+dormant mutation boundary are documented in
+`managed-annual-subscriptions-provider-projection.md`; they do not convert synthetic evidence into
+provider evidence.
 
 Revisions are gap-free and monotonic per tenant + target + action. A `REVOKED` row requires a
 previous ACTIVE revision and is terminal for that synthetic target. The resolver rejects an older

@@ -88,9 +88,10 @@ policy remains a release blocker rather than an implicit overwrite.
 
 These candidates make the policy-version payload pass the current service and runtime-projection
 contracts, including the exact 25-station HUB provider scope, but are intentionally not
-publication-ready and do not make LK1/LK2 enforce it. A real
-enforcement still requires a provider-backed canonical target producer that maps each trusted LK
-create/join target to the composite event identity, exact station, duration, price and immutable
-evidence revision. Publication also requires an independently retained and reviewed Golden HAR
-dictionary evidence artifact. Until those items and the publication/runtime flags are separately
-deployed and enabled, the contour must remain fail closed.
+publication-ready and do not make LK1/LK2 enforce it. A check-only reviewed-evidence projection core
+now validates the exact composite event identity, station, duration, price and immutable evidence
+revision. It is deliberately dormant: there is no provider read adapter, approved action-specific
+Golden HAR, Nest/HTTP registration or apply command. Publication also requires an independently
+retained and reviewed Golden HAR dictionary evidence artifact. Until those items, the guarded
+operator adapter and the publication/runtime flags are separately reviewed, deployed and enabled,
+the contour must remain fail closed.
