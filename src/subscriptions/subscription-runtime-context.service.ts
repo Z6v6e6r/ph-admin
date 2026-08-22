@@ -14,6 +14,7 @@ import {
   validateStoredSubscriptionProviderMapping
 } from './subscription-runtime-contracts';
 import { computeSubscriptionClientRefHash } from './subscription-trusted-shadow-adapter.service';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionInstance,
@@ -128,7 +129,13 @@ export class SubscriptionRuntimeContextService {
         && mapping.providerScope.scopeId !== instance.tenantId)
       || (mapping.providerScope.kind === 'STATION'
         && mapping.providerScope.scopeId !== instance.homeStationId)
-      || mapping.providerScope.kind === 'STUDIO') {
+      || mapping.providerScope.kind === 'STUDIO'
+      || (mapping.providerScope.kind === 'STATION_SET'
+        && !subscriptionProviderScopeMatchesProjection(
+          mapping.providerScope,
+          publication.runtimeProjection,
+          instance.tenantId
+        ))) {
       throw new ServiceUnavailableException({
         code: 'SUBSCRIPTION_RUNTIME_MAPPING_NOT_CURRENT',
         message: 'Subscription provider mapping is not current'

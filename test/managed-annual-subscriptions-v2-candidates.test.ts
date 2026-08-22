@@ -155,8 +155,7 @@ async function main(): Promise<void> {
   ]);
   assert.deepEqual(hub.publicationBlockers, [
     'CANONICAL_DICTIONARY_EVIDENCE_ARTIFACT_REQUIRED',
-    'REAL_CANONICAL_TARGET_PRODUCER_REQUIRED',
-    'MULTI_STATION_PROVIDER_SCOPE_PUBLICATION_UNSUPPORTED'
+    'REAL_CANONICAL_TARGET_PRODUCER_REQUIRED'
   ]);
 
   const previousFlag = process.env.SUBSCRIPTIONS_ADMIN_ENABLED;

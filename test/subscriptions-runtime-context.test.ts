@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
 import { SubscriptionRuntimeContextService } from '../src/subscriptions/subscription-runtime-context.service';
+import { deriveSubscriptionProviderScope } from '../src/subscriptions/subscription-provider-scope';
 import {
   StoredSubscriptionInstance,
   StoredSubscriptionPolicyPublication,
@@ -210,6 +211,39 @@ async function main(): Promise<void> {
   assert.equal(result.instance.subscriptionInstanceId, instance.subscriptionInstanceId);
   assert.equal(result.evidence.mappingRevision, 2);
   assert.doesNotMatch(JSON.stringify(result), /provider_client|clientRefHash|phone|paymentEvidence/);
+
+  const stationSetPublication = publicationFixture();
+  stationSetPublication.runtimeProjection.stationAccessRules[0].selector = {
+    kind: 'STATION_LIST',
+    stationIds: [instance.homeStationId, 'station:hub-second']
+  };
+  stationSetPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    stationSetPublication.runtimeProjection
+  );
+  publication = stationSetPublication;
+  storedInstance = { ...instance, policyDigest: stationSetPublication.policyDigest };
+  mapping = {
+    ...mappingFixture(),
+    providerScope: deriveSubscriptionProviderScope(
+      stationSetPublication.runtimeProjection.stationAccessRules,
+      instance.tenantId
+    )
+  };
+  const stationSetResult = await service.resolve('Bearer user', TOKEN, {
+    clientSubscriptionId: instance.clientSubscriptionId
+  });
+  assert.equal(stationSetResult.policyDigest, stationSetPublication.policyDigest);
+  mapping = {
+    ...mapping,
+    providerScope: { kind: 'STATION_SET', scopeId: `station-set:${'b'.repeat(64)}` }
+  };
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  storedInstance = instance;
+  mapping = mappingFixture();
+  publication = publicationFixture();
 
   await assert.rejects(
     service.resolve('Bearer user', 'wrong-token', { clientSubscriptionId: instance.clientSubscriptionId }),

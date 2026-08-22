@@ -43,7 +43,9 @@ provider evidence.
 ### `subscription_provider_mappings`
 
 Reviewed identity mapping between a CUP subscription type and one provider
-catalogue product in an exact tenant/studio/station scope. `VERIFIED` requires
+catalogue product in an exact tenant/studio/station/station-set scope. A station-set scope is
+content-addressed from sorted unique station IDs, so reordering cannot create a second identity.
+`VERIFIED` requires
 evidence reference, verifier and timestamp. `clientSubscriptionId` is not part
 of this document.
 

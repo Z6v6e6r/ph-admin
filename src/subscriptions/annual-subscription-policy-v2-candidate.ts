@@ -74,7 +74,6 @@ export interface ManagedAnnualSubscriptionV2Candidate {
   publicationBlockers: Array<
     | 'CANONICAL_DICTIONARY_EVIDENCE_ARTIFACT_REQUIRED'
     | 'REAL_CANONICAL_TARGET_PRODUCER_REQUIRED'
-    | 'MULTI_STATION_PROVIDER_SCOPE_PUBLICATION_UNSUPPORTED'
   >;
   request: CreatePolicyVersionDto;
 }
@@ -175,8 +174,7 @@ export const buildManagedAnnualSubscriptionV2Candidate = (
   const dictionaryHash = sha256(dictionary);
   const publicationBlockers: ManagedAnnualSubscriptionV2Candidate['publicationBlockers'] = [
     'CANONICAL_DICTIONARY_EVIDENCE_ARTIFACT_REQUIRED',
-    'REAL_CANONICAL_TARGET_PRODUCER_REQUIRED',
-    ...(scope === 'HUB' ? ['MULTI_STATION_PROVIDER_SCOPE_PUBLICATION_UNSUPPORTED' as const] : [])
+    'REAL_CANONICAL_TARGET_PRODUCER_REQUIRED'
   ];
   const stationAccessRules: CreatePolicyVersionDto['stationAccessRules'] = [{
     ruleId: `annual-v2:${scope.toLowerCase()}:station-access`,

@@ -487,7 +487,7 @@ export interface StoredSubscriptionTestEvent {
 }
 
 export type SubscriptionProviderMappingState = 'DRAFT' | 'VERIFIED' | 'DISABLED';
-export type SubscriptionProviderScopeKind = 'TENANT' | 'STUDIO' | 'STATION';
+export type SubscriptionProviderScopeKind = 'TENANT' | 'STUDIO' | 'STATION' | 'STATION_SET';
 export type SubscriptionPublicationState =
   | 'PUBLISHED'
   | 'SUPERSEDED'

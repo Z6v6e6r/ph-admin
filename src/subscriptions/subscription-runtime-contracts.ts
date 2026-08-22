@@ -13,6 +13,7 @@ import {
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
+const STATION_SET_SCOPE_PATTERN = /^station-set:[a-f0-9]{64}$/;
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_WEEK_PATTERN = /^\d{4}-W\d{2}$/;
 const LOCAL_MONTH_PATTERN = /^\d{4}-\d{2}$/;
@@ -586,10 +587,13 @@ export function validateStoredSubscriptionProviderMapping(
     'SUBSCRIPTION_PROVIDER_MAPPING_STATE_INVALID',
     'state'
   );
-  if (!['TENANT', 'STUDIO', 'STATION'].includes(value.providerScope?.kind)) {
+  if (!['TENANT', 'STUDIO', 'STATION', 'STATION_SET'].includes(value.providerScope?.kind)) {
     fail('SUBSCRIPTION_PROVIDER_SCOPE_INVALID');
   }
-  requiredId(value.providerScope?.scopeId, 'providerScope.scopeId');
+  const providerScopeId = requiredId(value.providerScope?.scopeId, 'providerScope.scopeId');
+  if (value.providerScope?.kind === 'STATION_SET' && !STATION_SET_SCOPE_PATTERN.test(providerScopeId)) {
+    fail('SUBSCRIPTION_PROVIDER_SCOPE_INVALID');
+  }
   positiveInteger(value.revision, 'revision');
   requiredInstant(value.createdAt, 'createdAt');
   requiredInstant(value.updatedAt, 'updatedAt');

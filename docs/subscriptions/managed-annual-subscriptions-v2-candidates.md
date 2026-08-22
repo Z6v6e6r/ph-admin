@@ -25,7 +25,8 @@ reads were not retained as the separately controlled Golden HAR artifact, so the
   exact benefit list would let an unknown station produce a full-price entitlement and consume a
   daily unit. The HUB candidate therefore pins the complete 25-ID dictionary snapshot and its hash.
   A later studio addition fails closed with `STATION_NOT_ALLOWED` until a new policy version updates
-  that snapshot.
+  that snapshot. Publication represents the reviewed list as a `STATION_SET` provider scope whose
+  `scopeId` is the SHA-256 of the sorted unique station IDs; list order cannot change its identity.
 
 The provider `cost` read-back is intentionally not used by the policy candidate. The current Viva
 adapter still marks the cost unit as `UNVERIFIED`; a numeric value alone is not sufficient price-unit
@@ -86,11 +87,10 @@ policy remains a release blocker rather than an implicit overwrite.
 ## Remaining runtime blocker
 
 These candidates make the policy-version payload pass the current service and runtime-projection
-contracts, but are intentionally not publication-ready and do not make LK1/LK2 enforce it. A real
+contracts, including the exact 25-station HUB provider scope, but are intentionally not
+publication-ready and do not make LK1/LK2 enforce it. A real
 enforcement still requires a provider-backed canonical target producer that maps each trusted LK
 create/join target to the composite event identity, exact station, duration, price and immutable
 evidence revision. Publication also requires an independently retained and reviewed Golden HAR
-dictionary evidence artifact. The first-publication contour also currently supports only one exact
-station or `ALL_STATIONS`, not the safe 25-station HUB scope; this requires a separate reviewed
-multi-station provider-scope design. Until those items and the publication/runtime flags are
-separately deployed and enabled, the contour must remain fail closed.
+dictionary evidence artifact. Until those items and the publication/runtime flags are separately
+deployed and enabled, the contour must remain fail closed.

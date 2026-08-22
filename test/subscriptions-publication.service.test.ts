@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   ConflictException,
   ForbiddenException,
@@ -25,6 +26,11 @@ import {
 } from '../src/subscriptions/subscriptions.types';
 
 const HASH = 'a'.repeat(64);
+const HUB_STATION_IDS = [
+  '0d5504f6-ea6f-44bb-a9e4-947faf0273ab',
+  '1ea77cbf-bc36-49a1-96d6-f35c216a409b',
+  '6b2d7e60-caff-4b22-89f6-6f19d7d311ab'
+];
 const globalAdmin: RequestUser = {
   id: 'admin:global',
   login: 'global-admin',
@@ -92,7 +98,7 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
     }]
     : [{
       ruleId: 'station-rule:hub', enabled: true, priority: 1,
-      selector: { kind: 'ALL_STATIONS', stationIds: [] },
+      selector: { kind: 'STATION_LIST', stationIds: [...HUB_STATION_IDS].reverse() },
       surcharge: { kind: 'NONE', amountMinor: 0 }
     }],
   benefitRules: [{
@@ -540,7 +546,40 @@ async function main(): Promise<void> {
   const hubPreview = await hub.service.preview(
     hub.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
   );
-  assert.deepEqual(hubPreview.providerScope, { kind: 'TENANT', scopeId: 'tenant:iSkq6G' });
+  const expectedHubSetDigest = createHash('sha256')
+    .update(JSON.stringify({ schemaVersion: 1, stationIds: HUB_STATION_IDS }))
+    .digest('hex');
+  assert.deepEqual(hubPreview.providerScope, {
+    kind: 'STATION_SET', scopeId: `station-set:${expectedHubSetDigest}`
+  });
+
+  const reorderedHub = createService();
+  reorderedHub.repository.type = structuredClone(hub.repository.type);
+  reorderedHub.repository.policy = policyFixture('HUB');
+  reorderedHub.repository.policy.stationAccessRules![0].selector = {
+    kind: 'STATION_LIST', stationIds: [...HUB_STATION_IDS]
+  };
+  const reorderedHubPreview = await reorderedHub.service.preview(
+    reorderedHub.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+  );
+  assert.deepEqual(reorderedHubPreview.providerScope, hubPreview.providerScope);
+
+  const mixedScope = createService();
+  mixedScope.repository.policy.stationAccessRules!.push({
+    ruleId: 'station-rule:unsupported-home', enabled: true, priority: 2,
+    selector: { kind: 'HOME_STATION', stationIds: [] },
+    surcharge: { kind: 'NONE', amountMinor: 0 }
+  });
+  const mixedScopeError = await expectException(
+    () => mixedScope.service.preview(
+      mixedScope.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal(
+    (mixedScopeError.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_PUBLICATION_STATION_SCOPE_UNSUPPORTED'
+  );
 
   const incompletePolicy = createService();
   incompletePolicy.repository.policy.benefitRules = [];

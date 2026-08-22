@@ -23,6 +23,10 @@ import {
   SubscriptionsRepository
 } from '../src/subscriptions/subscriptions.repository';
 import {
+  deriveSubscriptionProviderScope,
+  subscriptionProviderScopeMatchesProjection
+} from '../src/subscriptions/subscription-provider-scope';
+import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
@@ -322,6 +326,39 @@ const hasCode = (code: string) => (error: unknown): boolean =>
 async function run(): Promise<void> {
   validateStoredSubscriptionCanonicalTargetSnapshot(canonicalTargetFixture());
   validateStoredSubscriptionProviderMapping(mappingFixture());
+  validateStoredSubscriptionProviderMapping({
+    ...mappingFixture(),
+    providerScope: { kind: 'STATION_SET', scopeId: `station-set:${HASH}` }
+  });
+  const stationSetProjection = publicationFixture().runtimeProjection;
+  stationSetProjection.stationAccessRules[0].selector = {
+    kind: 'STATION_LIST', stationIds: ['station:beta', 'station:alpha']
+  };
+  const stationSetScope = deriveSubscriptionProviderScope(
+    stationSetProjection.stationAccessRules,
+    'iSkq6G'
+  );
+  assert.equal(stationSetScope.kind, 'STATION_SET');
+  assert.match(stationSetScope.scopeId, /^station-set:[a-f0-9]{64}$/);
+  stationSetProjection.stationAccessRules[0].selector = {
+    kind: 'STATION_LIST', stationIds: ['station:alpha', 'station:beta']
+  };
+  assert.deepEqual(
+    deriveSubscriptionProviderScope(stationSetProjection.stationAccessRules, 'iSkq6G'),
+    stationSetScope
+  );
+  assert.equal(
+    subscriptionProviderScopeMatchesProjection(stationSetScope, stationSetProjection, 'iSkq6G'),
+    true
+  );
+  assert.equal(
+    subscriptionProviderScopeMatchesProjection(
+      { kind: 'STATION_SET', scopeId: `station-set:${OTHER_HASH}` },
+      stationSetProjection,
+      'iSkq6G'
+    ),
+    false
+  );
   validateStoredSubscriptionPolicyPublication(publicationFixture());
   const hybridPublication = publicationFixture();
   hybridPublication.runtimeProjection.lifecycle = {
@@ -448,6 +485,13 @@ async function run(): Promise<void> {
       providerProductId: 123 as any
     }),
     hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionProviderMapping({
+      ...mappingFixture(),
+      providerScope: { kind: 'STATION_SET', scopeId: 'station-set:not-a-digest' }
+    }),
+    hasCode('SUBSCRIPTION_PROVIDER_SCOPE_INVALID')
   );
   assert.throws(
     () => validateStoredSubscriptionPolicyPublication({

@@ -24,6 +24,10 @@ import {
   validateStoredSubscriptionPolicyPublication
 } from './subscription-runtime-contracts';
 import { compileSubscriptionRuntimeProjection } from './subscription-runtime-projection';
+import {
+  deriveSubscriptionProviderScope,
+  SubscriptionProviderScopeDerivationError
+} from './subscription-provider-scope';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionPolicyPublication,
@@ -360,24 +364,15 @@ export class SubscriptionPublicationService {
     rules: SubscriptionRuntimeProjectionSnapshot['stationAccessRules'],
     tenantId: string
   ): SubscriptionProviderScope {
-    const enabled = rules.filter((rule) => rule.enabled);
-    if (enabled.length === 1 && enabled[0].selector.kind === 'ALL_STATIONS') {
-      return { kind: 'TENANT', scopeId: tenantId };
-    }
-    if (enabled.some((rule) => rule.selector.kind !== 'STATION_LIST')) {
+    try {
+      return deriveSubscriptionProviderScope(rules, tenantId);
+    } catch (error) {
+      if (!(error instanceof SubscriptionProviderScopeDerivationError)) throw error;
       throw new UnprocessableEntityException({
         code: 'SUBSCRIPTIONS_PUBLICATION_STATION_SCOPE_UNSUPPORTED',
-        message: 'First publication supports either ALL_STATIONS or one exact station'
+        message: 'First publication requires ALL_STATIONS or a non-empty exact station set'
       });
     }
-    const stationIds = [...new Set(enabled.flatMap((rule) => rule.selector.stationIds))];
-    if (stationIds.length !== 1 || !ID_PATTERN.test(stationIds[0])) {
-      throw new UnprocessableEntityException({
-        code: 'SUBSCRIPTIONS_PUBLICATION_STATION_SCOPE_UNSUPPORTED',
-        message: 'First publication supports either ALL_STATIONS or one exact station'
-      });
-    }
-    return { kind: 'STATION', scopeId: stationIds[0] };
   }
 
   private assertRuntimeProjectionPublishable(input: {

@@ -7,6 +7,7 @@ import {
   validateStoredSubscriptionProviderMapping
 } from './subscription-runtime-contracts';
 import { evaluateSubscriptionShadowQuote } from './subscription-shadow-quote';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   SubscriptionShadowQuoteBlocker,
@@ -78,6 +79,13 @@ export class SubscriptionShadowQuoteService {
         block('PROVIDER_MAPPING_SCOPE_MISMATCH', 'Область продукта Viva не совпадает с домашней станцией');
       } else if (mapping.providerScope.kind === 'STUDIO') {
         block('CANONICAL_STUDIO_MAPPING_UNAVAILABLE', 'Сопоставление студии Viva со станцией ещё не подтверждено');
+      } else if (mapping.providerScope.kind === 'STATION_SET' && publication
+        && !subscriptionProviderScopeMatchesProjection(
+          mapping.providerScope,
+          publication.runtimeProjection,
+          instance.tenantId
+        )) {
+        block('PROVIDER_MAPPING_SCOPE_MISMATCH', 'Набор станций Viva не совпадает с опубликованными правилами');
       }
       this.requireFresh('PROVIDER_MAPPING_STALE', mapping.verifiedAt, now, maxStalenessSeconds, block);
     }

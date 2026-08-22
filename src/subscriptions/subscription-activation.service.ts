@@ -17,6 +17,7 @@ import {
   validateStoredSubscriptionProviderMapping
 } from './subscription-runtime-contracts';
 import { computeSubscriptionClientRefHash } from './subscription-trusted-shadow-adapter.service';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionInstance,
@@ -352,6 +353,12 @@ export class SubscriptionActivationService {
       || (mapping.providerScope.kind === 'STATION'
         && mapping.providerScope.scopeId !== instance.homeStationId)
       || mapping.providerScope.kind === 'STUDIO'
+      || (mapping.providerScope.kind === 'STATION_SET'
+        && !subscriptionProviderScopeMatchesProjection(
+          mapping.providerScope,
+          publication.runtimeProjection,
+          instance.tenantId
+        ))
       || !mapping.verifiedAt
       || !this.isFresh(mapping.verifiedAt, now)) {
       throw new ServiceUnavailableException({

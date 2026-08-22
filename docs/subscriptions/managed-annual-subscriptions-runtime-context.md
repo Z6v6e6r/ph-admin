@@ -79,7 +79,7 @@ The first LK-compatible policies must use:
 - join enabled for 60 through 120 minutes;
 - Piter station list containing
   `1ea77cbf-bc36-49a1-96d6-f35c216a409b`;
-- HUB `ALL_STATIONS` (the actual station is still server-resolved in LK);
+- HUB exact `STATION_LIST` pinned to the reviewed 25-station Viva dictionary snapshot;
 - disabled active/weekly/monthly/future/min-interval counters for the first
   activation.
 

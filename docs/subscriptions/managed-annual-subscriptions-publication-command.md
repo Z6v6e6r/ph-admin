@@ -48,7 +48,7 @@ configured synthetic client, and returns:
 
 - `policyDigest`;
 - content-addressed `impactPreviewRef`;
-- derived TENANT or one-STATION provider scope;
+- derived `TENANT`, one-`STATION`, or content-addressed `STATION_SET` provider scope;
 - sanitized Viva product evidence;
 - exact runtime projection.
 
@@ -103,7 +103,7 @@ Publication requires:
 
 - modelVersion 3 DRAFT and exact product candidate;
 - runtime contract-valid create/join/limit/lifecycle rules;
-- either one exact station or ALL_STATIONS scope derived from policy rules;
+- either a non-empty exact station set or `ALL_STATIONS` scope derived from policy rules;
 - at least one enabled benefit with canonical action, event, duration and
   station selectors;
 - immutable dictionary evidence reference;
