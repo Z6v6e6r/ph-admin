@@ -34,6 +34,7 @@ const plan = [
     ['subscription_policy_publications', { subscriptionTypeId: 1, policyVersion: 1 }, { unique: true, name: 'subscription_publication_policy_version_unique' }],
     ['subscription_policy_publications', { subscriptionTypeId: 1, state: 1, effectiveAt: -1 }, { name: 'subscription_publication_runtime_lookup' }],
     ['subscription_policy_publications', { policyDigest: 1, publicationId: 1 }, { name: 'subscription_publication_digest' }],
+    ['subscription_policy_publications', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, sparse: true, name: 'subscription_publication_idempotency_unique' }],
     ['subscription_instances', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_instance_id_unique' }],
     ['subscription_instances', { tenantId: 1, providerClientId: 1, clientSubscriptionId: 1 }, { unique: true, name: 'subscription_instance_provider_identity_unique' }],
     ['subscription_instances', { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_type_state_expiry' }],
@@ -94,6 +95,11 @@ try {
         Object.keys(keys).map((field, index) => [`field${index + 1}`, `$${field}`])
       );
       const duplicate = await db.collection(collectionName).aggregate([
+        ...(options.sparse ? [{
+          $match: {
+            $or: Object.keys(keys).map((field) => ({ [field]: { $exists: true } }))
+          }
+        }] : []),
         { $group: { _id: groupId, count: { $sum: 1 } } },
         { $match: { count: { $gt: 1 } } },
         { $limit: 1 }
@@ -116,13 +122,19 @@ try {
     const actualIndexes = exists ? await collection.listIndexes().toArray() : [];
     const expected = plan
       .filter(([plannedCollection]) => plannedCollection === collectionName)
-      .map(([, keys, options]) => ({ name: options.name, key: keys, unique: options.unique === true }));
+      .map(([, keys, options]) => ({
+        name: options.name,
+        key: keys,
+        unique: options.unique === true,
+        sparse: options.sparse === true
+      }));
     const missing = expected
       .filter((spec) => {
         const actual = actualIndexes.find((item) => item.name === spec.name);
         return !actual
           || JSON.stringify(actual.key) !== JSON.stringify(spec.key)
-          || Boolean(actual.unique) !== spec.unique;
+          || Boolean(actual.unique) !== spec.unique
+          || Boolean(actual.sparse) !== spec.sparse;
       })
       .map((spec) => spec.name);
     missingCount += missing.length;

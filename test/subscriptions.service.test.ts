@@ -53,6 +53,38 @@ class InMemorySubscriptionsRepository {
     (row as StoredSubscriptionPolicyVersion & { _id?: string })._id = 'mongo-generated-id';
     this.policies.push(structuredClone(row));
   }
+  async insertSupersedingPolicyVersion(input: {
+    policy: StoredSubscriptionPolicyVersion;
+    expectedTypeRevision: number;
+    expectedCurrentPolicyVersion: number;
+  }) {
+    if (this.policies.some((item) => (
+      item.subscriptionTypeId === input.policy.subscriptionTypeId && item.status === 'DRAFT'
+    ))) return 'DRAFT_EXISTS' as const;
+    const type = this.types.find((item) => (
+      item.subscriptionTypeId === input.policy.subscriptionTypeId
+    ));
+    const currentPolicy = this.policies.find((item) => (
+      item.subscriptionTypeId === input.policy.subscriptionTypeId
+      && item.version === input.expectedCurrentPolicyVersion
+    ));
+    if (!type
+      || !currentPolicy
+      || type.state !== 'ACTIVE'
+      || type.revision !== input.expectedTypeRevision
+      || type.currentPolicyVersion !== input.expectedCurrentPolicyVersion
+      || currentPolicy.status !== 'PUBLISHED'
+      || input.policy.applyTo !== 'NEW_ONLY'
+      || input.policy.version !== input.expectedCurrentPolicyVersion + 1) {
+      return 'SOURCE_CONFLICT' as const;
+    }
+    if (await this.policyByIdempotency(
+      input.policy.idempotency.actorId,
+      input.policy.idempotency.key
+    )) throw new Error('DUPLICATE_KEY');
+    this.policies.push(structuredClone(input.policy));
+    return 'INSERTED' as const;
+  }
   async releaseProgramByIdempotency(actorId: string, key: string) {
     return this.programs.find((row) => row.idempotency.actorId === actorId && row.idempotency.key === key) ?? null;
   }
@@ -216,6 +248,67 @@ async function expectException(action: () => Promise<unknown>, type: Function): 
     return error;
   }
   assert.fail(`Expected ${type.name}`);
+}
+
+async function verifySupersedingPolicyInsertRepository(
+  typeFixture: StoredSubscriptionType,
+  currentFixture: StoredSubscriptionPolicyVersion,
+  draftFixture: StoredSubscriptionPolicyVersion
+): Promise<void> {
+  const repository = Object.create(SubscriptionsRepository.prototype) as any;
+  let type = structuredClone(typeFixture);
+  let policies = [structuredClone(currentFixture)];
+  repository.client = {
+    startSession: () => ({
+      withTransaction: async (callback: () => Promise<unknown>) => {
+        const before = { type: structuredClone(type), policies: structuredClone(policies) };
+        try {
+          return await callback();
+        } catch (error) {
+          type = before.type;
+          policies = before.policies;
+          throw error;
+        }
+      },
+      endSession: async () => undefined
+    })
+  };
+  repository.types = () => ({ findOne: async () => structuredClone(type) });
+  repository.policies = () => ({
+    findOne: async (filter: any) => {
+      const row = policies.find((item) => {
+        if (filter.version && typeof filter.version === 'number') return item.version === filter.version;
+        if (filter.status && item.status !== filter.status) return false;
+        if (filter.version?.$gt !== undefined && item.version <= filter.version.$gt) return false;
+        return true;
+      });
+      return row ? structuredClone(row) : null;
+    },
+    insertOne: async (row: StoredSubscriptionPolicyVersion) => {
+      if (policies.some((item) => (
+        item.subscriptionTypeId === row.subscriptionTypeId && item.version === row.version
+      ))) throw new Error('DUPLICATE_KEY');
+      policies.push(structuredClone(row));
+    }
+  });
+  const input = {
+    policy: structuredClone(draftFixture),
+    expectedTypeRevision: typeFixture.revision,
+    expectedCurrentPolicyVersion: Number(typeFixture.currentPolicyVersion)
+  };
+  assert.equal(await repository.insertSupersedingPolicyVersion(input), 'INSERTED');
+  assert.equal(policies.length, 2);
+  assert.equal(policies[1].status, 'DRAFT');
+
+  type = structuredClone(typeFixture);
+  policies = [structuredClone(currentFixture), structuredClone(draftFixture)];
+  assert.equal(await repository.insertSupersedingPolicyVersion(input), 'DRAFT_EXISTS');
+  assert.equal(policies.length, 2);
+
+  type = structuredClone(typeFixture);
+  policies = [{ ...structuredClone(currentFixture), status: 'SUPERSEDED' }];
+  assert.equal(await repository.insertSupersedingPolicyVersion(input), 'SOURCE_CONFLICT');
+  assert.equal(policies.length, 1);
 }
 
 async function main(): Promise<void> {
@@ -1053,6 +1146,116 @@ async function main(): Promise<void> {
   });
   const invalidV2Errors = await validate(invalidV2Dto);
   assert.ok(invalidV2Errors.some((error) => error.property === 'capabilities'));
+
+  const activeRepository = new InMemorySubscriptionsRepository();
+  const activeType: StoredSubscriptionType = {
+    ...structuredClone(repository.types[0]),
+    subscriptionTypeId: 'subscription_type:active-annual',
+    code: 'active-annual',
+    codeNorm: 'active-annual',
+    state: 'ACTIVE',
+    currentPolicyVersion: 1,
+    revision: 2,
+    idempotency: {
+      actorId: 'admin:global', key: 'create-active-type', requestHash: 'a'.repeat(64),
+      correlationId: 'corr:active-type'
+    }
+  };
+  const activePolicy: StoredSubscriptionPolicyVersion = {
+    ...structuredClone(repository.policies[0]),
+    subscriptionTypeId: activeType.subscriptionTypeId,
+    version: 1,
+    revision: 2,
+    status: 'PUBLISHED',
+    applyTo: 'NEW_ONLY',
+    idempotency: {
+      actorId: 'admin:global', key: 'create-active-policy-v1', requestHash: 'b'.repeat(64),
+      correlationId: 'corr:active-policy-v1'
+    }
+  };
+  activeRepository.types.push(activeType);
+  activeRepository.policies.push(activePolicy);
+  const activeService = new SubscriptionsService(
+    activeRepository as unknown as SubscriptionsRepository
+  );
+  const activeDraft = await activeService.createPolicyVersion(
+    activeType.subscriptionTypeId,
+    { ...policyDraft(), applyTo: 'NEW_ONLY' },
+    command('active-v2'),
+    globalAdmin
+  );
+  assert.equal(activeDraft.item.version, 2);
+  assert.equal(activeDraft.item.status, 'DRAFT');
+  assert.equal(activeDraft.item.applyTo, 'NEW_ONLY');
+  assert.equal(activeRepository.policies.length, 2);
+  await verifySupersedingPolicyInsertRepository(
+    activeType,
+    activePolicy,
+    activeRepository.policies[1]
+  );
+  const activeReplay = await activeService.createPolicyVersion(
+    activeType.subscriptionTypeId,
+    { ...policyDraft(), applyTo: 'NEW_ONLY' },
+    command('active-v2'),
+    globalAdmin
+  );
+  assert.equal(activeReplay.replayed, true);
+  assert.equal(activeRepository.policies.length, 2);
+  const draftExistsError = await expectException(
+    () => activeService.createPolicyVersion(
+      activeType.subscriptionTypeId,
+      { ...policyDraft(), applyTo: 'NEW_ONLY', validityDays: 364 },
+      command('active-v2-other'),
+      globalAdmin
+    ),
+    ConflictException
+  ) as ConflictException;
+  assert.equal(
+    (draftExistsError.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_POLICY_DRAFT_ALREADY_EXISTS'
+  );
+
+  const migrationRepository = new InMemorySubscriptionsRepository();
+  migrationRepository.types.push(structuredClone(activeType));
+  migrationRepository.policies.push(structuredClone(activePolicy));
+  const migrationService = new SubscriptionsService(
+    migrationRepository as unknown as SubscriptionsRepository
+  );
+  const migrationError = await expectException(
+    () => migrationService.createPolicyVersion(
+      activeType.subscriptionTypeId,
+      policyDraft(),
+      command('active-migrate'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal(
+    (migrationError.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_ACTIVE_INSTANCE_MIGRATION_UNSUPPORTED'
+  );
+  assert.equal(migrationRepository.policies.length, 1);
+
+  const staleActiveRepository = new InMemorySubscriptionsRepository();
+  staleActiveRepository.types.push(structuredClone(activeType));
+  staleActiveRepository.policies.push({ ...structuredClone(activePolicy), status: 'SUPERSEDED' });
+  const staleActiveService = new SubscriptionsService(
+    staleActiveRepository as unknown as SubscriptionsRepository
+  );
+  const staleActiveError = await expectException(
+    () => staleActiveService.createPolicyVersion(
+      activeType.subscriptionTypeId,
+      { ...policyDraft(), applyTo: 'NEW_ONLY' },
+      command('active-stale'),
+      globalAdmin
+    ),
+    ConflictException
+  ) as ConflictException;
+  assert.equal(
+    (staleActiveError.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_POLICY_SUPERSESSION_PRECONDITION_CHANGED'
+  );
+  assert.equal(staleActiveRepository.policies.length, 1);
 
   const filter = new SubscriptionsExceptionFilter();
   const filterHeaders: Record<string, string> = {};

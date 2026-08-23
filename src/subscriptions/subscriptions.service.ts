@@ -261,29 +261,84 @@ export class SubscriptionsService implements OnModuleDestroy {
     }
     const parent = await this.call(() => this.repository.subscriptionTypeById(normalizedTypeId));
     if (!parent) throw new NotFoundException('Subscription type not found');
+    const buildRow = (version: number): StoredSubscriptionPolicyVersion => ({
+      schemaVersion: 3,
+      subscriptionTypeId: normalizedTypeId,
+      version,
+      revision: 1,
+      status: 'DRAFT',
+      ...normalized,
+      createdAt: new Date().toISOString(),
+      createdBy: actorId,
+      idempotency: {
+        actorId,
+        key: command.idempotencyKey,
+        requestHash,
+        correlationId: command.correlationId
+      }
+    });
+    if (parent.state === 'ACTIVE') {
+      if (!Number.isSafeInteger(parent.currentPolicyVersion)
+        || Number(parent.currentPolicyVersion) < 1) {
+        throw this.conflict(
+          'SUBSCRIPTIONS_POLICY_SUPERSESSION_PRECONDITION_CHANGED',
+          'У активной подписки отсутствует текущая опубликованная версия'
+        );
+      }
+      if (normalized.applyTo !== 'NEW_ONLY') {
+        throw this.domainError(
+          'SUBSCRIPTIONS_ACTIVE_INSTANCE_MIGRATION_UNSUPPORTED',
+          'Изменение правил активных экземпляров пока не поддерживается; выберите NEW_ONLY'
+        );
+      }
+      const currentPolicyVersion = Number(parent.currentPolicyVersion);
+      const row = buildRow(currentPolicyVersion + 1);
+      try {
+        const result = await this.call(() => this.repository.insertSupersedingPolicyVersion({
+          policy: row,
+          expectedTypeRevision: parent.revision,
+          expectedCurrentPolicyVersion: currentPolicyVersion
+        }));
+        if (result === 'DRAFT_EXISTS') {
+          throw this.conflict(
+            'SUBSCRIPTIONS_POLICY_DRAFT_ALREADY_EXISTS',
+            'Для активной подписки уже существует новая черновая версия правил'
+          );
+        }
+        if (result === 'SOURCE_CONFLICT') {
+          throw this.conflict(
+            'SUBSCRIPTIONS_POLICY_SUPERSESSION_PRECONDITION_CHANGED',
+            'Текущая версия активной подписки изменилась, обновите данные и повторите'
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof HttpException) && this.repository.isDuplicateKey(error)) {
+          const raced = await this.call(() =>
+            this.repository.policyByIdempotency(actorId, command.idempotencyKey)
+          );
+          if (raced) {
+            return this.replayPolicy(
+              raced,
+              [requestHash, ...(previousRequestHash ? [previousRequestHash] : []), ...(legacyRequestHash ? [legacyRequestHash] : [])],
+              this.publicPolicy(raced)
+            );
+          }
+          throw this.conflict(
+            'SUBSCRIPTIONS_POLICY_DRAFT_ALREADY_EXISTS',
+            'Для активной подписки уже существует новая черновая версия правил'
+          );
+        }
+        throw error;
+      }
+      return { item: this.publicPolicy(row), replayed: false, correlationId: command.correlationId };
+    }
     if (parent.state !== 'DRAFT') {
       throw this.domainError('SUBSCRIPTION_TYPE_NOT_DRAFT', 'Новая версия правил доступна только для черновика');
     }
 
     for (let attempt = 0; attempt < POLICY_VERSION_INSERT_ATTEMPTS; attempt += 1) {
       const version = (await this.call(() => this.repository.latestPolicyVersion(normalizedTypeId))) + 1;
-      const now = new Date().toISOString();
-      const row: StoredSubscriptionPolicyVersion = {
-        schemaVersion: 3,
-        subscriptionTypeId: normalizedTypeId,
-        version,
-        revision: 1,
-        status: 'DRAFT',
-        ...normalized,
-        createdAt: now,
-        createdBy: actorId,
-        idempotency: {
-          actorId,
-          key: command.idempotencyKey,
-          requestHash,
-          correlationId: command.correlationId
-        }
-      };
+      const row = buildRow(version);
       try {
         await this.call(() => this.repository.insertPolicyVersion(row));
         return { item: this.publicPolicy(row), replayed: false, correlationId: command.correlationId };

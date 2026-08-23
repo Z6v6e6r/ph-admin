@@ -244,6 +244,18 @@ async function main(): Promise<void> {
   storedInstance = instance;
   mapping = mappingFixture();
   publication = publicationFixture();
+  publication = {
+    ...publication,
+    state: 'SUPERSEDED',
+    supersededAt: '2026-08-22T12:00:00.000Z',
+    supersededBy: 'publication:piter-v2'
+  };
+  const supersededResult = await service.resolve('Bearer user', TOKEN, {
+    clientSubscriptionId: instance.clientSubscriptionId
+  });
+  assert.equal(supersededResult.instance.policyVersion, instance.policyVersion);
+  assert.equal(supersededResult.policyDigest, instance.policyDigest);
+  publication = publicationFixture();
 
   await assert.rejects(
     service.resolve('Bearer user', 'wrong-token', { clientSubscriptionId: instance.clientSubscriptionId }),

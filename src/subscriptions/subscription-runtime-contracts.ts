@@ -690,7 +690,7 @@ export function validateStoredSubscriptionCanonicalTargetSnapshot(
 export function validateStoredSubscriptionPolicyPublication(
   value: StoredSubscriptionPolicyPublication
 ): void {
-  if (value.schemaVersion !== 1) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  if (![1, 2].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
   requiredId(value.publicationId, 'publicationId');
   requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
   positiveInteger(value.policyVersion, 'policyVersion');
@@ -702,6 +702,15 @@ export function validateStoredSubscriptionPolicyPublication(
   requiredId(value.publishedBy, 'publishedBy');
   requiredId(value.impactPreviewRef, 'impactPreviewRef');
   requiredId(value.approvalAuditRef, 'approvalAuditRef');
+  if (value.schemaVersion === 2 && !value.idempotency) {
+    fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+  }
+  if (value.idempotency) {
+    requiredId(value.idempotency.actorId, 'idempotency.actorId');
+    requiredText(value.idempotency.key, 'idempotency.key', 200);
+    hash(value.idempotency.requestHash, 'idempotency.requestHash');
+    requiredId(value.idempotency.correlationId, 'idempotency.correlationId');
+  }
   oneOf(value.state, PUBLICATION_STATES, 'SUBSCRIPTION_PUBLICATION_STATE_INVALID', 'state');
   if (value.runtimeProjection?.runtimeSchemaVersion !== 1
     || value.runtimeProjection.status !== 'PUBLISHED'

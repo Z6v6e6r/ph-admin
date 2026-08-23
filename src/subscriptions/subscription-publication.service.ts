@@ -50,6 +50,9 @@ interface PublicationPlan {
   preview: SubscriptionPolicyPublicationPreview;
   typeRevision: number;
   policyRevision: number;
+  previousPolicyRevision: number | null;
+  previousPublication: StoredSubscriptionPolicyPublication | null;
+  mapping: StoredSubscriptionProviderMapping | null;
 }
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
@@ -94,15 +97,29 @@ export class SubscriptionPublicationService {
       ...input
     });
 
-    const existing = await this.repositoryCall('WRITE', () =>
+    const existingPublication = await this.repositoryCall('WRITE', () =>
+      this.repository.runtimePolicyPublicationByIdempotency({
+        actorId,
+        key: command.idempotencyKey
+      })
+    );
+    if (existingPublication) {
+      return this.replayPublication(
+        existingPublication,
+        input.subscriptionTypeId,
+        input.policyVersion,
+        requestHash
+      );
+    }
+    const existingMapping = await this.repositoryCall('WRITE', () =>
       this.repository.runtimeProviderMappingByIdempotency({
         tenantId,
         actorId,
         key: command.idempotencyKey
       })
     );
-    if (existing) {
-      return this.replay(existing, input.subscriptionTypeId, input.policyVersion, requestHash);
+    if (existingMapping) {
+      return this.replay(existingMapping, input.subscriptionTypeId, input.policyVersion, requestHash);
     }
 
     const plan = await this.buildPlan(input);
@@ -115,18 +132,28 @@ export class SubscriptionPublicationService {
     }
 
     const now = new Date().toISOString();
-    const mappingId = `mapping:${randomUUID()}`;
+    const mappingId = plan.mapping?.mappingId ?? `mapping:${randomUUID()}`;
     const publicationId = `publication:${randomUUID()}`;
     const approvalAuditRef = `audit:subscription-publication:${randomUUID()}`;
     const mappingEvidenceRef = this.reference('evidence:provider-mapping', {
       providerEvidenceRef: plan.preview.providerEvidence.evidenceRef,
+      providerObservedAt: plan.preview.providerEvidence.observedAt,
       dictionaryEvidenceRef: plan.preview.dictionaryEvidenceRef,
       tenantId: plan.preview.tenantId,
       providerStudioId: plan.preview.providerStudioId,
       providerScope: plan.preview.providerScope,
       providerProductId: plan.preview.providerProductId
     });
-    const mapping: StoredSubscriptionProviderMapping = {
+    const mapping: StoredSubscriptionProviderMapping = plan.mapping ? {
+      ...plan.mapping,
+      state: 'VERIFIED',
+      evidenceRef: mappingEvidenceRef,
+      verifiedAt: now,
+      verifiedBy: actorId,
+      revision: plan.mapping.revision + 1,
+      updatedAt: now,
+      updatedBy: actorId
+    } : {
       schemaVersion: 1,
       mappingId,
       tenantId: plan.preview.tenantId,
@@ -151,7 +178,7 @@ export class SubscriptionPublicationService {
       }
     };
     const publication: StoredSubscriptionPolicyPublication = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       publicationId,
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
@@ -166,7 +193,13 @@ export class SubscriptionPublicationService {
       supersededAt: null,
       supersededBy: null,
       impactPreviewRef: plan.preview.impactPreviewRef,
-      approvalAuditRef
+      approvalAuditRef,
+      idempotency: {
+        actorId,
+        key: command.idempotencyKey,
+        requestHash,
+        correlationId: command.correlationId
+      }
     };
 
     await this.appendApprovalAudit({
@@ -184,21 +217,49 @@ export class SubscriptionPublicationService {
     try {
       await this.repositoryCall('WRITE', () => this.repository.publishRuntimePolicy({
         mapping,
+        insertMapping: plan.mapping === null,
+        expectedMappingRevision: plan.mapping?.revision ?? null,
         publication,
         expectedTypeRevision: plan.typeRevision,
-        expectedPolicyRevision: plan.policyRevision
+        expectedPolicyRevision: plan.policyRevision,
+        previousPublicationId: plan.previousPublication?.publicationId ?? null,
+        previousPolicyVersion: plan.preview.supersedes?.policyVersion ?? null,
+        expectedPreviousPolicyRevision: plan.previousPolicyRevision
       }));
     } catch (error) {
-      if (!this.repository.isDuplicateKey(error)) throw error;
-      const raced = await this.repositoryCall('WRITE', () =>
+      const duplicate = this.repository.isDuplicateKey(error);
+      const response = error instanceof HttpException ? error.getResponse() : null;
+      const responseCode = response && typeof response === 'object'
+        ? String((response as { code?: unknown }).code ?? '')
+        : '';
+      const replayableRace = duplicate
+        || responseCode === 'SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED';
+      if (replayableRace) {
+        const racedPublication = await this.repositoryCall('WRITE', () =>
+          this.repository.runtimePolicyPublicationByIdempotency({
+            actorId,
+            key: command.idempotencyKey
+          })
+        );
+        if (racedPublication) {
+          return this.replayPublication(
+            racedPublication,
+            input.subscriptionTypeId,
+            input.policyVersion,
+            requestHash
+          );
+        }
+      }
+      if (!duplicate) throw error;
+      const racedMapping = await this.repositoryCall('WRITE', () =>
         this.repository.runtimeProviderMappingByIdempotency({
           tenantId,
           actorId,
           key: command.idempotencyKey
         })
       );
-      if (raced) {
-        return this.replay(raced, input.subscriptionTypeId, input.policyVersion, requestHash);
+      if (racedMapping) {
+        return this.replay(racedMapping, input.subscriptionTypeId, input.policyVersion, requestHash);
       }
       throw new ConflictException({
         code: 'SUBSCRIPTIONS_POLICY_ALREADY_PUBLISHED',
@@ -229,16 +290,30 @@ export class SubscriptionPublicationService {
     ]));
     if (!type) throw new NotFoundException('Subscription type not found');
     if (!policy) throw new NotFoundException('Subscription policy version not found');
-    if (type.state !== 'DRAFT' || type.currentPolicyVersion !== null) {
+    const publicationMode = type.state === 'DRAFT' && type.currentPolicyVersion === null
+      ? 'INITIAL'
+      : type.state === 'ACTIVE'
+        && Number.isSafeInteger(type.currentPolicyVersion)
+        && Number(type.currentPolicyVersion) > 0
+        && input.policyVersion === Number(type.currentPolicyVersion) + 1
+        ? 'SUPERSESSION'
+        : null;
+    if (!publicationMode) {
       throw new ConflictException({
-        code: 'SUBSCRIPTIONS_TYPE_ALREADY_PUBLISHED',
-        message: 'Only the first publication of a draft subscription type is supported'
+        code: 'SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED',
+        message: 'Publication target is not the current draft or the next version of an active subscription'
       });
     }
     if (policy.status !== 'DRAFT' || policy.modelVersion !== 3) {
       throw new UnprocessableEntityException({
         code: 'SUBSCRIPTIONS_PUBLICATION_DRAFT_V3_REQUIRED',
         message: 'Publication requires one draft modelVersion 3 policy'
+      });
+    }
+    if (publicationMode === 'SUPERSESSION' && policy.applyTo !== 'NEW_ONLY') {
+      throw new UnprocessableEntityException({
+        code: 'SUBSCRIPTIONS_ACTIVE_INSTANCE_MIGRATION_UNSUPPORTED',
+        message: 'Supersession supports NEW_ONLY only; active instance migration is not available'
       });
     }
     const binding = policy.providerBinding;
@@ -265,7 +340,10 @@ export class SubscriptionPublicationService {
       dictionaryRevision: input.dictionaryRevision,
       runtimeProjection
     });
-    const [existingPublication, existingMapping] = await this.repositoryCall(
+    const currentPolicyVersion = publicationMode === 'SUPERSESSION'
+      ? Number(type.currentPolicyVersion)
+      : null;
+    const [existingPublication, existingMapping, previousPolicy, previousPublication, existingInstanceCount] = await this.repositoryCall(
       'READ_ONLY',
       async () => Promise.all([
         this.repository.runtimePolicyPublicationByVersion(input.subscriptionTypeId, input.policyVersion),
@@ -275,14 +353,57 @@ export class SubscriptionPublicationService {
           providerProductId: binding.externalId,
           providerScopeKind: providerScope.kind,
           providerScopeId: providerScope.scopeId
-        })
+        }),
+        currentPolicyVersion === null
+          ? Promise.resolve(null)
+          : this.repository.policyVersionByNumber(input.subscriptionTypeId, currentPolicyVersion),
+        currentPolicyVersion === null
+          ? Promise.resolve(null)
+          : this.repository.runtimePolicyPublicationByVersion(
+            input.subscriptionTypeId,
+            currentPolicyVersion
+          ),
+        currentPolicyVersion === null
+          ? Promise.resolve(0)
+          : this.repository.countRuntimeInstancesByPolicy(
+            input.subscriptionTypeId,
+            currentPolicyVersion
+          )
       ])
     );
-    if (existingPublication || existingMapping) {
+    if (existingPublication) {
       throw new ConflictException({
         code: 'SUBSCRIPTIONS_POLICY_ALREADY_PUBLISHED',
-        message: 'Policy version or provider mapping already exists'
+        message: 'Policy version already exists'
       });
+    }
+    if (publicationMode === 'INITIAL' && existingMapping) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTIONS_POLICY_ALREADY_PUBLISHED',
+        message: 'Provider mapping already exists'
+      });
+    }
+    if (publicationMode === 'SUPERSESSION') {
+      if (!previousPolicy
+        || previousPolicy.status !== 'PUBLISHED'
+        || !previousPublication
+        || previousPublication.state !== 'PUBLISHED'
+        || previousPublication.policyVersion !== currentPolicyVersion
+        || previousPublication.policyDigest !== computeSubscriptionRuntimeProjectionDigest(
+          compileSubscriptionRuntimeProjection({ ...previousPolicy, status: 'PUBLISHED' })
+        )) {
+        throw new ConflictException({
+          code: 'SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED',
+          message: 'Current published policy or publication is not eligible for supersession'
+        });
+      }
+      if (existingMapping && (existingMapping.state !== 'VERIFIED'
+        || existingMapping.subscriptionTypeId !== input.subscriptionTypeId)) {
+        throw new ConflictException({
+          code: 'SUBSCRIPTIONS_PROVIDER_MAPPING_CONFLICT',
+          message: 'Provider identity is already bound to another subscription type or mapping state'
+        });
+      }
     }
 
     const providerEvidence = await this.vivaAdmin.inspectSubscriptionProduct({
@@ -306,11 +427,20 @@ export class SubscriptionPublicationService {
       providerStudioId: input.providerStudioId,
       providerScope,
       dictionaryRevision: input.dictionaryRevision,
-      dictionaryEvidenceRef: input.dictionaryEvidenceRef
+      dictionaryEvidenceRef: input.dictionaryEvidenceRef,
+      publicationMode,
+      previousPublicationId: previousPublication?.publicationId ?? null,
+      previousPolicyVersion: currentPolicyVersion,
+      providerMappingMode: existingMapping ? 'REUSE' : 'CREATE',
+      applyTo: policy.applyTo,
+      existingInstanceCount
     });
     return {
       typeRevision: type.revision,
       policyRevision: policy.revision,
+      previousPolicyRevision: previousPolicy?.revision ?? null,
+      previousPublication,
+      mapping: existingMapping,
       preview: {
         subscriptionTypeId: input.subscriptionTypeId,
         policyVersion: input.policyVersion,
@@ -327,7 +457,19 @@ export class SubscriptionPublicationService {
         dictionaryEvidenceRef: input.dictionaryEvidenceRef,
         policyDigest,
         impactPreviewRef,
-        runtimeProjection: runtimeProjection as SubscriptionRuntimeProjectionSnapshot
+        runtimeProjection: runtimeProjection as SubscriptionRuntimeProjectionSnapshot,
+        publicationMode,
+        providerMappingMode: existingMapping ? 'REUSE' : 'CREATE',
+        supersedes: previousPublication ? {
+          publicationId: previousPublication.publicationId,
+          policyVersion: previousPublication.policyVersion,
+          policyDigest: previousPublication.policyDigest
+        } : null,
+        instanceImpact: {
+          applyTo: policy.applyTo,
+          existingInstanceCount,
+          migrationRequired: false
+        }
       }
     };
   }
@@ -357,6 +499,37 @@ export class SubscriptionPublicationService {
       item: { mapping: this.publicMapping(mapping), publication },
       replayed: true,
       correlationId: mapping.idempotency.correlationId
+    };
+  }
+
+  private async replayPublication(
+    publication: StoredSubscriptionPolicyPublication,
+    subscriptionTypeId: string,
+    policyVersion: number,
+    requestHash: string
+  ): Promise<SubscriptionCreateResult<SubscriptionPolicyPublicationResult>> {
+    if (!publication.idempotency
+      || publication.idempotency.requestHash !== requestHash
+      || publication.subscriptionTypeId !== subscriptionTypeId
+      || publication.policyVersion !== policyVersion) {
+      throw new ConflictException({
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'Idempotency-Key was already used for another publication request'
+      });
+    }
+    const mapping = await this.repositoryCall('WRITE', () =>
+      this.repository.runtimeProviderMappingById(publication.mappingId)
+    );
+    if (!mapping || mapping.subscriptionTypeId !== subscriptionTypeId) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_PUBLICATION_REPLAY_INCOMPLETE',
+        message: 'Publication idempotency record is incomplete'
+      });
+    }
+    return {
+      item: { mapping: this.publicMapping(mapping), publication },
+      replayed: true,
+      correlationId: publication.idempotency.correlationId
     };
   }
 
@@ -520,6 +693,13 @@ export class SubscriptionPublicationService {
           dictionaryRevision: input.plan.preview.dictionaryRevision,
           dictionaryEvidenceRef: input.plan.preview.dictionaryEvidenceRef,
           providerEvidenceRef: input.plan.preview.providerEvidence.evidenceRef,
+          publicationMode: input.plan.preview.publicationMode,
+          providerMappingMode: input.plan.preview.providerMappingMode,
+          supersededPublicationId: input.plan.preview.supersedes?.publicationId ?? null,
+          supersededPolicyVersion: input.plan.preview.supersedes?.policyVersion ?? null,
+          applyTo: input.plan.preview.instanceImpact.applyTo,
+          existingInstanceCount: input.plan.preview.instanceImpact.existingInstanceCount,
+          migrationRequired: input.plan.preview.instanceImpact.migrationRequired,
           mappingId: input.mappingId,
           mappingEvidenceRef: input.mappingEvidenceRef,
           approvalReason: input.approvalReason

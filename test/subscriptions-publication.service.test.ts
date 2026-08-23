@@ -15,7 +15,10 @@ import { RequestUser } from '../src/common/rbac/request-user.interface';
 import { Role } from '../src/common/rbac/role.enum';
 import { PublishSubscriptionPolicyDto } from '../src/subscriptions/dto/subscription-policy-publication.dto';
 import { SubscriptionPublicationService } from '../src/subscriptions/subscription-publication.service';
-import { SubscriptionRuntimeContractError } from '../src/subscriptions/subscription-runtime-contracts';
+import {
+  computeSubscriptionRuntimeProjectionDigest,
+  SubscriptionRuntimeContractError
+} from '../src/subscriptions/subscription-runtime-contracts';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionsController } from '../src/subscriptions/subscriptions.controller';
 import {
@@ -191,11 +194,28 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
 
 class FakeRepository {
   type = typeFixture();
-  policy = policyFixture();
-  mapping: StoredSubscriptionProviderMapping | null = null;
-  publication: StoredSubscriptionPolicyPublication | null = null;
+  policies: StoredSubscriptionPolicyVersion[] = [policyFixture()];
+  mappings: StoredSubscriptionProviderMapping[] = [];
+  publications: StoredSubscriptionPolicyPublication[] = [];
+  instanceCounts = new Map<number, number>();
   publishCalls = 0;
   commitThenDuplicate = false;
+  commitThenPreconditionConflict = false;
+
+  get policy(): StoredSubscriptionPolicyVersion {
+    return this.policies.reduce((latest, row) => row.version > latest.version ? row : latest);
+  }
+  set policy(value: StoredSubscriptionPolicyVersion) { this.policies = [value]; }
+  get mapping(): StoredSubscriptionProviderMapping | null { return this.mappings.at(-1) ?? null; }
+  set mapping(value: StoredSubscriptionProviderMapping | null) {
+    this.mappings = value ? [value] : [];
+  }
+  get publication(): StoredSubscriptionPolicyPublication | null {
+    return this.publications.at(-1) ?? null;
+  }
+  set publication(value: StoredSubscriptionPolicyPublication | null) {
+    this.publications = value ? [value] : [];
+  }
 
   async connect(): Promise<void> {}
   async connectReadOnly(): Promise<void> {}
@@ -204,51 +224,96 @@ class FakeRepository {
     return this.type.subscriptionTypeId === id ? structuredClone(this.type) : null;
   }
   async policyVersionByNumber(typeId: string, version: number) {
-    return this.policy.subscriptionTypeId === typeId && this.policy.version === version
-      ? structuredClone(this.policy)
-      : null;
+    const row = this.policies.find((item) => (
+      item.subscriptionTypeId === typeId && item.version === version
+    ));
+    return row ? structuredClone(row) : null;
   }
   async runtimePolicyPublicationByVersion(typeId: string, version: number) {
-    return this.publication?.subscriptionTypeId === typeId && this.publication.policyVersion === version
-      ? structuredClone(this.publication)
-      : null;
+    const row = this.publications.find((item) => (
+      item.subscriptionTypeId === typeId && item.policyVersion === version
+    ));
+    return row ? structuredClone(row) : null;
+  }
+  async runtimePolicyPublicationByIdempotency(input: { actorId: string; key: string }) {
+    const row = this.publications.find((item) => (
+      item.idempotency?.actorId === input.actorId && item.idempotency.key === input.key
+    ));
+    return row ? structuredClone(row) : null;
+  }
+  async runtimeProviderMappingById(mappingId: string) {
+    const row = this.mappings.find((item) => item.mappingId === mappingId);
+    return row ? structuredClone(row) : null;
+  }
+  async countRuntimeInstancesByPolicy(_typeId: string, version: number) {
+    return this.instanceCounts.get(version) ?? 0;
   }
   async runtimeProviderMappingByProviderIdentity(input: {
     tenantId: string; providerProductId: string; providerScopeKind: string; providerScopeId: string;
   }) {
-    if (!this.mapping) return null;
-    return this.mapping.tenantId === input.tenantId
-      && this.mapping.providerProductId === input.providerProductId
-      && this.mapping.providerScope.kind === input.providerScopeKind
-      && this.mapping.providerScope.scopeId === input.providerScopeId
-      ? structuredClone(this.mapping)
-      : null;
+    const row = this.mappings.find((item) => item.tenantId === input.tenantId
+      && item.providerProductId === input.providerProductId
+      && item.providerScope.kind === input.providerScopeKind
+      && item.providerScope.scopeId === input.providerScopeId);
+    return row ? structuredClone(row) : null;
   }
   async runtimeProviderMappingByIdempotency(input: { tenantId: string; actorId: string; key: string }) {
-    if (!this.mapping) return null;
-    return this.mapping.tenantId === input.tenantId
-      && this.mapping.idempotency.actorId === input.actorId
-      && this.mapping.idempotency.key === input.key
-      ? structuredClone(this.mapping)
-      : null;
+    const row = this.mappings.find((item) => item.tenantId === input.tenantId
+      && item.idempotency.actorId === input.actorId
+      && item.idempotency.key === input.key);
+    return row ? structuredClone(row) : null;
   }
   async publishRuntimePolicy(input: {
     mapping: StoredSubscriptionProviderMapping;
+    insertMapping: boolean;
+    expectedMappingRevision: number | null;
     publication: StoredSubscriptionPolicyPublication;
     expectedTypeRevision: number;
     expectedPolicyRevision: number;
+    previousPublicationId: string | null;
+    previousPolicyVersion: number | null;
+    expectedPreviousPolicyRevision: number | null;
   }) {
     this.publishCalls += 1;
     assert.equal(input.expectedTypeRevision, this.type.revision);
     assert.equal(input.expectedPolicyRevision, this.policy.revision);
-    this.mapping = structuredClone(input.mapping);
-    this.publication = structuredClone(input.publication);
+    if (input.insertMapping) {
+      assert.equal(input.expectedMappingRevision, null);
+      this.mappings.push(structuredClone(input.mapping));
+    } else {
+      const mappingIndex = this.mappings.findIndex((item) => (
+        item.mappingId === input.mapping.mappingId
+      ));
+      assert.ok(mappingIndex >= 0);
+      assert.equal(this.mappings[mappingIndex].revision, input.expectedMappingRevision);
+      this.mappings[mappingIndex] = structuredClone(input.mapping);
+    }
+    if (input.previousPublicationId) {
+      const previousPublication = this.publications.find((item) => (
+        item.publicationId === input.previousPublicationId
+      ));
+      const previousPolicy = this.policies.find((item) => (
+        item.version === input.publication.policyVersion - 1
+      ));
+      assert.ok(previousPublication);
+      assert.ok(previousPolicy);
+      assert.equal(previousPolicy.revision, input.expectedPreviousPolicyRevision);
+      previousPublication.state = 'SUPERSEDED';
+      previousPublication.supersededAt = input.publication.publishedAt;
+      previousPublication.supersededBy = input.publication.publicationId;
+      previousPolicy.status = 'SUPERSEDED';
+      previousPolicy.revision += 1;
+    }
+    this.publications.push(structuredClone(input.publication));
     this.type.state = 'ACTIVE';
     this.type.currentPolicyVersion = this.policy.version;
     this.type.revision += 1;
     this.policy.status = 'PUBLISHED';
     this.policy.revision += 1;
     if (this.commitThenDuplicate) throw new Error('DUPLICATE_KEY');
+    if (this.commitThenPreconditionConflict) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_CAS_CONFLICT');
+    }
   }
 }
 
@@ -263,7 +328,7 @@ class FakeViva {
       type: 'BY_VISITS',
       providerReportedCost: 5680000,
       costUnit: 'UNVERIFIED' as const,
-      observedAt: '2026-08-21T12:00:00.000Z',
+      observedAt: `2026-08-21T12:00:${String(this.calls).padStart(2, '0')}.000Z`,
       evidenceRef: `evidence:viva-product:${'b'.repeat(64)}`
     };
   }
@@ -373,9 +438,14 @@ async function verifyRepositoryTransaction(
 
   await repository.publishRuntimePolicy({
     mapping: structuredClone(mapping),
+    insertMapping: true,
+    expectedMappingRevision: null,
     publication: structuredClone(publication),
     expectedTypeRevision: 1,
-    expectedPolicyRevision: 1
+    expectedPolicyRevision: 1,
+    previousPublicationId: null,
+    previousPolicyVersion: null,
+    expectedPreviousPolicyRevision: null
   });
   assert.equal(mappings.length, 1);
   assert.equal(publications.length, 1);
@@ -389,9 +459,14 @@ async function verifyRepositoryTransaction(
   await assert.rejects(
     repository.publishRuntimePolicy({
       mapping: structuredClone(mapping),
+      insertMapping: true,
+      expectedMappingRevision: null,
       publication: structuredClone(publication),
       expectedTypeRevision: 2,
-      expectedPolicyRevision: 1
+      expectedPolicyRevision: 1,
+      previousPublicationId: null,
+      previousPolicyVersion: null,
+      expectedPreviousPolicyRevision: null
     }),
     (error: unknown) => error instanceof SubscriptionRuntimeContractError
       && error.code === 'SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT'
@@ -400,6 +475,225 @@ async function verifyRepositoryTransaction(
   assert.equal(publications.length, 0);
   assert.equal(type.state, 'DRAFT');
   assert.equal(policy.status, 'DRAFT');
+}
+
+async function verifyRepositorySupersessionTransaction(
+  mapping: StoredSubscriptionProviderMapping,
+  initialPublication: StoredSubscriptionPolicyPublication
+): Promise<void> {
+  const repository = Object.create(SubscriptionsRepository.prototype) as any;
+  const initialType = {
+    ...typeFixture(), state: 'ACTIVE' as const, currentPolicyVersion: 1, revision: 2
+  };
+  const oldPolicy = {
+    ...policyFixture(), status: 'PUBLISHED' as const, revision: 2
+  };
+  const newPolicy = {
+    ...policyFixture(), version: 2, status: 'DRAFT' as const, revision: 1,
+    idempotency: {
+      actorId: 'admin:global', key: 'create-v2-for-transaction', requestHash: HASH,
+      correlationId: 'corr:create-v2-transaction'
+    }
+  };
+  const newProjection = structuredClone(initialPublication.runtimeProjection);
+  newProjection.policyVersion = 2;
+  const newPublication: StoredSubscriptionPolicyPublication = {
+    ...structuredClone(initialPublication),
+    schemaVersion: 2,
+    publicationId: 'publication:supersession-v2',
+    policyVersion: 2,
+    policyDigest: computeSubscriptionRuntimeProjectionDigest(newProjection),
+    runtimeProjection: newProjection,
+    publishedAt: new Date(Date.parse(initialPublication.publishedAt) + 1000).toISOString(),
+    supersededAt: null,
+    supersededBy: null,
+    idempotency: {
+      actorId: 'admin:global', key: 'publish-v2-for-transaction', requestHash: HASH,
+      correlationId: 'corr:publish-v2-transaction'
+    }
+  };
+  const refreshedMapping: StoredSubscriptionProviderMapping = {
+    ...structuredClone(mapping),
+    evidenceRef: `evidence:provider-mapping:${'e'.repeat(64)}`,
+    verifiedAt: newPublication.publishedAt,
+    verifiedBy: 'admin:global',
+    revision: mapping.revision + 1,
+    updatedAt: newPublication.publishedAt,
+    updatedBy: 'admin:global'
+  };
+  let type = structuredClone(initialType);
+  let policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  let mappings = [structuredClone(mapping)];
+  let publications = [structuredClone(initialPublication)];
+  let failTypeCas = false;
+  repository.client = {
+    startSession: () => ({
+      withTransaction: async (callback: () => Promise<void>) => {
+        const before = {
+          type: structuredClone(type), policies: structuredClone(policies),
+          mappings: structuredClone(mappings), publications: structuredClone(publications)
+        };
+        try {
+          await callback();
+        } catch (error) {
+          type = before.type;
+          policies = before.policies;
+          mappings = before.mappings;
+          publications = before.publications;
+          throw error;
+        }
+      },
+      endSession: async () => undefined
+    })
+  };
+  repository.types = () => ({
+    findOne: async () => structuredClone(type),
+    updateOne: async (filter: any, update: any) => {
+      if (failTypeCas
+        || filter.revision !== type.revision
+        || filter.state !== type.state
+        || filter.currentPolicyVersion !== type.currentPolicyVersion) return { modifiedCount: 0 };
+      type.state = update.$set.state;
+      type.currentPolicyVersion = update.$set.currentPolicyVersion;
+      type.updatedAt = update.$set.updatedAt;
+      type.revision += update.$inc.revision;
+      return { modifiedCount: 1 };
+    }
+  });
+  repository.policies = () => ({
+    findOne: async (filter: any) => {
+      const row = policies.find((item) => item.version === filter.version);
+      return row ? structuredClone(row) : null;
+    },
+    updateOne: async (filter: any, update: any) => {
+      const row = policies.find((item) => item.version === filter.version);
+      if (!row || row.status !== filter.status || row.revision !== filter.revision) {
+        return { modifiedCount: 0 };
+      }
+      row.status = update.$set.status;
+      row.revision += update.$inc.revision;
+      return { modifiedCount: 1 };
+    }
+  });
+  repository.runtimeMappings = () => ({
+    findOne: async (filter: any) => {
+      const row = mappings.find((item) => item.mappingId === filter.mappingId);
+      return row ? structuredClone(row) : null;
+    },
+    insertOne: async (row: StoredSubscriptionProviderMapping) => {
+      mappings.push(structuredClone(row));
+    },
+    updateOne: async (filter: any, update: any) => {
+      const row = mappings.find((item) => item.mappingId === filter.mappingId);
+      if (!row || row.state !== filter.state || row.revision !== filter.revision) {
+        return { modifiedCount: 0 };
+      }
+      Object.assign(row, update.$set);
+      row.revision += update.$inc.revision;
+      return { modifiedCount: 1 };
+    }
+  });
+  repository.runtimePublications = () => ({
+    findOne: async (filter: any) => {
+      const row = publications.find((item) => item.publicationId === filter.publicationId);
+      return row ? structuredClone(row) : null;
+    },
+    insertOne: async (row: StoredSubscriptionPolicyPublication) => {
+      publications.push(structuredClone(row));
+    },
+    updateOne: async (filter: any, update: any) => {
+      const row = publications.find((item) => item.publicationId === filter.publicationId);
+      if (!row || row.state !== filter.state || row.supersededAt !== null || row.supersededBy !== null) {
+        return { modifiedCount: 0 };
+      }
+      Object.assign(row, update.$set);
+      return { modifiedCount: 1 };
+    }
+  });
+
+  const publish = () => repository.publishRuntimePolicy({
+    mapping: structuredClone(refreshedMapping),
+    insertMapping: false,
+    expectedMappingRevision: mapping.revision,
+    publication: structuredClone(newPublication),
+    expectedTypeRevision: 2,
+    expectedPolicyRevision: 1,
+    previousPublicationId: initialPublication.publicationId,
+    previousPolicyVersion: 1,
+    expectedPreviousPolicyRevision: 2
+  });
+  await publish();
+  assert.equal(type.currentPolicyVersion, 2);
+  assert.equal(policies[0].status, 'SUPERSEDED');
+  assert.equal(policies[1].status, 'PUBLISHED');
+  assert.equal(publications[0].state, 'SUPERSEDED');
+  assert.equal(publications[0].supersededBy, newPublication.publicationId);
+  assert.equal(publications[1].state, 'PUBLISHED');
+  assert.equal(mappings.length, 1);
+  assert.equal(mappings[0].revision, refreshedMapping.revision);
+  assert.equal(mappings[0].evidenceRef, refreshedMapping.evidenceRef);
+
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  failTypeCas = true;
+  await assert.rejects(
+    publish,
+    (error: unknown) => error instanceof SubscriptionRuntimeContractError
+      && error.code === 'SUBSCRIPTION_PUBLICATION_CAS_CONFLICT'
+  );
+  assert.deepEqual(type, initialType);
+  assert.deepEqual(policies, [oldPolicy, newPolicy]);
+  assert.deepEqual(publications, [initialPublication]);
+  assert.equal(mappings.length, 1);
+
+  const createdMapping: StoredSubscriptionProviderMapping = {
+    ...structuredClone(mapping),
+    mappingId: 'mapping:supersession-v2-new-product',
+    providerProductId: 'product:piter-friendship-v2',
+    revision: 1,
+    evidenceRef: `evidence:provider-mapping:${'f'.repeat(64)}`,
+    verifiedAt: newPublication.publishedAt,
+    updatedAt: newPublication.publishedAt,
+    idempotency: {
+      actorId: 'admin:global', key: 'publish-v2-new-mapping', requestHash: HASH,
+      correlationId: 'corr:publish-v2-new-mapping'
+    }
+  };
+  const createdMappingPublication = {
+    ...structuredClone(newPublication),
+    publicationId: 'publication:supersession-v2-new-mapping',
+    mappingId: createdMapping.mappingId,
+    idempotency: {
+      actorId: 'admin:global', key: 'publish-v2-new-mapping', requestHash: HASH,
+      correlationId: 'corr:publish-v2-new-mapping'
+    }
+  };
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  failTypeCas = true;
+  await assert.rejects(
+    repository.publishRuntimePolicy({
+      mapping: createdMapping,
+      insertMapping: true,
+      expectedMappingRevision: null,
+      publication: createdMappingPublication,
+      expectedTypeRevision: 2,
+      expectedPolicyRevision: 1,
+      previousPublicationId: initialPublication.publicationId,
+      previousPolicyVersion: 1,
+      expectedPreviousPolicyRevision: 2
+    }),
+    (error: unknown) => error instanceof SubscriptionRuntimeContractError
+      && error.code === 'SUBSCRIPTION_PUBLICATION_CAS_CONFLICT'
+  );
+  assert.deepEqual(type, initialType);
+  assert.deepEqual(policies, [oldPolicy, newPolicy]);
+  assert.deepEqual(publications, [initialPublication]);
+  assert.deepEqual(mappings, [mapping]);
 }
 
 async function expectException(action: () => Promise<unknown>, type: Function): Promise<unknown> {
@@ -466,6 +760,12 @@ async function main(): Promise<void> {
   });
   assert.match(preview.policyDigest, /^sha256:[a-f0-9]{64}$/);
   assert.match(preview.impactPreviewRef, /^impact:subscription-publication:[a-f0-9]{64}$/);
+  assert.equal(preview.publicationMode, 'INITIAL');
+  assert.equal(preview.providerMappingMode, 'CREATE');
+  assert.equal(preview.supersedes, null);
+  assert.deepEqual(preview.instanceImpact, {
+    applyTo: 'NEW_ONLY', existingInstanceCount: 0, migrationRequired: false
+  });
   assert.equal(context.repository.mapping, null);
   assert.equal(context.repository.publication, null);
 
@@ -487,6 +787,8 @@ async function main(): Promise<void> {
   assert.equal(published.item.publication.state, 'PUBLISHED');
   assert.equal(published.item.publication.mappingId, published.item.mapping.mappingId);
   assert.equal(published.item.publication.policyDigest, preview.policyDigest);
+  assert.equal(published.item.publication.schemaVersion, 2);
+  assert.equal(published.item.publication.idempotency?.key, headers().idempotencyKey);
   assert.equal(context.repository.type.state, 'ACTIVE');
   assert.equal(context.repository.policy.status, 'PUBLISHED');
   assert.equal(context.repository.publishCalls, 1);
@@ -499,6 +801,10 @@ async function main(): Promise<void> {
   assert.ok(context.repository.mapping);
   assert.ok(context.repository.publication);
   await verifyRepositoryTransaction(
+    context.repository.mapping,
+    context.repository.publication
+  );
+  await verifyRepositorySupersessionTransaction(
     context.repository.mapping,
     context.repository.publication
   );
@@ -533,6 +839,262 @@ async function main(): Promise<void> {
       globalAdmin
     ),
     ConflictException
+  );
+
+  const supersession = createService();
+  const supersessionV1Preview = await supersession.service.preview(
+    supersession.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+  );
+  await supersession.service.publish(
+    supersession.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: supersessionV1Preview.policyDigest,
+      expectedImpactPreviewRef: supersessionV1Preview.impactPreviewRef,
+      approvalReason: 'Publish initial version before controlled supersession'
+    },
+    headers('supersession-v1'),
+    globalAdmin
+  );
+  supersession.repository.mappings[0].verifiedAt = '2026-08-20T12:00:00.000Z';
+  supersession.repository.mappings[0].updatedAt = '2026-08-20T12:00:00.000Z';
+  const staleMappingEvidenceRef = supersession.repository.mappings[0].evidenceRef;
+  const staleMappingRevision = supersession.repository.mappings[0].revision;
+  const v2Draft: StoredSubscriptionPolicyVersion = {
+    ...structuredClone(supersession.repository.policy),
+    version: 2,
+    revision: 1,
+    status: 'DRAFT',
+    createdAt: '2026-08-22T12:00:00.000Z',
+    idempotency: {
+      actorId: 'admin:global',
+      key: 'create-piter-policy-v2',
+      requestHash: 'd'.repeat(64),
+      correlationId: 'corr:create-policy-v2'
+    }
+  };
+  supersession.repository.policies.push(v2Draft);
+  supersession.repository.instanceCounts.set(1, 7);
+  const v2Preview = await supersession.service.preview(
+    supersession.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
+  );
+  assert.equal(v2Preview.publicationMode, 'SUPERSESSION');
+  assert.equal(v2Preview.providerMappingMode, 'REUSE');
+  assert.equal(v2Preview.supersedes?.policyVersion, 1);
+  assert.deepEqual(v2Preview.instanceImpact, {
+    applyTo: 'NEW_ONLY', existingInstanceCount: 7, migrationRequired: false
+  });
+  supersession.repository.instanceCounts.set(1, 8);
+  await expectException(
+    () => supersession.service.publish(
+      supersession.repository.type.subscriptionTypeId,
+      '2',
+      {
+        ...previewDto(),
+        expectedPolicyDigest: v2Preview.policyDigest,
+        expectedImpactPreviewRef: v2Preview.impactPreviewRef,
+        approvalReason: 'Stale instance impact count must require a fresh preview'
+      },
+      headers('supersession-stale-count'),
+      globalAdmin
+    ),
+    ConflictException
+  );
+  assert.equal(supersession.repository.publications.length, 1);
+  assert.equal(supersession.audit.entries.length, 1);
+  supersession.repository.instanceCounts.set(1, 7);
+  const mappingIdBefore = supersession.repository.mapping?.mappingId;
+  const v2Published = await supersession.service.publish(
+    supersession.repository.type.subscriptionTypeId,
+    '2',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: v2Preview.policyDigest,
+      expectedImpactPreviewRef: v2Preview.impactPreviewRef,
+      approvalReason: 'Publish NEW_ONLY supersession without migrating existing instances'
+    },
+    headers('supersession-v2'),
+    globalAdmin
+  );
+  assert.equal(v2Published.item.mapping.mappingId, mappingIdBefore);
+  assert.equal(supersession.repository.mappings.length, 1);
+  assert.equal(v2Published.item.mapping.revision, staleMappingRevision + 1);
+  assert.notEqual(v2Published.item.mapping.evidenceRef, staleMappingEvidenceRef);
+  assert.notEqual(v2Published.item.mapping.verifiedAt, '2026-08-20T12:00:00.000Z');
+  assert.equal(supersession.repository.publications.length, 2);
+  assert.equal(supersession.repository.publications[0].state, 'SUPERSEDED');
+  assert.equal(
+    supersession.repository.publications[0].supersededBy,
+    supersession.repository.publications[1].publicationId
+  );
+  assert.equal(supersession.repository.policies[0].status, 'SUPERSEDED');
+  assert.equal(supersession.repository.policies[1].status, 'PUBLISHED');
+  assert.equal(supersession.repository.type.currentPolicyVersion, 2);
+  assert.equal(supersession.repository.instanceCounts.get(1), 7);
+  const v2VivaCalls = supersession.viva.calls;
+  const v2Replay = await supersession.service.publish(
+    supersession.repository.type.subscriptionTypeId,
+    '2',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: v2Preview.policyDigest,
+      expectedImpactPreviewRef: v2Preview.impactPreviewRef,
+      approvalReason: 'Publish NEW_ONLY supersession without migrating existing instances'
+    },
+    headers('supersession-v2'),
+    globalAdmin
+  );
+  assert.equal(v2Replay.replayed, true);
+  assert.equal(supersession.viva.calls, v2VivaCalls);
+
+  const concurrentReuse = createService();
+  const concurrentV1Preview = await concurrentReuse.service.preview(
+    concurrentReuse.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+  );
+  await concurrentReuse.service.publish(
+    concurrentReuse.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: concurrentV1Preview.policyDigest,
+      expectedImpactPreviewRef: concurrentV1Preview.impactPreviewRef,
+      approvalReason: 'Publish initial version before reuse concurrency replay test'
+    },
+    headers('concurrent-reuse-v1'),
+    globalAdmin
+  );
+  concurrentReuse.repository.policies.push({
+    ...structuredClone(concurrentReuse.repository.policy),
+    version: 2,
+    revision: 1,
+    status: 'DRAFT',
+    idempotency: {
+      actorId: 'admin:global', key: 'create-concurrent-reuse-v2', requestHash: HASH,
+      correlationId: 'corr:create-concurrent-reuse-v2'
+    }
+  });
+  const concurrentV2Preview = await concurrentReuse.service.preview(
+    concurrentReuse.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
+  );
+  concurrentReuse.repository.commitThenPreconditionConflict = true;
+  const concurrentReplay = await concurrentReuse.service.publish(
+    concurrentReuse.repository.type.subscriptionTypeId,
+    '2',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: concurrentV2Preview.policyDigest,
+      expectedImpactPreviewRef: concurrentV2Preview.impactPreviewRef,
+      approvalReason: 'Concurrent reuse CAS conflict must replay the committed command'
+    },
+    headers('concurrent-reuse-v2'),
+    globalAdmin
+  );
+  assert.equal(concurrentReplay.replayed, true);
+  assert.equal(concurrentReuse.repository.publications.length, 2);
+  assert.equal(concurrentReuse.repository.type.currentPolicyVersion, 2);
+
+  const newMappingSupersession = createService();
+  const newMappingV1Preview = await newMappingSupersession.service.preview(
+    newMappingSupersession.repository.type.subscriptionTypeId,
+    '1',
+    previewDto(),
+    globalAdmin
+  );
+  await newMappingSupersession.service.publish(
+    newMappingSupersession.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: newMappingV1Preview.policyDigest,
+      expectedImpactPreviewRef: newMappingV1Preview.impactPreviewRef,
+      approvalReason: 'Publish initial version before a new provider mapping supersession'
+    },
+    headers('new-mapping-v1'),
+    globalAdmin
+  );
+  const originalMapping = structuredClone(newMappingSupersession.repository.mappings[0]);
+  newMappingSupersession.repository.policies.push({
+    ...structuredClone(newMappingSupersession.repository.policy),
+    version: 2,
+    revision: 1,
+    status: 'DRAFT',
+    providerBinding: {
+      provider: 'VIVA',
+      externalId: 'product:piter-friendship-v2',
+      referenceKind: 'PRODUCT_CANDIDATE',
+      evidenceState: 'UNVERIFIED'
+    },
+    idempotency: {
+      actorId: 'admin:global', key: 'create-new-mapping-policy-v2', requestHash: HASH,
+      correlationId: 'corr:create-new-mapping-v2'
+    }
+  });
+  newMappingSupersession.repository.instanceCounts.set(1, 3);
+  const newMappingV2Preview = await newMappingSupersession.service.preview(
+    newMappingSupersession.repository.type.subscriptionTypeId,
+    '2',
+    previewDto(),
+    globalAdmin
+  );
+  assert.equal(newMappingV2Preview.publicationMode, 'SUPERSESSION');
+  assert.equal(newMappingV2Preview.providerMappingMode, 'CREATE');
+  const newMappingV2 = await newMappingSupersession.service.publish(
+    newMappingSupersession.repository.type.subscriptionTypeId,
+    '2',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: newMappingV2Preview.policyDigest,
+      expectedImpactPreviewRef: newMappingV2Preview.impactPreviewRef,
+      approvalReason: 'Publish supersession with a separately verified new provider product'
+    },
+    headers('new-mapping-v2'),
+    globalAdmin
+  );
+  assert.equal(newMappingSupersession.repository.mappings.length, 2);
+  assert.deepEqual(newMappingSupersession.repository.mappings[0], originalMapping);
+  assert.notEqual(newMappingV2.item.mapping.mappingId, originalMapping.mappingId);
+  assert.equal(newMappingV2.item.mapping.providerProductId, 'product:piter-friendship-v2');
+  assert.equal(newMappingV2.item.publication.mappingId, newMappingV2.item.mapping.mappingId);
+  assert.equal(newMappingSupersession.repository.publications[0].mappingId, originalMapping.mappingId);
+  assert.equal(newMappingSupersession.repository.instanceCounts.get(1), 3);
+
+  const migrationBlocked = createService();
+  const migrationV1Preview = await migrationBlocked.service.preview(
+    migrationBlocked.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+  );
+  await migrationBlocked.service.publish(
+    migrationBlocked.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: migrationV1Preview.policyDigest,
+      expectedImpactPreviewRef: migrationV1Preview.impactPreviewRef,
+      approvalReason: 'Publish initial version before migration rejection test'
+    },
+    headers('migration-v1'),
+    globalAdmin
+  );
+  migrationBlocked.repository.policies.push({
+    ...structuredClone(migrationBlocked.repository.policy),
+    version: 2,
+    revision: 1,
+    status: 'DRAFT',
+    applyTo: 'ACTIVE_AND_NEW',
+    idempotency: {
+      actorId: 'admin:global', key: 'create-migration-v2', requestHash: HASH,
+      correlationId: 'corr:migration-v2'
+    }
+  });
+  const migrationError = await expectException(
+    () => migrationBlocked.service.preview(
+      migrationBlocked.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
+    ),
+    UnprocessableEntityException
+  ) as UnprocessableEntityException;
+  assert.equal(
+    (migrationError.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_ACTIVE_INSTANCE_MIGRATION_UNSUPPORTED'
   );
 
   const hub = createService();

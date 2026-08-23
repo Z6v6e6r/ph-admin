@@ -614,7 +614,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
 }
 
 export interface StoredSubscriptionPolicyPublication {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   publicationId: string;
   subscriptionTypeId: string;
   policyVersion: number;
@@ -630,6 +630,7 @@ export interface StoredSubscriptionPolicyPublication {
   supersededBy: string | null;
   impactPreviewRef: string;
   approvalAuditRef: string;
+  idempotency?: SubscriptionIdempotency;
 }
 
 export interface SubscriptionInstanceEvidence {
@@ -850,6 +851,18 @@ export interface SubscriptionPolicyPublicationPreview {
   policyDigest: string;
   impactPreviewRef: string;
   runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
+  publicationMode: 'INITIAL' | 'SUPERSESSION';
+  providerMappingMode: 'CREATE' | 'REUSE';
+  supersedes: null | {
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: string;
+  };
+  instanceImpact: {
+    applyTo: SubscriptionPolicyApplyTo;
+    existingInstanceCount: number;
+    migrationRequired: false;
+  };
 }
 
 export type SubscriptionProviderMappingView = Omit<

@@ -360,6 +360,24 @@ async function run(): Promise<void> {
     false
   );
   validateStoredSubscriptionPolicyPublication(publicationFixture());
+  const versionTwoPublication: StoredSubscriptionPolicyPublication = {
+    ...publicationFixture(),
+    schemaVersion: 2,
+    idempotency: {
+      actorId: 'admin:subscriptions',
+      key: 'publish-friendship-12m-v3',
+      requestHash: HASH,
+      correlationId: 'corr:publish-v3'
+    }
+  };
+  validateStoredSubscriptionPolicyPublication(versionTwoPublication);
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...versionTwoPublication,
+      idempotency: undefined
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED')
+  );
   const hybridPublication = publicationFixture();
   hybridPublication.runtimeProjection.lifecycle = {
     allowBookingsAfterExpiry: false,
@@ -735,7 +753,8 @@ async function run(): Promise<void> {
         .map(([field, direction]) => `${field.includes('.') ? `'${field}'` : field}: ${direction}`)
         .join(', ');
       const unique = index.unique ? 'unique: true, ' : '';
-      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}name: '${index.name}' }]`;
+      const sparse = 'sparse' in index && index.sparse ? 'sparse: true, ' : '';
+      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}${sparse}name: '${index.name}' }]`;
       const position = indexScript.indexOf(exactSpec);
       assert.ok(
         position >= runtimeIndexBlockStart && position < runtimeIndexBlockEnd,
@@ -743,6 +762,7 @@ async function run(): Promise<void> {
       );
     }
   }
+  assert.match(indexScript, /options\.sparse \? \[\{[\s\S]*?\$or:[\s\S]*?\$exists: true/);
   const repositorySource = fs.readFileSync('src/subscriptions/subscriptions.repository.ts', 'utf8');
   assert.doesNotMatch(repositorySource, /ensureRuntimeIndexes/);
   assert.doesNotMatch(repositorySource, /insertRuntimeLedgerEvent|insertRuntimeOutboxEvent/);

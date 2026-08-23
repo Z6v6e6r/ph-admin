@@ -139,6 +139,12 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       name: 'subscription_publication_digest',
       key: { policyDigest: 1, publicationId: 1 },
       unique: false
+    },
+    {
+      name: 'subscription_publication_idempotency_unique',
+      key: { 'idempotency.actorId': 1, 'idempotency.key': 1 },
+      unique: true,
+      sparse: true
     }
   ],
   instances: [
@@ -238,13 +244,14 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
 } as const;
 
 export function subscriptionIndexMatches(
-  actual: { name?: string; key?: unknown; unique?: boolean } | undefined,
-  expected: { name: string; key: unknown; unique: boolean }
+  actual: { name?: string; key?: unknown; unique?: boolean; sparse?: boolean } | undefined,
+  expected: { name: string; key: unknown; unique: boolean; sparse?: boolean }
 ): boolean {
   return Boolean(actual)
     && actual?.name === expected.name
     && JSON.stringify(actual.key) === JSON.stringify(expected.key)
-    && Boolean(actual.unique) === expected.unique;
+    && Boolean(actual.unique) === expected.unique
+    && Boolean(actual.sparse) === Boolean(expected.sparse);
 }
 
 @Injectable()
@@ -379,6 +386,55 @@ export class SubscriptionsRepository {
 
   async insertPolicyVersion(document: StoredSubscriptionPolicyVersion): Promise<void> {
     await this.policies().insertOne(document);
+  }
+
+  async insertSupersedingPolicyVersion(input: {
+    policy: StoredSubscriptionPolicyVersion;
+    expectedTypeRevision: number;
+    expectedCurrentPolicyVersion: number;
+  }): Promise<'INSERTED' | 'SOURCE_CONFLICT' | 'DRAFT_EXISTS'> {
+    const session = this.requireClient().startSession();
+    try {
+      return await session.withTransaction(async () => {
+        const [type, currentPolicy, pendingDraft] = await Promise.all([
+          this.types().findOne(
+            { subscriptionTypeId: input.policy.subscriptionTypeId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.policies().findOne(
+            {
+              subscriptionTypeId: input.policy.subscriptionTypeId,
+              version: input.expectedCurrentPolicyVersion
+            },
+            { projection: { _id: 0 }, session }
+          ),
+          this.policies().findOne(
+            {
+              subscriptionTypeId: input.policy.subscriptionTypeId,
+              status: 'DRAFT',
+              version: { $gt: input.expectedCurrentPolicyVersion }
+            },
+            { projection: { _id: 0 }, session }
+          )
+        ]);
+        if (pendingDraft) return 'DRAFT_EXISTS';
+        if (!type
+          || !currentPolicy
+          || type.state !== 'ACTIVE'
+          || type.revision !== input.expectedTypeRevision
+          || type.currentPolicyVersion !== input.expectedCurrentPolicyVersion
+          || currentPolicy.status !== 'PUBLISHED'
+          || input.policy.status !== 'DRAFT'
+          || input.policy.applyTo !== 'NEW_ONLY'
+          || input.policy.version !== input.expectedCurrentPolicyVersion + 1) {
+          return 'SOURCE_CONFLICT';
+        }
+        await this.policies().insertOne(input.policy, { session });
+        return 'INSERTED';
+      });
+    } finally {
+      await session.endSession();
+    }
   }
 
   async releaseProgramByIdempotency(
@@ -556,6 +612,27 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimePolicyPublicationByIdempotency(input: {
+    actorId: string;
+    key: string;
+  }): Promise<StoredSubscriptionPolicyPublication | null> {
+    this.assertRuntimeContractsEnabled();
+    const row = await this.runtimePublications().findOne(
+      { 'idempotency.actorId': input.actorId, 'idempotency.key': input.key },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionPolicyPublication(row);
+    return row;
+  }
+
+  async countRuntimeInstancesByPolicy(
+    subscriptionTypeId: string,
+    policyVersion: number
+  ): Promise<number> {
+    this.assertRuntimeContractsEnabled();
+    return this.runtimeInstances().countDocuments({ subscriptionTypeId, policyVersion });
+  }
+
   async insertRuntimePolicyPublication(
     document: StoredSubscriptionPolicyPublication
   ): Promise<void> {
@@ -566,9 +643,14 @@ export class SubscriptionsRepository {
 
   async publishRuntimePolicy(input: {
     mapping: StoredSubscriptionProviderMapping;
+    insertMapping: boolean;
+    expectedMappingRevision: number | null;
     publication: StoredSubscriptionPolicyPublication;
     expectedTypeRevision: number;
     expectedPolicyRevision: number;
+    previousPublicationId: string | null;
+    previousPolicyVersion: number | null;
+    expectedPreviousPolicyRevision: number | null;
   }): Promise<void> {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionProviderMapping(input.mapping);
@@ -583,7 +665,8 @@ export class SubscriptionsRepository {
     const session = this.requireClient().startSession();
     try {
       await session.withTransaction(async () => {
-        const [type, policy] = await Promise.all([
+        const previousPolicyVersion = input.previousPolicyVersion;
+        const [type, policy, previousPolicy, previousPublication, persistedMapping] = await Promise.all([
           this.types().findOne(
             { subscriptionTypeId: input.publication.subscriptionTypeId },
             { projection: { _id: 0 }, session }
@@ -594,23 +677,140 @@ export class SubscriptionsRepository {
               version: input.publication.policyVersion
             },
             { projection: { _id: 0 }, session }
-          )
+          ),
+          previousPolicyVersion === null
+            ? Promise.resolve(null)
+            : this.policies().findOne(
+              {
+                subscriptionTypeId: input.publication.subscriptionTypeId,
+                version: previousPolicyVersion
+              },
+              { projection: { _id: 0 }, session }
+            ),
+          input.previousPublicationId === null
+            ? Promise.resolve(null)
+            : this.runtimePublications().findOne(
+              { publicationId: input.previousPublicationId },
+              { projection: { _id: 0 }, session }
+            ),
+          input.insertMapping
+            ? Promise.resolve(null)
+            : this.runtimeMappings().findOne(
+              { mappingId: input.mapping.mappingId },
+              { projection: { _id: 0 }, session }
+            )
         ]);
         if (!type || !policy) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_NOT_FOUND');
         }
-        if (type.state !== 'DRAFT'
-          || type.currentPolicyVersion !== null
-          || type.revision !== input.expectedTypeRevision
+        if (type.revision !== input.expectedTypeRevision
           || policy.status !== 'DRAFT'
           || policy.modelVersion !== 3
           || policy.revision !== input.expectedPolicyRevision
           || policy.effectiveAt !== input.publication.effectiveAt) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
         }
+        const isInitial = input.previousPublicationId === null;
+        if (isInitial) {
+          if (type.state !== 'DRAFT'
+            || type.currentPolicyVersion !== null
+            || input.previousPolicyVersion !== null
+            || input.expectedPreviousPolicyRevision !== null
+            || previousPolicy !== null
+            || previousPublication !== null
+            || !input.insertMapping
+            || input.expectedMappingRevision !== null) {
+            throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
+        } else {
+          if (type.state !== 'ACTIVE'
+            || input.previousPolicyVersion === null
+            || type.currentPolicyVersion !== previousPolicyVersion
+            || policy.applyTo !== 'NEW_ONLY'
+            || input.expectedPreviousPolicyRevision === null
+            || !previousPolicy
+            || previousPolicy.status !== 'PUBLISHED'
+            || previousPolicy.revision !== input.expectedPreviousPolicyRevision
+            || !previousPublication
+            || previousPublication.subscriptionTypeId !== input.publication.subscriptionTypeId
+            || previousPublication.policyVersion !== previousPolicyVersion
+            || previousPublication.state !== 'PUBLISHED'
+            || previousPublication.supersededAt !== null
+            || previousPublication.supersededBy !== null) {
+            throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
+        }
+        if (!input.insertMapping && (!persistedMapping
+          || input.expectedMappingRevision === null
+          || persistedMapping.revision !== input.expectedMappingRevision
+          || input.mapping.revision !== input.expectedMappingRevision + 1
+          || persistedMapping.state !== 'VERIFIED'
+          || persistedMapping.mappingId !== input.mapping.mappingId
+          || persistedMapping.subscriptionTypeId !== input.mapping.subscriptionTypeId
+          || persistedMapping.tenantId !== input.mapping.tenantId
+          || persistedMapping.providerProductId !== input.mapping.providerProductId
+          || persistedMapping.providerScope.kind !== input.mapping.providerScope.kind
+          || persistedMapping.providerScope.scopeId !== input.mapping.providerScope.scopeId)) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+        }
+        if (input.insertMapping && input.expectedMappingRevision !== null) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+        }
 
-        await this.runtimeMappings().insertOne(input.mapping, { session });
+        let mappingUpdate = { modifiedCount: input.insertMapping ? 1 : 0 };
+        if (input.insertMapping) {
+          await this.runtimeMappings().insertOne(input.mapping, { session });
+        } else {
+          mappingUpdate = await this.runtimeMappings().updateOne(
+            {
+              mappingId: input.mapping.mappingId,
+              state: 'VERIFIED',
+              revision: input.expectedMappingRevision!
+            },
+            {
+              $set: {
+                evidenceRef: input.mapping.evidenceRef,
+                verifiedAt: input.mapping.verifiedAt,
+                verifiedBy: input.mapping.verifiedBy,
+                updatedAt: input.mapping.updatedAt,
+                updatedBy: input.mapping.updatedBy
+              },
+              $inc: { revision: 1 }
+            },
+            { session }
+          );
+        }
         await this.runtimePublications().insertOne(input.publication, { session });
+        let previousPolicyUpdate = { modifiedCount: isInitial ? 1 : 0 };
+        let previousPublicationUpdate = { modifiedCount: isInitial ? 1 : 0 };
+        if (!isInitial && previousPolicy && previousPublication) {
+          previousPolicyUpdate = await this.policies().updateOne(
+            {
+              subscriptionTypeId: previousPolicy.subscriptionTypeId,
+              version: previousPolicy.version,
+              status: 'PUBLISHED',
+              revision: input.expectedPreviousPolicyRevision!
+            },
+            { $set: { status: 'SUPERSEDED' }, $inc: { revision: 1 } },
+            { session }
+          );
+          previousPublicationUpdate = await this.runtimePublications().updateOne(
+            {
+              publicationId: previousPublication.publicationId,
+              state: 'PUBLISHED',
+              supersededAt: null,
+              supersededBy: null
+            },
+            {
+              $set: {
+                state: 'SUPERSEDED',
+                supersededAt: input.publication.publishedAt,
+                supersededBy: input.publication.publicationId
+              }
+            },
+            { session }
+          );
+        }
         const policyUpdate = await this.policies().updateOne(
           {
             subscriptionTypeId: policy.subscriptionTypeId,
@@ -624,8 +824,8 @@ export class SubscriptionsRepository {
         const typeUpdate = await this.types().updateOne(
           {
             subscriptionTypeId: type.subscriptionTypeId,
-            state: 'DRAFT',
-            currentPolicyVersion: null,
+            state: isInitial ? 'DRAFT' : 'ACTIVE',
+            currentPolicyVersion: isInitial ? null : previousPolicyVersion,
             revision: input.expectedTypeRevision
           },
           {
@@ -638,7 +838,11 @@ export class SubscriptionsRepository {
           },
           { session }
         );
-        if (policyUpdate.modifiedCount !== 1 || typeUpdate.modifiedCount !== 1) {
+        if (policyUpdate.modifiedCount !== 1
+          || typeUpdate.modifiedCount !== 1
+          || mappingUpdate.modifiedCount !== 1
+          || previousPolicyUpdate.modifiedCount !== 1
+          || previousPublicationUpdate.modifiedCount !== 1) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_CAS_CONFLICT');
         }
       });
