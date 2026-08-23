@@ -28,9 +28,15 @@ import {
   deriveSubscriptionProviderScope,
   SubscriptionProviderScopeDerivationError
 } from './subscription-provider-scope';
+import {
+  assertPolicySupportedByPublicationAdapter,
+  requirePublicationEnforcementAdapter,
+  SubscriptionPublicationAdapterError
+} from './subscription-publication-enforcement-adapter';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionPolicyVersion,
   StoredSubscriptionProviderMapping,
   SubscriptionCreateResult,
   SubscriptionPolicyPublicationPreview,
@@ -74,8 +80,9 @@ export class SubscriptionPublicationService {
   ): Promise<SubscriptionPolicyPublicationPreview> {
     this.requireFlags('PREVIEW');
     this.requireGlobalPublicationActor(user);
+    const adapterVersion = this.requirePublicationEnforcementAdapter();
     const input = this.normalizePreviewInput(subscriptionTypeId, rawVersion, dto);
-    const plan = await this.buildPlan(input);
+    const plan = await this.buildPlan(input, adapterVersion);
     return plan.preview;
   }
 
@@ -88,6 +95,7 @@ export class SubscriptionPublicationService {
   ): Promise<SubscriptionCreateResult<SubscriptionPolicyPublicationResult>> {
     this.requireFlags('COMMAND');
     const actorId = this.requireGlobalPublicationActor(user);
+    const adapterVersion = this.requirePublicationEnforcementAdapter();
     const command = this.validateCommandHeaders(headers);
     const input = this.normalizePublishInput(subscriptionTypeId, rawVersion, dto);
     const tenantId = this.tenantId();
@@ -122,7 +130,7 @@ export class SubscriptionPublicationService {
       return this.replay(existingMapping, input.subscriptionTypeId, input.policyVersion, requestHash);
     }
 
-    const plan = await this.buildPlan(input);
+    const plan = await this.buildPlan(input, adapterVersion);
     if (plan.preview.policyDigest !== input.expectedPolicyDigest
       || plan.preview.impactPreviewRef !== input.expectedImpactPreviewRef) {
       throw new ConflictException({
@@ -281,7 +289,8 @@ export class SubscriptionPublicationService {
       providerStudioId: string;
       dictionaryRevision: string;
       dictionaryEvidenceRef: string;
-    }
+    },
+    adapterVersion: ReturnType<typeof requirePublicationEnforcementAdapter>
   ): Promise<PublicationPlan> {
     const tenantId = this.tenantId();
     const [type, policy] = await this.repositoryCall('READ_ONLY', async () => Promise.all([
@@ -332,6 +341,7 @@ export class SubscriptionPublicationService {
       ...policy,
       status: 'PUBLISHED'
     });
+    this.assertPublicationAdapterCompatibility(adapterVersion, policy);
     const policyDigest = computeSubscriptionRuntimeProjectionDigest(runtimeProjection);
     this.assertRuntimeProjectionPublishable({
       subscriptionTypeId: input.subscriptionTypeId,
@@ -472,6 +482,37 @@ export class SubscriptionPublicationService {
         }
       }
     };
+  }
+
+  private requirePublicationEnforcementAdapter(): ReturnType<typeof requirePublicationEnforcementAdapter> {
+    try {
+      return requirePublicationEnforcementAdapter();
+    } catch (error) {
+      this.throwPublicationAdapterError(error);
+    }
+  }
+
+  private assertPublicationAdapterCompatibility(
+    adapterVersion: ReturnType<typeof requirePublicationEnforcementAdapter>,
+    policy: StoredSubscriptionPolicyVersion
+  ): void {
+    try {
+      assertPolicySupportedByPublicationAdapter(adapterVersion, policy);
+    } catch (error) {
+      this.throwPublicationAdapterError(error);
+    }
+  }
+
+  private throwPublicationAdapterError(error: unknown): never {
+    if (error instanceof SubscriptionPublicationAdapterError) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED',
+        message: 'Subscription policy is not supported by the configured booking enforcement adapter',
+        adapterVersion: error.adapterVersion,
+        blockers: error.blockerKeys
+      });
+    }
+    throw error;
   }
 
   private async replay(

@@ -20,11 +20,20 @@ SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID=<approved synthetic client>
 SUBSCRIPTIONS_RUNTIME_TENANT_ID=<server-owned tenant>
 SUBSCRIPTIONS_PUBLICATION_PREVIEW_ENABLED=true
 SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED=false
+SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION=LK_NODE_RED_ANNUAL_BOOKING_V1
 ```
 
 Preview can be enabled while publish remains disabled. Enabling either flag,
 provisioning the synthetic client or mutating production data is a separate
 release/operations approval. Both flags are false in the example environment.
+
+`SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION` is mandatory for both
+preview and publish. `LK_NODE_RED_ANNUAL_BOOKING_V1` accepts only the reviewed
+Piter/HUB annual booking-admission slice; any missing, unknown or incompatible
+adapter/policy fails before the Viva read-back and before an audit or Mongo
+write. Cancellation, no-show, refund, renewal and other lifecycle/commerce
+fields remain modeled policy data, but are separate GO gates and are not made
+executable by this booking-admission adapter.
 
 ## Two-step contract
 
@@ -95,9 +104,9 @@ as the publication's mandatory approval reference.
 
 ## Fail-closed publication rules
 
-The first command supports only the first publication of a DRAFT subscription
-type. Supersession, disabling and republishing are deliberately absent and need
-their own reviewed command and compatibility plan.
+The command supports initial publication and reviewed `NEW_ONLY` supersession.
+Disabling and republishing remain separate reviewed commands and compatibility
+plans.
 
 Publication requires:
 
