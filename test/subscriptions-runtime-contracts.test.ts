@@ -374,9 +374,89 @@ async function run(): Promise<void> {
   assert.throws(
     () => validateStoredSubscriptionPolicyPublication({
       ...versionTwoPublication,
+      runtimeCompatibility: {
+        adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+        contractVersion: 1,
+        capabilityDigest: `sha256:${HASH}`
+      }
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_UNATTESTED')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...versionTwoPublication,
       idempotency: undefined
     }),
     hasCode('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED')
+  );
+  const versionThreePublication: StoredSubscriptionPolicyPublication = {
+    ...versionTwoPublication,
+    schemaVersion: 3,
+    runtimeCompatibility: {
+      adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+      contractVersion: 1,
+      capabilityDigest: `sha256:${HASH}`
+    }
+  };
+  validateStoredSubscriptionPolicyPublication(versionThreePublication);
+  validateStoredSubscriptionPolicyPublication({
+    ...versionThreePublication,
+    runtimeCompatibility: {
+      adapterId: 'future-booking-gateway',
+      contractVersion: 2,
+      capabilityDigest: `sha256:${HASH}`
+    }
+  });
+  for (const adapterId of ['', ' invalid adapter ']) {
+    assert.throws(
+      () => validateStoredSubscriptionPolicyPublication({
+        ...versionThreePublication,
+        runtimeCompatibility: {
+          ...versionThreePublication.runtimeCompatibility!,
+          adapterId
+        }
+      }),
+      hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
+    );
+  }
+  for (const contractVersion of [0, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => validateStoredSubscriptionPolicyPublication({
+        ...versionThreePublication,
+        runtimeCompatibility: {
+          ...versionThreePublication.runtimeCompatibility!,
+          contractVersion
+        }
+      }),
+      hasCode('SUBSCRIPTION_RUNTIME_COUNTER_INVALID')
+    );
+  }
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...versionThreePublication,
+      runtimeCompatibility: undefined
+    }),
+    hasCode('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...versionThreePublication,
+      runtimeCompatibility: {
+        ...versionThreePublication.runtimeCompatibility!,
+        capabilityDigest: 'sha256:not-a-digest'
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_DIGEST_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication({
+      ...versionThreePublication,
+      runtimeCompatibility: {
+        ...versionThreePublication.runtimeCompatibility!,
+        capabilityScope: 'unbound'
+      } as typeof versionThreePublication.runtimeCompatibility
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_SHAPE_INVALID')
   );
   const hybridPublication = publicationFixture();
   hybridPublication.runtimeProjection.lifecycle = {

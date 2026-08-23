@@ -21,6 +21,8 @@ import {
 } from '../src/subscriptions/annual-subscription-policy-v2-candidate';
 import {
   assertPolicySupportedByPublicationAdapter,
+  LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST,
+  LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST,
   LK_NODE_RED_ANNUAL_BOOKING_V1
 } from '../src/subscriptions/subscription-publication-enforcement-adapter';
 import { SubscriptionPublicationService } from '../src/subscriptions/subscription-publication.service';
@@ -542,6 +544,7 @@ async function verifyRepositorySupersessionTransaction(
       correlationId: 'corr:publish-v2-transaction'
     }
   };
+  delete newPublication.runtimeCompatibility;
   const refreshedMapping: StoredSubscriptionProviderMapping = {
     ...structuredClone(mapping),
     evidenceRef: `evidence:provider-mapping:${'e'.repeat(64)}`,
@@ -822,6 +825,9 @@ async function main(): Promise<void> {
     policy.capabilities.usage.weeklyUsageLimit = 2;
   }, 'USAGE_COUNTER_UNSUPPORTED');
   await expectAdapterBlocked((policy) => {
+    policy.capabilities.usage.blackoutDates = ['2026-09-01'];
+  }, 'BLACKOUT_DATES_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
     policy.activeServicesLimit = { enabled: true, max: 1, scope: 'SUBSCRIPTION_BENEFIT_ONLY' };
   }, 'ACTIVE_SERVICES_UNSUPPORTED');
   await expectAdapterBlocked((policy) => {
@@ -839,6 +845,12 @@ async function main(): Promise<void> {
       ruleId: 'benefit-rule:group-training',
       category: 'GROUP_TRAINING',
       actions: ['BOOK_GROUP_TRAINING']
+    });
+  }, 'BENEFIT_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.benefitRules.push({
+      ...structuredClone(policy.benefitRules[0]),
+      ruleId: 'benefit-rule:create-duplicate'
     });
   }, 'BENEFIT_UNSUPPORTED');
   await expectAdapterBlocked((policy) => {
@@ -908,6 +920,21 @@ async function main(): Promise<void> {
   assert.equal(unknownAdapter.viva.calls, 0);
   process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   assert.match(preview.policyDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(preview.runtimeCompatibility, {
+    adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+    contractVersion: 1,
+    capabilityDigest: LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST
+  });
+  assert.equal(
+    LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST,
+    'sha256:f1e00751ba2ef19b1945964f2ee90d2d88dbf11121fdb75dfe573b6b12f31791'
+  );
+  assert.equal(Object.isFrozen(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST), true);
+  assert.equal(Object.isFrozen(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.usage), true);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.runtimeSchemaVersion, 1);
+  assert.deepEqual(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.usage.blackoutDates, []);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.benefit.enabledRuleCount, 2);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.benefit.exactlyOnePerAction, true);
   assert.match(preview.impactPreviewRef, /^impact:subscription-publication:[a-f0-9]{64}$/);
   assert.equal(preview.publicationMode, 'INITIAL');
   assert.equal(preview.providerMappingMode, 'CREATE');
@@ -936,7 +963,8 @@ async function main(): Promise<void> {
   assert.equal(published.item.publication.state, 'PUBLISHED');
   assert.equal(published.item.publication.mappingId, published.item.mapping.mappingId);
   assert.equal(published.item.publication.policyDigest, preview.policyDigest);
-  assert.equal(published.item.publication.schemaVersion, 2);
+  assert.equal(published.item.publication.schemaVersion, 3);
+  assert.deepEqual(published.item.publication.runtimeCompatibility, preview.runtimeCompatibility);
   assert.equal(published.item.publication.idempotency?.key, headers().idempotencyKey);
   assert.equal(context.repository.type.state, 'ACTIVE');
   assert.equal(context.repository.policy.status, 'PUBLISHED');
@@ -945,6 +973,9 @@ async function main(): Promise<void> {
   assert.equal(context.audit.entries[0].action, 'SUBSCRIPTION_POLICY_PUBLICATION_APPROVED');
   const metadata = context.audit.entries[0].metadata as Record<string, unknown>;
   assert.equal(metadata.impactPreviewRef, preview.impactPreviewRef);
+  assert.equal(metadata.runtimeAdapterId, 'LK_REGIONAL_BOOKING_GATEWAY');
+  assert.equal(metadata.runtimeContractVersion, 1);
+  assert.equal(metadata.runtimeCapabilityDigest, preview.runtimeCompatibility.capabilityDigest);
   assert.equal(metadata.dictionaryEvidenceRef, previewDto().dictionaryEvidenceRef);
   assert.notEqual(metadata.idempotencyKeyHash, headers().idempotencyKey);
   assert.ok(context.repository.mapping);
@@ -974,6 +1005,42 @@ async function main(): Promise<void> {
   assert.equal(replay.replayed, true);
   assert.equal(context.viva.calls, vivaCallsBeforeReplay);
   assert.equal(context.audit.entries.length, 1);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'UNKNOWN_ADAPTER';
+  const replayWithoutCurrentAdapter = await context.service.publish(
+    context.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: preview.policyDigest,
+      expectedImpactPreviewRef: preview.impactPreviewRef,
+      approvalReason: 'Approved exact Piter annual policy and provider mapping'
+    },
+    headers(),
+    globalAdmin
+  );
+  assert.equal(replayWithoutCurrentAdapter.replayed, true);
+  assert.equal(context.viva.calls, vivaCallsBeforeReplay);
+  assert.equal(context.audit.entries.length, 1);
+  const storedPublication = context.repository.publications[0];
+  assert.ok(storedPublication);
+  storedPublication.schemaVersion = 2;
+  delete storedPublication.runtimeCompatibility;
+  const legacyReplay = await context.service.publish(
+    context.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: preview.policyDigest,
+      expectedImpactPreviewRef: preview.impactPreviewRef,
+      approvalReason: 'Approved exact Piter annual policy and provider mapping'
+    },
+    headers(),
+    globalAdmin
+  );
+  assert.equal(legacyReplay.replayed, true);
+  assert.equal(legacyReplay.item.publication.schemaVersion, 2);
+  assert.equal(context.viva.calls, vivaCallsBeforeReplay);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   await expectException(
     () => context.service.publish(
       context.repository.type.subscriptionTypeId,

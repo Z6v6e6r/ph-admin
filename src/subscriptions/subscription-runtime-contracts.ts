@@ -7,7 +7,8 @@ import {
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionRuntimeOperation,
-  StoredSubscriptionUsageLedgerEvent
+  StoredSubscriptionUsageLedgerEvent,
+  SubscriptionRuntimeCompatibility
 } from './subscriptions.types';
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -238,6 +239,23 @@ const hash = (value: unknown, field: string): string => {
     fail('SUBSCRIPTION_RUNTIME_HASH_INVALID', { field });
   }
   return normalized;
+};
+
+const validateRuntimeCompatibility = (value: unknown): SubscriptionRuntimeCompatibility => {
+  const compatibility = value as Partial<SubscriptionRuntimeCompatibility> | null;
+  if (!compatibility || typeof compatibility !== 'object') {
+    fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_INVALID');
+  }
+  assertExactKeys(
+    compatibility as object,
+    ['adapterId', 'contractVersion', 'capabilityDigest'],
+    'runtimeCompatibility'
+  );
+  const resolved = compatibility as SubscriptionRuntimeCompatibility;
+  requiredId(resolved.adapterId, 'runtimeCompatibility.adapterId');
+  positiveInteger(resolved.contractVersion, 'runtimeCompatibility.contractVersion');
+  digest(resolved.capabilityDigest, 'runtimeCompatibility.capabilityDigest');
+  return resolved;
 };
 
 const validateMoney = (
@@ -690,7 +708,7 @@ export function validateStoredSubscriptionCanonicalTargetSnapshot(
 export function validateStoredSubscriptionPolicyPublication(
   value: StoredSubscriptionPolicyPublication
 ): void {
-  if (![1, 2].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  if (![1, 2, 3].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
   requiredId(value.publicationId, 'publicationId');
   requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
   positiveInteger(value.policyVersion, 'policyVersion');
@@ -704,6 +722,13 @@ export function validateStoredSubscriptionPolicyPublication(
   requiredId(value.approvalAuditRef, 'approvalAuditRef');
   if (value.schemaVersion === 2 && !value.idempotency) {
     fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+  }
+  if ((value.schemaVersion === 1 || value.schemaVersion === 2) && value.runtimeCompatibility !== undefined) {
+    fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_UNATTESTED');
+  }
+  if (value.schemaVersion === 3) {
+    if (!value.idempotency) fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+    validateRuntimeCompatibility(value.runtimeCompatibility);
   }
   if (value.idempotency) {
     requiredId(value.idempotency.actorId, 'idempotency.actorId');

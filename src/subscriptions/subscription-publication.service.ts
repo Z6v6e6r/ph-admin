@@ -30,6 +30,7 @@ import {
 } from './subscription-provider-scope';
 import {
   assertPolicySupportedByPublicationAdapter,
+  publicationAdapterRuntimeCompatibility,
   requirePublicationEnforcementAdapter,
   SubscriptionPublicationAdapterError
 } from './subscription-publication-enforcement-adapter';
@@ -95,7 +96,6 @@ export class SubscriptionPublicationService {
   ): Promise<SubscriptionCreateResult<SubscriptionPolicyPublicationResult>> {
     this.requireFlags('COMMAND');
     const actorId = this.requireGlobalPublicationActor(user);
-    const adapterVersion = this.requirePublicationEnforcementAdapter();
     const command = this.validateCommandHeaders(headers);
     const input = this.normalizePublishInput(subscriptionTypeId, rawVersion, dto);
     const tenantId = this.tenantId();
@@ -130,6 +130,7 @@ export class SubscriptionPublicationService {
       return this.replay(existingMapping, input.subscriptionTypeId, input.policyVersion, requestHash);
     }
 
+    const adapterVersion = this.requirePublicationEnforcementAdapter();
     const plan = await this.buildPlan(input, adapterVersion);
     if (plan.preview.policyDigest !== input.expectedPolicyDigest
       || plan.preview.impactPreviewRef !== input.expectedImpactPreviewRef) {
@@ -186,7 +187,7 @@ export class SubscriptionPublicationService {
       }
     };
     const publication: StoredSubscriptionPolicyPublication = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       publicationId,
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
@@ -202,6 +203,7 @@ export class SubscriptionPublicationService {
       supersededBy: null,
       impactPreviewRef: plan.preview.impactPreviewRef,
       approvalAuditRef,
+      runtimeCompatibility: plan.preview.runtimeCompatibility,
       idempotency: {
         actorId,
         key: command.idempotencyKey,
@@ -336,6 +338,7 @@ export class SubscriptionPublicationService {
         message: 'Publication requires one exact unverified Viva product candidate'
       });
     }
+    const runtimeCompatibility = this.publicationAdapterRuntimeCompatibility(adapterVersion);
     const providerScope = this.providerScope(policy.stationAccessRules ?? [], tenantId);
     const runtimeProjection = compileSubscriptionRuntimeProjection({
       ...policy,
@@ -347,6 +350,7 @@ export class SubscriptionPublicationService {
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
       policyDigest,
+      runtimeCompatibility,
       dictionaryRevision: input.dictionaryRevision,
       runtimeProjection
     });
@@ -428,11 +432,12 @@ export class SubscriptionPublicationService {
       });
     }
     const impactPreviewRef = this.reference('impact:subscription-publication', {
-      schemaVersion: 1,
+      schemaVersion: 2,
       tenantId,
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
       policyDigest,
+      runtimeCompatibility,
       providerProductId: binding.externalId,
       providerStudioId: input.providerStudioId,
       providerScope,
@@ -466,6 +471,7 @@ export class SubscriptionPublicationService {
         dictionaryRevision: input.dictionaryRevision,
         dictionaryEvidenceRef: input.dictionaryEvidenceRef,
         policyDigest,
+        runtimeCompatibility,
         impactPreviewRef,
         runtimeProjection: runtimeProjection as SubscriptionRuntimeProjectionSnapshot,
         publicationMode,
@@ -498,6 +504,16 @@ export class SubscriptionPublicationService {
   ): void {
     try {
       assertPolicySupportedByPublicationAdapter(adapterVersion, policy);
+    } catch (error) {
+      this.throwPublicationAdapterError(error);
+    }
+  }
+
+  private publicationAdapterRuntimeCompatibility(
+    adapterVersion: ReturnType<typeof requirePublicationEnforcementAdapter>
+  ) {
+    try {
+      return publicationAdapterRuntimeCompatibility(adapterVersion);
     } catch (error) {
       this.throwPublicationAdapterError(error);
     }
@@ -595,10 +611,11 @@ export class SubscriptionPublicationService {
     policyDigest: string;
     dictionaryRevision: string;
     runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
+    runtimeCompatibility: SubscriptionPolicyPublicationPreview['runtimeCompatibility'];
   }): void {
     try {
       validateStoredSubscriptionPolicyPublication({
-        schemaVersion: 1,
+        schemaVersion: 3,
         publicationId: 'publication:preview-validation',
         subscriptionTypeId: input.subscriptionTypeId,
         policyVersion: input.policyVersion,
@@ -613,7 +630,14 @@ export class SubscriptionPublicationService {
         supersededAt: null,
         supersededBy: null,
         impactPreviewRef: 'impact:preview-validation',
-        approvalAuditRef: 'audit:preview-validation'
+        approvalAuditRef: 'audit:preview-validation',
+        runtimeCompatibility: input.runtimeCompatibility,
+        idempotency: {
+          actorId: 'system:publication-preview',
+          key: 'publication-preview-validation',
+          requestHash: '0'.repeat(64),
+          correlationId: 'corr:publication-preview'
+        }
       });
     } catch (error) {
       if (error instanceof SubscriptionRuntimeContractError) {
@@ -731,6 +755,9 @@ export class SubscriptionPublicationService {
           policyVersion: input.plan.preview.policyVersion,
           policyDigest: input.plan.preview.policyDigest,
           impactPreviewRef: input.plan.preview.impactPreviewRef,
+          runtimeAdapterId: input.plan.preview.runtimeCompatibility.adapterId,
+          runtimeContractVersion: input.plan.preview.runtimeCompatibility.contractVersion,
+          runtimeCapabilityDigest: input.plan.preview.runtimeCompatibility.capabilityDigest,
           dictionaryRevision: input.plan.preview.dictionaryRevision,
           dictionaryEvidenceRef: input.plan.preview.dictionaryEvidenceRef,
           providerEvidenceRef: input.plan.preview.providerEvidence.evidenceRef,

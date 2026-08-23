@@ -614,7 +614,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
 }
 
 export interface StoredSubscriptionPolicyPublication {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   publicationId: string;
   subscriptionTypeId: string;
   policyVersion: number;
@@ -631,6 +631,13 @@ export interface StoredSubscriptionPolicyPublication {
   impactPreviewRef: string;
   approvalAuditRef: string;
   idempotency?: SubscriptionIdempotency;
+  runtimeCompatibility?: SubscriptionRuntimeCompatibility;
+}
+
+export interface SubscriptionRuntimeCompatibility {
+  adapterId: string;
+  contractVersion: number;
+  capabilityDigest: `sha256:${string}`;
 }
 
 export interface SubscriptionInstanceEvidence {
@@ -849,6 +856,7 @@ export interface SubscriptionPolicyPublicationPreview {
   dictionaryRevision: string;
   dictionaryEvidenceRef: string;
   policyDigest: string;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
   impactPreviewRef: string;
   runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
   publicationMode: 'INITIAL' | 'SUPERSESSION';
