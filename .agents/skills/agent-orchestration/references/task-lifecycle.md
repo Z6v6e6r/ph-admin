@@ -36,7 +36,7 @@ Implement the smallest complete behavior using current patterns. Preserve API an
 1. Run narrow formatter/lint/typecheck/tests only if configured and applicable.
 2. Expand to integration/build/browser/runtime evidence as risk requires.
 3. Inspect final `git diff`, untracked files, lockfiles, secrets, debug code, TODOs, errors/status changes, and generated assets.
-4. Obtain independent review for significant R2 and every R3-R4 change.
+4. Obtain review by trigger: normally none for R0/R1, at most one for R2, one specialist per actual R3 risk, and two distinct perspectives for R4.
 5. Remediate blocker/high findings and rerun affected gates.
 6. Confirm pre-existing user changes remain intact.
 
@@ -46,4 +46,4 @@ Classify a failure as environment, dependency, compilation, logic, test-data, fl
 
 ## Result
 
-Lead with the outcome. List changed files, actual commands/results, unverified evidence, residual risks, required next step, and commit/push/deploy/data-mutation status. A future stage starts only after any required user approval.
+Lead with the outcome. List changed files, actual commands/results, unverified evidence, residual risks, required next step, and commit/task-branch-push/Draft-PR/merge/deploy/data-mutation status. Reversible task-branch work continues without intermediate approval; a prohibited live or irreversible stage starts only after exact user approval.

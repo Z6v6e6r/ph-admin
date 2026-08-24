@@ -2,5 +2,5 @@
 enabled = true
 default_subagent_model = "gpt-5.6-terra"
 default_subagent_reasoning_effort = "medium"
-max_concurrent_threads_per_session = 4
+max_concurrent_threads_per_session = 2
 interrupt_message = true

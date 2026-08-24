@@ -1,5 +1,28 @@
 # Agent rules changelog
 
+## 2026-08-24 — Risk-based autonomous task-branch delivery
+
+Reason: remove repeated approval and validation cycles from reversible R0-R2 work while
+preserving every critical production and trust-boundary gate.
+
+Changed:
+
+- replaced universal stage stops with Fast, Spark, Main, and Critical lanes using R0-R4;
+- authorized one continuous task-branch loop through focused commits, same-branch push,
+  Draft PR, CI readback, and in-scope CI fixes;
+- retained explicit approval for merge/protected branches, deploy, live/shared mutation,
+  migrations, secrets, permissions, routing, payments, messages, and destructive actions;
+- reduced concurrent spawned threads from four to two;
+- changed generic significant-diff review to domain-triggered review and prohibited
+  unchanged duplicate checks;
+- made use of the globally managed Spark worker conditional on its availability without
+  duplicating its model profile;
+- clarified that the cap is two spawned-agent threads in addition to the primary and that
+  R3 uses one specialist per actual trigger, with a second reviewer only for a distinct risk.
+
+No application code, dependencies, runtime configuration, live data, or deployment was
+changed.
+
 ## 2026-08-08 — Initial repository operating system
 
 Reason: establish a permanent, auditable, cost-aware workflow for Codex engineering in `ph-ab` while preserving a heavily modified user worktree.

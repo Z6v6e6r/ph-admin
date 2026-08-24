@@ -10,7 +10,10 @@ Confirmed on 2026-08-08 with `codex-cli 0.147.0-alpha.6.5` and `codex debug mode
 | `gpt-5.6-terra` | Default implementation, multi-file bugs, integrations, tests, standard review, read-heavy support work | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-luna` | Narrow repeatable work, extraction, templated docs/tests, mechanical batches | low, medium, high, xhigh, max |
 
-`gpt-5.3-codex-spark` was not present in the local model catalog. Do not configure or request it here until a future catalog check confirms it.
+Use `global_spark_worker` for an eligible bounded R1/R2 task when that global profile is
+available in the current Codex environment. If it is unavailable, keep the task on the
+primary Fast or Main lane. Do not fail the task, add a repository-local duplicate profile,
+or silently route critical work to a weaker model.
 
 Fallbacks:
 
@@ -47,10 +50,10 @@ Estimate without ceremony:
 
 | Class | Typical score | Default route |
 | --- | ---: | --- |
-| R0 | 0-3 | One agent, Luna/Terra low; local validation |
-| R1 | 4-6 | Terra medium; optional explorer; targeted tests/typecheck |
-| R2 | 7-10 | Terra high or Sol high; explorer; significant-diff review |
-| R3 | 11-14 | Sol high/xhigh owner; 2-4 distinct roles; specialist review; rollback/observability |
+| R0 | 0-3 | Fast lane, primary only; local validation |
+| R1 | 4-6 | Fast or one bounded Spark writer; targeted tests/typecheck |
+| R2 | 7-10 | Main lane; Spark only for an isolated slice; at most one triggered reviewer |
+| R3 | 11-14 | Critical primary owner; triggered specialist review; rollback/observability |
 | R4 | 15+ | Sol xhigh/max or justified primary ultra; invariants; two reviews; release gate |
 
 Minimum R3 override: auth/RBAC, personal data, secrets, destructive operations, bookings/capacity, prices/payments/refunds/subscriptions, production Mongo/index/backfill work, external CRM synchronization, public API compatibility, rating history, release signing, deployment, or public production changes.
