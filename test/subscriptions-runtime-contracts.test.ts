@@ -874,7 +874,8 @@ async function run(): Promise<void> {
     aggregates: 'subscription_entitlement_aggregates',
     operations: 'subscription_operations',
     ledger: 'subscription_usage_ledger',
-    outbox: 'subscription_outbox'
+    outbox: 'subscription_outbox',
+    delegationReplays: 'subscription_runtime_delegation_replays'
   };
   for (const [groupName, indexes] of Object.entries(SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES)) {
     for (const index of indexes) {
@@ -883,7 +884,10 @@ async function run(): Promise<void> {
         .join(', ');
       const unique = index.unique ? 'unique: true, ' : '';
       const sparse = 'sparse' in index && index.sparse ? 'sparse: true, ' : '';
-      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}${sparse}name: '${index.name}' }]`;
+      const expiry = 'expireAfterSeconds' in index
+        ? `expireAfterSeconds: ${index.expireAfterSeconds}, `
+        : '';
+      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}${sparse}${expiry}name: '${index.name}' }]`;
       const position = indexScript.indexOf(exactSpec);
       assert.ok(
         position >= runtimeIndexBlockStart && position < runtimeIndexBlockEnd,

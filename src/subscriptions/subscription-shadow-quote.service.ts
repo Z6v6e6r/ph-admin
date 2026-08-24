@@ -196,7 +196,7 @@ export class SubscriptionShadowQuoteService {
   }
 
   private validateTrustedRequest(request: SubscriptionShadowQuoteRequest): void {
-    if (request.identity?.resolutionSource !== 'LK_IDENTITY'
+    if (!['LK_IDENTITY', 'LK2_DELEGATION'].includes(request.identity?.resolutionSource)
       || request.target?.resolutionSource !== 'SERVER') {
       throw new SubscriptionRuntimeContractError('SUBSCRIPTION_SHADOW_QUOTE_SOURCE_UNTRUSTED');
     }

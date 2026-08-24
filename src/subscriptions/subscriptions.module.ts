@@ -21,6 +21,8 @@ import { SubscriptionActivationService } from './subscription-activation.service
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionRuntimeV1QuoteService } from './subscription-runtime-v1-quote.service';
+import { SubscriptionRuntimeLk2DelegationVerifierService } from
+  './subscription-runtime-lk2-delegation-verifier.service';
 
 @Module({
   imports: [AuthModule, LkIdentityModule, VivaAdminModule],
@@ -37,6 +39,7 @@ import { SubscriptionRuntimeV1QuoteService } from './subscription-runtime-v1-quo
     SubscriptionProviderMappingPreviewService,
     SubscriptionTrustedShadowAdapterService,
     SubscriptionRuntimeV1QuoteService,
+    SubscriptionRuntimeLk2DelegationVerifierService,
     SubscriptionRuntimeContextService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,

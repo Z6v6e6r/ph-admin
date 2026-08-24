@@ -9,6 +9,7 @@ import { LkIdentityService } from '../lk-identity/lk-identity.service';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionCanonicalTargetResolverService } from './subscription-canonical-target-resolver.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
+import { TrustedSubscriptionRuntimeActor } from './subscription-runtime-trusted-actor';
 import { SubscriptionShadowQuoteResult } from './subscriptions.types';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
@@ -45,14 +46,6 @@ export class SubscriptionTrustedShadowAdapterService {
       'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
       'SUBSCRIPTIONS_RUNTIME_TENANT_ID_INVALID'
     );
-    const pepper = String(process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER ?? '');
-    if (Buffer.byteLength(pepper, 'utf8') < 32) {
-      throw new ServiceUnavailableException({
-        code: 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER_REQUIRED',
-        message: 'Subscription client hash is not configured'
-      });
-    }
-
     const verified = await this.identity.verifyTrustedBearer(authorizationHeader);
     if (verified.actor.tenantKey !== tenantId) {
       throw new ForbiddenException({
@@ -69,11 +62,13 @@ export class SubscriptionTrustedShadowAdapterService {
     }
 
     const verifiedAt = this.now().toISOString();
-    const clientRefHash = computeSubscriptionClientRefHash({
-      pepper,
-      tenantId,
-      providerClientId
-    });
+    const pepper = String(process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER ?? '');
+    if (Buffer.byteLength(pepper, 'utf8') < 32) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER_REQUIRED',
+        message: 'Subscription client hash is not configured'
+      });
+    }
     const identityEvidenceHash = createHmac('sha256', pepper)
       .update([
         'subscription-lk-identity-evidence:v1',
@@ -83,6 +78,51 @@ export class SubscriptionTrustedShadowAdapterService {
         verifiedAt
       ].join('\0'))
       .digest('hex');
+    return this.quoteTrustedActor({
+      source: 'LK_IDENTITY',
+      runtimeTenantId: tenantId,
+      actorUserId: verified.actor.subject,
+      provider: 'VIVA',
+      providerClientId,
+      evidenceRef: `evidence:lk-identity:${identityEvidenceHash}`,
+      verifiedAt
+    }, dto);
+  }
+
+  async quoteTrustedActor(
+    actor: TrustedSubscriptionRuntimeActor,
+    dto: SubscriptionShadowQuoteAdapterDto
+  ): Promise<SubscriptionShadowQuoteResult> {
+    this.assertEnabled();
+    const tenantId = this.requireConfiguredId(
+      'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
+      'SUBSCRIPTIONS_RUNTIME_TENANT_ID_INVALID'
+    );
+    if (actor.runtimeTenantId !== tenantId || actor.provider !== 'VIVA') {
+      throw new ForbiddenException({
+        code: 'SUBSCRIPTIONS_RUNTIME_TENANT_MISMATCH',
+        message: 'Trusted identity tenant does not match subscription runtime tenant'
+      });
+    }
+    const providerClientId = String(actor.providerClientId ?? '').trim();
+    if (!ID_PATTERN.test(providerClientId)) {
+      throw new UnauthorizedException({
+        code: 'SUBSCRIPTIONS_RUNTIME_PROVIDER_CLIENT_REQUIRED',
+        message: 'Trusted identity does not contain a canonical provider client id'
+      });
+    }
+    const pepper = String(process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER ?? '');
+    if (Buffer.byteLength(pepper, 'utf8') < 32) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER_REQUIRED',
+        message: 'Subscription client hash is not configured'
+      });
+    }
+    const clientRefHash = computeSubscriptionClientRefHash({
+      pepper,
+      tenantId,
+      providerClientId
+    });
     const target = await this.targetResolver.resolve({
       tenantId,
       targetId: dto.target.targetId,
@@ -92,11 +132,11 @@ export class SubscriptionTrustedShadowAdapterService {
 
     return this.shadowQuote.quote({
       identity: {
-        resolutionSource: 'LK_IDENTITY',
+        resolutionSource: actor.source,
         tenantId,
         clientRefHash,
-        evidenceRef: `evidence:lk-identity:${identityEvidenceHash}`,
-        verifiedAt
+        evidenceRef: actor.evidenceRef,
+        verifiedAt: actor.verifiedAt
       },
       subscriptionInstanceId: dto.subscriptionInstanceId,
       action: dto.action,

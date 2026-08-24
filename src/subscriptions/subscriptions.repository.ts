@@ -31,6 +31,13 @@ import {
   validateStoredSubscriptionUsageLedgerEvent
 } from './subscription-runtime-contracts';
 
+interface StoredSubscriptionRuntimeDelegationReplay {
+  issuer: string;
+  jti: string;
+  expiresAt: Date;
+  consumedAt: Date;
+}
+
 export const SUBSCRIPTION_REQUIRED_INDEXES = {
   types: [
     { name: 'subscription_type_id_unique', key: { subscriptionTypeId: 1 }, unique: true },
@@ -240,18 +247,54 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       key: { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 },
       unique: false
     }
+  ],
+  delegationReplays: [
+    {
+      name: 'subscription_runtime_delegation_issuer_jti_unique',
+      key: { issuer: 1, jti: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_runtime_delegation_expiry_ttl',
+      key: { expiresAt: 1 },
+      unique: false,
+      expireAfterSeconds: 0
+    }
   ]
 } as const;
 
 export function subscriptionIndexMatches(
-  actual: { name?: string; key?: unknown; unique?: boolean; sparse?: boolean } | undefined,
-  expected: { name: string; key: unknown; unique: boolean; sparse?: boolean }
+  actual: {
+    name?: string;
+    key?: unknown;
+    unique?: boolean;
+    sparse?: boolean;
+    expireAfterSeconds?: number
+  } | undefined,
+  expected: {
+    name: string;
+    key: unknown;
+    unique: boolean;
+    sparse?: boolean;
+    expireAfterSeconds?: number
+  }
 ): boolean {
   return Boolean(actual)
     && actual?.name === expected.name
     && JSON.stringify(actual.key) === JSON.stringify(expected.key)
     && Boolean(actual.unique) === expected.unique
-    && Boolean(actual.sparse) === Boolean(expected.sparse);
+    && Boolean(actual.sparse) === Boolean(expected.sparse)
+    && actual?.expireAfterSeconds === expected.expireAfterSeconds;
+}
+
+export function subscriptionRuntimeDelegationIndexesRequired(
+  environment: NodeJS.ProcessEnv = process.env
+): boolean {
+  const enabled = (name: string) => ['1', 'true', 'yes'].includes(
+    String(environment[name] ?? '').trim().toLowerCase()
+  );
+  return enabled('SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED')
+    && enabled('SUBSCRIPTIONS_RUNTIME_LK2_DELEGATION_ENABLED');
 }
 
 @Injectable()
@@ -891,6 +934,33 @@ export class SubscriptionsRepository {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionInstance(document);
     await this.runtimeInstances().insertOne(document);
+  }
+
+  async consumeRuntimeDelegationReplay(
+    document: StoredSubscriptionRuntimeDelegationReplay
+  ): Promise<'CONSUMED' | 'REPLAY'> {
+    this.assertRuntimeContractsEnabled();
+    if (!this.lk2DelegationEnabled()) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTION_RUNTIME_LK2_DELEGATION_DISABLED'
+      );
+    }
+    if (!document.issuer
+      || !document.jti
+      || !Number.isFinite(document.expiresAt.getTime())
+      || !Number.isFinite(document.consumedAt.getTime())
+      || document.expiresAt.getTime() <= document.consumedAt.getTime()) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTION_RUNTIME_DELEGATION_REPLAY_INVALID'
+      );
+    }
+    try {
+      await this.runtimeDelegationReplays().insertOne(document);
+      return 'CONSUMED';
+    } catch (error) {
+      if (this.isDuplicateKey(error)) return 'REPLAY';
+      throw error;
+    }
   }
 
   async runtimePendingActivationInstances(
@@ -1634,6 +1704,12 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionOutboxEvent>('subscription_outbox');
   }
 
+  private runtimeDelegationReplays(): Collection<StoredSubscriptionRuntimeDelegationReplay> {
+    return this.requireDb().collection<StoredSubscriptionRuntimeDelegationReplay>(
+      'subscription_runtime_delegation_replays'
+    );
+  }
+
   private testOffers(): Collection<StoredSubscriptionTestOffer> {
     return this.requireDb().collection<StoredSubscriptionTestOffer>('subscription_test_offers');
   }
@@ -1936,6 +2012,10 @@ export class SubscriptionsRepository {
     return value === '1' || value === 'true' || value === 'yes';
   }
 
+  private lk2DelegationEnabled(): boolean {
+    return subscriptionRuntimeDelegationIndexesRequired();
+  }
+
   private assertRuntimeContractsEnabled(): void {
     if (!this.runtimeContractsEnabled()) {
       throw new SubscriptionRuntimeContractError('SUBSCRIPTION_RUNTIME_CONTRACTS_DISABLED');
@@ -1982,12 +2062,21 @@ export class SubscriptionsRepository {
         actual: await this.runtimeOutbox().listIndexes().toArray()
       }
     ];
-    const missing = groups.flatMap(({ required, actual }) => required
+    const missing: string[] = groups.flatMap(({ required, actual }) => required
       .filter((expected) => !subscriptionIndexMatches(
         actual.find((item) => item.name === expected.name),
         expected
       ))
       .map((expected) => expected.name));
+    if (this.lk2DelegationEnabled()) {
+      const actual = await this.runtimeDelegationReplays().listIndexes().toArray();
+      missing.push(...SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.delegationReplays
+        .filter((expected) => !subscriptionIndexMatches(
+          actual.find((item) => item.name === expected.name),
+          expected
+        ))
+        .map((expected) => expected.name));
+    }
     if (missing.length) {
       throw new Error(`SUBSCRIPTIONS_RUNTIME_INDEXES_NOT_READY:${missing.join(',')}`);
     }
