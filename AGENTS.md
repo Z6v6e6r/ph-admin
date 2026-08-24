@@ -24,11 +24,28 @@ primary Fast or Main lane; do not add a repository-local duplicate profile or do
 critical work. The configured limit is at most two concurrent spawned-agent threads in
 addition to the primary agent; do not fill those slots without independent value.
 
-Keep explicit human gates before merge, direct push to `main`/protected branches,
-force push, deploy, service restart, Node-RED import, migration or backfill execution,
-live/shared data mutation, secrets/keys, permission widening, routing/ingress changes,
-payments/refunds, external messages, destructive rollback, or any other irreversible
-trust-boundary transition. A Draft PR or green CI never authorizes those actions.
+Within an authorized task branch, the agent may write migration or backfill code,
+permission/RBAC/ACL/RLS code, and secret-handling code without accessing real secret
+values; add tests; run fully local rehearsals on synthetic data; create commits; push only
+the task branch; create or update a Draft PR; read CI; and fix in-scope CI failures.
+
+Human approval remains mandatory before:
+
+- merge or direct push to a protected branch;
+- force push or published-history rewrite;
+- deployment, service restart, or Node-RED import;
+- migration or backfill execution against a real or shared target;
+- live or shared data repair or mutation;
+- live permission, RBAC, ACL, or RLS mutation;
+- permission widening in a deployed environment;
+- secret or key access, installation, replacement, or rotation;
+- DNS, ingress, routing, or public-domain changes;
+- payment or refund execution;
+- external user messages;
+- destructive rollback or another irreversible operation.
+
+A Draft PR, green CI, local build, mock, synthetic-data rehearsal, or staging artifact does
+not authorize a live, shared-target, or provider mutation.
 
 Use focused checks for R0-R2 and expand only when changed files, shared contracts,
 dependencies, root/CI/deploy configuration, or critical risk require it. Do not repeat an
@@ -76,7 +93,7 @@ Before any nontrivial feature, bug fix, audit, refactor, API change, migration, 
 - Games/tournaments changes must protect capacity, concurrent joins, duplicate requests, timezone, cancellation, pricing snapshots, result determinism, and historical auditability.
 - `client-sdk/phab-admin-panel.js` and served client scripts are product UI. Verify loading/empty/error states, permissions, browser console/network behavior, and the actual served artifact when changed.
 - Never inspect, print, copy, or commit real `.env*` values. Example env files may contain names/placeholders only.
-- Deployment assets are not deployment authorization. Task-branch commit/push/Draft PR are reversible development actions; live data mutation, Node-RED import, service restart, migration, merge/protected-branch push, deploy, or production/public-domain change still require explicit target-specific approval. Preserve a rollback path and revalidate the actual target runtime.
+- Deployment assets are not deployment authorization. Task-branch commit/push/Draft PR are reversible development actions; live data mutation, Node-RED import, service restart, migration/backfill execution against a real or shared target, merge/protected-branch push, deploy, or production/public-domain change still require explicit target-specific approval. Preserve a rollback path and revalidate the actual target runtime.
 - Local source/build success is not production proof. Distinguish local, Docker, server-147, Nano/staging, and public production evidence.
 
 ## Contracts, reviews, and handoff

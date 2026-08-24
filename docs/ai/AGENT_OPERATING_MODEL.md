@@ -69,10 +69,19 @@ Risk uses consequence, ambiguity, scale, cross-system reach, irreversibility, no
 
 Steps 1-11 form one autonomous reversible development loop through commits on the exact
 task branch, push of that same branch, Draft PR, CI readback, and in-scope CI correction.
-Merge, protected-branch push, force push, deployment, service restart, Node-RED import,
-migration, external/shared data mutation, secrets/keys, permission widening, routing,
-payment execution, external messages, and public-domain changes remain separate gates
-requiring exact user authorization.
+Within that loop, migration/backfill code, permission/RBAC/ACL/RLS code, and
+secret-handling code may be authored and tested without access to real secret values;
+fully local synthetic-data rehearsals are allowed.
+
+Exact human authorization remains mandatory before merge or protected-branch push; force
+push or published-history rewrite; deployment, service restart, or Node-RED import;
+migration/backfill execution against a
+real or shared target; live/shared data or permission/RBAC/ACL/RLS mutation; deployed
+permission widening; real secret/key access, installation, replacement, or rotation;
+DNS/ingress/routing/public-domain changes; payment/refund execution; external user
+messages; destructive rollback; or another irreversible operation. A Draft PR, green CI,
+local build, mock, synthetic-data rehearsal, or staging artifact does not authorize a
+live, shared-target, or provider mutation.
 
 ## Model routing
 

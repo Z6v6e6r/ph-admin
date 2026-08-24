@@ -65,10 +65,18 @@ Read `references/quality-gates.md` for the risk-class gates and domain invariant
 The primary agent must inspect the actual diff and verify claimed commands/results. Do not rerun an identical passing check unless source, inputs, environment, acceptance target, or hypothesis changed. For R3-R4, the reviewer receives the original outcome, acceptance criteria, and diff—not a persuasive implementation summary. Resolve blocker/high findings with evidence and rerun only affected gates.
 
 Continue an authorized reversible development outcome through task-branch commits, push,
-Draft PR, CI readback, and in-scope CI fixes. Stop before merge, protected-branch push,
-deploy, live/shared mutation, migration or backfill execution against a real/shared
-target, secret/key access or mutation, routing, payments, external messages, permission
-widening, or destructive actions.
+Draft PR, CI readback, and in-scope CI fixes. This includes authoring and testing
+migration/backfill, permission/RBAC/ACL/RLS, and secret-handling code without accessing
+real secret values, plus fully local rehearsals on synthetic data.
+
+Stop for exact human approval before merge or protected-branch push; force push or
+published-history rewrite; deployment, service restart, or Node-RED import;
+migration/backfill execution against a real/shared target; live/shared data or
+permission/RBAC/ACL/RLS mutation; deployed permission widening; real secret/key
+access, installation, replacement, or rotation; routing or public-domain changes;
+payment/refund execution; external user messages; destructive rollback; or another
+irreversible operation. A Draft PR, green CI, local build, mock, synthetic-data rehearsal,
+or staging artifact does not authorize a live, shared-target, or provider mutation.
 
 Never treat a compile, health endpoint, mock, or subagent statement as proof of external delivery, authorization, persistence, migration safety, or the rendered user journey.
 
