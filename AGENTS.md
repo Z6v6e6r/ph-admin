@@ -9,19 +9,27 @@ These rules are mandatory for every change in this repository.
 - Never commit secrets, local environment values, production exports, or temporary diagnostic artifacts.
 - Run proportionate tests and builds and report checks that could not be completed.
 
-## Mandatory staged delivery workflow
+## Risk-based delivery workflow
 
-Every task uses the following stage gates. Approval of one stage never authorizes a later stage.
+Classify the highest-risk intended change as R0-R4 and use the global Fast, Spark, Main,
+or Critical lane. A scoped development request authorizes one continuous reversible
+task-branch cycle: focused worktree/branch, implementation, proportionate checks,
+checkpoint commits, push of that same `codex/*` or `agent/*` branch, Draft PR creation,
+CI readback and in-scope CI correction. Do not pause merely because one of those steps
+completed.
 
-1. **Implement and verify in isolation.** Identify the base `origin/main` SHA, use a focused branch/worktree, preserve dirty changes, implement the approved scope, and run relevant checks. Stop with a verified uncommitted diff and ask for checkpoint-commit approval. Do not merge, push, or deploy.
-2. **User verification.** After explicit checkpoint-commit approval, provide the result, changed-file summary, checks, SHA, and limitations. Corrections remain in the same task branch and require another approved checkpoint.
-3. **Integrate into `main`.** Only after explicit approval, refresh `origin/main`, inspect the final diff, integrate only the approved task branch into local `main`, and rerun proportionate checks. Do not push or deploy.
-4. **Push `main`.** Only after separate explicit approval, show the outgoing commits, push local `main`, confirm the remote SHA, and check required CI. Do not deploy.
-5. **Deploy and post-check.** Only after another explicit approval, deploy an immutable artifact built from the confirmed pushed SHA to the approved environment. Verification is part of this stage: confirm the served release/image SHA, health/readiness, and the affected authenticated UI/API/worker/persistence journey. Never deploy a dirty tree or edit server code manually.
+Keep explicit human gates before merge, direct push to `main`/protected branches,
+force push, deploy, service restart, Node-RED import, migration or backfill execution,
+live/shared data mutation, secrets/keys, permission widening, routing/ingress changes,
+payments/refunds, external messages, destructive rollback, or any other irreversible
+trust-boundary transition. A Draft PR or green CI never authorizes those actions.
 
-At the end of every completed stage, stop, report evidence, and ask exactly one direct transition question: `Приступать к следующему этапу: <название этапа>?` Do not start it until the user explicitly agrees. Never infer permission for integration, `main` push, deploy, live data mutation, or rollback from an earlier approval.
-
-If a stage fails or is blocked, stay in that stage, report the blocker, and ask for direction. A post-deploy fix returns to a focused task/hotfix branch and follows the same gates.
+Use focused checks for R0-R2 and expand only when changed files, shared contracts,
+dependencies, root/CI/deploy configuration, or critical risk require it. Do not repeat an
+identical successful check without changed source, inputs, environment, or a new
+hypothesis. If one part is blocked, continue independent in-scope work; stop for missing
+material product authority, suspected credential/PII exposure, scope expansion, an
+inseparable broken baseline, unavailable required access, or a prohibited next action.
 
 ## Project
 
@@ -51,7 +59,7 @@ Before any nontrivial feature, bug fix, audit, refactor, API change, migration, 
 6. Make the smallest behavior-complete diff. Do not mix unrelated refactoring, broad formatting, dependency upgrades, or generated artifacts.
 7. Validate narrowly first, then expand in proportion to risk. Never hide failures, weaken assertions, or call a mock/health response proof of persistence or external delivery.
 8. Review the actual final diff for scope, secrets, debug code, generated files, public behavior, error contracts, and missing negative tests.
-9. Use independent read-only review for significant R2 changes and all R3-R4 changes; add security, integration, migration, UI, performance, or release review only when its trigger applies.
+9. Review by trigger: R0 uses self-review; R1 normally uses self-review; R2 uses at most one independent reviewer when complexity or a domain trigger justifies it; R3 uses one specialist per actual risk; R4 uses two genuinely independent risk perspectives. Keep reviewers read-only by default.
 
 ## Project invariants
 
@@ -62,14 +70,14 @@ Before any nontrivial feature, bug fix, audit, refactor, API change, migration, 
 - Games/tournaments changes must protect capacity, concurrent joins, duplicate requests, timezone, cancellation, pricing snapshots, result determinism, and historical auditability.
 - `client-sdk/phab-admin-panel.js` and served client scripts are product UI. Verify loading/empty/error states, permissions, browser console/network behavior, and the actual served artifact when changed.
 - Never inspect, print, copy, or commit real `.env*` values. Example env files may contain names/placeholders only.
-- Deployment assets are not deployment authorization. Before commit, push, live data mutation, Node-RED import, service restart, migration, or production/public-domain change, stop for explicit user approval. Preserve a rollback path and revalidate the actual target runtime.
+- Deployment assets are not deployment authorization. Task-branch commit/push/Draft PR are reversible development actions; live data mutation, Node-RED import, service restart, migration, merge/protected-branch push, deploy, or production/public-domain change still require explicit target-specific approval. Preserve a rollback path and revalidate the actual target runtime.
 - Local source/build success is not production proof. Distinguish local, Docker, server-147, Nano/staging, and public production evidence.
 
 ## Contracts, reviews, and handoff
 
 Do not change public routes, DTOs, error/status semantics, stored shapes, env contracts, or client payloads without compatibility analysis and relevant contract/negative tests. Documentation proposals under `docs/migration/` are not automatically approved runtime architecture.
 
-Do not merge, rebase, deploy, mutate external data, or overwrite user changes without explicit approval. Commit and push follow the separate stage gates above.
+Do not merge, push protected branches, deploy, mutate external data, or overwrite user changes without explicit approval. Rebase only the clean current task branch onto its configured protected base; never force push.
 
 The final answer must list changed files, exact commands run and results, skipped or blocked checks, residual risks, and whether commit/push/deploy occurred. Record stable new project rules only after repeated evidence or an explicit long-term user instruction; put detail in the orchestration skill and log material rule changes in `docs/ai/AGENT_RULES_CHANGELOG.md`.
 

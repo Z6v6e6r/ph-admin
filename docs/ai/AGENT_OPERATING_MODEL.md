@@ -53,7 +53,7 @@ Tiny reversible tasks follow:
 
 Risk uses consequence, ambiguity, scale, cross-system reach, irreversibility, novelty, testability, and mechanical repeatability. The score is guidance; auth/RBAC, personal data, secrets, bookings/capacity, payments/prices, production Mongo/index work, external CRM synchronization, public contracts, deployment, and destructive actions are automatically at least R3.
 
-### Stage gates
+### Delivery lifecycle
 
 1. **Intake** — outcome, acceptance evidence, non-goals, constraints, Git state.
 2. **Classification** — R0-R4, model/effort, roles, ownership.
@@ -63,11 +63,16 @@ Risk uses consequence, ambiguity, scale, cross-system reach, irreversibility, no
 6. **Implementation** — smallest behavior-complete diff with exclusive write ownership.
 7. **Validation** — narrow first, expanded only after stabilization and in proportion to risk.
 8. **Diff review** — primary inspects actual changes, artifacts, secrets, contracts, and tests.
-9. **Independent review** — significant R2 and all R3-R4; specialist review by trigger.
+9. **Triggered review** — none by default for R0/R1, at most one for R2 unless two distinct risks apply, one specialist per R3 trigger, and two perspectives for R4.
 10. **Remediation/final validation** — resolve blocker/high evidence and rerun affected gates.
 11. **Result** — files, commands/results, missing evidence, risks, and external-action status.
 
-Commit, push, merge, rebase, deployment, service restart, Node-RED import, migration, external data mutation, and public-domain changes are separate stages requiring explicit user authorization.
+Steps 1-11 form one autonomous reversible development loop through commits on the exact
+task branch, push of that same branch, Draft PR, CI readback, and in-scope CI correction.
+Merge, protected-branch push, force push, deployment, service restart, Node-RED import,
+migration, external/shared data mutation, secrets/keys, permission widening, routing,
+payment execution, external messages, and public-domain changes remain separate gates
+requiring exact user authorization.
 
 ## Model routing
 
@@ -90,11 +95,17 @@ Confirmed model IDs:
 - `gpt-5.6-terra`: low, medium, high, xhigh, max, ultra.
 - `gpt-5.6-luna`: low, medium, high, xhigh, max.
 
-`gpt-5.3-codex-spark` was absent from the installed catalog and is not configured. Recheck the catalog before changing permanent IDs; fallback policy lives in `references/model-routing.md`.
+The workstation-level `global_spark_worker` is available for bounded R1/R2 implementation
+and is intentionally managed outside this repository. Recheck the catalog before changing
+the repository's explicit Sol/Terra/Luna IDs; fallback policy lives in
+`references/model-routing.md`.
 
 ## Agent roster
 
-The repository default is Terra medium with a configured cap of four spawned threads. Runtime capacity can be stricter: a host exposing four total active slots permits the primary plus only three concurrent subagents. Always obey the lower live limit and use successive waves; agents should be selected for independent value, not filled to capacity.
+The repository default is Terra medium with a configured cap of two spawned threads.
+Always obey a lower live limit and use successive waves; agents are selected for
+independent value, not filled to capacity. A single global Spark writer is preferred for
+an eligible bounded R1/R2 task.
 
 | Agent | Trigger | Model/effort | Sandbox |
 | --- | --- | --- | --- |
@@ -120,11 +131,11 @@ Every delegated request uses the agent task packet in the skill references. A wr
 
 Normal limits:
 
-- R0: no subagent.
-- R1: zero or one.
-- R2: one to three.
-- R3: two to four.
-- broad R4 audit: three to six across successive waves, never more than both the configured cap and the live host capacity concurrently.
+- R0: no subagent;
+- R1: zero or one bounded Spark writer;
+- R2: primary ownership, optionally one explorer or one bounded Spark slice and at most one triggered reviewer;
+- R3: primary ownership plus one specialist per actual trigger, at most two concurrent;
+- R4: primary ownership, two independent risk perspectives across successive waves, at most two concurrent.
 
 Subagents do not recursively form teams unless the primary explicitly grants and bounds that authority.
 
@@ -145,12 +156,14 @@ These are configuration simulations, not executed product changes.
 | Scenario | Risk and route | Agents | Required checks |
 | --- | --- | --- | --- |
 | A. Change one component label | R0; Luna/Terra low; shortened route | none | inspect actual asset, syntax/diff, focused UI check if available |
-| B. Fix ordinary backend bug in several files | R1/R2; Terra medium/high | optional explorer; reviewer only for significant diff | reproduce, no-emit TS, targeted tests, diff review |
+| B. Fix ordinary backend bug in several files | R1/R2; Fast, bounded Spark, or Main according to ambiguity | one Spark writer only when the packet is cheaper; reviewer only on trigger | reproduce, affected no-emit TS, targeted tests, diff review |
 | C. Add API scenario consumed by mobile | minimum R2/R3 due public cross-client contract; Sol/Terra design then Terra implementation | explorer, architect if ambiguous, implementer/test engineer, integration/contract review; no local mobile reviewer | compatibility, contract/negative tests, old-client fallback, external mobile evidence required |
 | D. Change payment/subscription calculation | automatic R3; Sol xhigh analysis, Terra high implementation | architect, implementer, test engineer, security/integration reviewer, independent reviewer | amount/currency, idempotency, duplicate callbacks, race/partial failure, reconciliation, rollback |
 | E. Full release-readiness audit | R4; primary Sol ultra only because lanes are independent, otherwise Sol xhigh | parallel read-only backend/data/security/integration/UI/release lanes, never above both configured and live caps | candidate SHA, relevant full gates, migration/config, real runtime evidence, observability, rollback, consolidated GO/NO-GO |
 
-The model correctly avoids spawning agents for A, scales selectively for B/C, applies automatic critical routing for D, and uses read-only parallelism without conflicting writes for E.
+The model correctly avoids spawning agents for A, chooses direct or bounded Spark work
+for B, scales selectively for C, applies automatic critical routing for D, and uses
+read-only successive review waves without conflicting writes for E.
 
 ## Ready-to-use examples
 
