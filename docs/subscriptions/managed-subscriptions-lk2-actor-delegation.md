@@ -1,7 +1,7 @@
 # LK2 actor delegation for Subscription Runtime
 
-Status: source-only, default-off
-Date: 2026-08-24
+Status: source-only, default-off; Mongo replay source/CI evidence required
+Date: 2026-08-25
 
 ## Boundary
 
@@ -47,6 +47,28 @@ reuse; a TTL index removes expired replay markers. Replay storage failure fails
 closed. Application startup verifies these indexes and never creates them in
 production.
 
+The exact required indexes are:
+
+- `subscription_runtime_delegation_issuer_jti_unique` with key
+  `{ issuer: 1, jti: 1 }` and `unique: true`;
+- `subscription_runtime_delegation_expiry_ttl` with key `{ expiresAt: 1 }` and
+  `expireAfterSeconds: 0`.
+
+The consume linearization point is one Mongo `insertOne` with replay-scoped
+`w: majority`, a five-second operation timeout and a bounded write timeout. Only
+an `E11000` that names the exact compound replay index and reports its exact key
+pattern is classified as `REPLAY`. An `E11000` from another index and every other
+storage error fail closed. TTL is cleanup only; correctness never waits for TTL
+deletion.
+
+The marker's `expiresAt` is the later of signed token expiry plus a configurable
+retention window and actual consume time plus that window (default 300 seconds,
+allowed range 60–3600 seconds), not the JWT expiry itself. This preserves a full
+retention window even when a previously validated request resumes after a delay.
+The window exceeds the accepted clock skew and bounded Mongo operation/write
+timeouts, so a request validated near token expiry cannot race TTL cleanup. JWT
+`exp` alone still controls whether a new verification is initially accepted.
+
 Rotation order:
 
 1. add the new public JWK to the runtime allowlist;
@@ -55,6 +77,38 @@ Rotation order:
 4. remove the old public key only after that overlap.
 
 No signing key, integration token or live flag is provisioned by this change.
+
+## Disposable Mongo evidence
+
+The canonical workflow starts a pinned Mongo 7.0 container and runs
+`test:subscriptions-runtime-lk2-delegation:mongo` against a random, loopback-only
+database matching
+`phab_sub_replay_test_<pid>_<timestamp>_<random>`.
+The test refuses a non-loopback URI, applies/checks indexes only on that exact
+ephemeral database and proves its removal afterward. Mongo unavailability is a
+hard failure; the suite has no skip path.
+
+The suite proves:
+
+- readiness failure with runtime and delegation enabled, index auto-creation off,
+  and both replay indexes absent;
+- canonical index apply/check followed by exact unique and TTL specification
+  inspection, plus failure on a same-name malformed unique index;
+- three rounds of 100 concurrent consumes for one `issuer + jti`, each yielding
+  exactly one `CONSUMED`, 99 `REPLAY`, and one stored marker;
+- independent consumption for one issuer with 16 different JTIs and one JTI with
+  16 different issuers;
+- no marker for `expiresAt <= consumedAt`, a real non-duplicate Mongo failure, or
+  an unexpected duplicate index failure;
+- 32 concurrent verifier calls for one signed JWT yielding one actor and 31 replay
+  errors;
+- 11 independently signed/invalid or binding-invalid cases that do not burn the
+  JTI, after which the correct same-JTI token succeeds once and then replays.
+
+The standalone CI container proves the unique-index linearization and accepted
+majority write policy on that topology. Replica-set acknowledgement under failover
+is deliberately `OUT_OF_SCOPE/OPEN`; it requires a disposable replica-set test
+before any runtime activation claim.
 
 ## Default-off configuration
 
@@ -67,6 +121,7 @@ SUBSCRIPTIONS_RUNTIME_LK2_EXPECTED_AUDIENCE=
 SUBSCRIPTIONS_RUNTIME_LK2_PUBLIC_JWKS_JSON=
 SUBSCRIPTIONS_RUNTIME_LK2_MAX_TTL_SECONDS=60
 SUBSCRIPTIONS_RUNTIME_LK2_CLOCK_SKEW_SECONDS=5
+SUBSCRIPTIONS_RUNTIME_LK2_REPLAY_RETENTION_SECONDS=300
 SUBSCRIPTIONS_RUNTIME_LK2_TENANT_BINDINGS_JSON=
 SUBSCRIPTIONS_RUNTIME_LK2_INTEGRATION_TOKEN=
 ```
@@ -76,8 +131,9 @@ identifier. Missing or inconsistent mappings return a fail-closed error.
 
 ## Readiness
 
-This boundary proves source-level authentication and replay resistance only. It
-does not make SHADOW, WARN or ENFORCE ready. SHADOW still requires a server-side
-legacy comparator and mismatch metrics. WARN requires the shared Web/Mobile public
-contract. ENFORCE additionally requires authoritative projection, reservation,
-writer read-back, reconciliation and cancellation evidence.
+This boundary proves source-level authentication and replay resistance only when
+the canonical Mongo workflow is green on the exact source commit. It does not make
+SHADOW, WARN or ENFORCE ready. SHADOW still requires a server-side legacy comparator,
+configuration custody and mismatch metrics. WARN requires the shared Web/Mobile
+public contract. ENFORCE additionally requires authoritative projection,
+reservation, writer read-back, reconciliation and cancellation evidence.

@@ -92,6 +92,7 @@ async function run(): Promise<void> {
   });
   process.env.SUBSCRIPTIONS_RUNTIME_LK2_MAX_TTL_SECONDS = '60';
   process.env.SUBSCRIPTIONS_RUNTIME_LK2_CLOCK_SKEW_SECONDS = '5';
+  process.env.SUBSCRIPTIONS_RUNTIME_LK2_REPLAY_RETENTION_SECONDS = '300';
   process.env.SUBSCRIPTIONS_RUNTIME_LK2_TENANT_BINDINGS_JSON = JSON.stringify({
     'local-padel': { lk2TenantId: TENANT_ID, runtimeTenantId: 'tenant:one' }
   });
@@ -100,7 +101,15 @@ async function run(): Promise<void> {
   const consumed = new Set<string>();
   const repository = {
     connect: async () => undefined,
-    consumeRuntimeDelegationReplay: async (input: { issuer: string; jti: string }) => {
+    consumeRuntimeDelegationReplay: async (input: {
+      issuer: string;
+      jti: string;
+      consumedAt: Date;
+      expiresAt: Date;
+    }) => {
+      assert.equal(input.consumedAt.getTime(), NOW.getTime());
+      assert.ok(input.expiresAt.getTime() >= NOW.getTime() + 301_000);
+      assert.ok(input.expiresAt.getTime() <= NOW.getTime() + 360_000);
       const key = `${input.issuer}\0${input.jti}`;
       if (consumed.has(key)) return 'REPLAY' as const;
       consumed.add(key);
@@ -176,6 +185,37 @@ async function run(): Promise<void> {
     verify(token(privateKey, {}, { jku: 'https://attacker.invalid/jwks' })),
     'SUBSCRIPTIONS_RUNTIME_LK2_DELEGATION_INVALID'
   );
+
+  let delayedNow = new Date(NOW);
+  let delayedMarker: { consumedAt: Date; expiresAt: Date } | undefined;
+  const delayedRepository = {
+    connect: async () => {
+      delayedNow = new Date(NOW.getTime() + 301_000);
+    },
+    consumeRuntimeDelegationReplay: async (input: { consumedAt: Date; expiresAt: Date }) => {
+      delayedMarker = input;
+      return 'CONSUMED' as const;
+    }
+  };
+  const delayedService = new SubscriptionRuntimeLk2DelegationVerifierService(
+    delayedRepository as any
+  );
+  (delayedService as any).now = () => new Date(delayedNow);
+  await delayedService.verify({
+    actorDelegation: token(privateKey, {
+      exp: Math.floor(NOW.getTime() / 1000) + 1,
+      jti: '88888888-8888-4888-8888-888888888888'
+    }),
+    integrationToken: TOKEN,
+    request,
+    correlationId: CORRELATION_ID,
+    idempotencyKey: IDEMPOTENCY_KEY,
+    contractVersion: '1'
+  });
+  assert.ok(delayedMarker);
+  assert.equal(delayedMarker.consumedAt.getTime(), delayedNow.getTime());
+  assert.equal(delayedMarker.expiresAt.getTime(), delayedNow.getTime() + 300_000);
+
   await expectCode(
     service.verify({
       actorDelegation: token(privateKey),

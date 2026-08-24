@@ -1,7 +1,7 @@
 # Managed subscriptions runtime: LK1/LK2 integration plan
 
-Status: source-only architecture baseline
-Date: 2026-08-24
+Status: source-only architecture baseline; Mongo delegation replay evidence isolated
+Date: 2026-08-25
 Authoritative owner: `ph-admin` Subscription Runtime
 Activation: default `OFF`; no live activation is authorized by this document
 
@@ -23,6 +23,11 @@ facts are proven.
 This document does not authorize a live Node-RED import, Viva mutation, Mongo index
 apply, PostgreSQL migration, secret change, feature-flag activation, deployment or
 merge.
+
+The isolated Mongo replay-evidence slice is based on ph-admin commit
+`2d8e09a60a85f2090de058cc06ab759063bb415b`. LK2 commit
+`33b1ad4ee1158e4c6c0edd0f4c1e736e9015e430` is reference evidence only and is not
+modified by this slice.
 
 ## 2. Decision summary
 
@@ -250,7 +255,7 @@ missing ledger event, aggregate/ledger divergence or inability to roll back.
 - authoritative instance/aggregate/target/price projections;
 - persisted projector checkpoint writer and freshness/recovery;
 - redacted legacy comparison metrics; the LK2 delegation boundary is source-only
-  and still requires configuration/index readiness;
+  and still requires configuration custody and exact deployed index readiness;
 - removal/rotation response for the committed LK1 credential.
 
 ### WARN
@@ -273,6 +278,7 @@ missing ledger event, aggregate/ledger divergence or inability to roll back.
 - credential rotation/revocation and secret provisioning;
 - sanitized Golden HAR/provider contract confirmation;
 - Mongo topology/index preflight/apply and backup/restore proof;
+- replica-set majority acknowledgement and failover evidence for replay consume;
 - feature-flag activation, Node-RED import, deployment and rendered post-check.
 
 ## 13. Immediate next package

@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { MongoServerError } from 'mongodb';
 import {
   SubscriptionsRepository,
   subscriptionRuntimeDelegationIndexesRequired
@@ -7,12 +8,21 @@ import { SubscriptionRuntimeContractError } from
   '../src/subscriptions/subscription-runtime-contracts';
 
 class ReplayRepository extends SubscriptionsRepository {
-  override isDuplicateKey(error: unknown): boolean {
-    return error === duplicate;
+  classifyReplayDuplicate(error: unknown): boolean {
+    return this.isRuntimeDelegationReplayDuplicate(error);
   }
 }
 
-const duplicate = new Error('synthetic duplicate key');
+const expectedDuplicate = new MongoServerError({
+  code: 11000,
+  errmsg: 'E11000 duplicate key error collection: test.replays index: subscription_runtime_delegation_issuer_jti_unique dup key: { issuer: "issuer", jti: "jti" }',
+  keyPattern: { issuer: 1, jti: 1 }
+});
+const unknownDuplicate = new MongoServerError({
+  code: 11000,
+  errmsg: 'E11000 duplicate key error collection: test.replays index: unexpected_unique dup key: { consumedAt: new Date(0) }',
+  keyPattern: { consumedAt: 1 }
+});
 
 async function run(): Promise<void> {
   assert.equal(subscriptionRuntimeDelegationIndexesRequired({}), false);
@@ -29,13 +39,26 @@ async function run(): Promise<void> {
   process.env.SUBSCRIPTIONS_RUNTIME_LK2_DELEGATION_ENABLED = 'true';
   const consumed = new Set<string>();
   const repository = new ReplayRepository();
+  assert.equal(repository.classifyReplayDuplicate(expectedDuplicate), true);
+  assert.equal(repository.classifyReplayDuplicate(unknownDuplicate), false);
+  assert.equal(repository.classifyReplayDuplicate(new Error('storage unavailable')), false);
   (repository as any).db = {
     collection: (name: string) => {
       assert.equal(name, 'subscription_runtime_delegation_replays');
       return {
-        insertOne: async (document: { issuer: string; jti: string }) => {
+        insertOne: async (
+          document: { issuer: string; jti: string },
+          options: {
+            timeoutMS?: number;
+            writeConcern?: { w?: string; wtimeoutMS?: number };
+          }
+        ) => {
+          assert.deepEqual(options, {
+            timeoutMS: 5_000,
+            writeConcern: { w: 'majority', wtimeoutMS: 5_000 }
+          });
           const key = `${document.issuer}\0${document.jti}`;
-          if (consumed.has(key)) throw duplicate;
+          if (consumed.has(key)) throw expectedDuplicate;
           consumed.add(key);
         }
       };

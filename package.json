@@ -41,6 +41,7 @@
     "test:subscriptions-runtime-contracts": "ts-node test/subscriptions-runtime-contracts.test.ts",
     "test:subscriptions-runtime-v1-quote": "ts-node test/subscriptions-runtime-v1-quote.service.test.ts",
     "test:subscriptions-runtime-lk2-delegation": "ts-node test/subscriptions-runtime-lk2-delegation.test.ts && ts-node test/subscriptions-runtime-delegation-replay.repository.test.ts",
+    "test:subscriptions-runtime-lk2-delegation:mongo": "ts-node test/subscriptions-runtime-delegation-replay.mongodb.test.ts",
     "test:subscriptions-entitlement-reservation": "ts-node test/subscriptions-entitlement-reservation.repository.test.ts",
     "test:subscriptions-publication": "ts-node test/subscriptions-publication.service.test.ts",
     "test:subscriptions-backup": "node --test test/managed-subscriptions-backup.test.mjs",
