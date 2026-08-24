@@ -4,6 +4,7 @@ import { VivaAdminModule } from '../integrations/viva/viva-admin.module';
 import { LkIdentityModule } from '../lk-identity/lk-identity.module';
 import {
   SubscriptionsController,
+  SubscriptionRuntimeV1Controller,
   SubscriptionTestController,
   SubscriptionTrustedShadowController
 } from './subscriptions.controller';
@@ -19,11 +20,13 @@ import { SubscriptionRuntimeContextService } from './subscription-runtime-contex
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
 import { SubscriptionPublicationService } from './subscription-publication.service';
+import { SubscriptionRuntimeV1QuoteService } from './subscription-runtime-v1-quote.service';
 
 @Module({
   imports: [AuthModule, LkIdentityModule, VivaAdminModule],
   controllers: [
     SubscriptionsController,
+    SubscriptionRuntimeV1Controller,
     SubscriptionTestController,
     SubscriptionTrustedShadowController
   ],
@@ -33,6 +36,7 @@ import { SubscriptionPublicationService } from './subscription-publication.servi
     SubscriptionCanonicalTargetResolverService,
     SubscriptionProviderMappingPreviewService,
     SubscriptionTrustedShadowAdapterService,
+    SubscriptionRuntimeV1QuoteService,
     SubscriptionRuntimeContextService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,
