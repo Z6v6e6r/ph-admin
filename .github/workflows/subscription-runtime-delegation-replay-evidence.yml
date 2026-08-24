@@ -1,0 +1,69 @@
+name: Subscription runtime delegation replay evidence
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/subscription-runtime-delegation-replay-mongo-evidence-20260824
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: subscription-runtime-delegation-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mongo-replay-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mongo:
+        image: mongo:7.0.14
+        ports:
+          - 27029:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'quit(db.adminCommand({ ping: 1 }).ok ? 0 : 1)'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27029/?directConnection=true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Clean install
+        run: npm ci
+      - name: Existing delegation tests
+        run: npm run test:subscriptions-runtime-lk2-delegation
+      - name: Existing runtime contract tests
+        run: npm run test:subscriptions-runtime-contracts
+      - name: Real Mongo replay evidence
+        run: npm run test:subscriptions-runtime-lk2-delegation:mongo
+      - name: TypeScript
+        run: npx tsc -p tsconfig.build.json --noEmit --incremental false
+      - name: Build
+        run: npm run build
+      - name: Worktree remains clean
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

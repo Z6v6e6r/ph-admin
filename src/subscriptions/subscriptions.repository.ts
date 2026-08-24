@@ -955,10 +955,13 @@ export class SubscriptionsRepository {
       );
     }
     try {
-      await this.runtimeDelegationReplays().insertOne(document);
+      await this.runtimeDelegationReplays().insertOne(document, {
+        timeoutMS: 5_000,
+        writeConcern: { w: 'majority', wtimeoutMS: 5_000 }
+      });
       return 'CONSUMED';
     } catch (error) {
-      if (this.isDuplicateKey(error)) return 'REPLAY';
+      if (this.isRuntimeDelegationReplayDuplicate(error)) return 'REPLAY';
       throw error;
     }
   }
@@ -1656,6 +1659,20 @@ export class SubscriptionsRepository {
 
   isDuplicateKey(error: unknown): boolean {
     return error instanceof MongoServerError && error.code === 11000;
+  }
+
+  protected isRuntimeDelegationReplayDuplicate(error: unknown): boolean {
+    if (!this.isDuplicateKey(error)) return false;
+    const mongoError = error as MongoServerError;
+    const expected = SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.delegationReplays[0];
+    const actualKeyPattern = mongoError.keyPattern as unknown;
+    if (JSON.stringify(actualKeyPattern) !== JSON.stringify(expected.key)) return false;
+    const details = [
+      mongoError.message,
+      mongoError.errmsg,
+      mongoError.errorResponse?.errmsg
+    ].filter((value): value is string => typeof value === 'string');
+    return details.some((value) => value.includes(`index: ${expected.name} dup key:`));
   }
 
   private types(): Collection<StoredSubscriptionType> {

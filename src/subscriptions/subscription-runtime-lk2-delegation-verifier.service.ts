@@ -165,11 +165,21 @@ export class SubscriptionRuntimeLk2DelegationVerifierService {
     }
 
     await this.repository.connect();
+    const consumedAt = this.now();
+    const replayRetentionSeconds = this.integerEnv(
+      'SUBSCRIPTIONS_RUNTIME_LK2_REPLAY_RETENTION_SECONDS',
+      300,
+      60,
+      3_600
+    );
     const replay = await this.repository.consumeRuntimeDelegationReplay({
       issuer: claims.iss,
       jti: claims.jti,
-      expiresAt: new Date(claims.exp * 1000),
-      consumedAt: this.now()
+      expiresAt: new Date(Math.max(
+        (claims.exp + replayRetentionSeconds) * 1000,
+        consumedAt.getTime() + replayRetentionSeconds * 1000
+      )),
+      consumedAt
     });
     if (replay === 'REPLAY') {
       throw new UnauthorizedException({
