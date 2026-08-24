@@ -54,7 +54,8 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     const domainCode = typeof body.code === 'string' ? body.code : '';
     const isIntegrationTokenRejection = [
       'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN',
-      'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN'
+      'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN',
+      'SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_FORBIDDEN'
     ].includes(domainCode);
     const status = rawStatus === HttpStatus.FORBIDDEN && !request.user && !isIntegrationTokenRejection
       ? HttpStatus.UNAUTHORIZED
@@ -78,6 +79,8 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     }
 
     response.setHeader('X-Correlation-Id', correlationId);
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
     response.status(status).json({
       error: {
         code,
