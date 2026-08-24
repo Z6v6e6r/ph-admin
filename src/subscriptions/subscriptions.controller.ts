@@ -40,6 +40,9 @@ import { SubscriptionPublicationService } from './subscription-publication.servi
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionRuntimeV1QuoteService } from './subscription-runtime-v1-quote.service';
 import { SubscriptionRuntimeV1QuoteDto } from './dto/subscription-runtime-v1-quote.dto';
+import { ManagedSubscriptionRuntimeV1QuoteRequest } from './subscription-runtime-contracts';
+import { SubscriptionRuntimeLk2DelegationVerifierService } from
+  './subscription-runtime-lk2-delegation-verifier.service';
 import {
   SubscriptionActivationResult,
   SubscriptionActivationService
@@ -334,7 +337,10 @@ export class SubscriptionTrustedShadowController {
 @Roles()
 @UseFilters(SubscriptionsExceptionFilter)
 export class SubscriptionRuntimeV1Controller {
-  constructor(private readonly runtimeV1Quote: SubscriptionRuntimeV1QuoteService) {}
+  constructor(
+    private readonly runtimeV1Quote: SubscriptionRuntimeV1QuoteService,
+    private readonly lk2Delegation: SubscriptionRuntimeLk2DelegationVerifierService
+  ) {}
 
   @Post('quote')
   @SkipAdminMutationAudit()
@@ -352,6 +358,41 @@ export class SubscriptionRuntimeV1Controller {
     return this.runtimeV1Quote.quote(
       authorization,
       integrationToken,
+      dto,
+      correlationId,
+      idempotencyKey,
+      contractVersion
+    );
+  }
+
+  @Post('lk2/v1/quote')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  async quoteFromLk2(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscription-actor-delegation') actorDelegation: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-subscription-runtime-contract-version') contractVersion: string | undefined,
+    @Body() dto: SubscriptionRuntimeV1QuoteDto
+  ) {
+    const actor = await this.lk2Delegation.verify({
+      authorization,
+      actorDelegation,
+      integrationToken,
+      request: {
+        ...dto,
+        target: { ...dto.target }
+      } as ManagedSubscriptionRuntimeV1QuoteRequest,
+      correlationId,
+      idempotencyKey,
+      contractVersion
+    });
+    return this.runtimeV1Quote.quoteTrustedActor(
+      actor,
       dto,
       correlationId,
       idempotencyKey,

@@ -63,18 +63,27 @@ async function run(): Promise<void> {
   let identityCalls = 0;
   let adapterCalls = 0;
   let adapterResult = shadow();
+  let expectedActorSource: 'LK_IDENTITY' | 'LK2_DELEGATION' = 'LK_IDENTITY';
   const identity = {
     verifyTrustedBearer: async (authorization: string | undefined) => {
       identityCalls += 1;
       assert.equal(authorization, AUTHORIZATION);
-      return { actor: { tenantKey: 'tenant:one' } };
+      return {
+        actor: {
+          tenantKey: 'tenant:one',
+          clientId: 'provider-client:one',
+          issuer: 'issuer:one',
+          subject: 'subject:one'
+        }
+      };
     }
   };
   const adapter = {
-    quote: async (authorization: string | undefined, token: string | undefined, dto: unknown) => {
+    quoteTrustedActor: async (actor: any, dto: unknown) => {
       adapterCalls += 1;
-      assert.equal(authorization, AUTHORIZATION);
-      assert.equal(token, TOKEN);
+      assert.equal(actor.source, expectedActorSource);
+      assert.equal(actor.runtimeTenantId, 'tenant:one');
+      assert.equal(actor.providerClientId, 'provider-client:one');
       assert.deepEqual(dto, {
         subscriptionInstanceId: 'subscription_instance:one',
         action: 'JOIN_GAME',
@@ -98,6 +107,27 @@ async function run(): Promise<void> {
   assert.equal(eligible.price?.finalPriceMinor, 0);
   assert.equal(eligible.selectedSubscription?.policyDigest, DIGEST);
   assert.equal(eligible.expiresAt, '2026-08-24T10:02:00.000Z');
+
+  expectedActorSource = 'LK2_DELEGATION';
+  const identityCallsBeforeDelegation = identityCalls;
+  const delegated = await service.quoteTrustedActor(
+    {
+      source: 'LK2_DELEGATION',
+      runtimeTenantId: 'tenant:one',
+      actorUserId: '11111111-1111-4111-8111-111111111111',
+      provider: 'VIVA',
+      providerClientId: 'provider-client:one',
+      evidenceRef: `evidence:lk2-delegation:${'b'.repeat(64)}`,
+      verifiedAt: NOW
+    },
+    request() as any,
+    'correlation:delegated',
+    'idempotency:delegated',
+    '1'
+  );
+  assert.equal(delegated.outcome, 'ENTITLEMENT_APPLIED');
+  assert.equal(identityCalls, identityCallsBeforeDelegation);
+  expectedActorSource = 'LK_IDENTITY';
 
   adapterResult = shadow({
     eligible: false,

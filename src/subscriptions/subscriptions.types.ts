@@ -705,7 +705,7 @@ export interface StoredSubscriptionEntitlementAggregate {
 }
 
 export interface SubscriptionShadowQuoteIdentityContext {
-  resolutionSource: 'LK_IDENTITY';
+  resolutionSource: 'LK_IDENTITY' | 'LK2_DELEGATION';
   tenantId: string;
   clientRefHash: string;
   evidenceRef: string;

@@ -17,6 +17,7 @@ import {
   ManagedSubscriptionRuntimeReasonCode
 } from './subscription-runtime-reason-codes';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import { TrustedSubscriptionRuntimeActor } from './subscription-runtime-trusted-actor';
 import { SubscriptionShadowQuoteBlocker } from './subscriptions.types';
 
 const HEADER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
@@ -66,12 +67,48 @@ export class SubscriptionRuntimeV1QuoteService {
     validateManagedSubscriptionRuntimeV1QuoteRequest(request);
     this.assertEnabledMode();
     this.assertCommandHeaders(correlationId, idempotencyKey, contractVersion);
-    await this.assertAccess(authorization, integrationToken);
+    const actor = await this.assertAccess(authorization, integrationToken);
 
+    return this.evaluate(
+      request,
+      actor,
+      correlationId as string,
+      idempotencyKey as string
+    );
+  }
+
+  async quoteTrustedActor(
+    actor: TrustedSubscriptionRuntimeActor,
+    dto: SubscriptionRuntimeV1QuoteDto,
+    correlationId: string | undefined,
+    idempotencyKey: string | undefined,
+    contractVersion: string | undefined
+  ): Promise<ManagedSubscriptionRuntimeV1QuoteOutcome> {
+    const request = {
+      ...dto,
+      target: { ...dto.target }
+    } as ManagedSubscriptionRuntimeV1QuoteRequest;
+    validateManagedSubscriptionRuntimeV1QuoteRequest(request);
+    this.assertEnabledMode();
+    this.assertCommandHeaders(correlationId, idempotencyKey, contractVersion);
+    return this.evaluate(
+      request,
+      actor,
+      correlationId as string,
+      idempotencyKey as string
+    );
+  }
+
+  private async evaluate(
+    request: ManagedSubscriptionRuntimeV1QuoteRequest,
+    actor: TrustedSubscriptionRuntimeActor,
+    correlationId: string,
+    idempotencyKey: string
+  ): Promise<ManagedSubscriptionRuntimeV1QuoteOutcome> {
     const base = this.base(
       request,
-      correlationId as string,
-      idempotencyKey as string,
+      correlationId,
+      idempotencyKey,
       this.now()
     );
     if (!request.preferredSubscriptionInstanceId) {
@@ -81,7 +118,7 @@ export class SubscriptionRuntimeV1QuoteService {
       return this.retryLater(base, 'TARGET_NOT_SERVER_RESOLVED');
     }
 
-    const shadow = await this.adapter.quote(authorization, integrationToken, {
+    const shadow = await this.adapter.quoteTrustedActor(actor, {
       subscriptionInstanceId: request.preferredSubscriptionInstanceId,
       action: request.action as 'CREATE_GAME',
       target: {
@@ -298,7 +335,7 @@ export class SubscriptionRuntimeV1QuoteService {
   private async assertAccess(
     authorization: string | undefined,
     suppliedToken: string | undefined
-  ): Promise<void> {
+  ): Promise<TrustedSubscriptionRuntimeActor> {
     const expected = String(process.env.SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN ?? '').trim();
     if (!INTEGRATION_TOKEN_PATTERN.test(expected)) {
       throw new ServiceUnavailableException({
@@ -330,6 +367,32 @@ export class SubscriptionRuntimeV1QuoteService {
         message: 'Managed subscription runtime tenant does not match verified identity'
       });
     }
+    const providerClientId = String(verified.actor.clientId ?? '').trim();
+    if (!ID_PATTERN.test(providerClientId)) {
+      throw new ForbiddenException({
+        code: 'SUBSCRIPTIONS_RUNTIME_PROVIDER_CLIENT_REQUIRED',
+        message: 'Managed subscription runtime provider identity is unavailable'
+      });
+    }
+    const verifiedAt = this.now().toISOString();
+    const evidenceHash = createHash('sha256')
+      .update([
+        'subscription-runtime-lk-identity:v1',
+        tenantId,
+        verified.actor.issuer,
+        verified.actor.subject,
+        verifiedAt
+      ].join('\0'))
+      .digest('hex');
+    return {
+      source: 'LK_IDENTITY',
+      runtimeTenantId: tenantId,
+      actorUserId: verified.actor.subject,
+      provider: 'VIVA',
+      providerClientId,
+      evidenceRef: `evidence:lk-identity:${evidenceHash}`,
+      verifiedAt
+    };
   }
 
   private ttlSeconds(): number {

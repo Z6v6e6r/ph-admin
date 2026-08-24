@@ -144,6 +144,7 @@ use one orchestration path and must not bolt subscription checks onto both.
 The initial internal API is versioned and service-authenticated:
 
 - `POST /api/internal/subscription-runtime/quote`
+- `POST /api/internal/subscription-runtime/lk2/v1/quote`
 - `POST /api/internal/subscription-runtime/reservations`
 - `POST /api/internal/subscription-runtime/reservations/:id/confirm`
 - `POST /api/internal/subscription-runtime/reservations/:id/release`
@@ -153,6 +154,13 @@ The initial internal API is versioned and service-authenticated:
 Tenant and actor are derived from authenticated server context, never trusted from
 the body. A public client supplies only action, PadlHub target ID, optional expected
 revision, optional opaque local subscription instance and payment intent.
+
+LK1 and LK2 use distinct identity contracts. LK1 retains its verified LK bearer.
+LK2 must never forward its general PadlHub session JWT; it uses the request-bound
+RS256 delegation and separate integration token described in
+`managed-subscriptions-lk2-actor-delegation.md`. A shared Mongo replay marker makes
+each delegation single-use. The boundary remains default-off and does not authorize
+signing-key provisioning or activation.
 
 Stable outcomes:
 
@@ -241,7 +249,8 @@ missing ledger event, aggregate/ledger divergence or inability to roll back.
 
 - authoritative instance/aggregate/target/price projections;
 - persisted projector checkpoint writer and freshness/recovery;
-- service-authenticated clients and redacted comparison metrics;
+- redacted legacy comparison metrics; the LK2 delegation boundary is source-only
+  and still requires configuration/index readiness;
 - removal/rotation response for the committed LK1 credential.
 
 ### WARN

@@ -27,7 +27,8 @@ permissions, feature flags and operational lifecycle.
 6. **LK1 call path:** browser intent -> LK1 Node-RED adapter -> internal runtime.
    Browser never receives the integration credential.
 7. **LK2 call path:** Web/Mobile -> LK2 public API -> one LK2 runtime client. Web and
-   Mobile never call the internal runtime.
+   Mobile never call the internal runtime. LK2 uses a recipient-specific,
+   request-bound RS256 actor delegation; it never forwards its general session JWT.
 8. **Provider mutation:** existing LK1 Viva writer during transition; LK2 owns only
    the local writer actions it actually implements. Each writer reports exact facts.
 9. **Reconciliation:** runtime-owned operation state machine using writer/provider

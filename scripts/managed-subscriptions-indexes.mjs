@@ -9,6 +9,9 @@ const includeTestRuntimeIndexes = ['1', 'true', 'yes'].includes(
 const includeRuntimeContractIndexes = ['1', 'true', 'yes'].includes(
   String(process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED || '').trim().toLowerCase()
 );
+const includeLk2DelegationIndexes = includeRuntimeContractIndexes && ['1', 'true', 'yes'].includes(
+  String(process.env.SUBSCRIPTIONS_RUNTIME_LK2_DELEGATION_ENABLED || '').trim().toLowerCase()
+);
 
 const plan = [
   ['subscription_types', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_type_id_unique' }],
@@ -54,6 +57,10 @@ const plan = [
     ['subscription_outbox', { outboxEventId: 1 }, { unique: true, name: 'subscription_outbox_event_id_unique' }],
     ['subscription_outbox', { ledgerEventId: 1 }, { unique: true, name: 'subscription_outbox_ledger_event_unique' }],
     ['subscription_outbox', { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 }, { name: 'subscription_outbox_delivery' }]
+  ] : []),
+  ...(includeLk2DelegationIndexes ? [
+    ['subscription_runtime_delegation_replays', { issuer: 1, jti: 1 }, { unique: true, name: 'subscription_runtime_delegation_issuer_jti_unique' }],
+    ['subscription_runtime_delegation_replays', { expiresAt: 1 }, { expireAfterSeconds: 0, name: 'subscription_runtime_delegation_expiry_ttl' }]
   ] : []),
   ...(includeTestRuntimeIndexes ? [
     ['subscription_test_offers', { offerId: 1 }, { unique: true, name: 'subscription_test_offer_id_unique' }],
@@ -126,7 +133,8 @@ try {
         name: options.name,
         key: keys,
         unique: options.unique === true,
-        sparse: options.sparse === true
+        sparse: options.sparse === true,
+        expireAfterSeconds: options.expireAfterSeconds
       }));
     const missing = expected
       .filter((spec) => {
@@ -134,7 +142,8 @@ try {
         return !actual
           || JSON.stringify(actual.key) !== JSON.stringify(spec.key)
           || Boolean(actual.unique) !== spec.unique
-          || Boolean(actual.sparse) !== spec.sparse;
+          || Boolean(actual.sparse) !== spec.sparse
+          || actual.expireAfterSeconds !== spec.expireAfterSeconds;
       })
       .map((spec) => spec.name);
     missingCount += missing.length;
