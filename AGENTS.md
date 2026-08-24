@@ -18,6 +18,12 @@ checkpoint commits, push of that same `codex/*` or `agent/*` branch, Draft PR cr
 CI readback and in-scope CI correction. Do not pause merely because one of those steps
 completed.
 
+Use `global_spark_worker` for an eligible bounded R1/R2 task only when that global profile
+is available in the current Codex environment. If unavailable, keep the task on the
+primary Fast or Main lane; do not add a repository-local duplicate profile or downgrade
+critical work. The configured limit is at most two concurrent spawned-agent threads in
+addition to the primary agent; do not fill those slots without independent value.
+
 Keep explicit human gates before merge, direct push to `main`/protected branches,
 force push, deploy, service restart, Node-RED import, migration or backfill execution,
 live/shared data mutation, secrets/keys, permission widening, routing/ingress changes,

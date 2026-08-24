@@ -95,17 +95,20 @@ Confirmed model IDs:
 - `gpt-5.6-terra`: low, medium, high, xhigh, max, ultra.
 - `gpt-5.6-luna`: low, medium, high, xhigh, max.
 
-The workstation-level `global_spark_worker` is available for bounded R1/R2 implementation
-and is intentionally managed outside this repository. Recheck the catalog before changing
-the repository's explicit Sol/Terra/Luna IDs; fallback policy lives in
+Use `global_spark_worker` for an eligible bounded R1/R2 task when that global profile is
+available in the current Codex environment. If it is unavailable, keep the task on the
+primary Fast or Main lane; do not fail the task, add a repository-local duplicate profile,
+or silently route critical work to a weaker model. Recheck the catalog before changing the
+repository's explicit Sol/Terra/Luna IDs; fallback policy lives in
 `references/model-routing.md`.
 
 ## Agent roster
 
-The repository default is Terra medium with a configured cap of two spawned threads.
-Always obey a lower live limit and use successive waves; agents are selected for
-independent value, not filled to capacity. A single global Spark writer is preferred for
-an eligible bounded R1/R2 task.
+The repository default is Terra medium with a configured cap of two concurrent
+spawned-agent threads in addition to the primary agent. Always obey a lower live limit and
+use successive waves; agents are selected for independent value, not filled to capacity.
+A single global Spark writer is preferred for an eligible bounded R1/R2 task when that
+profile is available.
 
 | Agent | Trigger | Model/effort | Sandbox |
 | --- | --- | --- | --- |
@@ -158,7 +161,7 @@ These are configuration simulations, not executed product changes.
 | A. Change one component label | R0; Luna/Terra low; shortened route | none | inspect actual asset, syntax/diff, focused UI check if available |
 | B. Fix ordinary backend bug in several files | R1/R2; Fast, bounded Spark, or Main according to ambiguity | one Spark writer only when the packet is cheaper; reviewer only on trigger | reproduce, affected no-emit TS, targeted tests, diff review |
 | C. Add API scenario consumed by mobile | minimum R2/R3 due public cross-client contract; Sol/Terra design then Terra implementation | explorer, architect if ambiguous, implementer/test engineer, integration/contract review; no local mobile reviewer | compatibility, contract/negative tests, old-client fallback, external mobile evidence required |
-| D. Change payment/subscription calculation | automatic R3; Sol xhigh analysis, Terra high implementation | architect, implementer, test engineer, security/integration reviewer, independent reviewer | amount/currency, idempotency, duplicate callbacks, race/partial failure, reconciliation, rollback |
+| D. Change payment/subscription calculation | automatic R3; Critical lane with primary ownership | primary owner + read-only payment-safety reviewer; optional test worker only for a genuinely independent test-owned scope; add a second reviewer only for another distinct risk such as schema migration or permission boundaries | amount/currency, negative tests, idempotency, duplicate callbacks, race/partial failure, reconciliation, rollback |
 | E. Full release-readiness audit | R4; primary Sol ultra only because lanes are independent, otherwise Sol xhigh | parallel read-only backend/data/security/integration/UI/release lanes, never above both configured and live caps | candidate SHA, relevant full gates, migration/config, real runtime evidence, observability, rollback, consolidated GO/NO-GO |
 
 The model correctly avoids spawning agents for A, chooses direct or bounded Spark work

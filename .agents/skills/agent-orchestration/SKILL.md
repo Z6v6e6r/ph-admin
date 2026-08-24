@@ -46,7 +46,7 @@ Delegate only when one of these is true:
 - a wide audit has genuinely independent lanes;
 - an independent cross-check is justified by R3-R4 risk.
 
-Do not delegate a task solvable by a few local reads/tool calls. Do not duplicate scopes for comfort. Use one write agent per area and at most two concurrent spawned agents total; prefer one reviewer for R2/R3 unless a second distinct risk trigger exists. Use successive waves rather than filling capacity.
+Do not delegate a task solvable by a few local reads/tool calls. Do not duplicate scopes for comfort. Use one write agent per area and at most two concurrent spawned-agent threads in addition to the primary agent; prefer one reviewer for R2/R3 unless a second distinct risk trigger exists. Use successive waves rather than filling capacity.
 
 Before spawning, write a task packet from `references/agent-task-packet.md`. Start with one explorer map, then give later agents narrow file/symbol inputs. Assign one integration owner. Write ownership must not overlap; serialize tightly coupled changes.
 

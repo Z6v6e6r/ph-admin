@@ -10,9 +10,10 @@ Confirmed on 2026-08-08 with `codex-cli 0.147.0-alpha.6.5` and `codex debug mode
 | `gpt-5.6-terra` | Default implementation, multi-file bugs, integrations, tests, standard review, read-heavy support work | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-luna` | Narrow repeatable work, extraction, templated docs/tests, mechanical batches | low, medium, high, xhigh, max |
 
-The global `global_spark_worker` is available on this workstation for bounded local R1/R2
-implementation. Its model remains globally managed; do not duplicate or override that
-profile in this repository.
+Use `global_spark_worker` for an eligible bounded R1/R2 task when that global profile is
+available in the current Codex environment. If it is unavailable, keep the task on the
+primary Fast or Main lane. Do not fail the task, add a repository-local duplicate profile,
+or silently route critical work to a weaker model.
 
 Fallbacks:
 

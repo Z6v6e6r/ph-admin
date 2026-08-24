@@ -5,7 +5,7 @@
 - R0: syntax/visual check, configured formatter if any, narrow test if any, diff review.
 - R1: focused test, no-emit typecheck for TS, build when emitted assets are in scope, diff review.
 - R2: safe baseline when useful, targeted and relevant integration tests, affected typecheck/build, and at most one independent review when complexity or a domain trigger justifies it.
-- R3: baseline, unit/integration/contract evidence, build, error and concurrency paths, independent reviewer plus relevant security/integration/migration review, compatibility, rollback/recovery, observability.
+- R3: baseline, relevant unit/integration/contract evidence, build, negative and concurrency paths, one specialist reviewer selected by the actual risk trigger, compatibility, rollback/recovery, and observability. Add a second reviewer only for a distinct independent risk area.
 - R4: recorded invariants/decision, all relevant automated levels, dry run, recovery rehearsal where safe, two independent review perspectives, release audit, manual approval before irreversible action, no automatic production deployment.
 
 This repository has no aggregate test/lint/formatter/CI script. Report that limitation precisely and use the nearest focused evidence. Never use `support:cleanup-outbox` as a check or repeat an unchanged passing command merely because a checkpoint was created.

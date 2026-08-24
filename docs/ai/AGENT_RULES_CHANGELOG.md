@@ -15,7 +15,10 @@ Changed:
 - reduced concurrent spawned threads from four to two;
 - changed generic significant-diff review to domain-triggered review and prohibited
   unchanged duplicate checks;
-- recognized the globally managed Spark worker without duplicating its model profile.
+- made use of the globally managed Spark worker conditional on its availability without
+  duplicating its model profile;
+- clarified that the cap is two spawned-agent threads in addition to the primary and that
+  R3 uses one specialist per actual trigger, with a second reviewer only for a distinct risk.
 
 No application code, dependencies, runtime configuration, live data, or deployment was
 changed.
