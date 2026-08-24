@@ -12,6 +12,7 @@ import {
   validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
+  validateStoredSubscriptionInstanceProjectorCheckpoint,
   validateStoredSubscriptionOutboxEvent,
   validateStoredSubscriptionPolicyPublication,
   validateStoredSubscriptionProviderMapping,
@@ -30,6 +31,7 @@ import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProviderMapping,
@@ -39,7 +41,7 @@ import {
 
 const HASH = 'a'.repeat(64);
 const OTHER_HASH = 'b'.repeat(64);
-const DIGEST = `sha256:${HASH}`;
+const DIGEST: `sha256:${string}` = `sha256:${HASH}`;
 const NOW = '2026-08-15T19:00:00.000Z';
 
 const canonicalTargetFixture = (): StoredSubscriptionCanonicalTargetSnapshot => ({
@@ -188,6 +190,62 @@ const instanceFixture = (): StoredSubscriptionInstance => ({
     lastReadBackEvidenceRef: 'evidence:provider-instance-readback'
   },
   reconciliation: { state: 'CURRENT', asOf: NOW, evidenceRef: 'evidence:instance-current' },
+  revision: 1,
+  createdAt: NOW,
+  updatedAt: NOW
+});
+
+const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckpoint => ({
+  schemaVersion: 1,
+  checkpointId: 'checkpoint:friendship-12m',
+  tenantId: 'iSkq6G',
+  provider: 'VIVA',
+  providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+  providerScope: { kind: 'STATION', scopeId: 'station:yasenevo' },
+  binding: {
+    mappingId: 'mapping:friendship-12m',
+    mappingRevision: 1,
+    subscriptionTypeId: 'subscription_type:friendship-12m',
+    publicationId: 'publication:friendship-12m-v3',
+    policyVersion: 3,
+    policyDigest: DIGEST,
+    runtimeCompatibility: {
+      adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+      contractVersion: 1,
+      capabilityDigest: DIGEST
+    }
+  },
+  producer: {
+    producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR',
+    contractVersion: 1,
+    producerCapabilityDigest: DIGEST,
+    sourceContractDigest: DIGEST
+  },
+  state: 'CURRENT',
+  coverage: {
+    kind: 'CONSISTENT_FULL_SNAPSHOT',
+    snapshotId: 'snapshot:friendship-12m-20260815',
+    snapshotDigest: DIGEST,
+    coverageThrough: NOW,
+    sourceItemCount: 4
+  },
+  reconciliation: {
+    runId: 'run:friendship-12m-20260815',
+    mode: 'INITIAL_FULL',
+    startedAt: '2026-08-15T18:58:00.000Z',
+    completedAt: NOW,
+    sourceItemCount: 4,
+    insertedCount: 2,
+    updatedCount: 1,
+    replayedCount: 1,
+    terminalCount: 0,
+    failureCount: 0,
+    sourceEvidenceRef: 'evidence:subscription-source',
+    resultEvidenceRef: 'evidence:subscription-projector-result',
+    reconciliationDigest: DIGEST
+  },
+  failure: null,
+  lease: null,
   revision: 1,
   createdAt: NOW,
   updatedAt: NOW
@@ -518,6 +576,77 @@ async function run(): Promise<void> {
     publicationFixture().policyDigest
   );
   validateStoredSubscriptionInstance(instanceFixture());
+  validateStoredSubscriptionInstanceProjectorCheckpoint(projectorCheckpointFixture());
+  validateStoredSubscriptionInstanceProjectorCheckpoint({
+    ...projectorCheckpointFixture(),
+    coverage: {
+      kind: 'ORDERED_CHANGE_FEED',
+      watermark: 'cursor:20260815:42',
+      watermarkDigest: DIGEST,
+      coverageThrough: NOW
+    }
+  });
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), provider: 'OTHER' as 'VIVA'
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_CHECKPOINT_SCHEMA_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), providerScope: { kind: 'STUDIO' as 'STATION', scopeId: 'studio:1' }
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), providerScope: { kind: 'STATION_SET', scopeId: 'station-set:bad' }
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(),
+      producer: {
+        ...projectorCheckpointFixture().producer,
+        producerCapabilityDigest: 'bad' as `sha256:${string}`
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_DIGEST_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), reconciliation: { ...projectorCheckpointFixture().reconciliation, sourceItemCount: 1 }
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), reconciliation: { ...projectorCheckpointFixture().reconciliation, completedAt: '2026-08-15T18:57:00.000Z' }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), failure: { code: 'SOURCE_FAILED', detectedAt: NOW, evidenceRef: 'evidence:failure' }
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_CURRENT_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), state: 'FAILED', failure: null
+    }),
+    hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_FAILED_INVALID')
+  );
+  assert.throws(
+    () => validateStoredSubscriptionInstanceProjectorCheckpoint({
+      ...projectorCheckpointFixture(), lease: {
+        runId: 'run:friendship-12m-20260815', epoch: 1, ownerIdHash: DIGEST,
+        acquiredAt: NOW, expiresAt: '2026-08-15T18:59:00.000Z'
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID')
+  );
   validateStoredSubscriptionEntitlementAggregate(aggregateFixture());
   validateStoredSubscriptionRuntimeOperation(operationFixture());
   validateStoredSubscriptionRuntimeOperation({
@@ -814,6 +943,7 @@ async function run(): Promise<void> {
   assert.equal(new Set(indexNames).size, indexNames.length);
   assert.ok(indexNames.length >= 20);
   const indexScript = fs.readFileSync('scripts/managed-subscriptions-indexes.mjs', 'utf8');
+  const indexPlanner = fs.readFileSync('scripts/managed-subscriptions-indexes-core.mjs', 'utf8');
   const runtimeIndexBlockStart = indexScript.indexOf('...(includeRuntimeContractIndexes ? [');
   const runtimeIndexBlockEnd = indexScript.indexOf('...(includeTestRuntimeIndexes ? [');
   assert.ok(runtimeIndexBlockStart >= 0 && runtimeIndexBlockEnd > runtimeIndexBlockStart);
@@ -822,6 +952,7 @@ async function run(): Promise<void> {
     mappings: 'subscription_provider_mappings',
     publications: 'subscription_policy_publications',
     instances: 'subscription_instances',
+    instanceProjectorCheckpoints: 'subscription_instance_projector_checkpoints',
     aggregates: 'subscription_entitlement_aggregates',
     operations: 'subscription_operations',
     ledger: 'subscription_usage_ledger',
@@ -850,6 +981,14 @@ async function run(): Promise<void> {
   assert.match(repositorySource, /session\.withTransaction/);
   assert.match(indexScript, /SUBSCRIPTIONS_INDEX_APPLY !== 'CONFIRM'/);
   assert.match(indexScript, /DUPLICATE_PRECHECK_FAILED/);
+  assert.match(indexScript, /SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID/);
+  assert.match(indexScript, /SUBSCRIPTIONS_INDEX_EXPECTED_DB/);
+  assert.match(indexScript, /isWritablePrimary/);
+  assert.match(indexPlanner, /SUBSCRIPTIONS_INDEX_DRIFT/);
+  assert.ok(
+    indexScript.indexOf('validateTargetAttestation(') < indexScript.indexOf('new MongoClient('),
+    'apply target attestation must happen before any Mongo connection'
+  );
 
   const permissionKeys = ADMIN_PERMISSION_CATALOG.map((item) => item.key);
   assert.ok(permissionKeys.includes('subscriptions:publication:write'));
@@ -859,6 +998,7 @@ async function run(): Promise<void> {
   }
 
   const originalFlag = process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED;
+  const originalProjectorFlag = process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED;
   const repository = Object.create(SubscriptionsRepository.prototype) as any;
   delete process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED;
   assert.equal(repository.runtimeContractsEnabled(), false);
@@ -868,6 +1008,46 @@ async function run(): Promise<void> {
   );
   process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = 'true';
   assert.equal(repository.runtimeContractsEnabled(), true);
+  delete process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED;
+  await assert.rejects(
+    repository.runtimeInstanceProjectorCheckpointByProviderIdentity({
+      tenantId: 'iSkq6G', provider: 'VIVA', providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+      providerScopeKind: 'STATION', providerScopeId: 'station:yasenevo'
+    }),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_DISABLED')
+  );
+  delete process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED;
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'true';
+  await assert.rejects(
+    repository.runtimeInstanceProjectorCheckpointByProviderIdentity({
+      tenantId: 'iSkq6G', provider: 'VIVA', providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+      providerScopeKind: 'STATION', providerScopeId: 'station:yasenevo'
+    }),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID')
+  );
+  const invalidConnectionRepository = new SubscriptionsRepository();
+  await assert.rejects(
+    invalidConnectionRepository.connectReadOnly(),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID')
+  );
+  process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = 'true';
+  let checkpointReads = 0;
+  repository.runtimeInstanceProjectorCheckpoints = () => ({
+    findOne: async (query: unknown, options: unknown) => {
+      checkpointReads += 1;
+      assert.deepEqual(query, {
+        tenantId: 'iSkq6G', provider: 'VIVA', providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+        'providerScope.kind': 'STATION', 'providerScope.scopeId': 'station:yasenevo'
+      });
+      assert.deepEqual(options, { projection: { _id: 0 } });
+      return projectorCheckpointFixture();
+    }
+  });
+  assert.equal((await repository.runtimeInstanceProjectorCheckpointByProviderIdentity({
+    tenantId: 'iSkq6G', provider: 'VIVA', providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
+    providerScopeKind: 'STATION', providerScopeId: 'station:yasenevo'
+  }))?.checkpointId, 'checkpoint:friendship-12m');
+  assert.equal(checkpointReads, 1);
 
   const connectionModes: string[] = [];
   const coldRepository = Object.create(SubscriptionsRepository.prototype) as any;
@@ -1057,12 +1237,23 @@ async function run(): Promise<void> {
   );
   if (originalFlag === undefined) delete process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED;
   else process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = originalFlag;
+  if (originalProjectorFlag === undefined) delete process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED;
+  else process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = originalProjectorFlag;
 
   const contractSources = [
     'src/subscriptions/subscription-runtime-contracts.ts',
     'src/subscriptions/subscriptions.types.ts'
   ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(contractSources, /api\.vivacrm\.ru|https?:\/\/|\bfetch\s*\(/i);
+  const projectorSources = [
+    'src/subscriptions/subscriptions.repository.ts',
+    'src/subscriptions/subscription-sale-readiness.service.ts'
+  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  assert.doesNotMatch(
+    projectorSources,
+    /insertRuntimeInstanceProjectorCheckpoint|updateRuntimeInstanceProjectorCheckpoint|@(?:Get|Post|Put|Patch|Delete)\([^)]*checkpoint/i
+  );
+  assert.match(projectorSources, /SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE/);
 
   console.log('subscriptions runtime contracts tests: OK');
 }

@@ -24,6 +24,7 @@ export const MANAGED_SUBSCRIPTION_COLLECTIONS = Object.freeze([
   'subscription_provider_mappings',
   'subscription_policy_publications',
   'subscription_instances',
+  'subscription_instance_projector_checkpoints',
   'subscription_entitlement_aggregates',
   'subscription_operations',
   'subscription_usage_ledger',
@@ -294,7 +295,7 @@ export async function createManagedSubscriptionsBackup({
       fail('BACKUP_COLLECTION_SET_INCOMPLETE', 'Backup adapter did not return every managed collection');
     }
     const manifest = {
-      schema: 'phab-production-managed-subscriptions-backup-v2',
+      schema: 'phab-production-managed-subscriptions-backup-v3',
       createdAt: now.toISOString(),
       database: target.database,
       targetSha256: target.targetSha256,

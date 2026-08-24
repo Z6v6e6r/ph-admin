@@ -5,6 +5,7 @@ import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionPolicyVersion,
@@ -24,6 +25,7 @@ import {
   validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
+  validateStoredSubscriptionInstanceProjectorCheckpoint,
   validateStoredSubscriptionOutboxEvent,
   validateStoredSubscriptionPolicyPublication,
   validateStoredSubscriptionProviderMapping,
@@ -240,6 +242,24 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       key: { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 },
       unique: false
     }
+  ],
+  instanceProjectorCheckpoints: [
+    {
+      name: 'subscription_instance_projector_checkpoint_id_unique',
+      key: { checkpointId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_instance_projector_checkpoint_provider_scope_unique',
+      key: {
+        tenantId: 1,
+        provider: 1,
+        providerProductId: 1,
+        'providerScope.kind': 1,
+        'providerScope.scopeId': 1
+      },
+      unique: true
+    }
   ]
 } as const;
 
@@ -297,6 +317,7 @@ export class SubscriptionsRepository {
   }
 
   private async initialize(mode: 'DEFAULT' | 'VERIFY_ONLY'): Promise<void> {
+    this.assertInstanceProjectorConfiguration();
     if (!this.mongoUri) throw new Error('SUBSCRIPTIONS_MONGODB_URI or MONGODB_URI is required');
     if (!this.dbName) throw new Error('SUBSCRIPTIONS_MONGODB_DB is required');
     const client = new MongoClient(this.mongoUri, {
@@ -572,6 +593,28 @@ export class SubscriptionsRepository {
       { projection: { _id: 0 } }
     );
     if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
+  }
+
+  async runtimeInstanceProjectorCheckpointByProviderIdentity(input: {
+    tenantId: string;
+    provider: 'VIVA';
+    providerProductId: string;
+    providerScopeKind: Exclude<StoredSubscriptionInstanceProjectorCheckpoint['providerScope']['kind'], 'STUDIO'>;
+    providerScopeId: string;
+  }): Promise<StoredSubscriptionInstanceProjectorCheckpoint | null> {
+    this.assertInstanceProjectorContractsEnabled();
+    const row = await this.runtimeInstanceProjectorCheckpoints().findOne(
+      {
+        tenantId: input.tenantId,
+        provider: input.provider,
+        providerProductId: input.providerProductId,
+        'providerScope.kind': input.providerScopeKind,
+        'providerScope.scopeId': input.providerScopeId
+      },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionInstanceProjectorCheckpoint(row);
     return row;
   }
 
@@ -1518,6 +1561,12 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionInstance>('subscription_instances');
   }
 
+  private runtimeInstanceProjectorCheckpoints(): Collection<StoredSubscriptionInstanceProjectorCheckpoint> {
+    return this.requireDb().collection<StoredSubscriptionInstanceProjectorCheckpoint>(
+      'subscription_instance_projector_checkpoints'
+    );
+  }
+
   private runtimeAggregates(): Collection<StoredSubscriptionEntitlementAggregate> {
     return this.requireDb().collection<StoredSubscriptionEntitlementAggregate>('subscription_entitlement_aggregates');
   }
@@ -1680,6 +1729,27 @@ export class SubscriptionsRepository {
     }
   }
 
+  private instanceProjectorContractsEnabled(): boolean {
+    const value = String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED ?? '')
+      .trim()
+      .toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes';
+  }
+
+  private assertInstanceProjectorContractsEnabled(): void {
+    this.assertInstanceProjectorConfiguration();
+    if (!this.runtimeContractsEnabled()) this.assertRuntimeContractsEnabled();
+    if (!this.instanceProjectorContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_DISABLED');
+    }
+  }
+
+  private assertInstanceProjectorConfiguration(): void {
+    if (this.instanceProjectorContractsEnabled() && !this.runtimeContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID');
+    }
+  }
+
   private testRuntimeEnabled(): boolean {
     const value = String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase();
     return value === '1' || value === 'true' || value === 'yes';
@@ -1728,6 +1798,28 @@ export class SubscriptionsRepository {
       .map((expected) => expected.name));
     if (missing.length) {
       throw new Error(`SUBSCRIPTIONS_RUNTIME_INDEXES_NOT_READY:${missing.join(',')}`);
+    }
+    if (this.instanceProjectorContractsEnabled()) await this.verifyInstanceProjectorIndexes();
+  }
+
+  private async verifyInstanceProjectorIndexes(): Promise<void> {
+    try {
+      const actual = await this.runtimeInstanceProjectorCheckpoints().listIndexes().toArray();
+      const missing = SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.instanceProjectorCheckpoints
+        .filter((expected) => !subscriptionIndexMatches(
+          actual.find((item) => item.name === expected.name),
+          expected
+        ))
+        .map((expected) => expected.name);
+      if (missing.length) {
+        throw new Error(`SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY:${missing.join(',')}`);
+      }
+    } catch (error) {
+      if (error instanceof Error
+        && error.message.startsWith('SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY:')) {
+        throw error;
+      }
+      throw new Error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY');
     }
   }
 

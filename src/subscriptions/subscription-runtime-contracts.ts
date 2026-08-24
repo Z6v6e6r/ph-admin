@@ -3,6 +3,7 @@ import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProviderMapping,
@@ -65,6 +66,7 @@ const LEDGER_EVENT_TYPES = [
   'SURCHARGE_REFUNDED', 'ADD_ON_CHARGED', 'ADD_ON_REFUNDED', 'ADMIN_ADJUSTED'
 ] as const;
 const OUTBOX_STATUSES = ['PENDING', 'DELIVERED', 'DEAD_LETTER'] as const;
+const INSTANCE_PROJECTOR_SCOPE_KINDS = ['TENANT', 'STATION', 'STATION_SET'] as const;
 const ACTIVATED_INSTANCE_STATES = new Set([
   'ACTIVE', 'FROZEN', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'REVOKED'
 ]);
@@ -281,6 +283,9 @@ const validateUsageBuckets = (
 };
 
 const assertExactKeys = (value: object, expected: readonly string[], field: string): void => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail('SUBSCRIPTION_RUNTIME_SHAPE_INVALID', { field });
+  }
   const actual = Object.keys(value).sort();
   const canonical = [...expected].sort();
   if (JSON.stringify(actual) !== JSON.stringify(canonical)) {
@@ -824,6 +829,125 @@ export function validateStoredSubscriptionInstance(value: StoredSubscriptionInst
     );
   }
   validateReconciliation(value.reconciliation, 'reconciliation');
+}
+
+export function validateStoredSubscriptionInstanceProjectorCheckpoint(
+  value: StoredSubscriptionInstanceProjectorCheckpoint
+): void {
+  if (value.schemaVersion !== 1 || value.provider !== 'VIVA') {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CHECKPOINT_SCHEMA_INVALID');
+  }
+  assertExactKeys(value as object, [
+    'schemaVersion', 'checkpointId', 'tenantId', 'provider', 'providerProductId', 'providerScope',
+    'binding', 'producer', 'state', 'coverage', 'reconciliation', 'failure', 'lease', 'revision',
+    'createdAt', 'updatedAt'
+  ], 'instanceProjectorCheckpoint');
+  requiredId(value.checkpointId, 'checkpointId');
+  requiredId(value.tenantId, 'tenantId');
+  requiredId(value.providerProductId, 'providerProductId');
+  assertExactKeys(value.providerScope as object, ['kind', 'scopeId'], 'providerScope');
+  oneOf(value.providerScope.kind, INSTANCE_PROJECTOR_SCOPE_KINDS,
+    'SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID', 'providerScope.kind');
+  if (value.providerScope.kind === 'STATION_SET') {
+    if (!STATION_SET_SCOPE_PATTERN.test(value.providerScope.scopeId)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID', { field: 'providerScope.scopeId' });
+    }
+  } else requiredId(value.providerScope.scopeId, 'providerScope.scopeId');
+
+  assertExactKeys(value.binding as object, [
+    'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
+    'policyDigest', 'runtimeCompatibility'
+  ], 'binding');
+  requiredId(value.binding.mappingId, 'binding.mappingId');
+  positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
+  requiredId(value.binding.subscriptionTypeId, 'binding.subscriptionTypeId');
+  requiredId(value.binding.publicationId, 'binding.publicationId');
+  positiveInteger(value.binding.policyVersion, 'binding.policyVersion');
+  digest(value.binding.policyDigest, 'binding.policyDigest');
+  validateRuntimeCompatibility(value.binding.runtimeCompatibility);
+
+  assertExactKeys(value.producer as object, [
+    'producerId', 'contractVersion', 'producerCapabilityDigest', 'sourceContractDigest'
+  ], 'producer');
+  if (value.producer.producerId !== 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR'
+    || value.producer.contractVersion !== 1) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_PRODUCER_INVALID');
+  }
+  digest(value.producer.producerCapabilityDigest, 'producer.producerCapabilityDigest');
+  digest(value.producer.sourceContractDigest, 'producer.sourceContractDigest');
+  oneOf(value.state, ['CURRENT', 'FAILED'], 'SUBSCRIPTION_INSTANCE_PROJECTOR_STATE_INVALID', 'state');
+
+  if (!value.coverage || typeof value.coverage !== 'object') {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+  }
+  if (value.coverage.kind === 'ORDERED_CHANGE_FEED') {
+    assertExactKeys(value.coverage, ['kind', 'watermark', 'watermarkDigest', 'coverageThrough'], 'coverage');
+    requiredText(value.coverage.watermark, 'coverage.watermark', 500);
+    digest(value.coverage.watermarkDigest, 'coverage.watermarkDigest');
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+  } else if (value.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT') {
+    assertExactKeys(value.coverage, ['kind', 'snapshotId', 'snapshotDigest', 'coverageThrough', 'sourceItemCount'], 'coverage');
+    requiredId(value.coverage.snapshotId, 'coverage.snapshotId');
+    digest(value.coverage.snapshotDigest, 'coverage.snapshotDigest');
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+    nonNegativeInteger(value.coverage.sourceItemCount, 'coverage.sourceItemCount');
+  } else fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+
+  assertExactKeys(value.reconciliation as object, [
+    'runId', 'mode', 'startedAt', 'completedAt', 'sourceItemCount', 'insertedCount', 'updatedCount',
+    'replayedCount', 'terminalCount', 'failureCount', 'sourceEvidenceRef', 'resultEvidenceRef',
+    'reconciliationDigest'
+  ], 'reconciliation');
+  requiredId(value.reconciliation.runId, 'reconciliation.runId');
+  oneOf(value.reconciliation.mode, ['INITIAL_FULL', 'INCREMENTAL', 'FULL_RECONCILIATION'],
+    'SUBSCRIPTION_INSTANCE_PROJECTOR_RECONCILIATION_INVALID', 'reconciliation.mode');
+  requiredInstant(value.reconciliation.startedAt, 'reconciliation.startedAt');
+  optionalInstant(value.reconciliation.completedAt, 'reconciliation.completedAt');
+  nonNegativeInteger(value.reconciliation.sourceItemCount, 'reconciliation.sourceItemCount');
+  for (const field of ['insertedCount', 'updatedCount', 'replayedCount', 'terminalCount', 'failureCount'] as const) {
+    nonNegativeInteger(value.reconciliation[field], `reconciliation.${field}`);
+  }
+  if (value.reconciliation.insertedCount + value.reconciliation.updatedCount
+    + value.reconciliation.replayedCount + value.reconciliation.terminalCount
+    > value.reconciliation.sourceItemCount) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
+  }
+  requiredText(value.reconciliation.sourceEvidenceRef, 'reconciliation.sourceEvidenceRef');
+  optionalText(value.reconciliation.resultEvidenceRef, 'reconciliation.resultEvidenceRef');
+  digest(value.reconciliation.reconciliationDigest, 'reconciliation.reconciliationDigest');
+  if (value.reconciliation.completedAt !== null) {
+    assertInstantOrder(value.reconciliation.startedAt, value.reconciliation.completedAt,
+      'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'reconciliation.completedAt');
+    assertInstantOrder(value.coverage.coverageThrough, value.reconciliation.completedAt,
+      'SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_TIME_INVALID', 'coverage.coverageThrough');
+  }
+
+  if (value.failure !== null) {
+    assertExactKeys(value.failure as object, ['code', 'detectedAt', 'evidenceRef'], 'failure');
+    requiredId(value.failure.code, 'failure.code');
+    requiredInstant(value.failure.detectedAt, 'failure.detectedAt');
+    requiredText(value.failure.evidenceRef, 'failure.evidenceRef');
+  }
+  if (value.lease !== null) {
+    assertExactKeys(value.lease as object, ['runId', 'epoch', 'ownerIdHash', 'acquiredAt', 'expiresAt'], 'lease');
+    requiredId(value.lease.runId, 'lease.runId');
+    positiveInteger(value.lease.epoch, 'lease.epoch');
+    digest(value.lease.ownerIdHash, 'lease.ownerIdHash');
+    requiredInstant(value.lease.acquiredAt, 'lease.acquiredAt');
+    requiredInstant(value.lease.expiresAt, 'lease.expiresAt');
+    assertInstantOrder(value.lease.acquiredAt, value.lease.expiresAt,
+      'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'lease.expiresAt');
+  }
+  if (value.state === 'CURRENT') {
+    if (value.failure !== null || value.lease !== null || value.reconciliation.failureCount !== 0
+      || value.reconciliation.completedAt === null) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CURRENT_INVALID');
+    }
+  } else if (value.failure === null) fail('SUBSCRIPTION_INSTANCE_PROJECTOR_FAILED_INVALID');
+  positiveInteger(value.revision, 'revision');
+  requiredInstant(value.createdAt, 'createdAt');
+  requiredInstant(value.updatedAt, 'updatedAt');
+  assertInstantOrder(value.createdAt, value.updatedAt, 'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'updatedAt');
 }
 
 export function validateStoredSubscriptionEntitlementAggregate(

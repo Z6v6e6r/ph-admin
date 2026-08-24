@@ -681,6 +681,77 @@ export interface StoredSubscriptionInstance {
   updatedAt: string;
 }
 
+export type SubscriptionInstanceProjectorCheckpointState = 'CURRENT' | 'FAILED';
+export type SubscriptionInstanceProjectorCoverage =
+  | {
+    kind: 'ORDERED_CHANGE_FEED';
+    watermark: string;
+    watermarkDigest: `sha256:${string}`;
+    coverageThrough: string;
+  }
+  | {
+    kind: 'CONSISTENT_FULL_SNAPSHOT';
+    snapshotId: string;
+    snapshotDigest: `sha256:${string}`;
+    coverageThrough: string;
+    sourceItemCount: number;
+  };
+
+export interface StoredSubscriptionInstanceProjectorCheckpoint {
+  schemaVersion: 1;
+  checkpointId: string;
+  tenantId: string;
+  provider: 'VIVA';
+  providerProductId: string;
+  providerScope: {
+    kind: Exclude<SubscriptionProviderScopeKind, 'STUDIO'>;
+    scopeId: string;
+  };
+  binding: {
+    mappingId: string;
+    mappingRevision: number;
+    subscriptionTypeId: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: `sha256:${string}`;
+    runtimeCompatibility: SubscriptionRuntimeCompatibility;
+  };
+  producer: {
+    producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR';
+    contractVersion: 1;
+    producerCapabilityDigest: `sha256:${string}`;
+    sourceContractDigest: `sha256:${string}`;
+  };
+  state: SubscriptionInstanceProjectorCheckpointState;
+  coverage: SubscriptionInstanceProjectorCoverage;
+  reconciliation: {
+    runId: string;
+    mode: 'INITIAL_FULL' | 'INCREMENTAL' | 'FULL_RECONCILIATION';
+    startedAt: string;
+    completedAt: string | null;
+    sourceItemCount: number;
+    insertedCount: number;
+    updatedCount: number;
+    replayedCount: number;
+    terminalCount: number;
+    failureCount: number;
+    sourceEvidenceRef: string;
+    resultEvidenceRef: string | null;
+    reconciliationDigest: `sha256:${string}`;
+  };
+  failure: { code: string; detectedAt: string; evidenceRef: string } | null;
+  lease: {
+    runId: string;
+    epoch: number;
+    ownerIdHash: `sha256:${string}`;
+    acquiredAt: string;
+    expiresAt: string;
+  } | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SubscriptionEntitlementReservation {
   operationId: string;
   targetId: string;

@@ -21,6 +21,11 @@ rows, environment overrides, or an in-memory worker cursor. The first possible
 producer identity/version, watermark, staleness policy, restart recovery, and
 reconciliation tests.
 
+The checkpoint collection contract may be introduced before a producer, but that is
+**contract only**: it has no writer and does not alter this endpoint's unconditional
+`ready: false` / `SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE` result.
+Its Mongo index rollout and apply are separate approvals.
+
 ## Request
 
 The caller sends `X-Subscriptions-Integration-Token`; a user bearer token is not

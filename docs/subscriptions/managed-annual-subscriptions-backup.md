@@ -2,7 +2,7 @@
 
 Status: **ISOLATED CANDIDATE / NOT RUN IN PRODUCTION**.
 
-The one-shot tool exports only the eleven managed subscription collections and
+The one-shot tool exports only the twelve managed subscription collections and
 their index metadata. It never changes MongoDB, calls Viva, publishes a policy,
 enables a feature flag or restores data. A production run is a separate
 operations gate.
@@ -20,6 +20,9 @@ operations gate.
   Extended JSON. Index metadata is captured separately before the transaction.
 - Every document/index file is SHA-256 pinned in `manifest.json`. The archive is
   completed atomically, with directory mode `0700` and archive mode `0600`.
+- Manifest schema `phab-production-managed-subscriptions-backup-v3` includes
+  `subscription_instance_projector_checkpoints`. A v2 archive remains evidence
+  only for a pre-checkpoint release and is insufficient once checkpoint data can exist.
 - Default caps are 100,000 documents and 512 MiB. Exceeding either cap removes
   only the incomplete paths created by that invocation and fails closed.
 - URI, credentials and document bodies are never printed. CLI failures expose
