@@ -446,7 +446,12 @@ export class ReferralLinksService {
   }
 
   private toView(link: StoredReferralLink): ReferralLinkView {
-    const { publicToken, idempotency: _idempotency, ...view } = link;
+    const {
+      publicToken,
+      idempotency: _idempotency,
+      _id: _mongoId,
+      ...view
+    } = link as StoredReferralLink & { _id?: unknown };
     return { ...view, publicUrl: `${this.publicBaseUrl}/api/referral-links/r/${publicToken}` };
   }
 

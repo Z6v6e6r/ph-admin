@@ -25,6 +25,7 @@ class InMemoryReferralLinksRepository {
   }
 
   async insertLink(link: StoredReferralLink): Promise<void> {
+    (link as StoredReferralLink & { _id?: string })._id = 'synthetic-mongo-object-id';
     this.links.push(structuredClone(link));
   }
 
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
     assert.equal(created.replayed, false);
     assert.match(created.item.publicUrl, /^https:\/\/cup\.padlhub\.ru\/api\/referral-links\/r\//);
     assert.equal((created.item as unknown as Record<string, unknown>).publicToken, undefined);
+    assert.equal((created.item as unknown as Record<string, unknown>)._id, undefined);
     assert.equal(Object.prototype.hasOwnProperty.call(repository.links[0], 'legacyAttributionKey'), false);
 
     const replay = await service.create(draft(), { idempotencyKey: 'referral-create-0001' }, admin);

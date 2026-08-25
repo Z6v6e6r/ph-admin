@@ -25,6 +25,12 @@ test('referral links UI does not render full phone field', () => {
   assert.match(source, /referralLinksAdminEnabled/);
 });
 
+test('referral links UI constrains cards and actions on mobile', () => {
+  assert.match(source, /\.phab-ref-card\{min-width:0;max-width:100%/);
+  assert.match(source, /\.phab-ref-head,\.phab-ref-detail-head,\.phab-ref-public\{flex-direction:column\}/);
+  assert.match(source, /\.phab-ref-public input,\.phab-ref-public \.phab-ref-btn\{width:100%\}/);
+});
+
 test('PII export fails closed when durable audit is unavailable', () => {
   assert.match(controllerSource, /authPersistence\.isEnabled\(\)/);
   assert.match(controllerSource, /REFERRAL_LINK_EXPORT_AUDIT_UNAVAILABLE/);
