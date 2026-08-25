@@ -12,6 +12,7 @@ import { LkIdentityModule } from './lk-identity/lk-identity.module';
 import { TelegramConnectorModule } from './integrations/telegram/telegram-connector.module';
 import { MessengerModule } from './messenger/messenger.module';
 import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
+import { ReferralLinksModule } from './referral-links/referral-links.module';
 import { SupportModule } from './support/support.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { RolesGuard } from './common/rbac/roles.guard';
@@ -31,6 +32,7 @@ import { WebPushModule } from './web-push/web-push.module';
     TournamentsModule,
     MessengerModule,
     PlayerRatingsModule,
+    ReferralLinksModule,
     SubscriptionsModule,
     SupportModule,
     TelegramConnectorModule,
