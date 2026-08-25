@@ -41,6 +41,7 @@
     "test:subscriptions-runtime-contracts": "ts-node test/subscriptions-runtime-contracts.test.ts",
     "test:subscriptions-runtime-v1-quote": "ts-node test/subscriptions-runtime-v1-quote.service.test.ts",
     "test:subscriptions-runtime-v1-quote:http": "ts-node test/subscriptions-runtime-v1-quote.http-e2e.test.ts",
+    "test:subscriptions-runtime-v1-quote:app": "ts-node test/subscriptions-runtime-v1-quote.app-composition.test.ts",
     "test:subscriptions-publication": "ts-node test/subscriptions-publication.service.test.ts",
     "test:subscriptions-backup": "node --test test/managed-subscriptions-backup.test.mjs",
     "test:subscriptions-shadow-quote": "ts-node test/subscriptions-shadow-quote.test.ts",
