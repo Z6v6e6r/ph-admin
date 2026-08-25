@@ -150,6 +150,20 @@ The initial internal API is versioned and service-authenticated:
 - `POST /api/internal/subscription-runtime/reservations/:id/reconcile`
 - `GET /api/internal/subscription-runtime/operations/:id`
 
+The current source slice implements only `POST /api/internal/subscription-runtime/quote`.
+It contains no reservation route or entitlement-write primitive. Its deployment-safe
+defaults are:
+
+```dotenv
+SUBSCRIPTIONS_RUNTIME_V1_QUOTE_ENABLED=false
+SUBSCRIPTIONS_RUNTIME_V1_MODE=OFF
+SUBSCRIPTIONS_RUNTIME_V1_QUOTE_TTL_SECONDS=
+```
+
+`SHADOW` and `WARN` are the only accepted runtime modes for this endpoint. `ENFORCE`,
+reservation, confirmation, release and reconciliation remain separate source and live
+gates.
+
 Tenant and actor are derived from authenticated server context, never trusted from
 the body. A public client supplies only action, PadlHub target ID, optional expected
 revision, optional opaque local subscription instance and payment intent.
