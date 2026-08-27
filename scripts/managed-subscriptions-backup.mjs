@@ -34,7 +34,7 @@ function safeSource() {
   };
 }
 
-async function mongoAdapter({ uri, database, MongoClient, EJSON }) {
+export async function mongoBackupAdapter({ uri, database, MongoClient, EJSON, collectionNames }) {
   const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 5000,
     maxPoolSize: 2,
@@ -55,18 +55,18 @@ async function mongoAdapter({ uri, database, MongoClient, EJSON }) {
     const names = new Set(
       (await db.listCollections({}, { nameOnly: true }).toArray()).map((item) => item.name)
     );
-    const collections = [];
-    for (const name of MANAGED_SUBSCRIPTION_COLLECTIONS) {
+    const metadataCollections = [];
+    for (const name of collectionNames) {
       const exists = names.has(name);
       const collection = db.collection(name);
-      collections.push({
+      metadataCollections.push({
         name,
         exists,
         count: exists ? await collection.countDocuments({}) : 0,
         indexCount: exists ? (await collection.listIndexes().toArray()).length : 0
       });
     }
-    return collections;
+    return metadataCollections;
   }
 
   return {
@@ -124,7 +124,13 @@ export async function main() {
   const source = selectedMode === '--create' ? validateBackupSource(safeSource()) : null;
   if (selectedMode === '--create') validateCreateGate(process.env);
   const { MongoClient, BSON } = await import('mongodb');
-  const adapter = await mongoAdapter({ uri, database, MongoClient, EJSON: BSON.EJSON });
+  const adapter = await mongoBackupAdapter({
+    uri,
+    database,
+    MongoClient,
+    EJSON: BSON.EJSON,
+    collectionNames: MANAGED_SUBSCRIPTION_COLLECTIONS
+  });
   try {
     if (selectedMode === '--check') {
       const collections = await adapter.metadata();

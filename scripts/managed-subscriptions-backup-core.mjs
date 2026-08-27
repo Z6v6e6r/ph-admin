@@ -140,9 +140,27 @@ export async function validateBackupRoot(rootValue, { requireRootOwner = true } 
   return resolved;
 }
 
-function utcId(date) {
+export function validateBackupCollectionSet(collectionsValue) {
+  if (!Array.isArray(collectionsValue) || collectionsValue.length < 1 || collectionsValue.length > 64) {
+    fail('BACKUP_COLLECTION_SET_INVALID', 'Backup collection set is invalid');
+  }
+  const collections = collectionsValue.map((value) => requiredText(
+    value,
+    'BACKUP_COLLECTION_NAME_INVALID',
+    'Backup collection name is invalid'
+  ));
+  if (collections.some((value) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value))) {
+    fail('BACKUP_COLLECTION_NAME_INVALID', 'Backup collection name is invalid');
+  }
+  if (new Set(collections).size !== collections.length) {
+    fail('BACKUP_COLLECTION_SET_INVALID', 'Backup collection set contains duplicates');
+  }
+  return collections;
+}
+
+function utcId(date, prefix) {
   const iso = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  return `phab-prod-subscriptions-gate-b-${iso}`;
+  return `${prefix}-${iso}`;
 }
 
 function safePositiveInteger(value, fallback, code) {
@@ -202,6 +220,10 @@ export async function createManagedSubscriptionsBackup({
   maxDocuments = 100000,
   maxBytes = 512 * 1024 * 1024,
   requireRootOwner = true,
+  collections = MANAGED_SUBSCRIPTION_COLLECTIONS,
+  backupIdPrefix = 'phab-prod-subscriptions-gate-b',
+  manifestSchema = 'phab-production-managed-subscriptions-backup-v2',
+  sourceEvidence,
   tar = defaultTar
 }) {
   const backupRoot = await validateBackupRoot(root, { requireRootOwner });
@@ -213,9 +235,26 @@ export async function createManagedSubscriptionsBackup({
     fail('BACKUP_ADAPTER_REQUIRED', 'Backup data adapter is unavailable');
   }
   if (typeof serialize !== 'function') fail('BACKUP_SERIALIZER_REQUIRED', 'Canonical serializer is unavailable');
+  const safeCollections = validateBackupCollectionSet(collections);
+  const safeBackupIdPrefix = requiredText(
+    backupIdPrefix,
+    'BACKUP_ID_PREFIX_INVALID',
+    'Backup identifier prefix is invalid'
+  );
+  if (!/^[a-z0-9][a-z0-9-]{2,95}$/.test(safeBackupIdPrefix)) {
+    fail('BACKUP_ID_PREFIX_INVALID', 'Backup identifier prefix is invalid');
+  }
+  const safeManifestSchema = requiredText(
+    manifestSchema,
+    'BACKUP_MANIFEST_SCHEMA_INVALID',
+    'Backup manifest schema is invalid'
+  );
+  if (!/^[a-z0-9][a-z0-9-]{2,127}$/.test(safeManifestSchema)) {
+    fail('BACKUP_MANIFEST_SCHEMA_INVALID', 'Backup manifest schema is invalid');
+  }
   const documentLimit = safePositiveInteger(maxDocuments, 100000, 'BACKUP_DOCUMENT_LIMIT_INVALID');
   const byteLimit = safePositiveInteger(maxBytes, 512 * 1024 * 1024, 'BACKUP_BYTE_LIMIT_INVALID');
-  const backupId = utcId(now);
+  const backupId = utcId(now, safeBackupIdPrefix);
   const finalDirectory = join(backupRoot, backupId);
   const workspaceRoot = join(backupRoot, `.tmp-${backupId}-${process.pid}`);
   const contentRoot = join(workspaceRoot, backupId);
@@ -238,8 +277,8 @@ export async function createManagedSubscriptionsBackup({
     await chmod(contentRoot, 0o700);
     await chmod(finalDirectory, 0o700);
 
-    await adapter.streamCollections(MANAGED_SUBSCRIPTION_COLLECTIONS, async (item) => {
-      const expectedName = MANAGED_SUBSCRIPTION_COLLECTIONS[manifestCollections.length];
+    await adapter.streamCollections(safeCollections, async (item) => {
+      const expectedName = safeCollections[manifestCollections.length];
       if (!item || item.name !== expectedName || seen.has(item.name)) {
         fail('BACKUP_COLLECTION_ORDER_INVALID', 'Backup adapter returned an unexpected collection');
       }
@@ -290,11 +329,11 @@ export async function createManagedSubscriptionsBackup({
       });
     });
 
-    if (manifestCollections.length !== MANAGED_SUBSCRIPTION_COLLECTIONS.length) {
+    if (manifestCollections.length !== safeCollections.length) {
       fail('BACKUP_COLLECTION_SET_INCOMPLETE', 'Backup adapter did not return every managed collection');
     }
     const manifest = {
-      schema: 'phab-production-managed-subscriptions-backup-v2',
+      schema: safeManifestSchema,
       createdAt: now.toISOString(),
       database: target.database,
       targetSha256: target.targetSha256,
@@ -303,6 +342,13 @@ export async function createManagedSubscriptionsBackup({
       totalDocuments,
       totalBytes
     };
+    if (sourceEvidence !== undefined) {
+      manifest.sourceEvidence = requiredText(
+        sourceEvidence,
+        'BACKUP_SOURCE_EVIDENCE_INVALID',
+        'Backup source evidence label is invalid'
+      );
+    }
     const manifestPath = join(contentRoot, 'manifest.json');
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
     await chmod(manifestPath, 0o600);
