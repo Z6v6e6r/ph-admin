@@ -20,8 +20,15 @@ const includeRuntimeContractIndexes = ['1', 'true', 'yes'].includes(
 const includeInstanceProjectorContractIndexes = ['1', 'true', 'yes'].includes(
   String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED || '').trim().toLowerCase()
 );
+const includeBindingPromotionContractIndexes = ['1', 'true', 'yes'].includes(
+  String(process.env.SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_ENABLED || '').trim().toLowerCase()
+);
 if (includeInstanceProjectorContractIndexes && !includeRuntimeContractIndexes) {
   console.error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID');
+  process.exit(2);
+}
+if (includeBindingPromotionContractIndexes && !includeRuntimeContractIndexes) {
+  console.error('SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_CONFIG_INVALID');
   process.exit(2);
 }
 
@@ -74,6 +81,11 @@ const plan = [
     ...(includeInstanceProjectorContractIndexes ? [
       ['subscription_instance_projector_checkpoints', { checkpointId: 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_id_unique' }],
       ['subscription_instance_projector_checkpoints', { tenantId: 1, provider: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_provider_scope_unique' }]
+    ] : []),
+    ...(includeBindingPromotionContractIndexes ? [
+      ['subscription_runtime_binding_promotions', { promotionId: 1 }, { unique: true, name: 'subscription_runtime_binding_promotion_id_unique' }],
+      ['subscription_runtime_binding_promotions', { tenantId: 1, subscriptionTypeId: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1, publicationId: 1, mappingId: 1, releaseProgramId: 1, releasePhaseId: 1 }, { unique: true, name: 'subscription_runtime_binding_promotion_source_identity_unique' }],
+      ['subscription_runtime_binding_promotions', { subscriptionTypeId: 1, providerProductId: 1 }, { name: 'subscription_runtime_binding_promotion_type_product_lookup' }]
     ] : [])
   ] : []),
   ...(includeTestRuntimeIndexes ? [

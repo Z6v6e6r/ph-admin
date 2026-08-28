@@ -1,0 +1,61 @@
+name: subscriptions-binding-promotion
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Start transaction-capable MongoDB
+        run: |
+          docker run --detach --name phab-promotion-mongo --publish 27017:27017 mongo:7.0 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 30); do
+            if docker exec phab-promotion-mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1; then break; fi
+            sleep 1
+          done
+          docker exec phab-promotion-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for attempt in $(seq 1 30); do
+            if docker exec phab-promotion-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then break; fi
+            sleep 1
+          done
+      - name: Exact-head identity
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          git rev-parse HEAD
+          git rev-parse 'HEAD^{tree}'
+      - name: Binding promotion unit and Mongo transaction tests
+        env:
+          SUBSCRIPTIONS_PROMOTION_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+        run: npm run test:subscriptions-binding-promotion
+      - run: npm run test:subscriptions-runtime-contracts
+      - run: npm run test:subscriptions-indexes
+      - run: npm run test:subscriptions-backup
+      - run: npm run test:subscriptions-annual-v2
+      - run: npm run test:subscriptions-publication
+      - run: npm run test:subscriptions-instance-projector
+      - run: npm run test:subscriptions-sale-readiness
+      - run: npm run test:subscriptions-shadow-quote
+      - run: npm run test:subscriptions-canonical-target-resolver
+      - run: npm run test:subscriptions-synthetic-projection
+      - run: npm run test:subscriptions-provider-projection
+      - run: npm run test:subscriptions-trusted-shadow-adapter
+      - run: npm run test:subscriptions-runtime-context
+      - run: npm run test:subscriptions
+      - run: npx tsc -p tsconfig.json --noEmit
+      - run: npm run build
+      - run: git diff --check origin/main...HEAD

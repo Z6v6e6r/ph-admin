@@ -1046,6 +1046,26 @@ async function main(): Promise<void> {
   );
   assert.equal(daily.item.phases[0].dailyDropQuantity, 7);
 
+  const programsBeforeProviderRefAttempt = repository.programs.length;
+  await expectException(
+    () => service.createReleaseProgram(
+      {
+        subscriptionTypeId: typeResult.item.subscriptionTypeId,
+        stationId: 'station-a',
+        timezone: 'Europe/Moscow',
+        phases: [{
+          order: 1, mode: 'BULK', totalQuantity: 24,
+          price: { amountMinor: 1980000, currency: 'RUB' }, activation: 'MANUAL',
+          providerProductRef: '8bf334ba-3050-4017-b40a-7eef2db1eb16'
+        }]
+      },
+      command('release-provider-ref-forbidden'),
+      stationAdmin
+    ),
+    UnprocessableEntityException
+  );
+  assert.equal(repository.programs.length, programsBeforeProviderRefAttempt);
+
   await expectException(
     () => service.createReleaseProgram(
       {

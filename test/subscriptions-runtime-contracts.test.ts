@@ -998,6 +998,7 @@ async function run(): Promise<void> {
     projectionFences: 'subscription_projection_fences',
     instances: 'subscription_instances',
     instanceProjectorCheckpoints: 'subscription_instance_projector_checkpoints',
+    bindingPromotions: 'subscription_runtime_binding_promotions',
     aggregates: 'subscription_entitlement_aggregates',
     operations: 'subscription_operations',
     ledger: 'subscription_usage_ledger',
