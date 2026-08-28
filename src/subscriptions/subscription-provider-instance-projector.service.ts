@@ -101,7 +101,7 @@ export interface SubscriptionInstanceProjectionPlan {
 }
 
 export interface SubscriptionInstanceProjectionResult {
-  status: 'READY_TO_INSERT' | 'EXACT_REPLAY';
+  status: 'READY_TO_INSERT' | 'INSERTED' | 'EXACT_REPLAY';
   write: boolean;
   sourceItemCount: number;
   inputSha256: string;
@@ -546,6 +546,17 @@ export function assertSubscriptionInstanceProjectionCheckBoundary(
   }
 }
 
+export function assertSubscriptionInstanceProjectionApplyBoundary(
+  plan: SubscriptionInstanceProjectionPlan,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  assertSubscriptionInstanceProjectionCheckBoundary(plan, env);
+  if (String(env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM ?? '').trim()
+    !== 'APPLY_INITIAL_RUNTIME_INSTANCE_PROJECTION') {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM_REQUIRED');
+  }
+}
+
 @Injectable()
 export class SubscriptionProviderInstanceProjectorService {
   constructor(private readonly repository: SubscriptionsRepository) {}
@@ -558,6 +569,15 @@ export class SubscriptionProviderInstanceProjectorService {
     const status = await this.repository.preflightInitialRuntimeInstanceProjection(plan);
     await this.assertFenceUnchanged(fence, plan.checkpoint.binding.subscriptionTypeId);
     return this.result(plan, status, false);
+  }
+
+  async apply(input: unknown): Promise<SubscriptionInstanceProjectionResult> {
+    const plan = this.plan(input);
+    assertSubscriptionInstanceProjectionApplyBoundary(plan);
+    await this.repository.connect();
+    await this.assertPersistedBinding(plan);
+    const status = await this.repository.applyInitialRuntimeInstanceProjection(plan);
+    return this.result(plan, status, status === 'INSERTED');
   }
 
   protected now(): Date {

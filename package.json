@@ -31,6 +31,7 @@
     "subscriptions:instance-projector:input-fingerprint": "ts-node scripts/managed-subscriptions-instance-projector.ts --input-fingerprint",
     "subscriptions:instance-projector:target-fingerprint": "ts-node scripts/managed-subscriptions-instance-projector.ts --target-fingerprint",
     "subscriptions:instance-projector:check": "ts-node scripts/managed-subscriptions-instance-projector.ts --check",
+    "subscriptions:instance-projector:apply": "ts-node scripts/managed-subscriptions-instance-projector.ts --apply",
     "subscriptions:synthetic-indexes:check": "ts-node scripts/managed-subscriptions-synthetic-indexes.ts --check",
     "subscriptions:synthetic-indexes:apply": "ts-node scripts/managed-subscriptions-synthetic-indexes.ts --apply",
     "postcheck:viva-shadow": "node scripts/viva-shadow-postcheck.mjs",

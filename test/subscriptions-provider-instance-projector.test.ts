@@ -2,6 +2,7 @@ import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   buildSubscriptionInstanceProjectionPlan,
+  assertSubscriptionInstanceProjectionApplyBoundary,
   subscriptionInstanceProjectionInputFingerprint,
   subscriptionInstanceProjectionTargetFingerprint,
   SubscriptionProviderInstanceProjectorService
@@ -19,6 +20,7 @@ import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repo
 import { buildSubscriptionProjectionFence } from '../src/subscriptions/subscription-projection-fence';
 import {
   parseProjectorInputJson,
+  sanitizedProjectorOutput,
   safeProjectorErrorCode
 } from '../scripts/managed-subscriptions-instance-projector';
 
@@ -262,7 +264,10 @@ const manifest = (): Record<string, unknown> => {
 
 class FakeRepository {
   preflightStatus: 'READY_TO_INSERT' | 'EXACT_REPLAY' = 'READY_TO_INSERT';
+  applyStatus: 'INSERTED' | 'EXACT_REPLAY' = 'INSERTED';
+  connectCalls = 0;
   connectReadOnlyCalls = 0;
+  applyCalls = 0;
   preflightCalls = 0;
   mapping = mapping();
   publication = publication();
@@ -270,6 +275,7 @@ class FakeRepository {
   subscriptionType = { state: 'ACTIVE', currentPolicyVersion: 1 };
   fence: ReturnType<typeof projectionFence> | null = projectionFence();
 
+  async connect(): Promise<void> { this.connectCalls += 1; }
   async connectReadOnly(): Promise<void> { this.connectReadOnlyCalls += 1; }
   async runtimeProviderMappingByProviderIdentity(): Promise<StoredSubscriptionProviderMapping | null> { return this.mapping; }
   async runtimePolicyPublicationByVersion(): Promise<StoredSubscriptionPolicyPublication | null> { return this.publication; }
@@ -281,6 +287,10 @@ class FakeRepository {
   async preflightInitialRuntimeInstanceProjection(): Promise<'READY_TO_INSERT' | 'EXACT_REPLAY'> {
     this.preflightCalls += 1;
     return this.preflightStatus;
+  }
+  async applyInitialRuntimeInstanceProjection(): Promise<'INSERTED' | 'EXACT_REPLAY'> {
+    this.applyCalls += 1;
+    return this.applyStatus;
   }
 }
 
@@ -380,7 +390,8 @@ const ENV_NAMES = [
   'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PROVIDER_PRODUCT_ID', 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_KIND',
   'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_ID', 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_EXPECTED_DB',
   'SUBSCRIPTIONS_INSTANCE_PROJECTOR_TARGET_SHA256', 'SUBSCRIPTIONS_MONGODB_URI',
-  'SUBSCRIPTIONS_MONGODB_DB', 'SUBSCRIPTIONS_AUTO_CREATE_INDEXES'
+  'SUBSCRIPTIONS_MONGODB_DB', 'SUBSCRIPTIONS_AUTO_CREATE_INDEXES',
+  'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM'
 ] as const;
 const originals = new Map(ENV_NAMES.map((name) => [name, process.env[name]]));
 
@@ -604,6 +615,8 @@ async function run(): Promise<void> {
     plan.checkpoint.reconciliation.reconciliationDigest
   );
   assert.equal(await applyRepository.applyInitialRuntimeInstanceProjection(plan), 'EXACT_REPLAY');
+  assert.equal(applyMongo.instances.length, plan.instances.length);
+  assert.equal(applyMongo.checkpoints.length, 1);
 
   const bootstrapMongo = new MemoryMongo();
   bootstrapMongo.fences = [];
@@ -637,16 +650,106 @@ async function run(): Promise<void> {
   assert.equal(publicationRaceMongo.checkpoints.length, 0);
 
   enable(input);
-  const checked = await new FixedClockService(new FakeRepository() as any).check(input);
+  const checkRepository = new FakeRepository();
+  const checked = await new FixedClockService(checkRepository as any).check(input);
   assert.deepEqual(
     { status: checked.status, write: checked.write, sourceItemCount: checked.sourceItemCount },
     { status: 'READY_TO_INSERT', write: false, sourceItemCount: 1 }
   );
-  const output = JSON.stringify(checked);
+  assert.equal(checkRepository.connectReadOnlyCalls, 1);
+  assert.equal(checkRepository.connectCalls, 0);
+  assert.equal(checkRepository.applyCalls, 0);
+  const output = JSON.stringify(sanitizedProjectorOutput(checked));
   for (const forbidden of [
     'provider-client-001', 'client-subscription-001', 'projector-test-pepper',
     'provider_payment_evidence', 'provider_instance_evidence'
   ]) assert.equal(output.includes(forbidden), false);
+
+  const assertApplyRejectedWithoutWrite = async (
+    name: (typeof ENV_NAMES)[number],
+    value: string | undefined,
+    code: string
+  ): Promise<void> => {
+    enable(input);
+    process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM =
+      'APPLY_INITIAL_RUNTIME_INSTANCE_PROJECTION';
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+    const applyRepository = new FakeRepository();
+    await assert.rejects(
+      new FixedClockService(applyRepository as any).apply(input),
+      hasCode(code)
+    );
+    assert.equal(applyRepository.connectCalls, 0);
+    assert.equal(applyRepository.applyCalls, 0);
+  };
+
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM',
+    undefined,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM_REQUIRED'
+  );
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHA256',
+    `sha256:${'1'.repeat(64)}`,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_ATTESTATION_MISMATCH'
+  );
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_SHA256',
+    `sha256:${'2'.repeat(64)}`,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_ATTESTATION_MISMATCH'
+  );
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_TARGET_SHA256',
+    `sha256:${'3'.repeat(64)}`,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_TARGET_ATTESTATION_MISMATCH'
+  );
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPROVAL_REF',
+    evidence('provider_approval', '4'),
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPROVAL_ATTESTATION_MISMATCH'
+  );
+  await assertApplyRejectedWithoutWrite(
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_EXPECTED_DB',
+    'wrong_database',
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_DATABASE_ATTESTATION_MISMATCH'
+  );
+
+  enable(input);
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM =
+    'APPLY_INITIAL_RUNTIME_INSTANCE_PROJECTION';
+  assert.doesNotThrow(() => assertSubscriptionInstanceProjectionApplyBoundary(plan));
+  const serviceApplyRepository = new FakeRepository();
+  const applyService = new FixedClockService(serviceApplyRepository as any);
+  const inserted = await applyService.apply(input);
+  assert.deepEqual(
+    { status: inserted.status, write: inserted.write, sourceItemCount: inserted.sourceItemCount },
+    { status: 'INSERTED', write: true, sourceItemCount: 1 }
+  );
+  assert.equal(serviceApplyRepository.connectCalls, 1);
+  assert.equal(serviceApplyRepository.connectReadOnlyCalls, 0);
+  assert.equal(serviceApplyRepository.applyCalls, 1);
+  serviceApplyRepository.applyStatus = 'EXACT_REPLAY';
+  const replayed = await applyService.apply(input);
+  assert.deepEqual(
+    { status: replayed.status, write: replayed.write, sourceItemCount: replayed.sourceItemCount },
+    { status: 'EXACT_REPLAY', write: false, sourceItemCount: 1 }
+  );
+  assert.equal(serviceApplyRepository.applyCalls, 2);
+  const applyOutput = JSON.stringify(sanitizedProjectorOutput(inserted));
+  for (const forbidden of [
+    'provider-client-001', 'client-subscription-001', 'projector-test-pepper',
+    'provider_payment_evidence', 'provider_instance_evidence'
+  ]) assert.equal(applyOutput.includes(forbidden), false);
+
+  const failedReadbackMongo = new MemoryMongo();
+  const failedReadbackRepository = repositoryWithMemoryMongo(failedReadbackMongo) as any;
+  failedReadbackRepository.preflightInitialRuntimeInstanceProjection = async () =>
+    'READY_TO_INSERT';
+  await assert.rejects(
+    failedReadbackRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POSTCOMMIT_READBACK_FAILED')
+  );
   const legacyWithoutFence = new FakeRepository();
   legacyWithoutFence.fence = null;
   assert.equal(
