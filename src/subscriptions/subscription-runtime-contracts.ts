@@ -9,6 +9,10 @@ import {
   StoredSubscriptionRuntimeOperation,
   StoredSubscriptionUsageLedgerEvent
 } from './subscriptions.types';
+import {
+  MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES,
+  ManagedSubscriptionRuntimeReasonCode
+} from './subscription-runtime-reason-codes';
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
@@ -17,6 +21,99 @@ const STATION_SET_SCOPE_PATTERN = /^station-set:[a-f0-9]{64}$/;
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_WEEK_PATTERN = /^\d{4}-W\d{2}$/;
 const LOCAL_MONTH_PATTERN = /^\d{4}-\d{2}$/;
+
+export const MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTIONS = [
+  'CREATE_GAME', 'JOIN_GAME', 'BOOK_GROUP_TRAINING', 'BOOK_TOURNAMENT',
+  'PURCHASE_ADD_ON_PRODUCT', 'CANCEL_BOOKING', 'RESCHEDULE_BOOKING',
+  'CONFIRM_ATTENDANCE', 'CONFIRM_NO_SHOW'
+] as const;
+export const MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOMES = [
+  'ENTITLEMENT_APPLIED', 'FULL_PRICE_ONLY', 'SUBSCRIPTION_SELECTION_REQUIRED',
+  'PRICE_CONFIRMATION_REQUIRED', 'SERVICE_BLOCKED', 'RETRY_LATER',
+  'RECONCILIATION_REQUIRED'
+] as const;
+export const MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENTS = [
+  'AUTO_BEST_PRICE', 'PAY_FULL_PRICE', 'USE_SUBSCRIPTION'
+] as const;
+export const MANAGED_SUBSCRIPTION_RUNTIME_V1_TARGET_KINDS = [
+  'GAME', 'GROUP_TRAINING', 'TOURNAMENT', 'ADD_ON_PRODUCT', 'BOOKING'
+] as const;
+export const MANAGED_SUBSCRIPTION_RUNTIME_V1_BENEFIT_KINDS = [
+  'NONE', 'FREE_ENTITLEMENT', 'FIXED_PRICE', 'FIXED_DISCOUNT',
+  'PERCENT_DISCOUNT', 'PARTIAL_PRICE_PERCENT_DISCOUNT'
+] as const;
+
+export type ManagedSubscriptionRuntimeV1Action =
+  (typeof MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTIONS)[number];
+export type ManagedSubscriptionRuntimeV1Outcome =
+  (typeof MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOMES)[number];
+export type ManagedSubscriptionRuntimeV1PaymentIntent =
+  (typeof MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENTS)[number];
+export type ManagedSubscriptionRuntimeV1TargetKind =
+  (typeof MANAGED_SUBSCRIPTION_RUNTIME_V1_TARGET_KINDS)[number];
+export type ManagedSubscriptionRuntimeV1BenefitKind =
+  (typeof MANAGED_SUBSCRIPTION_RUNTIME_V1_BENEFIT_KINDS)[number];
+
+export interface ManagedSubscriptionRuntimeV1QuoteRequest {
+  action: ManagedSubscriptionRuntimeV1Action;
+  target: {
+    kind: ManagedSubscriptionRuntimeV1TargetKind;
+    id: string;
+    expectedRevision?: number;
+  };
+  preferredSubscriptionInstanceId?: string;
+  paymentIntent: ManagedSubscriptionRuntimeV1PaymentIntent;
+}
+
+export interface ManagedSubscriptionRuntimeV1PriceSnapshot {
+  priceRevision: number;
+  basePriceMinor: number;
+  discountMinor: number;
+  surchargeMinor: number;
+  finalPriceMinor: number;
+  currency: 'RUB';
+}
+
+export interface ManagedSubscriptionRuntimeV1QuoteOutcome {
+  contractVersion: 1;
+  nonBinding: true;
+  requiresReservationRecheck: true;
+  outcome: ManagedSubscriptionRuntimeV1Outcome;
+  paymentIntent: ManagedSubscriptionRuntimeV1PaymentIntent;
+  decisionId: string;
+  serviceAllowed: boolean;
+  subscriptionBenefitAllowed: boolean;
+  selectedSubscription: {
+    subscriptionInstanceId: string;
+    policyVersion: number;
+    policyDigest: string;
+  } | null;
+  benefit: {
+    kind: ManagedSubscriptionRuntimeV1BenefitKind;
+    ruleId: string | null;
+    usageUnits: number;
+  } | null;
+  price: ManagedSubscriptionRuntimeV1PriceSnapshot | null;
+  limits: {
+    activeServices: number | null;
+    activeServicesLimit: number | null;
+    dailyUsed: number | null;
+    dailyLimit: number | null;
+    weeklyUsed: number | null;
+    weeklyLimit: number | null;
+    monthlyUsed: number | null;
+    monthlyLimit: number | null;
+    remainingUnits: number | null;
+  };
+  blockers: Array<{ code: ManagedSubscriptionRuntimeReasonCode }>;
+  warnings: Array<{ code: ManagedSubscriptionRuntimeReasonCode }>;
+  alternatives: Array<{
+    paymentIntent: 'PAY_FULL_PRICE';
+    requiresExplicitUserConfirmation: true;
+  }>;
+  evaluatedAt: string;
+  expiresAt: string;
+}
 
 const PROVIDER_MAPPING_STATES = ['DRAFT', 'VERIFIED', 'DISABLED'] as const;
 const PUBLICATION_STATES = ['PUBLISHED', 'SUPERSEDED', 'DISABLED_FOR_NEW_OPERATIONS'] as const;
@@ -269,6 +366,205 @@ const assertExactKeys = (value: object, expected: readonly string[], field: stri
     fail('SUBSCRIPTION_RUNTIME_SHAPE_INVALID', { field });
   }
 };
+
+const plainObject = (value: unknown, field: string): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_SHAPE_INVALID', { field });
+  }
+  return value as Record<string, unknown>;
+};
+
+const optionalRevision = (value: unknown, field: string): void => {
+  if (value !== undefined) positiveInteger(value, field);
+};
+
+const V1_ACTION_TARGET_KIND: Record<
+  ManagedSubscriptionRuntimeV1Action,
+  ManagedSubscriptionRuntimeV1TargetKind
+> = {
+  CREATE_GAME: 'GAME',
+  JOIN_GAME: 'GAME',
+  BOOK_GROUP_TRAINING: 'GROUP_TRAINING',
+  BOOK_TOURNAMENT: 'TOURNAMENT',
+  PURCHASE_ADD_ON_PRODUCT: 'ADD_ON_PRODUCT',
+  CANCEL_BOOKING: 'BOOKING',
+  RESCHEDULE_BOOKING: 'BOOKING',
+  CONFIRM_ATTENDANCE: 'BOOKING',
+  CONFIRM_NO_SHOW: 'BOOKING'
+};
+
+export function validateManagedSubscriptionRuntimeV1QuoteRequest(
+  value: unknown
+): asserts value is ManagedSubscriptionRuntimeV1QuoteRequest {
+  const request = plainObject(value, 'quoteRequest');
+  assertExactKeys(
+    request,
+    ['action', 'target', 'preferredSubscriptionInstanceId', 'paymentIntent']
+      .filter((key) => request[key] !== undefined),
+    'quoteRequest'
+  );
+  oneOf(
+    request.action,
+    MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTIONS,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTION_INVALID',
+    'action'
+  );
+  oneOf(
+    request.paymentIntent,
+    MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENTS,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENT_INVALID',
+    'paymentIntent'
+  );
+  const target = plainObject(request.target, 'target');
+  assertExactKeys(target, ['kind', 'id', 'expectedRevision'].filter((key) => target[key] !== undefined), 'target');
+  oneOf(
+    target.kind,
+    MANAGED_SUBSCRIPTION_RUNTIME_V1_TARGET_KINDS,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_TARGET_KIND_INVALID',
+    'target.kind'
+  );
+  requiredId(target.id, 'target.id');
+  optionalRevision(target.expectedRevision, 'target.expectedRevision');
+  if (V1_ACTION_TARGET_KIND[request.action as ManagedSubscriptionRuntimeV1Action]
+    !== target.kind) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTION_TARGET_MISMATCH');
+  }
+  if (request.preferredSubscriptionInstanceId !== undefined) {
+    requiredId(request.preferredSubscriptionInstanceId, 'preferredSubscriptionInstanceId');
+  }
+}
+
+export function validateManagedSubscriptionRuntimeV1QuoteOutcome(
+  value: unknown
+): asserts value is ManagedSubscriptionRuntimeV1QuoteOutcome {
+  const outcome = plainObject(value, 'quoteOutcome');
+  assertExactKeys(outcome, [
+    'contractVersion', 'nonBinding', 'requiresReservationRecheck', 'outcome', 'paymentIntent',
+    'decisionId', 'serviceAllowed', 'subscriptionBenefitAllowed', 'selectedSubscription',
+    'benefit', 'price', 'limits', 'blockers', 'warnings', 'alternatives', 'evaluatedAt', 'expiresAt'
+  ], 'quoteOutcome');
+  if (outcome.contractVersion !== 1) fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_VERSION_INVALID');
+  if (outcome.nonBinding !== true || outcome.requiresReservationRecheck !== true) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_NON_BINDING_REQUIRED');
+  }
+  oneOf(outcome.outcome, MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOMES,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOME_INVALID', 'outcome');
+  oneOf(outcome.paymentIntent, MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENTS,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENT_INVALID', 'paymentIntent');
+  requiredId(outcome.decisionId, 'decisionId');
+  requiredBoolean(outcome.serviceAllowed, 'serviceAllowed');
+  requiredBoolean(outcome.subscriptionBenefitAllowed, 'subscriptionBenefitAllowed');
+  if (outcome.selectedSubscription !== null) {
+    const selected = plainObject(outcome.selectedSubscription, 'selectedSubscription');
+    assertExactKeys(selected, ['subscriptionInstanceId', 'policyVersion', 'policyDigest'], 'selectedSubscription');
+    requiredId(selected.subscriptionInstanceId, 'selectedSubscription.subscriptionInstanceId');
+    positiveInteger(selected.policyVersion, 'selectedSubscription.policyVersion');
+    digest(selected.policyDigest, 'selectedSubscription.policyDigest');
+  }
+  if (outcome.benefit !== null) {
+    const benefit = plainObject(outcome.benefit, 'benefit');
+    assertExactKeys(benefit, ['kind', 'ruleId', 'usageUnits'], 'benefit');
+    oneOf(
+      benefit.kind,
+      MANAGED_SUBSCRIPTION_RUNTIME_V1_BENEFIT_KINDS,
+      'MANAGED_SUBSCRIPTION_RUNTIME_V1_BENEFIT_KIND_INVALID',
+      'benefit.kind'
+    );
+    optionalId(benefit.ruleId, 'benefit.ruleId');
+    positiveInteger(benefit.usageUnits, 'benefit.usageUnits');
+  }
+  if (outcome.price !== null) {
+    const price = plainObject(outcome.price, 'price');
+    assertExactKeys(price, [
+      'priceRevision', 'basePriceMinor', 'discountMinor', 'surchargeMinor', 'finalPriceMinor', 'currency'
+    ], 'price');
+    positiveInteger(price.priceRevision, 'price.priceRevision');
+    const basePriceMinor = nonNegativeInteger(price.basePriceMinor, 'price.basePriceMinor');
+    const discountMinor = nonNegativeInteger(price.discountMinor, 'price.discountMinor');
+    const surchargeMinor = nonNegativeInteger(price.surchargeMinor, 'price.surchargeMinor');
+    const finalPriceMinor = nonNegativeInteger(price.finalPriceMinor, 'price.finalPriceMinor');
+    if (price.currency !== 'RUB') fail('SUBSCRIPTION_RUNTIME_CURRENCY_INVALID', { field: 'price' });
+    if (discountMinor > basePriceMinor
+      || BigInt(basePriceMinor) - BigInt(discountMinor)
+        + BigInt(surchargeMinor) !== BigInt(finalPriceMinor)) {
+      fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_PRICE_INVARIANT_INVALID');
+    }
+  }
+  const limits = plainObject(outcome.limits, 'limits');
+  assertExactKeys(limits, ['activeServices', 'activeServicesLimit', 'dailyUsed', 'dailyLimit',
+    'weeklyUsed', 'weeklyLimit', 'monthlyUsed', 'monthlyLimit', 'remainingUnits'], 'limits');
+  Object.entries(limits).forEach(([field, item]) => {
+    if (item !== null) nonNegativeInteger(item, `limits.${field}`);
+  });
+  const validateReasons = (raw: unknown, severity: 'BLOCKER' | 'WARNING', field: string): string[] => {
+    if (!Array.isArray(raw)) fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_REASON_CODES_INVALID', { field });
+    const codes: string[] = (raw as unknown[]).map((item) => {
+      const entry = plainObject(item, field);
+      assertExactKeys(entry, ['code'], field);
+      if (typeof entry.code !== 'string' || !(entry.code in MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES)
+        || MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES[entry.code as ManagedSubscriptionRuntimeReasonCode].severity !== severity) {
+        fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_REASON_CODES_INVALID', { field });
+      }
+      return entry.code as string;
+    });
+    if (new Set(codes).size !== codes.length) fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_REASON_CODES_INVALID', { field });
+    return codes;
+  };
+  const blockers = validateReasons(outcome.blockers, 'BLOCKER', 'blockers');
+  validateReasons(outcome.warnings, 'WARNING', 'warnings');
+  if (!Array.isArray(outcome.alternatives)) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_ALTERNATIVES_INVALID');
+  }
+  const alternatives = outcome.alternatives as unknown[];
+  if (alternatives.some((item) => {
+      const alternative = plainObject(item, 'alternatives');
+      return Object.keys(alternative).length !== 2 || alternative.paymentIntent !== 'PAY_FULL_PRICE'
+        || alternative.requiresExplicitUserConfirmation !== true;
+    })
+    || alternatives.length > 1) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_ALTERNATIVES_INVALID');
+  }
+  requiredInstant(outcome.evaluatedAt, 'evaluatedAt');
+  requiredInstant(outcome.expiresAt, 'expiresAt');
+  assertInstantOrder(
+    outcome.evaluatedAt as string,
+    outcome.expiresAt as string,
+    'MANAGED_SUBSCRIPTION_RUNTIME_V1_QUOTE_EXPIRY_INVALID',
+    'expiresAt'
+  );
+  const kind = outcome.outcome as ManagedSubscriptionRuntimeV1Outcome;
+  const fullPriceIntent = outcome.paymentIntent === 'PAY_FULL_PRICE';
+  const requiresSelection = kind === 'ENTITLEMENT_APPLIED' || kind === 'PRICE_CONFIRMATION_REQUIRED';
+  const requiresPrice = !['SERVICE_BLOCKED', 'RETRY_LATER', 'RECONCILIATION_REQUIRED'].includes(kind);
+  const fullPriceAlternative = alternatives.length === 1;
+  const hasPriceChanged = blockers.includes('PRICE_CHANGED');
+  if ((requiresSelection && outcome.selectedSubscription === null)
+    || (!requiresSelection && outcome.selectedSubscription !== null)
+    || (requiresSelection && outcome.benefit === null)
+    || (!requiresSelection && outcome.benefit !== null)
+    || (requiresPrice && outcome.price === null)
+    || (!requiresPrice && outcome.price !== null)
+    || (kind === 'ENTITLEMENT_APPLIED' && (!outcome.serviceAllowed || !outcome.subscriptionBenefitAllowed
+      || blockers.length > 0 || fullPriceAlternative || fullPriceIntent))
+    || (kind === 'FULL_PRICE_ONLY' && (!outcome.serviceAllowed || outcome.subscriptionBenefitAllowed
+      || (fullPriceIntent ? blockers.length > 0 || fullPriceAlternative
+        : blockers.length === 0 || !fullPriceAlternative)))
+    || (kind === 'SUBSCRIPTION_SELECTION_REQUIRED' && (!outcome.serviceAllowed
+      || outcome.subscriptionBenefitAllowed || blockers.length === 0 || fullPriceIntent))
+    || (kind === 'PRICE_CONFIRMATION_REQUIRED' && (!outcome.serviceAllowed
+      || !outcome.subscriptionBenefitAllowed || !hasPriceChanged || fullPriceIntent))
+    || (kind === 'SERVICE_BLOCKED' && (outcome.serviceAllowed || outcome.subscriptionBenefitAllowed || blockers.length === 0 || fullPriceAlternative))
+    || (kind === 'RETRY_LATER' && (outcome.serviceAllowed || outcome.subscriptionBenefitAllowed
+      || !blockers.some((code) => MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES[
+        code as ManagedSubscriptionRuntimeReasonCode
+      ].retryable)))
+    || (kind === 'RECONCILIATION_REQUIRED' && (outcome.serviceAllowed || outcome.subscriptionBenefitAllowed
+      || !blockers.some((code) => ['RECONCILIATION_REQUIRED', 'PROVIDER_TIMEOUT_AFTER_ACCEPT',
+        'PROVIDER_READBACK_MISMATCH'].includes(code))))) {
+    fail('MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOME_FLAGS_INVALID');
+  }
+}
 
 const validateUniqueIdArray = (value: unknown, field: string): string[] => {
   if (!Array.isArray(value)) fail('SUBSCRIPTION_RUNTIME_ARRAY_INVALID', { field });

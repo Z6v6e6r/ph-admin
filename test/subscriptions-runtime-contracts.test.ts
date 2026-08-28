@@ -9,6 +9,8 @@ import {
   computeSubscriptionRuntimeProjectionDigest,
   computeSubscriptionUsageLedgerEventHash,
   SubscriptionRuntimeContractError,
+  validateManagedSubscriptionRuntimeV1QuoteOutcome,
+  validateManagedSubscriptionRuntimeV1QuoteRequest,
   validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
@@ -18,6 +20,8 @@ import {
   validateStoredSubscriptionRuntimeOperation,
   validateStoredSubscriptionUsageLedgerEvent
 } from '../src/subscriptions/subscription-runtime-contracts';
+import { MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES } from
+  '../src/subscriptions/subscription-runtime-reason-codes';
 import {
   SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES,
   SubscriptionsRepository
@@ -324,6 +328,131 @@ const hasCode = (code: string) => (error: unknown): boolean =>
   error instanceof SubscriptionRuntimeContractError && error.code === code;
 
 async function run(): Promise<void> {
+  const managedRuntimeV1Fixture = JSON.parse(fs.readFileSync(
+    'test/fixtures/managed-subscription-runtime-v1.json',
+    'utf8'
+  )) as { quoteRequests: unknown[]; quoteOutcomes: unknown[] };
+  for (const request of managedRuntimeV1Fixture.quoteRequests) {
+    validateManagedSubscriptionRuntimeV1QuoteRequest(request);
+  }
+  for (const outcome of managedRuntimeV1Fixture.quoteOutcomes) {
+    validateManagedSubscriptionRuntimeV1QuoteOutcome(outcome);
+  }
+  validateManagedSubscriptionRuntimeV1QuoteOutcome({
+    ...managedRuntimeV1Fixture.quoteOutcomes[1] as Record<string, unknown>,
+    paymentIntent: 'PAY_FULL_PRICE',
+    blockers: [],
+    alternatives: []
+  });
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+      ...managedRuntimeV1Fixture.quoteRequests[0] as Record<string, unknown>,
+      tenantId: 'injected:tenant'
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_SHAPE_INVALID')
+  );
+  for (const forbiddenField of [
+    'actorId', 'providerId', 'clientSubscriptionId', 'browserPriceMinor', 'counter'
+  ]) {
+    assert.throws(
+      () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+        ...managedRuntimeV1Fixture.quoteRequests[0] as Record<string, unknown>,
+        [forbiddenField]: 'injected:value'
+      }),
+      hasCode('SUBSCRIPTION_RUNTIME_SHAPE_INVALID')
+    );
+  }
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+      action: 'UNKNOWN_ACTION',
+      target: { kind: 'GAME', id: 'target:game-1' },
+      paymentIntent: 'AUTO_BEST_PRICE'
+    }),
+    hasCode('MANAGED_SUBSCRIPTION_RUNTIME_V1_ACTION_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+      action: 'CREATE_GAME',
+      target: { kind: 'GAME', id: 'target:game-1' },
+      paymentIntent: 'AUTO_PAY'
+    }),
+    hasCode('MANAGED_SUBSCRIPTION_RUNTIME_V1_PAYMENT_INTENT_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+      ...managedRuntimeV1Fixture.quoteRequests[0] as Record<string, unknown>,
+      target: {
+        ...((managedRuntimeV1Fixture.quoteRequests[0] as any).target),
+        browserPriceMinor: 1
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_SHAPE_INVALID')
+  );
+  for (const metadata of Object.values(MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES)) {
+    assert.equal(typeof metadata.retryable, 'boolean');
+    assert.ok(Number.isInteger(metadata.httpStatus));
+    assert.doesNotMatch(metadata.message, /provider|client|tenant|id/i);
+  }
+  const requiredManagedRuntimeReasonCodes = [
+    'SUBSCRIPTION_NOT_FOUND', 'SUBSCRIPTION_SELECTION_REQUIRED', 'SUBSCRIPTION_NOT_OWNED_BY_ACTOR', 'SUBSCRIPTION_TYPE_MISMATCH', 'SUBSCRIPTION_PENDING_ACTIVATION', 'SUBSCRIPTION_INACTIVE', 'SUBSCRIPTION_FROZEN', 'SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_CANCELLED', 'SUBSCRIPTION_REFUNDED', 'SUBSCRIPTION_REVOKED', 'SUBSCRIPTION_INSTANCE_STALE', 'PROVIDER_IDENTITY_UNAVAILABLE', 'PROVIDER_STATE_MISMATCH',
+    'POLICY_UNAVAILABLE', 'POLICY_NOT_PUBLISHED', 'POLICY_NOT_EFFECTIVE', 'POLICY_STALE', 'POLICY_VERSION_MISMATCH', 'POLICY_DIGEST_MISMATCH', 'POLICY_MAPPING_UNVERIFIED', 'POLICY_ACTION_DISABLED',
+    'TARGET_NOT_FOUND', 'TARGET_NOT_SERVER_RESOLVED', 'TARGET_STALE', 'TARGET_REVISION_MISMATCH', 'PRICE_UNAVAILABLE', 'PRICE_STALE', 'PRICE_REVISION_MISMATCH', 'CURRENCY_UNSUPPORTED', 'EVENT_NOT_INCLUDED', 'PRODUCT_NOT_INCLUDED', 'DURATION_NOT_ALLOWED', 'STATION_NOT_ALLOWED', 'STATION_RULE_AMBIGUOUS', 'BOOKING_WINDOW_EXCEEDED', 'BLACKOUT_DATE',
+    'ACTIVE_SERVICES_LIMIT_REACHED', 'ACTIVE_SERVICES_LIMIT_UNAVAILABLE', 'DAILY_LIMIT_REACHED', 'WEEKLY_LIMIT_REACHED', 'MONTHLY_LIMIT_REACHED', 'FUTURE_BOOKINGS_LIMIT_REACHED', 'MIN_INTERVAL_NOT_MET', 'UNITS_EXHAUSTED', 'USAGE_SNAPSHOT_STALE', 'USAGE_SNAPSHOT_INVALID',
+    'BENEFIT_NOT_APPLICABLE', 'DISCOUNT_DISABLED', 'PRICE_CALCULATION_INVALID', 'PRICE_CHANGED', 'PRICE_CONFIRMATION_REQUIRED',
+    'RESERVATION_CONFLICT', 'RESERVATION_EXPIRED', 'RESERVATION_NOT_OWNED_BY_ACTOR', 'IDEMPOTENCY_CONFLICT', 'PROVIDER_UNAVAILABLE', 'PROVIDER_REJECTED', 'PROVIDER_TIMEOUT_AFTER_ACCEPT', 'PROVIDER_READBACK_MISMATCH', 'RECONCILIATION_REQUIRED', 'CROSS_TENANT_REJECTED', 'LEGACY_FLOW_NOT_MANAGED'
+  ];
+  assert.deepEqual(Object.keys(MANAGED_SUBSCRIPTION_RUNTIME_REASON_CODES).filter(
+    (code) => requiredManagedRuntimeReasonCodes.includes(code)
+  ).sort(), [...requiredManagedRuntimeReasonCodes].sort());
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteRequest({
+      action: 'CREATE_GAME',
+      target: { kind: 'GAME', id: 'target:game-1', expectedRevision: 1.5 },
+      paymentIntent: 'AUTO_BEST_PRICE'
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_COUNTER_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteOutcome({
+      ...managedRuntimeV1Fixture.quoteOutcomes[0] as Record<string, unknown>,
+      price: {
+        ...((managedRuntimeV1Fixture.quoteOutcomes[0] as any).price),
+        currency: 'USD'
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_CURRENCY_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteOutcome({
+      ...managedRuntimeV1Fixture.quoteOutcomes[0] as Record<string, unknown>,
+      price: {
+        ...((managedRuntimeV1Fixture.quoteOutcomes[0] as any).price),
+        finalPriceMinor: -1
+      }
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_COUNTER_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteOutcome({
+      ...managedRuntimeV1Fixture.quoteOutcomes[1] as Record<string, unknown>,
+      alternatives: [{ paymentIntent: 'PAY_FULL_PRICE', requiresExplicitUserConfirmation: false }]
+    }),
+    hasCode('MANAGED_SUBSCRIPTION_RUNTIME_V1_ALTERNATIVES_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteOutcome({
+      ...managedRuntimeV1Fixture.quoteOutcomes[1] as Record<string, unknown>,
+      paymentIntent: 'PAY_FULL_PRICE'
+    }),
+    hasCode('MANAGED_SUBSCRIPTION_RUNTIME_V1_OUTCOME_FLAGS_INVALID')
+  );
+  assert.throws(
+    () => validateManagedSubscriptionRuntimeV1QuoteOutcome({
+      ...managedRuntimeV1Fixture.quoteOutcomes[0] as Record<string, unknown>,
+      message: 'provider:private-id'
+    }),
+    hasCode('SUBSCRIPTION_RUNTIME_SHAPE_INVALID')
+  );
   validateStoredSubscriptionCanonicalTargetSnapshot(canonicalTargetFixture());
   validateStoredSubscriptionProviderMapping(mappingFixture());
   validateStoredSubscriptionProviderMapping({

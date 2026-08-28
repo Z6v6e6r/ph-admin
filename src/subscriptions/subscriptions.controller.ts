@@ -38,6 +38,8 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import { SubscriptionRuntimeV1QuoteService } from './subscription-runtime-v1-quote.service';
+import { SubscriptionRuntimeV1QuoteDto } from './dto/subscription-runtime-v1-quote.dto';
 import {
   SubscriptionActivationResult,
   SubscriptionActivationService
@@ -324,6 +326,36 @@ export class SubscriptionTrustedShadowController {
       integrationToken,
       dto,
       { correlationId }
+    );
+  }
+}
+
+@Controller('internal/subscription-runtime')
+@Roles()
+@UseFilters(SubscriptionsExceptionFilter)
+export class SubscriptionRuntimeV1Controller {
+  constructor(private readonly runtimeV1Quote: SubscriptionRuntimeV1QuoteService) {}
+
+  @Post('quote')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quote(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-subscription-runtime-contract-version') contractVersion: string | undefined,
+    @Body() dto: SubscriptionRuntimeV1QuoteDto
+  ) {
+    return this.runtimeV1Quote.quote(
+      authorization,
+      integrationToken,
+      dto,
+      correlationId,
+      idempotencyKey,
+      contractVersion
     );
   }
 }
