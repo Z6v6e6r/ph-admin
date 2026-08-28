@@ -12,6 +12,7 @@ import {
   Res,
   UseFilters
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SkipAdminMutationAudit } from '../common/observability/admin-audit.decorator';
@@ -25,6 +26,11 @@ import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
+import { SubscriptionSaleReadinessDto } from './dto/subscription-sale-readiness.dto';
+import {
+  SubscriptionSaleReadinessResult,
+  SubscriptionSaleReadinessService
+} from './subscription-sale-readiness.service';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
@@ -279,7 +285,8 @@ export class SubscriptionTrustedShadowController {
   constructor(
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
-    private readonly activation: SubscriptionActivationService
+    private readonly activation: SubscriptionActivationService,
+    private readonly saleReadinessService: SubscriptionSaleReadinessService
   ) {}
 
   @Post('shadow-quote')
@@ -306,6 +313,29 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
+  }
+
+  @Post('sale-readiness')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  saleReadiness(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: SubscriptionSaleReadinessDto,
+    @Res({ passthrough: true }) response: Response
+  ): Promise<SubscriptionSaleReadinessResult> {
+    const validCorrelationId = typeof correlationId === 'string'
+      && correlationId === correlationId.trim()
+      && !/\s/.test(correlationId)
+      && correlationId.length >= 8
+      && correlationId.length <= 128;
+    response.setHeader(
+      'X-Correlation-Id',
+      validCorrelationId ? correlationId : `corr:${randomUUID()}`
+    );
+    return this.saleReadinessService.check(integrationToken, dto);
   }
 
   @Post('activate-first-use')

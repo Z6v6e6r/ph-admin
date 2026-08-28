@@ -23,7 +23,9 @@ export const MANAGED_SUBSCRIPTION_COLLECTIONS = Object.freeze([
   'subscription_canonical_target_snapshots',
   'subscription_provider_mappings',
   'subscription_policy_publications',
+  'subscription_projection_fences',
   'subscription_instances',
+  'subscription_instance_projector_checkpoints',
   'subscription_entitlement_aggregates',
   'subscription_operations',
   'subscription_usage_ledger',
@@ -222,7 +224,7 @@ export async function createManagedSubscriptionsBackup({
   requireRootOwner = true,
   collections = MANAGED_SUBSCRIPTION_COLLECTIONS,
   backupIdPrefix = 'phab-prod-subscriptions-gate-b',
-  manifestSchema = 'phab-production-managed-subscriptions-backup-v2',
+  manifestSchema = 'phab-production-managed-subscriptions-backup-v4',
   sourceEvidence,
   tar = defaultTar
 }) {

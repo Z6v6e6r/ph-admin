@@ -25,7 +25,7 @@ function errorCode(code) {
   return (error) => error?.code === code;
 }
 
-function fakeAdapter(documentsByName = {}) {
+function fakeAdapter(documentsByName = {}, indexesByName = {}) {
   return {
     async streamCollections(names, handler) {
       for (const name of names) {
@@ -34,7 +34,7 @@ function fakeAdapter(documentsByName = {}) {
           name,
           exists: documentsByName[name] !== undefined,
           indexes: documentsByName[name] !== undefined
-            ? [{ name: '_id_', key: { _id: 1 } }]
+            ? (indexesByName[name] ?? [{ name: '_id_', key: { _id: 1 } }])
             : [],
           documents
         });
@@ -123,9 +123,16 @@ test('archive is root-only shaped, checksummed and contains no connection secret
   });
   assert.equal(archive.status, 0);
   const manifest = JSON.parse(archive.stdout);
-  assert.equal(manifest.schema, 'phab-production-managed-subscriptions-backup-v2');
+  assert.equal(manifest.schema, 'phab-production-managed-subscriptions-backup-v4');
   assert.equal(manifest.totalDocuments, 2);
   assert.equal(manifest.collections.length, MANAGED_SUBSCRIPTION_COLLECTIONS.length);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.length, 13);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_instance_projector_checkpoints'), true);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_projection_fences'), true);
+  const checkpointInventory = manifest.collections.find(
+    (item) => item.name === 'subscription_instance_projector_checkpoints'
+  );
+  assert.equal(checkpointInventory.exists, false);
   assert.doesNotMatch(archive.stdout, /mongodb:\/\/|super-secret/);
   for (const item of manifest.collections) {
     for (const [file, expected] of [
@@ -138,6 +145,72 @@ test('archive is root-only shaped, checksummed and contains no connection secret
     }
   }
   assert.equal(await readFile(result.archivePath).then((value) => value.length > 0), true);
+});
+
+test('checkpoint collection is exported when present', async () => {
+  const root = await secureTempRoot();
+  const checkpointDocument = { checkpointId: 'checkpoint:1', state: 'CURRENT' };
+  const checkpointIndexes = [
+    { name: '_id_', key: { _id: 1 } },
+    {
+      name: 'subscription_instance_projector_checkpoint_id_unique',
+      key: { checkpointId: 1 },
+      unique: true
+    }
+  ];
+  const result = await createManagedSubscriptionsBackup({
+    root,
+    target: { database: 'dialog', targetSha256: SHA },
+    source: SOURCE,
+    adapter: fakeAdapter(
+      { subscription_instance_projector_checkpoints: [checkpointDocument] },
+      { subscription_instance_projector_checkpoints: checkpointIndexes }
+    ),
+    serialize: JSON.stringify,
+    now: new Date('2026-08-22T01:02:03.000Z'),
+    requireRootOwner: false
+  });
+  const checkpoint = result.collections.find(
+    (item) => item.name === 'subscription_instance_projector_checkpoints'
+  );
+  assert.equal(checkpoint.exists, true);
+  assert.equal(checkpoint.count, 1);
+  assert.equal(checkpoint.indexCount, 2);
+
+  const manifestMember = spawnSync(
+    'tar',
+    ['-xOzf', result.archivePath, `${result.backupId}/manifest.json`],
+    { encoding: 'utf8' }
+  );
+  assert.equal(manifestMember.status, 0);
+  const manifest = JSON.parse(manifestMember.stdout);
+  const checkpointManifest = manifest.collections.find(
+    (item) => item.name === 'subscription_instance_projector_checkpoints'
+  );
+  assert.equal(checkpointManifest.count, 1);
+  assert.equal(checkpointManifest.indexCount, 2);
+
+  const documentMember = spawnSync(
+    'tar',
+    ['-xOzf', result.archivePath, `${result.backupId}/${checkpointManifest.documentFile}`]
+  );
+  assert.equal(documentMember.status, 0);
+  assert.equal(documentMember.stdout.toString('utf8'), `${JSON.stringify(checkpointDocument)}\n`);
+  assert.equal(
+    createHash('sha256').update(documentMember.stdout).digest('hex'),
+    checkpointManifest.documentSha256
+  );
+
+  const indexMember = spawnSync(
+    'tar',
+    ['-xOzf', result.archivePath, `${result.backupId}/${checkpointManifest.indexFile}`]
+  );
+  assert.equal(indexMember.status, 0);
+  assert.deepEqual(JSON.parse(indexMember.stdout.toString('utf8')), checkpointIndexes);
+  assert.equal(
+    createHash('sha256').update(indexMember.stdout).digest('hex'),
+    checkpointManifest.indexSha256
+  );
 });
 
 test('document cap fails closed and removes the incomplete final directory', async () => {

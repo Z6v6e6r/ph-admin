@@ -212,6 +212,27 @@ async function main(): Promise<void> {
   assert.equal(result.evidence.mappingRevision, 2);
   assert.doesNotMatch(JSON.stringify(result), /provider_client|clientRefHash|phone|paymentEvidence/);
 
+  publication = {
+    ...publicationFixture(),
+    schemaVersion: 3,
+    runtimeCompatibility: {
+      adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+      contractVersion: 1,
+      capabilityDigest: `sha256:${HASH}`
+    },
+    idempotency: {
+      actorId: 'admin:subscriptions',
+      key: 'publish-piter-schema3',
+      requestHash: HASH,
+      correlationId: 'corr:publish-piter-schema3'
+    }
+  };
+  const schemaThreeResult = await service.resolve('Bearer user', TOKEN, {
+    clientSubscriptionId: instance.clientSubscriptionId
+  });
+  assert.equal(schemaThreeResult.policyDigest, instance.policyDigest);
+  publication = publicationFixture();
+
   const stationSetPublication = publicationFixture();
   stationSetPublication.runtimeProjection.stationAccessRules[0].selector = {
     kind: 'STATION_LIST',

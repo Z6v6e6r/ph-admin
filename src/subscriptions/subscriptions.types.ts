@@ -614,7 +614,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
 }
 
 export interface StoredSubscriptionPolicyPublication {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   publicationId: string;
   subscriptionTypeId: string;
   policyVersion: number;
@@ -631,6 +631,36 @@ export interface StoredSubscriptionPolicyPublication {
   impactPreviewRef: string;
   approvalAuditRef: string;
   idempotency?: SubscriptionIdempotency;
+  runtimeCompatibility?: SubscriptionRuntimeCompatibility;
+}
+
+export interface SubscriptionRuntimeCompatibility {
+  adapterId: string;
+  contractVersion: number;
+  capabilityDigest: `sha256:${string}`;
+}
+
+export interface SubscriptionProjectionFenceBinding {
+  mappingId: string;
+  mappingRevision: number;
+  subscriptionTypeId: string;
+  publicationId: string;
+  policyVersion: number;
+  policyDigest: `sha256:${string}`;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
+}
+
+export interface StoredSubscriptionProjectionFence {
+  schemaVersion: 1;
+  fenceId: string;
+  subscriptionTypeId: string;
+  bindingRevision: number;
+  bindingDigest: `sha256:${string}`;
+  binding: SubscriptionProjectionFenceBinding;
+  coordinationRevision: number;
+  lastProjectorReconciliationDigest: `sha256:${string}` | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SubscriptionInstanceEvidence {
@@ -669,6 +699,85 @@ export interface StoredSubscriptionInstance {
     asOf: string | null;
     evidenceRef: string | null;
   };
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SubscriptionInstanceProjectorCheckpointState = 'CURRENT' | 'FAILED';
+export type SubscriptionInstanceProjectorCoverage =
+  | {
+    kind: 'ORDERED_CHANGE_FEED';
+    watermark: string;
+    watermarkDigest: `sha256:${string}`;
+    coverageThrough: string;
+  }
+  | {
+    kind: 'CONSISTENT_FULL_SNAPSHOT';
+    snapshotId: string;
+    snapshotDigest: `sha256:${string}`;
+    coverageThrough: string;
+    sourceItemCount: number;
+  };
+
+export interface StoredSubscriptionInstanceProjectorCheckpoint {
+  schemaVersion: 2;
+  checkpointId: string;
+  tenantId: string;
+  provider: 'VIVA';
+  providerProductId: string;
+  providerScope: {
+    kind: Exclude<SubscriptionProviderScopeKind, 'STUDIO'>;
+    scopeId: string;
+  };
+  approvalRef: string;
+  binding: {
+    fenceId: string;
+    fenceRevision: number;
+    fenceDigest: `sha256:${string}`;
+    mappingId: string;
+    mappingRevision: number;
+    subscriptionTypeId: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: `sha256:${string}`;
+    releaseProgramId: string;
+    releaseProgramRevision: number;
+    releasePhaseId: string;
+    runtimeCompatibility: SubscriptionRuntimeCompatibility;
+  };
+  producer: {
+    producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR';
+    contractVersion: 2;
+    producerCapabilityDigest: `sha256:${string}`;
+    sourceContractDigest: `sha256:${string}`;
+    authorityDigest: `sha256:${string}`;
+  };
+  state: SubscriptionInstanceProjectorCheckpointState;
+  coverage: SubscriptionInstanceProjectorCoverage;
+  reconciliation: {
+    runId: string;
+    mode: 'INITIAL_FULL' | 'INCREMENTAL' | 'FULL_RECONCILIATION';
+    startedAt: string;
+    completedAt: string | null;
+    sourceItemCount: number;
+    insertedCount: number;
+    updatedCount: number;
+    replayedCount: number;
+    terminalCount: number;
+    failureCount: number;
+    sourceEvidenceRef: string;
+    resultEvidenceRef: string | null;
+    reconciliationDigest: `sha256:${string}`;
+  };
+  failure: { code: string; detectedAt: string; evidenceRef: string } | null;
+  lease: {
+    runId: string;
+    epoch: number;
+    ownerIdHash: `sha256:${string}`;
+    acquiredAt: string;
+    expiresAt: string;
+  } | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -849,6 +958,7 @@ export interface SubscriptionPolicyPublicationPreview {
   dictionaryRevision: string;
   dictionaryEvidenceRef: string;
   policyDigest: string;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
   impactPreviewRef: string;
   runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
   publicationMode: 'INITIAL' | 'SUPERSESSION';

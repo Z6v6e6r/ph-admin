@@ -19,6 +19,7 @@ import { SubscriptionRuntimeContextService } from './subscription-runtime-contex
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
 import { SubscriptionPublicationService } from './subscription-publication.service';
+import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.service';
 
 @Module({
   imports: [AuthModule, LkIdentityModule, VivaAdminModule],
@@ -37,6 +38,7 @@ import { SubscriptionPublicationService } from './subscription-publication.servi
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,
     SubscriptionPublicationService,
+    SubscriptionSaleReadinessService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter

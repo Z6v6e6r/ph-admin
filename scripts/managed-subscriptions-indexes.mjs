@@ -1,4 +1,12 @@
 import { MongoClient } from 'mongodb';
+import {
+  credentialFreeMongoTarget,
+  validateTargetAttestation
+} from './managed-subscriptions-backup-core.mjs';
+import {
+  classifyMissingSubscriptionIndexes,
+  uniqueIndexesRequiringDuplicatePreflight
+} from './managed-subscriptions-indexes-core.mjs';
 
 const mode = process.argv.includes('--apply') ? 'apply' : 'check';
 const uri = String(process.env.SUBSCRIPTIONS_MONGODB_URI || process.env.MONGODB_URI || '').trim();
@@ -9,6 +17,13 @@ const includeTestRuntimeIndexes = ['1', 'true', 'yes'].includes(
 const includeRuntimeContractIndexes = ['1', 'true', 'yes'].includes(
   String(process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED || '').trim().toLowerCase()
 );
+const includeInstanceProjectorContractIndexes = ['1', 'true', 'yes'].includes(
+  String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED || '').trim().toLowerCase()
+);
+if (includeInstanceProjectorContractIndexes && !includeRuntimeContractIndexes) {
+  console.error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID');
+  process.exit(2);
+}
 
 const plan = [
   ['subscription_types', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_type_id_unique' }],
@@ -35,6 +50,8 @@ const plan = [
     ['subscription_policy_publications', { subscriptionTypeId: 1, state: 1, effectiveAt: -1 }, { name: 'subscription_publication_runtime_lookup' }],
     ['subscription_policy_publications', { policyDigest: 1, publicationId: 1 }, { name: 'subscription_publication_digest' }],
     ['subscription_policy_publications', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, sparse: true, name: 'subscription_publication_idempotency_unique' }],
+    ['subscription_projection_fences', { fenceId: 1 }, { unique: true, name: 'subscription_projection_fence_id_unique' }],
+    ['subscription_projection_fences', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_projection_fence_type_unique' }],
     ['subscription_instances', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_instance_id_unique' }],
     ['subscription_instances', { tenantId: 1, providerClientId: 1, clientSubscriptionId: 1 }, { unique: true, name: 'subscription_instance_provider_identity_unique' }],
     ['subscription_instances', { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_type_state_expiry' }],
@@ -53,7 +70,11 @@ const plan = [
     ['subscription_usage_ledger', { eventType: 1, occurredAt: 1, eventId: 1 }, { name: 'subscription_usage_type_time' }],
     ['subscription_outbox', { outboxEventId: 1 }, { unique: true, name: 'subscription_outbox_event_id_unique' }],
     ['subscription_outbox', { ledgerEventId: 1 }, { unique: true, name: 'subscription_outbox_ledger_event_unique' }],
-    ['subscription_outbox', { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 }, { name: 'subscription_outbox_delivery' }]
+    ['subscription_outbox', { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 }, { name: 'subscription_outbox_delivery' }],
+    ...(includeInstanceProjectorContractIndexes ? [
+      ['subscription_instance_projector_checkpoints', { checkpointId: 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_id_unique' }],
+      ['subscription_instance_projector_checkpoints', { tenantId: 1, provider: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_provider_scope_unique' }]
+    ] : [])
   ] : []),
   ...(includeTestRuntimeIndexes ? [
     ['subscription_test_offers', { offerId: 1 }, { unique: true, name: 'subscription_test_offer_id_unique' }],
@@ -84,13 +105,31 @@ if (mode === 'apply' && process.env.SUBSCRIPTIONS_INDEX_APPLY !== 'CONFIRM') {
   console.error('Refusing index mutation: set SUBSCRIPTIONS_INDEX_APPLY=CONFIRM');
   process.exit(3);
 }
+if (mode === 'apply') {
+  const target = credentialFreeMongoTarget(uri, dbName);
+  validateTargetAttestation(
+    target,
+    process.env.SUBSCRIPTIONS_INDEX_EXPECTED_DB,
+    process.env.SUBSCRIPTIONS_INDEX_TARGET_SHA256
+  );
+}
 
 const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, maxPoolSize: 2 });
 try {
   await client.connect();
   const db = client.db(dbName);
   if (mode === 'apply') {
-    for (const [collectionName, keys, options] of plan.filter(([, , item]) => item.unique === true)) {
+    const hello = await db.command({ hello: 1 });
+    if (hello?.isWritablePrimary !== true) {
+      throw new Error('SUBSCRIPTIONS_INDEX_PRIMARY_REQUIRED');
+    }
+    const existingByCollection = new Map();
+    for (const collectionName of new Set(plan.map(([name]) => name))) {
+      const exists = await db.listCollections({ name: collectionName }, { nameOnly: true }).hasNext();
+      existingByCollection.set(collectionName, exists ? await db.collection(collectionName).listIndexes().toArray() : []);
+    }
+    const missingPlan = classifyMissingSubscriptionIndexes(plan, existingByCollection);
+    for (const [collectionName, keys, options] of uniqueIndexesRequiringDuplicatePreflight(missingPlan)) {
       const groupId = Object.fromEntries(
         Object.keys(keys).map((field, index) => [`field${index + 1}`, `$${field}`])
       );
@@ -108,10 +147,12 @@ try {
         throw new Error(`DUPLICATE_PRECHECK_FAILED:${collectionName}:${options.name}`);
       }
     }
+    for (const [collectionName, keys, options] of missingPlan) {
+      await db.collection(collectionName).createIndex(keys, options);
+    }
   }
   const byCollection = new Map();
   for (const [collectionName, keys, options] of plan) {
-    if (mode === 'apply') await db.collection(collectionName).createIndex(keys, options);
     if (!byCollection.has(collectionName)) byCollection.set(collectionName, []);
     byCollection.get(collectionName).push(options.name);
   }

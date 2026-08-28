@@ -56,6 +56,16 @@ runtime projection, verified mapping reference, dictionary revision, impact
 preview and approval audit references. The projection type/version/effective
 date must match the envelope.
 
+### `subscription_projection_fences`
+
+One unique coordination document per subscription type. Its binding revision/digest pins the
+current verified mapping and schema-v3 publication. Publication advances it in the same Mongo
+transaction as mapping, policy, publication and type state. The instance projector must CAS the
+same document in its import transaction, so a stale import cannot commit after a newer publication
+binding. If the import commits first, MongoDB may safely serialize or retry publication against the
+reconciled fence. The last projector reconciliation is digest-only; no provider/client identity is
+stored in the fence.
+
 ### `subscription_instances`
 
 One local client-owned subscription pinned to policy version/digest and the
@@ -142,6 +152,12 @@ Forward procedure for a later approved environment:
 6. rerun the read-only check;
 7. enable the flag for the application only after every expected index matches.
 
+This order assumes the target application currently has runtime contracts disabled. If an
+environment already runs with `SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED=true`, deploying code that
+requires `subscription_projection_fences` before its indexes exist is **NO-GO**: take the approved
+backup, apply and verify the immutable target's guarded fence indexes first, then deploy compatible
+code. Fresh target inventory and separate live mutation/deploy approvals are still required.
+
 The canonical target collection adds three reviewed indexes: unique snapshot id, unique
 tenant/target/action/revision, and the active revision lookup. They are included in the same guarded
 runtime plan and are never auto-created by application startup.
@@ -177,8 +193,20 @@ Recovery:
   the policy is the exact `PUBLISHED` version/digest, and every enabled benefit
   contains canonical station/event/product selectors before inserting the
   immutable envelope.
-- Old and new application versions can coexist because no runtime document is
-  created and new index checks are opt-in.
+- Old and new application versions may coexist only while
+  `SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED=false` is applied to every writer. An old
+  publication writer does not advance `subscription_projection_fences`; publication writes
+  must therefore be quiesced before the first mixed-version deployment and remain off until
+  every writer is fence-aware. The flag must not be enabled on only a subset of nodes.
+
+Rollback has the same boundary. If any fence-aware publication or projector transaction has
+committed, rolling back application code does not authorize old publication writers. Keep the
+publication command off, retain the indexes/documents, and run an exact read-only consistency
+audit that proves each fence matches its current mapping, publication and runtime compatibility
+binding before re-enable. No generic production audit or fence-repair command is exposed by this
+checkpoint, so its absence is **NO-GO** for such a rollback/re-enable. Any mismatch requires a
+separately reviewed forward-fix/reconciliation plan, exact target and backup, data-mutation
+authorization, and post-write read-back; do not delete or rewrite a fence manually.
 
 ## Shadow quote checkpoint
 

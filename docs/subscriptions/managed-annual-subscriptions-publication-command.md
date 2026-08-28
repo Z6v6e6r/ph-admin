@@ -20,11 +20,31 @@ SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID=<approved synthetic client>
 SUBSCRIPTIONS_RUNTIME_TENANT_ID=<server-owned tenant>
 SUBSCRIPTIONS_PUBLICATION_PREVIEW_ENABLED=true
 SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED=false
+SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION=LK_NODE_RED_ANNUAL_BOOKING_V1
 ```
 
 Preview can be enabled while publish remains disabled. Enabling either flag,
 provisioning the synthetic client or mutating production data is a separate
 release/operations approval. Both flags are false in the example environment.
+
+`SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION` is mandatory for both
+preview and publish. `LK_NODE_RED_ANNUAL_BOOKING_V1` accepts only the reviewed
+Piter/HUB annual booking-admission slice; any missing, unknown or incompatible
+adapter/policy fails before the Viva read-back and before an audit or Mongo
+write. Cancellation, no-show, refund, renewal and other lifecycle/commerce
+fields remain modeled policy data, but are separate GO gates and are not made
+executable by this booking-admission adapter.
+
+## Reader rollout floor for schema-3 publications
+
+Before permitting any schema-3 publication write, deploy v3-capable runtime
+readers and fence-aware publication writers to every CUP replica while
+`SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED=false`; verify the immutable release
+digest on every replica. Only then is a separately approved publication-command
+enablement eligible for consideration. After the first schema-3 publication is
+written, rollback is bounded by both the v3-capable reader floor and the
+fence-aware publication-writer floor. This document does
+not authorize command activation, production publication, or any live mutation.
 
 ## Two-step contract
 
@@ -47,6 +67,9 @@ publication contract, performs an exact-ID Viva product read-back with the
 configured synthetic client, and returns:
 
 - `policyDigest`;
+- `runtimeCompatibility` for schema-3 publication: exact `adapterId`, positive
+  `contractVersion`, and `sha256:<64hex>` `capabilityDigest` for the immutable
+  runtime capability manifest;
 - content-addressed `impactPreviewRef`;
 - derived `TENANT`, one-`STATION`, or content-addressed `STATION_SET` provider scope;
 - sanitized Viva product evidence;
@@ -64,27 +87,35 @@ X-Correlation-Id: <8..128 stable characters>
 ```
 
 The body repeats the preview inputs and must include its exact `policyDigest`,
-exact `impactPreviewRef`, and a 10..500 character approval reason. CUP repeats
-all reads and the Viva exact-ID check. Any changed policy, dictionary input,
-scope or digest fails before audit or runtime mutation.
+exact `impactPreviewRef`, and a 10..500 character approval reason. The impact
+reference binds the preview's runtime compatibility as well as its policy and
+provider evidence. CUP repeats all reads and the Viva exact-ID check. Any
+changed policy, dictionary input, scope, runtime capability digest or impact
+reference fails before audit or runtime mutation.
 
 Before the Mongo transaction CUP writes a mandatory durable approval audit
-record. Its metadata contains hashes/references and the approval reason, never
-the raw Idempotency-Key, provider payload, credentials, cookies or client PII.
+record. Its metadata contains hashes/references, the schema-3 runtime
+compatibility fields and the approval reason, never the raw Idempotency-Key,
+provider payload, credentials, cookies or client PII.
 If durable audit persistence is unavailable, publication fails closed.
 
 One Mongo transaction then:
 
 1. re-reads the DRAFT type and policy and checks their revisions;
 2. inserts one VERIFIED provider mapping;
-3. inserts one immutable PUBLISHED policy envelope;
+3. inserts one immutable schema-3 PUBLISHED policy envelope, including the
+   preview-bound runtime compatibility;
 4. changes the policy status to PUBLISHED with revision increment;
 5. changes the subscription type from DRAFT to ACTIVE and pins
    `currentPolicyVersion`.
 
 A transaction/CAS/unique-index failure cannot leave a mapping without a
 publication. A lost response replays through the tenant + actor + idempotency
-mapping index and returns the exact committed mapping/publication. Reusing the
+mapping index and returns the exact committed mapping/publication. Replay first
+performs normal idempotency payload-conflict checks, then returns the committed
+record without requiring the current adapter environment, Viva read, audit or
+write. Schema-1/2 publications remain readable and replayable but are
+UNATTESTED: they do not carry a runtime compatibility attestation. Reusing the
 key with another request hash returns `IDEMPOTENCY_CONFLICT`.
 
 The explicit approval audit is intentionally written before the transaction.
@@ -95,9 +126,9 @@ as the publication's mandatory approval reference.
 
 ## Fail-closed publication rules
 
-The first command supports only the first publication of a DRAFT subscription
-type. Supersession, disabling and republishing are deliberately absent and need
-their own reviewed command and compatibility plan.
+The command supports initial publication and reviewed `NEW_ONLY` supersession.
+Disabling and republishing remain separate reviewed commands and compatibility
+plans.
 
 Publication requires:
 
@@ -126,8 +157,11 @@ absent until their exact Viva/CUP dictionaries and price evidence are approved.
   audit storage and transaction probe are approved.
 - If publish fails, inspect the approval audit and the four affected collections;
   do not retry with a new payload under the same idempotency key.
-- Code rollback is compatible while no publication exists: turn both new flags
-  off and deploy the previous artifact.
+- Code rollback before any fence-aware write requires both publication flags off on every
+  replica. After a fence-aware publication or projector transaction commits, keep publication
+  writes quiesced across rollback and follow the exact fence consistency audit and separately
+  authorized forward-fix procedure in `managed-annual-subscriptions-runtime-contracts.md` before
+  re-enable; an old writer must never publish while fences exist.
 - Once a policy is published, do not edit it. Future rule changes require a new
   policy version plus a separately implemented supersession command; existing
   instances remain pinned to their original version/digest unless an explicit

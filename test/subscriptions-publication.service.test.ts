@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   ServiceUnavailableException,
+  UnauthorizedException,
   UnprocessableEntityException
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
@@ -14,26 +15,37 @@ import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { RequestUser } from '../src/common/rbac/request-user.interface';
 import { Role } from '../src/common/rbac/role.enum';
 import { PublishSubscriptionPolicyDto } from '../src/subscriptions/dto/subscription-policy-publication.dto';
+import {
+  buildManagedAnnualSubscriptionV2Candidate,
+  VIVA_ANNUAL_STUDIOS_SNAPSHOT
+} from '../src/subscriptions/annual-subscription-policy-v2-candidate';
+import {
+  assertPolicySupportedByPublicationAdapter,
+  LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST,
+  LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST,
+  LK_NODE_RED_ANNUAL_BOOKING_V1
+} from '../src/subscriptions/subscription-publication-enforcement-adapter';
 import { SubscriptionPublicationService } from '../src/subscriptions/subscription-publication.service';
 import {
   computeSubscriptionRuntimeProjectionDigest,
   SubscriptionRuntimeContractError
 } from '../src/subscriptions/subscription-runtime-contracts';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
+import {
+  buildSubscriptionProjectionFence,
+  subscriptionProjectionFenceBindingDigest
+} from '../src/subscriptions/subscription-projection-fence';
 import { SubscriptionsController } from '../src/subscriptions/subscriptions.controller';
 import {
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionPolicyVersion,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionType
 } from '../src/subscriptions/subscriptions.types';
 
 const HASH = 'a'.repeat(64);
-const HUB_STATION_IDS = [
-  '0d5504f6-ea6f-44bb-a9e4-947faf0273ab',
-  '1ea77cbf-bc36-49a1-96d6-f35c216a409b',
-  '6b2d7e60-caff-4b22-89f6-6f19d7d311ab'
-];
+const HUB_STATION_IDS = [...VIVA_ANNUAL_STUDIOS_SNAPSHOT];
 const globalAdmin: RequestUser = {
   id: 'admin:global',
   login: 'global-admin',
@@ -109,12 +121,12 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
     enabled: true,
     category: 'GAME',
     actions: ['CREATE_GAME'],
-    externalEventTypeIds: ['event-type:padel-game'],
+    externalEventTypeIds: ['viva:direction:4588:type:1613'],
     productTypeIds: [],
     durationMinutes: [60],
     stationIds: scope === 'PITER'
       ? ['1ea77cbf-bc36-49a1-96d6-f35c216a409b']
-      : ['station:hub-canonical'],
+      : HUB_STATION_IDS,
     kind: 'FREE_ENTITLEMENT',
     valueMinor: null,
     percentage: null,
@@ -125,12 +137,12 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
     enabled: true,
     category: 'GAME',
     actions: ['JOIN_GAME'],
-    externalEventTypeIds: ['event-type:padel-game'],
+    externalEventTypeIds: ['viva:direction:4588:type:1613'],
     productTypeIds: [],
     durationMinutes: [60, 90, 120],
     stationIds: scope === 'PITER'
       ? ['1ea77cbf-bc36-49a1-96d6-f35c216a409b']
-      : ['station:hub-canonical'],
+      : HUB_STATION_IDS,
     kind: 'FREE_ENTITLEMENT',
     valueMinor: null,
     percentage: null,
@@ -139,7 +151,9 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
   }],
   providerBinding: {
     provider: 'VIVA',
-    externalId: scope === 'PITER' ? 'product:piter-friendship' : 'product:hub-friendship',
+    externalId: scope === 'PITER'
+      ? '8bf334ba-3050-4017-b40a-7eef2db1eb16'
+      : 'db7a5250-7369-4f43-8ac5-9111be24bc74',
     referenceKind: 'PRODUCT_CANDIDATE',
     evidenceState: 'UNVERIFIED'
   },
@@ -191,6 +205,29 @@ const policyFixture = (scope: 'PITER' | 'HUB' = 'PITER'): StoredSubscriptionPoli
     correlationId: 'corr:create-policy'
   }
 });
+
+const candidatePolicyFixture = (scope: 'PITER' | 'HUB'): StoredSubscriptionPolicyVersion => {
+  const candidate = buildManagedAnnualSubscriptionV2Candidate(scope);
+  return {
+    schemaVersion: 3,
+    modelVersion: 3,
+    subscriptionTypeId: candidate.subscriptionTypeId,
+    version: candidate.expectedNextVersion,
+    revision: 1,
+    status: 'DRAFT',
+    ...candidate.request,
+    providerBinding: {
+      ...candidate.request.providerBinding!,
+      evidenceState: 'UNVERIFIED'
+    },
+    createdAt: '2026-08-22T00:00:00.000Z',
+    createdBy: 'admin:global',
+    idempotency: {
+      actorId: 'admin:global', key: `candidate-${scope.toLowerCase()}-policy`, requestHash: HASH,
+      correlationId: `corr:candidate-${scope.toLowerCase()}`
+    }
+  } as StoredSubscriptionPolicyVersion;
+};
 
 class FakeRepository {
   type = typeFixture();
@@ -373,13 +410,15 @@ async function verifyRepositoryTransaction(
   let policy = policyFixture();
   let mappings: StoredSubscriptionProviderMapping[] = [];
   let publications: StoredSubscriptionPolicyPublication[] = [];
+  let fences: StoredSubscriptionProjectionFence[] = [];
   const session = { marker: 'publication-session' };
   repository.client = {
     startSession: () => ({
       withTransaction: async (callback: () => Promise<void>) => {
         const before = {
           type: structuredClone(type), policy: structuredClone(policy),
-          mappings: structuredClone(mappings), publications: structuredClone(publications)
+          mappings: structuredClone(mappings), publications: structuredClone(publications),
+          fences: structuredClone(fences)
         };
         try {
           await callback();
@@ -388,6 +427,7 @@ async function verifyRepositoryTransaction(
           policy = before.policy;
           mappings = before.mappings;
           publications = before.publications;
+          fences = before.fences;
           throw error;
         }
       },
@@ -435,6 +475,13 @@ async function verifyRepositoryTransaction(
       publications.push(structuredClone(row));
     }
   });
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => fences[0] ? structuredClone(fences[0]) : null,
+    insertOne: async (row: StoredSubscriptionProjectionFence, options: { session?: unknown }) => {
+      assert.ok(options.session);
+      fences.push(structuredClone(row));
+    }
+  });
 
   await repository.publishRuntimePolicy({
     mapping: structuredClone(mapping),
@@ -451,11 +498,14 @@ async function verifyRepositoryTransaction(
   assert.equal(publications.length, 1);
   assert.equal(type.state, 'ACTIVE');
   assert.equal(policy.status, 'PUBLISHED');
+  assert.equal(fences.length, 1);
+  assert.equal(fences[0].binding.publicationId, publication.publicationId);
 
   type = typeFixture();
   policy = policyFixture();
   mappings = [];
   publications = [];
+  fences = [];
   await assert.rejects(
     repository.publishRuntimePolicy({
       mapping: structuredClone(mapping),
@@ -499,7 +549,7 @@ async function verifyRepositorySupersessionTransaction(
   newProjection.policyVersion = 2;
   const newPublication: StoredSubscriptionPolicyPublication = {
     ...structuredClone(initialPublication),
-    schemaVersion: 2,
+    schemaVersion: 3,
     publicationId: 'publication:supersession-v2',
     policyVersion: 2,
     policyDigest: computeSubscriptionRuntimeProjectionDigest(newProjection),
@@ -525,13 +575,20 @@ async function verifyRepositorySupersessionTransaction(
   let policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   let mappings = [structuredClone(mapping)];
   let publications = [structuredClone(initialPublication)];
+  const initialFence = buildSubscriptionProjectionFence({
+    mapping,
+    publication: initialPublication,
+    previous: null
+  });
+  let fences = [structuredClone(initialFence)];
   let failTypeCas = false;
   repository.client = {
     startSession: () => ({
       withTransaction: async (callback: () => Promise<void>) => {
         const before = {
           type: structuredClone(type), policies: structuredClone(policies),
-          mappings: structuredClone(mappings), publications: structuredClone(publications)
+          mappings: structuredClone(mappings), publications: structuredClone(publications),
+          fences: structuredClone(fences)
         };
         try {
           await callback();
@@ -540,6 +597,7 @@ async function verifyRepositorySupersessionTransaction(
           policies = before.policies;
           mappings = before.mappings;
           publications = before.publications;
+          fences = before.fences;
           throw error;
         }
       },
@@ -610,6 +668,22 @@ async function verifyRepositorySupersessionTransaction(
       return { modifiedCount: 1 };
     }
   });
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => fences[0] ? structuredClone(fences[0]) : null,
+    insertOne: async (row: StoredSubscriptionProjectionFence) => {
+      fences.push(structuredClone(row));
+    },
+    updateOne: async (filter: any, update: any) => {
+      const row = fences[0];
+      if (!row
+        || row.fenceId !== filter.fenceId
+        || row.bindingRevision !== filter.bindingRevision
+        || row.coordinationRevision !== filter.coordinationRevision
+        || row.bindingDigest !== filter.bindingDigest) return { modifiedCount: 0 };
+      Object.assign(row, structuredClone(update.$set));
+      return { modifiedCount: 1 };
+    }
+  });
 
   const publish = () => repository.publishRuntimePolicy({
     mapping: structuredClone(refreshedMapping),
@@ -632,11 +706,39 @@ async function verifyRepositorySupersessionTransaction(
   assert.equal(mappings.length, 1);
   assert.equal(mappings[0].revision, refreshedMapping.revision);
   assert.equal(mappings[0].evidenceRef, refreshedMapping.evidenceRef);
+  assert.equal(fences[0].bindingRevision, 2);
+  assert.equal(fences[0].binding.publicationId, newPublication.publicationId);
 
   type = structuredClone(initialType);
   policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   mappings = [structuredClone(mapping)];
   publications = [structuredClone(initialPublication)];
+  fences = [];
+  await publish();
+  assert.equal(fences.length, 1);
+  assert.equal(fences[0].bindingRevision, 1);
+  assert.equal(fences[0].binding.publicationId, newPublication.publicationId);
+
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
+  fences[0].binding.mappingRevision += 1;
+  fences[0].bindingDigest = subscriptionProjectionFenceBindingDigest(fences[0].binding);
+  await assert.rejects(
+    publish,
+    (error: unknown) => error instanceof SubscriptionRuntimeContractError
+      && error.code === 'SUBSCRIPTION_PUBLICATION_FENCE_CONFLICT'
+  );
+  assert.deepEqual(mappings, [mapping]);
+  assert.deepEqual(publications, [initialPublication]);
+
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
   failTypeCas = true;
   await assert.rejects(
     publish,
@@ -674,6 +776,7 @@ async function verifyRepositorySupersessionTransaction(
   policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   mappings = [structuredClone(mapping)];
   publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
   failTypeCas = true;
   await assert.rejects(
     repository.publishRuntimePolicy({
@@ -712,8 +815,18 @@ async function main(): Promise<void> {
   process.env.SUBSCRIPTIONS_PUBLICATION_PREVIEW_ENABLED = 'true';
   process.env.SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED = 'true';
   process.env.SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = 'tenant:iSkq6G';
   process.env.SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID = 'client:synthetic-preview';
+
+  assert.doesNotThrow(() => assertPolicySupportedByPublicationAdapter(
+    LK_NODE_RED_ANNUAL_BOOKING_V1,
+    candidatePolicyFixture('PITER')
+  ));
+  assert.doesNotThrow(() => assertPolicySupportedByPublicationAdapter(
+    LK_NODE_RED_ANNUAL_BOOKING_V1,
+    candidatePolicyFixture('HUB')
+  ));
 
   assert.deepEqual(
     Reflect.getMetadata(PERMISSIONS_KEY, SubscriptionsController.prototype.previewPublication),
@@ -758,7 +871,140 @@ async function main(): Promise<void> {
   assert.deepEqual(preview.providerScope, {
     kind: 'STATION', scopeId: '1ea77cbf-bc36-49a1-96d6-f35c216a409b'
   });
+
+  const expectAdapterBlocked = async (
+    mutate: (policy: StoredSubscriptionPolicyVersion) => void,
+    blocker: string
+  ): Promise<void> => {
+    const blocked = createService();
+    mutate(blocked.repository.policy);
+    const error = await expectException(
+      () => blocked.service.preview(
+        blocked.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+      ),
+      ServiceUnavailableException
+    ) as ServiceUnavailableException;
+    const response = error.getResponse() as { code?: string; blockers?: string[] };
+    assert.equal(response.code, 'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED');
+    assert.ok(response.blockers?.includes(blocker));
+    assert.equal(blocked.viva.calls, 0);
+    assert.equal(blocked.repository.publishCalls, 0);
+  };
+
+  await expectAdapterBlocked((policy) => {
+    policy.capabilities.usage.weeklyUsageLimit = 2;
+  }, 'USAGE_COUNTER_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.capabilities.usage.blackoutDates = ['2026-09-01'];
+  }, 'BLACKOUT_DATES_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.activeServicesLimit = { enabled: true, max: 1, scope: 'SUBSCRIPTION_BENEFIT_ONLY' };
+  }, 'ACTIVE_SERVICES_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.stationAccessRules![0].selector = {
+      kind: 'STATION_LIST',
+      stationIds: ['1ea77cbf-bc36-49a1-96d6-f35c216a409b', '0d5504f6-ea6f-44bb-a9e4-947faf0273ab']
+    };
+  }, 'STATION_SCOPE_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.capabilities.lifecycle.activationMode = 'FIXED_DATE';
+  }, 'LIFECYCLE_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.benefitRules.push({
+      ...structuredClone(policy.benefitRules[0]),
+      ruleId: 'benefit-rule:group-training',
+      category: 'GROUP_TRAINING',
+      actions: ['BOOK_GROUP_TRAINING']
+    });
+  }, 'BENEFIT_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.benefitRules.push({
+      ...structuredClone(policy.benefitRules[0]),
+      ruleId: 'benefit-rule:create-duplicate'
+    });
+  }, 'BENEFIT_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.benefitRules[0].externalEventTypeIds = ['viva:direction:other:type:other'];
+  }, 'BENEFIT_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.benefitRules[0].productTypeIds = ['product-type:other'];
+  }, 'BENEFIT_UNSUPPORTED');
+  await expectAdapterBlocked((policy) => {
+    policy.providerBinding!.externalId = '00000000-0000-4000-8000-000000000000';
+  }, 'PROVIDER_PRODUCT_UNSUPPORTED');
+
+  const missingAdapter = createService();
+  delete process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION;
+  const missingAdapterError = await expectException(
+    () => missingAdapter.service.preview(
+      missingAdapter.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+    ),
+    ServiceUnavailableException
+  ) as ServiceUnavailableException;
+  assert.deepEqual(missingAdapterError.getResponse(), {
+    code: 'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED',
+    message: 'Subscription policy is not supported by the configured booking enforcement adapter',
+    adapterVersion: null,
+    blockers: ['ADAPTER_VERSION_REQUIRED']
+  });
+  assert.equal(missingAdapter.viva.calls, 0);
+  const missingAdapterCommand = await expectException(
+    () => missingAdapter.service.publish(
+      missingAdapter.repository.type.subscriptionTypeId,
+      '1',
+      {
+        ...previewDto(),
+        expectedPolicyDigest: `sha256:${HASH}`,
+        expectedImpactPreviewRef: `impact:subscription-publication:${HASH}`,
+        approvalReason: 'Missing adapter must block publication before any write'
+      },
+      headers('adapter-missing'),
+      globalAdmin
+    ),
+    ServiceUnavailableException
+  ) as ServiceUnavailableException;
+  assert.equal(
+    (missingAdapterCommand.getResponse() as { code?: string }).code,
+    'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED'
+  );
+  assert.equal(missingAdapter.repository.publishCalls, 0);
+  const unauthorizedWithoutAdapter = createService();
+  const unauthorizedError = await expectException(
+    () => unauthorizedWithoutAdapter.service.preview(
+      unauthorizedWithoutAdapter.repository.type.subscriptionTypeId, '1', previewDto()
+    ),
+    UnauthorizedException
+  );
+  assert.equal(unauthorizedWithoutAdapter.viva.calls, 0);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'UNKNOWN_ADAPTER';
+  const unknownAdapter = createService();
+  const unknownAdapterError = await expectException(
+    () => unknownAdapter.service.preview(
+      unknownAdapter.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
+    ),
+    ServiceUnavailableException
+  ) as ServiceUnavailableException;
+  const unknownResponse = unknownAdapterError.getResponse() as { code?: string; blockers?: string[] };
+  assert.equal(unknownResponse.code, 'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED');
+  assert.deepEqual(unknownResponse.blockers, ['ADAPTER_VERSION_UNKNOWN']);
+  assert.equal(unknownAdapter.viva.calls, 0);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   assert.match(preview.policyDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(preview.runtimeCompatibility, {
+    adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+    contractVersion: 1,
+    capabilityDigest: LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST
+  });
+  assert.equal(
+    LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_DIGEST,
+    'sha256:f1e00751ba2ef19b1945964f2ee90d2d88dbf11121fdb75dfe573b6b12f31791'
+  );
+  assert.equal(Object.isFrozen(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST), true);
+  assert.equal(Object.isFrozen(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.usage), true);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.runtimeSchemaVersion, 1);
+  assert.deepEqual(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.usage.blackoutDates, []);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.benefit.enabledRuleCount, 2);
+  assert.equal(LK_REGIONAL_BOOKING_GATEWAY_CAPABILITY_MANIFEST.benefit.exactlyOnePerAction, true);
   assert.match(preview.impactPreviewRef, /^impact:subscription-publication:[a-f0-9]{64}$/);
   assert.equal(preview.publicationMode, 'INITIAL');
   assert.equal(preview.providerMappingMode, 'CREATE');
@@ -787,7 +1033,8 @@ async function main(): Promise<void> {
   assert.equal(published.item.publication.state, 'PUBLISHED');
   assert.equal(published.item.publication.mappingId, published.item.mapping.mappingId);
   assert.equal(published.item.publication.policyDigest, preview.policyDigest);
-  assert.equal(published.item.publication.schemaVersion, 2);
+  assert.equal(published.item.publication.schemaVersion, 3);
+  assert.deepEqual(published.item.publication.runtimeCompatibility, preview.runtimeCompatibility);
   assert.equal(published.item.publication.idempotency?.key, headers().idempotencyKey);
   assert.equal(context.repository.type.state, 'ACTIVE');
   assert.equal(context.repository.policy.status, 'PUBLISHED');
@@ -796,6 +1043,9 @@ async function main(): Promise<void> {
   assert.equal(context.audit.entries[0].action, 'SUBSCRIPTION_POLICY_PUBLICATION_APPROVED');
   const metadata = context.audit.entries[0].metadata as Record<string, unknown>;
   assert.equal(metadata.impactPreviewRef, preview.impactPreviewRef);
+  assert.equal(metadata.runtimeAdapterId, 'LK_REGIONAL_BOOKING_GATEWAY');
+  assert.equal(metadata.runtimeContractVersion, 1);
+  assert.equal(metadata.runtimeCapabilityDigest, preview.runtimeCompatibility.capabilityDigest);
   assert.equal(metadata.dictionaryEvidenceRef, previewDto().dictionaryEvidenceRef);
   assert.notEqual(metadata.idempotencyKeyHash, headers().idempotencyKey);
   assert.ok(context.repository.mapping);
@@ -825,6 +1075,42 @@ async function main(): Promise<void> {
   assert.equal(replay.replayed, true);
   assert.equal(context.viva.calls, vivaCallsBeforeReplay);
   assert.equal(context.audit.entries.length, 1);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'UNKNOWN_ADAPTER';
+  const replayWithoutCurrentAdapter = await context.service.publish(
+    context.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: preview.policyDigest,
+      expectedImpactPreviewRef: preview.impactPreviewRef,
+      approvalReason: 'Approved exact Piter annual policy and provider mapping'
+    },
+    headers(),
+    globalAdmin
+  );
+  assert.equal(replayWithoutCurrentAdapter.replayed, true);
+  assert.equal(context.viva.calls, vivaCallsBeforeReplay);
+  assert.equal(context.audit.entries.length, 1);
+  const storedPublication = context.repository.publications[0];
+  assert.ok(storedPublication);
+  storedPublication.schemaVersion = 2;
+  delete storedPublication.runtimeCompatibility;
+  const legacyReplay = await context.service.publish(
+    context.repository.type.subscriptionTypeId,
+    '1',
+    {
+      ...previewDto(),
+      expectedPolicyDigest: preview.policyDigest,
+      expectedImpactPreviewRef: preview.impactPreviewRef,
+      approvalReason: 'Approved exact Piter annual policy and provider mapping'
+    },
+    headers(),
+    globalAdmin
+  );
+  assert.equal(legacyReplay.replayed, true);
+  assert.equal(legacyReplay.item.publication.schemaVersion, 2);
+  assert.equal(context.viva.calls, vivaCallsBeforeReplay);
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   await expectException(
     () => context.service.publish(
       context.repository.type.subscriptionTypeId,
@@ -1015,16 +1301,11 @@ async function main(): Promise<void> {
   );
   const originalMapping = structuredClone(newMappingSupersession.repository.mappings[0]);
   newMappingSupersession.repository.policies.push({
-    ...structuredClone(newMappingSupersession.repository.policy),
+    ...policyFixture('HUB'),
+    subscriptionTypeId: newMappingSupersession.repository.type.subscriptionTypeId,
     version: 2,
     revision: 1,
     status: 'DRAFT',
-    providerBinding: {
-      provider: 'VIVA',
-      externalId: 'product:piter-friendship-v2',
-      referenceKind: 'PRODUCT_CANDIDATE',
-      evidenceState: 'UNVERIFIED'
-    },
     idempotency: {
       actorId: 'admin:global', key: 'create-new-mapping-policy-v2', requestHash: HASH,
       correlationId: 'corr:create-new-mapping-v2'
@@ -1054,7 +1335,7 @@ async function main(): Promise<void> {
   assert.equal(newMappingSupersession.repository.mappings.length, 2);
   assert.deepEqual(newMappingSupersession.repository.mappings[0], originalMapping);
   assert.notEqual(newMappingV2.item.mapping.mappingId, originalMapping.mappingId);
-  assert.equal(newMappingV2.item.mapping.providerProductId, 'product:piter-friendship-v2');
+  assert.equal(newMappingV2.item.mapping.providerProductId, 'db7a5250-7369-4f43-8ac5-9111be24bc74');
   assert.equal(newMappingV2.item.publication.mappingId, newMappingV2.item.mapping.mappingId);
   assert.equal(newMappingSupersession.repository.publications[0].mappingId, originalMapping.mappingId);
   assert.equal(newMappingSupersession.repository.instanceCounts.get(1), 3);
@@ -1149,11 +1430,11 @@ async function main(): Promise<void> {
     () => incompletePolicy.service.preview(
       incompletePolicy.repository.type.subscriptionTypeId, '1', previewDto(), globalAdmin
     ),
-    UnprocessableEntityException
-  ) as UnprocessableEntityException;
+    ServiceUnavailableException
+  ) as ServiceUnavailableException;
   assert.equal(
     (incompleteError.getResponse() as { code?: string }).code,
-    'SUBSCRIPTION_PUBLICATION_ENABLED_BENEFIT_REQUIRED'
+    'SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED'
   );
   assert.equal(incompletePolicy.viva.calls, 0);
   assert.equal(incompletePolicy.repository.publishCalls, 0);
