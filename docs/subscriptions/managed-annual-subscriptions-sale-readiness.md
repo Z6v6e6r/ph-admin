@@ -9,22 +9,17 @@ creates, changes, activates, charges, or reconciles a subscription.
 
 ## Fail-closed boundary
 
-This release always returns HTTP 200 with `ready: false` after successful
-authentication and configuration validation. CUP does not yet persist an
-authoritative Viva-to-CUP subscription-instance projector checkpoint, so every
-successful response contains
+The source can consume a fresh, fully-accounted initial-full projector checkpoint, but
+the importer and checkpoint reader are default-off. Without that exact persisted
+evidence every successful response contains
 `SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE`.
 
 Do not infer readiness from provider product mappings, publication rows, instance
-rows, environment overrides, or an in-memory worker cursor. The first possible
-`ready: true` is a separate P0 change requiring a persisted projector checkpoint,
-producer identity/version, watermark, staleness policy, restart recovery, and
-reconciliation tests.
-
-The checkpoint collection contract may be introduced before a producer, but that is
-**contract only**: it has no writer and does not alter this endpoint's unconditional
-`ready: false` / `SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE` result.
-Its Mongo index rollout and apply are separate approvals.
+rows, environment overrides, or an in-memory worker cursor. `ready: true` additionally
+requires a persisted initial-full checkpoint with pinned producer identity/version,
+fresh coverage, exact accounting and unchanged mapping/publication compatibility.
+Index rollout, manifest approval, import apply and reader activation are separate
+approvals.
 
 ## Request
 
@@ -51,7 +46,8 @@ Successful responses include `Cache-Control: no-store`,
 `Referrer-Policy: no-referrer`, and a valid `X-Correlation-Id`. They echo the
 requested product/scope and compiled compatibility, expose only sanitized
 mapping/publication summaries, and never expose integration tokens, evidence
-references, client identifiers, payment data, or raw provider payloads.
+references, client identifiers, payment data, or raw provider payloads. `ready: true`
+is possible only when every listed blocker is absent, including a current checkpoint.
 
 ## Evidence order and blockers
 
@@ -65,7 +61,7 @@ The read path checks, in deterministic order:
 6. the exact policy publication, effective state, linkage, derived provider scope,
    and schema-3 runtime compatibility attestation;
 7. a repeated exact mapping/type read to detect evidence changing during the check;
-8. the unavailable authoritative instance-projector checkpoint.
+8. the fresh, fully-accounted authoritative instance-projector checkpoint.
 
 Missing or business-not-ready evidence returns HTTP 200 with ordered blockers.
 Disabled/misconfigured readiness, invalid tenant/staleness configuration, a wrong
@@ -79,6 +75,7 @@ The deployment example keeps the new boundary off:
 ```dotenv
 SUBSCRIPTIONS_SALE_READINESS_ENABLED=false
 SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_TOKEN=
+SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED=false
 ```
 
 The dedicated token must be at least 32 UTF-8 bytes. Mapping freshness reuses
@@ -87,4 +84,5 @@ The repository also requires the existing runtime-contract configuration and
 indexes.
 
 Enabling either flag, configuring a production secret, deployment, connecting an
-LK caller, and implementing the projector checkpoint are separate release gates.
+LK caller, approving the normalized provider snapshot, importing the checkpoint, and
+activating its reader are separate release gates.

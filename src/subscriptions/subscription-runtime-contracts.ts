@@ -67,6 +67,8 @@ const LEDGER_EVENT_TYPES = [
 ] as const;
 const OUTBOX_STATUSES = ['PENDING', 'DELIVERED', 'DEAD_LETTER'] as const;
 const INSTANCE_PROJECTOR_SCOPE_KINDS = ['TENANT', 'STATION', 'STATION_SET'] as const;
+const INSTANCE_PROJECTOR_EVIDENCE_PATTERN =
+  /^[a-z][a-z0-9_]{2,63}:sha256:[a-f0-9]{64}$/;
 const ACTIVATED_INSTANCE_STATES = new Set([
   'ACTIVE', 'FROZEN', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'REVOKED'
 ]);
@@ -856,7 +858,8 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
 
   assertExactKeys(value.binding as object, [
     'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
-    'policyDigest', 'runtimeCompatibility'
+    'policyDigest', 'releaseProgramId', 'releaseProgramRevision', 'releasePhaseId',
+    'runtimeCompatibility'
   ], 'binding');
   requiredId(value.binding.mappingId, 'binding.mappingId');
   positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
@@ -864,6 +867,9 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   requiredId(value.binding.publicationId, 'binding.publicationId');
   positiveInteger(value.binding.policyVersion, 'binding.policyVersion');
   digest(value.binding.policyDigest, 'binding.policyDigest');
+  requiredId(value.binding.releaseProgramId, 'binding.releaseProgramId');
+  positiveInteger(value.binding.releaseProgramRevision, 'binding.releaseProgramRevision');
+  requiredId(value.binding.releasePhaseId, 'binding.releasePhaseId');
   validateRuntimeCompatibility(value.binding.runtimeCompatibility);
 
   assertExactKeys(value.producer as object, [
@@ -882,7 +888,9 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   }
   if (value.coverage.kind === 'ORDERED_CHANGE_FEED') {
     assertExactKeys(value.coverage, ['kind', 'watermark', 'watermarkDigest', 'coverageThrough'], 'coverage');
-    requiredText(value.coverage.watermark, 'coverage.watermark', 500);
+    if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.coverage.watermark)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_WATERMARK_INVALID');
+    }
     digest(value.coverage.watermarkDigest, 'coverage.watermarkDigest');
     requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
   } else if (value.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT') {
@@ -912,8 +920,17 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
     > value.reconciliation.sourceItemCount) {
     fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
   }
-  requiredText(value.reconciliation.sourceEvidenceRef, 'reconciliation.sourceEvidenceRef');
-  optionalText(value.reconciliation.resultEvidenceRef, 'reconciliation.resultEvidenceRef');
+  if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.reconciliation.sourceEvidenceRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+      field: 'reconciliation.sourceEvidenceRef'
+    });
+  }
+  if (value.reconciliation.resultEvidenceRef !== null
+    && !INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.reconciliation.resultEvidenceRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+      field: 'reconciliation.resultEvidenceRef'
+    });
+  }
   digest(value.reconciliation.reconciliationDigest, 'reconciliation.reconciliationDigest');
   if (value.reconciliation.completedAt !== null) {
     assertInstantOrder(value.reconciliation.startedAt, value.reconciliation.completedAt,
@@ -926,7 +943,11 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
     assertExactKeys(value.failure as object, ['code', 'detectedAt', 'evidenceRef'], 'failure');
     requiredId(value.failure.code, 'failure.code');
     requiredInstant(value.failure.detectedAt, 'failure.detectedAt');
-    requiredText(value.failure.evidenceRef, 'failure.evidenceRef');
+    if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.failure.evidenceRef)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+        field: 'failure.evidenceRef'
+      });
+    }
   }
   if (value.lease !== null) {
     assertExactKeys(value.lease as object, ['runId', 'epoch', 'ownerIdHash', 'acquiredAt', 'expiresAt'], 'lease');
@@ -942,6 +963,17 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
     if (value.failure !== null || value.lease !== null || value.reconciliation.failureCount !== 0
       || value.reconciliation.completedAt === null) {
       fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CURRENT_INVALID');
+    }
+    const accounted = value.reconciliation.insertedCount
+      + value.reconciliation.updatedCount
+      + value.reconciliation.replayedCount
+      + value.reconciliation.terminalCount;
+    if (accounted !== value.reconciliation.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
+    }
+    if (value.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT'
+      && value.coverage.sourceItemCount !== value.reconciliation.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
     }
   } else if (value.failure === null) fail('SUBSCRIPTION_INSTANCE_PROJECTOR_FAILED_INVALID');
   positiveInteger(value.revision, 'revision');

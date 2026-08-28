@@ -209,6 +209,9 @@ const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckp
     publicationId: 'publication:friendship-12m-v3',
     policyVersion: 3,
     policyDigest: DIGEST,
+    releaseProgramId: 'release_program:friendship-12m',
+    releaseProgramRevision: 1,
+    releasePhaseId: 'release_phase:friendship-12m',
     runtimeCompatibility: {
       adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
       contractVersion: 1,
@@ -240,8 +243,8 @@ const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckp
     replayedCount: 1,
     terminalCount: 0,
     failureCount: 0,
-    sourceEvidenceRef: 'evidence:subscription-source',
-    resultEvidenceRef: 'evidence:subscription-projector-result',
+    sourceEvidenceRef: `provider_snapshot_evidence:${DIGEST}`,
+    resultEvidenceRef: `projection_result:${DIGEST}`,
     reconciliationDigest: DIGEST
   },
   failure: null,
@@ -581,7 +584,7 @@ async function run(): Promise<void> {
     ...projectorCheckpointFixture(),
     coverage: {
       kind: 'ORDERED_CHANGE_FEED',
-      watermark: 'cursor:20260815:42',
+      watermark: `provider_watermark:${DIGEST}`,
       watermarkDigest: DIGEST,
       coverageThrough: NOW
     }
@@ -628,7 +631,7 @@ async function run(): Promise<void> {
   );
   assert.throws(
     () => validateStoredSubscriptionInstanceProjectorCheckpoint({
-      ...projectorCheckpointFixture(), failure: { code: 'SOURCE_FAILED', detectedAt: NOW, evidenceRef: 'evidence:failure' }
+      ...projectorCheckpointFixture(), failure: { code: 'SOURCE_FAILED', detectedAt: NOW, evidenceRef: `provider_failure:${DIGEST}` }
     }),
     hasCode('SUBSCRIPTION_INSTANCE_PROJECTOR_CURRENT_INVALID')
   );

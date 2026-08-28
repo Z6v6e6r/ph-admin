@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { Collection, Db, Filter, MongoClient, MongoServerError } from 'mongodb';
+import type { SubscriptionInstanceProjectionPlan } from './subscription-provider-instance-projector.service';
 import {
   StoredReleaseProgram,
   StoredSubscriptionCanonicalTargetSnapshot,
@@ -616,6 +618,38 @@ export class SubscriptionsRepository {
     );
     if (row) validateStoredSubscriptionInstanceProjectorCheckpoint(row);
     return row;
+  }
+
+  async preflightInitialRuntimeInstanceProjection(
+    plan: SubscriptionInstanceProjectionPlan
+  ): Promise<'READY_TO_INSERT' | 'EXACT_REPLAY'> {
+    this.assertInstanceProjectorContractsEnabled();
+    this.validateInitialProjectionPlan(plan);
+    const checkpoint = await this.runtimeInstanceProjectorCheckpoints().findOne(
+      this.instanceProjectorIdentity(plan.checkpoint),
+      { projection: { _id: 0 } }
+    );
+    const rows = await this.runtimeInstances()
+      .find(this.instanceProjectionProductFilter(plan.checkpoint), { projection: { _id: 0 } })
+      .sort({ subscriptionInstanceId: 1 })
+      .toArray();
+    rows.forEach(validateStoredSubscriptionInstance);
+    if (!checkpoint) {
+      if (rows.length !== 0) {
+        throw new SubscriptionRuntimeContractError(
+          'SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNCHECKPOINTED_INSTANCES_CONFLICT'
+        );
+      }
+      return 'READY_TO_INSERT';
+    }
+    validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
+    if (!isDeepStrictEqual(checkpoint, plan.checkpoint)
+      || !isDeepStrictEqual(rows, plan.instances)) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_INSTANCE_PROJECTOR_IMMUTABLE_CONFLICT'
+      );
+    }
+    return 'EXACT_REPLAY';
   }
 
   async runtimeProviderMappingByIdempotency(input: {
@@ -1529,6 +1563,51 @@ export class SubscriptionsRepository {
 
   isDuplicateKey(error: unknown): boolean {
     return error instanceof MongoServerError && error.code === 11000;
+  }
+
+  private validateInitialProjectionPlan(plan: SubscriptionInstanceProjectionPlan): void {
+    validateStoredSubscriptionInstanceProjectorCheckpoint(plan.checkpoint);
+    plan.instances.forEach(validateStoredSubscriptionInstance);
+    if (plan.instances.length < 1
+      || plan.checkpoint.state !== 'CURRENT'
+      || plan.checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
+      || plan.checkpoint.reconciliation.mode !== 'INITIAL_FULL'
+      || plan.checkpoint.reconciliation.insertedCount !== plan.instances.length
+      || plan.checkpoint.reconciliation.replayedCount !== 0
+      || plan.instances.some((instance) =>
+        instance.tenantId !== plan.checkpoint.tenantId
+        || instance.provider !== plan.checkpoint.provider
+        || instance.providerProductId !== plan.checkpoint.providerProductId
+        || instance.mappingId !== plan.checkpoint.binding.mappingId
+        || instance.subscriptionTypeId !== plan.checkpoint.binding.subscriptionTypeId
+        || instance.policyVersion !== plan.checkpoint.binding.policyVersion
+        || instance.policyDigest !== plan.checkpoint.binding.policyDigest
+        || instance.releaseProgramId !== plan.checkpoint.binding.releaseProgramId
+        || instance.releasePhaseId !== plan.checkpoint.binding.releasePhaseId)) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+  }
+
+  private instanceProjectorIdentity(
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint
+  ): Record<string, unknown> {
+    return {
+      tenantId: checkpoint.tenantId,
+      provider: checkpoint.provider,
+      providerProductId: checkpoint.providerProductId,
+      'providerScope.kind': checkpoint.providerScope.kind,
+      'providerScope.scopeId': checkpoint.providerScope.scopeId
+    };
+  }
+
+  private instanceProjectionProductFilter(
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint
+  ): Filter<StoredSubscriptionInstance> {
+    return {
+      tenantId: checkpoint.tenantId,
+      provider: checkpoint.provider,
+      providerProductId: checkpoint.providerProductId
+    };
   }
 
   private types(): Collection<StoredSubscriptionType> {

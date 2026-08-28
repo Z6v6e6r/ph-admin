@@ -119,17 +119,74 @@ const publication = () => ({
   runtimeCompatibility: { ...COMPATIBILITY }
 });
 
+const checkpoint = () => ({
+  schemaVersion: 1 as const,
+  checkpointId: 'checkpoint:piter-annual',
+  tenantId: TENANT_ID,
+  provider: 'VIVA' as const,
+  providerProductId: PRODUCT_ID,
+  providerScope: { kind: 'STATION' as const, scopeId: STATION_ID },
+  binding: {
+    mappingId: mapping().mappingId,
+    mappingRevision: mapping().revision,
+    subscriptionTypeId: publication().subscriptionTypeId,
+    publicationId: publication().publicationId,
+    policyVersion: publication().policyVersion,
+    policyDigest: publication().policyDigest,
+    releaseProgramId: 'release-program:piter-annual',
+    releaseProgramRevision: 1,
+    releasePhaseId: 'release-phase:piter-annual',
+    runtimeCompatibility: { ...COMPATIBILITY }
+  },
+  producer: {
+    producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR' as const,
+    contractVersion: 1 as const,
+    producerCapabilityDigest: `sha256:${'e'.repeat(64)}` as `sha256:${string}`,
+    sourceContractDigest: `sha256:${'f'.repeat(64)}` as `sha256:${string}`
+  },
+  state: 'CURRENT' as const,
+  coverage: {
+    kind: 'CONSISTENT_FULL_SNAPSHOT' as const,
+    snapshotId: 'snapshot:piter-annual-20260824',
+    snapshotDigest: `sha256:${'1'.repeat(64)}` as `sha256:${string}`,
+    coverageThrough: '2026-08-24T09:59:30.000Z',
+    sourceItemCount: 1
+  },
+  reconciliation: {
+    runId: 'run:piter-annual-20260824',
+    mode: 'INITIAL_FULL' as const,
+    startedAt: '2026-08-24T09:59:00.000Z',
+    completedAt: '2026-08-24T09:59:30.000Z',
+    sourceItemCount: 1,
+    insertedCount: 1,
+    updatedCount: 0,
+    replayedCount: 0,
+    terminalCount: 0,
+    failureCount: 0,
+    sourceEvidenceRef: `provider_snapshot_evidence:sha256:${'2'.repeat(64)}`,
+    resultEvidenceRef: `projection_result:sha256:${'3'.repeat(64)}`,
+    reconciliationDigest: `sha256:${'4'.repeat(64)}` as `sha256:${string}`
+  },
+  failure: null,
+  lease: null,
+  revision: 1,
+  createdAt: '2026-08-24T09:59:30.000Z',
+  updatedAt: '2026-08-24T09:59:30.000Z'
+});
+
 class RepositoryStub {
   connectCalls = 0;
   mappingReads = 0;
   typeReads = 0;
   publicationReads = 0;
+  checkpointReads = 0;
   lastMappingIdentity: unknown = null;
   firstMapping: any = mapping();
   secondMapping: any = this.firstMapping;
   firstType: any = subscriptionType();
   secondType: any = this.firstType;
   currentPublication: any = publication();
+  currentCheckpoint: any = null;
   connectError: Error | null = null;
 
   async connectReadOnly(): Promise<void> {
@@ -151,6 +208,11 @@ class RepositoryStub {
   async runtimePolicyPublicationByVersion() {
     this.publicationReads += 1;
     return this.currentPublication;
+  }
+
+  async runtimeInstanceProjectorCheckpointByProviderIdentity() {
+    this.checkpointReads += 1;
+    return this.currentCheckpoint;
   }
 }
 
@@ -183,6 +245,8 @@ function configure(): void {
   process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = TENANT_ID;
   process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS = '3600';
   process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'false';
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED = 'false';
 }
 
 async function verifyDtoBoundary(): Promise<void> {
@@ -375,6 +439,27 @@ async function verifyFailClosedAndDrift(): Promise<void> {
   const serialized = JSON.stringify(exactResult);
   assert.doesNotMatch(serialized, /integration-token|evidenceRef|approvalAuditRef|providerClientId/);
   assert.equal(serialized.includes(TOKEN), false);
+
+  configure();
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'true';
+  const contractsOnly = service();
+  contractsOnly.repository.currentCheckpoint = checkpoint();
+  const contractsOnlyResult = await contractsOnly.service.check(TOKEN, dto());
+  assert.equal(contractsOnlyResult.ready, false);
+  assert.ok(blockerCodes(contractsOnlyResult)
+    .includes('SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE'));
+
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED = 'true';
+  const current = service();
+  current.repository.currentCheckpoint = checkpoint();
+  const currentResult = await current.service.check(TOKEN, dto());
+  assert.equal(currentResult.ready, true);
+  assert.deepEqual(currentResult.blockers, []);
+  assert.deepEqual(currentResult.instanceProjector, {
+    status: 'CURRENT',
+    checkpointAsOf: '2026-08-24T09:59:30.000Z'
+  });
 
   const drift = service();
   drift.repository.secondMapping = { ...mapping(), revision: 5 };
