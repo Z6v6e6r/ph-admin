@@ -159,11 +159,11 @@ async function seed(client: MongoClient, dbName: string, rejectCheckpoint: boole
       : undefined
   );
   await Promise.all([
-    db.collection('subscription_types').insertOne(source.type),
-    db.collection('subscription_policy_versions').insertOne(source.policy),
-    db.collection('subscription_provider_mappings').insertOne(source.mapping),
-    db.collection('subscription_policy_publications').insertOne(source.publication),
-    db.collection('subscription_release_programs').insertOne(source.releaseProgram)
+    db.collection('subscription_types').insertOne(structuredClone(source.type)),
+    db.collection('subscription_policy_versions').insertOne(structuredClone(source.policy)),
+    db.collection('subscription_provider_mappings').insertOne(structuredClone(source.mapping)),
+    db.collection('subscription_policy_publications').insertOne(structuredClone(source.publication)),
+    db.collection('subscription_release_programs').insertOne(structuredClone(source.releaseProgram))
   ]);
   return source;
 }
