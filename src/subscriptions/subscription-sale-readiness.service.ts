@@ -7,7 +7,9 @@ import {
 } from './subscription-publication-enforcement-adapter';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import { SubscriptionsRepository } from './subscriptions.repository';
+import { validateStoredSubscriptionInstanceProjectorCheckpoint } from './subscription-runtime-contracts';
 import {
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProviderMapping,
   SubscriptionProviderScope,
@@ -34,7 +36,7 @@ type SaleReadinessPublication = Pick<StoredSubscriptionPolicyPublication,
 
 export interface SubscriptionSaleReadinessResult {
   schemaVersion: 1;
-  ready: false;
+  ready: boolean;
   provider: 'VIVA';
   providerProductId: string;
   providerScope: SubscriptionProviderScope;
@@ -42,7 +44,10 @@ export interface SubscriptionSaleReadinessResult {
   requiredCompatibility: SubscriptionRuntimeCompatibility;
   mapping: SaleReadinessMapping | null;
   publication: SaleReadinessPublication | null;
-  instanceProjector: { status: 'UNAVAILABLE'; checkpointAsOf: null };
+  instanceProjector: {
+    status: 'UNAVAILABLE' | 'CURRENT';
+    checkpointAsOf: string | null;
+  };
   blockers: Array<{ code: string }>;
 }
 
@@ -161,12 +166,57 @@ export class SubscriptionSaleReadinessService {
       }
     }
 
-    blockers.push('SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE');
+    let instanceProjector: SubscriptionSaleReadinessResult['instanceProjector'] = {
+      status: 'UNAVAILABLE',
+      checkpointAsOf: null
+    };
+    if (mapping && publication
+      && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED')
+      && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED')) {
+      const checkpoint = await this.read(() =>
+        this.repository.runtimeInstanceProjectorCheckpointByProviderIdentity(identity));
+      if (checkpoint && this.instanceProjectorIsCurrent(
+        checkpoint,
+        mapping,
+        publication,
+        checkedAt,
+        maxStalenessSeconds,
+        requiredCompatibility
+      )) {
+        instanceProjector = {
+          status: 'CURRENT',
+          checkpointAsOf: checkpoint.coverage.coverageThrough
+        };
+        const [mappingAfterCheckpoint, publicationAfterCheckpoint] = await Promise.all([
+          this.read(() => this.repository.runtimeProviderMappingByProviderIdentity(identity)),
+          this.read(() => this.repository.runtimePolicyPublicationByVersion(
+            publication.subscriptionTypeId,
+            publication.policyVersion
+          ))
+        ]);
+        if (!mappingAfterCheckpoint
+          || mappingAfterCheckpoint.mappingId !== mapping.mappingId
+          || mappingAfterCheckpoint.revision !== mapping.revision
+          || !publicationAfterCheckpoint
+          || publicationAfterCheckpoint.publicationId !== publication.publicationId
+          || publicationAfterCheckpoint.state !== publication.state
+          || publicationAfterCheckpoint.policyDigest !== publication.policyDigest) {
+          blockers.push('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED');
+          instanceProjector = { status: 'UNAVAILABLE', checkpointAsOf: null };
+        }
+      }
+    }
+    if (instanceProjector.status !== 'CURRENT') {
+      blockers.push('SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE');
+    }
+    const uniqueBlockers = [...new Set(blockers)];
     return {
       ...base,
+      ready: uniqueBlockers.length === 0,
+      instanceProjector,
       mapping: mapping ? this.mappingView(mapping) : null,
       publication: publication ? this.publicationView(publication) : null,
-      blockers: [...new Set(blockers)].map((code) => ({ code }))
+      blockers: uniqueBlockers.map((code) => ({ code }))
     };
   }
 
@@ -228,6 +278,37 @@ export class SubscriptionSaleReadinessService {
     return actual.adapterId === required.adapterId
       && actual.contractVersion === required.contractVersion
       && actual.capabilityDigest === required.capabilityDigest;
+  }
+
+  private instanceProjectorIsCurrent(
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint,
+    mapping: StoredSubscriptionProviderMapping,
+    publication: StoredSubscriptionPolicyPublication,
+    checkedAt: Date,
+    maxStalenessSeconds: number,
+    requiredCompatibility: SubscriptionRuntimeCompatibility
+  ): boolean {
+    try {
+      validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
+    } catch {
+      return false;
+    }
+    const compatibility = checkpoint.binding.runtimeCompatibility;
+    return checkpoint.state === 'CURRENT'
+      && checkpoint.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT'
+      && checkpoint.coverage.sourceItemCount > 0
+      && this.isFresh(
+        checkpoint.coverage.coverageThrough,
+        checkedAt,
+        maxStalenessSeconds
+      )
+      && checkpoint.binding.mappingId === mapping.mappingId
+      && checkpoint.binding.mappingRevision === mapping.revision
+      && checkpoint.binding.subscriptionTypeId === publication.subscriptionTypeId
+      && checkpoint.binding.publicationId === publication.publicationId
+      && checkpoint.binding.policyVersion === publication.policyVersion
+      && checkpoint.binding.policyDigest === publication.policyDigest
+      && this.runtimeCompatibilityMatches(compatibility, requiredCompatibility);
   }
 
   private mappingView(mapping: StoredSubscriptionProviderMapping): SaleReadinessMapping {

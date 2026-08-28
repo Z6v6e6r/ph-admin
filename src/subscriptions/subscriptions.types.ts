@@ -714,6 +714,9 @@ export interface StoredSubscriptionInstanceProjectorCheckpoint {
     publicationId: string;
     policyVersion: number;
     policyDigest: `sha256:${string}`;
+    releaseProgramId: string;
+    releaseProgramRevision: number;
+    releasePhaseId: string;
     runtimeCompatibility: SubscriptionRuntimeCompatibility;
   };
   producer: {
