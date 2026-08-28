@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   subscriptionInstanceProjectionInputFingerprint,
   subscriptionInstanceProjectionTargetFingerprint,
+  SubscriptionInstanceProjectionResult,
   SubscriptionProviderInstanceProjectorService
 } from '../src/subscriptions/subscription-provider-instance-projector.service';
 import { SubscriptionRuntimeContractError } from '../src/subscriptions/subscription-runtime-contracts';
@@ -45,9 +46,20 @@ export function safeProjectorErrorCode(error: unknown): string {
     : 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_FAILED';
 }
 
+export function sanitizedProjectorOutput(result: SubscriptionInstanceProjectionResult) {
+  return {
+    status: result.status,
+    write: result.write,
+    sourceItemCount: result.sourceItemCount,
+    inputSha256: result.inputSha256,
+    planSha256: result.planSha256,
+    checkpointId: result.checkpointId
+  };
+}
+
 async function main(): Promise<void> {
   const mode = process.argv[2];
-  if (!['--input-fingerprint', '--target-fingerprint', '--check'].includes(mode)) {
+  if (!['--input-fingerprint', '--target-fingerprint', '--check', '--apply'].includes(mode)) {
     throw new Error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_MODE_INVALID');
   }
   if (mode === '--target-fingerprint') {
@@ -71,15 +83,8 @@ async function main(): Promise<void> {
   const repository = new SubscriptionsRepository();
   try {
     const service = new SubscriptionProviderInstanceProjectorService(repository);
-    const result = await service.check(input);
-    console.log(JSON.stringify({
-      status: result.status,
-      write: result.write,
-      sourceItemCount: result.sourceItemCount,
-      inputSha256: result.inputSha256,
-      planSha256: result.planSha256,
-      checkpointId: result.checkpointId
-    }));
+    const result = mode === '--apply' ? await service.apply(input) : await service.check(input);
+    console.log(JSON.stringify(sanitizedProjectorOutput(result)));
   } finally {
     await repository.close();
   }
