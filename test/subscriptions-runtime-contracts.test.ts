@@ -15,6 +15,7 @@ import {
   validateStoredSubscriptionInstanceProjectorCheckpoint,
   validateStoredSubscriptionOutboxEvent,
   validateStoredSubscriptionPolicyPublication,
+  validateStoredSubscriptionProjectionFence,
   validateStoredSubscriptionProviderMapping,
   validateStoredSubscriptionRuntimeOperation,
   validateStoredSubscriptionUsageLedgerEvent
@@ -27,6 +28,7 @@ import {
   deriveSubscriptionProviderScope,
   subscriptionProviderScopeMatchesProjection
 } from '../src/subscriptions/subscription-provider-scope';
+import { buildSubscriptionProjectionFence } from '../src/subscriptions/subscription-projection-fence';
 import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
@@ -34,6 +36,7 @@ import {
   StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionRuntimeOperation,
   StoredSubscriptionUsageLedgerEvent
@@ -196,13 +199,17 @@ const instanceFixture = (): StoredSubscriptionInstance => ({
 });
 
 const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckpoint => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   checkpointId: 'checkpoint:friendship-12m',
   tenantId: 'iSkq6G',
   provider: 'VIVA',
   providerProductId: 'd60f36c5-1bc5-467e-ad78-05a175d2cf74',
   providerScope: { kind: 'STATION', scopeId: 'station:yasenevo' },
+  approvalRef: `provider_approval:sha256:${HASH}`,
   binding: {
+    fenceId: 'subscription_projection_fence:friendship-12m',
+    fenceRevision: 1,
+    fenceDigest: DIGEST,
     mappingId: 'mapping:friendship-12m',
     mappingRevision: 1,
     subscriptionTypeId: 'subscription_type:friendship-12m',
@@ -220,9 +227,10 @@ const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckp
   },
   producer: {
     producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR',
-    contractVersion: 1,
+    contractVersion: 2,
     producerCapabilityDigest: DIGEST,
-    sourceContractDigest: DIGEST
+    sourceContractDigest: DIGEST,
+    authorityDigest: DIGEST
   },
   state: 'CURRENT',
   coverage: {
@@ -250,6 +258,31 @@ const projectorCheckpointFixture = (): StoredSubscriptionInstanceProjectorCheckp
   failure: null,
   lease: null,
   revision: 1,
+  createdAt: NOW,
+  updatedAt: NOW
+});
+
+const projectionFenceFixture = (): StoredSubscriptionProjectionFence => ({
+  schemaVersion: 1,
+  fenceId: 'subscription_projection_fence:friendship-12m',
+  subscriptionTypeId: 'subscription_type:friendship-12m',
+  bindingRevision: 1,
+  bindingDigest: DIGEST,
+  binding: {
+    mappingId: 'mapping:friendship-12m',
+    mappingRevision: 1,
+    subscriptionTypeId: 'subscription_type:friendship-12m',
+    publicationId: 'publication:friendship-12m-v3',
+    policyVersion: 3,
+    policyDigest: DIGEST,
+    runtimeCompatibility: {
+      adapterId: 'LK_REGIONAL_BOOKING_GATEWAY',
+      contractVersion: 1,
+      capabilityDigest: DIGEST
+    }
+  },
+  coordinationRevision: 1,
+  lastProjectorReconciliationDigest: null,
   createdAt: NOW,
   updatedAt: NOW
 });
@@ -579,6 +612,14 @@ async function run(): Promise<void> {
     publicationFixture().policyDigest
   );
   validateStoredSubscriptionInstance(instanceFixture());
+  validateStoredSubscriptionProjectionFence(projectionFenceFixture());
+  assert.throws(
+    () => validateStoredSubscriptionProjectionFence({
+      ...projectionFenceFixture(),
+      binding: { ...projectionFenceFixture().binding, subscriptionTypeId: 'subscription_type:other' }
+    }),
+    hasCode('SUBSCRIPTION_PROJECTION_FENCE_BINDING_MISMATCH')
+  );
   validateStoredSubscriptionInstanceProjectorCheckpoint(projectorCheckpointFixture());
   validateStoredSubscriptionInstanceProjectorCheckpoint({
     ...projectorCheckpointFixture(),
@@ -954,6 +995,7 @@ async function run(): Promise<void> {
     canonicalTargets: 'subscription_canonical_target_snapshots',
     mappings: 'subscription_provider_mappings',
     publications: 'subscription_policy_publications',
+    projectionFences: 'subscription_projection_fences',
     instances: 'subscription_instances',
     instanceProjectorCheckpoints: 'subscription_instance_projector_checkpoints',
     aggregates: 'subscription_entitlement_aggregates',
@@ -1173,6 +1215,26 @@ async function run(): Promise<void> {
   await assert.rejects(
     repository.runtimeProviderMappingById('mapping:friendship-12m'),
     hasCode('SUBSCRIPTION_RUNTIME_ID_INVALID')
+  );
+
+  const persistedFence = buildSubscriptionProjectionFence({
+    mapping: mappingFixture(),
+    publication: versionThreePublication,
+    previous: null
+  });
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => structuredClone(persistedFence)
+  });
+  assert.equal(
+    (await repository.runtimeProjectionFenceByType(persistedFence.subscriptionTypeId))?.fenceId,
+    persistedFence.fenceId
+  );
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => ({ ...persistedFence, bindingDigest: DIGEST })
+  });
+  await assert.rejects(
+    repository.runtimeProjectionFenceByType(persistedFence.subscriptionTypeId),
+    hasCode('SUBSCRIPTION_PROJECTION_FENCE_DIGEST_MISMATCH')
   );
 
   let storedLedger: StoredSubscriptionUsageLedgerEvent | null = null;

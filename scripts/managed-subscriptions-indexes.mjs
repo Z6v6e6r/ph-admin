@@ -50,6 +50,8 @@ const plan = [
     ['subscription_policy_publications', { subscriptionTypeId: 1, state: 1, effectiveAt: -1 }, { name: 'subscription_publication_runtime_lookup' }],
     ['subscription_policy_publications', { policyDigest: 1, publicationId: 1 }, { name: 'subscription_publication_digest' }],
     ['subscription_policy_publications', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, sparse: true, name: 'subscription_publication_idempotency_unique' }],
+    ['subscription_projection_fences', { fenceId: 1 }, { unique: true, name: 'subscription_projection_fence_id_unique' }],
+    ['subscription_projection_fences', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_projection_fence_type_unique' }],
     ['subscription_instances', { subscriptionInstanceId: 1 }, { unique: true, name: 'subscription_instance_id_unique' }],
     ['subscription_instances', { tenantId: 1, providerClientId: 1, clientSubscriptionId: 1 }, { unique: true, name: 'subscription_instance_provider_identity_unique' }],
     ['subscription_instances', { subscriptionTypeId: 1, state: 1, activeTo: 1, subscriptionInstanceId: 1 }, { name: 'subscription_instance_type_state_expiry' }],

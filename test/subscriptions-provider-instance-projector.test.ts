@@ -16,6 +16,7 @@ import {
   StoredSubscriptionProviderMapping
 } from '../src/subscriptions/subscriptions.types';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
+import { buildSubscriptionProjectionFence } from '../src/subscriptions/subscription-projection-fence';
 import {
   parseProjectorInputJson,
   safeProjectorErrorCode
@@ -191,12 +192,18 @@ const releaseProgram = (): StoredReleaseProgram => ({
   }
 });
 
+const projectionFence = () => buildSubscriptionProjectionFence({
+  mapping: mapping(),
+  publication: publication(),
+  previous: null
+});
+
 const manifest = (): Record<string, unknown> => {
   const records = [record()];
   const published = publication();
   return {
-    schemaVersion: 1,
-    sourceMode: 'REVIEWED_NORMALIZED_PROVIDER_INSTANCE_SNAPSHOT',
+    schemaVersion: 2,
+    sourceMode: 'VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT',
     evidenceStatus: 'APPROVED',
     approvalRef: evidence('provider_approval'),
     tenantId: 'tenant:piter',
@@ -204,6 +211,9 @@ const manifest = (): Record<string, unknown> => {
     providerProductId: PRODUCT_ID,
     providerScope: { kind: 'STATION', scopeId: STATION_ID },
     binding: {
+      fenceId: projectionFence().fenceId,
+      fenceRevision: projectionFence().bindingRevision,
+      fenceDigest: projectionFence().bindingDigest,
       mappingId: 'mapping:annual-piter',
       mappingRevision: 3,
       subscriptionTypeId: 'subscription_type:annual-piter',
@@ -217,9 +227,26 @@ const manifest = (): Record<string, unknown> => {
     },
     producer: {
       producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR',
-      contractVersion: 1,
+      contractVersion: 2,
       producerCapabilityDigest: evidence('sha256').slice(7),
       sourceContractDigest: `sha256:${'f'.repeat(64)}`
+    },
+    authority: {
+      sourceSystem: 'VIVA',
+      resourceKind: 'SUBSCRIPTION_INSTANCE',
+      selectionMode: 'EXACT_PRODUCT_AND_SCOPE',
+      snapshotSemantics: 'COMPLETE_AS_OF',
+      endpointContractDigest: `sha256:${'1'.repeat(64)}`,
+      queryContractDigest: `sha256:${'2'.repeat(64)}`,
+      paginationContractDigest: `sha256:${'3'.repeat(64)}`,
+      normalizationContractDigest: `sha256:${'4'.repeat(64)}`,
+      stateMappingDigest: `sha256:${'5'.repeat(64)}`,
+      moneyMappingDigest: `sha256:${'6'.repeat(64)}`,
+      completenessEvidenceRef: evidence('provider_completeness_evidence', '7'),
+      pageCount: 1,
+      sourceItemCount: records.length,
+      rejectedItemCount: 0,
+      duplicateIdentityCount: 0
     },
     snapshot: {
       snapshotId: 'snapshot:annual-piter-20260828',
@@ -241,12 +268,16 @@ class FakeRepository {
   publication = publication();
   program = releaseProgram();
   subscriptionType = { state: 'ACTIVE', currentPolicyVersion: 1 };
+  fence: ReturnType<typeof projectionFence> | null = projectionFence();
 
   async connectReadOnly(): Promise<void> { this.connectReadOnlyCalls += 1; }
   async runtimeProviderMappingByProviderIdentity(): Promise<StoredSubscriptionProviderMapping | null> { return this.mapping; }
   async runtimePolicyPublicationByVersion(): Promise<StoredSubscriptionPolicyPublication | null> { return this.publication; }
   async releaseProgramById(): Promise<StoredReleaseProgram | null> { return this.program; }
   async subscriptionTypeById(): Promise<any> { return this.subscriptionType; }
+  async runtimeProjectionFenceByType(): Promise<any> {
+    return this.fence ? structuredClone(this.fence) : null;
+  }
   async preflightInitialRuntimeInstanceProjection(): Promise<'READY_TO_INSERT' | 'EXACT_REPLAY'> {
     this.preflightCalls += 1;
     return this.preflightStatus;
@@ -261,11 +292,13 @@ const nested = (value: any, path: string): unknown =>
   path.split('.').reduce((current, key) => current?.[key], value);
 
 class MemoryMongo {
+  forceFenceCasConflict = false;
   instances: any[] = [];
   checkpoints: any[] = [];
   mappings: any[] = [mapping()];
   publications: any[] = [publication()];
   programs: any[] = [releaseProgram()];
+  fences: any[] = [projectionFence()];
   types: any[] = [{
     subscriptionTypeId: 'subscription_type:annual-piter',
     state: 'ACTIVE',
@@ -275,6 +308,7 @@ class MemoryMongo {
   collection(name: string) {
     const rows = name === 'subscription_instances' ? this.instances
       : name === 'subscription_instance_projector_checkpoints' ? this.checkpoints
+        : name === 'subscription_projection_fences' ? this.fences
         : name === 'subscription_provider_mappings' ? this.mappings
           : name === 'subscription_policy_publications' ? this.publications
             : name === 'subscription_release_programs' ? this.programs
@@ -291,6 +325,21 @@ class MemoryMongo {
               .localeCompare(String(right.subscriptionInstanceId ?? '')))
         })
       }),
+      updateOne: async (filter: Record<string, unknown>, update: any) => {
+        const row = rows.find((candidate) => matches(candidate, filter));
+        if (!row) return { modifiedCount: 0 };
+        if (name === 'subscription_projection_fences' && this.forceFenceCasConflict) {
+          this.forceFenceCasConflict = false;
+          row.bindingRevision += 1;
+          row.coordinationRevision += 1;
+          return { modifiedCount: 0 };
+        }
+        Object.assign(row, structuredClone(update.$set ?? {}));
+        for (const [key, value] of Object.entries(update.$inc ?? {})) {
+          row[key] = Number(row[key] ?? 0) + Number(value);
+        }
+        return { modifiedCount: 1 };
+      },
       insertMany: async (documents: any[]) => { rows.push(...structuredClone(documents)); },
       insertOne: async (document: any) => { rows.push(structuredClone(document)); }
     };
@@ -304,6 +353,19 @@ class MemoryMongo {
 const repositoryWithMemoryMongo = (mongo: MemoryMongo): SubscriptionsRepository => {
   const repository = new SubscriptionsRepository() as any;
   repository.db = mongo;
+  repository.client = {
+    startSession: () => ({
+      withTransaction: async (callback: () => Promise<void>, options: any) => {
+        assert.deepEqual(options, {
+          readConcern: { level: 'snapshot' },
+          writeConcern: { w: 'majority', j: true },
+          readPreference: 'primary'
+        });
+        return callback();
+      },
+      endSession: async () => undefined
+    })
+  };
   return repository as SubscriptionsRepository;
 };
 
@@ -371,6 +433,35 @@ async function run(): Promise<void> {
   assert.throws(
     () => buildSubscriptionInstanceProjectionPlan({
       ...input,
+      schemaVersion: 1,
+      sourceMode: 'REVIEWED_NORMALIZED_PROVIDER_INSTANCE_SNAPSHOT'
+    }, PEPPER),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_INVALID')
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan({
+      ...input,
+      authority: { ...(input.authority as object), sourceItemCount: 2 }
+    }, PEPPER),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_COUNT_MISMATCH')
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan({
+      ...input,
+      authority: { ...(input.authority as object), rejectedItemCount: 1 }
+    }, PEPPER),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INCOMPLETE')
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan({
+      ...input,
+      authority: { ...(input.authority as object), endpointUrl: 'https://private.example' }
+    }, PEPPER),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID')
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan({
+      ...input,
       snapshot: { ...(input.snapshot as object), snapshotDigest: `sha256:${'0'.repeat(64)}` }
     }, PEPPER),
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SNAPSHOT_DIGEST_MISMATCH')
@@ -384,6 +475,7 @@ async function run(): Promise<void> {
     () => buildSubscriptionInstanceProjectionPlan({
       ...input,
       records: duplicateRecords,
+      authority: { ...(input.authority as object), sourceItemCount: duplicateRecords.length },
       snapshot: { ...(input.snapshot as object), snapshotDigest: digest(duplicateRecords) }
     }, PEPPER),
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_DUPLICATE_RECORD')
@@ -442,6 +534,7 @@ async function run(): Promise<void> {
   const multiInput = {
     ...input,
     records: multiRecords,
+    authority: { ...(input.authority as object), sourceItemCount: multiRecords.length },
     snapshot: { ...(input.snapshot as object), snapshotDigest: digest(
       [...multiRecords].sort((left, right) => {
         const leftId = `${left.providerClientId}\0${left.clientSubscriptionId}`;
@@ -479,6 +572,70 @@ async function run(): Promise<void> {
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNCHECKPOINTED_INSTANCES_CONFLICT')
   );
 
+  const disjointScopeMongo = new MemoryMongo();
+  disjointScopeMongo.instances.push({
+    ...structuredClone(plan.instances[0]),
+    subscriptionInstanceId: 'subscription_instance:other-station',
+    subscriptionTypeId: 'subscription_type:annual-other-station',
+    mappingId: 'mapping:annual-other-station',
+    providerClientId: 'provider-client-other-station',
+    clientSubscriptionId: 'client-subscription-other-station',
+    homeStationId: 'station:other'
+  });
+  const disjointScopeRepository = repositoryWithMemoryMongo(disjointScopeMongo);
+  assert.equal(
+    await disjointScopeRepository.preflightInitialRuntimeInstanceProjection(plan),
+    'READY_TO_INSERT'
+  );
+  assert.equal(
+    await disjointScopeRepository.applyInitialRuntimeInstanceProjection(plan),
+    'INSERTED'
+  );
+  assert.equal(disjointScopeMongo.instances.length, 2);
+
+  const applyMongo = new MemoryMongo();
+  const applyRepository = repositoryWithMemoryMongo(applyMongo);
+  assert.equal(await applyRepository.applyInitialRuntimeInstanceProjection(plan), 'INSERTED');
+  assert.deepEqual(applyMongo.instances, plan.instances);
+  assert.deepEqual(applyMongo.checkpoints, [plan.checkpoint]);
+  assert.equal(applyMongo.fences[0].coordinationRevision, 2);
+  assert.equal(
+    applyMongo.fences[0].lastProjectorReconciliationDigest,
+    plan.checkpoint.reconciliation.reconciliationDigest
+  );
+  assert.equal(await applyRepository.applyInitialRuntimeInstanceProjection(plan), 'EXACT_REPLAY');
+
+  const bootstrapMongo = new MemoryMongo();
+  bootstrapMongo.fences = [];
+  const bootstrapRepository = repositoryWithMemoryMongo(bootstrapMongo);
+  assert.equal(await bootstrapRepository.applyInitialRuntimeInstanceProjection(plan), 'INSERTED');
+  assert.equal(bootstrapMongo.fences.length, 1);
+  assert.equal(bootstrapMongo.fences[0].bindingDigest, plan.checkpoint.binding.fenceDigest);
+  assert.equal(
+    bootstrapMongo.fences[0].lastProjectorReconciliationDigest,
+    plan.checkpoint.reconciliation.reconciliationDigest
+  );
+
+  const fenceDriftMongo = new MemoryMongo();
+  fenceDriftMongo.fences[0].bindingRevision += 1;
+  const fenceDriftRepository = repositoryWithMemoryMongo(fenceDriftMongo);
+  await assert.rejects(
+    fenceDriftRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CONFLICT')
+  );
+  assert.equal(fenceDriftMongo.instances.length, 0);
+  assert.equal(fenceDriftMongo.checkpoints.length, 0);
+
+  const publicationRaceMongo = new MemoryMongo();
+  publicationRaceMongo.forceFenceCasConflict = true;
+  const publicationRaceRepository = repositoryWithMemoryMongo(publicationRaceMongo);
+  await assert.rejects(
+    publicationRaceRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CAS_CONFLICT')
+  );
+  assert.equal(publicationRaceMongo.instances.length, 0);
+  assert.equal(publicationRaceMongo.checkpoints.length, 0);
+
   enable(input);
   const checked = await new FixedClockService(new FakeRepository() as any).check(input);
   assert.deepEqual(
@@ -490,6 +647,12 @@ async function run(): Promise<void> {
     'provider-client-001', 'client-subscription-001', 'projector-test-pepper',
     'provider_payment_evidence', 'provider_instance_evidence'
   ]) assert.equal(output.includes(forbidden), false);
+  const legacyWithoutFence = new FakeRepository();
+  legacyWithoutFence.fence = null;
+  assert.equal(
+    (await new FixedClockService(legacyWithoutFence as any).check(input)).status,
+    'READY_TO_INSERT'
+  );
 
   const mappingDrift = new FakeRepository();
   mappingDrift.mapping = { ...mappingDrift.mapping, revision: 4 };

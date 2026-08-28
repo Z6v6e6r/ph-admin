@@ -6,6 +6,7 @@ import {
   StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionRuntimeOperation,
   StoredSubscriptionUsageLedgerEvent,
@@ -771,6 +772,47 @@ export function validateStoredSubscriptionPolicyPublication(
   }
 }
 
+export function validateStoredSubscriptionProjectionFence(
+  value: StoredSubscriptionProjectionFence
+): void {
+  if (value.schemaVersion !== 1) fail('SUBSCRIPTION_PROJECTION_FENCE_SCHEMA_INVALID');
+  assertExactKeys(value as object, [
+    'schemaVersion', 'fenceId', 'subscriptionTypeId', 'bindingRevision', 'bindingDigest',
+    'binding', 'coordinationRevision', 'lastProjectorReconciliationDigest', 'createdAt',
+    'updatedAt'
+  ], 'projectionFence');
+  requiredId(value.fenceId, 'fenceId');
+  requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
+  positiveInteger(value.bindingRevision, 'bindingRevision');
+  digest(value.bindingDigest, 'bindingDigest');
+  positiveInteger(value.coordinationRevision, 'coordinationRevision');
+  if (value.lastProjectorReconciliationDigest !== null) {
+    digest(value.lastProjectorReconciliationDigest, 'lastProjectorReconciliationDigest');
+  }
+  assertExactKeys(value.binding as object, [
+    'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
+    'policyDigest', 'runtimeCompatibility'
+  ], 'projectionFence.binding');
+  requiredId(value.binding.mappingId, 'binding.mappingId');
+  positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
+  requiredId(value.binding.subscriptionTypeId, 'binding.subscriptionTypeId');
+  requiredId(value.binding.publicationId, 'binding.publicationId');
+  positiveInteger(value.binding.policyVersion, 'binding.policyVersion');
+  digest(value.binding.policyDigest, 'binding.policyDigest');
+  validateRuntimeCompatibility(value.binding.runtimeCompatibility);
+  if (value.binding.subscriptionTypeId !== value.subscriptionTypeId) {
+    fail('SUBSCRIPTION_PROJECTION_FENCE_BINDING_MISMATCH');
+  }
+  requiredInstant(value.createdAt, 'createdAt');
+  requiredInstant(value.updatedAt, 'updatedAt');
+  assertInstantOrder(
+    value.createdAt,
+    value.updatedAt,
+    'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID',
+    'updatedAt'
+  );
+}
+
 export function validateStoredSubscriptionInstance(value: StoredSubscriptionInstance): void {
   if (value.schemaVersion !== 1 || value.provider !== 'VIVA') {
     fail('SUBSCRIPTION_INSTANCE_SCHEMA_INVALID');
@@ -836,13 +878,13 @@ export function validateStoredSubscriptionInstance(value: StoredSubscriptionInst
 export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   value: StoredSubscriptionInstanceProjectorCheckpoint
 ): void {
-  if (value.schemaVersion !== 1 || value.provider !== 'VIVA') {
+  if (value.schemaVersion !== 2 || value.provider !== 'VIVA') {
     fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CHECKPOINT_SCHEMA_INVALID');
   }
   assertExactKeys(value as object, [
     'schemaVersion', 'checkpointId', 'tenantId', 'provider', 'providerProductId', 'providerScope',
-    'binding', 'producer', 'state', 'coverage', 'reconciliation', 'failure', 'lease', 'revision',
-    'createdAt', 'updatedAt'
+    'approvalRef', 'binding', 'producer', 'state', 'coverage', 'reconciliation', 'failure',
+    'lease', 'revision', 'createdAt', 'updatedAt'
   ], 'instanceProjectorCheckpoint');
   requiredId(value.checkpointId, 'checkpointId');
   requiredId(value.tenantId, 'tenantId');
@@ -855,12 +897,19 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
       fail('SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID', { field: 'providerScope.scopeId' });
     }
   } else requiredId(value.providerScope.scopeId, 'providerScope.scopeId');
+  if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.approvalRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_APPROVAL_REF_INVALID');
+  }
 
   assertExactKeys(value.binding as object, [
-    'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
+    'fenceId', 'fenceRevision', 'fenceDigest', 'mappingId', 'mappingRevision',
+    'subscriptionTypeId', 'publicationId', 'policyVersion',
     'policyDigest', 'releaseProgramId', 'releaseProgramRevision', 'releasePhaseId',
     'runtimeCompatibility'
   ], 'binding');
+  requiredId(value.binding.fenceId, 'binding.fenceId');
+  positiveInteger(value.binding.fenceRevision, 'binding.fenceRevision');
+  digest(value.binding.fenceDigest, 'binding.fenceDigest');
   requiredId(value.binding.mappingId, 'binding.mappingId');
   positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
   requiredId(value.binding.subscriptionTypeId, 'binding.subscriptionTypeId');
@@ -873,14 +922,16 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   validateRuntimeCompatibility(value.binding.runtimeCompatibility);
 
   assertExactKeys(value.producer as object, [
-    'producerId', 'contractVersion', 'producerCapabilityDigest', 'sourceContractDigest'
+    'producerId', 'contractVersion', 'producerCapabilityDigest', 'sourceContractDigest',
+    'authorityDigest'
   ], 'producer');
   if (value.producer.producerId !== 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR'
-    || value.producer.contractVersion !== 1) {
+    || value.producer.contractVersion !== 2) {
     fail('SUBSCRIPTION_INSTANCE_PROJECTOR_PRODUCER_INVALID');
   }
   digest(value.producer.producerCapabilityDigest, 'producer.producerCapabilityDigest');
   digest(value.producer.sourceContractDigest, 'producer.sourceContractDigest');
+  digest(value.producer.authorityDigest, 'producer.authorityDigest');
   oneOf(value.state, ['CURRENT', 'FAILED'], 'SUBSCRIPTION_INSTANCE_PROJECTOR_STATE_INVALID', 'state');
 
   if (!value.coverage || typeof value.coverage !== 'object') {

@@ -6,31 +6,45 @@ import {
   validateStoredSubscriptionInstance,
   validateStoredSubscriptionInstanceProjectorCheckpoint,
   validateStoredSubscriptionPolicyPublication,
+  validateStoredSubscriptionProjectionFence,
   validateStoredSubscriptionProviderMapping
 } from './subscription-runtime-contracts';
+import {
+  subscriptionProjectionFenceBindingDigest,
+  subscriptionProjectionFenceId
+} from './subscription-projection-fence';
 import { computeSubscriptionClientRefHash } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionInstance,
   StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   SubscriptionInstanceState,
   SubscriptionRuntimeCompatibility
 } from './subscriptions.types';
 
 const TOP_LEVEL_KEYS = [
   'schemaVersion', 'sourceMode', 'evidenceStatus', 'approvalRef', 'tenantId', 'provider',
-  'providerProductId', 'providerScope', 'binding', 'producer', 'snapshot', 'records'
+  'providerProductId', 'providerScope', 'binding', 'producer', 'authority', 'snapshot', 'records'
 ] as const;
 const SCOPE_KEYS = ['kind', 'scopeId'] as const;
 const BINDING_KEYS = [
-  'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
+  'fenceId', 'fenceRevision', 'fenceDigest', 'mappingId', 'mappingRevision',
+  'subscriptionTypeId', 'publicationId', 'policyVersion',
   'policyDigest', 'releaseProgramId', 'releaseProgramRevision', 'releasePhaseId',
   'runtimeCompatibility'
 ] as const;
 const COMPATIBILITY_KEYS = ['adapterId', 'contractVersion', 'capabilityDigest'] as const;
 const PRODUCER_KEYS = [
   'producerId', 'contractVersion', 'producerCapabilityDigest', 'sourceContractDigest'
+] as const;
+const AUTHORITY_KEYS = [
+  'sourceSystem', 'resourceKind', 'selectionMode', 'snapshotSemantics',
+  'endpointContractDigest', 'queryContractDigest', 'paginationContractDigest',
+  'normalizationContractDigest', 'stateMappingDigest', 'moneyMappingDigest',
+  'completenessEvidenceRef', 'pageCount', 'sourceItemCount', 'rejectedItemCount',
+  'duplicateIdentityCount'
 ] as const;
 const SNAPSHOT_KEYS = [
   'snapshotId', 'snapshotDigest', 'startedAt', 'coverageThrough', 'sourceEvidenceRef',
@@ -66,6 +80,7 @@ interface ParsedManifest {
   providerScope: StoredSubscriptionInstanceProjectorCheckpoint['providerScope'];
   binding: StoredSubscriptionInstanceProjectorCheckpoint['binding'];
   producer: StoredSubscriptionInstanceProjectorCheckpoint['producer'];
+  authorityDigest: `sha256:${string}`;
   snapshot: {
     snapshotId: string;
     snapshotDigest: `sha256:${string}`;
@@ -158,8 +173,8 @@ const parseCompatibility = (value: unknown): SubscriptionRuntimeCompatibility =>
 
 const parseManifest = (input: unknown): ParsedManifest => {
   const value = exactObject(input, TOP_LEVEL_KEYS, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHAPE_INVALID');
-  if (value.schemaVersion !== 1
-    || value.sourceMode !== 'REVIEWED_NORMALIZED_PROVIDER_INSTANCE_SNAPSHOT'
+  if (value.schemaVersion !== 2
+    || value.sourceMode !== 'VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT'
     || value.provider !== 'VIVA') {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_INVALID');
   }
@@ -190,6 +205,9 @@ const parseManifest = (input: unknown): ParsedManifest => {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID');
   }
   const binding = {
+    fenceId: requiredPattern(bindingObject.fenceId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID'),
+    fenceRevision: bindingObject.fenceRevision as number,
+    fenceDigest: requiredPattern(bindingObject.fenceDigest, DIGEST_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID') as `sha256:${string}`,
     mappingId: requiredPattern(bindingObject.mappingId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID'),
     mappingRevision,
     subscriptionTypeId: requiredPattern(bindingObject.subscriptionTypeId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID'),
@@ -201,17 +219,55 @@ const parseManifest = (input: unknown): ParsedManifest => {
     releasePhaseId: requiredPattern(bindingObject.releasePhaseId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID'),
     runtimeCompatibility: parseCompatibility(bindingObject.runtimeCompatibility)
   };
+  if (!Number.isSafeInteger(binding.fenceRevision) || binding.fenceRevision < 1) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_INVALID');
+  }
   const producerObject = exactObject(value.producer, PRODUCER_KEYS, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCER_INVALID');
   if (producerObject.producerId !== 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR'
-    || producerObject.contractVersion !== 1) {
+    || producerObject.contractVersion !== 2) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCER_INVALID');
   }
   const producer = {
     producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR' as const,
-    contractVersion: 1 as const,
+    contractVersion: 2 as const,
     producerCapabilityDigest: requiredPattern(producerObject.producerCapabilityDigest, DIGEST_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCER_INVALID') as `sha256:${string}`,
-    sourceContractDigest: requiredPattern(producerObject.sourceContractDigest, DIGEST_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCER_INVALID') as `sha256:${string}`
+    sourceContractDigest: requiredPattern(producerObject.sourceContractDigest, DIGEST_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCER_INVALID') as `sha256:${string}`,
+    authorityDigest: '' as `sha256:${string}`
   };
+  const authority = exactObject(
+    value.authority,
+    AUTHORITY_KEYS,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID'
+  );
+  if (authority.sourceSystem !== 'VIVA'
+    || authority.resourceKind !== 'SUBSCRIPTION_INSTANCE'
+    || authority.selectionMode !== 'EXACT_PRODUCT_AND_SCOPE'
+    || authority.snapshotSemantics !== 'COMPLETE_AS_OF') {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID');
+  }
+  for (const field of [
+    'endpointContractDigest', 'queryContractDigest', 'paginationContractDigest',
+    'normalizationContractDigest', 'stateMappingDigest', 'moneyMappingDigest'
+  ] as const) {
+    requiredPattern(authority[field], DIGEST_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID');
+  }
+  requiredPattern(
+    authority.completenessEvidenceRef,
+    EVIDENCE_PATTERN,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID'
+  );
+  for (const field of ['pageCount', 'sourceItemCount', 'rejectedItemCount', 'duplicateIdentityCount'] as const) {
+    if (!Number.isSafeInteger(authority[field]) || Number(authority[field]) < 0) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID');
+    }
+  }
+  if (Number(authority.pageCount) < 1
+    || Number(authority.rejectedItemCount) !== 0
+    || Number(authority.duplicateIdentityCount) !== 0) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INCOMPLETE');
+  }
+  const authorityDigest = sha256(authority);
+  producer.authorityDigest = authorityDigest;
   const snapshotObject = exactObject(value.snapshot, SNAPSHOT_KEYS, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SNAPSHOT_INVALID');
   const snapshot = {
     snapshotId: requiredPattern(snapshotObject.snapshotId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SNAPSHOT_INVALID'),
@@ -228,6 +284,9 @@ const parseManifest = (input: unknown): ParsedManifest => {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECORD_COUNT_INVALID');
   }
   const recordValues = value.records as unknown[];
+  if (Number(authority.sourceItemCount) !== recordValues.length) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_COUNT_MISMATCH');
+  }
   const records = recordValues.map((record: unknown) => exactObject(
     record,
     RECORD_KEYS,
@@ -241,6 +300,7 @@ const parseManifest = (input: unknown): ParsedManifest => {
     providerScope,
     binding,
     producer,
+    authorityDigest,
     snapshot,
     records
   };
@@ -400,12 +460,13 @@ export function buildSubscriptionInstanceProjectionPlan(
     instanceDigests: instances.map((instance) => sha256(instance))
   });
   const checkpoint: StoredSubscriptionInstanceProjectorCheckpoint = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     checkpointId,
     tenantId: parsed.tenantId,
     provider: 'VIVA',
     providerProductId: parsed.providerProductId,
     providerScope: parsed.providerScope,
+    approvalRef: parsed.approvalRef,
     binding: parsed.binding,
     producer: parsed.producer,
     state: 'CURRENT',
@@ -493,8 +554,9 @@ export class SubscriptionProviderInstanceProjectorService {
     const plan = this.plan(input);
     assertSubscriptionInstanceProjectionCheckBoundary(plan);
     await this.repository.connectReadOnly();
-    await this.assertPersistedBinding(plan);
+    const fence = await this.assertPersistedBinding(plan);
     const status = await this.repository.preflightInitialRuntimeInstanceProjection(plan);
+    await this.assertFenceUnchanged(fence, plan.checkpoint.binding.subscriptionTypeId);
     return this.result(plan, status, false);
   }
 
@@ -515,9 +577,11 @@ export class SubscriptionProviderInstanceProjectorService {
     return plan;
   }
 
-  private async assertPersistedBinding(plan: SubscriptionInstanceProjectionPlan): Promise<void> {
+  private async assertPersistedBinding(
+    plan: SubscriptionInstanceProjectionPlan
+  ): Promise<StoredSubscriptionProjectionFence | null> {
     const checkpoint = plan.checkpoint;
-    const [mapping, publication, releaseProgram, subscriptionType] = await Promise.all([
+    const [mapping, publication, releaseProgram, subscriptionType, fence] = await Promise.all([
       this.repository.runtimeProviderMappingByProviderIdentity({
         tenantId: checkpoint.tenantId,
         provider: 'VIVA',
@@ -530,17 +594,52 @@ export class SubscriptionProviderInstanceProjectorService {
         checkpoint.binding.policyVersion
       ),
       this.repository.releaseProgramById(checkpoint.binding.releaseProgramId),
-      this.repository.subscriptionTypeById(checkpoint.binding.subscriptionTypeId)
+      this.repository.subscriptionTypeById(checkpoint.binding.subscriptionTypeId),
+      this.repository.runtimeProjectionFenceByType(checkpoint.binding.subscriptionTypeId)
     ]);
     if (!mapping || !publication || !releaseProgram || !subscriptionType) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_NOT_FOUND');
     }
     validateStoredSubscriptionProviderMapping(mapping);
     validateStoredSubscriptionPolicyPublication(publication);
+    const expectedFenceBinding = {
+      mappingId: checkpoint.binding.mappingId,
+      mappingRevision: checkpoint.binding.mappingRevision,
+      subscriptionTypeId: checkpoint.binding.subscriptionTypeId,
+      publicationId: checkpoint.binding.publicationId,
+      policyVersion: checkpoint.binding.policyVersion,
+      policyDigest: checkpoint.binding.policyDigest,
+      runtimeCompatibility: checkpoint.binding.runtimeCompatibility
+    };
+    if (checkpoint.binding.fenceId !== subscriptionProjectionFenceId(
+      checkpoint.binding.subscriptionTypeId
+    )
+      || checkpoint.binding.fenceDigest !== subscriptionProjectionFenceBindingDigest(
+        expectedFenceBinding
+      )
+      || (!fence && checkpoint.binding.fenceRevision !== 1)) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_NOT_CURRENT');
+    }
+    if (fence) {
+      validateStoredSubscriptionProjectionFence(fence);
+      if (fence.fenceId !== checkpoint.binding.fenceId
+        || fence.bindingRevision !== checkpoint.binding.fenceRevision
+        || fence.bindingDigest !== checkpoint.binding.fenceDigest
+        || fence.bindingDigest !== subscriptionProjectionFenceBindingDigest(fence.binding)
+        || fence.binding.mappingId !== checkpoint.binding.mappingId
+        || fence.binding.mappingRevision !== checkpoint.binding.mappingRevision
+        || fence.binding.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+        || fence.binding.publicationId !== checkpoint.binding.publicationId
+        || fence.binding.policyVersion !== checkpoint.binding.policyVersion
+        || fence.binding.policyDigest !== checkpoint.binding.policyDigest) {
+        fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_NOT_CURRENT');
+      }
+    }
     if (mapping.state !== 'VERIFIED'
       || mapping.mappingId !== checkpoint.binding.mappingId
       || mapping.revision !== checkpoint.binding.mappingRevision
       || mapping.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+      || Date.parse(mapping.verifiedAt ?? '') > Date.parse(checkpoint.coverage.coverageThrough)
       || !subscriptionProviderScopeMatchesProjection(
         mapping.providerScope,
         publication.runtimeProjection,
@@ -558,6 +657,8 @@ export class SubscriptionProviderInstanceProjectorService {
       || compatibility.adapterId !== checkpoint.binding.runtimeCompatibility.adapterId
       || compatibility.contractVersion !== checkpoint.binding.runtimeCompatibility.contractVersion
       || compatibility.capabilityDigest !== checkpoint.binding.runtimeCompatibility.capabilityDigest
+      || Date.parse(publication.publishedAt) > Date.parse(checkpoint.coverage.coverageThrough)
+      || (fence && Date.parse(fence.updatedAt) > Date.parse(checkpoint.coverage.coverageThrough))
       || Date.parse(publication.effectiveAt) > this.now().getTime()) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PUBLICATION_NOT_CURRENT');
     }
@@ -580,6 +681,23 @@ export class SubscriptionProviderInstanceProjectorService {
         || instance.purchasePrice.amountMinor !== phase.price.amountMinor
         || instance.purchasePrice.currency !== phase.price.currency)) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RELEASE_BINDING_MISMATCH');
+    }
+    return fence;
+  }
+
+  private async assertFenceUnchanged(
+    before: StoredSubscriptionProjectionFence | null,
+    subscriptionTypeId = before?.subscriptionTypeId
+  ): Promise<void> {
+    const typeId = subscriptionTypeId;
+    if (!typeId) fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_NOT_CURRENT');
+    const after = await this.repository.runtimeProjectionFenceByType(typeId);
+    if ((!before && after)
+      || (before && (!after
+        || after.bindingRevision !== before.bindingRevision
+        || after.coordinationRevision !== before.coordinationRevision
+        || after.bindingDigest !== before.bindingDigest))) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CHANGED_DURING_CHECK');
     }
   }
 

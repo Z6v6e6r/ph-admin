@@ -6,11 +6,19 @@ import {
   publicationAdapterRuntimeCompatibility
 } from './subscription-publication-enforcement-adapter';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import {
+  subscriptionProjectionFenceBindingDigest,
+  subscriptionProjectionFenceId
+} from './subscription-projection-fence';
 import { SubscriptionsRepository } from './subscriptions.repository';
-import { validateStoredSubscriptionInstanceProjectorCheckpoint } from './subscription-runtime-contracts';
+import {
+  validateStoredSubscriptionInstanceProjectorCheckpoint,
+  validateStoredSubscriptionProjectionFence
+} from './subscription-runtime-contracts';
 import {
   StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionProviderMapping,
   SubscriptionProviderScope,
   SubscriptionRuntimeCompatibility
@@ -173,10 +181,15 @@ export class SubscriptionSaleReadinessService {
     if (mapping && publication
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED')
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED')) {
-      const checkpoint = await this.read(() =>
-        this.repository.runtimeInstanceProjectorCheckpointByProviderIdentity(identity));
-      if (checkpoint && this.instanceProjectorIsCurrent(
+      const [checkpoint, fence] = await Promise.all([
+        this.read(() => this.repository.runtimeInstanceProjectorCheckpointByProviderIdentity(identity)),
+        this.read(() => this.repository.runtimeProjectionFenceByType(
+          publication.subscriptionTypeId
+        ))
+      ]);
+      if (checkpoint && fence && this.instanceProjectorIsCurrent(
         checkpoint,
+        fence,
         mapping,
         publication,
         checkedAt,
@@ -187,11 +200,14 @@ export class SubscriptionSaleReadinessService {
           status: 'CURRENT',
           checkpointAsOf: checkpoint.coverage.coverageThrough
         };
-        const [mappingAfterCheckpoint, publicationAfterCheckpoint] = await Promise.all([
+        const [mappingAfterCheckpoint, publicationAfterCheckpoint, fenceAfterCheckpoint] = await Promise.all([
           this.read(() => this.repository.runtimeProviderMappingByProviderIdentity(identity)),
           this.read(() => this.repository.runtimePolicyPublicationByVersion(
             publication.subscriptionTypeId,
             publication.policyVersion
+          )),
+          this.read(() => this.repository.runtimeProjectionFenceByType(
+            publication.subscriptionTypeId
           ))
         ]);
         if (!mappingAfterCheckpoint
@@ -200,7 +216,13 @@ export class SubscriptionSaleReadinessService {
           || !publicationAfterCheckpoint
           || publicationAfterCheckpoint.publicationId !== publication.publicationId
           || publicationAfterCheckpoint.state !== publication.state
-          || publicationAfterCheckpoint.policyDigest !== publication.policyDigest) {
+          || publicationAfterCheckpoint.policyDigest !== publication.policyDigest
+          || !fenceAfterCheckpoint
+          || fenceAfterCheckpoint.bindingRevision !== fence.bindingRevision
+          || fenceAfterCheckpoint.bindingDigest !== fence.bindingDigest
+          || fenceAfterCheckpoint.coordinationRevision !== fence.coordinationRevision
+          || fenceAfterCheckpoint.lastProjectorReconciliationDigest
+            !== fence.lastProjectorReconciliationDigest) {
           blockers.push('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED');
           instanceProjector = { status: 'UNAVAILABLE', checkpointAsOf: null };
         }
@@ -282,6 +304,7 @@ export class SubscriptionSaleReadinessService {
 
   private instanceProjectorIsCurrent(
     checkpoint: StoredSubscriptionInstanceProjectorCheckpoint,
+    fence: StoredSubscriptionProjectionFence,
     mapping: StoredSubscriptionProviderMapping,
     publication: StoredSubscriptionPolicyPublication,
     checkedAt: Date,
@@ -290,6 +313,7 @@ export class SubscriptionSaleReadinessService {
   ): boolean {
     try {
       validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
+      validateStoredSubscriptionProjectionFence(fence);
     } catch {
       return false;
     }
@@ -308,6 +332,22 @@ export class SubscriptionSaleReadinessService {
       && checkpoint.binding.publicationId === publication.publicationId
       && checkpoint.binding.policyVersion === publication.policyVersion
       && checkpoint.binding.policyDigest === publication.policyDigest
+      && checkpoint.binding.fenceId === fence.fenceId
+      && fence.fenceId === subscriptionProjectionFenceId(publication.subscriptionTypeId)
+      && checkpoint.binding.fenceRevision === fence.bindingRevision
+      && checkpoint.binding.fenceDigest === fence.bindingDigest
+      && fence.bindingDigest === subscriptionProjectionFenceBindingDigest(fence.binding)
+      && fence.binding.mappingId === mapping.mappingId
+      && fence.binding.mappingRevision === mapping.revision
+      && fence.binding.publicationId === publication.publicationId
+      && fence.binding.policyVersion === publication.policyVersion
+      && fence.binding.policyDigest === publication.policyDigest
+      && fence.lastProjectorReconciliationDigest
+        === checkpoint.reconciliation.reconciliationDigest
+      && this.runtimeCompatibilityMatches(
+        fence.binding.runtimeCompatibility,
+        requiredCompatibility
+      )
       && this.runtimeCompatibilityMatches(compatibility, requiredCompatibility);
   }
 

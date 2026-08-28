@@ -31,9 +31,14 @@ import {
   SubscriptionRuntimeContractError
 } from '../src/subscriptions/subscription-runtime-contracts';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
+import {
+  buildSubscriptionProjectionFence,
+  subscriptionProjectionFenceBindingDigest
+} from '../src/subscriptions/subscription-projection-fence';
 import { SubscriptionsController } from '../src/subscriptions/subscriptions.controller';
 import {
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionPolicyVersion,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionType
@@ -405,13 +410,15 @@ async function verifyRepositoryTransaction(
   let policy = policyFixture();
   let mappings: StoredSubscriptionProviderMapping[] = [];
   let publications: StoredSubscriptionPolicyPublication[] = [];
+  let fences: StoredSubscriptionProjectionFence[] = [];
   const session = { marker: 'publication-session' };
   repository.client = {
     startSession: () => ({
       withTransaction: async (callback: () => Promise<void>) => {
         const before = {
           type: structuredClone(type), policy: structuredClone(policy),
-          mappings: structuredClone(mappings), publications: structuredClone(publications)
+          mappings: structuredClone(mappings), publications: structuredClone(publications),
+          fences: structuredClone(fences)
         };
         try {
           await callback();
@@ -420,6 +427,7 @@ async function verifyRepositoryTransaction(
           policy = before.policy;
           mappings = before.mappings;
           publications = before.publications;
+          fences = before.fences;
           throw error;
         }
       },
@@ -467,6 +475,13 @@ async function verifyRepositoryTransaction(
       publications.push(structuredClone(row));
     }
   });
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => fences[0] ? structuredClone(fences[0]) : null,
+    insertOne: async (row: StoredSubscriptionProjectionFence, options: { session?: unknown }) => {
+      assert.ok(options.session);
+      fences.push(structuredClone(row));
+    }
+  });
 
   await repository.publishRuntimePolicy({
     mapping: structuredClone(mapping),
@@ -483,11 +498,14 @@ async function verifyRepositoryTransaction(
   assert.equal(publications.length, 1);
   assert.equal(type.state, 'ACTIVE');
   assert.equal(policy.status, 'PUBLISHED');
+  assert.equal(fences.length, 1);
+  assert.equal(fences[0].binding.publicationId, publication.publicationId);
 
   type = typeFixture();
   policy = policyFixture();
   mappings = [];
   publications = [];
+  fences = [];
   await assert.rejects(
     repository.publishRuntimePolicy({
       mapping: structuredClone(mapping),
@@ -531,7 +549,7 @@ async function verifyRepositorySupersessionTransaction(
   newProjection.policyVersion = 2;
   const newPublication: StoredSubscriptionPolicyPublication = {
     ...structuredClone(initialPublication),
-    schemaVersion: 2,
+    schemaVersion: 3,
     publicationId: 'publication:supersession-v2',
     policyVersion: 2,
     policyDigest: computeSubscriptionRuntimeProjectionDigest(newProjection),
@@ -544,7 +562,6 @@ async function verifyRepositorySupersessionTransaction(
       correlationId: 'corr:publish-v2-transaction'
     }
   };
-  delete newPublication.runtimeCompatibility;
   const refreshedMapping: StoredSubscriptionProviderMapping = {
     ...structuredClone(mapping),
     evidenceRef: `evidence:provider-mapping:${'e'.repeat(64)}`,
@@ -558,13 +575,20 @@ async function verifyRepositorySupersessionTransaction(
   let policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   let mappings = [structuredClone(mapping)];
   let publications = [structuredClone(initialPublication)];
+  const initialFence = buildSubscriptionProjectionFence({
+    mapping,
+    publication: initialPublication,
+    previous: null
+  });
+  let fences = [structuredClone(initialFence)];
   let failTypeCas = false;
   repository.client = {
     startSession: () => ({
       withTransaction: async (callback: () => Promise<void>) => {
         const before = {
           type: structuredClone(type), policies: structuredClone(policies),
-          mappings: structuredClone(mappings), publications: structuredClone(publications)
+          mappings: structuredClone(mappings), publications: structuredClone(publications),
+          fences: structuredClone(fences)
         };
         try {
           await callback();
@@ -573,6 +597,7 @@ async function verifyRepositorySupersessionTransaction(
           policies = before.policies;
           mappings = before.mappings;
           publications = before.publications;
+          fences = before.fences;
           throw error;
         }
       },
@@ -643,6 +668,22 @@ async function verifyRepositorySupersessionTransaction(
       return { modifiedCount: 1 };
     }
   });
+  repository.runtimeProjectionFences = () => ({
+    findOne: async () => fences[0] ? structuredClone(fences[0]) : null,
+    insertOne: async (row: StoredSubscriptionProjectionFence) => {
+      fences.push(structuredClone(row));
+    },
+    updateOne: async (filter: any, update: any) => {
+      const row = fences[0];
+      if (!row
+        || row.fenceId !== filter.fenceId
+        || row.bindingRevision !== filter.bindingRevision
+        || row.coordinationRevision !== filter.coordinationRevision
+        || row.bindingDigest !== filter.bindingDigest) return { modifiedCount: 0 };
+      Object.assign(row, structuredClone(update.$set));
+      return { modifiedCount: 1 };
+    }
+  });
 
   const publish = () => repository.publishRuntimePolicy({
     mapping: structuredClone(refreshedMapping),
@@ -665,11 +706,39 @@ async function verifyRepositorySupersessionTransaction(
   assert.equal(mappings.length, 1);
   assert.equal(mappings[0].revision, refreshedMapping.revision);
   assert.equal(mappings[0].evidenceRef, refreshedMapping.evidenceRef);
+  assert.equal(fences[0].bindingRevision, 2);
+  assert.equal(fences[0].binding.publicationId, newPublication.publicationId);
 
   type = structuredClone(initialType);
   policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   mappings = [structuredClone(mapping)];
   publications = [structuredClone(initialPublication)];
+  fences = [];
+  await publish();
+  assert.equal(fences.length, 1);
+  assert.equal(fences[0].bindingRevision, 1);
+  assert.equal(fences[0].binding.publicationId, newPublication.publicationId);
+
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
+  fences[0].binding.mappingRevision += 1;
+  fences[0].bindingDigest = subscriptionProjectionFenceBindingDigest(fences[0].binding);
+  await assert.rejects(
+    publish,
+    (error: unknown) => error instanceof SubscriptionRuntimeContractError
+      && error.code === 'SUBSCRIPTION_PUBLICATION_FENCE_CONFLICT'
+  );
+  assert.deepEqual(mappings, [mapping]);
+  assert.deepEqual(publications, [initialPublication]);
+
+  type = structuredClone(initialType);
+  policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
+  mappings = [structuredClone(mapping)];
+  publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
   failTypeCas = true;
   await assert.rejects(
     publish,
@@ -707,6 +776,7 @@ async function verifyRepositorySupersessionTransaction(
   policies = [structuredClone(oldPolicy), structuredClone(newPolicy)];
   mappings = [structuredClone(mapping)];
   publications = [structuredClone(initialPublication)];
+  fences = [structuredClone(initialFence)];
   failTypeCas = true;
   await assert.rejects(
     repository.publishRuntimePolicy({

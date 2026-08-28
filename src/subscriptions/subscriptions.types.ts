@@ -640,6 +640,29 @@ export interface SubscriptionRuntimeCompatibility {
   capabilityDigest: `sha256:${string}`;
 }
 
+export interface SubscriptionProjectionFenceBinding {
+  mappingId: string;
+  mappingRevision: number;
+  subscriptionTypeId: string;
+  publicationId: string;
+  policyVersion: number;
+  policyDigest: `sha256:${string}`;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
+}
+
+export interface StoredSubscriptionProjectionFence {
+  schemaVersion: 1;
+  fenceId: string;
+  subscriptionTypeId: string;
+  bindingRevision: number;
+  bindingDigest: `sha256:${string}`;
+  binding: SubscriptionProjectionFenceBinding;
+  coordinationRevision: number;
+  lastProjectorReconciliationDigest: `sha256:${string}` | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SubscriptionInstanceEvidence {
   paymentEvidenceRef: string | null;
   providerInstanceEvidenceRef: string | null;
@@ -698,7 +721,7 @@ export type SubscriptionInstanceProjectorCoverage =
   };
 
 export interface StoredSubscriptionInstanceProjectorCheckpoint {
-  schemaVersion: 1;
+  schemaVersion: 2;
   checkpointId: string;
   tenantId: string;
   provider: 'VIVA';
@@ -707,7 +730,11 @@ export interface StoredSubscriptionInstanceProjectorCheckpoint {
     kind: Exclude<SubscriptionProviderScopeKind, 'STUDIO'>;
     scopeId: string;
   };
+  approvalRef: string;
   binding: {
+    fenceId: string;
+    fenceRevision: number;
+    fenceDigest: `sha256:${string}`;
     mappingId: string;
     mappingRevision: number;
     subscriptionTypeId: string;
@@ -721,9 +748,10 @@ export interface StoredSubscriptionInstanceProjectorCheckpoint {
   };
   producer: {
     producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR';
-    contractVersion: 1;
+    contractVersion: 2;
     producerCapabilityDigest: `sha256:${string}`;
     sourceContractDigest: `sha256:${string}`;
+    authorityDigest: `sha256:${string}`;
   };
   state: SubscriptionInstanceProjectorCheckpointState;
   coverage: SubscriptionInstanceProjectorCoverage;

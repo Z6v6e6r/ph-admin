@@ -38,11 +38,12 @@ executable by this booking-admission adapter.
 ## Reader rollout floor for schema-3 publications
 
 Before permitting any schema-3 publication write, deploy v3-capable runtime
-readers to every CUP replica while
+readers and fence-aware publication writers to every CUP replica while
 `SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED=false`; verify the immutable release
 digest on every replica. Only then is a separately approved publication-command
 enablement eligible for consideration. After the first schema-3 publication is
-written, rollback is bounded by a v3-capable reader floor. This document does
+written, rollback is bounded by both the v3-capable reader floor and the
+fence-aware publication-writer floor. This document does
 not authorize command activation, production publication, or any live mutation.
 
 ## Two-step contract
@@ -156,8 +157,11 @@ absent until their exact Viva/CUP dictionaries and price evidence are approved.
   audit storage and transaction probe are approved.
 - If publish fails, inspect the approval audit and the four affected collections;
   do not retry with a new payload under the same idempotency key.
-- Code rollback is compatible while no publication exists: turn both new flags
-  off and deploy the previous artifact.
+- Code rollback before any fence-aware write requires both publication flags off on every
+  replica. After a fence-aware publication or projector transaction commits, keep publication
+  writes quiesced across rollback and follow the exact fence consistency audit and separately
+  authorized forward-fix procedure in `managed-annual-subscriptions-runtime-contracts.md` before
+  re-enable; an old writer must never publish while fences exist.
 - Once a policy is published, do not edit it. Future rule changes require a new
   policy version plus a separately implemented supersession command; existing
   instances remain pinned to their original version/digest unless an explicit

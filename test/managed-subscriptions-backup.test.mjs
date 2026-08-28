@@ -123,11 +123,12 @@ test('archive is root-only shaped, checksummed and contains no connection secret
   });
   assert.equal(archive.status, 0);
   const manifest = JSON.parse(archive.stdout);
-  assert.equal(manifest.schema, 'phab-production-managed-subscriptions-backup-v3');
+  assert.equal(manifest.schema, 'phab-production-managed-subscriptions-backup-v4');
   assert.equal(manifest.totalDocuments, 2);
   assert.equal(manifest.collections.length, MANAGED_SUBSCRIPTION_COLLECTIONS.length);
-  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.length, 12);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.length, 13);
   assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_instance_projector_checkpoints'), true);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_projection_fences'), true);
   const checkpointInventory = manifest.collections.find(
     (item) => item.name === 'subscription_instance_projector_checkpoints'
   );

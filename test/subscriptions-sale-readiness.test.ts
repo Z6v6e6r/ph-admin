@@ -10,6 +10,10 @@ import {
   publicationAdapterRuntimeCompatibility
 } from '../src/subscriptions/subscription-publication-enforcement-adapter';
 import { SubscriptionSaleReadinessService } from '../src/subscriptions/subscription-sale-readiness.service';
+import {
+  subscriptionProjectionFenceBindingDigest,
+  subscriptionProjectionFenceId
+} from '../src/subscriptions/subscription-projection-fence';
 import { SubscriptionTrustedShadowController } from '../src/subscriptions/subscriptions.controller';
 import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions-exception.filter';
 
@@ -19,6 +23,7 @@ const PRODUCT_ID = '8bf334ba-3050-4017-b40a-7eef2db1eb16';
 const STATION_ID = '1ea77cbf-bc36-49a1-96d6-f35c216a409b';
 const CHECKED_AT = new Date('2026-08-24T10:00:00.000Z');
 const COMPATIBILITY = publicationAdapterRuntimeCompatibility(LK_NODE_RED_ANNUAL_BOOKING_V1);
+const RECONCILIATION_DIGEST = `sha256:${'4'.repeat(64)}` as `sha256:${string}`;
 
 const dto = (): SubscriptionSaleReadinessDto => Object.assign(
   new SubscriptionSaleReadinessDto(),
@@ -119,14 +124,41 @@ const publication = () => ({
   runtimeCompatibility: { ...COMPATIBILITY }
 });
 
-const checkpoint = () => ({
+const fenceBinding = () => ({
+  mappingId: mapping().mappingId,
+  mappingRevision: mapping().revision,
+  subscriptionTypeId: publication().subscriptionTypeId,
+  publicationId: publication().publicationId,
+  policyVersion: publication().policyVersion,
+  policyDigest: publication().policyDigest as `sha256:${string}`,
+  runtimeCompatibility: { ...COMPATIBILITY }
+});
+
+const projectionFence = () => ({
   schemaVersion: 1 as const,
+  fenceId: subscriptionProjectionFenceId(publication().subscriptionTypeId),
+  subscriptionTypeId: publication().subscriptionTypeId,
+  bindingRevision: 1,
+  bindingDigest: subscriptionProjectionFenceBindingDigest(fenceBinding()),
+  binding: fenceBinding(),
+  coordinationRevision: 2,
+  lastProjectorReconciliationDigest: RECONCILIATION_DIGEST,
+  createdAt: '2026-08-24T08:55:00.000Z',
+  updatedAt: '2026-08-24T09:59:30.000Z'
+});
+
+const checkpoint = () => ({
+  schemaVersion: 2 as const,
   checkpointId: 'checkpoint:piter-annual',
   tenantId: TENANT_ID,
   provider: 'VIVA' as const,
   providerProductId: PRODUCT_ID,
   providerScope: { kind: 'STATION' as const, scopeId: STATION_ID },
+  approvalRef: `provider_approval:sha256:${'9'.repeat(64)}`,
   binding: {
+    fenceId: projectionFence().fenceId,
+    fenceRevision: 1,
+    fenceDigest: projectionFence().bindingDigest,
     mappingId: mapping().mappingId,
     mappingRevision: mapping().revision,
     subscriptionTypeId: publication().subscriptionTypeId,
@@ -140,9 +172,10 @@ const checkpoint = () => ({
   },
   producer: {
     producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR' as const,
-    contractVersion: 1 as const,
+    contractVersion: 2 as const,
     producerCapabilityDigest: `sha256:${'e'.repeat(64)}` as `sha256:${string}`,
-    sourceContractDigest: `sha256:${'f'.repeat(64)}` as `sha256:${string}`
+    sourceContractDigest: `sha256:${'f'.repeat(64)}` as `sha256:${string}`,
+    authorityDigest: `sha256:${'a'.repeat(64)}` as `sha256:${string}`
   },
   state: 'CURRENT' as const,
   coverage: {
@@ -165,7 +198,7 @@ const checkpoint = () => ({
     failureCount: 0,
     sourceEvidenceRef: `provider_snapshot_evidence:sha256:${'2'.repeat(64)}`,
     resultEvidenceRef: `projection_result:sha256:${'3'.repeat(64)}`,
-    reconciliationDigest: `sha256:${'4'.repeat(64)}` as `sha256:${string}`
+    reconciliationDigest: RECONCILIATION_DIGEST
   },
   failure: null,
   lease: null,
@@ -180,6 +213,7 @@ class RepositoryStub {
   typeReads = 0;
   publicationReads = 0;
   checkpointReads = 0;
+  fenceReads = 0;
   lastMappingIdentity: unknown = null;
   firstMapping: any = mapping();
   secondMapping: any = this.firstMapping;
@@ -187,6 +221,8 @@ class RepositoryStub {
   secondType: any = this.firstType;
   currentPublication: any = publication();
   currentCheckpoint: any = null;
+  firstFence: any = projectionFence();
+  secondFence: any = this.firstFence;
   connectError: Error | null = null;
 
   async connectReadOnly(): Promise<void> {
@@ -213,6 +249,11 @@ class RepositoryStub {
   async runtimeInstanceProjectorCheckpointByProviderIdentity() {
     this.checkpointReads += 1;
     return this.currentCheckpoint;
+  }
+
+  async runtimeProjectionFenceByType() {
+    this.fenceReads += 1;
+    return this.fenceReads === 1 ? this.firstFence : this.secondFence;
   }
 }
 
@@ -460,6 +501,24 @@ async function verifyFailClosedAndDrift(): Promise<void> {
     status: 'CURRENT',
     checkpointAsOf: '2026-08-24T09:59:30.000Z'
   });
+
+  const missingFence = service();
+  missingFence.repository.currentCheckpoint = checkpoint();
+  missingFence.repository.firstFence = null;
+  missingFence.repository.secondFence = null;
+  assert.ok(blockerCodes(await missingFence.service.check(TOKEN, dto()))
+    .includes('SUBSCRIPTIONS_SALE_READINESS_INSTANCE_PROJECTOR_UNAVAILABLE'));
+
+  const fenceReset = service();
+  fenceReset.repository.currentCheckpoint = checkpoint();
+  fenceReset.repository.secondFence = {
+    ...projectionFence(),
+    lastProjectorReconciliationDigest: null
+  };
+  const fenceResetResult = await fenceReset.service.check(TOKEN, dto());
+  assert.ok(blockerCodes(fenceResetResult)
+    .includes('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED'));
+  assert.equal(fenceResetResult.instanceProjector.status, 'UNAVAILABLE');
 
   const drift = service();
   drift.repository.secondMapping = { ...mapping(), revision: 5 };
