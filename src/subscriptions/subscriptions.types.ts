@@ -349,9 +349,54 @@ export interface SubscriptionTestOfferView {
 export interface SubscriptionTestActivationResult extends SubscriptionTestOfferView {
   accessToken: string | null;
   storefrontPath: string | null;
+  usageScenarioUrl: string | null;
   tokenIssued: boolean;
   replayed: boolean;
   correlationId: string;
+}
+
+export interface SubscriptionUsageTestTargetView {
+  targetId: string;
+  title: string;
+  description: string;
+  action: SubscriptionAction;
+  target: SubscriptionShadowQuoteResolvedTarget;
+}
+
+export interface SubscriptionUsageTestScenarioView {
+  mode: 'HOSTED_DEV_SHADOW';
+  testOnly: true;
+  providerMode: 'FAKE_NO_VIVA';
+  evaluatedAt: string;
+  offer: {
+    offerId: string;
+    title: string;
+    stationId: string;
+    timeZone: string;
+  };
+  policySource: {
+    sourceStatus: SubscriptionPolicyStatus;
+    runtimeStatus: 'PUBLISHED';
+    sourceModelVersion: 2 | 3;
+    version: number;
+    digest: string;
+  };
+  limits: {
+    activeServicesEnabled: boolean;
+    maxActiveServices: number | null;
+    bookingWindowEnabled: boolean;
+    bookingWindowDays: number | null;
+    dailyUsageLimit: number;
+    dailyUsageActions: SubscriptionAction[];
+    dailyLimitExceeded: DailyUsageLimitExceededMode;
+    dailyLimitExceededPercentage: number | null;
+  };
+  targets: SubscriptionUsageTestTargetView[];
+}
+
+export interface SubscriptionUsageTestQuoteResult {
+  target: SubscriptionUsageTestTargetView;
+  decision: SubscriptionShadowQuoteResult;
 }
 
 export interface SubscriptionImpactIssue {

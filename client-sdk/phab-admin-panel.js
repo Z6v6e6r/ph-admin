@@ -36786,6 +36786,16 @@
                 (testOffer.accessToken ? ' · новая одноразово показанная ссылка' : ' · существующий оффер');
               card.appendChild(offerMeta);
             }
+            if (testOffer && testOffer.usageScenarioUrl) {
+              var usageLink = document.createElement('a');
+              usageLink.className = 'phab-admin-btn-secondary';
+              usageLink.href = testOffer.usageScenarioUrl;
+              usageLink.target = '_blank';
+              usageLink.rel = 'noopener noreferrer';
+              usageLink.textContent = 'Проверить ограничения в lk_dev';
+              usageLink.setAttribute('aria-label', 'Открыть DEV-проверку ограничений и скидок без реальных записей');
+              card.appendChild(usageLink);
+            }
           }
           dom.subscriptionProgramsList.appendChild(card);
         });
@@ -37079,7 +37089,7 @@
         state.subscriptions.testActionByProgram[programId] = {
           busy: false,
           message: offer && offer.storefrontPath
-            ? 'Ссылка создана. Она ведёт только в fake-контур.'
+            ? 'Ссылки созданы. Они ведут только в fake-контур.'
             : 'Оффер уже существует; секретная ссылка повторно не раскрывается.'
         };
         setStatus('Тестовый оффер создан без Viva и реальной оплаты', false);

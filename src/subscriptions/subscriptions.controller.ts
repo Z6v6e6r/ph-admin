@@ -35,6 +35,7 @@ import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-te
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
+import { SubscriptionUsageTestQuoteDto } from './dto/subscription-usage-test-quote.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
 import {
   PublishSubscriptionPolicyDto,
@@ -68,6 +69,8 @@ import {
   SubscriptionTestOfferView,
   SubscriptionTestPurchaseView,
   SubscriptionTestReservationResult,
+  SubscriptionUsageTestQuoteResult,
+  SubscriptionUsageTestScenarioView,
   SubscriptionType,
   SubscriptionTypePage
 } from './subscriptions.types';
@@ -372,6 +375,27 @@ export class SubscriptionTestController {
     @Headers('x-subscription-test-token') accessToken: string | undefined
   ): Promise<SubscriptionTestOfferView> {
     return this.testRuntime.offerByCredentials(offerId, accessToken ?? '');
+  }
+
+  @Get('offers/:offerId/usage-scenarios')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  usageScenarios(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined
+  ): Promise<SubscriptionUsageTestScenarioView> {
+    return this.testRuntime.usageScenarios(offerId, accessToken ?? '');
+  }
+
+  @Post('offers/:offerId/usage-scenarios/quote')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quoteUsageScenario(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined,
+    @Body() dto: SubscriptionUsageTestQuoteDto
+  ): Promise<SubscriptionUsageTestQuoteResult> {
+    return this.testRuntime.quoteUsageScenario(offerId, accessToken ?? '', dto);
   }
 
   @Post('offers/:offerId/reservations')

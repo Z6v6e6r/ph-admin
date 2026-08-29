@@ -14,6 +14,11 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
+import { SubscriptionUsageTestQuoteDto } from './dto/subscription-usage-test-quote.dto';
+import {
+  buildSubscriptionUsageTestScenario,
+  evaluateSubscriptionUsageTestScenario
+} from './subscription-usage-test-runtime';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   ReleaseProgram,
@@ -32,7 +37,9 @@ import {
   SubscriptionTestOfferView,
   SubscriptionTestPurchaseStatus,
   SubscriptionTestPurchaseView,
-  SubscriptionTestReservationResult
+  SubscriptionTestReservationResult,
+  SubscriptionUsageTestQuoteResult,
+  SubscriptionUsageTestScenarioView
 } from './subscriptions.types';
 
 interface CommandHeaders {
@@ -266,6 +273,25 @@ export class SubscriptionsTestRuntimeService {
     const offer = await this.offerByCredentialsInternal(offerId, accessToken);
     await this.expirePendingPurchases(offer);
     return this.offerView(offer, await this.requiredInventory(offer.offerId));
+  }
+
+  async usageScenarios(
+    offerId: string,
+    accessToken: string
+  ): Promise<SubscriptionUsageTestScenarioView> {
+    this.requireTestRuntimeEnabled();
+    const offer = await this.offerByCredentialsInternal(offerId, accessToken);
+    return buildSubscriptionUsageTestScenario(offer, this.now());
+  }
+
+  async quoteUsageScenario(
+    offerId: string,
+    accessToken: string,
+    dto: SubscriptionUsageTestQuoteDto
+  ): Promise<SubscriptionUsageTestQuoteResult> {
+    this.requireTestRuntimeEnabled();
+    const offer = await this.offerByCredentialsInternal(offerId, accessToken);
+    return evaluateSubscriptionUsageTestScenario(offer, dto, this.now());
   }
 
   async reserve(
@@ -717,6 +743,9 @@ export class SubscriptionsTestRuntimeService {
       accessToken,
       storefrontPath: accessToken
         ? `/api/ui/subscription-test#offerId=${encodeURIComponent(offer.offerId)}&token=${encodeURIComponent(accessToken)}`
+        : null,
+      usageScenarioUrl: accessToken
+        ? `https://padlhub.ru/lk_dev?subscriptionTest=1#offerId=${encodeURIComponent(offer.offerId)}&token=${encodeURIComponent(accessToken)}`
         : null,
       tokenIssued: Boolean(accessToken),
       replayed,

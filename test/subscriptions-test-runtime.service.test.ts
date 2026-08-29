@@ -426,6 +426,87 @@ function fixture(firstQuantity = 2): InMemoryRuntimeRepository {
   return repository;
 }
 
+function annualUsageFixture(): InMemoryRuntimeRepository {
+  const repository = fixture(3);
+  const policy = repository.policies[0];
+  policy.modelVersion = 3;
+  policy.activeServicesLimit = {
+    enabled: true,
+    max: 4,
+    scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+  };
+  policy.bookingWindow = { enabled: true, days: 4 };
+  policy.capabilities.usage.maxFutureBookings = 4;
+  policy.dailyUsagePolicy = {
+    actions: ['CREATE_GAME', 'JOIN_GAME'],
+    limitExceeded: 'PERCENT_DISCOUNT',
+    percentage: 30
+  };
+  policy.stationAccessRules = [{
+    ruleId: 'annual-home-station',
+    enabled: true,
+    priority: 100,
+    selector: { kind: 'HOME_STATION', stationIds: [] },
+    surcharge: { kind: 'NONE', amountMinor: 0 }
+  }];
+  const common = {
+    enabled: true,
+    category: 'GAME' as const,
+    actions: ['CREATE_GAME', 'JOIN_GAME'] as const,
+    externalEventTypeIds: ['event_type:open-game'],
+    productTypeIds: [] as string[],
+    stationIds: ['yas'],
+    valueMinor: null,
+    priority: 100
+  };
+  policy.benefitRules = [{
+    ...common,
+    ruleId: 'annual-game-60',
+    actions: [...common.actions],
+    durationMinutes: [60],
+    kind: 'FREE_ENTITLEMENT',
+    percentage: null,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'annual-game-90',
+    actions: [...common.actions],
+    durationMinutes: [90],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 3 }
+  }, {
+    ...common,
+    ruleId: 'annual-game-120',
+    actions: [...common.actions],
+    durationMinutes: [120],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 2 }
+  }, {
+    ...common,
+    ruleId: 'annual-group-50',
+    category: 'GROUP_TRAINING',
+    actions: ['BOOK_GROUP_TRAINING'],
+    externalEventTypeIds: ['event_type:group-training'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'annual-tournament-50',
+    category: 'TOURNAMENT',
+    actions: ['BOOK_TOURNAMENT'],
+    externalEventTypeIds: ['event_type:tournament'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }];
+  return repository;
+}
+
 function command(suffix: string) {
   return {
     idempotencyKey: `runtime-test-${suffix.padEnd(16, 'x')}`,
@@ -510,6 +591,7 @@ async function testActivationTokenReservationAndFakeOutcomes(): Promise<void> {
   assert.equal(activated.currentPhase?.available, 3);
   assert.ok(activated.accessToken && activated.accessToken.length >= 32);
   assert.match(activated.storefrontPath ?? '', /^\/api\/ui\/subscription-test#offerId=.*&token=/);
+  assert.match(activated.usageScenarioUrl ?? '', /^https:\/\/padlhub\.ru\/lk_dev\?subscriptionTest=1#offerId=.*&token=/);
   assert.notEqual(repository.offers[0].accessTokenHash, activated.accessToken);
   assert.equal(JSON.stringify(repository.offers).includes(activated.accessToken as string), false);
   assert.match(repository.offers[0].accessTokenHash, /^[a-f0-9]{64}$/);
@@ -621,6 +703,55 @@ async function testActivationTokenReservationAndFakeOutcomes(): Promise<void> {
     [failed.inventory?.currentPhase?.available, failed.inventory?.currentPhase?.reserved, failed.inventory?.currentPhase?.sold],
     [2, 0, 1]
   );
+}
+
+async function testHostedAnnualUsageScenarios(): Promise<void> {
+  const repository = annualUsageFixture();
+  const service = new SubscriptionsTestRuntimeService(repository as unknown as SubscriptionsRepository);
+  process.env.SUBSCRIPTIONS_ADMIN_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER = 'runtime-test-pepper-32-bytes-minimum-value';
+  const activated = await activate(service);
+  const token = activated.accessToken as string;
+  const scenarios = await service.usageScenarios(activated.offerId, token);
+  assert.equal(scenarios.mode, 'HOSTED_DEV_SHADOW');
+  assert.equal(scenarios.providerMode, 'FAKE_NO_VIVA');
+  assert.equal(scenarios.policySource.sourceStatus, 'DRAFT');
+  assert.equal(scenarios.policySource.runtimeStatus, 'PUBLISHED');
+  assert.equal(scenarios.limits.maxActiveServices, 4);
+  assert.deepEqual(scenarios.limits.dailyUsageActions, ['CREATE_GAME', 'JOIN_GAME']);
+  assert.equal(scenarios.targets.length, 8);
+
+  const quote = (targetId: string, activeServices = 0, dailyGameUsage = 0) => (
+    service.quoteUsageScenario(activated.offerId, token, { targetId, activeServices, dailyGameUsage })
+  );
+  assert.equal((await quote('annual-create-60')).decision.benefit?.finalPriceMinor, 0);
+  assert.equal((await quote('annual-create-90')).decision.benefit?.finalPriceMinor, 210_000);
+  assert.equal((await quote('annual-create-120')).decision.benefit?.finalPriceMinor, 420_000);
+  assert.equal((await quote('annual-join-90')).decision.benefit?.finalPriceMinor, 210_000);
+  const excess = await quote('annual-join-120', 0, 1);
+  assert.equal(excess.decision.benefit?.kind, 'PERCENT_DISCOUNT');
+  assert.equal(excess.decision.benefit?.ruleId, 'daily-usage-limit-exceeded');
+  assert.equal(excess.decision.benefit?.finalPriceMinor, 840_000);
+  assert.equal((await quote('annual-group-60', 0, 1)).decision.benefit?.finalPriceMinor, 150_000);
+  assert.equal((await quote('annual-tournament-120', 0, 1)).decision.benefit?.finalPriceMinor, 250_000);
+  const activeLimit = await quote('annual-create-60', 4, 0);
+  assert.ok(activeLimit.decision.blockers.some((item) => item.code === 'ACTIVE_SERVICES_LIMIT_REACHED'));
+  await expectException(
+    () => service.usageScenarios(activated.offerId, 'invalid-token'),
+    NotFoundException
+  );
+
+  const mismatchedRepository = fixture();
+  const mismatched = new SubscriptionsTestRuntimeService(
+    mismatchedRepository as unknown as SubscriptionsRepository
+  );
+  const mismatchedOffer = await activate(mismatched);
+  const mismatch = await expectException(
+    () => mismatched.usageScenarios(mismatchedOffer.offerId, mismatchedOffer.accessToken as string),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(mismatch), 'SUBSCRIPTION_USAGE_TEST_POLICY_MISMATCH');
 }
 
 async function testPhaseRolloverAndLastUnitConcurrency(): Promise<void> {
@@ -880,6 +1011,7 @@ async function main(): Promise<void> {
   try {
     await testFeatureGateAndImpactPreview();
     await testActivationTokenReservationAndFakeOutcomes();
+    await testHostedAnnualUsageScenarios();
     await testPhaseRolloverAndLastUnitConcurrency();
     await testCreatingReservationCrashRecovery();
     await testTerminalPurchaseCrashRecovery();
