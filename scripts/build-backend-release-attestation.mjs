@@ -166,7 +166,8 @@ export function shouldExcludeRuntimePath(runtimePath) {
   const packageRootLength = segments[1]?.startsWith('@') ? 3 : 2;
   const dependencyPath = segments.slice(packageRootLength);
   if (segments[0] === 'node_modules'
-    && dependencyPath.some((segment) => /^(?:test|tests|__tests__|fixtures?)$/i.test(segment))) {
+    && (dependencyPath.some((segment) => /^(?:test|tests|__tests__|fixtures?)$/i.test(segment))
+      || /(?:^|\.)(?:test|tests|spec)(?:\.[A-Za-z0-9_-]+)+$/i.test(filename))) {
     return true;
   }
   return segments[0] === 'dist'
