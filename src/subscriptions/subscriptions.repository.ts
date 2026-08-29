@@ -731,23 +731,21 @@ export class SubscriptionsRepository {
     let result: 'INSERTED' | 'EXACT_REPLAY' | null = null;
     try {
       await session.withTransaction(async () => {
-        const [fence, checkpoint, rows] = await Promise.all([
-          this.runtimeProjectionFences().findOne(
-            { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
-            { projection: { _id: 0 }, session }
-          ),
-          this.runtimeInstanceProjectorCheckpoints().findOne(
-            this.instanceProjectorIdentity(plan.checkpoint),
-            { projection: { _id: 0 }, session }
-          ),
-          this.runtimeInstances()
-            .find(this.instanceProjectionProductFilter(plan.checkpoint), {
-              projection: { _id: 0 },
-              session
-            })
-            .sort({ subscriptionInstanceId: 1 })
-            .toArray()
-        ]);
+        const fence = await this.runtimeProjectionFences().findOne(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        );
+        const checkpoint = await this.runtimeInstanceProjectorCheckpoints().findOne(
+          this.instanceProjectorIdentity(plan.checkpoint),
+          { projection: { _id: 0 }, session }
+        );
+        const rows = await this.runtimeInstances()
+          .find(this.instanceProjectionProductFilter(plan.checkpoint), {
+            projection: { _id: 0 },
+            session
+          })
+          .sort({ subscriptionInstanceId: 1 })
+          .toArray();
         const expectedFenceBinding = {
           mappingId: plan.checkpoint.binding.mappingId,
           mappingRevision: plan.checkpoint.binding.mappingRevision,
@@ -846,8 +844,10 @@ export class SubscriptionsRepository {
             );
           }
         }
-        await this.runtimeInstances().insertMany(plan.instances, { ordered: true, session });
-        await this.runtimeInstanceProjectorCheckpoints().insertOne(plan.checkpoint, { session });
+        const instanceWriteDocuments = plan.instances.map((instance) => structuredClone(instance));
+        const checkpointWriteDocument = structuredClone(plan.checkpoint);
+        await this.runtimeInstances().insertMany(instanceWriteDocuments, { ordered: true, session });
+        await this.runtimeInstanceProjectorCheckpoints().insertOne(checkpointWriteDocument, { session });
         result = 'INSERTED';
       }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
       if (!result) {

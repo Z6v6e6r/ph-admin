@@ -1,7 +1,6 @@
 import * as assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { randomUUID } from 'node:crypto';
-import { MongoClient } from 'mongodb';
+import { createHash, randomUUID } from 'node:crypto';
+import { MongoClient, MongoServerError } from 'mongodb';
 import {
   buildSubscriptionInstanceProjectionPlan,
   assertSubscriptionInstanceProjectionApplyBoundary,
@@ -301,6 +300,7 @@ class FixedClockService extends SubscriptionProviderInstanceProjectorService {
 }
 
 async function verifyRealMongoPostcommitReadback(
+  input: Record<string, unknown>,
   plan: ReturnType<typeof buildSubscriptionInstanceProjectionPlan>
 ): Promise<void> {
   const uri = String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_MONGODB_TEST_URI ?? '').trim();
@@ -317,16 +317,51 @@ async function verifyRealMongoPostcommitReadback(
     ['127.0.0.1', 'localhost', '[::1]'].includes(parsedUri.hostname),
     'MongoDB test URI must target loopback'
   );
-  const dbName = `instance_projector_${randomUUID().replaceAll('-', '')}`;
+  const dbPrefix = `ip_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const dbNames = {
+    postcommit: `${dbPrefix}_postcommit`,
+    concurrent: `${dbPrefix}_concurrent`,
+    bootstrapConcurrent: `${dbPrefix}_bootstrap_concurrent`,
+    checkpointFailure: `${dbPrefix}_checkpoint_failure`,
+    bootstrapCheckpointFailure: `${dbPrefix}_bootstrap_checkpoint_failure`,
+    instanceFailure: `${dbPrefix}_instance_failure`
+  };
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 });
+  const inputSnapshot = structuredClone(input);
+  const planSnapshot = structuredClone(plan);
+  const countMongoIds = (value: unknown): number => {
+    if (Array.isArray(value)) {
+      return value.reduce((count, item) => count + countMongoIds(item), 0);
+    }
+    if (!value || typeof value !== 'object') return 0;
+    return Object.entries(value).reduce(
+      (count, [key, item]) => count + (key === '_id' ? 1 : 0) + countMongoIds(item),
+      0
+    );
+  };
   await client.connect();
-  let testError: unknown;
-  try {
-    const db = client.db(dbName);
-    await db.collection('subscription_projection_fences').insertOne(projectionFence());
+  const repositoryFor = (dbName: string): SubscriptionsRepository => {
     const repository = new SubscriptionsRepository() as any;
     repository.client = client;
-    repository.db = db;
+    repository.db = client.db(dbName);
+    return repository as SubscriptionsRepository;
+  };
+  const seedFence = async (dbName: string): Promise<void> => {
+    await client.db(dbName).collection('subscription_projection_fences')
+      .insertOne(structuredClone(projectionFence()));
+  };
+  const assertFenceUnchanged = async (dbName: string): Promise<void> => {
+    assert.deepEqual(
+      await client.db(dbName).collection('subscription_projection_fences')
+        .findOne({}, { projection: { _id: 0 } }),
+      projectionFence()
+    );
+  };
+  let testError: unknown;
+  try {
+    const db = client.db(dbNames.postcommit);
+    await seedFence(dbNames.postcommit);
+    const repository = repositoryFor(dbNames.postcommit);
     let applyError: unknown;
     let applyResult: 'INSERTED' | 'EXACT_REPLAY' | undefined;
     try {
@@ -341,11 +376,24 @@ async function verifyRealMongoPostcommitReadback(
       const errorCode = applyError instanceof SubscriptionRuntimeContractError
         ? applyError.code
         : applyError instanceof Error ? applyError.message : String(applyError);
+      assert.equal(errorCode, 'SUBSCRIPTION_RUNTIME_SHAPE_INVALID');
+      assert.equal(instanceCount, plan.instances.length);
+      assert.equal(checkpointCount, 1);
+      assert.deepEqual(input, inputSnapshot, 'caller-owned manifest must remain immutable');
+      assert.notDeepEqual(plan, planSnapshot, 'current regression must expose plan mutation');
+      const planMongoIdCount = countMongoIds(plan);
+      assert.equal(planMongoIdCount, plan.instances.length + 1);
       assert.fail(
-        `initial projector apply threw ${errorCode} after readback instances=${instanceCount} checkpoints=${checkpointCount}`
+        `initial projector apply threw ${errorCode} after committed readback `
+          + `instances=${instanceCount} checkpoints=${checkpointCount} `
+          + `callerPlanMongoIds=${planMongoIdCount}`
       );
     }
     assert.equal(applyResult, 'INSERTED');
+    assert.deepEqual(input, inputSnapshot, 'caller-owned manifest must remain immutable');
+    assert.deepEqual(plan, planSnapshot, 'caller-owned projection plan must remain immutable');
+    assert.equal(countMongoIds(input), 0);
+    assert.equal(countMongoIds(plan), 0);
     assert.equal(
       instanceCount,
       plan.instances.length
@@ -354,21 +402,150 @@ async function verifyRealMongoPostcommitReadback(
       checkpointCount,
       1
     );
+    assert.equal(
+      await repository.preflightInitialRuntimeInstanceProjection(plan),
+      'EXACT_REPLAY',
+      'strict persisted readback must match the original canonical plan'
+    );
+    assert.equal(
+      await repository.applyInitialRuntimeInstanceProjection(plan),
+      'EXACT_REPLAY',
+      'retrying the same in-memory plan must be an exact replay'
+    );
     assert.equal(await repository.applyInitialRuntimeInstanceProjection(
       buildSubscriptionInstanceProjectionPlan(manifest(), PEPPER)
     ), 'EXACT_REPLAY');
+    assert.equal(await db.collection('subscription_instances').countDocuments({}), plan.instances.length);
+    assert.equal(
+      await db.collection('subscription_instance_projector_checkpoints').countDocuments({}),
+      1
+    );
+
+    await seedFence(dbNames.concurrent);
+    const concurrentResults = await Promise.all([
+      repositoryFor(dbNames.concurrent).applyInitialRuntimeInstanceProjection(plan),
+      repositoryFor(dbNames.concurrent).applyInitialRuntimeInstanceProjection(plan)
+    ]);
+    assert.deepEqual([...concurrentResults].sort(), ['EXACT_REPLAY', 'INSERTED']);
+    const concurrentDb = client.db(dbNames.concurrent);
+    const concurrentInstances = await concurrentDb.collection('subscription_instances')
+      .find({}, { projection: { _id: 0 } }).toArray();
+    assert.equal(concurrentInstances.length, plan.instances.length);
+    assert.equal(
+      new Set(concurrentInstances.map((instance) => instance.subscriptionInstanceId)).size,
+      plan.instances.length,
+      'concurrent apply must not create duplicate instance rows'
+    );
+    assert.equal(
+      await concurrentDb.collection('subscription_instance_projector_checkpoints').countDocuments({}),
+      1
+    );
+
+    const bootstrapConcurrentDb = client.db(dbNames.bootstrapConcurrent);
+    await bootstrapConcurrentDb.collection('subscription_projection_fences')
+      .createIndex({ subscriptionTypeId: 1 }, { unique: true });
+    await bootstrapConcurrentDb.collection('subscription_instances')
+      .createIndex({ subscriptionInstanceId: 1 }, { unique: true });
+    await bootstrapConcurrentDb.collection('subscription_instance_projector_checkpoints')
+      .createIndex({ checkpointId: 1 }, { unique: true });
+    const bootstrapConcurrentResults = await Promise.all([
+      repositoryFor(dbNames.bootstrapConcurrent).applyInitialRuntimeInstanceProjection(plan),
+      repositoryFor(dbNames.bootstrapConcurrent).applyInitialRuntimeInstanceProjection(plan)
+    ]);
+    assert.deepEqual([...bootstrapConcurrentResults].sort(), ['EXACT_REPLAY', 'INSERTED']);
+    assert.equal(
+      await bootstrapConcurrentDb.collection('subscription_projection_fences').countDocuments({}),
+      1
+    );
+    assert.equal(
+      await bootstrapConcurrentDb.collection('subscription_instances').countDocuments({}),
+      plan.instances.length
+    );
+    assert.equal(
+      await bootstrapConcurrentDb.collection('subscription_instance_projector_checkpoints')
+        .countDocuments({}),
+      1
+    );
+
+    const checkpointFailureDb = client.db(dbNames.checkpointFailure);
+    await seedFence(dbNames.checkpointFailure);
+    await checkpointFailureDb.createCollection('subscription_instance_projector_checkpoints', {
+      validator: { $jsonSchema: { bsonType: 'object', required: ['forcedMissingField'] } },
+      validationLevel: 'strict',
+      validationAction: 'error'
+    });
+    await assert.rejects(
+      repositoryFor(dbNames.checkpointFailure).applyInitialRuntimeInstanceProjection(plan),
+      (error: unknown) => error instanceof MongoServerError && error.code === 121
+    );
+    assert.equal(await checkpointFailureDb.collection('subscription_instances').countDocuments({}), 0);
+    assert.equal(
+      await checkpointFailureDb.collection('subscription_instance_projector_checkpoints')
+        .countDocuments({}),
+      0
+    );
+    await assertFenceUnchanged(dbNames.checkpointFailure);
+
+    const bootstrapCheckpointFailureDb = client.db(dbNames.bootstrapCheckpointFailure);
+    await bootstrapCheckpointFailureDb.createCollection(
+      'subscription_instance_projector_checkpoints',
+      {
+        validator: { $jsonSchema: { bsonType: 'object', required: ['forcedMissingField'] } },
+        validationLevel: 'strict',
+        validationAction: 'error'
+      }
+    );
+    await assert.rejects(
+      repositoryFor(dbNames.bootstrapCheckpointFailure).applyInitialRuntimeInstanceProjection(plan),
+      (error: unknown) => error instanceof MongoServerError && error.code === 121
+    );
+    assert.equal(
+      await bootstrapCheckpointFailureDb.collection('subscription_projection_fences')
+        .countDocuments({}),
+      0
+    );
+    assert.equal(
+      await bootstrapCheckpointFailureDb.collection('subscription_instances').countDocuments({}),
+      0
+    );
+    assert.equal(
+      await bootstrapCheckpointFailureDb.collection('subscription_instance_projector_checkpoints')
+        .countDocuments({}),
+      0
+    );
+
+    const instanceFailureDb = client.db(dbNames.instanceFailure);
+    await seedFence(dbNames.instanceFailure);
+    await instanceFailureDb.createCollection('subscription_instances', {
+      validator: { $jsonSchema: { bsonType: 'object', required: ['forcedMissingField'] } },
+      validationLevel: 'strict',
+      validationAction: 'error'
+    });
+    await assert.rejects(
+      repositoryFor(dbNames.instanceFailure).applyInitialRuntimeInstanceProjection(plan),
+      (error: unknown) => error instanceof MongoServerError && error.code === 121
+    );
+    assert.equal(await instanceFailureDb.collection('subscription_instances').countDocuments({}), 0);
+    assert.equal(
+      await instanceFailureDb.collection('subscription_instance_projector_checkpoints')
+        .countDocuments({}),
+      0
+    );
+    await assertFenceUnchanged(dbNames.instanceFailure);
     console.log('subscriptions instance projector MongoDB postcommit test: OK');
   } catch (error) {
     testError = error;
   } finally {
     try {
-      await client.db(dbName).dropDatabase();
+      for (const dbName of Object.values(dbNames)) await client.db(dbName).dropDatabase();
       const databases = await client.db('admin').admin().listDatabases({ nameOnly: true });
-      assert.equal(
-        databases.databases.some((database) => database.name === dbName),
-        false,
-        `MongoDB test database cleanup failed: ${dbName}`
-      );
+      for (const dbName of Object.values(dbNames)) {
+        assert.equal(
+          databases.databases.some((database) => database.name === dbName),
+          false,
+          `MongoDB test database cleanup failed: ${dbName}`
+        );
+      }
     } catch (cleanupError) {
       if (testError) throw new AggregateError([testError, cleanupError], 'MongoDB test and cleanup failed');
       throw cleanupError;
@@ -857,9 +1034,15 @@ async function run(): Promise<void> {
   );
   assert.equal(priceDrift.preflightCalls, 0);
 
-  await verifyRealMongoPostcommitReadback(
-    buildSubscriptionInstanceProjectionPlan(manifest(), PEPPER)
+  const realMongoManifest = manifest();
+  const realMongoManifestSnapshot = structuredClone(realMongoManifest);
+  const realMongoPlan = buildSubscriptionInstanceProjectionPlan(realMongoManifest, PEPPER);
+  assert.deepEqual(
+    realMongoManifest,
+    realMongoManifestSnapshot,
+    'building the canonical projection plan must not mutate the input manifest'
   );
+  await verifyRealMongoPostcommitReadback(realMongoManifest, realMongoPlan);
 
   console.log('subscriptions provider instance projector tests: OK');
 }

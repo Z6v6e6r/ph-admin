@@ -34,6 +34,19 @@ const ALLOWED_SYNTHETIC_IDENTIFIERS = new Set([
   'it@example.com',
   'support@padelhub.local'
 ]);
+const ALLOWED_RUNTIME_BINARY_PATHS = new Set([
+  'client-sdk/admin-panel-message.wav',
+  'client-sdk/branding/apple-touch-icon.png',
+  'client-sdk/branding/favicon-192.png',
+  'client-sdk/branding/favicon-512.png',
+  'client-sdk/branding/tournament-sleeve.png',
+  'dist/admin-panel-message.wav',
+  'dist/client-sdk/admin-panel-message.wav',
+  'dist/client-sdk/branding/apple-touch-icon.png',
+  'dist/client-sdk/branding/favicon-192.png',
+  'dist/client-sdk/branding/favicon-512.png',
+  'dist/client-sdk/branding/tournament-sleeve.png'
+]);
 
 export class BackendReleaseAttestationError extends Error {
   constructor(code, message) {
@@ -162,7 +175,21 @@ export function shouldExcludeRuntimePath(runtimePath) {
       || /\.tsbuildinfo$/i.test(filename));
 }
 
+export function isSensitiveRuntimePath(runtimePath) {
+  return String(runtimePath).split('/').some((segment) =>
+    segment === '.git'
+      || segment === '.git-credentials'
+      || segment === '.gitconfig'
+      || segment === '.npmrc'
+      || segment === '.netrc'
+      || segment === '.ssh'
+      || segment.startsWith('.env'));
+}
+
 async function copyRuntimeTree(source, destination, inventory, prefix = '') {
+  if (prefix && isSensitiveRuntimePath(prefix)) {
+    fail('BACKEND_RELEASE_SENSITIVE_PATH', `Sensitive runtime path is forbidden: ${prefix}`);
+  }
   const info = await lstat(source);
   if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
     fail('BACKEND_RELEASE_RUNTIME_PATH_UNSAFE', `Unsafe runtime path: ${prefix || basename(source)}`);
@@ -213,7 +240,14 @@ export async function scanRuntimeArtifact(root) {
   let binaryFilesSkipped = 0;
   for (const path of files) {
     const body = await readFile(path);
+    const runtimePath = relative(root, path).split(sep).join('/');
+    if (isSensitiveRuntimePath(runtimePath)) {
+      fail('BACKEND_RELEASE_SENSITIVE_PATH', `Sensitive runtime path is forbidden: ${runtimePath}`);
+    }
     if (body.includes(0)) {
+      if (!ALLOWED_RUNTIME_BINARY_PATHS.has(runtimePath)) {
+        fail('BACKEND_RELEASE_UNEXPECTED_BINARY', `Unexpected binary runtime file: ${runtimePath}`);
+      }
       binaryFilesSkipped += 1;
       continue;
     }
@@ -221,12 +255,20 @@ export async function scanRuntimeArtifact(root) {
     const text = body.toString('utf8');
     if (/-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]{64,}-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/.test(text)
       || /mongodb(?:\+srv)?:\/\/[^\s]+:[^\s@]+@/i.test(text)
-      || /\bsk-[A-Za-z0-9_-]{24,}\b/.test(text)) {
+      || /\bsk-[A-Za-z0-9_-]{24,}\b/.test(text)
+      || /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/.test(text)
+      || /\b(?:gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/.test(text)
+      || /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/.test(text)
+      || /\bAIza[0-9A-Za-z_-]{35}\b/.test(text)
+      || /\bsk_live_[A-Za-z0-9]{20,}\b/.test(text)) {
       fail('BACKEND_RELEASE_SECRET_MATCH', `Secret-like content found in ${relative(root, path)}`);
     }
-    const runtimePath = relative(root, path);
-    const firstPartyCode = runtimePath.startsWith(`dist${sep}`)
-      || runtimePath.startsWith(`client-sdk${sep}`);
+    const firstPartyCode = runtimePath.startsWith('dist/')
+      || runtimePath.startsWith('client-sdk/');
+    if (firstPartyCode
+      && /(?:^|["'`\s])(?:\/Users\/[^/\s]+|\/home\/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)/.test(text)) {
+      fail('BACKEND_RELEASE_USER_PATH_MATCH', `User-specific path found in ${runtimePath}`);
+    }
     const identifiers = firstPartyCode ? [
       ...(text.match(/\+7[0-9]{10}/g) ?? []),
       ...(text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [])

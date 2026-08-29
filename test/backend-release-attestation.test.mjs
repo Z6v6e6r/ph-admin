@@ -7,6 +7,7 @@ import {
   BackendReleaseAttestationError,
   canonicalGitHubRepository,
   createDeterministicTarGzip,
+  isSensitiveRuntimePath,
   scanRuntimeArtifact,
   shouldExcludeRuntimePath,
   validateReleaseTarget
@@ -64,6 +65,12 @@ test('runtime pruning keeps dependency implementation and removes only proven no
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/.cache/index'), true);
   assert.equal(shouldExcludeRuntimePath('dist/main.d.ts'), true);
   assert.equal(shouldExcludeRuntimePath('dist/main.js'), false);
+  assert.equal(isSensitiveRuntimePath('dist/.env.production'), true);
+  assert.equal(isSensitiveRuntimePath('dist/.envrc'), true);
+  assert.equal(isSensitiveRuntimePath('node_modules/pkg/.git/config'), true);
+  assert.equal(isSensitiveRuntimePath('node_modules/pkg/.git-credentials'), true);
+  assert.equal(isSensitiveRuntimePath('node_modules/pkg/.npmrc'), true);
+  assert.equal(isSensitiveRuntimePath('dist/main.js'), false);
 });
 
 test('tar.gz bytes are deterministic for identical content and source epoch', async () => {
@@ -99,6 +106,45 @@ test('artifact scan covers runtime text, allows synthetic placeholders and rejec
       piiMatches: 0,
       piiScope: 'first-party-code'
     });
+    await writeFile(join(root, 'dist/admin-panel-message.wav'), Buffer.from([0, 1, 2, 3]));
+    assert.equal((await scanRuntimeArtifact(root)).binaryFilesSkipped, 1);
+    await rm(join(root, 'dist/admin-panel-message.wav'));
+    await writeFile(join(root, 'dist/unexpected.bin'), Buffer.from([0, 1, 2, 3]));
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_UNEXPECTED_BINARY')
+    );
+    await rm(join(root, 'dist/unexpected.bin'));
+    await writeFile(join(root, 'dist/.env.production'), 'API_KEY=synthetic\n');
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_SENSITIVE_PATH')
+    );
+    await rm(join(root, 'dist/.env.production'));
+    await writeFile(join(root, 'dist/.envrc'), 'export API_KEY=synthetic\n');
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_SENSITIVE_PATH')
+    );
+    await rm(join(root, 'dist/.envrc'));
+    await writeFile(join(root, 'dist/.git-credentials'), 'https://user:secret@example.test\n');
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_SENSITIVE_PATH')
+    );
+    await rm(join(root, 'dist/.git-credentials'));
+    await mkdir(join(root, 'dist/.git'));
+    await writeFile(join(root, 'dist/.git/config'), '[core]\n');
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_SENSITIVE_PATH')
+    );
+    await rm(join(root, 'dist/.git'), { recursive: true, force: true });
+    await writeFile(join(root, 'dist/main.js'), `const token = "${['ghp', '_', 'a'.repeat(36)].join('')}";\n`);
+    await assert.rejects(
+      () => scanRuntimeArtifact(root),
+      errorCode('BACKEND_RELEASE_SECRET_MATCH')
+    );
     await writeFile(join(root, 'dist/main.js'), [
       `-----BEGIN ${'PRIVATE KEY'}-----`,
       'a'.repeat(64),
