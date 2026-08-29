@@ -118,6 +118,11 @@ const publicationFixture = (): StoredSubscriptionPolicyPublication => {
     activeServicesLimit: { enabled: true, max: 3, scope: 'SUBSCRIPTION_BENEFIT_ONLY' },
     bookingWindow: { enabled: true, days: 4 },
     dailyUsageLimit: 1,
+    dailyUsagePolicy: {
+      actions: ['CREATE_GAME', 'JOIN_GAME'],
+      limitExceeded: 'PERCENT_DISCOUNT',
+      percentage: 30
+    },
     usageUnitsByDuration: { '60': 1, '90': 1, '120': 1 },
     stationAccessRules: [{
       ruleId: 'station_rule:home',
@@ -454,6 +459,19 @@ async function run(): Promise<void> {
     false
   );
   validateStoredSubscriptionPolicyPublication(publicationFixture());
+  const invalidDailyUsagePublication = publicationFixture();
+  invalidDailyUsagePublication.runtimeProjection.dailyUsagePolicy = {
+    actions: ['CREATE_GAME'],
+    limitExceeded: 'BLOCK',
+    percentage: 30
+  };
+  invalidDailyUsagePublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    invalidDailyUsagePublication.runtimeProjection
+  );
+  assert.throws(
+    () => validateStoredSubscriptionPolicyPublication(invalidDailyUsagePublication),
+    hasCode('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_DISCOUNT_INVALID')
+  );
   const versionTwoPublication: StoredSubscriptionPolicyPublication = {
     ...publicationFixture(),
     schemaVersion: 2,

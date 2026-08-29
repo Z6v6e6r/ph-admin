@@ -59,6 +59,35 @@ export class UsageUnitsByDurationDto {
   '120'!: number;
 }
 
+export class DailyUsagePolicyDto {
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ArrayUnique()
+  @IsIn([
+    'CREATE_GAME',
+    'JOIN_GAME',
+    'BOOK_GROUP_TRAINING',
+    'BOOK_TOURNAMENT',
+    'PURCHASE_ADD_ON_PRODUCT'
+  ], { each: true })
+  actions!: Array<
+    | 'CREATE_GAME'
+    | 'JOIN_GAME'
+    | 'BOOK_GROUP_TRAINING'
+    | 'BOOK_TOURNAMENT'
+    | 'PURCHASE_ADD_ON_PRODUCT'
+  >;
+
+  @IsIn(['BLOCK', 'PERCENT_DISCOUNT'])
+  limitExceeded!: 'BLOCK' | 'PERCENT_DISCOUNT';
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  percentage?: number | null;
+}
+
 export class PartialPriceDto {
   @IsInt()
   @Min(1)
@@ -621,6 +650,12 @@ export class CreatePolicyVersionDto {
   @Min(0)
   @Max(1000)
   dailyUsageLimit!: number;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DailyUsagePolicyDto)
+  dailyUsagePolicy?: DailyUsagePolicyDto;
 
   @IsIn(['SUBSCRIPTION_BENEFIT_ONLY', 'ALL_BOOKINGS'])
   activeServiceScope!: 'SUBSCRIPTION_BENEFIT_ONLY' | 'ALL_BOOKINGS';

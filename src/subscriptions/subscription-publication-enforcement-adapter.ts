@@ -161,6 +161,9 @@ function lkNodeRedAnnualBookingV1Blockers(policy: SubscriptionPolicyVersion): st
     blockers.push('BOOKING_WINDOW_UNSUPPORTED');
   }
   if (policy.dailyUsageLimit !== 1) blockers.push('DAILY_USAGE_LIMIT_UNSUPPORTED');
+  if (policy.dailyUsagePolicy && policy.dailyUsagePolicy.limitExceeded !== 'BLOCK') {
+    blockers.push('DAILY_USAGE_POLICY_UNSUPPORTED');
+  }
   if (policy.usageUnitsByDuration['60'] !== 1
     || policy.usageUnitsByDuration['90'] !== 1
     || policy.usageUnitsByDuration['120'] !== 1) {

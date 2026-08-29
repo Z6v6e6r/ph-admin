@@ -529,6 +529,33 @@ const validateRuntimeProjection = (
     fail('SUBSCRIPTION_PUBLICATION_BOOKING_WINDOW_INVALID');
   }
   positiveInteger(value.dailyUsageLimit, 'runtimeProjection.dailyUsageLimit');
+  if (value.dailyUsagePolicy !== undefined) {
+    const dailyUsageActions = validateUniqueIdArray(
+      value.dailyUsagePolicy.actions,
+      'runtimeProjection.dailyUsagePolicy.actions'
+    );
+    if (dailyUsageActions.length === 0
+      || dailyUsageActions.some((action) => !SUBSCRIPTION_ACTIONS.includes(
+        action as (typeof SUBSCRIPTION_ACTIONS)[number]
+      ))) {
+      fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_ACTIONS_INVALID');
+    }
+    oneOf(
+      value.dailyUsagePolicy.limitExceeded,
+      ['BLOCK', 'PERCENT_DISCOUNT'],
+      'SUBSCRIPTION_PUBLICATION_DAILY_USAGE_EXCEEDED_INVALID',
+      'runtimeProjection.dailyUsagePolicy.limitExceeded'
+    );
+    if (value.dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT') {
+      const percentage = nonNegativeInteger(
+        value.dailyUsagePolicy.percentage,
+        'runtimeProjection.dailyUsagePolicy.percentage'
+      );
+      if (percentage > 100) fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_DISCOUNT_INVALID');
+    } else if (value.dailyUsagePolicy.percentage !== null) {
+      fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_DISCOUNT_INVALID');
+    }
+  }
   for (const duration of ['60', '90', '120'] as const) {
     positiveInteger(
       value.usageUnitsByDuration?.[duration],

@@ -9528,9 +9528,10 @@
       '<label class="phab-subscriptions-field"><span>Дата-кандидат</span><input class="phab-admin-input" type="datetime-local" data-subscription-effective-at required></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Создание игр</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-create-enabled>Разрешено</label><div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" value="60" checked data-subscription-create-duration>60 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="90" checked data-subscription-create-duration>90 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="120" checked data-subscription-create-duration>120 мин</label></div></div>' +
       '<div class="phab-subscriptions-field is-wide"><span>Присоединение к играм</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-join-enabled>Разрешено</label><label class="phab-subscriptions-field"><span>Разрешённый диапазон длительности</span><div class="phab-subscriptions-actions"><select class="phab-admin-input" data-subscription-join-min><option>60</option><option>90</option><option>120</option></select><select class="phab-admin-input" data-subscription-join-max><option>60</option><option>90</option><option selected>120</option></select></div></label></div>' +
-      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="3" data-subscription-active-limit></label>' +
+      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="4" data-subscription-active-limit></label>' +
       '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-booking-window-enabled>Ограничивать</label><select class="phab-admin-input" data-subscription-booking-window><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option><option>13</option><option>14</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Использований в день</span><input class="phab-admin-input" type="number" min="0" value="1" data-subscription-daily-limit></label>' +
+      '<label class="phab-subscriptions-field"><span>После дневного лимита игр</span><select class="phab-admin-input" data-subscription-daily-exceeded><option value="BLOCK">Запретить</option><option value="PERCENT_DISCOUNT" selected>Полная цена со скидкой</option></select><input class="phab-admin-input" type="number" min="0" max="100" value="30" aria-label="Скидка после дневного лимита, процентов" data-subscription-daily-discount></label>' +
       '<label class="phab-subscriptions-field"><span>Что считать активной услугой</span><select class="phab-admin-input" data-subscription-active-scope><option value="SUBSCRIPTION_BENEFIT_ONLY">Только услуги по подписке</option><option value="ALL_BOOKINGS">Все записи</option></select></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
       '<div class="phab-subscriptions-field is-wide"><span>Доступ по станциям</span><div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-station-rule-add>+ Строка станций</button></div><div class="phab-subscriptions-phases" data-subscription-station-rules></div></div>' +
@@ -9653,6 +9654,8 @@
     var subscriptionBookingWindowInput = subscriptionsSection.querySelector('[data-subscription-booking-window]');
     var subscriptionBookingWindowEnabledInput = subscriptionsSection.querySelector('[data-subscription-booking-window-enabled]');
     var subscriptionDailyLimitInput = subscriptionsSection.querySelector('[data-subscription-daily-limit]');
+    var subscriptionDailyExceededInput = subscriptionsSection.querySelector('[data-subscription-daily-exceeded]');
+    var subscriptionDailyDiscountInput = subscriptionsSection.querySelector('[data-subscription-daily-discount]');
     var subscriptionActiveScopeInput = subscriptionsSection.querySelector('[data-subscription-active-scope]');
     var subscriptionUnitInputs = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscription-unit]'));
     var subscriptionBenefits = subscriptionsSection.querySelector('[data-subscription-benefits]');
@@ -13150,6 +13153,8 @@
       subscriptionBookingWindowInput: subscriptionBookingWindowInput,
       subscriptionBookingWindowEnabledInput: subscriptionBookingWindowEnabledInput,
       subscriptionDailyLimitInput: subscriptionDailyLimitInput,
+      subscriptionDailyExceededInput: subscriptionDailyExceededInput,
+      subscriptionDailyDiscountInput: subscriptionDailyDiscountInput,
       subscriptionActiveScopeInput: subscriptionActiveScopeInput,
       subscriptionUnitInputs: subscriptionUnitInputs,
       subscriptionBenefits: subscriptionBenefits,
@@ -37247,6 +37252,13 @@
             : null
         },
         dailyUsageLimit: Number(dom.subscriptionDailyLimitInput.value || 0),
+        dailyUsagePolicy: {
+          actions: ['CREATE_GAME', 'JOIN_GAME'],
+          limitExceeded: dom.subscriptionDailyExceededInput.value,
+          percentage: dom.subscriptionDailyExceededInput.value === 'PERCENT_DISCOUNT'
+            ? Number(dom.subscriptionDailyDiscountInput.value || 0)
+            : null
+        },
         activeServiceScope: dom.subscriptionActiveScopeInput.value,
         usageUnitsByDuration: usageUnits,
         stationAccessRules: subscriptionStationRulesPayload(),
