@@ -721,6 +721,11 @@ async function main(): Promise<void> {
         scope: 'SUBSCRIPTION_BENEFIT_ONLY'
       },
       bookingWindow: { enabled: false, days: null },
+      dailyUsagePolicy: {
+        actions: ['JOIN_GAME', 'CREATE_GAME'],
+        limitExceeded: 'PERCENT_DISCOUNT',
+        percentage: 30
+      },
       stationAccessRules: [
         {
           ruleId: 'home-free',
@@ -789,6 +794,11 @@ async function main(): Promise<void> {
     scope: 'SUBSCRIPTION_BENEFIT_ONLY'
   });
   assert.deepEqual(managedPolicy.item.bookingWindow, { enabled: false, days: null });
+  assert.deepEqual(managedPolicy.item.dailyUsagePolicy, {
+    actions: ['CREATE_GAME', 'JOIN_GAME'],
+    limitExceeded: 'PERCENT_DISCOUNT',
+    percentage: 30
+  });
   assert.deepEqual(
     managedPolicy.item.stationAccessRules?.[1].selector,
     { kind: 'STATION_LIST', stationIds: ['station-a', 'station-b'] }
@@ -813,31 +823,33 @@ async function main(): Promise<void> {
   });
   assert.equal(runtimeProjection.runtimeSchemaVersion, 1);
   assert.deepEqual(runtimeProjection.bookingWindow, { enabled: false, days: null });
+  assert.deepEqual(runtimeProjection.dailyUsagePolicy, managedPolicy.item.dailyUsagePolicy);
   assert.equal(
     runtimeProjection.benefitRules.find((rule) => rule.ruleId === 'create-90-quarter-minus-20')
       ?.kind,
     'PARTIAL_PRICE_PERCENT_DISCOUNT'
   );
 
+  const hybridPolicyDto = {
+    ...policyDraft(),
+    activeServicesLimit: {
+      enabled: false,
+      max: null,
+      scope: 'SUBSCRIPTION_BENEFIT_ONLY' as const
+    },
+    bookingWindow: { enabled: false, days: null },
+    stationAccessRules: [{
+      ruleId: 'hybrid-home-station',
+      enabled: true,
+      priority: 100,
+      selector: { kind: 'HOME_STATION' as const, stationIds: [] },
+      surcharge: { kind: 'NONE' as const, amountMinor: 0 }
+    }],
+    capabilities: hybridActivationCapabilitiesDraft()
+  };
   const hybridPolicy = await service.createPolicyVersion(
     typeResult.item.subscriptionTypeId,
-    {
-      ...policyDraft(),
-      activeServicesLimit: {
-        enabled: false,
-        max: null,
-        scope: 'SUBSCRIPTION_BENEFIT_ONLY'
-      },
-      bookingWindow: { enabled: false, days: null },
-      stationAccessRules: [{
-        ruleId: 'hybrid-home-station',
-        enabled: true,
-        priority: 100,
-        selector: { kind: 'HOME_STATION', stationIds: [] },
-        surcharge: { kind: 'NONE', amountMinor: 0 }
-      }],
-      capabilities: hybridActivationCapabilitiesDraft()
-    },
+    hybridPolicyDto,
     command('policy-hybrid-activation'),
     globalAdmin
   );
@@ -857,6 +869,27 @@ async function main(): Promise<void> {
     fixedActivationTimeZone: 'Europe/Moscow',
     validityDays: 365
   });
+  const hybridStored = repository.policies.find(
+    (row) => row.version === hybridPolicy.item.version
+  ) as StoredSubscriptionPolicyVersion;
+  const normalizedHybridPolicy = (service as unknown as {
+    normalizePolicy(dto: typeof hybridPolicyDto): unknown;
+  }).normalizePolicy(hybridPolicyDto);
+  hybridStored.idempotency.requestHash = (service as unknown as {
+    preDailyUsagePolicyShape(policy: unknown): unknown;
+    requestHash(operation: string, payload: unknown): string;
+  }).requestHash('createSubscriptionPolicyVersion', {
+    subscriptionTypeId: typeResult.item.subscriptionTypeId,
+    policy: (service as unknown as { preDailyUsagePolicyShape(policy: unknown): unknown })
+      .preDailyUsagePolicyShape(normalizedHybridPolicy)
+  });
+  const preDailyUsageReplay = await service.createPolicyVersion(
+    typeResult.item.subscriptionTypeId,
+    hybridPolicyDto,
+    command('policy-hybrid-activation'),
+    globalAdmin
+  );
+  assert.equal(preDailyUsageReplay.replayed, true);
 
   await expectException(
     () => service.createPolicyVersion(
@@ -870,6 +903,23 @@ async function main(): Promise<void> {
         }
       },
       command('policy-active-limit-required'),
+      globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+
+  await expectException(
+    () => service.createPolicyVersion(
+      typeResult.item.subscriptionTypeId,
+      {
+        ...policyDraft(),
+        dailyUsagePolicy: {
+          actions: ['CREATE_GAME'],
+          limitExceeded: 'PERCENT_DISCOUNT',
+          percentage: null
+        }
+      },
+      command('policy-daily-discount-required'),
       globalAdmin
     ),
     UnprocessableEntityException

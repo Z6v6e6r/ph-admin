@@ -196,6 +196,73 @@ const requestFixture = (): SubscriptionShadowQuoteRequest => ({
   }
 });
 
+const annualPublicationFixture = (): StoredSubscriptionPolicyPublication => {
+  const publication = publicationFixture();
+  publication.runtimeProjection.activeServicesLimit.max = 4;
+  publication.runtimeProjection.dailyUsagePolicy = {
+    actions: ['CREATE_GAME', 'JOIN_GAME'],
+    limitExceeded: 'PERCENT_DISCOUNT',
+    percentage: 30
+  };
+  const common = {
+    enabled: true,
+    category: 'GAME' as const,
+    actions: ['CREATE_GAME', 'JOIN_GAME'] as const,
+    externalEventTypeIds: ['event_type:open-game'],
+    productTypeIds: [] as string[],
+    stationIds: ['station:yasenevo'],
+    valueMinor: null,
+    priority: 10
+  };
+  publication.runtimeProjection.benefitRules = [{
+    ...common,
+    ruleId: 'benefit_rule:annual-game-60',
+    actions: [...common.actions],
+    durationMinutes: [60],
+    kind: 'FREE_ENTITLEMENT',
+    percentage: null,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'benefit_rule:annual-game-90',
+    actions: [...common.actions],
+    durationMinutes: [90],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 3 }
+  }, {
+    ...common,
+    ruleId: 'benefit_rule:annual-game-120',
+    actions: [...common.actions],
+    durationMinutes: [120],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 2 }
+  }, {
+    ...common,
+    ruleId: 'benefit_rule:annual-group-training',
+    category: 'GROUP_TRAINING',
+    actions: ['BOOK_GROUP_TRAINING'],
+    externalEventTypeIds: ['event_type:group-training'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'benefit_rule:annual-tournament',
+    category: 'TOURNAMENT',
+    actions: ['BOOK_TOURNAMENT'],
+    externalEventTypeIds: ['event_type:tournament'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }];
+  publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(publication.runtimeProjection);
+  return publication;
+};
+
 const evaluate = (
   publication = publicationFixture(),
   instance = instanceFixture(),
@@ -284,6 +351,86 @@ async function run(): Promise<void> {
       + (partial.decision?.money.surchargeMinor ?? 0),
     partial.decision?.money.finalPriceMinor
   );
+
+  const annual60Request = requestFixture();
+  annual60Request.target.basePriceMinor = 60000;
+  const annual60 = evaluate(
+    annualPublicationFixture(),
+    instanceFixture(),
+    aggregateFixture(),
+    annual60Request
+  );
+  assert.equal(annual60.eligible, true);
+  assert.equal(annual60.benefit?.kind, 'FREE_ENTITLEMENT');
+  assert.equal(annual60.benefit?.finalPriceMinor, 0);
+
+  const annual90Request = requestFixture();
+  annual90Request.target.durationMinutes = 90;
+  annual90Request.target.basePriceMinor = 90000;
+  const annual90 = evaluate(
+    annualPublicationFixture(),
+    instanceFixture(),
+    aggregateFixture(),
+    annual90Request
+  );
+  assert.equal(annual90.eligible, true);
+  assert.equal(annual90.benefit?.finalPriceMinor, 21000);
+
+  const annual120Request = requestFixture();
+  annual120Request.target.durationMinutes = 120;
+  annual120Request.target.basePriceMinor = 120000;
+  const annual120 = evaluate(
+    annualPublicationFixture(),
+    instanceFixture(),
+    aggregateFixture(),
+    annual120Request
+  );
+  assert.equal(annual120.eligible, true);
+  assert.equal(annual120.benefit?.finalPriceMinor, 42000);
+
+  const annualExcessRequest = requestFixture();
+  annualExcessRequest.action = 'JOIN_GAME';
+  annualExcessRequest.target.durationMinutes = 120;
+  annualExcessRequest.target.basePriceMinor = 120000;
+  const annualExcess = evaluate(
+    annualPublicationFixture(),
+    instanceFixture(),
+    { ...aggregateFixture(), dailyUsage: { '2026-08-18': 1 } },
+    annualExcessRequest
+  );
+  assert.equal(annualExcess.eligible, true);
+  assert.equal(annualExcess.benefit?.kind, 'PERCENT_DISCOUNT');
+  assert.equal(annualExcess.benefit?.ruleId, 'daily-usage-limit-exceeded');
+  assert.equal(annualExcess.benefit?.finalPriceMinor, 84000);
+
+  for (const [action, category, eventTypeId] of [
+    ['BOOK_GROUP_TRAINING', 'GROUP_TRAINING', 'event_type:group-training'],
+    ['BOOK_TOURNAMENT', 'TOURNAMENT', 'event_type:tournament']
+  ] as const) {
+    const eventRequest = requestFixture();
+    eventRequest.action = action;
+    eventRequest.target.category = category;
+    eventRequest.target.externalEventTypeId = eventTypeId;
+    eventRequest.target.durationMinutes = 120;
+    eventRequest.target.basePriceMinor = 120000;
+    const eventQuote = evaluate(
+      annualPublicationFixture(),
+      instanceFixture(),
+      { ...aggregateFixture(), dailyUsage: { '2026-08-18': 1 } },
+      eventRequest
+    );
+    assert.equal(eventQuote.eligible, true, action);
+    assert.equal(eventQuote.benefit?.kind, 'PERCENT_DISCOUNT', action);
+    assert.equal(eventQuote.benefit?.finalPriceMinor, 60000, action);
+  }
+
+  const annualActiveLimit = evaluate(
+    annualPublicationFixture(),
+    instanceFixture(),
+    { ...aggregateFixture(), activeServiceCount: 4 },
+    annual60Request
+  );
+  assert.ok(hasBlocker(annualActiveLimit, 'ACTIVE_SERVICES_LIMIT_REACHED'));
 
   const gameDiscountDisabled = publicationFixture();
   gameDiscountDisabled.runtimeProjection.benefitRules[0].enabled = false;

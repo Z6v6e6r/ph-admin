@@ -28,6 +28,7 @@ export type SubscriptionAction =
   | 'BOOK_GROUP_TRAINING'
   | 'BOOK_TOURNAMENT'
   | 'PURCHASE_ADD_ON_PRODUCT';
+export type DailyUsageLimitExceededMode = 'BLOCK' | 'PERCENT_DISCOUNT';
 export type EventCategory = 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
 export type BenefitCategory = EventCategory | 'ADD_ON_PRODUCT';
 export type BenefitKind =
@@ -207,6 +208,11 @@ export interface SubscriptionPolicyVersion {
     days: number | null;
   };
   dailyUsageLimit: number;
+  dailyUsagePolicy?: {
+    actions: SubscriptionAction[];
+    limitExceeded: DailyUsageLimitExceededMode;
+    percentage: number | null;
+  };
   activeServiceScope: ActiveServiceScope;
   usageUnitsByDuration: { '60': number; '90': number; '120': number };
   stationAccessRules?: SubscriptionStationAccessRule[];
@@ -593,6 +599,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
   activeServicesLimit: NonNullable<SubscriptionPolicyVersion['activeServicesLimit']>;
   bookingWindow: NonNullable<SubscriptionPolicyVersion['bookingWindow']>;
   dailyUsageLimit: number;
+  dailyUsagePolicy?: NonNullable<SubscriptionPolicyVersion['dailyUsagePolicy']>;
   usageUnitsByDuration: SubscriptionPolicyVersion['usageUnitsByDuration'];
   stationAccessRules: SubscriptionStationAccessRule[];
   benefitRules: BenefitRule[];

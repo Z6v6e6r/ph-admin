@@ -258,17 +258,58 @@ export function evaluateSubscriptionShadowQuote(
   const weeklyUsed = targetLocal ? nonNegativeInteger(aggregate.weeklyUsage[targetLocal.week] ?? 0) : null;
   const monthlyUsed = targetLocal ? nonNegativeInteger(aggregate.monthlyUsage[targetLocal.month] ?? 0) : null;
   const dailyLimit = nonNegativeInteger(policy.dailyUsageLimit);
-  if (dailyUsed === null || dailyLimit === null) {
-    block('DAILY_USAGE_LIMIT_INVALID', 'Дневной лимит подписки не настроен');
-  } else if (usageUnits !== null) {
-    const afterUsage = safeAdd(dailyUsed, usageUnits);
-    if (afterUsage === null) block('USAGE_COUNTER_OVERFLOW', 'Счётчик использования выходит за допустимый диапазон');
-    else if (afterUsage > dailyLimit) {
-      block('DAILY_USAGE_LIMIT_REACHED', 'Дневной лимит использования исчерпан', {
-        dailyUsed,
-        dailyLimit,
-        requestedUsageUnits: usageUnits
-      });
+  const dailyUsagePolicy = policy.dailyUsagePolicy ?? {
+    actions: [
+      'CREATE_GAME',
+      'JOIN_GAME',
+      'BOOK_GROUP_TRAINING',
+      'BOOK_TOURNAMENT',
+      'PURCHASE_ADD_ON_PRODUCT'
+    ] as SubscriptionAction[],
+    limitExceeded: 'BLOCK' as const,
+    percentage: null
+  };
+  const dailyUsageActions = Array.isArray(dailyUsagePolicy.actions)
+    ? dailyUsagePolicy.actions
+    : [];
+  if (dailyUsageActions.length === 0) {
+    block('DAILY_USAGE_POLICY_INVALID', 'Область дневного лимита подписки не настроена');
+  }
+  if (!['BLOCK', 'PERCENT_DISCOUNT'].includes(dailyUsagePolicy.limitExceeded)) {
+    block('DAILY_USAGE_POLICY_INVALID', 'Поведение после дневного лимита не настроено');
+  } else if (dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT'
+    && (!Number.isInteger(dailyUsagePolicy.percentage)
+      || dailyUsagePolicy.percentage === null
+      || dailyUsagePolicy.percentage < 0
+      || dailyUsagePolicy.percentage > 100)) {
+    block('DAILY_USAGE_DISCOUNT_INVALID', 'Скидка после дневного лимита не настроена');
+  } else if (dailyUsagePolicy.limitExceeded === 'BLOCK'
+    && dailyUsagePolicy.percentage !== null) {
+    block('DAILY_USAGE_DISCOUNT_INVALID', 'Скидка несовместима с блокирующим дневным лимитом');
+  }
+  const dailyActionApplies = dailyUsageActions.includes(action);
+  let dailyLimitExceeded = false;
+  if (dailyActionApplies) {
+    if (dailyUsed === null || dailyLimit === null) {
+      block('DAILY_USAGE_LIMIT_INVALID', 'Дневной лимит подписки не настроен');
+    } else if (usageUnits !== null) {
+      const afterUsage = safeAdd(dailyUsed, usageUnits);
+      if (afterUsage === null) block('USAGE_COUNTER_OVERFLOW', 'Счётчик использования выходит за допустимый диапазон');
+      else if (afterUsage > dailyLimit) {
+        dailyLimitExceeded = true;
+        if (dailyUsagePolicy.limitExceeded === 'BLOCK') {
+          block('DAILY_USAGE_LIMIT_REACHED', 'Дневной лимит использования исчерпан', {
+            dailyUsed,
+            dailyLimit,
+            requestedUsageUnits: usageUnits
+          });
+        } else if (!Number.isInteger(dailyUsagePolicy.percentage)
+          || dailyUsagePolicy.percentage === null
+          || dailyUsagePolicy.percentage < 0
+          || dailyUsagePolicy.percentage > 100) {
+          block('DAILY_USAGE_DISCOUNT_INVALID', 'Скидка после дневного лимита не настроена');
+        }
+      }
     }
   }
   const weeklyLimit = policy.usage.weeklyUsageLimit;
@@ -330,8 +371,27 @@ export function evaluateSubscriptionShadowQuote(
   if (benefitSelection.ambiguous) {
     block('AMBIGUOUS_BENEFIT_RULE', 'Для услуги найдено несколько равноприоритетных льгот');
   }
+  const appliedBenefitRule = dailyLimitExceeded
+    && dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT'
+    && dailyUsagePolicy.percentage !== null
+    ? {
+      ruleId: 'daily-usage-limit-exceeded',
+      enabled: true,
+      category: target.category,
+      actions: [action],
+      externalEventTypeIds: [target.externalEventTypeId],
+      productTypeIds: target.productTypeId ? [target.productTypeId] : [],
+      durationMinutes: [target.durationMinutes],
+      stationIds: [target.stationId],
+      kind: 'PERCENT_DISCOUNT' as const,
+      valueMinor: null,
+      percentage: dailyUsagePolicy.percentage,
+      partialPrice: null,
+      priority: Number.MAX_SAFE_INTEGER
+    }
+    : benefitSelection.rule;
   const appliedBenefit = priceBenefit(
-    benefitSelection.rule,
+    appliedBenefitRule,
     target.category,
     target.basePriceMinor,
     surchargeMinor,
