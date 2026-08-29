@@ -1,0 +1,10 @@
+{
+  "schema": "ph-admin-backend-release-target-v1",
+  "repository": "Z6v6e6r/ph-admin",
+  "component": "lk1-subscriptions-backend",
+  "serviceName": "phab-api-p32-2be5b1f.service",
+  "buildCommand": "npm run build",
+  "entrypoint": "node dist/main.js",
+  "nodeVersion": "v22.13.1",
+  "npmVersion": "11.1.0"
+}

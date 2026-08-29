@@ -3,6 +3,8 @@ name: subscriptions-binding-promotion
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,16 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.1
           cache: npm
+      - run: npm install --global npm@11.1.0
       - run: npm ci
       - name: Start transaction-capable MongoDB
         run: |
-          docker run --detach --name phab-promotion-mongo --publish 27017:27017 mongo:7.0 --replSet rs0 --bind_ip_all
+          docker run --detach --name phab-promotion-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --replSet rs0 --bind_ip_all
           for attempt in $(seq 1 30); do
             if docker exec phab-promotion-mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1; then break; fi
             sleep 1
@@ -35,7 +38,8 @@ jobs:
           done
       - name: Exact-head identity
         run: |
-          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "${GITHUB_REPOSITORY}" = "Z6v6e6r/ph-admin"
+          test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
           git rev-parse HEAD
           git rev-parse 'HEAD^{tree}'
       - name: Binding promotion unit and Mongo transaction tests
@@ -48,6 +52,10 @@ jobs:
       - run: npm run test:subscriptions-annual-v2
       - run: npm run test:subscriptions-publication
       - run: npm run test:subscriptions-instance-projector
+        env:
+          SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED: "true"
+          SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED: "true"
+          SUBSCRIPTIONS_INSTANCE_PROJECTOR_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:subscriptions-sale-readiness
       - run: npm run test:subscriptions-shadow-quote
       - run: npm run test:subscriptions-canonical-target-resolver
@@ -55,7 +63,43 @@ jobs:
       - run: npm run test:subscriptions-provider-projection
       - run: npm run test:subscriptions-trusted-shadow-adapter
       - run: npm run test:subscriptions-runtime-context
+      - run: npm run test:subscriptions-synthetic-projection:mongo
+        env:
+          SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - run: npm run test:subscriptions-runtime:mongo
+        env:
+          SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - run: npm run test:backend-release-attestation
       - run: npm run test:subscriptions
+      - run: npm run test:auth-rbac
       - run: npx tsc -p tsconfig.json --noEmit
+      - run: npx tsc -p tsconfig.build.json --noEmit --incremental false
       - run: npm run build
+      - name: Deterministic backend artifact and identity attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_parent="$(mktemp -d)"
+          head_sha="$(git rev-parse HEAD)"
+          tree_sha="$(git rev-parse 'HEAD^{tree}')"
+          trusted_ref="HEAD"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            trusted_ref="refs/remotes/origin/main"
+          fi
+          npm run backend:release-attestation:build -- \
+            --source "${GITHUB_WORKSPACE}" \
+            --output "${artifact_parent}/first" \
+            --expected-head "${head_sha}" \
+            --expected-tree "${tree_sha}" \
+            --trusted-ref "${trusted_ref}"
+          npm run backend:release-attestation:build -- \
+            --source "${GITHUB_WORKSPACE}" \
+            --output "${artifact_parent}/second" \
+            --expected-head "${head_sha}" \
+            --expected-tree "${tree_sha}" \
+            --trusted-ref "${trusted_ref}"
+          cmp "${artifact_parent}/first/ph-admin-backend-${head_sha:0:12}.tar.gz" \
+            "${artifact_parent}/second/ph-admin-backend-${head_sha:0:12}.tar.gz"
+          cmp "${artifact_parent}/first/release-manifest.json" \
+            "${artifact_parent}/second/release-manifest.json"
       - run: git diff --check origin/main...HEAD
