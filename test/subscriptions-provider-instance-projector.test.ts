@@ -1,5 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { MongoClient } from 'mongodb';
 import {
   buildSubscriptionInstanceProjectionPlan,
   assertSubscriptionInstanceProjectionApplyBoundary,
@@ -296,6 +298,85 @@ class FakeRepository {
 
 class FixedClockService extends SubscriptionProviderInstanceProjectorService {
   protected override now(): Date { return new Date(NOW); }
+}
+
+async function verifyRealMongoPostcommitReadback(
+  plan: ReturnType<typeof buildSubscriptionInstanceProjectionPlan>
+): Promise<void> {
+  const uri = String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_MONGODB_TEST_URI ?? '').trim();
+  if (!uri) {
+    console.log('subscriptions instance projector MongoDB postcommit test: SKIP');
+    return;
+  }
+  const parsedUri = new URL(uri);
+  assert.equal(parsedUri.protocol, 'mongodb:', 'MongoDB test URI must use mongodb://');
+  assert.equal(parsedUri.username, '', 'MongoDB test URI must not contain credentials');
+  assert.equal(parsedUri.password, '', 'MongoDB test URI must not contain credentials');
+  assert.equal(parsedUri.pathname, '/', 'MongoDB test URI must not select a shared database');
+  assert.ok(
+    ['127.0.0.1', 'localhost', '[::1]'].includes(parsedUri.hostname),
+    'MongoDB test URI must target loopback'
+  );
+  const dbName = `instance_projector_${randomUUID().replaceAll('-', '')}`;
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 });
+  await client.connect();
+  let testError: unknown;
+  try {
+    const db = client.db(dbName);
+    await db.collection('subscription_projection_fences').insertOne(projectionFence());
+    const repository = new SubscriptionsRepository() as any;
+    repository.client = client;
+    repository.db = db;
+    let applyError: unknown;
+    let applyResult: 'INSERTED' | 'EXACT_REPLAY' | undefined;
+    try {
+      applyResult = await repository.applyInitialRuntimeInstanceProjection(plan);
+    } catch (error) {
+      applyError = error;
+    }
+    const instanceCount = await db.collection('subscription_instances').countDocuments({});
+    const checkpointCount = await db.collection('subscription_instance_projector_checkpoints')
+      .countDocuments({});
+    if (applyError) {
+      const errorCode = applyError instanceof SubscriptionRuntimeContractError
+        ? applyError.code
+        : applyError instanceof Error ? applyError.message : String(applyError);
+      assert.fail(
+        `initial projector apply threw ${errorCode} after readback instances=${instanceCount} checkpoints=${checkpointCount}`
+      );
+    }
+    assert.equal(applyResult, 'INSERTED');
+    assert.equal(
+      instanceCount,
+      plan.instances.length
+    );
+    assert.equal(
+      checkpointCount,
+      1
+    );
+    assert.equal(await repository.applyInitialRuntimeInstanceProjection(
+      buildSubscriptionInstanceProjectionPlan(manifest(), PEPPER)
+    ), 'EXACT_REPLAY');
+    console.log('subscriptions instance projector MongoDB postcommit test: OK');
+  } catch (error) {
+    testError = error;
+  } finally {
+    try {
+      await client.db(dbName).dropDatabase();
+      const databases = await client.db('admin').admin().listDatabases({ nameOnly: true });
+      assert.equal(
+        databases.databases.some((database) => database.name === dbName),
+        false,
+        `MongoDB test database cleanup failed: ${dbName}`
+      );
+    } catch (cleanupError) {
+      if (testError) throw new AggregateError([testError, cleanupError], 'MongoDB test and cleanup failed');
+      throw cleanupError;
+    } finally {
+      await client.close();
+    }
+  }
+  if (testError) throw testError;
 }
 
 const nested = (value: any, path: string): unknown =>
@@ -775,6 +856,10 @@ async function run(): Promise<void> {
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RELEASE_BINDING_MISMATCH')
   );
   assert.equal(priceDrift.preflightCalls, 0);
+
+  await verifyRealMongoPostcommitReadback(
+    buildSubscriptionInstanceProjectionPlan(manifest(), PEPPER)
+  );
 
   console.log('subscriptions provider instance projector tests: OK');
 }

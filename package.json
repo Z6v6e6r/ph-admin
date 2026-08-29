@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run build:client-sdk",
     "build:client-sdk": "node scripts/copy-client-sdk.mjs",
+    "backend:release-attestation:build": "node scripts/build-backend-release-attestation.mjs",
   "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
   "tournaments:pending-payments:reconcile": "node scripts/reconcile-public-tournament-pending-payments.mjs",
     "subscriptions:indexes:check": "node scripts/managed-subscriptions-indexes.mjs --check",
@@ -66,6 +67,7 @@
     "test:subscriptions-synthetic-projection": "ts-node test/subscriptions-synthetic-canonical-projection.test.ts",
     "test:subscriptions-provider-projection": "ts-node test/subscriptions-provider-canonical-projection.test.ts",
     "test:subscriptions-instance-projector": "ts-node test/subscriptions-provider-instance-projector.test.ts",
+    "test:backend-release-attestation": "node --test test/backend-release-attestation.test.mjs",
     "test:subscriptions-binding-promotion": "ts-node test/subscriptions-legacy-binding-promotion.test.ts && ts-node test/subscriptions-legacy-binding-promotion.mongodb.test.ts",
     "test:subscriptions-synthetic-projection:mongo": "ts-node test/subscriptions-synthetic-canonical-projection.mongodb.test.ts",
     "test:subscriptions-trusted-shadow-adapter": "ts-node test/subscriptions-trusted-shadow-adapter.test.ts",
