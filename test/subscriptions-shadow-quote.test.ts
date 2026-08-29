@@ -353,7 +353,7 @@ async function run(): Promise<void> {
   );
 
   const annual60Request = requestFixture();
-  annual60Request.target.basePriceMinor = 60000;
+  annual60Request.target.basePriceMinor = 15000;
   const annual60 = evaluate(
     annualPublicationFixture(),
     instanceFixture(),
@@ -366,7 +366,7 @@ async function run(): Promise<void> {
 
   const annual90Request = requestFixture();
   annual90Request.target.durationMinutes = 90;
-  annual90Request.target.basePriceMinor = 90000;
+  annual90Request.target.basePriceMinor = 22500;
   const annual90 = evaluate(
     annualPublicationFixture(),
     instanceFixture(),
@@ -374,11 +374,11 @@ async function run(): Promise<void> {
     annual90Request
   );
   assert.equal(annual90.eligible, true);
-  assert.equal(annual90.benefit?.finalPriceMinor, 21000);
+  assert.equal(annual90.benefit?.finalPriceMinor, 5250);
 
   const annual120Request = requestFixture();
   annual120Request.target.durationMinutes = 120;
-  annual120Request.target.basePriceMinor = 120000;
+  annual120Request.target.basePriceMinor = 30000;
   const annual120 = evaluate(
     annualPublicationFixture(),
     instanceFixture(),
@@ -386,12 +386,12 @@ async function run(): Promise<void> {
     annual120Request
   );
   assert.equal(annual120.eligible, true);
-  assert.equal(annual120.benefit?.finalPriceMinor, 42000);
+  assert.equal(annual120.benefit?.finalPriceMinor, 10500);
 
   const annualExcessRequest = requestFixture();
   annualExcessRequest.action = 'JOIN_GAME';
   annualExcessRequest.target.durationMinutes = 120;
-  annualExcessRequest.target.basePriceMinor = 120000;
+  annualExcessRequest.target.basePriceMinor = 30000;
   const annualExcess = evaluate(
     annualPublicationFixture(),
     instanceFixture(),
@@ -401,7 +401,7 @@ async function run(): Promise<void> {
   assert.equal(annualExcess.eligible, true);
   assert.equal(annualExcess.benefit?.kind, 'PERCENT_DISCOUNT');
   assert.equal(annualExcess.benefit?.ruleId, 'daily-usage-limit-exceeded');
-  assert.equal(annualExcess.benefit?.finalPriceMinor, 84000);
+  assert.equal(annualExcess.benefit?.finalPriceMinor, 21000);
 
   for (const [action, category, eventTypeId] of [
     ['BOOK_GROUP_TRAINING', 'GROUP_TRAINING', 'event_type:group-training'],

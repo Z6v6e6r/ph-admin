@@ -360,6 +360,8 @@ export interface SubscriptionUsageTestTargetView {
   title: string;
   description: string;
   action: SubscriptionAction;
+  courtPriceMinor: number | null;
+  participantCount: number;
   target: SubscriptionShadowQuoteResolvedTarget;
 }
 

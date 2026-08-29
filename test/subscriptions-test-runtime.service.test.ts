@@ -721,18 +721,24 @@ async function testHostedAnnualUsageScenarios(): Promise<void> {
   assert.equal(scenarios.limits.maxActiveServices, 4);
   assert.deepEqual(scenarios.limits.dailyUsageActions, ['CREATE_GAME', 'JOIN_GAME']);
   assert.equal(scenarios.targets.length, 8);
+  const create90Target = scenarios.targets.find((target) => target.targetId === 'annual-create-90');
+  assert.equal(create90Target?.courtPriceMinor, 900_000);
+  assert.equal(create90Target?.participantCount, 4);
+  assert.equal(create90Target?.target.basePriceMinor, 225_000);
 
   const quote = (targetId: string, activeServices = 0, dailyGameUsage = 0) => (
     service.quoteUsageScenario(activated.offerId, token, { targetId, activeServices, dailyGameUsage })
   );
   assert.equal((await quote('annual-create-60')).decision.benefit?.finalPriceMinor, 0);
-  assert.equal((await quote('annual-create-90')).decision.benefit?.finalPriceMinor, 210_000);
-  assert.equal((await quote('annual-create-120')).decision.benefit?.finalPriceMinor, 420_000);
-  assert.equal((await quote('annual-join-90')).decision.benefit?.finalPriceMinor, 210_000);
+  assert.equal((await quote('annual-create-90')).decision.benefit?.finalPriceMinor, 52_500);
+  assert.equal((await quote('annual-create-120')).decision.benefit?.finalPriceMinor, 105_000);
+  assert.equal((await quote('annual-join-90')).decision.benefit?.finalPriceMinor, 52_500);
+  assert.equal((await quote('annual-create-60', 0, 1)).decision.benefit?.finalPriceMinor, 105_000);
+  assert.equal((await quote('annual-create-90', 0, 1)).decision.benefit?.finalPriceMinor, 157_500);
   const excess = await quote('annual-join-120', 0, 1);
   assert.equal(excess.decision.benefit?.kind, 'PERCENT_DISCOUNT');
   assert.equal(excess.decision.benefit?.ruleId, 'daily-usage-limit-exceeded');
-  assert.equal(excess.decision.benefit?.finalPriceMinor, 840_000);
+  assert.equal(excess.decision.benefit?.finalPriceMinor, 210_000);
   assert.equal((await quote('annual-group-60', 0, 1)).decision.benefit?.finalPriceMinor, 150_000);
   assert.equal((await quote('annual-tournament-120', 0, 1)).decision.benefit?.finalPriceMinor, 250_000);
   const activeLimit = await quote('annual-create-60', 4, 0);

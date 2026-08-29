@@ -25,6 +25,8 @@ interface TargetSpec {
   category: BenefitCategory;
   durationMinutes: 60 | 90 | 120;
   basePriceMinor: number;
+  courtPriceMinor?: number;
+  participantCount?: number;
   kind: BenefitKind;
   percentage: number | null;
   partialPrice: { numerator: number; denominator: number } | null;
@@ -35,40 +37,46 @@ const TARGET_SPECS: TargetSpec[] = [
   {
     targetId: 'annual-create-60', title: 'Создать игру на 60 минут',
     description: 'Первая игровая услуга дня: один час бесплатно.',
-    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 60, basePriceMinor: 600_000,
+    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 60,
+    basePriceMinor: 150_000, courtPriceMinor: 600_000, participantCount: 4,
     kind: 'FREE_ENTITLEMENT', percentage: null, partialPrice: null, startHour: 9
   },
   {
     targetId: 'annual-create-90', title: 'Создать игру на 90 минут',
     description: 'Первая игровая услуга дня: оплачиваются 30 минут сверх часа со скидкой 30%.',
-    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 90, basePriceMinor: 900_000,
+    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 90,
+    basePriceMinor: 225_000, courtPriceMinor: 900_000, participantCount: 4,
     kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT', percentage: 30,
     partialPrice: { numerator: 1, denominator: 3 }, startHour: 11
   },
   {
     targetId: 'annual-create-120', title: 'Создать игру на 120 минут',
     description: 'Первая игровая услуга дня: оплачиваются 60 минут сверх часа со скидкой 30%.',
-    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 120, basePriceMinor: 1_200_000,
+    action: 'CREATE_GAME', category: 'GAME', durationMinutes: 120,
+    basePriceMinor: 300_000, courtPriceMinor: 1_200_000, participantCount: 4,
     kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT', percentage: 30,
     partialPrice: { numerator: 1, denominator: 2 }, startHour: 13
   },
   {
     targetId: 'annual-join-60', title: 'Присоединиться к игре на 60 минут',
     description: 'Первая игровая услуга дня: один час бесплатно.',
-    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 60, basePriceMinor: 600_000,
+    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 60,
+    basePriceMinor: 150_000, courtPriceMinor: 600_000, participantCount: 4,
     kind: 'FREE_ENTITLEMENT', percentage: null, partialPrice: null, startHour: 15
   },
   {
     targetId: 'annual-join-90', title: 'Присоединиться к игре на 90 минут',
     description: 'Первая игровая услуга дня: доплата только за время сверх часа со скидкой 30%.',
-    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 90, basePriceMinor: 900_000,
+    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 90,
+    basePriceMinor: 225_000, courtPriceMinor: 900_000, participantCount: 4,
     kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT', percentage: 30,
     partialPrice: { numerator: 1, denominator: 3 }, startHour: 16
   },
   {
     targetId: 'annual-join-120', title: 'Присоединиться к игре на 120 минут',
     description: 'Первая игровая услуга дня: доплата только за время сверх часа со скидкой 30%.',
-    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 120, basePriceMinor: 1_200_000,
+    action: 'JOIN_GAME', category: 'GAME', durationMinutes: 120,
+    basePriceMinor: 300_000, courtPriceMinor: 1_200_000, participantCount: 4,
     kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT', percentage: 30,
     partialPrice: { numerator: 1, denominator: 2 }, startHour: 18
   },
@@ -362,6 +370,8 @@ function targetFromPolicy(
     title: spec.title,
     description: spec.description,
     action: spec.action,
+    courtPriceMinor: spec.courtPriceMinor ?? null,
+    participantCount: spec.participantCount ?? 1,
     target: {
       resolutionSource: 'SERVER',
       targetId: spec.targetId,
