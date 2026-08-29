@@ -62,9 +62,14 @@ test('runtime pruning keeps dependency implementation and removes only proven no
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/test/fixture.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/@scope/pkg/__tests__/fixture.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/test.js'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/test-stable.js'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/parser-test-helper.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/parser.test.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/parser.spec.js.map'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/parser.spect.d.ts'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/contest.js'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/latest.js'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/lib/attest.js'), false);
   assert.equal(shouldExcludeRuntimePath('node_modules/jszip/.jekyll-metadata'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/.cache/index'), true);
   assert.equal(shouldExcludeRuntimePath('dist/main.d.ts'), true);
