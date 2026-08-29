@@ -145,6 +145,11 @@ async function assertPrivateOutput(output, sourceRoot) {
 
 export function shouldExcludeRuntimePath(runtimePath) {
   const segments = String(runtimePath).split('/');
+  const filename = segments.at(-1) ?? '';
+  if (segments.includes('.cache')
+    || ['.jekyll-metadata', '.DS_Store', 'npm-debug.log', 'yarn-error.log'].includes(filename)) {
+    return true;
+  }
   const packageRootLength = segments[1]?.startsWith('@') ? 3 : 2;
   const dependencyPath = segments.slice(packageRootLength);
   if (segments[0] === 'node_modules'
@@ -152,9 +157,9 @@ export function shouldExcludeRuntimePath(runtimePath) {
     return true;
   }
   return segments[0] === 'dist'
-    && (/\.d\.ts$/i.test(segments.at(-1) ?? '')
-      || /\.map$/i.test(segments.at(-1) ?? '')
-      || /\.tsbuildinfo$/i.test(segments.at(-1) ?? ''));
+    && (/\.d\.ts$/i.test(filename)
+      || /\.map$/i.test(filename)
+      || /\.tsbuildinfo$/i.test(filename));
 }
 
 async function copyRuntimeTree(source, destination, inventory, prefix = '') {
@@ -169,7 +174,6 @@ async function copyRuntimeTree(source, destination, inventory, prefix = '') {
       Buffer.from(left.name, 'utf8'), Buffer.from(right.name, 'utf8')
     ))) {
       if (prefix === 'node_modules' && entry.name === '.bin') continue;
-      if (entry.name === '.cache') continue;
       const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (shouldExcludeRuntimePath(childPrefix)) continue;
       await copyRuntimeTree(join(source, entry.name), join(destination, entry.name), inventory, childPrefix);
