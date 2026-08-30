@@ -408,6 +408,14 @@ export interface SubscriptionUsageTestQuoteResult {
   };
 }
 
+export interface SubscriptionUsageResolvedQuoteResult extends SubscriptionUsageTestQuoteResult {
+  resolution: {
+    source: 'SERVER_CONFIG';
+    providerCalls: 0;
+    browserPriceAccepted: false;
+  };
+}
+
 export interface SubscriptionImpactIssue {
   code: string;
   message: string;

@@ -15,10 +15,13 @@ import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-te
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
 import { SubscriptionUsageTestQuoteDto } from './dto/subscription-usage-test-quote.dto';
+import { SubscriptionUsageResolvedQuoteDto } from './dto/subscription-usage-resolved-quote.dto';
 import {
   buildSubscriptionUsageTestScenario,
+  evaluateSubscriptionUsageResolvedTarget,
   evaluateSubscriptionUsageTestScenario
 } from './subscription-usage-test-runtime';
+import { resolveSubscriptionUsageExactTarget } from './subscription-usage-test-exact-target';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   ReleaseProgram,
@@ -39,6 +42,7 @@ import {
   SubscriptionTestPurchaseView,
   SubscriptionTestReservationResult,
   SubscriptionUsageTestQuoteResult,
+  SubscriptionUsageResolvedQuoteResult,
   SubscriptionUsageTestScenarioView
 } from './subscriptions.types';
 
@@ -292,6 +296,17 @@ export class SubscriptionsTestRuntimeService {
     this.requireTestRuntimeEnabled();
     const offer = await this.offerByCredentialsInternal(offerId, accessToken);
     return evaluateSubscriptionUsageTestScenario(offer, dto, this.now());
+  }
+
+  async quoteResolvedUsageScenario(
+    offerId: string,
+    accessToken: string,
+    dto: SubscriptionUsageResolvedQuoteDto
+  ): Promise<SubscriptionUsageResolvedQuoteResult> {
+    this.requireTestRuntimeEnabled();
+    const offer = await this.offerByCredentialsInternal(offerId, accessToken);
+    const resolved = resolveSubscriptionUsageExactTarget(offer, dto);
+    return evaluateSubscriptionUsageResolvedTarget(offer, resolved, dto, this.now());
   }
 
   async reserve(

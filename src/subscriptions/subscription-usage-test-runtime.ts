@@ -13,6 +13,7 @@ import {
   SubscriptionAction,
   SubscriptionPolicyVersion,
   SubscriptionShadowQuoteResult,
+  SubscriptionUsageResolvedQuoteResult,
   SubscriptionUsageTestQuoteResult,
   SubscriptionUsageTestScenarioView,
   SubscriptionUsageTestTargetView
@@ -32,6 +33,60 @@ interface TargetSpec {
   percentage: number | null;
   partialPrice: { numerator: number; denominator: number } | null;
   startHour: number;
+}
+
+export function evaluateSubscriptionUsageResolvedTarget(
+  offer: StoredSubscriptionTestOffer,
+  resolved: {
+    targetId: string;
+    action: 'CREATE_GAME' | 'JOIN_GAME';
+    startsAt: string;
+    durationMinutes: 60 | 90 | 120;
+    courtPriceMinor: number;
+    participantCount: 4;
+    evidenceRef: string;
+    priceEvidenceRef: string;
+  },
+  input: { activeServices: number; dailyGameUsage: number },
+  evaluatedAt = new Date()
+): SubscriptionUsageResolvedQuoteResult {
+  const compiled = compileScenario(offer, evaluatedAt);
+  const templateId = `annual-${resolved.action === 'CREATE_GAME' ? 'create' : 'join'}-${resolved.durationMinutes}`;
+  const template = compiled.view.targets.find((item) => item.targetId === templateId);
+  if (!template) {
+    throw new UnprocessableEntityException({
+      code: 'SUBSCRIPTION_USAGE_TEST_TARGET_UNKNOWN',
+      message: 'Сценарий тестовой услуги не найден'
+    });
+  }
+  const target: SubscriptionUsageTestTargetView = {
+    ...template,
+    targetId: resolved.targetId,
+    title: resolved.action === 'CREATE_GAME'
+      ? `Создать игру на ${resolved.durationMinutes} минут`
+      : `Присоединиться к игре на ${resolved.durationMinutes} минут`,
+    action: resolved.action,
+    courtPriceMinor: resolved.courtPriceMinor,
+    participantCount: resolved.participantCount,
+    target: {
+      ...template.target,
+      targetId: resolved.targetId,
+      stationId: offer.stationId,
+      startsAt: resolved.startsAt,
+      basePriceMinor: resolved.courtPriceMinor / resolved.participantCount,
+      evidenceRef: resolved.evidenceRef,
+      priceEvidenceRef: resolved.priceEvidenceRef,
+      resolvedAt: evaluatedAt.toISOString()
+    }
+  };
+  return {
+    ...evaluateCompiledTarget(compiled, target, input, evaluatedAt),
+    resolution: {
+      source: 'SERVER_CONFIG',
+      providerCalls: 0,
+      browserPriceAccepted: false
+    }
+  };
 }
 
 const TARGET_SPECS: TargetSpec[] = [
@@ -123,6 +178,15 @@ export function evaluateSubscriptionUsageTestScenario(
       message: 'Сценарий тестовой услуги не найден'
     });
   }
+  return evaluateCompiledTarget(compiled, target, input, evaluatedAt);
+}
+
+function evaluateCompiledTarget(
+  compiled: CompiledScenario,
+  target: SubscriptionUsageTestTargetView,
+  input: { activeServices: number; dailyGameUsage: number },
+  evaluatedAt: Date
+): SubscriptionUsageTestQuoteResult {
   const localKeys = targetLocalKeys(new Date(target.target.startsAt));
   const now = evaluatedAt.toISOString();
   const aggregate: StoredSubscriptionEntitlementAggregate = {

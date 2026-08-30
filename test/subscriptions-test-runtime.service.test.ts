@@ -791,6 +791,150 @@ async function testHostedAnnualUsageScenarios(): Promise<void> {
   assert.equal(exceptionCode(mismatch), 'SUBSCRIPTION_USAGE_TEST_POLICY_MISMATCH');
 }
 
+async function testHostedExactTargetQuotes(): Promise<void> {
+  const repository = annualUsageFixture();
+  const service = new SubscriptionsTestRuntimeService(repository as unknown as SubscriptionsRepository);
+  process.env.SUBSCRIPTIONS_ADMIN_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER = 'runtime-test-pepper-32-bytes-minimum-value';
+  const activated = await activate(service);
+  const token = activated.accessToken as string;
+  const scenarios = await service.usageScenarios(activated.offerId, token);
+  const startsAt90 = scenarios.targets.find((target) => target.targetId === 'annual-create-90')?.target.startsAt;
+  const startsAt120 = scenarios.targets.find((target) => target.targetId === 'annual-join-120')?.target.startsAt;
+  assert.ok(startsAt90);
+  assert.ok(startsAt120);
+  const createTarget = {
+    targetKind: 'NEW_GAME' as const,
+    slotId: 'slot-exact-90',
+    stationId: scenarios.offer.stationId,
+    roomId: 'room-exact-1',
+    masterServiceId: 'master-exact-1',
+    subServiceIds: ['sub-exact-2', 'sub-exact-1'],
+    startsAt: startsAt90,
+    durationMinutes: 90 as const
+  };
+  const joinTarget = {
+    targetKind: 'GAME_AGGREGATE' as const,
+    gameId: 'pay_exact-game-120'
+  };
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([
+    { ...createTarget, subServiceIds: [...createTarget.subServiceIds].reverse(), courtPriceMinor: 900_000 },
+    {
+      ...joinTarget,
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAt120,
+      durationMinutes: 120,
+      courtPriceMinor: 1_200_000
+    }
+  ]);
+
+  const create90 = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME',
+    target: createTarget,
+    activeServices: 0,
+    dailyGameUsage: 0
+  });
+  assert.equal(create90.target.participantCount, 4);
+  assert.equal(create90.target.courtPriceMinor, 900_000);
+  assert.equal(create90.target.target.basePriceMinor, 225_000);
+  assert.equal(create90.decision.benefit?.finalPriceMinor, 52_500);
+  assert.deepEqual(create90.resolution, {
+    source: 'SERVER_CONFIG',
+    providerCalls: 0,
+    browserPriceAccepted: false
+  });
+
+  const dailyLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME', target: createTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(dailyLimit.decision.benefit?.finalPriceMinor, 157_500);
+
+  const activeLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME', target: createTarget, activeServices: 4, dailyGameUsage: 0
+  });
+  assert.deepEqual(activeLimit.bookingOutcome, {
+    allowed: true,
+    subscriptionApplied: false,
+    pricingMode: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
+    finalPriceMinor: 225_000,
+    reasonCodes: ['ACTIVE_SERVICES_LIMIT_REACHED', 'FUTURE_BOOKINGS_LIMIT_REACHED']
+  });
+
+  const join120 = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+  });
+  assert.equal(join120.target.target.basePriceMinor, 300_000);
+  assert.equal(join120.decision.benefit?.finalPriceMinor, 105_000);
+
+  const browserPrice = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME',
+      target: { ...joinTarget, courtPriceMinor: 1 },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    BadRequestException
+  );
+  assert.equal(exceptionCode(browserPrice), 'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID');
+
+  const unknown = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME',
+      target: { targetKind: 'GAME_AGGREGATE', gameId: 'pay_unknown-game' },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(unknown), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND');
+
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([{
+    ...joinTarget,
+    stationId: 'station-other',
+    startsAt: startsAt120,
+    durationMinutes: 120,
+    courtPriceMinor: 1_200_000
+  }]);
+  const stationMismatch = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(stationMismatch), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_STATION_MISMATCH');
+
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([{
+    ...joinTarget,
+    stationId: scenarios.offer.stationId,
+    startsAt: startsAt120,
+    durationMinutes: 120,
+    courtPriceMinor: 1_200_001
+  }]);
+  const invalidCatalog = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    ServiceUnavailableException
+  );
+  assert.equal(exceptionCode(invalidCatalog), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_CONFIG_INVALID');
+
+  delete process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON;
+  await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, 'invalid-token', {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    NotFoundException
+  );
+  const missingCatalog = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    ServiceUnavailableException
+  );
+  assert.equal(exceptionCode(missingCatalog), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_NOT_CONFIGURED');
+}
+
 async function testPhaseRolloverAndLastUnitConcurrency(): Promise<void> {
   const repository = fixture(1);
   const service = new SubscriptionsTestRuntimeService(repository as unknown as SubscriptionsRepository);
@@ -1045,10 +1189,12 @@ async function main(): Promise<void> {
   const originalAdmin = process.env.SUBSCRIPTIONS_ADMIN_ENABLED;
   const originalRuntime = process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED;
   const originalPepper = process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER;
+  const originalExactTargets = process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON;
   try {
     await testFeatureGateAndImpactPreview();
     await testActivationTokenReservationAndFakeOutcomes();
     await testHostedAnnualUsageScenarios();
+    await testHostedExactTargetQuotes();
     await testPhaseRolloverAndLastUnitConcurrency();
     await testCreatingReservationCrashRecovery();
     await testTerminalPurchaseCrashRecovery();
@@ -1072,6 +1218,7 @@ async function main(): Promise<void> {
     restoreEnv('SUBSCRIPTIONS_ADMIN_ENABLED', originalAdmin);
     restoreEnv('SUBSCRIPTIONS_TEST_RUNTIME_ENABLED', originalRuntime);
     restoreEnv('SUBSCRIPTIONS_TEST_HASH_PEPPER', originalPepper);
+    restoreEnv('SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON', originalExactTargets);
   }
 }
 

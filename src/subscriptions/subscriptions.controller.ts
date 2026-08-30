@@ -36,6 +36,7 @@ import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-fir
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
 import { SubscriptionUsageTestQuoteDto } from './dto/subscription-usage-test-quote.dto';
+import { SubscriptionUsageResolvedQuoteDto } from './dto/subscription-usage-resolved-quote.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
 import {
   PublishSubscriptionPolicyDto,
@@ -70,6 +71,7 @@ import {
   SubscriptionTestPurchaseView,
   SubscriptionTestReservationResult,
   SubscriptionUsageTestQuoteResult,
+  SubscriptionUsageResolvedQuoteResult,
   SubscriptionUsageTestScenarioView,
   SubscriptionType,
   SubscriptionTypePage
@@ -396,6 +398,17 @@ export class SubscriptionTestController {
     @Body() dto: SubscriptionUsageTestQuoteDto
   ): Promise<SubscriptionUsageTestQuoteResult> {
     return this.testRuntime.quoteUsageScenario(offerId, accessToken ?? '', dto);
+  }
+
+  @Post('offers/:offerId/usage-scenarios/resolved-quote')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quoteResolvedUsageScenario(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined,
+    @Body() dto: SubscriptionUsageResolvedQuoteDto
+  ): Promise<SubscriptionUsageResolvedQuoteResult> {
+    return this.testRuntime.quoteResolvedUsageScenario(offerId, accessToken ?? '', dto);
   }
 
   @Post('offers/:offerId/reservations')
