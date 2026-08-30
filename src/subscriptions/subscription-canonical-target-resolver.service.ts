@@ -12,6 +12,11 @@ export interface SubscriptionCanonicalTargetReference {
   snapshotRevision: number;
 }
 
+export type SubscriptionLatestCanonicalTargetReference = Omit<
+  SubscriptionCanonicalTargetReference,
+  'snapshotRevision'
+>;
+
 @Injectable()
 export class SubscriptionCanonicalTargetResolverService {
   constructor(private readonly repository: SubscriptionsRepository) {}
@@ -88,6 +93,21 @@ export class SubscriptionCanonicalTargetResolverService {
       priceEvidenceRef: snapshot.priceEvidenceRef,
       resolvedAt: snapshot.observedAt
     };
+  }
+
+  async resolveLatest(
+    reference: SubscriptionLatestCanonicalTargetReference
+  ): Promise<SubscriptionShadowQuoteResolvedTarget> {
+    this.assertEnabled();
+    await this.repository.connectReadOnly();
+    const latest = await this.repository.runtimeLatestCanonicalTargetSnapshot(reference);
+    if (!latest) {
+      this.unavailable(
+        'SUBSCRIPTIONS_CANONICAL_TARGET_NOT_FOUND',
+        'Canonical subscription target is not available'
+      );
+    }
+    return this.resolve({ ...reference, snapshotRevision: latest.revision });
   }
 
   protected now(): Date {

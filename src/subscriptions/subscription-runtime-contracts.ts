@@ -1096,6 +1096,39 @@ export function validateStoredSubscriptionEntitlementAggregate(
       'SUBSCRIPTION_AGGREGATE_RESERVATION_STATE_INVALID',
       'activeServices.state'
     );
+    if (reservation.usageBuckets !== undefined) {
+      assertExactKeys(reservation.usageBuckets, [
+        'localDate', 'localWeek', 'localMonth', 'dailyUsageDelta',
+        'weeklyUsageDelta', 'monthlyUsageDelta', 'remainingUnitsDelta',
+        'futureBookingDelta'
+      ], 'activeServices.usageBuckets');
+      if (!LOCAL_DATE_PATTERN.test(reservation.usageBuckets.localDate)
+        || !LOCAL_WEEK_PATTERN.test(reservation.usageBuckets.localWeek)
+        || !LOCAL_MONTH_PATTERN.test(reservation.usageBuckets.localMonth)) {
+        fail('SUBSCRIPTION_RUNTIME_USAGE_BUCKET_KEY_INVALID', {
+          field: 'activeServices.usageBuckets'
+        });
+      }
+      nonNegativeInteger(
+        reservation.usageBuckets.dailyUsageDelta,
+        'activeServices.usageBuckets.dailyUsageDelta'
+      );
+      positiveInteger(
+        reservation.usageBuckets.weeklyUsageDelta,
+        'activeServices.usageBuckets.weeklyUsageDelta'
+      );
+      positiveInteger(
+        reservation.usageBuckets.monthlyUsageDelta,
+        'activeServices.usageBuckets.monthlyUsageDelta'
+      );
+      nonNegativeInteger(
+        reservation.usageBuckets.remainingUnitsDelta,
+        'activeServices.usageBuckets.remainingUnitsDelta'
+      );
+      if (reservation.usageBuckets.futureBookingDelta !== 1) {
+        fail('SUBSCRIPTION_AGGREGATE_FUTURE_DELTA_INVALID');
+      }
+    }
   }
   for (const startsAt of value.futureServiceStartsAt) {
     requiredInstant(startsAt, 'futureServiceStartsAt');

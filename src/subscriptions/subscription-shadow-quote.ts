@@ -443,6 +443,13 @@ export function evaluateSubscriptionShadowQuote(
     maxActiveServices,
     dailyUsed,
     dailyLimit,
+    usageBucket: targetLocal ? {
+      localDate: targetLocal.date,
+      localWeek: targetLocal.week,
+      localMonth: targetLocal.month
+    } : null,
+    dailyUsageApplies: dailyActionApplies,
+    dailyLimitExceeded,
     benefit: appliedBenefit,
     decision
   };

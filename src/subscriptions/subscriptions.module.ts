@@ -15,6 +15,7 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import { SubscriptionEntitlementLifecycleService } from './subscription-entitlement-lifecycle.service';
 import { SubscriptionRuntimeContextService } from './subscription-runtime-context.service';
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
@@ -34,6 +35,7 @@ import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.
     SubscriptionCanonicalTargetResolverService,
     SubscriptionProviderMappingPreviewService,
     SubscriptionTrustedShadowAdapterService,
+    SubscriptionEntitlementLifecycleService,
     SubscriptionRuntimeContextService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,

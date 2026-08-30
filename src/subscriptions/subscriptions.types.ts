@@ -858,6 +858,16 @@ export interface SubscriptionEntitlementReservation {
   startsAt: string;
   usageUnits: number;
   state: 'RESERVED' | 'CONFIRMED';
+  usageBuckets?: {
+    localDate: string;
+    localWeek: string;
+    localMonth: string;
+    dailyUsageDelta: number;
+    weeklyUsageDelta: number;
+    monthlyUsageDelta: number;
+    remainingUnitsDelta: number;
+    futureBookingDelta: 1;
+  };
 }
 
 export interface StoredSubscriptionEntitlementAggregate {
@@ -980,6 +990,13 @@ export interface SubscriptionShadowQuoteResult {
   maxActiveServices: number | null;
   dailyUsed: number | null;
   dailyLimit: number | null;
+  usageBucket?: {
+    localDate: string;
+    localWeek: string;
+    localMonth: string;
+  } | null;
+  dailyUsageApplies?: boolean | null;
+  dailyLimitExceeded?: boolean | null;
   benefit: SubscriptionShadowQuoteAppliedBenefit | null;
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }
