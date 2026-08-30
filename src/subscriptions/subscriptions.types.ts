@@ -399,6 +399,13 @@ export interface SubscriptionUsageTestScenarioView {
 export interface SubscriptionUsageTestQuoteResult {
   target: SubscriptionUsageTestTargetView;
   decision: SubscriptionShadowQuoteResult;
+  bookingOutcome: {
+    allowed: boolean;
+    subscriptionApplied: boolean;
+    pricingMode: 'SUBSCRIPTION' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | 'BLOCKED';
+    finalPriceMinor: number | null;
+    reasonCodes: string[];
+  };
 }
 
 export interface SubscriptionImpactIssue {

@@ -12,6 +12,7 @@ import {
   StoredSubscriptionTestOffer,
   SubscriptionAction,
   SubscriptionPolicyVersion,
+  SubscriptionShadowQuoteResult,
   SubscriptionUsageTestQuoteResult,
   SubscriptionUsageTestScenarioView,
   SubscriptionUsageTestTargetView
@@ -147,16 +148,63 @@ export function evaluateSubscriptionUsageTestScenario(
     createdAt: now,
     updatedAt: now
   };
+  const decision = evaluateSubscriptionShadowQuote({
+    evaluatedAt: now,
+    publication: compiled.publication,
+    instance: compiled.instance,
+    aggregate,
+    action: target.action,
+    target: target.target
+  });
   return {
     target,
-    decision: evaluateSubscriptionShadowQuote({
-      evaluatedAt: now,
-      publication: compiled.publication,
-      instance: compiled.instance,
-      aggregate,
-      action: target.action,
-      target: target.target
-    })
+    decision,
+    bookingOutcome: resolveSubscriptionUsageTestBookingOutcome(target, decision)
+  };
+}
+
+const FULL_PRICE_GAME_FALLBACK_BLOCKERS = new Set([
+  'ACTIVE_SERVICES_LIMIT_REACHED',
+  'FUTURE_BOOKINGS_LIMIT_REACHED'
+]);
+
+export function resolveSubscriptionUsageTestBookingOutcome(
+  target: SubscriptionUsageTestTargetView,
+  decision: SubscriptionShadowQuoteResult
+): SubscriptionUsageTestQuoteResult['bookingOutcome'] {
+  if (decision.eligible) {
+    return {
+      allowed: true,
+      subscriptionApplied: true,
+      pricingMode: 'SUBSCRIPTION',
+      finalPriceMinor: decision.benefit?.finalPriceMinor ?? null,
+      reasonCodes: []
+    };
+  }
+
+  const reasonCodes = decision.blockers.map((blocker) => blocker.code);
+  const isGame = target.target.category === 'GAME'
+    && (target.action === 'CREATE_GAME' || target.action === 'JOIN_GAME');
+  const capacityOnly = reasonCodes.length > 0
+    && reasonCodes.every((code) => FULL_PRICE_GAME_FALLBACK_BLOCKERS.has(code));
+  const fullPriceMinor = target.target.basePriceMinor;
+  const hasValidFullPrice = Number.isInteger(fullPriceMinor) && (fullPriceMinor ?? -1) >= 0;
+  if (isGame && capacityOnly && hasValidFullPrice) {
+    return {
+      allowed: true,
+      subscriptionApplied: false,
+      pricingMode: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
+      finalPriceMinor: fullPriceMinor,
+      reasonCodes
+    };
+  }
+
+  return {
+    allowed: false,
+    subscriptionApplied: false,
+    pricingMode: 'BLOCKED',
+    finalPriceMinor: null,
+    reasonCodes
   };
 }
 

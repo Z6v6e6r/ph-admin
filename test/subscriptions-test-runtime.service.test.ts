@@ -20,6 +20,7 @@ import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionsService } from '../src/subscriptions/subscriptions.service';
 import { SubscriptionsTestRuntimeService } from '../src/subscriptions/subscriptions-test-runtime.service';
+import { resolveSubscriptionUsageTestBookingOutcome } from '../src/subscriptions/subscription-usage-test-runtime';
 import {
   StoredReleaseProgram,
   StoredSubscriptionPolicyVersion,
@@ -743,6 +744,36 @@ async function testHostedAnnualUsageScenarios(): Promise<void> {
   assert.equal((await quote('annual-tournament-120', 0, 1)).decision.benefit?.finalPriceMinor, 250_000);
   const activeLimit = await quote('annual-create-60', 4, 0);
   assert.ok(activeLimit.decision.blockers.some((item) => item.code === 'ACTIVE_SERVICES_LIMIT_REACHED'));
+  assert.equal(activeLimit.decision.eligible, false);
+  assert.deepEqual(activeLimit.bookingOutcome, {
+    allowed: true,
+    subscriptionApplied: false,
+    pricingMode: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
+    finalPriceMinor: 150_000,
+    reasonCodes: ['ACTIVE_SERVICES_LIMIT_REACHED', 'FUTURE_BOOKINGS_LIMIT_REACHED']
+  });
+  assert.equal((await quote('annual-join-120', 4, 0)).bookingOutcome.finalPriceMinor, 300_000);
+  assert.equal((await quote('annual-group-60', 4, 0)).bookingOutcome.pricingMode, 'BLOCKED');
+  const mixedBlockers = {
+    ...activeLimit.decision,
+    blockers: [...activeLimit.decision.blockers, {
+      code: 'STATION_NOT_ALLOWED',
+      message: 'Станция не включена в правила подписки',
+      details: null
+    }]
+  };
+  assert.equal(
+    resolveSubscriptionUsageTestBookingOutcome(activeLimit.target, mixedBlockers).pricingMode,
+    'BLOCKED'
+  );
+  const invalidFullPriceTarget = {
+    ...activeLimit.target,
+    target: { ...activeLimit.target.target, basePriceMinor: -1 }
+  };
+  assert.equal(
+    resolveSubscriptionUsageTestBookingOutcome(invalidFullPriceTarget, activeLimit.decision).pricingMode,
+    'BLOCKED'
+  );
   await expectException(
     () => service.usageScenarios(activated.offerId, 'invalid-token'),
     NotFoundException
