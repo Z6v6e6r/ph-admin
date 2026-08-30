@@ -75,6 +75,7 @@ export function evaluateSubscriptionUsageResolvedTarget(
       targetId: resolved.targetId,
       stationId: offer.stationId,
       startsAt: resolved.startsAt,
+      durationMinutes: resolved.durationMinutes,
       basePriceMinor: resolved.basePriceMinor,
       evidenceRef: resolved.evidenceRef,
       priceEvidenceRef: resolved.priceEvidenceRef,

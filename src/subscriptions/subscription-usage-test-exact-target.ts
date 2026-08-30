@@ -89,7 +89,7 @@ interface EventTargetConfig {
   action: 'BOOK_GROUP_TRAINING' | 'BOOK_TOURNAMENT';
   stationId: string;
   startsAt: string;
-  durationMinutes: 60 | 120;
+  durationMinutes: 60 | 90 | 120;
   basePriceMinor: number;
 }
 
@@ -243,18 +243,13 @@ function validateConfigTarget(value: unknown, index: number): ExactTargetConfig 
   if (action !== 'BOOK_GROUP_TRAINING' && action !== 'BOOK_TOURNAMENT') {
     configInvalid(`target[${index}].action is invalid`);
   }
-  if ((action === 'BOOK_GROUP_TRAINING' && durationMinutes !== 60)
-    || (action === 'BOOK_TOURNAMENT' && durationMinutes !== 120)) {
-    configInvalid(`target[${index}].durationMinutes does not match action`);
-  }
-  const eventDuration = action === 'BOOK_GROUP_TRAINING' ? 60 : 120;
   return {
     targetKind: 'EVENT_AGGREGATE',
     eventId: requiredId(value.eventId, `target[${index}].eventId`, configInvalid),
     action,
     stationId,
     startsAt,
-    durationMinutes: eventDuration,
+    durationMinutes,
     basePriceMinor: requiredBasePrice(value.basePriceMinor, `target[${index}].basePriceMinor`, configInvalid)
   };
 }

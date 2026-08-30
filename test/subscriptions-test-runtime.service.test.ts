@@ -854,7 +854,7 @@ async function testHostedExactTargetQuotes(): Promise<void> {
       action: 'BOOK_TOURNAMENT',
       stationId: scenarios.offer.stationId,
       startsAt: startsAtTournament,
-      durationMinutes: 120,
+      durationMinutes: 90,
       basePriceMinor: 500_000
     }
   ]);
@@ -916,6 +916,7 @@ async function testHostedExactTargetQuotes(): Promise<void> {
   });
   assert.equal(tournament.target.participantCount, 1);
   assert.equal(tournament.target.courtPriceMinor, null);
+  assert.equal(tournament.target.target.durationMinutes, 90);
   assert.equal(tournament.target.target.basePriceMinor, 500_000);
   assert.equal(tournament.decision.benefit?.finalPriceMinor, 250_000);
   assert.equal(tournament.resolution.providerCalls, 0);
