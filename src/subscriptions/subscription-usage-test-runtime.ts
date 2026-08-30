@@ -18,6 +18,7 @@ import {
   SubscriptionUsageTestScenarioView,
   SubscriptionUsageTestTargetView
 } from './subscriptions.types';
+import type { SubscriptionUsageExactTarget } from './subscription-usage-test-exact-target';
 
 interface TargetSpec {
   targetId: string;
@@ -37,21 +38,18 @@ interface TargetSpec {
 
 export function evaluateSubscriptionUsageResolvedTarget(
   offer: StoredSubscriptionTestOffer,
-  resolved: {
-    targetId: string;
-    action: 'CREATE_GAME' | 'JOIN_GAME';
-    startsAt: string;
-    durationMinutes: 60 | 90 | 120;
-    courtPriceMinor: number;
-    participantCount: 4;
-    evidenceRef: string;
-    priceEvidenceRef: string;
-  },
+  resolved: SubscriptionUsageExactTarget,
   input: { activeServices: number; dailyGameUsage: number },
   evaluatedAt = new Date()
 ): SubscriptionUsageResolvedQuoteResult {
   const compiled = compileScenario(offer, evaluatedAt);
-  const templateId = `annual-${resolved.action === 'CREATE_GAME' ? 'create' : 'join'}-${resolved.durationMinutes}`;
+  const templateId = resolved.action === 'CREATE_GAME'
+    ? `annual-create-${resolved.durationMinutes}`
+    : resolved.action === 'JOIN_GAME'
+      ? `annual-join-${resolved.durationMinutes}`
+      : resolved.action === 'BOOK_GROUP_TRAINING'
+        ? 'annual-group-60'
+        : 'annual-tournament-120';
   const template = compiled.view.targets.find((item) => item.targetId === templateId);
   if (!template) {
     throw new UnprocessableEntityException({
@@ -64,7 +62,11 @@ export function evaluateSubscriptionUsageResolvedTarget(
     targetId: resolved.targetId,
     title: resolved.action === 'CREATE_GAME'
       ? `Создать игру на ${resolved.durationMinutes} минут`
-      : `Присоединиться к игре на ${resolved.durationMinutes} минут`,
+      : resolved.action === 'JOIN_GAME'
+        ? `Присоединиться к игре на ${resolved.durationMinutes} минут`
+        : resolved.action === 'BOOK_GROUP_TRAINING'
+          ? 'Групповая тренировка'
+          : 'Участие в турнире',
     action: resolved.action,
     courtPriceMinor: resolved.courtPriceMinor,
     participantCount: resolved.participantCount,
@@ -73,7 +75,7 @@ export function evaluateSubscriptionUsageResolvedTarget(
       targetId: resolved.targetId,
       stationId: offer.stationId,
       startsAt: resolved.startsAt,
-      basePriceMinor: resolved.courtPriceMinor / resolved.participantCount,
+      basePriceMinor: resolved.basePriceMinor,
       evidenceRef: resolved.evidenceRef,
       priceEvidenceRef: resolved.priceEvidenceRef,
       resolvedAt: evaluatedAt.toISOString()

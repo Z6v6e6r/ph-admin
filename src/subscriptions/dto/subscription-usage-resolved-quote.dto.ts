@@ -1,11 +1,16 @@
 import { IsDefined, IsIn, IsInt, IsObject, Max, Min } from 'class-validator';
 import { SubscriptionAction } from '../subscriptions.types';
 
-const GAME_ACTIONS: SubscriptionAction[] = ['CREATE_GAME', 'JOIN_GAME'];
+const RESOLVED_QUOTE_ACTIONS: SubscriptionAction[] = [
+  'CREATE_GAME',
+  'JOIN_GAME',
+  'BOOK_GROUP_TRAINING',
+  'BOOK_TOURNAMENT'
+];
 
 export class SubscriptionUsageResolvedQuoteDto {
-  @IsIn(GAME_ACTIONS)
-  action!: 'CREATE_GAME' | 'JOIN_GAME';
+  @IsIn(RESOLVED_QUOTE_ACTIONS)
+  action!: 'CREATE_GAME' | 'JOIN_GAME' | 'BOOK_GROUP_TRAINING' | 'BOOK_TOURNAMENT';
 
   @IsDefined()
   @IsObject()

@@ -23,6 +23,7 @@ const CREATE_KEYS = new Set([
   'durationMinutes'
 ]);
 const JOIN_KEYS = new Set(['targetKind', 'gameId']);
+const EVENT_KEYS = new Set(['targetKind', 'eventId']);
 const CONFIG_CREATE_KEYS = new Set([...CREATE_KEYS, 'courtPriceMinor']);
 const CONFIG_JOIN_KEYS = new Set([
   'targetKind',
@@ -32,15 +33,31 @@ const CONFIG_JOIN_KEYS = new Set([
   'durationMinutes',
   'courtPriceMinor'
 ]);
+const CONFIG_EVENT_KEYS = new Set([
+  'targetKind',
+  'eventId',
+  'action',
+  'stationId',
+  'startsAt',
+  'durationMinutes',
+  'basePriceMinor'
+]);
+
+type ExactTargetAction =
+  | 'CREATE_GAME'
+  | 'JOIN_GAME'
+  | 'BOOK_GROUP_TRAINING'
+  | 'BOOK_TOURNAMENT';
 
 export interface SubscriptionUsageExactTarget {
   targetId: string;
-  action: 'CREATE_GAME' | 'JOIN_GAME';
+  action: ExactTargetAction;
   stationId: string;
   startsAt: string;
   durationMinutes: 60 | 90 | 120;
-  courtPriceMinor: number;
-  participantCount: 4;
+  basePriceMinor: number;
+  courtPriceMinor: number | null;
+  participantCount: number;
   evidenceRef: string;
   priceEvidenceRef: string;
 }
@@ -66,7 +83,17 @@ interface JoinTargetConfig {
   courtPriceMinor: number;
 }
 
-type ExactTargetConfig = CreateTargetConfig | JoinTargetConfig;
+interface EventTargetConfig {
+  targetKind: 'EVENT_AGGREGATE';
+  eventId: string;
+  action: 'BOOK_GROUP_TRAINING' | 'BOOK_TOURNAMENT';
+  stationId: string;
+  startsAt: string;
+  durationMinutes: 60 | 120;
+  basePriceMinor: number;
+}
+
+type ExactTargetConfig = CreateTargetConfig | JoinTargetConfig | EventTargetConfig;
 
 export function resolveSubscriptionUsageExactTarget(
   offer: StoredSubscriptionTestOffer,
@@ -78,25 +105,34 @@ export function resolveSubscriptionUsageExactTarget(
   if (!match) {
     throw new UnprocessableEntityException({
       code: 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND',
-      message: 'Для выбранной игры или слота нет точной серверной тестовой цены'
+      message: 'Для выбранной игры, слота или события нет точной серверной тестовой цены'
     });
   }
   if (match.stationId !== offer.stationId) {
     throw new UnprocessableEntityException({
       code: 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_STATION_MISMATCH',
-      message: 'Выбранная игра или слот не относятся к станции тестового оффера'
+      message: 'Выбранная игра, слот или событие не относятся к станции тестового оффера'
     });
   }
   const canonical = canonicalTarget(match);
   const digest = createHash('sha256').update(canonical).digest('hex');
+  const participantCount = match.targetKind === 'EVENT_AGGREGATE' ? 1 : PARTICIPANT_COUNT;
+  const basePriceMinor = match.targetKind === 'EVENT_AGGREGATE'
+    ? match.basePriceMinor
+    : match.courtPriceMinor / participantCount;
   return {
     targetId: `test-exact:${digest.slice(0, 32)}`,
-    action: match.targetKind === 'NEW_GAME' ? 'CREATE_GAME' : 'JOIN_GAME',
+    action: match.targetKind === 'NEW_GAME'
+      ? 'CREATE_GAME'
+      : match.targetKind === 'GAME_AGGREGATE'
+        ? 'JOIN_GAME'
+        : match.action,
     stationId: match.stationId,
     startsAt: match.startsAt,
     durationMinutes: match.durationMinutes,
-    courtPriceMinor: match.courtPriceMinor,
-    participantCount: PARTICIPANT_COUNT,
+    basePriceMinor,
+    courtPriceMinor: match.targetKind === 'EVENT_AGGREGATE' ? null : match.courtPriceMinor,
+    participantCount,
     evidenceRef: `test-only:exact-target:sha256:${digest}`,
     priceEvidenceRef: `test-only:server-config:sha256:${digest}`
   };
@@ -111,7 +147,18 @@ function validateRequestTarget(dto: SubscriptionUsageResolvedQuoteDto): Record<s
   if (dto.action === 'JOIN_GAME' && targetKind !== 'GAME_AGGREGATE') {
     invalidRequest('JOIN_GAME requires targetKind GAME_AGGREGATE');
   }
-  const allowed = targetKind === 'NEW_GAME' ? CREATE_KEYS : JOIN_KEYS;
+  if ((dto.action === 'BOOK_GROUP_TRAINING' || dto.action === 'BOOK_TOURNAMENT')
+    && targetKind !== 'EVENT_AGGREGATE') {
+    invalidRequest(`${dto.action} requires targetKind EVENT_AGGREGATE`);
+  }
+  const allowed = targetKind === 'NEW_GAME'
+    ? CREATE_KEYS
+    : targetKind === 'GAME_AGGREGATE'
+      ? JOIN_KEYS
+      : targetKind === 'EVENT_AGGREGATE'
+        ? EVENT_KEYS
+        : null;
+  if (!allowed) invalidRequest('target.targetKind is invalid');
   assertExactKeys(target, allowed, 'request target', invalidRequest);
   if (targetKind === 'NEW_GAME') {
     requiredId(target.slotId, 'target.slotId', invalidRequest);
@@ -121,8 +168,10 @@ function validateRequestTarget(dto: SubscriptionUsageResolvedQuoteDto): Record<s
     requiredIds(target.subServiceIds, 'target.subServiceIds', invalidRequest);
     normalizedIso(target.startsAt, 'target.startsAt', invalidRequest);
     requiredDuration(target.durationMinutes, 'target.durationMinutes', invalidRequest);
-  } else {
+  } else if (targetKind === 'GAME_AGGREGATE') {
     requiredId(target.gameId, 'target.gameId', invalidRequest);
+  } else {
+    requiredId(target.eventId, 'target.eventId', invalidRequest);
   }
   return target;
 }
@@ -159,13 +208,14 @@ function validateConfigTarget(value: unknown, index: number): ExactTargetConfig 
     ? CONFIG_CREATE_KEYS
     : kind === 'GAME_AGGREGATE'
       ? CONFIG_JOIN_KEYS
-      : null;
+      : kind === 'EVENT_AGGREGATE'
+        ? CONFIG_EVENT_KEYS
+        : null;
   if (!allowed) configInvalid(`target[${index}].targetKind is invalid`);
   assertExactKeys(value, allowed, `target[${index}]`, configInvalid);
   const stationId = requiredId(value.stationId, `target[${index}].stationId`, configInvalid);
   const startsAt = normalizedIso(value.startsAt, `target[${index}].startsAt`, configInvalid);
   const durationMinutes = requiredDuration(value.durationMinutes, `target[${index}].durationMinutes`, configInvalid);
-  const courtPriceMinor = requiredPrice(value.courtPriceMinor, `target[${index}].courtPriceMinor`, configInvalid);
   if (kind === 'NEW_GAME') {
     return {
       targetKind: kind,
@@ -176,22 +226,42 @@ function validateConfigTarget(value: unknown, index: number): ExactTargetConfig 
       subServiceIds: requiredIds(value.subServiceIds, `target[${index}].subServiceIds`, configInvalid),
       startsAt,
       durationMinutes,
-      courtPriceMinor
+      courtPriceMinor: requiredCourtPrice(value.courtPriceMinor, `target[${index}].courtPriceMinor`, configInvalid)
     };
   }
+  if (kind === 'GAME_AGGREGATE') {
+    return {
+      targetKind: 'GAME_AGGREGATE',
+      gameId: requiredId(value.gameId, `target[${index}].gameId`, configInvalid),
+      stationId,
+      startsAt,
+      durationMinutes,
+      courtPriceMinor: requiredCourtPrice(value.courtPriceMinor, `target[${index}].courtPriceMinor`, configInvalid)
+    };
+  }
+  const action = value.action;
+  if (action !== 'BOOK_GROUP_TRAINING' && action !== 'BOOK_TOURNAMENT') {
+    configInvalid(`target[${index}].action is invalid`);
+  }
+  if ((action === 'BOOK_GROUP_TRAINING' && durationMinutes !== 60)
+    || (action === 'BOOK_TOURNAMENT' && durationMinutes !== 120)) {
+    configInvalid(`target[${index}].durationMinutes does not match action`);
+  }
+  const eventDuration = action === 'BOOK_GROUP_TRAINING' ? 60 : 120;
   return {
-    targetKind: 'GAME_AGGREGATE',
-    gameId: requiredId(value.gameId, `target[${index}].gameId`, configInvalid),
+    targetKind: 'EVENT_AGGREGATE',
+    eventId: requiredId(value.eventId, `target[${index}].eventId`, configInvalid),
+    action,
     stationId,
     startsAt,
-    durationMinutes,
-    courtPriceMinor
+    durationMinutes: eventDuration,
+    basePriceMinor: requiredBasePrice(value.basePriceMinor, `target[${index}].basePriceMinor`, configInvalid)
   };
 }
 
 function requestMatches(
   candidate: ExactTargetConfig,
-  action: 'CREATE_GAME' | 'JOIN_GAME',
+  action: ExactTargetAction,
   target: Record<string, unknown>
 ): boolean {
   if (action === 'CREATE_GAME' && candidate.targetKind === 'NEW_GAME') {
@@ -203,9 +273,14 @@ function requestMatches(
       && candidate.durationMinutes === target.durationMinutes
       && sameIds(candidate.subServiceIds, target.subServiceIds as string[]);
   }
-  return action === 'JOIN_GAME'
-    && candidate.targetKind === 'GAME_AGGREGATE'
-    && candidate.gameId === target.gameId;
+  if (action === 'JOIN_GAME') {
+    return candidate.targetKind === 'GAME_AGGREGATE'
+      && candidate.gameId === target.gameId;
+  }
+  return (action === 'BOOK_GROUP_TRAINING' || action === 'BOOK_TOURNAMENT')
+    && candidate.targetKind === 'EVENT_AGGREGATE'
+    && candidate.action === action
+    && candidate.eventId === target.eventId;
 }
 
 function canonicalTarget(target: ExactTargetConfig): string {
@@ -218,7 +293,9 @@ function canonicalTarget(target: ExactTargetConfig): string {
 function canonicalLookupKey(target: ExactTargetConfig): string {
   return target.targetKind === 'NEW_GAME'
     ? `CREATE_GAME:${target.stationId}:${target.slotId}:${target.startsAt}:${target.durationMinutes}`
-    : `JOIN_GAME:${target.gameId}`;
+    : target.targetKind === 'GAME_AGGREGATE'
+      ? `JOIN_GAME:${target.gameId}`
+      : `EVENT:${target.eventId}`;
 }
 
 function sameIds(left: string[], right: string[]): boolean {
@@ -247,14 +324,19 @@ function requiredDuration(value: unknown, field: string, fail: (message: string)
   return value;
 }
 
-function requiredPrice(value: unknown, field: string, fail: (message: string) => never): number {
+function requiredBasePrice(value: unknown, field: string, fail: (message: string) => never): number {
   if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > 100_000_000) {
     fail(`${field} is invalid`);
   }
-  if ((value as number) % PARTICIPANT_COUNT !== 0) {
+  return value as number;
+}
+
+function requiredCourtPrice(value: unknown, field: string, fail: (message: string) => never): number {
+  const price = requiredBasePrice(value, field, fail);
+  if (price % PARTICIPANT_COUNT !== 0) {
     fail(`${field} must be exactly divisible by ${PARTICIPANT_COUNT}`);
   }
-  return value as number;
+  return price;
 }
 
 function normalizedIso(value: unknown, field: string, fail: (message: string) => never): string {

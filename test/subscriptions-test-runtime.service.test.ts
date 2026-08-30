@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException
 } from '@nestjs/common';
+import { validate } from 'class-validator';
 import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { RequestUser } from '../src/common/rbac/request-user.interface';
 import { Role } from '../src/common/rbac/role.enum';
@@ -20,6 +21,7 @@ import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionsService } from '../src/subscriptions/subscriptions.service';
 import { SubscriptionsTestRuntimeService } from '../src/subscriptions/subscriptions-test-runtime.service';
+import { SubscriptionUsageResolvedQuoteDto } from '../src/subscriptions/dto/subscription-usage-resolved-quote.dto';
 import { resolveSubscriptionUsageTestBookingOutcome } from '../src/subscriptions/subscription-usage-test-runtime';
 import {
   StoredReleaseProgram,
@@ -802,8 +804,12 @@ async function testHostedExactTargetQuotes(): Promise<void> {
   const scenarios = await service.usageScenarios(activated.offerId, token);
   const startsAt90 = scenarios.targets.find((target) => target.targetId === 'annual-create-90')?.target.startsAt;
   const startsAt120 = scenarios.targets.find((target) => target.targetId === 'annual-join-120')?.target.startsAt;
+  const startsAtGroup = scenarios.targets.find((target) => target.targetId === 'annual-group-60')?.target.startsAt;
+  const startsAtTournament = scenarios.targets.find((target) => target.targetId === 'annual-tournament-120')?.target.startsAt;
   assert.ok(startsAt90);
   assert.ok(startsAt120);
+  assert.ok(startsAtGroup);
+  assert.ok(startsAtTournament);
   const createTarget = {
     targetKind: 'NEW_GAME' as const,
     slotId: 'slot-exact-90',
@@ -818,6 +824,14 @@ async function testHostedExactTargetQuotes(): Promise<void> {
     targetKind: 'GAME_AGGREGATE' as const,
     gameId: 'pay_exact-game-120'
   };
+  const groupTarget = {
+    targetKind: 'EVENT_AGGREGATE' as const,
+    eventId: 'group_exact-60'
+  };
+  const tournamentTarget = {
+    targetKind: 'EVENT_AGGREGATE' as const,
+    eventId: 'tournament_exact-120'
+  };
   process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([
     { ...createTarget, subServiceIds: [...createTarget.subServiceIds].reverse(), courtPriceMinor: 900_000 },
     {
@@ -826,6 +840,22 @@ async function testHostedExactTargetQuotes(): Promise<void> {
       startsAt: startsAt120,
       durationMinutes: 120,
       courtPriceMinor: 1_200_000
+    },
+    {
+      ...groupTarget,
+      action: 'BOOK_GROUP_TRAINING',
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAtGroup,
+      durationMinutes: 60,
+      basePriceMinor: 300_000
+    },
+    {
+      ...tournamentTarget,
+      action: 'BOOK_TOURNAMENT',
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAtTournament,
+      durationMinutes: 120,
+      basePriceMinor: 500_000
     }
   ]);
 
@@ -867,6 +897,29 @@ async function testHostedExactTargetQuotes(): Promise<void> {
   assert.equal(join120.target.target.basePriceMinor, 300_000);
   assert.equal(join120.decision.benefit?.finalPriceMinor, 105_000);
 
+  const group = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_GROUP_TRAINING', target: groupTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(group.target.participantCount, 1);
+  assert.equal(group.target.courtPriceMinor, null);
+  assert.equal(group.target.target.basePriceMinor, 300_000);
+  assert.equal(group.decision.benefit?.finalPriceMinor, 150_000);
+  assert.equal(group.resolution.browserPriceAccepted, false);
+  const groupAtActiveLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_GROUP_TRAINING', target: groupTarget, activeServices: 4, dailyGameUsage: 0
+  });
+  assert.equal(groupAtActiveLimit.bookingOutcome.pricingMode, 'BLOCKED');
+  assert.equal(groupAtActiveLimit.bookingOutcome.finalPriceMinor, null);
+
+  const tournament = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_TOURNAMENT', target: tournamentTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(tournament.target.participantCount, 1);
+  assert.equal(tournament.target.courtPriceMinor, null);
+  assert.equal(tournament.target.target.basePriceMinor, 500_000);
+  assert.equal(tournament.decision.benefit?.finalPriceMinor, 250_000);
+  assert.equal(tournament.resolution.providerCalls, 0);
+
   const browserPrice = await expectException(
     () => service.quoteResolvedUsageScenario(activated.offerId, token, {
       action: 'JOIN_GAME',
@@ -877,6 +930,25 @@ async function testHostedExactTargetQuotes(): Promise<void> {
     BadRequestException
   );
   assert.equal(exceptionCode(browserPrice), 'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID');
+
+  const browserEventPrice = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'BOOK_GROUP_TRAINING',
+      target: { ...groupTarget, basePriceMinor: 1 },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    BadRequestException
+  );
+  assert.equal(exceptionCode(browserEventPrice), 'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID');
+
+  const actionMismatch = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'BOOK_TOURNAMENT', target: groupTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(actionMismatch), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND');
 
   const unknown = await expectException(
     () => service.quoteResolvedUsageScenario(activated.offerId, token, {
@@ -933,6 +1005,30 @@ async function testHostedExactTargetQuotes(): Promise<void> {
     ServiceUnavailableException
   );
   assert.equal(exceptionCode(missingCatalog), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_NOT_CONFIGURED');
+}
+
+async function testResolvedQuoteDtoActions(): Promise<void> {
+  for (const action of [
+    'CREATE_GAME',
+    'JOIN_GAME',
+    'BOOK_GROUP_TRAINING',
+    'BOOK_TOURNAMENT'
+  ] as const) {
+    const dto = Object.assign(new SubscriptionUsageResolvedQuoteDto(), {
+      action,
+      target: { targetKind: 'EVENT_AGGREGATE', eventId: 'dto-contract' },
+      activeServices: 0,
+      dailyGameUsage: 0
+    });
+    assert.deepEqual(await validate(dto), []);
+  }
+  const forbidden = Object.assign(new SubscriptionUsageResolvedQuoteDto(), {
+    action: 'PURCHASE_ADD_ON_PRODUCT',
+    target: { targetKind: 'EVENT_AGGREGATE', eventId: 'dto-contract' },
+    activeServices: 0,
+    dailyGameUsage: 0
+  });
+  assert.ok((await validate(forbidden)).some((error) => error.property === 'action'));
 }
 
 async function testPhaseRolloverAndLastUnitConcurrency(): Promise<void> {
@@ -1194,6 +1290,7 @@ async function main(): Promise<void> {
     await testFeatureGateAndImpactPreview();
     await testActivationTokenReservationAndFakeOutcomes();
     await testHostedAnnualUsageScenarios();
+    await testResolvedQuoteDtoActions();
     await testHostedExactTargetQuotes();
     await testPhaseRolloverAndLastUnitConcurrency();
     await testCreatingReservationCrashRecovery();
