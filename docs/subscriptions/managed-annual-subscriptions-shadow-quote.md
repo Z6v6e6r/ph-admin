@@ -147,6 +147,7 @@ Recovery is disabling `SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED`,
 `SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED` and
 `SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_ENABLED`; there are no checkpoint-created data or indexes
 to roll back at application level. Runtime indexes are retained if they were separately applied.
-The next gate is a trusted projection producer plus Golden HAR/dictionary proof and synthetic
-snapshots. The adapter remains shadow-only until a separate reviewed atomic reservation and
-provider confirmation flow is approved.
+The reviewed default-off atomic reservation and provider confirmation contract is documented in
+`managed-annual-subscriptions-entitlement-lifecycle.md`. Its remaining activation gate is the
+exact Viva mixed-pricing contract plus Golden HAR/dictionary proof; shadow quote remains
+non-binding until reservation succeeds.

@@ -1611,6 +1611,168 @@ export class SubscriptionsRepository {
     await this.runtimeAggregates().insertOne(document);
   }
 
+  async reserveRuntimeEntitlement(input: {
+    expectedAggregateRevision: number;
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<{
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    replayed: boolean;
+  }> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionEntitlementAggregate(input.aggregate);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    const reservation = input.aggregate.activeServices.find(
+      (item) => item.operationId === input.operation.operationId
+    );
+    if (input.operation.kind !== 'BOOKING'
+      || input.operation.state !== 'RESERVED'
+      || input.operation.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || !reservation
+      || reservation.state !== 'RESERVED'
+      || input.ledger.eventType !== 'ENTITLEMENT_RESERVED'
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_RESERVATION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    let result: {
+      aggregate: StoredSubscriptionEntitlementAggregate;
+      operation: StoredSubscriptionRuntimeOperation;
+      replayed: boolean;
+    } | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const existing = await this.runtimeOperations().findOne({
+          tenantId: input.operation.tenantId,
+          'actor.actorId': input.operation.actor.actorId,
+          kind: input.operation.kind,
+          'idempotency.keyHash': input.operation.idempotency.keyHash
+        }, { projection: { _id: 0 }, session });
+        if (existing) {
+          validateStoredSubscriptionRuntimeOperation(existing);
+          if (existing.operationId !== input.operation.operationId
+            || existing.idempotency.requestHash !== input.operation.idempotency.requestHash) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT'
+            );
+          }
+          const aggregate = await this.runtimeAggregates().findOne(
+            { subscriptionInstanceId: input.aggregate.subscriptionInstanceId },
+            { projection: { _id: 0 }, session }
+          );
+          if (!aggregate) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTION_ENTITLEMENT_AGGREGATE_NOT_FOUND'
+            );
+          }
+          validateStoredSubscriptionEntitlementAggregate(aggregate);
+          result = { aggregate, operation: existing, replayed: true };
+          return;
+        }
+
+        const aggregate = await this.runtimeAggregates().findOneAndReplace(
+          {
+            subscriptionInstanceId: input.aggregate.subscriptionInstanceId,
+            revision: input.expectedAggregateRevision
+          },
+          input.aggregate,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!aggregate) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        await this.runtimeOperations().insertOne(input.operation, { session });
+        await this.runtimeLedger().insertOne(input.ledger, { session });
+        await this.runtimeOutbox().insertOne(input.outbox, { session });
+        result = { aggregate, operation: input.operation, replayed: false };
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSACTION_EMPTY');
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async transitionRuntimeEntitlement(input: {
+    expectedAggregateRevision: number;
+    expectedOperationRevision: number;
+    expectedOperationStates: StoredSubscriptionRuntimeOperation['state'][];
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<{
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+  }> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionEntitlementAggregate(input.aggregate);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    if (input.operation.kind !== 'BOOKING'
+      || input.operation.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSITION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    let result: {
+      aggregate: StoredSubscriptionEntitlementAggregate;
+      operation: StoredSubscriptionRuntimeOperation;
+    } | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const operation = await this.runtimeOperations().findOneAndReplace(
+          {
+            operationId: input.operation.operationId,
+            revision: input.expectedOperationRevision,
+            state: { $in: input.expectedOperationStates }
+          },
+          input.operation,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!operation) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        const aggregate = await this.runtimeAggregates().findOneAndReplace(
+          {
+            subscriptionInstanceId: input.aggregate.subscriptionInstanceId,
+            revision: input.expectedAggregateRevision
+          },
+          input.aggregate,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!aggregate) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        await this.runtimeLedger().insertOne(input.ledger, { session });
+        await this.runtimeOutbox().insertOne(input.outbox, { session });
+        result = { aggregate, operation };
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSACTION_EMPTY');
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
   async runtimeOperationById(operationId: string): Promise<StoredSubscriptionRuntimeOperation | null> {
     this.assertRuntimeContractsEnabled();
     const row = await this.runtimeOperations().findOne(

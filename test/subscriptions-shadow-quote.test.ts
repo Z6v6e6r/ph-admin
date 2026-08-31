@@ -294,6 +294,13 @@ async function run(): Promise<void> {
   assert.equal(happy.requiresReservationRecheck, true);
   assert.equal(happy.benefit?.finalPriceMinor, 0);
   assert.equal(happy.decision?.usageUnits, 1);
+  assert.deepEqual(happy.usageBucket, {
+    localDate: '2026-08-18',
+    localWeek: '2026-W34',
+    localMonth: '2026-08'
+  });
+  assert.equal(happy.dailyUsageApplies, true);
+  assert.equal(happy.dailyLimitExceeded, false);
 
   const activeLimit = evaluate(
     publicationFixture(),
@@ -402,6 +409,8 @@ async function run(): Promise<void> {
   assert.equal(annualExcess.benefit?.kind, 'PERCENT_DISCOUNT');
   assert.equal(annualExcess.benefit?.ruleId, 'daily-usage-limit-exceeded');
   assert.equal(annualExcess.benefit?.finalPriceMinor, 21000);
+  assert.equal(annualExcess.dailyUsageApplies, true);
+  assert.equal(annualExcess.dailyLimitExceeded, true);
 
   for (const [action, category, eventTypeId] of [
     ['BOOK_GROUP_TRAINING', 'GROUP_TRAINING', 'event_type:group-training'],

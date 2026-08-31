@@ -26,6 +26,11 @@ import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
+import {
+  ConfirmSubscriptionEntitlementDto,
+  ReleaseSubscriptionEntitlementDto,
+  ReserveSubscriptionEntitlementDto
+} from './dto/subscription-entitlement-lifecycle.dto';
 import { SubscriptionSaleReadinessDto } from './dto/subscription-sale-readiness.dto';
 import {
   SubscriptionSaleReadinessResult,
@@ -46,6 +51,11 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import {
+  SubscriptionEntitlementLifecycleService,
+  SubscriptionEntitlementReserveResult,
+  SubscriptionEntitlementTransitionResult
+} from './subscription-entitlement-lifecycle.service';
 import {
   SubscriptionActivationResult,
   SubscriptionActivationService
@@ -289,6 +299,7 @@ export class SubscriptionsController {
 export class SubscriptionTrustedShadowController {
   constructor(
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
+    private readonly entitlements: SubscriptionEntitlementLifecycleService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
     private readonly activation: SubscriptionActivationService,
     private readonly saleReadinessService: SubscriptionSaleReadinessService
@@ -305,6 +316,47 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionShadowQuoteAdapterDto
   ): Promise<SubscriptionShadowQuoteResult> {
     return this.adapter.quote(authorization, integrationToken, dto);
+  }
+
+  @Post('entitlements/reserve')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  reserveEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: ReserveSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReserveResult> {
+    return this.entitlements.reserve(authorization, integrationToken, dto, {
+      idempotencyKey,
+      correlationId
+    });
+  }
+
+  @Post('entitlements/confirm')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  confirmEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: ConfirmSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementTransitionResult> {
+    return this.entitlements.confirm(authorization, integrationToken, dto);
+  }
+
+  @Post('entitlements/release')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  releaseEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: ReleaseSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementTransitionResult> {
+    return this.entitlements.release(authorization, integrationToken, dto);
   }
 
   @Post('runtime-context')

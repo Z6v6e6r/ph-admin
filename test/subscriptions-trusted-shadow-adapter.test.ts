@@ -33,6 +33,7 @@ const ENV_NAMES = [
   'SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED',
   'SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS',
   'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN',
+  'SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN',
   'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
   'SUBSCRIPTIONS_RUNTIME_HASH_PEPPER',
   'SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID',
@@ -139,6 +140,30 @@ async function testTrustedAdapter(): Promise<void> {
         priceEvidenceRef: 'evidence:price-read',
         resolvedAt: '2026-08-19T09:59:50.000Z'
       };
+    },
+    resolveLatest: async (reference: unknown) => {
+      resolverCalls += 1;
+      assert.deepEqual(reference, {
+        tenantId: 'iSkq6G',
+        targetId: 'exercise:synthetic-1',
+        action: 'CREATE_GAME'
+      });
+      return {
+        resolutionSource: 'SERVER',
+        targetId: 'exercise:synthetic-1',
+        stationId: 'station:yasenevo',
+        category: 'GAME',
+        externalEventTypeId: 'event_type:open-game',
+        productTypeId: null,
+        durationMinutes: 60,
+        startsAt: '2026-08-20T06:00:00.000Z',
+        basePriceMinor: 400000,
+        currency: 'RUB',
+        dictionaryRevision: 'dictionary:2026-08-19',
+        evidenceRef: 'evidence:exercise-read',
+        priceEvidenceRef: 'evidence:price-read',
+        resolvedAt: '2026-08-19T09:59:50.000Z'
+      };
     }
   } as any;
   const adapter = new FixedClockAdapter(identity, shadowQuote, targetResolver);
@@ -184,6 +209,20 @@ async function testTrustedAdapter(): Promise<void> {
       providerClientId: 'provider_client:synthetic-1'
     })
   );
+
+  process.env.SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN = 'entitlement-token-'.repeat(3);
+  await assert.rejects(adapter.resolveEntitlementRequest(
+    'Bearer token',
+    process.env.SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN,
+    quoteDto()
+  ), (error) => error instanceof ForbiddenException);
+  const entitlementRequest = await adapter.resolveEntitlementRequest(
+    'Bearer token',
+    process.env.SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN,
+    quoteDto()
+  );
+  assert.equal(entitlementRequest.identity.clientRefHash, capturedRequest.identity.clientRefHash);
+  assert.equal(entitlementRequest.target.targetId, 'exercise:synthetic-1');
 
   identity.verifyTrustedBearer = async () => ({
     ok: true,
