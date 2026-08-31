@@ -549,6 +549,7 @@ async function verifyControllerAndFilter(): Promise<void> {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
     checked.service
   );
   const headers = new Map<string, string>();
