@@ -8,7 +8,7 @@ async function main(): Promise<void> {
   const originalWidgetIds = process.env.VIVA_END_USER_WIDGET_IDS;
   const originalUserAgent = process.env.VIVA_END_USER_USER_AGENT;
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
-  process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
+  process.env.VIVA_END_USER_WIDGET_ID = 'iSkq6G';
   delete process.env.VIVA_END_USER_WIDGET_IDS;
   delete process.env.VIVA_END_USER_USER_AGENT;
 
@@ -39,13 +39,24 @@ async function main(): Promise<void> {
     });
 
     assert.deepEqual(tournaments?.map((item) => item.id), ['manual-day-tournament']);
-    assert.equal(requestedUrls.length, 1, 'manual day refresh must make one request per widget');
-    const requestUrl = new URL(requestedUrls[0]);
-    assert.equal(requestUrl.pathname, '/end-user/api/v1/widget-test/exercises');
-    assert.equal(requestUrl.searchParams.get('date'), '2026-08-04');
-    assert.equal(requestUrl.searchParams.get('includePast'), 'true');
-    assert.equal(requestUrl.searchParams.get('past'), 'true');
-    assert.deepEqual(requestedUserAgents, ['PadlHub-LK-Tournament-Refresh/1.0']);
+    assert.equal(requestedUrls.length, 2, 'manual day refresh must make two bounded requests per widget');
+    const requestUrls = requestedUrls.map((url) => new URL(url));
+    assert.ok(requestUrls.every((url) =>
+      url.pathname === '/end-user/api/v1/iSkq6G/exercises'
+    ));
+    assert.ok(requestUrls.every((url) => url.searchParams.get('date') === '2026-08-04'));
+    assert.ok(requestUrls.every((url) => url.searchParams.get('includePast') === 'true'));
+    assert.ok(requestUrls.every((url) => url.searchParams.get('past') === 'true'));
+    assert.equal(
+      requestUrls.filter((url) =>
+        url.searchParams.get('studioId') === '1ea77cbf-bc36-49a1-96d6-f35c216a409b'
+      ).length,
+      1
+    );
+    assert.deepEqual(requestedUserAgents, [
+      'PadlHub-LK-Tournament-Refresh/1.0',
+      'PadlHub-LK-Tournament-Refresh/1.0'
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);

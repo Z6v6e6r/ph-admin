@@ -26,6 +26,12 @@ interface VivaExerciseTypeResolution {
 
 type VivaRawRecord = Record<string, unknown>;
 
+const VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET: Readonly<
+  Record<string, readonly string[]>
+> = {
+  iSkq6G: ['1ea77cbf-bc36-49a1-96d6-f35c216a409b']
+};
+
 @Injectable()
 export class VivaTournamentsService {
   private readonly logger = new Logger(VivaTournamentsService.name);
@@ -104,8 +110,15 @@ export class VivaTournamentsService {
 
     const deduplicated = new Map<string, Tournament>();
     let loadedAtLeastOneWidget = false;
+    const requestedDate = this.normalizeDateKey(options?.date);
+    const widgetIds = requestedDate
+      ? [...this.widgetIds].sort((left, right) =>
+          Number(Boolean(VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[left]))
+          - Number(Boolean(VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[right]))
+        )
+      : this.widgetIds;
 
-    for (const widgetId of this.widgetIds) {
+    for (const widgetId of widgetIds) {
       try {
         const tournaments = await this.loadTournaments(widgetId, options);
         loadedAtLeastOneWidget = true;
@@ -116,6 +129,9 @@ export class VivaTournamentsService {
         this.logger.warn(
           `Failed to load Viva tournaments for widget ${widgetId}: ${String(error)}`
         );
+        if (requestedDate) {
+          return null;
+        }
       }
     }
 
@@ -273,7 +289,10 @@ export class VivaTournamentsService {
       dates.map((dateKey) => this.fetchExercisesByDate(
         dateKey,
         widgetId,
-        options?.includePast === true
+        options?.includePast === true,
+        requestedDate
+          ? VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[widgetId] ?? []
+          : []
       ))
     );
 
@@ -475,13 +494,23 @@ export class VivaTournamentsService {
   private async fetchExercisesByDate(
     dateKey: string,
     widgetId: string,
-    includePast = false
+    includePast = false,
+    supplementalStudioIds: readonly string[] = []
   ): Promise<VivaRawRecord[]> {
-    const payload = await this.fetchJson('exercises', {
+    const query = {
       date: dateKey,
       ...(includePast ? { includePast: 'true', past: 'true' } : {})
-    }, widgetId);
-    return this.unwrapRecords(payload);
+    };
+    const payloads = await Promise.all([
+      this.fetchJson('exercises', query, widgetId),
+      ...supplementalStudioIds.map((studioId) => this.fetchJson(
+        'exercises',
+        { ...query, studioId },
+        widgetId
+      ))
+    ]);
+
+    return payloads.flatMap((payload) => this.unwrapRecords(payload));
   }
 
   private async fetchTournamentDates(

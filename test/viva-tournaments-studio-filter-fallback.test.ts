@@ -10,7 +10,7 @@ async function main(): Promise<void> {
   const originalExerciseTypeIds = process.env.VIVA_TOURNAMENT_EXERCISE_TYPE_IDS;
 
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
-  process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
+  process.env.VIVA_END_USER_WIDGET_ID = 'iSkq6G';
   process.env.VIVA_TOURNAMENT_EXERCISE_TYPE_IDS = '839,1013';
 
   const requestedUrls: string[] = [];
@@ -79,6 +79,13 @@ async function main(): Promise<void> {
     assert.equal(datesRequests.length, 2);
     assert.ok(datesRequests.some((url) => url.includes('studioIds=studio-moscow')));
     assert.ok(datesRequests.some((url) => !url.includes('studioIds=')));
+    assert.equal(
+      requestedUrls.filter((url) =>
+        url.includes('/exercises?') && url.includes('studioId=')
+      ).length,
+      0,
+      'background range loading should not fan out per studio'
+    );
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);
