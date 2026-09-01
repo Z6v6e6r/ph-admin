@@ -592,9 +592,13 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
 
   listStationConfigs(user: RequestUser): MessengerStationConfig[] {
     this.ensureSettingsReadAccess(user);
-    return Array.from(this.stationConfigs.values()).sort((left, right) =>
+    const stations = Array.from(this.stationConfigs.values()).sort((left, right) =>
       left.stationId.localeCompare(right.stationId)
     );
+    if (this.isSuperAdmin(user) || user.roles.includes(Role.MANAGER)) {
+      return stations;
+    }
+    return stations.map(({ tournamentBroadcastBoxId: _boxId, ...station }) => station);
   }
 
   createStationConfig(
@@ -608,10 +612,12 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     }
 
     const now = new Date().toISOString();
+    const tournamentBroadcastBoxId = dto.tournamentBroadcastBoxId?.trim();
     const station: MessengerStationConfig = {
       stationId,
       stationName: dto.stationName?.trim() || stationId,
       isActive: dto.isActive ?? true,
+      ...(tournamentBroadcastBoxId ? { tournamentBroadcastBoxId } : {}),
       createdAt: now,
       updatedAt: now
     };
@@ -631,12 +637,24 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       throw new NotFoundException(`Station with id ${stationId} not found`);
     }
 
+    const updatesTournamentBroadcastBoxId = Object.prototype.hasOwnProperty.call(
+      dto,
+      'tournamentBroadcastBoxId'
+    );
     const updated: MessengerStationConfig = {
       ...existing,
       stationName: dto.stationName?.trim() || existing.stationName,
       isActive: dto.isActive ?? existing.isActive,
       updatedAt: new Date().toISOString()
     };
+    if (updatesTournamentBroadcastBoxId) {
+      const tournamentBroadcastBoxId = dto.tournamentBroadcastBoxId?.trim();
+      if (tournamentBroadcastBoxId) {
+        updated.tournamentBroadcastBoxId = tournamentBroadcastBoxId;
+      } else {
+        delete updated.tournamentBroadcastBoxId;
+      }
+    }
 
     this.stationConfigs.set(stationId, updated);
     this.persistence.persistStation(updated);

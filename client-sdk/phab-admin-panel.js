@@ -10952,6 +10952,17 @@
     stationNameInput.placeholder = 'Москва #1';
     stationForm.appendChild(stationNameInput);
 
+    var stationBroadcastBoxIdLabel = document.createElement('label');
+    stationBroadcastBoxIdLabel.className = 'phab-admin-settings-label';
+    stationBroadcastBoxIdLabel.textContent = 'ID приставки трансляции';
+    stationForm.appendChild(stationBroadcastBoxIdLabel);
+
+    var stationBroadcastBoxIdInput = document.createElement('input');
+    stationBroadcastBoxIdInput.className = 'phab-admin-settings-input';
+    stationBroadcastBoxIdInput.placeholder = 'UUID приставки';
+    stationBroadcastBoxIdInput.autocomplete = 'off';
+    stationForm.appendChild(stationBroadcastBoxIdInput);
+
     var stationActiveWrap = document.createElement('label');
     stationActiveWrap.className = 'phab-admin-check';
     stationForm.appendChild(stationActiveWrap);
@@ -13507,6 +13518,7 @@
       stationList: stationList,
       stationIdInput: stationIdInput,
       stationNameInput: stationNameInput,
+      stationBroadcastBoxIdInput: stationBroadcastBoxIdInput,
       stationActiveInput: stationActiveInput,
       stationCreateBtn: stationCreateBtn,
       connectorList: connectorList,
@@ -32837,8 +32849,36 @@
         var meta = document.createElement('div');
         meta.className = 'phab-admin-settings-row-meta';
         meta.textContent =
-          (station.isActive ? 'active' : 'inactive') + ' · обновлено ' + formatTime(station.updatedAt);
+          (station.isActive ? 'active' : 'inactive') +
+          ' · приставка: ' +
+          (station.tournamentBroadcastBoxId || 'не привязана') +
+          ' · обновлено ' +
+          formatTime(station.updatedAt);
         main.appendChild(meta);
+
+        var broadcastEditor = document.createElement('div');
+        broadcastEditor.className = 'phab-admin-settings-form';
+        main.appendChild(broadcastEditor);
+
+        var broadcastInput = document.createElement('input');
+        broadcastInput.className = 'phab-admin-settings-input';
+        broadcastInput.value = String(station.tournamentBroadcastBoxId || '');
+        broadcastInput.placeholder = 'UUID приставки';
+        broadcastInput.autocomplete = 'off';
+        broadcastInput.setAttribute(
+          'aria-label',
+          'ID приставки трансляции для ' + station.stationName
+        );
+        broadcastEditor.appendChild(broadcastInput);
+
+        var saveBroadcastBtn = document.createElement('button');
+        saveBroadcastBtn.type = 'button';
+        saveBroadcastBtn.className = 'phab-admin-btn-secondary';
+        saveBroadcastBtn.textContent = 'Сохранить ID';
+        saveBroadcastBtn.addEventListener('click', function () {
+          saveStationBroadcastBoxId(station, broadcastInput, saveBroadcastBtn).catch(handleError);
+        });
+        broadcastEditor.appendChild(saveBroadcastBtn);
 
         var action = document.createElement('button');
         action.type = 'button';
@@ -35905,10 +35945,13 @@
         await api.createStation({
           stationId: stationId,
           stationName: String(dom.stationNameInput.value || '').trim() || undefined,
+          tournamentBroadcastBoxId:
+            String(dom.stationBroadcastBoxIdInput.value || '').trim() || undefined,
           isActive: Boolean(dom.stationActiveInput.checked)
         });
         dom.stationIdInput.value = '';
         dom.stationNameInput.value = '';
+        dom.stationBroadcastBoxIdInput.value = '';
         dom.stationActiveInput.checked = true;
         await loadSettings();
         await refreshDialogsView();
@@ -35923,6 +35966,25 @@
       await loadSettings();
       await refreshDialogsView();
       setStatus('Станция обновлена', false);
+    }
+
+    async function saveStationBroadcastBoxId(station, input, button) {
+      var tournamentBroadcastBoxId = String(input.value || '').trim();
+      button.disabled = true;
+      try {
+        await api.updateStation(station.stationId, {
+          tournamentBroadcastBoxId: tournamentBroadcastBoxId || null
+        });
+        await loadSettings();
+        setStatus(
+          tournamentBroadcastBoxId
+            ? 'ID приставки сохранён'
+            : 'Привязка приставки удалена',
+          false
+        );
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function createConnector() {

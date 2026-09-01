@@ -154,9 +154,15 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
   persistStation(station: MessengerStationConfig): void {
     this.fireAndForget(
       async () => {
+        const update = station.tournamentBroadcastBoxId
+          ? { $set: station }
+          : {
+              $set: station,
+              $unset: { tournamentBroadcastBoxId: '' as const }
+            };
         await this.stations().updateOne(
           { stationId: station.stationId },
-          { $set: station },
+          update,
           { upsert: true }
         );
       },
