@@ -78,4 +78,17 @@ assert.deepEqual(resolveSubscriptionSalePeriod({
   purchasedAt: '2026-02-01T00:00:00.000Z',
   publications: [{ ...first, supersededAt: '2026-01-31T23:59:59.999Z' }, second]
 }), { matchCount: 0, kind: 'MALFORMED' });
+const subMillisecondFirst = publication(1, '2026-01-01T00:00:00.000Z');
+const subMillisecondSecond = publication(2, '2026-02-01T00:00:00.000500Z');
+subMillisecondFirst.state = 'SUPERSEDED';
+subMillisecondFirst.supersededAt = subMillisecondSecond.publishedAt;
+subMillisecondFirst.supersededBy = subMillisecondSecond.publicationId;
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-02-01T00:00:00.000499Z',
+  publications: [subMillisecondFirst, subMillisecondSecond]
+}), { matchCount: 0, kind: 'MALFORMED' });
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-02-01T00:00:00.000500Z',
+  publications: [subMillisecondFirst, subMillisecondSecond]
+}), { matchCount: 0, kind: 'MALFORMED' });
 console.log('subscription sale-period resolver tests passed');

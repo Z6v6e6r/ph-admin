@@ -68,6 +68,9 @@ closed. A disabled publication is never silently skipped or accepted as the
 selected policy. Runtime-context never uses the current date to select or
 re-pin a policy. Explicit publication `until` values are not a supported
 contract; the next `effectiveAt` is the exclusive end of a period.
+All selector and boundary timestamps are restricted to millisecond precision;
+higher fractional precision fails closed instead of being rounded by JavaScript
+date parsing.
 
 The complete history must also be a canonical lifecycle chain: the chronological
 tail is the only `PUBLISHED` row, and every earlier row is `SUPERSEDED` with
