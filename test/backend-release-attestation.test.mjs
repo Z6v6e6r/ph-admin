@@ -1,13 +1,18 @@
 import * as assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   BackendReleaseAttestationError,
+  buildBackendReleaseAttestation,
+  DEV_RELEASE_TARGET,
   canonicalGitHubRepository,
   createDeterministicTarGzip,
   isSensitiveRuntimePath,
+  parseReleaseArguments,
+  releaseIdentity,
   scanRuntimeArtifact,
   shouldExcludeRuntimePath,
   validateReleaseTarget
@@ -22,6 +27,99 @@ const target = () => ({
   entrypoint: 'node dist/main.js',
   nodeVersion: 'v22.13.1',
   npmVersion: '11.1.0'
+});
+
+test('DEV target is explicit, closed, source-controlled and never accepted as production', async () => {
+  const dev = JSON.parse(await readFile(new URL('../deploy/release-targets/subscriptions-dev-backend.json', import.meta.url)));
+  assert.deepEqual(dev, DEV_RELEASE_TARGET);
+  assert.deepEqual(validateReleaseTarget(dev, 'subscriptions-dev'), dev);
+  assert.deepEqual(validateReleaseTarget(target()), validateReleaseTarget(target(), 'production'));
+  for (const profile of ['', 'dev', 'test', 'PRODUCTION', null]) {
+    assert.throws(() => validateReleaseTarget(dev, profile), errorCode('BACKEND_RELEASE_PROFILE_INVALID'));
+  }
+  assert.throws(() => validateReleaseTarget(dev), errorCode('BACKEND_RELEASE_TARGET_SHAPE_INVALID'));
+  assert.throws(() => validateReleaseTarget(target(), 'subscriptions-dev'), errorCode('BACKEND_RELEASE_TARGET_SHAPE_INVALID'));
+  for (const key of Object.keys(dev)) {
+    assert.throws(() => validateReleaseTarget({ ...dev, [key]: 'drift' }, 'subscriptions-dev'), errorCode('BACKEND_RELEASE_TARGET_MISMATCH'));
+    const missing = { ...dev };
+    delete missing[key];
+    assert.throws(() => validateReleaseTarget(missing, 'subscriptions-dev'), errorCode('BACKEND_RELEASE_TARGET_SHAPE_INVALID'));
+  }
+  for (const serviceName of [target().serviceName, 'phab-api-dev-subscriptions.service']) {
+    assert.throws(() => validateReleaseTarget({ ...dev, serviceName }, 'subscriptions-dev'), errorCode('BACKEND_RELEASE_TARGET_MISMATCH'));
+  }
+  assert.throws(() => validateReleaseTarget({ ...dev, extra: true }, 'subscriptions-dev'), errorCode('BACKEND_RELEASE_TARGET_SHAPE_INVALID'));
+});
+
+test('DEV artifact identity is distinct and commits to the canonical target', () => {
+  const sha = 'a'.repeat(40);
+  assert.deepEqual(releaseIdentity(target(), sha), releaseIdentity(target(), sha, 'production'));
+  assert.deepEqual(releaseIdentity(target(), sha), {
+    schema: 'ph-admin-backend-release-attestation-v1',
+    rootName: 'ph-admin-backend-aaaaaaaaaaaa',
+    metadata: {}
+  });
+  const dev = releaseIdentity(DEV_RELEASE_TARGET, sha, 'subscriptions-dev');
+  assert.equal(dev.schema, 'ph-admin-subscriptions-dev-release-attestation-v1');
+  assert.equal(dev.rootName, 'ph-admin-subscriptions-dev-aaaaaaaaaaaa');
+  assert.deepEqual(dev.metadata.target, DEV_RELEASE_TARGET);
+  assert.match(dev.metadata.targetSha256, /^[a-f0-9]{64}$/);
+  assert.equal(dev.metadata.builderSourceCommit, sha);
+  assert.equal(dev.metadata.activationAuthorized, false);
+  const reordered = Object.fromEntries(Object.entries(DEV_RELEASE_TARGET).reverse());
+  assert.deepEqual(releaseIdentity(reordered, sha, 'subscriptions-dev'), dev);
+});
+
+test('CLI rejects ambiguous profiles instead of falling back to production', () => {
+  assert.deepEqual(parseReleaseArguments([]), {});
+  assert.deepEqual(parseReleaseArguments(['--profile', 'subscriptions-dev']), { '--profile': 'subscriptions-dev' });
+  for (const args of [
+    ['--profile'], ['--profile', ''], ['--profile', '--target', 'file'],
+    ['--profile', 'production', '--profile', 'subscriptions-dev'],
+    ['--profile=subscriptions-dev'], ['--profle', 'subscriptions-dev'],
+    ['--target', 'one', '--target', 'two']
+  ]) assert.throws(() => parseReleaseArguments(args), errorCode('BACKEND_RELEASE_ARGUMENT_INVALID'));
+  assert.throws(() => parseReleaseArguments(['--profile', 'dev']), errorCode('BACKEND_RELEASE_PROFILE_INVALID'));
+});
+
+test('DEV build rejects untracked builder or target provenance before npm or output creation', async () => {
+  for (const scenario of ['builder-mismatch', 'target-drift', 'target-missing']) {
+    const root = await mkdtemp(join(tmpdir(), 'dev-release-custody-'));
+    const source = join(root, 'source');
+    const output = join(root, 'output');
+    try {
+      await mkdir(join(source, 'scripts'), { recursive: true });
+      await mkdir(join(source, 'deploy/release-targets'), { recursive: true });
+      const builder = scenario === 'builder-mismatch' ? '// not the running builder\n'
+        : await readFile(new URL('../scripts/build-backend-release-attestation.mjs', import.meta.url), 'utf8');
+      await writeFile(join(source, 'scripts/build-backend-release-attestation.mjs'), builder);
+      if (scenario !== 'target-missing') {
+        await writeFile(join(source, 'deploy/release-targets/subscriptions-dev-backend.json'), JSON.stringify({
+          ...DEV_RELEASE_TARGET,
+          ...(scenario === 'target-drift' ? { serviceName: 'production.service' } : {})
+        }));
+      }
+      const explicitTarget = join(root, 'valid-target.json');
+      await writeFile(explicitTarget, JSON.stringify(DEV_RELEASE_TARGET));
+      const git = args => execFileSync('git', args, { cwd: source, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      git(['init', '-q']);
+      git(['remote', 'add', 'origin', 'https://github.com/Z6v6e6r/ph-admin.git']);
+      git(['add', '.']);
+      git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'synthetic source']);
+      const head = git(['rev-parse', 'HEAD']);
+      const tree = git(['rev-parse', 'HEAD^{tree}']);
+      git(['checkout', '--detach', head]);
+      const expected = scenario === 'builder-mismatch' ? 'BACKEND_RELEASE_BUILDER_SOURCE_MISMATCH'
+        : scenario === 'target-drift' ? 'BACKEND_RELEASE_TARGET_MISMATCH' : 'BACKEND_RELEASE_COMMAND_FAILED';
+      await assert.rejects(() => buildBackendReleaseAttestation({
+        source, output, expectedHead: head, expectedTree: tree, trustedRef: 'HEAD',
+        profile: 'subscriptions-dev', targetPath: explicitTarget
+      }), errorCode(expected));
+      await assert.rejects(() => access(output), { code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
 });
 
 const errorCode = (code) => (error) =>

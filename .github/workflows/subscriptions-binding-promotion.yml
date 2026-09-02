@@ -105,4 +105,17 @@ jobs:
             "${artifact_parent}/second/ph-admin-backend-${head_sha:0:12}.tar.gz"
           cmp "${artifact_parent}/first/release-manifest.json" \
             "${artifact_parent}/second/release-manifest.json"
+          for build in dev-first dev-second; do
+            npm run backend:release-attestation:build -- \
+              --profile subscriptions-dev \
+              --source "${GITHUB_WORKSPACE}" \
+              --output "${artifact_parent}/${build}" \
+              --expected-head "${head_sha}" \
+              --expected-tree "${tree_sha}" \
+              --trusted-ref "${trusted_ref}"
+          done
+          cmp "${artifact_parent}/dev-first/ph-admin-subscriptions-dev-${head_sha:0:12}.tar.gz" \
+            "${artifact_parent}/dev-second/ph-admin-subscriptions-dev-${head_sha:0:12}.tar.gz"
+          cmp "${artifact_parent}/dev-first/release-manifest.json" \
+            "${artifact_parent}/dev-second/release-manifest.json"
       - run: git diff --check origin/main...HEAD
