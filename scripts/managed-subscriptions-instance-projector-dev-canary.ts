@@ -168,20 +168,40 @@ export async function assertSubscriptionInstanceDevCanaryFixtureCustody(
   target: { targetSha256: string; database: string }
 ): Promise<void> {
   const hello = await db.admin().command({ hello: 1 });
-  const hosts = Array.isArray(hello.hosts) ? hello.hosts : [];
-  if (hello.isWritablePrimary !== true
-    || hello.setName !== 'rs0'
-    || hosts.length !== 1
-    || hosts.some((host) => typeof host !== 'string'
-      || !/^(?:localhost|127\.0\.0\.1|\[::1\]):[0-9]{2,5}$/.test(host))) {
-    fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_TOPOLOGY_FORBIDDEN');
-  }
+  const replicaSetConfig = await db.admin().command({ replSetGetConfig: 1 });
+  assertSubscriptionInstanceDevCanaryReplicaSetTopology(hello, replicaSetConfig);
   const expected = subscriptionInstanceDevCanaryFixtureSentinel(env, target);
   const actual = await db.collection<typeof expected>(
     SUBSCRIPTION_INSTANCE_DEV_CANARY_FIXTURE_SENTINEL_COLLECTION
   ).findOne({ _id: expected._id });
   if (!isDeepStrictEqual(actual, expected)) {
     fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_SENTINEL_MISMATCH');
+  }
+}
+
+export function assertSubscriptionInstanceDevCanaryReplicaSetTopology(
+  hello: Record<string, unknown>,
+  replicaSetConfig: Record<string, unknown>
+): void {
+  const hosts = Array.isArray(hello.hosts) ? hello.hosts : [];
+  const config = replicaSetConfig.config;
+  const members = config && typeof config === 'object' && !Array.isArray(config)
+    && Array.isArray((config as Record<string, unknown>).members)
+    ? (config as Record<string, unknown>).members as unknown[]
+    : [];
+  const configuredHost = members.length === 1
+    && members[0] && typeof members[0] === 'object' && !Array.isArray(members[0])
+    ? (members[0] as Record<string, unknown>).host
+    : null;
+  const loopbackHostPattern = /^(?:localhost|127\.0\.0\.1|\[::1\]):[0-9]{2,5}$/;
+  if (hello.isWritablePrimary !== true
+    || hello.setName !== 'rs0'
+    || hosts.length !== 1
+    || hosts.some((host) => typeof host !== 'string'
+      || !loopbackHostPattern.test(host))
+    || typeof configuredHost !== 'string'
+    || !loopbackHostPattern.test(configuredHost)) {
+    fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_TOPOLOGY_FORBIDDEN');
   }
 }
 

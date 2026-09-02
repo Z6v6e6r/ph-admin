@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import {
   assertSubscriptionInstanceDevCanaryBoundary,
+  assertSubscriptionInstanceDevCanaryReplicaSetTopology,
   parseSubscriptionInstanceDevCanaryInput
 } from '../scripts/managed-subscriptions-instance-projector-dev-canary';
 import {
@@ -122,6 +123,27 @@ assert.throws(
     SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_NONCE_SHA256: ''
   }),
   hasCode('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_ATTESTATION_REQUIRED')
+);
+
+const localHello = {
+  isWritablePrimary: true,
+  setName: 'rs0',
+  hosts: ['127.0.0.1:27017']
+};
+assert.doesNotThrow(() => assertSubscriptionInstanceDevCanaryReplicaSetTopology(
+  localHello,
+  { config: { members: [{ _id: 0, host: '127.0.0.1:27017' }] } }
+));
+assert.throws(
+  () => assertSubscriptionInstanceDevCanaryReplicaSetTopology(localHello, {
+    config: {
+      members: [
+        { _id: 0, host: '127.0.0.1:27017' },
+        { _id: 1, host: 'remote.internal:27017', hidden: true, priority: 0 }
+      ]
+    }
+  }),
+  hasCode('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_TOPOLOGY_FORBIDDEN')
 );
 
 console.log('subscriptions instance DEV canary tests passed');

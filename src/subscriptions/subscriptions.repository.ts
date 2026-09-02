@@ -748,24 +748,22 @@ export class SubscriptionsRepository {
           })
           .sort({ subscriptionInstanceId: 1 })
           .toArray();
-        const [publicationHistory, mapping, releaseProgram, subscriptionType] = await Promise.all([
-          this.runtimePublications().find(
-            { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
-            { projection: { _id: 0 }, session }
-          ).sort({ effectiveAt: 1, publicationId: 1 }).toArray(),
-          this.runtimeMappings().findOne(
-            { mappingId: plan.checkpoint.binding.mappingId },
-            { projection: { _id: 0 }, session }
-          ),
-          this.programs().findOne(
-            { releaseProgramId: plan.checkpoint.binding.releaseProgramId },
-            { projection: { _id: 0 }, session }
-          ),
-          this.types().findOne(
-            { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
-            { projection: { _id: 0 }, session }
-          )
-        ]);
+        const publicationHistory = await this.runtimePublications().find(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+        const mapping = await this.runtimeMappings().findOne(
+          { mappingId: plan.checkpoint.binding.mappingId },
+          { projection: { _id: 0 }, session }
+        );
+        const releaseProgram = await this.programs().findOne(
+          { releaseProgramId: plan.checkpoint.binding.releaseProgramId },
+          { projection: { _id: 0 }, session }
+        );
+        const subscriptionType = await this.types().findOne(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        );
         publicationHistory.forEach(validateStoredSubscriptionPolicyPublication);
         if (plan.checkpoint.schemaVersion !== 3
           || !plan.checkpoint.policyResolution
