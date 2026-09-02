@@ -15,9 +15,11 @@ import {
 } from './subscription-runtime-contracts';
 import { computeSubscriptionClientRefHash } from './subscription-trusted-shadow-adapter.service';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import { resolveSubscriptionSalePeriod } from './subscription-sale-period-resolver';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionInstance,
+  StoredSubscriptionPolicyPublication,
   SubscriptionRuntimeProjectionSnapshot
 } from './subscriptions.types';
 
@@ -102,21 +104,49 @@ export class SubscriptionRuntimeContextService {
     }
     validateStoredSubscriptionInstance(instance);
 
-    const [mapping, publication] = await Promise.all([
-      this.repository.runtimeProviderMappingById(instance.mappingId),
-      this.repository.runtimePolicyPublicationByVersion(
-        instance.subscriptionTypeId,
-        instance.policyVersion
-      )
-    ]);
-    if (!mapping || !publication) {
+    const mapping = await this.repository.runtimeProviderMappingById(instance.mappingId);
+    let publications: StoredSubscriptionPolicyPublication[];
+    try {
+      publications = await this.repository.runtimePolicyPublicationHistoryByType(instance.subscriptionTypeId);
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_RUNTIME_SALE_PERIOD_INVALID',
+        message: 'Subscription sale-period history is invalid'
+      });
+    }
+    if (!mapping || publications.length === 0) {
       throw new ServiceUnavailableException({
         code: 'SUBSCRIPTION_RUNTIME_CONTEXT_INCOMPLETE',
         message: 'Subscription runtime context is incomplete'
       });
     }
     validateStoredSubscriptionProviderMapping(mapping);
-    validateStoredSubscriptionPolicyPublication(publication);
+    let resolution: ReturnType<typeof resolveSubscriptionSalePeriod>;
+    try {
+      publications.forEach((publication) => validateStoredSubscriptionPolicyPublication(publication));
+      resolution = resolveSubscriptionSalePeriod({
+        purchasedAt: instance.purchasedAt,
+        publications
+      });
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_RUNTIME_SALE_PERIOD_INVALID',
+        message: 'Subscription sale-period history is invalid'
+      });
+    }
+    if (resolution.kind === 'MALFORMED') {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_RUNTIME_SALE_PERIOD_INVALID',
+        message: 'Subscription sale-period history is invalid'
+      });
+    }
+    if (resolution.kind !== 'MATCH') {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_RUNTIME_SALE_PERIOD_UNRESOLVED',
+        message: 'Subscription sale-period rule is not uniquely resolved'
+      });
+    }
+    const publication = resolution.publication;
 
     const now = this.now();
     if (mapping.state !== 'VERIFIED'
@@ -147,11 +177,11 @@ export class SubscriptionRuntimeContextService {
         message: 'Subscription provider mapping is stale'
       });
     }
-    if (publication.state === 'DISABLED_FOR_NEW_OPERATIONS'
-      || publication.subscriptionTypeId !== instance.subscriptionTypeId
+    if (publication.subscriptionTypeId !== instance.subscriptionTypeId
       || publication.policyVersion !== instance.policyVersion
       || publication.policyDigest !== instance.policyDigest
       || publication.mappingId !== instance.mappingId
+      || publication.state === 'DISABLED_FOR_NEW_OPERATIONS'
       || Date.parse(publication.effectiveAt) > now.getTime()) {
       throw new ServiceUnavailableException({
         code: 'SUBSCRIPTION_RUNTIME_POLICY_NOT_CURRENT',

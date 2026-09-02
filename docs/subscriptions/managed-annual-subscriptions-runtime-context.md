@@ -49,11 +49,25 @@ Before returning context CUP requires:
 3. LK tenant and canonical provider client identity;
 4. exact actor ownership hash;
 5. verified, fresh provider mapping with matching tenant/product/type/scope;
-6. exact `PUBLISHED`, already-effective policy linked by mapping/version/digest;
+6. exactly one sale-period policy derived from the instance `purchasedAt` and
+   publication `effectiveAt` history, linked by the stored mapping/version/digest;
 7. current, fresh subscription-instance reconciliation.
 
 Any missing, stale, disabled or mismatched evidence blocks the request. There is
 no fallback to product names or client-supplied subscription instance ids.
+
+## Sale-period resolution
+
+For one subscription type, CUP derives half-open periods from every stored
+publication (`PUBLISHED`, `SUPERSEDED`, and disabled):
+`[effectiveAt(vN), effectiveAt(vN+1))`; the last period is open-ended. The
+instance `purchasedAt` selects the policy. A purchase exactly at a newer
+`effectiveAt` selects that newer policy. Before the first period, malformed
+timestamps, duplicate starts, or any result other than exactly one match fail
+closed. A disabled selected publication is rejected after selection; it is not
+silently skipped. Runtime-context never uses the current date to select or
+re-pin a policy. Explicit publication `until` values are not a supported
+contract; the next `effectiveAt` is the exclusive end of a period.
 
 ## Configuration
 

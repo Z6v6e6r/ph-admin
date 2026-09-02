@@ -1114,6 +1114,18 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimePolicyPublicationHistoryByType(
+    subscriptionTypeId: string
+  ): Promise<StoredSubscriptionPolicyPublication[]> {
+    this.assertRuntimeContractsEnabled();
+    const rows = await this.runtimePublications().find(
+      { subscriptionTypeId },
+      { projection: { _id: 0 } }
+    ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+    rows.forEach((row) => validateStoredSubscriptionPolicyPublication(row));
+    return rows;
+  }
+
   async runtimePolicyPublicationByIdempotency(input: {
     actorId: string;
     key: string;
@@ -1263,6 +1275,10 @@ export class SubscriptionsRepository {
             throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
           }
           validateStoredSubscriptionProviderMapping(previousMapping);
+          validateStoredSubscriptionPolicyPublication(previousPublication);
+          if (Date.parse(input.publication.effectiveAt) <= Date.parse(previousPublication.effectiveAt)) {
+            throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
           if (persistedFence) {
             validateStoredSubscriptionProjectionFence(persistedFence);
             if (persistedFence.fenceId !== subscriptionProjectionFenceId(type.subscriptionTypeId)
