@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { MongoClient, MongoServerError } from 'mongodb';
 import {
-  buildSubscriptionInstanceProjectionPlan,
+  buildSubscriptionInstanceProjectionPlan as buildSubscriptionInstanceProjectionPlanWithHistory,
   assertSubscriptionInstanceProjectionApplyBoundary,
   subscriptionInstanceProjectionInputFingerprint,
   subscriptionInstanceProjectionTargetFingerprint,
@@ -26,7 +26,7 @@ import {
 } from '../scripts/managed-subscriptions-instance-projector';
 
 const HASH = 'a'.repeat(64);
-const PEPPER = 'projector-test-pepper-is-at-least-32-bytes';
+export const PEPPER = 'projector-test-pepper-is-at-least-32-bytes';
 const NOW = '2026-08-28T09:00:00.000Z';
 const COVERAGE = '2026-08-28T08:59:50.000Z';
 const PRODUCT_ID = 'provider-product-annual-piter';
@@ -43,7 +43,7 @@ const digest = (value: unknown): `sha256:${string}` => `sha256:${createHash('sha
   .digest('hex')}`;
 const evidence = (kind: string, digit = 'a'): string => `${kind}:sha256:${digit.repeat(64)}`;
 
-const record = (): Record<string, unknown> => ({
+export const record = (): Record<string, unknown> => ({
   providerClientId: 'provider-client-001',
   clientSubscriptionId: 'client-subscription-001',
   homeStationId: STATION_ID,
@@ -164,6 +164,83 @@ const publication = (): StoredSubscriptionPolicyPublication => {
   return value;
 };
 
+const buildSubscriptionInstanceProjectionPlan = (
+  input: unknown,
+  pepper: unknown,
+  publications: readonly StoredSubscriptionPolicyPublication[] = [publication()]
+) => buildSubscriptionInstanceProjectionPlanWithHistory(input, pepper, publications);
+
+export const twoPublicationHistory = (): [
+  StoredSubscriptionPolicyPublication,
+  StoredSubscriptionPolicyPublication
+] => {
+  const first = publication();
+  const second: StoredSubscriptionPolicyPublication = {
+    ...structuredClone(first),
+    publicationId: 'publication:annual-piter-v2',
+    policyVersion: 2,
+    effectiveAt: '2026-08-15T00:00:00.000Z',
+    publishedAt: '2026-08-14T10:00:00.000Z',
+    impactPreviewRef: 'impact:annual-piter-v2',
+    approvalAuditRef: 'audit:annual-piter-v2',
+    idempotency: {
+      actorId: 'admin:subscriptions',
+      key: 'publication-annual-piter-v2',
+      requestHash: HASH,
+      correlationId: 'correlation:publication-annual-piter-v2'
+    },
+    runtimeProjection: {
+      ...structuredClone(first.runtimeProjection),
+      policyVersion: 2,
+      effectiveAt: '2026-08-15T00:00:00.000Z'
+    }
+  };
+  second.policyDigest = computeSubscriptionRuntimeProjectionDigest(second.runtimeProjection);
+  first.state = 'SUPERSEDED';
+  first.supersededAt = second.publishedAt;
+  first.supersededBy = second.publicationId;
+  return [first, second];
+};
+
+export const manifestForHistory = (
+  records: Array<Record<string, unknown>>,
+  history: readonly StoredSubscriptionPolicyPublication[]
+): Record<string, unknown> => {
+  const current = history.at(-1)!;
+  const fence = buildSubscriptionProjectionFence({
+    mapping: mapping(),
+    publication: current,
+    previous: history.length > 1 ? projectionFence() : null
+  });
+  const sortedRecords = [...records].sort((left, right) => {
+    const leftId = `${String(left.providerClientId)}\0${String(left.clientSubscriptionId)}`;
+    const rightId = `${String(right.providerClientId)}\0${String(right.clientSubscriptionId)}`;
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
+  const base = manifest();
+  return {
+    ...base,
+    binding: {
+      ...(base.binding as Record<string, unknown>),
+      fenceId: fence.fenceId,
+      fenceRevision: fence.bindingRevision,
+      fenceDigest: fence.bindingDigest,
+      publicationId: current.publicationId,
+      policyVersion: current.policyVersion,
+      policyDigest: current.policyDigest
+    },
+    authority: {
+      ...(base.authority as Record<string, unknown>),
+      sourceItemCount: records.length
+    },
+    snapshot: {
+      ...(base.snapshot as Record<string, unknown>),
+      snapshotDigest: digest(sortedRecords)
+    },
+    records
+  };
+};
+
 const releaseProgram = (): StoredReleaseProgram => ({
   schemaVersion: 1,
   releaseProgramId: 'release_program:annual-piter',
@@ -272,6 +349,7 @@ class FakeRepository {
   preflightCalls = 0;
   mapping = mapping();
   publication = publication();
+  publicationHistory: StoredSubscriptionPolicyPublication[] = [publication()];
   program = releaseProgram();
   subscriptionType = { state: 'ACTIVE', currentPolicyVersion: 1 };
   fence: ReturnType<typeof projectionFence> | null = projectionFence();
@@ -280,6 +358,9 @@ class FakeRepository {
   async connectReadOnly(): Promise<void> { this.connectReadOnlyCalls += 1; }
   async runtimeProviderMappingByProviderIdentity(): Promise<StoredSubscriptionProviderMapping | null> { return this.mapping; }
   async runtimePolicyPublicationByVersion(): Promise<StoredSubscriptionPolicyPublication | null> { return this.publication; }
+  async runtimePolicyPublicationHistoryByType(): Promise<StoredSubscriptionPolicyPublication[]> {
+    return structuredClone(this.publicationHistory);
+  }
   async releaseProgramById(): Promise<StoredReleaseProgram | null> { return this.program; }
   async subscriptionTypeById(): Promise<any> { return this.subscriptionType; }
   async runtimeProjectionFenceByType(): Promise<any> {
@@ -340,6 +421,10 @@ async function verifyRealMongoPostcommitReadback(
     );
   };
   await client.connect();
+  for (const dbName of Object.values(dbNames)) {
+    await client.db(dbName).collection('subscription_policy_publications')
+      .insertOne(structuredClone(publication()));
+  }
   const repositoryFor = (dbName: string): SubscriptionsRepository => {
     const repository = new SubscriptionsRepository() as any;
     repository.client = client;
@@ -819,6 +904,131 @@ async function run(): Promise<void> {
     multiPlan.instances.map((instance) => instance.subscriptionInstanceId).sort()
   );
 
+  const history = twoPublicationHistory();
+  const beforeBoundary = {
+    ...record(),
+    providerClientId: 'provider-client-before-boundary',
+    clientSubscriptionId: 'client-subscription-before-boundary',
+    purchasedAt: '2026-08-14T23:59:59.999Z',
+    activeFrom: '2026-08-14T23:59:59.999Z',
+    activeTo: '2027-08-14T23:59:59.999Z'
+  };
+  const exactBoundary = {
+    ...record(),
+    providerClientId: 'provider-client-exact-boundary',
+    clientSubscriptionId: 'client-subscription-exact-boundary',
+    purchasedAt: '2026-08-15T00:00:00.000Z',
+    activeFrom: '2026-08-15T00:00:00.000Z',
+    activeTo: '2027-08-15T00:00:00.000Z'
+  };
+  const multiPeriodInput = manifestForHistory([beforeBoundary, exactBoundary], history);
+  const multiPeriodPlan = buildSubscriptionInstanceProjectionPlan(
+    multiPeriodInput,
+    PEPPER,
+    history
+  );
+  assert.deepEqual(
+    multiPeriodPlan.instances.map((instance) => [
+      instance.clientSubscriptionId,
+      instance.policyVersion
+    ]).sort(),
+    [
+      ['client-subscription-before-boundary', 1],
+      ['client-subscription-exact-boundary', 2]
+    ]
+  );
+  assert.equal(multiPeriodPlan.checkpoint.schemaVersion, 3);
+  assert.equal(multiPeriodPlan.checkpoint.policyResolution?.publicationHistory.entries.length, 2);
+  assert.deepEqual(
+    multiPeriodPlan.checkpoint.policyResolution?.selections.map((selection) => [
+      selection.clientSubscriptionId,
+      selection.purchasedAt,
+      selection.publicationId,
+      selection.policyVersion
+    ]).sort(),
+    [
+      [
+        'client-subscription-before-boundary',
+        '2026-08-14T23:59:59.999Z',
+        'publication:annual-piter-v1',
+        1
+      ],
+      [
+        'client-subscription-exact-boundary',
+        '2026-08-15T00:00:00.000Z',
+        'publication:annual-piter-v2',
+        2
+      ]
+    ]
+  );
+
+  const malformedPurchase = [{
+    ...beforeBoundary,
+    purchasedAt: '2026-02-30T00:00:00.000Z'
+  }];
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory(malformedPurchase, history),
+      PEPPER,
+      history
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  const beforeFirstPublication = [{
+    ...beforeBoundary,
+    purchasedAt: '2026-07-31T23:59:59.999Z',
+    activeFrom: '2026-07-31T23:59:59.999Z'
+  }];
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory(beforeFirstPublication, history),
+      PEPPER,
+      history
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_NOT_FOUND')
+  );
+  const duplicateEffectiveAtHistory = structuredClone(history);
+  duplicateEffectiveAtHistory[1].effectiveAt = duplicateEffectiveAtHistory[0].effectiveAt;
+  duplicateEffectiveAtHistory[1].runtimeProjection.effectiveAt =
+    duplicateEffectiveAtHistory[0].effectiveAt;
+  duplicateEffectiveAtHistory[1].policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    duplicateEffectiveAtHistory[1].runtimeProjection
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([exactBoundary], duplicateEffectiveAtHistory),
+      PEPPER,
+      duplicateEffectiveAtHistory
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_AMBIGUOUS')
+  );
+  const nonMonotonicHistory = structuredClone(history);
+  nonMonotonicHistory[1].policyVersion = 1;
+  nonMonotonicHistory[1].runtimeProjection.policyVersion = 1;
+  nonMonotonicHistory[1].policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    nonMonotonicHistory[1].runtimeProjection
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([exactBoundary], nonMonotonicHistory),
+      PEPPER,
+      nonMonotonicHistory
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  const disabledSelectedHistory = structuredClone(history);
+  disabledSelectedHistory[0].state = 'DISABLED_FOR_NEW_OPERATIONS';
+  disabledSelectedHistory[0].supersededAt = null;
+  disabledSelectedHistory[0].supersededBy = null;
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([beforeBoundary], disabledSelectedHistory),
+      PEPPER,
+      disabledSelectedHistory
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SELECTED_PUBLICATION_DISABLED')
+  );
+
   process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = 'true';
   process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'true';
   const memoryMongo = new MemoryMongo();
@@ -839,6 +1049,27 @@ async function run(): Promise<void> {
   await assert.rejects(
     uncheckpointedRepository.preflightInitialRuntimeInstanceProjection(plan),
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNCHECKPOINTED_INSTANCES_CONFLICT')
+  );
+
+  const tamperedPinPlan = structuredClone(multiPeriodPlan);
+  tamperedPinPlan.instances[0].policyVersion =
+    tamperedPinPlan.instances[0].policyVersion === 1 ? 2 : 1;
+  const tamperedPinRepository = repositoryWithMemoryMongo(new MemoryMongo());
+  await assert.rejects(
+    tamperedPinRepository.preflightInitialRuntimeInstanceProjection(tamperedPinPlan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID')
+  );
+
+  const legacyCheckpointMongo = new MemoryMongo();
+  legacyCheckpointMongo.instances = structuredClone(multiPeriodPlan.instances);
+  const legacyCheckpoint = structuredClone(multiPeriodPlan.checkpoint) as any;
+  legacyCheckpoint.schemaVersion = 2;
+  delete legacyCheckpoint.policyResolution;
+  legacyCheckpointMongo.checkpoints = [legacyCheckpoint];
+  const legacyCheckpointRepository = repositoryWithMemoryMongo(legacyCheckpointMongo);
+  await assert.rejects(
+    legacyCheckpointRepository.preflightInitialRuntimeInstanceProjection(multiPeriodPlan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_IMMUTABLE_CONFLICT')
   );
 
   const disjointScopeMongo = new MemoryMongo();
@@ -897,6 +1128,48 @@ async function run(): Promise<void> {
   assert.equal(fenceDriftMongo.instances.length, 0);
   assert.equal(fenceDriftMongo.checkpoints.length, 0);
 
+  const multiPeriodMongo = new MemoryMongo();
+  multiPeriodMongo.publications = structuredClone(history);
+  multiPeriodMongo.fences = [buildSubscriptionProjectionFence({
+    mapping: mapping(),
+    publication: history[1],
+    previous: projectionFence()
+  })];
+  multiPeriodMongo.types[0].currentPolicyVersion = 2;
+  const multiPeriodRepository = repositoryWithMemoryMongo(multiPeriodMongo);
+  assert.equal(
+    await multiPeriodRepository.applyInitialRuntimeInstanceProjection(multiPeriodPlan),
+    'INSERTED'
+  );
+  assert.equal(
+    await multiPeriodRepository.applyInitialRuntimeInstanceProjection(multiPeriodPlan),
+    'EXACT_REPLAY'
+  );
+  assert.deepEqual(
+    multiPeriodMongo.instances.map((instance) => instance.policyVersion).sort(),
+    [1, 2]
+  );
+  assert.equal(multiPeriodMongo.checkpoints.length, 1);
+
+  const historyDriftMongo = new MemoryMongo();
+  historyDriftMongo.publications = structuredClone(history);
+  historyDriftMongo.publications[0].state = 'DISABLED_FOR_NEW_OPERATIONS';
+  historyDriftMongo.publications[0].supersededAt = null;
+  historyDriftMongo.publications[0].supersededBy = null;
+  historyDriftMongo.fences = [buildSubscriptionProjectionFence({
+    mapping: mapping(),
+    publication: history[1],
+    previous: projectionFence()
+  })];
+  historyDriftMongo.types[0].currentPolicyVersion = 2;
+  const historyDriftRepository = repositoryWithMemoryMongo(historyDriftMongo);
+  await assert.rejects(
+    historyDriftRepository.applyInitialRuntimeInstanceProjection(multiPeriodPlan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_CONFLICT')
+  );
+  assert.equal(historyDriftMongo.instances.length, 0);
+  assert.equal(historyDriftMongo.checkpoints.length, 0);
+
   const publicationRaceMongo = new MemoryMongo();
   publicationRaceMongo.forceFenceCasConflict = true;
   const publicationRaceRepository = repositoryWithMemoryMongo(publicationRaceMongo);
@@ -938,7 +1211,10 @@ async function run(): Promise<void> {
       new FixedClockService(applyRepository as any).apply(input),
       hasCode(code)
     );
-    assert.equal(applyRepository.connectCalls, 0);
+    assert.equal(
+      applyRepository.connectCalls,
+      name === 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_SHA256' ? 1 : 0
+    );
     assert.equal(applyRepository.applyCalls, 0);
   };
 
@@ -1047,13 +1323,15 @@ async function run(): Promise<void> {
   console.log('subscriptions provider instance projector tests: OK');
 }
 
-run().finally(() => {
-  for (const name of ENV_NAMES) {
-    const value = originals.get(name);
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
-}).catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  run().finally(() => {
+    for (const name of ENV_NAMES) {
+      const value = originals.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

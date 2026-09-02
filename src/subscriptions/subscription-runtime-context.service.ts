@@ -181,8 +181,7 @@ export class SubscriptionRuntimeContextService {
       || publication.policyVersion !== instance.policyVersion
       || publication.policyDigest !== instance.policyDigest
       || publication.mappingId !== instance.mappingId
-      || publication.state === 'DISABLED_FOR_NEW_OPERATIONS'
-      || Date.parse(publication.effectiveAt) > now.getTime()) {
+      || publication.state === 'DISABLED_FOR_NEW_OPERATIONS') {
       throw new ServiceUnavailableException({
         code: 'SUBSCRIPTION_RUNTIME_POLICY_NOT_CURRENT',
         message: 'Published subscription policy is not current'

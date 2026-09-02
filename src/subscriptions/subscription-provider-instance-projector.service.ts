@@ -2,6 +2,11 @@ import { createHash, createHmac } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import {
+  buildSubscriptionInstancePolicyResolution,
+  subscriptionPublicationHistoryMatchesResolution
+} from './subscription-instance-policy-resolution';
+import { resolveSubscriptionSalePeriod } from './subscription-sale-period-resolver';
+import {
   SubscriptionRuntimeContractError,
   validateStoredSubscriptionInstance,
   validateStoredSubscriptionInstanceProjectorCheckpoint,
@@ -73,6 +78,7 @@ const MAX_RECORDS = 500;
 type JsonObject = Record<string, unknown>;
 
 interface ParsedManifest {
+  sourceContract: SubscriptionInstanceProjectionSourceContract;
   approvalRef: string;
   inputSha256: `sha256:${string}`;
   tenantId: string;
@@ -91,6 +97,10 @@ interface ParsedManifest {
   };
   records: JsonObject[];
 }
+
+export type SubscriptionInstanceProjectionSourceContract =
+  | 'PRODUCTION_COMPLETE'
+  | 'DEV_EXACT_ALLOWLIST';
 
 export interface SubscriptionInstanceProjectionPlan {
   inputSha256: `sha256:${string}`;
@@ -171,10 +181,17 @@ const parseCompatibility = (value: unknown): SubscriptionRuntimeCompatibility =>
   return compatibility;
 };
 
-const parseManifest = (input: unknown): ParsedManifest => {
+const parseManifest = (
+  input: unknown,
+  sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE'
+): ParsedManifest => {
   const value = exactObject(input, TOP_LEVEL_KEYS, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHAPE_INVALID');
-  if (value.schemaVersion !== 2
-    || value.sourceMode !== 'VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT'
+  const expectedSchemaVersion = sourceContract === 'PRODUCTION_COMPLETE' ? 2 : 3;
+  const expectedSourceMode = sourceContract === 'PRODUCTION_COMPLETE'
+    ? 'VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT'
+    : 'DEV_VIVA_EXACT_CLIENT_SUBSCRIPTION_ALLOWLIST';
+  if (value.schemaVersion !== expectedSchemaVersion
+    || value.sourceMode !== expectedSourceMode
     || value.provider !== 'VIVA') {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_INVALID');
   }
@@ -239,10 +256,16 @@ const parseManifest = (input: unknown): ParsedManifest => {
     AUTHORITY_KEYS,
     'SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID'
   );
+  const expectedSelectionMode = sourceContract === 'PRODUCTION_COMPLETE'
+    ? 'EXACT_PRODUCT_AND_SCOPE'
+    : 'EXACT_CLIENT_SUBSCRIPTION_ALLOWLIST';
+  const expectedSnapshotSemantics = sourceContract === 'PRODUCTION_COMPLETE'
+    ? 'COMPLETE_AS_OF'
+    : 'EXACT_ALLOWLIST_AS_OF';
   if (authority.sourceSystem !== 'VIVA'
     || authority.resourceKind !== 'SUBSCRIPTION_INSTANCE'
-    || authority.selectionMode !== 'EXACT_PRODUCT_AND_SCOPE'
-    || authority.snapshotSemantics !== 'COMPLETE_AS_OF') {
+    || authority.selectionMode !== expectedSelectionMode
+    || authority.snapshotSemantics !== expectedSnapshotSemantics) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTHORITY_INVALID');
   }
   for (const field of [
@@ -293,6 +316,7 @@ const parseManifest = (input: unknown): ParsedManifest => {
     'SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECORD_SHAPE_INVALID'
   ));
   return {
+    sourceContract,
     approvalRef: requiredPattern(value.approvalRef, APPROVAL_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPROVAL_REF_INVALID'),
     inputSha256: sha256(value),
     tenantId,
@@ -306,8 +330,11 @@ const parseManifest = (input: unknown): ParsedManifest => {
   };
 };
 
-export function subscriptionInstanceProjectionInputFingerprint(input: unknown): string {
-  return parseManifest(input).inputSha256;
+export function subscriptionInstanceProjectionInputFingerprint(
+  input: unknown,
+  sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE'
+): string {
+  return parseManifest(input, sourceContract).inputSha256;
 }
 
 export function subscriptionInstanceProjectionTargetFingerprint(
@@ -336,9 +363,11 @@ export function subscriptionInstanceProjectionTargetFingerprint(
 
 export function buildSubscriptionInstanceProjectionPlan(
   input: unknown,
-  pepperValue: unknown
+  pepperValue: unknown,
+  publicationHistory: readonly StoredSubscriptionPolicyPublication[],
+  sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE'
 ): SubscriptionInstanceProjectionPlan {
-  const parsed = parseManifest(input);
+  const parsed = parseManifest(input, sourceContract);
   const pepper = String(pepperValue ?? '');
   if (Buffer.byteLength(pepper, 'utf8') < 32) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_HASH_PEPPER_REQUIRED');
@@ -352,8 +381,14 @@ export function buildSubscriptionInstanceProjectionPlan(
   if (sha256(sortedRecords) !== parsed.snapshot.snapshotDigest) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SNAPSHOT_DIGEST_MISMATCH');
   }
+  if (!Array.isArray(publicationHistory) || publicationHistory.length < 1) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_REQUIRED');
+  }
   const identities = new Set<string>();
-  const instances = sortedRecords.map((record): StoredSubscriptionInstance => {
+  const resolvedInstances = sortedRecords.map((record): {
+    instance: StoredSubscriptionInstance;
+    selection: NonNullable<StoredSubscriptionInstanceProjectorCheckpoint['policyResolution']>['selections'][number];
+  } => {
     const providerClientId = requiredPattern(record.providerClientId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECORD_ID_INVALID');
     const clientSubscriptionId = requiredPattern(record.clientSubscriptionId, ID_PATTERN, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECORD_ID_INVALID');
     const identity = `${providerClientId}\0${clientSubscriptionId}`;
@@ -400,6 +435,23 @@ export function buildSubscriptionInstanceProjectionPlan(
         && Date.parse(activeFrom) > Date.parse(parsed.snapshot.coverageThrough))) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_STATE_TIME_MISMATCH');
     }
+    const resolution = resolveSubscriptionSalePeriod({
+      purchasedAt,
+      publications: publicationHistory
+    });
+    if (resolution.kind === 'MALFORMED') {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+    }
+    if (resolution.kind === 'AMBIGUOUS') {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_AMBIGUOUS');
+    }
+    if (resolution.kind === 'NO_MATCH') {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_NOT_FOUND');
+    }
+    const selectedPublication = resolution.publication;
+    if (selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS') {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SELECTED_PUBLICATION_DISABLED');
+    }
     const document: StoredSubscriptionInstance = {
       schemaVersion: 1,
       subscriptionInstanceId: `subscription_instance:${createHmac('sha256', pepper)
@@ -407,9 +459,9 @@ export function buildSubscriptionInstanceProjectionPlan(
         .digest('hex')}`,
       tenantId: parsed.tenantId,
       subscriptionTypeId: parsed.binding.subscriptionTypeId,
-      policyVersion: parsed.binding.policyVersion,
-      policyDigest: parsed.binding.policyDigest,
-      mappingId: parsed.binding.mappingId,
+      policyVersion: selectedPublication.policyVersion,
+      policyDigest: selectedPublication.policyDigest,
+      mappingId: selectedPublication.mappingId,
       provider: 'VIVA',
       providerProductId: parsed.providerProductId,
       providerClientId,
@@ -441,11 +493,25 @@ export function buildSubscriptionInstanceProjectionPlan(
       updatedAt: parsed.snapshot.coverageThrough
     };
     validateStoredSubscriptionInstance(document);
-    return document;
+    return {
+      instance: document,
+      selection: {
+        subscriptionInstanceId: document.subscriptionInstanceId,
+        providerClientId,
+        clientSubscriptionId,
+        purchasedAt,
+        publicationId: selectedPublication.publicationId,
+        policyVersion: selectedPublication.policyVersion,
+        policyDigest: selectedPublication.policyDigest as `sha256:${string}`,
+        mappingId: selectedPublication.mappingId
+      }
+    };
   }).sort((left, right) => compareCodeUnits(
-    left.subscriptionInstanceId,
-    right.subscriptionInstanceId
+    left.instance.subscriptionInstanceId,
+    right.instance.subscriptionInstanceId
   ));
+  const instances = resolvedInstances.map(({ instance }) => instance);
+  const selections = resolvedInstances.map(({ selection }) => selection);
   const checkpointId = `subscription_instance_projector_checkpoint:${createHash('sha256')
     .update(JSON.stringify(stableValue({
       tenantId: parsed.tenantId,
@@ -460,7 +526,7 @@ export function buildSubscriptionInstanceProjectionPlan(
     instanceDigests: instances.map((instance) => sha256(instance))
   });
   const checkpoint: StoredSubscriptionInstanceProjectorCheckpoint = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     checkpointId,
     tenantId: parsed.tenantId,
     provider: 'VIVA',
@@ -469,14 +535,24 @@ export function buildSubscriptionInstanceProjectionPlan(
     approvalRef: parsed.approvalRef,
     binding: parsed.binding,
     producer: parsed.producer,
+    policyResolution: buildSubscriptionInstancePolicyResolution(publicationHistory, selections),
     state: 'CURRENT',
-    coverage: {
-      kind: 'CONSISTENT_FULL_SNAPSHOT',
-      snapshotId: parsed.snapshot.snapshotId,
-      snapshotDigest: parsed.snapshot.snapshotDigest,
-      coverageThrough: parsed.snapshot.coverageThrough,
-      sourceItemCount: instances.length
-    },
+    coverage: parsed.sourceContract === 'PRODUCTION_COMPLETE'
+      ? {
+        kind: 'CONSISTENT_FULL_SNAPSHOT',
+        snapshotId: parsed.snapshot.snapshotId,
+        snapshotDigest: parsed.snapshot.snapshotDigest,
+        coverageThrough: parsed.snapshot.coverageThrough,
+        sourceItemCount: instances.length
+      }
+      : {
+        kind: 'EXACT_ALLOWLIST_CANARY',
+        clientSubscriptionIds: selections
+          .map((selection) => selection.clientSubscriptionId)
+          .sort() as [string, string],
+        coverageThrough: parsed.snapshot.coverageThrough,
+        sourceItemCount: 2
+      },
     reconciliation: {
       runId: `subscription_instance_projector_run:${parsed.inputSha256.slice(7)}`,
       mode: 'INITIAL_FULL',
@@ -546,6 +622,48 @@ export function assertSubscriptionInstanceProjectionCheckBoundary(
   }
 }
 
+function assertSubscriptionInstanceProjectionInputBoundary(
+  parsed: ParsedManifest,
+  apply: boolean,
+  env: NodeJS.ProcessEnv = process.env
+): void {
+  const enabled = (name: string): boolean => ['1', 'true', 'yes'].includes(
+    String(env[name] ?? '').trim().toLowerCase()
+  );
+  if (!enabled('SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED')) fail('SUBSCRIPTIONS_RUNTIME_CONTRACTS_DISABLED');
+  if (!enabled('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED')) fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_DISABLED');
+  const expected: Array<[string, string, string]> = [
+    ['SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHA256', parsed.inputSha256, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_ATTESTATION_MISMATCH'],
+    ['SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPROVAL_REF', parsed.approvalRef, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPROVAL_ATTESTATION_MISMATCH'],
+    ['SUBSCRIPTIONS_RUNTIME_TENANT_ID', parsed.tenantId, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_TENANT_ATTESTATION_MISMATCH'],
+    ['SUBSCRIPTIONS_INSTANCE_PROJECTOR_PROVIDER_PRODUCT_ID', parsed.providerProductId, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRODUCT_ATTESTATION_MISMATCH'],
+    ['SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_KIND', parsed.providerScope.kind, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_ATTESTATION_MISMATCH'],
+    ['SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_ID', parsed.providerScope.scopeId, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SCOPE_ATTESTATION_MISMATCH']
+  ];
+  for (const [name, value, code] of expected) {
+    if (String(env[name] ?? '').trim() !== value) fail(code);
+  }
+  const database = String(env.SUBSCRIPTIONS_MONGODB_DB ?? '').trim();
+  if (String(env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_EXPECTED_DB ?? '').trim() !== database) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_DATABASE_ATTESTATION_MISMATCH');
+  }
+  const target = subscriptionInstanceProjectionTargetFingerprint(
+    env.SUBSCRIPTIONS_MONGODB_URI ?? env.MONGODB_URI,
+    database
+  );
+  if (String(env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_TARGET_SHA256 ?? '').trim() !== target) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_TARGET_ATTESTATION_MISMATCH');
+  }
+  const autoIndexes = String(env.SUBSCRIPTIONS_AUTO_CREATE_INDEXES ?? '').trim().toLowerCase();
+  if (!['0', 'false', 'no'].includes(autoIndexes)) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_AUTO_INDEX_FALSE_REQUIRED');
+  }
+  if (apply && String(env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM ?? '').trim()
+    !== 'APPLY_INITIAL_RUNTIME_INSTANCE_PROJECTION') {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_APPLY_CONFIRM_REQUIRED');
+  }
+}
+
 export function assertSubscriptionInstanceProjectionApplyBoundary(
   plan: SubscriptionInstanceProjectionPlan,
   env: NodeJS.ProcessEnv = process.env
@@ -562,20 +680,29 @@ export class SubscriptionProviderInstanceProjectorService {
   constructor(private readonly repository: SubscriptionsRepository) {}
 
   async check(input: unknown): Promise<SubscriptionInstanceProjectionResult> {
-    const plan = this.plan(input);
-    assertSubscriptionInstanceProjectionCheckBoundary(plan);
+    const parsed = this.prepareInput(input, false);
     await this.repository.connectReadOnly();
-    const fence = await this.assertPersistedBinding(plan);
+    const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
+      parsed.binding.subscriptionTypeId
+    );
+    const plan = this.plan(input, publicationHistory);
+    assertSubscriptionInstanceProjectionCheckBoundary(plan);
+    const fence = await this.assertPersistedBinding(plan, publicationHistory);
     const status = await this.repository.preflightInitialRuntimeInstanceProjection(plan);
     await this.assertFenceUnchanged(fence, plan.checkpoint.binding.subscriptionTypeId);
+    await this.assertPublicationHistoryUnchanged(plan);
     return this.result(plan, status, false);
   }
 
   async apply(input: unknown): Promise<SubscriptionInstanceProjectionResult> {
-    const plan = this.plan(input);
-    assertSubscriptionInstanceProjectionApplyBoundary(plan);
+    const parsed = this.prepareInput(input, true);
     await this.repository.connect();
-    await this.assertPersistedBinding(plan);
+    const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
+      parsed.binding.subscriptionTypeId
+    );
+    const plan = this.plan(input, publicationHistory);
+    assertSubscriptionInstanceProjectionApplyBoundary(plan);
+    await this.assertPersistedBinding(plan, publicationHistory);
     const status = await this.repository.applyInitialRuntimeInstanceProjection(plan);
     return this.result(plan, status, status === 'INSERTED');
   }
@@ -584,24 +711,34 @@ export class SubscriptionProviderInstanceProjectorService {
     return new Date();
   }
 
-  private plan(input: unknown): SubscriptionInstanceProjectionPlan {
-    const plan = buildSubscriptionInstanceProjectionPlan(
-      input,
-      process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER
-    );
+  private prepareInput(input: unknown, apply: boolean): ParsedManifest {
+    const parsed = parseManifest(input);
+    assertSubscriptionInstanceProjectionInputBoundary(parsed, apply);
     const maxSeconds = Number(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_MAX_STALENESS_SECONDS);
-    const age = this.now().getTime() - Date.parse(plan.checkpoint.coverage.coverageThrough);
+    const age = this.now().getTime() - Date.parse(parsed.snapshot.coverageThrough);
     if (!Number.isSafeInteger(maxSeconds) || maxSeconds < 1 || age < 0 || age > maxSeconds * 1000) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SNAPSHOT_NOT_CURRENT');
     }
-    return plan;
+    return parsed;
+  }
+
+  private plan(
+    input: unknown,
+    publicationHistory: readonly StoredSubscriptionPolicyPublication[]
+  ): SubscriptionInstanceProjectionPlan {
+    return buildSubscriptionInstanceProjectionPlan(
+      input,
+      process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER,
+      publicationHistory
+    );
   }
 
   private async assertPersistedBinding(
-    plan: SubscriptionInstanceProjectionPlan
+    plan: SubscriptionInstanceProjectionPlan,
+    publicationHistory: readonly StoredSubscriptionPolicyPublication[]
   ): Promise<StoredSubscriptionProjectionFence | null> {
     const checkpoint = plan.checkpoint;
-    const [mapping, publication, releaseProgram, subscriptionType, fence] = await Promise.all([
+    const [mapping, releaseProgram, subscriptionType, fence] = await Promise.all([
       this.repository.runtimeProviderMappingByProviderIdentity({
         tenantId: checkpoint.tenantId,
         provider: 'VIVA',
@@ -609,15 +746,19 @@ export class SubscriptionProviderInstanceProjectorService {
         providerScopeKind: checkpoint.providerScope.kind,
         providerScopeId: checkpoint.providerScope.scopeId
       }),
-      this.repository.runtimePolicyPublicationByVersion(
-        checkpoint.binding.subscriptionTypeId,
-        checkpoint.binding.policyVersion
-      ),
       this.repository.releaseProgramById(checkpoint.binding.releaseProgramId),
       this.repository.subscriptionTypeById(checkpoint.binding.subscriptionTypeId),
       this.repository.runtimeProjectionFenceByType(checkpoint.binding.subscriptionTypeId)
     ]);
-    if (!mapping || !publication || !releaseProgram || !subscriptionType) {
+    const publication = publicationHistory.find((item) =>
+      item.policyVersion === checkpoint.binding.policyVersion);
+    if (!mapping || !publication || !releaseProgram || !subscriptionType
+      || checkpoint.schemaVersion !== 3
+      || !checkpoint.policyResolution
+      || !subscriptionPublicationHistoryMatchesResolution(
+        publicationHistory,
+        checkpoint.policyResolution
+      )) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_BINDING_NOT_FOUND');
     }
     validateStoredSubscriptionProviderMapping(mapping);
@@ -679,7 +820,7 @@ export class SubscriptionProviderInstanceProjectorService {
       || compatibility.capabilityDigest !== checkpoint.binding.runtimeCompatibility.capabilityDigest
       || Date.parse(publication.publishedAt) > Date.parse(checkpoint.coverage.coverageThrough)
       || (fence && Date.parse(fence.updatedAt) > Date.parse(checkpoint.coverage.coverageThrough))
-      || Date.parse(publication.effectiveAt) > this.now().getTime()) {
+      ) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PUBLICATION_NOT_CURRENT');
     }
     const phase = releaseProgram.phases.find((item) =>
@@ -698,11 +839,29 @@ export class SubscriptionProviderInstanceProjectorService {
       )
       || plan.instances.some((instance) =>
         instance.homeStationId !== releaseProgram.stationId
+        || instance.mappingId !== mapping.mappingId
         || instance.purchasePrice.amountMinor !== phase.price.amountMinor
         || instance.purchasePrice.currency !== phase.price.currency)) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RELEASE_BINDING_MISMATCH');
     }
     return fence;
+  }
+
+  private async assertPublicationHistoryUnchanged(
+    plan: SubscriptionInstanceProjectionPlan
+  ): Promise<void> {
+    if (plan.checkpoint.schemaVersion !== 3 || !plan.checkpoint.policyResolution) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+    }
+    const after = await this.repository.runtimePolicyPublicationHistoryByType(
+      plan.checkpoint.binding.subscriptionTypeId
+    );
+    if (!subscriptionPublicationHistoryMatchesResolution(
+      after,
+      plan.checkpoint.policyResolution
+    )) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_CHANGED_DURING_CHECK');
+    }
   }
 
   private async assertFenceUnchanged(

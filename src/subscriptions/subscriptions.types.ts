@@ -773,6 +773,32 @@ export interface StoredSubscriptionInstance {
   updatedAt: string;
 }
 
+export interface StoredSubscriptionInstancePolicyResolution {
+  publicationHistory: {
+    historyDigest: `sha256:${string}`;
+    entries: Array<{
+      publicationId: string;
+      subscriptionTypeId: string;
+      policyVersion: number;
+      policyDigest: `sha256:${string}`;
+      mappingId: string;
+      state: SubscriptionPublicationState;
+      effectiveAt: string;
+    }>;
+  };
+  selections: Array<{
+    subscriptionInstanceId: string;
+    providerClientId: string;
+    clientSubscriptionId: string;
+    purchasedAt: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: `sha256:${string}`;
+    mappingId: string;
+  }>;
+  resolutionDigest: `sha256:${string}`;
+}
+
 export type SubscriptionInstanceProjectorCheckpointState = 'CURRENT' | 'FAILED';
 export type SubscriptionInstanceProjectorCoverage =
   | {
@@ -787,10 +813,16 @@ export type SubscriptionInstanceProjectorCoverage =
     snapshotDigest: `sha256:${string}`;
     coverageThrough: string;
     sourceItemCount: number;
+  }
+  | {
+    kind: 'EXACT_ALLOWLIST_CANARY';
+    clientSubscriptionIds: [string, string];
+    coverageThrough: string;
+    sourceItemCount: 2;
   };
 
 export interface StoredSubscriptionInstanceProjectorCheckpoint {
-  schemaVersion: 2;
+  schemaVersion: 2 | 3;
   checkpointId: string;
   tenantId: string;
   provider: 'VIVA';
@@ -822,6 +854,7 @@ export interface StoredSubscriptionInstanceProjectorCheckpoint {
     sourceContractDigest: `sha256:${string}`;
     authorityDigest: `sha256:${string}`;
   };
+  policyResolution?: StoredSubscriptionInstancePolicyResolution;
   state: SubscriptionInstanceProjectorCheckpointState;
   coverage: SubscriptionInstanceProjectorCoverage;
   reconciliation: {

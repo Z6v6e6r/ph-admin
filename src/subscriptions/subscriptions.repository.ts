@@ -10,6 +10,7 @@ import {
   TransactionOptions
 } from 'mongodb';
 import type { SubscriptionInstanceProjectionPlan } from './subscription-provider-instance-projector.service';
+import { subscriptionPublicationHistoryMatchesResolution } from './subscription-instance-policy-resolution';
 import {
   assertSubscriptionLegacyBindingPromotionPlanExact,
   rebuildSubscriptionLegacyBindingPromotionPlan
@@ -746,6 +747,21 @@ export class SubscriptionsRepository {
           })
           .sort({ subscriptionInstanceId: 1 })
           .toArray();
+        const publicationHistory = await this.runtimePublications().find(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+        publicationHistory.forEach(validateStoredSubscriptionPolicyPublication);
+        if (plan.checkpoint.schemaVersion !== 3
+          || !plan.checkpoint.policyResolution
+          || !subscriptionPublicationHistoryMatchesResolution(
+            publicationHistory,
+            plan.checkpoint.policyResolution
+          )) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_CONFLICT'
+          );
+        }
         const expectedFenceBinding = {
           mappingId: plan.checkpoint.binding.mappingId,
           mappingRevision: plan.checkpoint.binding.mappingRevision,
@@ -2248,6 +2264,8 @@ export class SubscriptionsRepository {
     validateStoredSubscriptionInstanceProjectorCheckpoint(plan.checkpoint);
     plan.instances.forEach(validateStoredSubscriptionInstance);
     if (plan.instances.length < 1
+      || plan.checkpoint.schemaVersion !== 3
+      || !plan.checkpoint.policyResolution
       || plan.checkpoint.state !== 'CURRENT'
       || plan.checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
       || plan.checkpoint.reconciliation.mode !== 'INITIAL_FULL'
@@ -2257,12 +2275,36 @@ export class SubscriptionsRepository {
         instance.tenantId !== plan.checkpoint.tenantId
         || instance.provider !== plan.checkpoint.provider
         || instance.providerProductId !== plan.checkpoint.providerProductId
-        || instance.mappingId !== plan.checkpoint.binding.mappingId
         || instance.subscriptionTypeId !== plan.checkpoint.binding.subscriptionTypeId
-        || instance.policyVersion !== plan.checkpoint.binding.policyVersion
-        || instance.policyDigest !== plan.checkpoint.binding.policyDigest
         || instance.releaseProgramId !== plan.checkpoint.binding.releaseProgramId
         || instance.releasePhaseId !== plan.checkpoint.binding.releasePhaseId)) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+    const resolution = plan.checkpoint.policyResolution;
+    if (resolution.selections.length !== plan.instances.length
+      || resolution.selections.some((selection, index) => {
+        const instance = plan.instances[index];
+        const selectedPublication = resolution.publicationHistory.entries.find(
+          (entry) => entry.publicationId === selection.publicationId
+        );
+        const expectedPublication = resolution.publicationHistory.entries
+          .filter((entry) => Date.parse(entry.effectiveAt) <= Date.parse(selection.purchasedAt))
+          .at(-1);
+        return !instance
+          || !selectedPublication
+          || expectedPublication?.publicationId !== selectedPublication.publicationId
+          || selection.subscriptionInstanceId !== instance.subscriptionInstanceId
+          || selection.providerClientId !== instance.providerClientId
+          || selection.clientSubscriptionId !== instance.clientSubscriptionId
+          || selection.purchasedAt !== instance.purchasedAt
+          || selection.policyVersion !== instance.policyVersion
+          || selection.policyDigest !== instance.policyDigest
+          || selection.mappingId !== instance.mappingId
+          || selectedPublication.policyVersion !== instance.policyVersion
+          || selectedPublication.policyDigest !== instance.policyDigest
+          || selectedPublication.mappingId !== instance.mappingId
+          || selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS';
+      })) {
       throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
     }
   }

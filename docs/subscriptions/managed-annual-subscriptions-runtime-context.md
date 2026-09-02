@@ -69,6 +69,56 @@ silently skipped. Runtime-context never uses the current date to select or
 re-pin a policy. Explicit publication `until` values are not a supported
 contract; the next `effectiveAt` is the exclusive end of a period.
 
+## Provider instance projection pins
+
+The production provider projector preserves its strict
+`VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT` contract. Its
+manifest binding coordinates the current mapping, publication fence, release
+program and phase; it no longer assigns that current publication to every row.
+For each validated provider record the projector resolves `purchasedAt` against
+the complete stored publication history and pins the resulting
+`policyVersion`, `policyDigest` and `mappingId` on that instance.
+
+New checkpoints use schema version 3. They retain the current fence binding and
+add a digest of the complete validated publication documents, canonical
+publication evidence, and one resolution record per instance with its provider
+identity, `purchasedAt`, publication id, version, digest and mapping. The plan
+digest includes the instances and checkpoint, so it commits to every selected
+policy as well as the current fence revision and digest.
+
+Schema-v2 checkpoints remain readable, but cannot be an exact replay of a
+schema-v3 multi-period plan. Apply rereads and compares the complete publication
+history inside the same Mongo snapshot transaction before the fence CAS or any
+insert. History/fence drift, a disabled selected publication, a pin mismatch,
+or an old conflicting checkpoint produces zero partial writes.
+
+## Isolated DEV exact-two canary
+
+`scripts/managed-subscriptions-instance-projector-dev-canary.ts` is a standalone
+operator CLI with no HTTP route, startup hook or scheduler and no Viva calls. It
+accepts a private exact-shape input with source contract
+`DEV_VIVA_EXACT_CLIENT_SUBSCRIPTION_ALLOWLIST`, exactly two allowlisted
+`clientSubscriptionId` values and matching records. It uses the same plan
+builder, sale-period resolver and policy pins as production, but writes only to
+`subscription_instance_dev_canary_*` collections with
+`EXACT_ALLOWLIST_CANARY` coverage; this cannot satisfy the production complete
+snapshot contract.
+
+The CLI requires `NODE_ENV=development|test`, a credential-free loopback Mongo
+URI, a `dev-*` or `test-*` database, a non-production DEV/TEST service marker,
+disabled auto-index creation, a credential-free target fingerprint and the
+exact apply phrase `APPLY_EXACTLY_TWO_DEV_SUBSCRIPTION_INSTANCES`. All guards run
+before connection. Deterministic `_id` custody, a snapshot transaction and an
+in-transaction publication-history reread protect concurrent apply and drift.
+Output contains only status, counts and digests.
+
+```text
+npm run subscriptions:instance-projector:dev-canary:target-fingerprint
+npm run subscriptions:instance-projector:dev-canary:plan-fingerprint
+npm run subscriptions:instance-projector:dev-canary:check
+npm run subscriptions:instance-projector:dev-canary:apply
+```
+
 ## Configuration
 
 ```text

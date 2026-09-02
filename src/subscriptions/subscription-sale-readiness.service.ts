@@ -6,6 +6,7 @@ import {
   publicationAdapterRuntimeCompatibility
 } from './subscription-publication-enforcement-adapter';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import { subscriptionPublicationHistoryMatchesResolution } from './subscription-instance-policy-resolution';
 import {
   subscriptionProjectionFenceBindingDigest,
   subscriptionProjectionFenceId
@@ -181,9 +182,12 @@ export class SubscriptionSaleReadinessService {
     if (mapping && publication
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED')
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED')) {
-      const [checkpoint, fence] = await Promise.all([
+      const [checkpoint, fence, publicationHistory] = await Promise.all([
         this.read(() => this.repository.runtimeInstanceProjectorCheckpointByProviderIdentity(identity)),
         this.read(() => this.repository.runtimeProjectionFenceByType(
+          publication.subscriptionTypeId
+        )),
+        this.read(() => this.repository.runtimePolicyPublicationHistoryByType(
           publication.subscriptionTypeId
         ))
       ]);
@@ -192,6 +196,7 @@ export class SubscriptionSaleReadinessService {
         fence,
         mapping,
         publication,
+        publicationHistory,
         checkedAt,
         maxStalenessSeconds,
         requiredCompatibility
@@ -200,13 +205,17 @@ export class SubscriptionSaleReadinessService {
           status: 'CURRENT',
           checkpointAsOf: checkpoint.coverage.coverageThrough
         };
-        const [mappingAfterCheckpoint, publicationAfterCheckpoint, fenceAfterCheckpoint] = await Promise.all([
+        const [mappingAfterCheckpoint, publicationAfterCheckpoint, fenceAfterCheckpoint,
+          publicationHistoryAfterCheckpoint] = await Promise.all([
           this.read(() => this.repository.runtimeProviderMappingByProviderIdentity(identity)),
           this.read(() => this.repository.runtimePolicyPublicationByVersion(
             publication.subscriptionTypeId,
             publication.policyVersion
           )),
           this.read(() => this.repository.runtimeProjectionFenceByType(
+            publication.subscriptionTypeId
+          )),
+          this.read(() => this.repository.runtimePolicyPublicationHistoryByType(
             publication.subscriptionTypeId
           ))
         ]);
@@ -222,7 +231,13 @@ export class SubscriptionSaleReadinessService {
           || fenceAfterCheckpoint.bindingDigest !== fence.bindingDigest
           || fenceAfterCheckpoint.coordinationRevision !== fence.coordinationRevision
           || fenceAfterCheckpoint.lastProjectorReconciliationDigest
-            !== fence.lastProjectorReconciliationDigest) {
+            !== fence.lastProjectorReconciliationDigest
+          || checkpoint.schemaVersion !== 3
+          || !checkpoint.policyResolution
+          || !subscriptionPublicationHistoryMatchesResolution(
+            publicationHistoryAfterCheckpoint,
+            checkpoint.policyResolution
+          )) {
           blockers.push('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED');
           instanceProjector = { status: 'UNAVAILABLE', checkpointAsOf: null };
         }
@@ -307,18 +322,27 @@ export class SubscriptionSaleReadinessService {
     fence: StoredSubscriptionProjectionFence,
     mapping: StoredSubscriptionProviderMapping,
     publication: StoredSubscriptionPolicyPublication,
+    publicationHistory: StoredSubscriptionPolicyPublication[],
     checkedAt: Date,
     maxStalenessSeconds: number,
     requiredCompatibility: SubscriptionRuntimeCompatibility
   ): boolean {
+    let historyMatches = false;
     try {
       validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
       validateStoredSubscriptionProjectionFence(fence);
+      historyMatches = checkpoint.schemaVersion === 3
+        && !!checkpoint.policyResolution
+        && subscriptionPublicationHistoryMatchesResolution(
+          publicationHistory,
+          checkpoint.policyResolution
+        );
     } catch {
       return false;
     }
     const compatibility = checkpoint.binding.runtimeCompatibility;
-    return checkpoint.state === 'CURRENT'
+    return historyMatches
+      && checkpoint.state === 'CURRENT'
       && checkpoint.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT'
       && checkpoint.coverage.sourceItemCount > 0
       && this.isFresh(
