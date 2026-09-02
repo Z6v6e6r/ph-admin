@@ -10,12 +10,15 @@ import {
   publicationAdapterRuntimeCompatibility
 } from '../src/subscriptions/subscription-publication-enforcement-adapter';
 import { SubscriptionSaleReadinessService } from '../src/subscriptions/subscription-sale-readiness.service';
+import { buildSubscriptionInstancePolicyResolution } from '../src/subscriptions/subscription-instance-policy-resolution';
+import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
 import {
   subscriptionProjectionFenceBindingDigest,
   subscriptionProjectionFenceId
 } from '../src/subscriptions/subscription-projection-fence';
 import { SubscriptionTrustedShadowController } from '../src/subscriptions/subscriptions.controller';
 import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions-exception.filter';
+import { StoredSubscriptionPolicyPublication } from '../src/subscriptions/subscriptions.types';
 
 const TOKEN = 'sale-readiness-integration-token-2026';
 const TENANT_ID = 'tenant:iSkq6G';
@@ -84,12 +87,13 @@ const subscriptionType = () => ({
   }
 });
 
-const publication = () => ({
+const publication = () => {
+  const value: StoredSubscriptionPolicyPublication = {
   schemaVersion: 3 as const,
   publicationId: 'publication:piter-annual-v2',
   subscriptionTypeId: 'subscription-type:piter-annual',
   policyVersion: 2,
-  policyDigest: `sha256:${'c'.repeat(64)}`,
+  policyDigest: '' as string,
   mappingId: 'mapping:piter-annual',
   dictionaryRevision: 'dictionary:2026-08-24',
   runtimeProjection: {
@@ -99,13 +103,42 @@ const publication = () => ({
     status: 'PUBLISHED' as const,
     effectiveAt: '2026-08-24T09:00:00.000Z',
     timeZone: 'Europe/Moscow' as const,
+    createGame: { enabled: true, durationsMinutes: [60] },
+    joinGame: { enabled: true, minDurationMinutes: 60, maxDurationMinutes: 120 },
+    activeServicesLimit: { enabled: false, max: null, scope: 'ALL_BOOKINGS' as const },
+    bookingWindow: { enabled: false, days: null },
+    dailyUsageLimit: 1,
+    usageUnitsByDuration: { '60': 1, '90': 1, '120': 1 },
     stationAccessRules: [{
       ruleId: 'station-rule:piter',
       enabled: true,
       priority: 1,
       selector: { kind: 'STATION_LIST' as const, stationIds: [STATION_ID] },
       surcharge: { kind: 'NONE' as const, amountMinor: 0 }
-    }]
+    }],
+    benefitRules: [{
+      ruleId: 'benefit-rule:piter-game',
+      enabled: true,
+      category: 'GAME' as const,
+      actions: ['JOIN_GAME' as const],
+      externalEventTypeIds: ['viva:direction:4588:type:1613'],
+      productTypeIds: [],
+      durationMinutes: [60, 90, 120],
+      stationIds: [STATION_ID],
+      kind: 'FREE_ENTITLEMENT' as const,
+      valueMinor: null,
+      percentage: null,
+      partialPrice: null,
+      priority: 1
+    }],
+    lifecycle: { allowBookingsAfterExpiry: false },
+    usage: {
+      weeklyUsageLimit: null,
+      monthlyUsageLimit: null,
+      maxFutureBookings: null,
+      minHoursBetweenUses: 0,
+      blackoutDates: []
+    }
   },
   state: 'PUBLISHED' as const,
   effectiveAt: '2026-08-24T09:00:00.000Z',
@@ -122,7 +155,10 @@ const publication = () => ({
     correlationId: 'corr:publication-piter-annual-v2'
   },
   runtimeCompatibility: { ...COMPATIBILITY }
-});
+  };
+  value.policyDigest = computeSubscriptionRuntimeProjectionDigest(value.runtimeProjection);
+  return value;
+};
 
 const fenceBinding = () => ({
   mappingId: mapping().mappingId,
@@ -148,7 +184,7 @@ const projectionFence = () => ({
 });
 
 const checkpoint = () => ({
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   checkpointId: 'checkpoint:piter-annual',
   tenantId: TENANT_ID,
   provider: 'VIVA' as const,
@@ -177,6 +213,16 @@ const checkpoint = () => ({
     sourceContractDigest: `sha256:${'f'.repeat(64)}` as `sha256:${string}`,
     authorityDigest: `sha256:${'a'.repeat(64)}` as `sha256:${string}`
   },
+  policyResolution: buildSubscriptionInstancePolicyResolution([publication()], [{
+    subscriptionInstanceId: 'subscription-instance:piter-annual-client-001',
+    providerClientId: 'provider-client:piter-001',
+    clientSubscriptionId: 'client-subscription:piter-001',
+    purchasedAt: publication().effectiveAt,
+    publicationId: publication().publicationId,
+    policyVersion: publication().policyVersion,
+    policyDigest: publication().policyDigest as `sha256:${string}`,
+    mappingId: publication().mappingId
+  }]),
   state: 'CURRENT' as const,
   coverage: {
     kind: 'CONSISTENT_FULL_SNAPSHOT' as const,
@@ -212,6 +258,7 @@ class RepositoryStub {
   mappingReads = 0;
   typeReads = 0;
   publicationReads = 0;
+  publicationHistoryReads = 0;
   checkpointReads = 0;
   fenceReads = 0;
   lastMappingIdentity: unknown = null;
@@ -220,6 +267,8 @@ class RepositoryStub {
   firstType: any = subscriptionType();
   secondType: any = this.firstType;
   currentPublication: any = publication();
+  firstPublicationHistory: any[] | null = null;
+  secondPublicationHistory: any[] | null = null;
   currentCheckpoint: any = null;
   firstFence: any = projectionFence();
   secondFence: any = this.firstFence;
@@ -244,6 +293,14 @@ class RepositoryStub {
   async runtimePolicyPublicationByVersion() {
     this.publicationReads += 1;
     return this.currentPublication;
+  }
+
+  async runtimePolicyPublicationHistoryByType() {
+    this.publicationHistoryReads += 1;
+    const fallback = [this.currentPublication];
+    return structuredClone(this.publicationHistoryReads === 1
+      ? this.firstPublicationHistory ?? fallback
+      : this.secondPublicationHistory ?? this.firstPublicationHistory ?? fallback);
   }
 
   async runtimeInstanceProjectorCheckpointByProviderIdentity() {
@@ -501,6 +558,22 @@ async function verifyFailClosedAndDrift(): Promise<void> {
     status: 'CURRENT',
     checkpointAsOf: '2026-08-24T09:59:30.000Z'
   });
+
+  const historyDrift = service();
+  historyDrift.repository.currentCheckpoint = checkpoint();
+  historyDrift.repository.firstPublicationHistory = [publication()];
+  historyDrift.repository.secondPublicationHistory = [
+    {
+      ...publication(),
+      state: 'DISABLED_FOR_NEW_OPERATIONS',
+      supersededAt: null,
+      supersededBy: null
+    }
+  ];
+  const historyDriftResult = await historyDrift.service.check(TOKEN, dto());
+  assert.ok(blockerCodes(historyDriftResult)
+    .includes('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED'));
+  assert.equal(historyDriftResult.instanceProjector.status, 'UNAVAILABLE');
 
   const missingFence = service();
   missingFence.repository.currentCheckpoint = checkpoint();

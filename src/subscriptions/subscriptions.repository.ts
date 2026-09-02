@@ -10,6 +10,8 @@ import {
   TransactionOptions
 } from 'mongodb';
 import type { SubscriptionInstanceProjectionPlan } from './subscription-provider-instance-projector.service';
+import { subscriptionPublicationHistoryMatchesResolution } from './subscription-instance-policy-resolution';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
 import {
   assertSubscriptionLegacyBindingPromotionPlanExact,
   rebuildSubscriptionLegacyBindingPromotionPlan
@@ -746,6 +748,40 @@ export class SubscriptionsRepository {
           })
           .sort({ subscriptionInstanceId: 1 })
           .toArray();
+        const publicationHistory = await this.runtimePublications().find(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+        const mapping = await this.runtimeMappings().findOne(
+          { mappingId: plan.checkpoint.binding.mappingId },
+          { projection: { _id: 0 }, session }
+        );
+        const releaseProgram = await this.programs().findOne(
+          { releaseProgramId: plan.checkpoint.binding.releaseProgramId },
+          { projection: { _id: 0 }, session }
+        );
+        const subscriptionType = await this.types().findOne(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        );
+        publicationHistory.forEach(validateStoredSubscriptionPolicyPublication);
+        if (plan.checkpoint.schemaVersion !== 3
+          || !plan.checkpoint.policyResolution
+          || !subscriptionPublicationHistoryMatchesResolution(
+            publicationHistory,
+            plan.checkpoint.policyResolution
+          )) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_CONFLICT'
+          );
+        }
+        this.assertInitialProjectionSourcesCurrent({
+          plan,
+          mapping,
+          releaseProgram,
+          subscriptionType,
+          publicationHistory
+        });
         const expectedFenceBinding = {
           mappingId: plan.checkpoint.binding.mappingId,
           mappingRevision: plan.checkpoint.binding.mappingRevision,
@@ -1114,6 +1150,18 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimePolicyPublicationHistoryByType(
+    subscriptionTypeId: string
+  ): Promise<StoredSubscriptionPolicyPublication[]> {
+    this.assertRuntimeContractsEnabled();
+    const rows = await this.runtimePublications().find(
+      { subscriptionTypeId },
+      { projection: { _id: 0 } }
+    ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+    rows.forEach((row) => validateStoredSubscriptionPolicyPublication(row));
+    return rows;
+  }
+
   async runtimePolicyPublicationByIdempotency(input: {
     actorId: string;
     key: string;
@@ -1263,6 +1311,10 @@ export class SubscriptionsRepository {
             throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
           }
           validateStoredSubscriptionProviderMapping(previousMapping);
+          validateStoredSubscriptionPolicyPublication(previousPublication);
+          if (Date.parse(input.publication.effectiveAt) <= Date.parse(previousPublication.effectiveAt)) {
+            throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
           if (persistedFence) {
             validateStoredSubscriptionProjectionFence(persistedFence);
             if (persistedFence.fenceId !== subscriptionProjectionFenceId(type.subscriptionTypeId)
@@ -2232,6 +2284,8 @@ export class SubscriptionsRepository {
     validateStoredSubscriptionInstanceProjectorCheckpoint(plan.checkpoint);
     plan.instances.forEach(validateStoredSubscriptionInstance);
     if (plan.instances.length < 1
+      || plan.checkpoint.schemaVersion !== 3
+      || !plan.checkpoint.policyResolution
       || plan.checkpoint.state !== 'CURRENT'
       || plan.checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
       || plan.checkpoint.reconciliation.mode !== 'INITIAL_FULL'
@@ -2241,13 +2295,108 @@ export class SubscriptionsRepository {
         instance.tenantId !== plan.checkpoint.tenantId
         || instance.provider !== plan.checkpoint.provider
         || instance.providerProductId !== plan.checkpoint.providerProductId
-        || instance.mappingId !== plan.checkpoint.binding.mappingId
         || instance.subscriptionTypeId !== plan.checkpoint.binding.subscriptionTypeId
-        || instance.policyVersion !== plan.checkpoint.binding.policyVersion
-        || instance.policyDigest !== plan.checkpoint.binding.policyDigest
         || instance.releaseProgramId !== plan.checkpoint.binding.releaseProgramId
         || instance.releasePhaseId !== plan.checkpoint.binding.releasePhaseId)) {
       throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+    const resolution = plan.checkpoint.policyResolution;
+    if (resolution.selections.length !== plan.instances.length
+      || resolution.selections.some((selection, index) => {
+        const instance = plan.instances[index];
+        const selectedPublication = resolution.publicationHistory.entries.find(
+          (entry) => entry.publicationId === selection.publicationId
+        );
+        const expectedPublication = resolution.publicationHistory.entries
+          .filter((entry) => Date.parse(entry.effectiveAt) <= Date.parse(selection.purchasedAt))
+          .at(-1);
+        return !instance
+          || !selectedPublication
+          || expectedPublication?.publicationId !== selectedPublication.publicationId
+          || selection.subscriptionInstanceId !== instance.subscriptionInstanceId
+          || selection.providerClientId !== instance.providerClientId
+          || selection.clientSubscriptionId !== instance.clientSubscriptionId
+          || selection.purchasedAt !== instance.purchasedAt
+          || selection.policyVersion !== instance.policyVersion
+          || selection.policyDigest !== instance.policyDigest
+          || selection.mappingId !== instance.mappingId
+          || selectedPublication.policyVersion !== instance.policyVersion
+          || selectedPublication.policyDigest !== instance.policyDigest
+          || selectedPublication.mappingId !== instance.mappingId
+          || selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS';
+      })) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+  }
+
+  private assertInitialProjectionSourcesCurrent(input: {
+    plan: SubscriptionInstanceProjectionPlan;
+    mapping: StoredSubscriptionProviderMapping | null;
+    releaseProgram: StoredReleaseProgram | null;
+    subscriptionType: StoredSubscriptionType | null;
+    publicationHistory: StoredSubscriptionPolicyPublication[];
+  }): void {
+    const { plan, mapping, releaseProgram, subscriptionType, publicationHistory } = input;
+    const checkpoint = plan.checkpoint;
+    const publication = publicationHistory.at(-1);
+    if (mapping) validateStoredSubscriptionProviderMapping(mapping);
+    const phase = releaseProgram?.phases.find((item) =>
+      item.releasePhaseId === checkpoint.binding.releasePhaseId);
+    const scope = checkpoint.providerScope;
+    const releaseStationMatchesScope = publication && releaseProgram
+      ? scope.kind === 'STATION'
+        ? scope.scopeId === releaseProgram.stationId
+        : scope.kind === 'TENANT'
+          ? scope.scopeId === checkpoint.tenantId
+          : publication.runtimeProjection.stationAccessRules
+            .filter((rule) => rule.enabled && rule.selector.kind === 'STATION_LIST')
+            .flatMap((rule) => rule.selector.stationIds)
+            .includes(releaseProgram.stationId)
+      : false;
+    if (!mapping
+      || mapping.state !== 'VERIFIED'
+      || mapping.mappingId !== checkpoint.binding.mappingId
+      || mapping.revision !== checkpoint.binding.mappingRevision
+      || mapping.tenantId !== checkpoint.tenantId
+      || mapping.provider !== checkpoint.provider
+      || mapping.providerProductId !== checkpoint.providerProductId
+      || mapping.providerScope.kind !== checkpoint.providerScope.kind
+      || mapping.providerScope.scopeId !== checkpoint.providerScope.scopeId
+      || mapping.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+      || !publication
+      || publication.state !== 'PUBLISHED'
+      || publication.publicationId !== checkpoint.binding.publicationId
+      || publication.policyVersion !== checkpoint.binding.policyVersion
+      || publication.policyDigest !== checkpoint.binding.policyDigest
+      || publication.mappingId !== checkpoint.binding.mappingId
+      || !publication.runtimeCompatibility
+      || !isDeepStrictEqual(
+        publication.runtimeCompatibility,
+        checkpoint.binding.runtimeCompatibility
+      )
+      || !subscriptionProviderScopeMatchesProjection(
+        mapping.providerScope,
+        publication.runtimeProjection,
+        checkpoint.tenantId
+      )
+      || !subscriptionType
+      || subscriptionType.state !== 'ACTIVE'
+      || subscriptionType.currentPolicyVersion !== checkpoint.binding.policyVersion
+      || !releaseProgram
+      || releaseProgram.state === 'DRAFT'
+      || releaseProgram.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+      || releaseProgram.revision !== checkpoint.binding.releaseProgramRevision
+      || !phase
+      || phase.providerProductRef !== checkpoint.providerProductId
+      || !releaseStationMatchesScope
+      || plan.instances.some((instance) =>
+        instance.homeStationId !== releaseProgram.stationId
+        || instance.mappingId !== mapping.mappingId
+        || instance.purchasePrice.amountMinor !== phase.price.amountMinor
+        || instance.purchasePrice.currency !== phase.price.currency)) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_CONFLICT'
+      );
     }
   }
 

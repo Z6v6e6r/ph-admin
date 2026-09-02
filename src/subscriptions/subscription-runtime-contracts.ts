@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
@@ -905,13 +906,14 @@ export function validateStoredSubscriptionInstance(value: StoredSubscriptionInst
 export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   value: StoredSubscriptionInstanceProjectorCheckpoint
 ): void {
-  if (value.schemaVersion !== 2 || value.provider !== 'VIVA') {
+  if (![2, 3].includes(value.schemaVersion) || value.provider !== 'VIVA') {
     fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CHECKPOINT_SCHEMA_INVALID');
   }
   assertExactKeys(value as object, [
     'schemaVersion', 'checkpointId', 'tenantId', 'provider', 'providerProductId', 'providerScope',
     'approvalRef', 'binding', 'producer', 'state', 'coverage', 'reconciliation', 'failure',
-    'lease', 'revision', 'createdAt', 'updatedAt'
+    'lease', 'revision', 'createdAt', 'updatedAt',
+    ...(value.schemaVersion === 3 ? ['policyResolution'] : [])
   ], 'instanceProjectorCheckpoint');
   requiredId(value.checkpointId, 'checkpointId');
   requiredId(value.tenantId, 'tenantId');
@@ -959,6 +961,98 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
   digest(value.producer.producerCapabilityDigest, 'producer.producerCapabilityDigest');
   digest(value.producer.sourceContractDigest, 'producer.sourceContractDigest');
   digest(value.producer.authorityDigest, 'producer.authorityDigest');
+
+  if (value.schemaVersion === 2) {
+    if (value.policyResolution !== undefined) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_INVALID');
+    }
+  } else {
+    if (!value.policyResolution || typeof value.policyResolution !== 'object') {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_REQUIRED');
+    }
+    const resolution = value.policyResolution!;
+    assertExactKeys(resolution as object, [
+      'publicationHistory', 'selections', 'resolutionDigest'
+    ], 'policyResolution');
+    assertExactKeys(resolution.publicationHistory as object, [
+      'historyDigest', 'entries'
+    ], 'policyResolution.publicationHistory');
+    digest(resolution.publicationHistory.historyDigest, 'policyResolution.publicationHistory.historyDigest');
+    if (!Array.isArray(resolution.publicationHistory.entries)
+      || resolution.publicationHistory.entries.length < 1) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+    }
+    const publicationIds = new Set<string>();
+    const policyVersions = new Set<number>();
+    const publicationEntriesById = new Map<string,
+      (typeof resolution.publicationHistory.entries)[number]>();
+    for (const [index, entry] of resolution.publicationHistory.entries.entries()) {
+      assertExactKeys(entry as object, [
+        'publicationId', 'subscriptionTypeId', 'policyVersion', 'policyDigest', 'mappingId',
+        'state', 'effectiveAt'
+      ], 'policyResolution.publicationHistory.entry');
+      requiredId(entry.publicationId, 'policyResolution.publicationHistory.publicationId');
+      requiredId(entry.subscriptionTypeId, 'policyResolution.publicationHistory.subscriptionTypeId');
+      positiveInteger(entry.policyVersion, 'policyResolution.publicationHistory.policyVersion');
+      digest(entry.policyDigest, 'policyResolution.publicationHistory.policyDigest');
+      requiredId(entry.mappingId, 'policyResolution.publicationHistory.mappingId');
+      oneOf(entry.state, PUBLICATION_STATES,
+        'SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID',
+        'policyResolution.publicationHistory.state');
+      requiredInstant(entry.effectiveAt, 'policyResolution.publicationHistory.effectiveAt');
+      if (entry.subscriptionTypeId !== value.binding.subscriptionTypeId
+        || publicationIds.has(entry.publicationId)
+        || policyVersions.has(entry.policyVersion)) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+      }
+      const previous = resolution.publicationHistory.entries[index - 1];
+      if (previous && (Date.parse(previous.effectiveAt) >= Date.parse(entry.effectiveAt)
+        || previous.policyVersion >= entry.policyVersion)) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+      }
+      publicationIds.add(entry.publicationId);
+      policyVersions.add(entry.policyVersion);
+      publicationEntriesById.set(entry.publicationId, entry);
+    }
+    if (!Array.isArray(resolution.selections) || resolution.selections.length < 1) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+    }
+    const selectionIds = new Set<string>();
+    for (const selection of resolution.selections) {
+      assertExactKeys(selection as object, [
+        'subscriptionInstanceId', 'providerClientId', 'clientSubscriptionId', 'purchasedAt',
+        'publicationId', 'policyVersion', 'policyDigest', 'mappingId'
+      ], 'policyResolution.selection');
+      requiredId(selection.subscriptionInstanceId, 'policyResolution.selection.subscriptionInstanceId');
+      requiredId(selection.providerClientId, 'policyResolution.selection.providerClientId');
+      requiredId(selection.clientSubscriptionId, 'policyResolution.selection.clientSubscriptionId');
+      requiredInstant(selection.purchasedAt, 'policyResolution.selection.purchasedAt');
+      requiredId(selection.publicationId, 'policyResolution.selection.publicationId');
+      positiveInteger(selection.policyVersion, 'policyResolution.selection.policyVersion');
+      digest(selection.policyDigest, 'policyResolution.selection.policyDigest');
+      requiredId(selection.mappingId, 'policyResolution.selection.mappingId');
+      const selectedPublication = publicationEntriesById.get(selection.publicationId);
+      if (selectionIds.has(selection.subscriptionInstanceId)
+        || !selectedPublication
+        || selectedPublication.policyVersion !== selection.policyVersion
+        || selectedPublication.policyDigest !== selection.policyDigest
+        || selectedPublication.mappingId !== selection.mappingId
+        || selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS') {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+      }
+      selectionIds.add(selection.subscriptionInstanceId);
+    }
+    digest(resolution.resolutionDigest, 'policyResolution.resolutionDigest');
+    const computedResolutionDigest = `sha256:${createHash('sha256')
+      .update(canonicalStringify({
+        publicationHistory: resolution.publicationHistory,
+        selections: resolution.selections
+      }))
+      .digest('hex')}`;
+    if (computedResolutionDigest !== resolution.resolutionDigest) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_INVALID');
+    }
+  }
   oneOf(value.state, ['CURRENT', 'FAILED'], 'SUBSCRIPTION_INSTANCE_PROJECTOR_STATE_INVALID', 'state');
 
   if (!value.coverage || typeof value.coverage !== 'object') {
@@ -977,7 +1071,39 @@ export function validateStoredSubscriptionInstanceProjectorCheckpoint(
     digest(value.coverage.snapshotDigest, 'coverage.snapshotDigest');
     requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
     nonNegativeInteger(value.coverage.sourceItemCount, 'coverage.sourceItemCount');
+  } else if (value.coverage.kind === 'EXACT_ALLOWLIST_CANARY') {
+    assertExactKeys(value.coverage, [
+      'kind', 'clientSubscriptionIds', 'coverageThrough', 'sourceItemCount'
+    ], 'coverage');
+    if (!Array.isArray(value.coverage.clientSubscriptionIds)
+      || value.coverage.clientSubscriptionIds.length !== 2
+      || new Set(value.coverage.clientSubscriptionIds).size !== 2) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+    }
+    value.coverage.clientSubscriptionIds.forEach((id) =>
+      requiredId(id, 'coverage.clientSubscriptionIds'));
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+    if (value.coverage.sourceItemCount !== 2) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+    }
   } else fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+  if (value.schemaVersion === 3 && value.policyResolution) {
+    if (value.coverage.kind !== 'ORDERED_CHANGE_FEED'
+      && value.policyResolution.selections.length !== value.coverage.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+    }
+    if (value.coverage.kind === 'EXACT_ALLOWLIST_CANARY') {
+      const selectedIds = value.policyResolution.selections
+        .map((selection) => selection.clientSubscriptionId)
+        .sort();
+      if (!isDeepStrictEqual(
+        selectedIds,
+        [...value.coverage.clientSubscriptionIds].sort()
+      )) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+      }
+    }
+  }
 
   assertExactKeys(value.reconciliation as object, [
     'runId', 'mode', 'startedAt', 'completedAt', 'sourceItemCount', 'insertedCount', 'updatedCount',

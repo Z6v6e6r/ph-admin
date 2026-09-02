@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   subscriptionInstanceProjectionInputFingerprint,
   subscriptionInstanceProjectionTargetFingerprint,
+  SubscriptionInstanceProjectionPlanFingerprintResult,
   SubscriptionInstanceProjectionResult,
   SubscriptionProviderInstanceProjectorService
 } from '../src/subscriptions/subscription-provider-instance-projector.service';
@@ -46,7 +47,9 @@ export function safeProjectorErrorCode(error: unknown): string {
     : 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_FAILED';
 }
 
-export function sanitizedProjectorOutput(result: SubscriptionInstanceProjectionResult) {
+export function sanitizedProjectorOutput(
+  result: SubscriptionInstanceProjectionResult | SubscriptionInstanceProjectionPlanFingerprintResult
+) {
   return {
     status: result.status,
     write: result.write,
@@ -59,7 +62,9 @@ export function sanitizedProjectorOutput(result: SubscriptionInstanceProjectionR
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
-  if (!['--input-fingerprint', '--target-fingerprint', '--check', '--apply'].includes(mode)) {
+  if (![
+    '--input-fingerprint', '--plan-fingerprint', '--target-fingerprint', '--check', '--apply'
+  ].includes(mode)) {
     throw new Error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_MODE_INVALID');
   }
   if (mode === '--target-fingerprint') {
@@ -83,7 +88,11 @@ async function main(): Promise<void> {
   const repository = new SubscriptionsRepository();
   try {
     const service = new SubscriptionProviderInstanceProjectorService(repository);
-    const result = mode === '--apply' ? await service.apply(input) : await service.check(input);
+    const result = mode === '--apply'
+      ? await service.apply(input)
+      : mode === '--plan-fingerprint'
+        ? await service.planFingerprint(input)
+        : await service.check(input);
     console.log(JSON.stringify(sanitizedProjectorOutput(result)));
   } finally {
     await repository.close();
