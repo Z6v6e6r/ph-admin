@@ -422,8 +422,17 @@ async function verifyRealMongoPostcommitReadback(
   };
   await client.connect();
   for (const dbName of Object.values(dbNames)) {
-    await client.db(dbName).collection('subscription_policy_publications')
-      .insertOne(structuredClone(publication()));
+    const db = client.db(dbName);
+    await Promise.all([
+      db.collection('subscription_policy_publications').insertOne(structuredClone(publication())),
+      db.collection('subscription_provider_mappings').insertOne(structuredClone(mapping())),
+      db.collection('subscription_release_programs').insertOne(structuredClone(releaseProgram())),
+      db.collection('subscription_types').insertOne({
+        subscriptionTypeId: 'subscription_type:annual-piter',
+        state: 'ACTIVE',
+        currentPolicyVersion: 1
+      })
+    ]);
   }
   const repositoryFor = (dbName: string): SubscriptionsRepository => {
     const repository = new SubscriptionsRepository() as any;
@@ -1016,6 +1025,20 @@ async function run(): Promise<void> {
     ),
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
   );
+  const skippedPolicyVersionHistory = structuredClone(history);
+  skippedPolicyVersionHistory[1].policyVersion = 3;
+  skippedPolicyVersionHistory[1].runtimeProjection.policyVersion = 3;
+  skippedPolicyVersionHistory[1].policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    skippedPolicyVersionHistory[1].runtimeProjection
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([exactBoundary], skippedPolicyVersionHistory),
+      PEPPER,
+      skippedPolicyVersionHistory
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
   const disabledSelectedHistory = structuredClone(history);
   disabledSelectedHistory[0].state = 'DISABLED_FOR_NEW_OPERATIONS';
   disabledSelectedHistory[0].supersededAt = null;
@@ -1212,6 +1235,48 @@ async function run(): Promise<void> {
   );
   assert.equal(historyDriftMongo.instances.length, 0);
   assert.equal(historyDriftMongo.checkpoints.length, 0);
+
+  const mappingDriftMongo = new MemoryMongo();
+  const mappingDriftApplyRepository = repositoryWithMemoryMongo(mappingDriftMongo);
+  assert.equal(
+    await mappingDriftApplyRepository.preflightInitialRuntimeInstanceProjection(plan),
+    'READY_TO_INSERT'
+  );
+  mappingDriftMongo.mappings[0].revision += 1;
+  await assert.rejects(
+    mappingDriftApplyRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_CONFLICT')
+  );
+  assert.equal(mappingDriftMongo.instances.length, 0);
+  assert.equal(mappingDriftMongo.checkpoints.length, 0);
+
+  const programDriftMongo = new MemoryMongo();
+  const programDriftRepository = repositoryWithMemoryMongo(programDriftMongo);
+  assert.equal(
+    await programDriftRepository.preflightInitialRuntimeInstanceProjection(plan),
+    'READY_TO_INSERT'
+  );
+  programDriftMongo.programs[0].revision += 1;
+  await assert.rejects(
+    programDriftRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_CONFLICT')
+  );
+  assert.equal(programDriftMongo.instances.length, 0);
+  assert.equal(programDriftMongo.checkpoints.length, 0);
+
+  const typeDriftMongo = new MemoryMongo();
+  const typeDriftRepository = repositoryWithMemoryMongo(typeDriftMongo);
+  assert.equal(
+    await typeDriftRepository.preflightInitialRuntimeInstanceProjection(plan),
+    'READY_TO_INSERT'
+  );
+  typeDriftMongo.types[0].currentPolicyVersion = 2;
+  await assert.rejects(
+    typeDriftRepository.applyInitialRuntimeInstanceProjection(plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_CONFLICT')
+  );
+  assert.equal(typeDriftMongo.instances.length, 0);
+  assert.equal(typeDriftMongo.checkpoints.length, 0);
 
   const publicationRaceMongo = new MemoryMongo();
   publicationRaceMongo.forceFenceCasConflict = true;

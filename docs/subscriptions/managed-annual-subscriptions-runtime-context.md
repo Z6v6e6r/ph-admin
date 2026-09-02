@@ -75,7 +75,8 @@ date parsing.
 The complete history must also be a canonical lifecycle chain: the chronological
 tail is the only `PUBLISHED` row, and every earlier row is `SUPERSEDED` with
 `supersededBy` pointing to the next publication and
-`supersededAt` equal to that successor's `publishedAt`. The projector binding
+`supersededAt` equal to that successor's `publishedAt`. From the first stored
+publication onward, each policy version must increment by exactly one. The projector binding
 must identify that current tail. Multiple current rows, broken links, disabled
 rows inside the chain, or a later publication after the bound row fail closed.
 
@@ -98,9 +99,11 @@ policy as well as the current fence revision and digest.
 
 Schema-v2 checkpoints remain readable, but cannot be an exact replay of a
 schema-v3 multi-period plan. Apply rereads and compares the complete publication
-history inside the same Mongo snapshot transaction before the fence CAS or any
-insert. History/fence drift, a disabled selected publication, a pin mismatch,
-or an old conflicting checkpoint produces zero partial writes.
+history, provider mapping, subscription type and release program inside the same
+Mongo snapshot transaction before the fence CAS or any insert. Mapping/program/type
+revision, phase, price, station, scope, binding or history drift produces zero
+partial writes. The official binding mutations share the same fence CAS; release
+programs are immutable after promotion.
 
 The production CLI exposes a read-only planning step after the input and target
 fingerprints. `plan-fingerprint` opens only a read-only repository connection,
@@ -134,9 +137,14 @@ The CLI requires `NODE_ENV=development|test`, a credential-free loopback Mongo
 URI, a `dev-*` or `test-*` database, a non-production DEV/TEST service marker,
 disabled auto-index creation, a credential-free target fingerprint and the
 exact apply phrase `APPLY_EXACTLY_TWO_DEV_SUBSCRIPTION_INSTANCES`. All guards run
-before connection. Deterministic `_id` custody, a snapshot transaction and an
+before connection. After connection it additionally requires a single-node
+loopback `rs0` topology and an exact pre-existing fixture sentinel containing
+the target/database and a private fixture nonce digest; the canary never creates
+that sentinel itself. Deterministic `_id` custody, a snapshot transaction and an
 in-transaction publication-history reread protect concurrent apply and drift.
-Output contains only status, counts and digests.
+The Mongo integration test proves rollback on a second-row unique conflict,
+successful V1/V2 pins, exact replay, production-collection isolation and
+`dropDatabase` cleanup. Output contains only status, counts and digests.
 
 ```text
 npm run subscriptions:instance-projector:dev-canary:target-fingerprint

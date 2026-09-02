@@ -65,6 +65,15 @@ assert.deepEqual(resolveSubscriptionSalePeriod({
     publication(1, '2026-02-01T00:00:00.000Z')
   ]
 }), { matchCount: 0, kind: 'MALFORMED' });
+const skippedVersionFirst = publication(1, '2026-01-01T00:00:00.000Z');
+const skippedVersionThird = publication(3, '2026-02-01T00:00:00.000Z');
+skippedVersionFirst.state = 'SUPERSEDED';
+skippedVersionFirst.supersededAt = skippedVersionThird.publishedAt;
+skippedVersionFirst.supersededBy = skippedVersionThird.publicationId;
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-03-01T00:00:00.000Z',
+  publications: [skippedVersionFirst, skippedVersionThird]
+}), { matchCount: 0, kind: 'MALFORMED' });
 assert.deepEqual(resolveSubscriptionSalePeriod({ purchasedAt: '2026-03-01T00:00:00.000Z', publications: [first, { ...second, subscriptionTypeId: 'subscription_type:other' }] }), { matchCount: 0, kind: 'MALFORMED' });
 assert.deepEqual(resolveSubscriptionSalePeriod({
   purchasedAt: '2026-02-01T00:00:00.000Z',

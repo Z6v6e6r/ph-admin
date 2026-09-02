@@ -65,7 +65,8 @@ export function validateSubscriptionSalePeriodHistory(
     return { kind: 'AMBIGUOUS', matchCount: duplicateStartCount };
   }
   if (ordered.some((candidate, index) => index > 0
-    && ordered[index - 1].publication.policyVersion >= candidate.publication.policyVersion)) {
+      && candidate.publication.policyVersion
+        !== ordered[index - 1].publication.policyVersion + 1)) {
     return { kind: 'MALFORMED' };
   }
   const tail = ordered.at(-1)!.publication;

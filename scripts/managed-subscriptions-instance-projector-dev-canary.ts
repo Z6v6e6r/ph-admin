@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { lstat, readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import { MongoClient } from 'mongodb';
+import { Db, MongoClient } from 'mongodb';
 import {
   buildSubscriptionInstanceProjectionPlan,
   subscriptionInstanceProjectionInputFingerprint,
@@ -16,6 +16,10 @@ const DEV_DATABASE_PATTERN = /^(?:dev|test)-[A-Za-z0-9][A-Za-z0-9_-]{1,119}$/;
 const TOP_LEVEL_KEYS = [
   'schemaVersion', 'sourceMode', 'allowlistedClientSubscriptionIds', 'projectionInput'
 ] as const;
+const FIXTURE_SENTINEL_ID = 'subscription_instance_dev_canary_fixture_sentinel:v1';
+export const SUBSCRIPTION_INSTANCE_DEV_CANARY_FIXTURE_SENTINEL_COLLECTION =
+  'subscription_instance_dev_canary_fixture_sentinels';
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 type CanaryInput = {
   schemaVersion: 1;
@@ -131,7 +135,54 @@ export function subscriptionInstanceDevCanaryTarget(
   )) {
     fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_AUTO_INDEX_FALSE_REQUIRED');
   }
+  subscriptionInstanceDevCanaryFixtureSentinel(env, { targetSha256, database });
   return { targetSha256, database, uri };
+}
+
+export function subscriptionInstanceDevCanaryFixtureSentinel(
+  env: NodeJS.ProcessEnv,
+  target: { targetSha256: string; database: string }
+) {
+  const fixtureId = String(env.SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_ID ?? '').trim();
+  const nonceSha256 = String(
+    env.SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_NONCE_SHA256 ?? ''
+  ).trim();
+  if (!/^fixture:(?:dev|test):[A-Za-z0-9][A-Za-z0-9._:-]{2,119}$/.test(fixtureId)
+    || !DIGEST_PATTERN.test(nonceSha256)) {
+    fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_ATTESTATION_REQUIRED');
+  }
+  return {
+    _id: FIXTURE_SENTINEL_ID,
+    schemaVersion: 1,
+    custody: 'LOCAL_EPHEMERAL_FIXTURE',
+    fixtureId,
+    targetSha256: target.targetSha256,
+    database: target.database,
+    nonceSha256
+  } as const;
+}
+
+export async function assertSubscriptionInstanceDevCanaryFixtureCustody(
+  db: Db,
+  env: NodeJS.ProcessEnv,
+  target: { targetSha256: string; database: string }
+): Promise<void> {
+  const hello = await db.admin().command({ hello: 1 });
+  const hosts = Array.isArray(hello.hosts) ? hello.hosts : [];
+  if (hello.isWritablePrimary !== true
+    || hello.setName !== 'rs0'
+    || hosts.length !== 1
+    || hosts.some((host) => typeof host !== 'string'
+      || !/^(?:localhost|127\.0\.0\.1|\[::1\]):[0-9]{2,5}$/.test(host))) {
+    fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_TOPOLOGY_FORBIDDEN');
+  }
+  const expected = subscriptionInstanceDevCanaryFixtureSentinel(env, target);
+  const actual = await db.collection<typeof expected>(
+    SUBSCRIPTION_INSTANCE_DEV_CANARY_FIXTURE_SENTINEL_COLLECTION
+  ).findOne({ _id: expected._id });
+  if (!isDeepStrictEqual(actual, expected)) {
+    fail('SUBSCRIPTIONS_INSTANCE_DEV_CANARY_FIXTURE_SENTINEL_MISMATCH');
+  }
 }
 
 async function readPrivateInput(): Promise<unknown> {
@@ -182,6 +233,7 @@ async function main(): Promise<void> {
   try {
     await client.connect();
     const db = client.db(boundary.database);
+    await assertSubscriptionInstanceDevCanaryFixtureCustody(db, process.env, boundary);
     const publications = await db.collection('subscription_policy_publications')
       .find({ subscriptionTypeId }, { projection: { _id: 0 } })
       .sort({ effectiveAt: 1, publicationId: 1 })

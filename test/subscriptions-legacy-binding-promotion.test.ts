@@ -18,6 +18,7 @@ import {
   validateSubscriptionLegacyBindingPromotionAttestations
 } from '../src/subscriptions/subscription-legacy-binding-promotion.service';
 import { compileSubscriptionRuntimeProjection } from '../src/subscriptions/subscription-runtime-projection';
+import { buildSubscriptionInstancePolicyResolution } from '../src/subscriptions/subscription-instance-policy-resolution';
 import { SubscriptionProviderInstanceProjectorService } from '../src/subscriptions/subscription-provider-instance-projector.service';
 import {
   computeSubscriptionRuntimeProjectionDigest,
@@ -457,6 +458,7 @@ async function main(): Promise<void> {
   }
   await (new FixedProjectorClock(projectorRepository as any) as any).assertPersistedBinding({
     checkpoint: {
+      schemaVersion: 3,
       tenantId: PITER_TENANT_ID,
       provider: 'VIVA',
       providerProductId: PITER_PROVIDER_PRODUCT_ID,
@@ -476,13 +478,27 @@ async function main(): Promise<void> {
         releasePhaseId: PHASE_ID,
         runtimeCompatibility: plan.target.publication.runtimeCompatibility
       },
+      policyResolution: buildSubscriptionInstancePolicyResolution(
+        [plan.target.publication],
+        [{
+          subscriptionInstanceId: 'subscription_instance:binding-promotion-probe',
+          providerClientId: 'provider_client:binding-promotion-probe',
+          clientSubscriptionId: 'client_subscription:binding-promotion-probe',
+          purchasedAt: plan.target.publication.effectiveAt,
+          publicationId: plan.target.publication.publicationId,
+          policyVersion: plan.target.publication.policyVersion,
+          policyDigest: plan.target.publication.policyDigest as `sha256:${string}`,
+          mappingId: plan.target.publication.mappingId
+        }]
+      ),
       coverage: { coverageThrough: '2026-10-01T00:00:00.000Z' }
     },
     instances: [{
       homeStationId: PITER_STATION_ID,
+      mappingId: plan.target.mapping.mappingId,
       purchasePrice: { amountMinor: PITER_PRICE_MINOR, currency: 'RUB' }
     }]
-  });
+  }, [plan.target.publication]);
 
   const parsed = parseSubscriptionLegacyBindingPromotionManifest(ready.manifest);
   const env = {
