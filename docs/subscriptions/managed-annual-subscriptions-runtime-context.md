@@ -92,6 +92,22 @@ history inside the same Mongo snapshot transaction before the fence CAS or any
 insert. History/fence drift, a disabled selected publication, a pin mismatch,
 or an old conflicting checkpoint produces zero partial writes.
 
+The production CLI exposes a read-only planning step after the input and target
+fingerprints. `plan-fingerprint` opens only a read-only repository connection,
+loads the attested publication history and persisted binding, verifies that
+the history and fence remain stable, and emits the sanitized history-bound plan
+digest with `write: false`. It deliberately does not require
+`SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_SHA256`; that emitted digest is then
+supplied to `check` and `apply` as the independent plan attestation.
+
+```text
+npm run subscriptions:instance-projector:input-fingerprint
+npm run subscriptions:instance-projector:target-fingerprint
+npm run subscriptions:instance-projector:plan-fingerprint
+npm run subscriptions:instance-projector:check
+npm run subscriptions:instance-projector:apply
+```
+
 ## Isolated DEV exact-two canary
 
 `scripts/managed-subscriptions-instance-projector-dev-canary.ts` is a standalone

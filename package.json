@@ -30,6 +30,7 @@
     "subscriptions:provider-projection:input-fingerprint": "ts-node scripts/managed-subscriptions-provider-projection.ts --input-fingerprint",
     "subscriptions:provider-projection:check": "ts-node scripts/managed-subscriptions-provider-projection.ts --check",
     "subscriptions:instance-projector:input-fingerprint": "ts-node scripts/managed-subscriptions-instance-projector.ts --input-fingerprint",
+    "subscriptions:instance-projector:plan-fingerprint": "ts-node scripts/managed-subscriptions-instance-projector.ts --plan-fingerprint",
     "subscriptions:instance-projector:target-fingerprint": "ts-node scripts/managed-subscriptions-instance-projector.ts --target-fingerprint",
     "subscriptions:instance-projector:check": "ts-node scripts/managed-subscriptions-instance-projector.ts --check",
     "subscriptions:instance-projector:apply": "ts-node scripts/managed-subscriptions-instance-projector.ts --apply",

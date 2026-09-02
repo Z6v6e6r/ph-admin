@@ -119,6 +119,15 @@ export interface SubscriptionInstanceProjectionResult {
   checkpointId: string;
 }
 
+export interface SubscriptionInstanceProjectionPlanFingerprintResult {
+  status: 'PLAN_FINGERPRINT';
+  write: false;
+  sourceItemCount: number;
+  inputSha256: string;
+  planSha256: string;
+  checkpointId: string;
+}
+
 function fail(code: string): never {
   throw new SubscriptionRuntimeContractError(code);
 }
@@ -678,6 +687,26 @@ export function assertSubscriptionInstanceProjectionApplyBoundary(
 @Injectable()
 export class SubscriptionProviderInstanceProjectorService {
   constructor(private readonly repository: SubscriptionsRepository) {}
+
+  async planFingerprint(input: unknown): Promise<SubscriptionInstanceProjectionPlanFingerprintResult> {
+    const parsed = this.prepareInput(input, false);
+    await this.repository.connectReadOnly();
+    const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
+      parsed.binding.subscriptionTypeId
+    );
+    const plan = this.plan(input, publicationHistory);
+    const fence = await this.assertPersistedBinding(plan, publicationHistory);
+    await this.assertFenceUnchanged(fence, plan.checkpoint.binding.subscriptionTypeId);
+    await this.assertPublicationHistoryUnchanged(plan);
+    return {
+      status: 'PLAN_FINGERPRINT',
+      write: false,
+      sourceItemCount: plan.instances.length,
+      inputSha256: plan.inputSha256,
+      planSha256: plan.planSha256,
+      checkpointId: plan.checkpoint.checkpointId
+    };
+  }
 
   async check(input: unknown): Promise<SubscriptionInstanceProjectionResult> {
     const parsed = this.prepareInput(input, false);

@@ -1181,6 +1181,36 @@ async function run(): Promise<void> {
   assert.equal(publicationRaceMongo.checkpoints.length, 0);
 
   enable(input);
+  delete process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_SHA256;
+  const fingerprintRepository = new FakeRepository();
+  const fingerprint = await new FixedClockService(
+    fingerprintRepository as any
+  ).planFingerprint(input);
+  assert.deepEqual(
+    {
+      status: fingerprint.status,
+      write: fingerprint.write,
+      sourceItemCount: fingerprint.sourceItemCount,
+      planSha256: fingerprint.planSha256
+    },
+    {
+      status: 'PLAN_FINGERPRINT',
+      write: false,
+      sourceItemCount: 1,
+      planSha256: plan.planSha256
+    }
+  );
+  assert.equal(fingerprintRepository.connectReadOnlyCalls, 1);
+  assert.equal(fingerprintRepository.connectCalls, 0);
+  assert.equal(fingerprintRepository.preflightCalls, 0);
+  assert.equal(fingerprintRepository.applyCalls, 0);
+  const fingerprintOutput = JSON.stringify(sanitizedProjectorOutput(fingerprint));
+  for (const forbidden of [
+    'provider-client-001', 'client-subscription-001', 'projector-test-pepper',
+    'provider_payment_evidence', 'provider_instance_evidence'
+  ]) assert.equal(fingerprintOutput.includes(forbidden), false);
+
+  enable(input);
   const checkRepository = new FakeRepository();
   const checked = await new FixedClockService(checkRepository as any).check(input);
   assert.deepEqual(
