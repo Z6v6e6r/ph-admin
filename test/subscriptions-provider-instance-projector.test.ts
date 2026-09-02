@@ -1086,6 +1086,23 @@ async function run(): Promise<void> {
     hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID')
   );
 
+  const subMillisecondPlan = structuredClone(multiPeriodPlan);
+  const subMillisecondSelection = subMillisecondPlan.checkpoint.policyResolution!.selections[0];
+  subMillisecondSelection.purchasedAt = '2026-08-15T00:00:00.000499Z';
+  subMillisecondPlan.checkpoint.policyResolution!.resolutionDigest = digest({
+    publicationHistory: subMillisecondPlan.checkpoint.policyResolution!.publicationHistory,
+    selections: subMillisecondPlan.checkpoint.policyResolution!.selections
+  });
+  const subMillisecondMongo = new MemoryMongo();
+  subMillisecondMongo.publications = structuredClone(history);
+  const subMillisecondRepository = repositoryWithMemoryMongo(subMillisecondMongo);
+  await assert.rejects(
+    subMillisecondRepository.applyInitialRuntimeInstanceProjection(subMillisecondPlan),
+    hasCode('SUBSCRIPTION_RUNTIME_TIMESTAMP_INVALID')
+  );
+  assert.equal(subMillisecondMongo.instances.length, 0);
+  assert.equal(subMillisecondMongo.checkpoints.length, 0);
+
   const legacyCheckpointMongo = new MemoryMongo();
   legacyCheckpointMongo.instances = structuredClone(multiPeriodPlan.instances);
   const legacyCheckpoint = structuredClone(multiPeriodPlan.checkpoint) as any;
