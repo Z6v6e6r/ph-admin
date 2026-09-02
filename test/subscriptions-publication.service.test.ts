@@ -540,6 +540,7 @@ async function verifyRepositorySupersessionTransaction(
   };
   const newPolicy = {
     ...policyFixture(), version: 2, status: 'DRAFT' as const, revision: 1,
+    effectiveAt: new Date(Date.parse(initialPublication.effectiveAt) + 1).toISOString(),
     idempotency: {
       actorId: 'admin:global', key: 'create-v2-for-transaction', requestHash: HASH,
       correlationId: 'corr:create-v2-transaction'
@@ -547,11 +548,13 @@ async function verifyRepositorySupersessionTransaction(
   };
   const newProjection = structuredClone(initialPublication.runtimeProjection);
   newProjection.policyVersion = 2;
+  newProjection.effectiveAt = newPolicy.effectiveAt;
   const newPublication: StoredSubscriptionPolicyPublication = {
     ...structuredClone(initialPublication),
     schemaVersion: 3,
     publicationId: 'publication:supersession-v2',
     policyVersion: 2,
+    effectiveAt: newPolicy.effectiveAt,
     policyDigest: computeSubscriptionRuntimeProjectionDigest(newProjection),
     runtimeProjection: newProjection,
     publishedAt: new Date(Date.parse(initialPublication.publishedAt) + 1000).toISOString(),
@@ -685,17 +688,30 @@ async function verifyRepositorySupersessionTransaction(
     }
   });
 
-  const publish = () => repository.publishRuntimePolicy({
+  const publish = (publication = newPublication) => repository.publishRuntimePolicy({
     mapping: structuredClone(refreshedMapping),
     insertMapping: false,
     expectedMappingRevision: mapping.revision,
-    publication: structuredClone(newPublication),
+    publication: structuredClone(publication),
     expectedTypeRevision: 2,
     expectedPolicyRevision: 1,
     previousPublicationId: initialPublication.publicationId,
     previousPolicyVersion: 1,
     expectedPreviousPolicyRevision: 2
   });
+  const overlappingPublication = structuredClone(newPublication);
+  overlappingPublication.effectiveAt = initialPublication.effectiveAt;
+  overlappingPublication.runtimeProjection.effectiveAt = initialPublication.effectiveAt;
+  overlappingPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    overlappingPublication.runtimeProjection
+  );
+  policies[1].effectiveAt = initialPublication.effectiveAt;
+  await assert.rejects(
+    publish(overlappingPublication),
+    (error: unknown) => error instanceof SubscriptionRuntimeContractError
+      && error.code === 'SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT'
+  );
+  policies[1].effectiveAt = newPolicy.effectiveAt;
   await publish();
   assert.equal(type.currentPolicyVersion, 2);
   assert.equal(policies[0].status, 'SUPERSEDED');
@@ -1162,6 +1178,20 @@ async function main(): Promise<void> {
   };
   supersession.repository.policies.push(v2Draft);
   supersession.repository.instanceCounts.set(1, 7);
+  await expectException(
+    () => supersession.service.preview(
+      supersession.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+  supersession.repository.policies[1].effectiveAt = '2026-08-20T20:59:59.999Z';
+  await expectException(
+    () => supersession.service.preview(
+      supersession.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
+    ),
+    UnprocessableEntityException
+  );
+  supersession.repository.policies[1].effectiveAt = '2026-08-20T21:00:00.001Z';
   const v2Preview = await supersession.service.preview(
     supersession.repository.type.subscriptionTypeId, '2', previewDto(), globalAdmin
   );
@@ -1255,6 +1285,7 @@ async function main(): Promise<void> {
     version: 2,
     revision: 1,
     status: 'DRAFT',
+    effectiveAt: '2026-08-20T21:00:00.001Z',
     idempotency: {
       actorId: 'admin:global', key: 'create-concurrent-reuse-v2', requestHash: HASH,
       correlationId: 'corr:create-concurrent-reuse-v2'
@@ -1306,6 +1337,7 @@ async function main(): Promise<void> {
     version: 2,
     revision: 1,
     status: 'DRAFT',
+    effectiveAt: '2026-08-20T21:00:00.001Z',
     idempotency: {
       actorId: 'admin:global', key: 'create-new-mapping-policy-v2', requestHash: HASH,
       correlationId: 'corr:create-new-mapping-v2'
@@ -1361,6 +1393,7 @@ async function main(): Promise<void> {
     version: 2,
     revision: 1,
     status: 'DRAFT',
+    effectiveAt: '2026-08-20T21:00:00.001Z',
     applyTo: 'ACTIVE_AND_NEW',
     idempotency: {
       actorId: 'admin:global', key: 'create-migration-v2', requestHash: HASH,

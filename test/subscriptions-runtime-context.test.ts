@@ -178,6 +178,7 @@ async function main(): Promise<void> {
   let storedInstance: StoredSubscriptionInstance | null = instance;
   let mapping = mappingFixture();
   let publication = publicationFixture();
+  let publications = [publication];
   const identity = {
     verifyTrustedBearer: async () => ({
       actor: {
@@ -190,7 +191,7 @@ async function main(): Promise<void> {
     connectReadOnly: async () => undefined,
     runtimeInstanceByProviderIdentity: async () => storedInstance,
     runtimeProviderMappingById: async () => mapping,
-    runtimePolicyPublicationByVersion: async () => publication
+    runtimePolicyPublicationHistoryByType: async () => publications
   } as any;
   const service = new FixedClockRuntimeContext(identity, repository);
 
@@ -212,6 +213,88 @@ async function main(): Promise<void> {
   assert.equal(result.evidence.mappingRevision, 2);
   assert.doesNotMatch(JSON.stringify(result), /provider_client|clientRefHash|phone|paymentEvidence/);
 
+  const newPublication = publicationFixture();
+  newPublication.publicationId = 'publication:piter-friendship-v2';
+  newPublication.policyVersion = 2;
+  newPublication.effectiveAt = '2026-08-20T09:30:00.000Z';
+  newPublication.publishedAt = newPublication.effectiveAt;
+  newPublication.runtimeProjection = {
+    ...newPublication.runtimeProjection,
+    policyVersion: 2,
+    effectiveAt: newPublication.effectiveAt
+  };
+  newPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(newPublication.runtimeProjection);
+  publication = {
+    ...publication,
+    state: 'SUPERSEDED',
+    supersededAt: newPublication.publishedAt,
+    supersededBy: newPublication.publicationId
+  };
+  publications = [publication, newPublication];
+  const oldPurchaseResult = await service.resolve('Bearer user', TOKEN, {
+    clientSubscriptionId: instance.clientSubscriptionId
+  });
+  assert.equal(oldPurchaseResult.evidence.publicationId, publication.publicationId);
+  const newPurchaseInstance = {
+    ...instance,
+    purchasedAt: newPublication.effectiveAt,
+    policyVersion: newPublication.policyVersion,
+    policyDigest: newPublication.policyDigest
+  };
+  storedInstance = newPurchaseInstance;
+  const newPurchaseResult = await service.resolve('Bearer user', TOKEN, {
+    clientSubscriptionId: instance.clientSubscriptionId
+  });
+  assert.equal(newPurchaseResult.evidence.publicationId, newPublication.publicationId);
+  publications = [
+    { ...publication, state: 'PUBLISHED', supersededAt: null, supersededBy: null },
+    newPublication
+  ];
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  publications = [{ ...publication, supersededBy: 'publication:broken-chain' }, newPublication];
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  publications = [publication, newPublication];
+  storedInstance = { ...instance, purchasedAt: newPublication.effectiveAt };
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  storedInstance = { ...instance, purchasedAt: '2026-08-20T08:59:59.999Z' };
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  const duplicateStartPublication = { ...newPublication };
+  duplicateStartPublication.publicationId = 'publication:piter-friendship-v3';
+  duplicateStartPublication.policyVersion = 3;
+  duplicateStartPublication.runtimeProjection = {
+    ...duplicateStartPublication.runtimeProjection,
+    policyVersion: 3
+  };
+  duplicateStartPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(
+    duplicateStartPublication.runtimeProjection
+  );
+  publications = [publication, newPublication, duplicateStartPublication];
+  storedInstance = newPurchaseInstance;
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  publications = [{ ...publication, effectiveAt: 'not-a-date' }];
+  storedInstance = instance;
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  storedInstance = instance;
+  publications = [publication];
+
   publication = {
     ...publicationFixture(),
     schemaVersion: 3,
@@ -227,6 +310,7 @@ async function main(): Promise<void> {
       correlationId: 'corr:publish-piter-schema3'
     }
   };
+  publications = [publication];
   const schemaThreeResult = await service.resolve('Bearer user', TOKEN, {
     clientSubscriptionId: instance.clientSubscriptionId
   });
@@ -242,6 +326,7 @@ async function main(): Promise<void> {
     stationSetPublication.runtimeProjection
   );
   publication = stationSetPublication;
+  publications = [publication];
   storedInstance = { ...instance, policyDigest: stationSetPublication.policyDigest };
   mapping = {
     ...mappingFixture(),
@@ -265,12 +350,15 @@ async function main(): Promise<void> {
   storedInstance = instance;
   mapping = mappingFixture();
   publication = publicationFixture();
+  publications = [publication];
+  publication = publicationFixture();
   publication = {
     ...publication,
     state: 'SUPERSEDED',
-    supersededAt: '2026-08-22T12:00:00.000Z',
-    supersededBy: 'publication:piter-v2'
+    supersededAt: newPublication.publishedAt,
+    supersededBy: newPublication.publicationId
   };
+  publications = [publication, newPublication];
   const supersededResult = await service.resolve('Bearer user', TOKEN, {
     clientSubscriptionId: instance.clientSubscriptionId
   });
@@ -295,6 +383,7 @@ async function main(): Promise<void> {
   );
   mapping = mappingFixture();
   publication = { ...publication, state: 'DISABLED_FOR_NEW_OPERATIONS' };
+  publications = [publication];
   await assert.rejects(
     service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
     (error) => error instanceof ServiceUnavailableException

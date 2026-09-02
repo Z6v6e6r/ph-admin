@@ -411,6 +411,12 @@ export class SubscriptionPublicationService {
           message: 'Current published policy or publication is not eligible for supersession'
         });
       }
+      if (Date.parse(runtimeProjection.effectiveAt) <= Date.parse(previousPublication.effectiveAt)) {
+        throw new UnprocessableEntityException({
+          code: 'SUBSCRIPTIONS_SALE_PERIOD_OVERLAP',
+          message: 'Superseding policy effectiveAt must be later than the current publication'
+        });
+      }
       if (existingMapping && (existingMapping.state !== 'VERIFIED'
         || existingMapping.subscriptionTypeId !== input.subscriptionTypeId)) {
         throw new ConflictException({

@@ -56,6 +56,9 @@ jobs:
           SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED: "true"
           SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED: "true"
           SUBSCRIPTIONS_INSTANCE_PROJECTOR_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - run: npm run test:subscriptions-instance-projector-dev-canary
+        env:
+          SUBSCRIPTIONS_INSTANCE_DEV_CANARY_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:subscriptions-sale-readiness
       - run: npm run test:subscriptions-shadow-quote
       - run: npm run test:subscriptions-canonical-target-resolver
