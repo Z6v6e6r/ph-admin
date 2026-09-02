@@ -28,6 +28,9 @@ const publication = (version: number, effectiveAt: string): StoredSubscriptionPo
 
 const first = publication(1, '2026-01-01T00:00:00.000Z');
 const second = publication(2, '2026-02-01T00:00:00.000Z');
+first.state = 'SUPERSEDED';
+first.supersededAt = second.publishedAt;
+first.supersededBy = second.publicationId;
 const history = [first, second];
 const matchedVersion = (purchasedAt: string, publications = history): number | null => {
   const result = resolveSubscriptionSalePeriod({ purchasedAt, publications });
@@ -63,4 +66,16 @@ assert.deepEqual(resolveSubscriptionSalePeriod({
   ]
 }), { matchCount: 0, kind: 'MALFORMED' });
 assert.deepEqual(resolveSubscriptionSalePeriod({ purchasedAt: '2026-03-01T00:00:00.000Z', publications: [first, { ...second, subscriptionTypeId: 'subscription_type:other' }] }), { matchCount: 0, kind: 'MALFORMED' });
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-02-01T00:00:00.000Z',
+  publications: [{ ...first, state: 'PUBLISHED', supersededAt: null, supersededBy: null }, second]
+}), { matchCount: 0, kind: 'MALFORMED' });
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-02-01T00:00:00.000Z',
+  publications: [{ ...first, supersededBy: 'publication:sale-period-wrong' }, second]
+}), { matchCount: 0, kind: 'MALFORMED' });
+assert.deepEqual(resolveSubscriptionSalePeriod({
+  purchasedAt: '2026-02-01T00:00:00.000Z',
+  publications: [{ ...first, supersededAt: '2026-01-31T23:59:59.999Z' }, second]
+}), { matchCount: 0, kind: 'MALFORMED' });
 console.log('subscription sale-period resolver tests passed');

@@ -5,7 +5,10 @@ import {
   buildSubscriptionInstancePolicyResolution,
   subscriptionPublicationHistoryMatchesResolution
 } from './subscription-instance-policy-resolution';
-import { resolveSubscriptionSalePeriod } from './subscription-sale-period-resolver';
+import {
+  resolveSubscriptionSalePeriod,
+  validateSubscriptionSalePeriodHistory
+} from './subscription-sale-period-resolver';
 import {
   SubscriptionRuntimeContractError,
   validateStoredSubscriptionInstance,
@@ -392,6 +395,20 @@ export function buildSubscriptionInstanceProjectionPlan(
   }
   if (!Array.isArray(publicationHistory) || publicationHistory.length < 1) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_REQUIRED');
+  }
+  const validatedHistory = validateSubscriptionSalePeriodHistory(publicationHistory);
+  if (validatedHistory.kind === 'AMBIGUOUS') {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_AMBIGUOUS');
+  }
+  if (validatedHistory.kind !== 'VALID') {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+  }
+  const currentPublication = validatedHistory.publications.at(-1)!;
+  if (currentPublication.publicationId !== parsed.binding.publicationId
+    || currentPublication.policyVersion !== parsed.binding.policyVersion
+    || currentPublication.policyDigest !== parsed.binding.policyDigest
+    || currentPublication.mappingId !== parsed.binding.mappingId) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PUBLICATION_NOT_CURRENT');
   }
   const identities = new Set<string>();
   const resolvedInstances = sortedRecords.map((record): {

@@ -8,6 +8,11 @@ export type SubscriptionSalePeriodResolution =
   | { matchCount: 1; kind: 'MATCH'; publication: StoredSubscriptionPolicyPublication }
   | { matchCount: number; kind: 'AMBIGUOUS' };
 
+export type SubscriptionSalePeriodHistoryValidation =
+  | { kind: 'VALID'; publications: StoredSubscriptionPolicyPublication[] }
+  | { kind: 'MALFORMED' }
+  | { kind: 'AMBIGUOUS'; matchCount: number };
+
 const parseStrictInstant = (value: unknown): number | null => {
   if (typeof value !== 'string' || value !== value.trim()) return null;
   const match = ISO_INSTANT_PATTERN.exec(value);
@@ -31,6 +36,59 @@ const parseStrictInstant = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+export function validateSubscriptionSalePeriodHistory(
+  publications: readonly StoredSubscriptionPolicyPublication[]
+): SubscriptionSalePeriodHistoryValidation {
+  if (publications.length < 1
+    || new Set(publications.map((publication) => publication.subscriptionTypeId)).size !== 1
+    || new Set(publications.map((publication) => publication.publicationId)).size
+      !== publications.length) {
+    return { kind: 'MALFORMED' };
+  }
+  const candidates = publications.map((publication) => ({
+    publication,
+    effectiveAt: parseStrictInstant(publication.effectiveAt)
+  }));
+  if (candidates.some((candidate) => candidate.effectiveAt === null)) {
+    return { kind: 'MALFORMED' };
+  }
+  const ordered = (candidates as Array<{
+    publication: StoredSubscriptionPolicyPublication;
+    effectiveAt: number;
+  }>).sort((left, right) => left.effectiveAt - right.effectiveAt);
+  const startCounts = new Map<number, number>();
+  for (const candidate of ordered) {
+    startCounts.set(candidate.effectiveAt, (startCounts.get(candidate.effectiveAt) ?? 0) + 1);
+  }
+  const duplicateStartCount = Math.max(0, ...startCounts.values());
+  if (duplicateStartCount > 1) {
+    return { kind: 'AMBIGUOUS', matchCount: duplicateStartCount };
+  }
+  if (ordered.some((candidate, index) => index > 0
+    && ordered[index - 1].publication.policyVersion >= candidate.publication.policyVersion)) {
+    return { kind: 'MALFORMED' };
+  }
+  const tail = ordered.at(-1)!.publication;
+  if (tail.state !== 'PUBLISHED'
+    || tail.supersededAt !== null
+    || tail.supersededBy !== null
+    || ordered.filter(({ publication }) => publication.state === 'PUBLISHED').length !== 1) {
+    return { kind: 'MALFORMED' };
+  }
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const publication = ordered[index].publication;
+    const next = ordered[index + 1].publication;
+    if (publication.state !== 'SUPERSEDED'
+      || publication.supersededBy !== next.publicationId
+      || publication.supersededAt !== next.publishedAt
+      || parseStrictInstant(publication.supersededAt) === null
+      || parseStrictInstant(next.publishedAt) === null) {
+      return { kind: 'MALFORMED' };
+    }
+  }
+  return { kind: 'VALID', publications: ordered.map(({ publication }) => publication) };
+}
+
 /**
  * Resolves the publication period containing a subscription acquisition instant.
  * Publication periods are derived from effectiveAt history as [effectiveAt(n),
@@ -43,44 +101,23 @@ export function resolveSubscriptionSalePeriod(input: {
   const purchasedAt = parseStrictInstant(input.purchasedAt);
   if (purchasedAt === null) return { matchCount: 0, kind: 'MALFORMED' };
 
-  if (new Set(input.publications.map((publication) => publication.subscriptionTypeId)).size > 1) {
+  const history = validateSubscriptionSalePeriodHistory(input.publications);
+  if (history.kind === 'MALFORMED') {
     return { matchCount: 0, kind: 'MALFORMED' };
   }
-
-  const candidates = input.publications.map((publication) => ({
-    publication,
-    effectiveAt: parseStrictInstant(publication.effectiveAt)
-  }));
-  if (candidates.some((candidate) => candidate.effectiveAt === null)) {
-    return { matchCount: 0, kind: 'MALFORMED' };
+  if (history.kind === 'AMBIGUOUS') {
+    return { matchCount: history.matchCount, kind: 'AMBIGUOUS' };
   }
-
-  const validCandidates = candidates as Array<{
-    publication: StoredSubscriptionPolicyPublication;
-    effectiveAt: number;
-  }>;
-
-  validCandidates.sort((left, right) => left.effectiveAt - right.effectiveAt);
-  const startCounts = new Map<number, number>();
-  for (const candidate of validCandidates) {
-    startCounts.set(candidate.effectiveAt, (startCounts.get(candidate.effectiveAt) ?? 0) + 1);
-  }
-  const duplicateStartCount = Math.max(0, ...startCounts.values());
-  if (duplicateStartCount > 1) {
-    return { matchCount: duplicateStartCount, kind: 'AMBIGUOUS' };
-  }
-  if (validCandidates.some((candidate, index) => index > 0
-    && validCandidates[index - 1].publication.policyVersion >= candidate.publication.policyVersion)) {
-    return { matchCount: 0, kind: 'MALFORMED' };
-  }
-  const startsAtOrBeforePurchase = validCandidates.filter(
-    (candidate) => candidate.effectiveAt <= purchasedAt
+  const startsAtOrBeforePurchase = history.publications.filter(
+    (publication) => Date.parse(publication.effectiveAt) <= purchasedAt
   );
   if (startsAtOrBeforePurchase.length === 0) return { matchCount: 0, kind: 'NO_MATCH' };
-  const latestStart = Math.max(...startsAtOrBeforePurchase.map((candidate) => candidate.effectiveAt));
+  const latestStart = Math.max(...startsAtOrBeforePurchase.map(
+    (publication) => Date.parse(publication.effectiveAt)
+  ));
   const matches = startsAtOrBeforePurchase.filter(
-    (candidate) => candidate.effectiveAt === latestStart
+    (publication) => Date.parse(publication.effectiveAt) === latestStart
   );
   if (matches.length !== 1) return { matchCount: matches.length, kind: 'AMBIGUOUS' };
-  return { matchCount: 1, kind: 'MATCH', publication: matches[0].publication };
+  return { matchCount: 1, kind: 'MATCH', publication: matches[0] };
 }

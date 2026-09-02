@@ -64,10 +64,17 @@ publication (`PUBLISHED`, `SUPERSEDED`, and disabled):
 instance `purchasedAt` selects the policy. A purchase exactly at a newer
 `effectiveAt` selects that newer policy. Before the first period, malformed
 timestamps, duplicate starts, or any result other than exactly one match fail
-closed. A disabled selected publication is rejected after selection; it is not
-silently skipped. Runtime-context never uses the current date to select or
+closed. A disabled publication is never silently skipped or accepted as the
+selected policy. Runtime-context never uses the current date to select or
 re-pin a policy. Explicit publication `until` values are not a supported
 contract; the next `effectiveAt` is the exclusive end of a period.
+
+The complete history must also be a canonical lifecycle chain: the chronological
+tail is the only `PUBLISHED` row, and every earlier row is `SUPERSEDED` with
+`supersededBy` pointing to the next publication and
+`supersededAt` equal to that successor's `publishedAt`. The projector binding
+must identify that current tail. Multiple current rows, broken links, disabled
+rows inside the chain, or a later publication after the bound row fail closed.
 
 ## Provider instance projection pins
 

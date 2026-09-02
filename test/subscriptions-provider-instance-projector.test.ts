@@ -1026,7 +1026,33 @@ async function run(): Promise<void> {
       PEPPER,
       disabledSelectedHistory
     ),
-    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_SELECTED_PUBLICATION_DISABLED')
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  const twoCurrentPublications = structuredClone(history);
+  twoCurrentPublications[0].state = 'PUBLISHED';
+  twoCurrentPublications[0].supersededAt = null;
+  twoCurrentPublications[0].supersededBy = null;
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([exactBoundary], twoCurrentPublications),
+      PEPPER,
+      twoCurrentPublications
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  const brokenSupersessionHistory = structuredClone(history);
+  brokenSupersessionHistory[0].supersededBy = 'publication:wrong-successor';
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(
+      manifestForHistory([exactBoundary], brokenSupersessionHistory),
+      PEPPER,
+      brokenSupersessionHistory
+    ),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  assert.throws(
+    () => buildSubscriptionInstanceProjectionPlan(manifest(), PEPPER, history),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PUBLICATION_NOT_CURRENT')
   );
 
   process.env.SUBSCRIPTIONS_RUNTIME_CONTRACTS_ENABLED = 'true';
@@ -1225,6 +1251,19 @@ async function run(): Promise<void> {
     'provider-client-001', 'client-subscription-001', 'projector-test-pepper',
     'provider_payment_evidence', 'provider_instance_evidence'
   ]) assert.equal(output.includes(forbidden), false);
+
+  enable(input);
+  const invalidLifecycleRepository = new FakeRepository();
+  invalidLifecycleRepository.publicationHistory = structuredClone(history);
+  invalidLifecycleRepository.publicationHistory[0].state = 'PUBLISHED';
+  invalidLifecycleRepository.publicationHistory[0].supersededAt = null;
+  invalidLifecycleRepository.publicationHistory[0].supersededBy = null;
+  await assert.rejects(
+    new FixedClockService(invalidLifecycleRepository as any).check(input),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID')
+  );
+  assert.equal(invalidLifecycleRepository.preflightCalls, 0);
+  assert.equal(invalidLifecycleRepository.applyCalls, 0);
 
   const assertApplyRejectedWithoutWrite = async (
     name: (typeof ENV_NAMES)[number],

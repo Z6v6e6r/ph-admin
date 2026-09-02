@@ -224,6 +224,12 @@ async function main(): Promise<void> {
     effectiveAt: newPublication.effectiveAt
   };
   newPublication.policyDigest = computeSubscriptionRuntimeProjectionDigest(newPublication.runtimeProjection);
+  publication = {
+    ...publication,
+    state: 'SUPERSEDED',
+    supersededAt: newPublication.publishedAt,
+    supersededBy: newPublication.publicationId
+  };
   publications = [publication, newPublication];
   const oldPurchaseResult = await service.resolve('Bearer user', TOKEN, {
     clientSubscriptionId: instance.clientSubscriptionId
@@ -240,6 +246,20 @@ async function main(): Promise<void> {
     clientSubscriptionId: instance.clientSubscriptionId
   });
   assert.equal(newPurchaseResult.evidence.publicationId, newPublication.publicationId);
+  publications = [
+    { ...publication, state: 'PUBLISHED', supersededAt: null, supersededBy: null },
+    newPublication
+  ];
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  publications = [{ ...publication, supersededBy: 'publication:broken-chain' }, newPublication];
+  await assert.rejects(
+    service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
+    (error) => error instanceof ServiceUnavailableException
+  );
+  publications = [publication, newPublication];
   storedInstance = { ...instance, purchasedAt: newPublication.effectiveAt };
   await assert.rejects(
     service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
@@ -331,13 +351,14 @@ async function main(): Promise<void> {
   mapping = mappingFixture();
   publication = publicationFixture();
   publications = [publication];
+  publication = publicationFixture();
   publication = {
     ...publication,
     state: 'SUPERSEDED',
-    supersededAt: '2026-08-22T12:00:00.000Z',
-    supersededBy: 'publication:piter-v2'
+    supersededAt: newPublication.publishedAt,
+    supersededBy: newPublication.publicationId
   };
-  publications = [publication];
+  publications = [publication, newPublication];
   const supersededResult = await service.resolve('Bearer user', TOKEN, {
     clientSubscriptionId: instance.clientSubscriptionId
   });

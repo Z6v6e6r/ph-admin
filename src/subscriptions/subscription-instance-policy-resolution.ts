@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { validateSubscriptionSalePeriodHistory } from './subscription-sale-period-resolver';
 import { validateStoredSubscriptionPolicyPublication } from './subscription-runtime-contracts';
 import {
   StoredSubscriptionInstancePolicyResolution,
@@ -48,6 +49,7 @@ export function subscriptionPublicationHistoryMatchesResolution(
   publications: readonly StoredSubscriptionPolicyPublication[],
   resolution: StoredSubscriptionInstancePolicyResolution
 ): boolean {
+  if (validateSubscriptionSalePeriodHistory(publications).kind !== 'VALID') return false;
   return isDeepStrictEqual(
     buildSubscriptionPublicationHistoryEvidence(publications),
     resolution.publicationHistory
