@@ -44,6 +44,38 @@ it is not exact-current-main. After separately approved merge, fresh-fetch main,
 check its exact CI, use `--trusted-ref refs/remotes/origin/main`, and rebuild.
 Do not rename or relabel the task-head artifact as an exact-main release.
 
+## Source-only verification and stopped host contract
+
+The archive can be verified offline without installing or executing it. The
+verifier accepts only the exact subscriptions-dev target, an exact-current-main
+source commit/tree and its approved private archive digest. Configure
+SUBSCRIPTIONS_DEV_RELEASE_ARCHIVE, SUBSCRIPTIONS_DEV_RELEASE_ARCHIVE_SHA256,
+SUBSCRIPTIONS_DEV_RELEASE_SOURCE_SHA and SUBSCRIPTIONS_DEV_RELEASE_SOURCE_TREE,
+then run the subscriptions:dev-release:verify package command.
+Its sanitized result includes the exact manifest and canonical runtime-inventory
+digests used by the stopped host snapshot and authorization contract.
+
+The subscriptions DEV host contract is deliberately not an installer. It
+validates a private, exact-shape host snapshot, emits only sanitized release and
+topology evidence, and can build inert INSTALL_STOPPED, SWITCH_STOPPED and
+ROLLBACK_STOPPED plans. Every plan binds the exact source, artifact, manifest,
+release directory, unit file and ExecStart; it always reports execute=false,
+serviceStartAuthorized=false and deleteAuthorized=false. An active service,
+open or foreign listener, enabled/missing/unknown subscription flag, path
+escape or authorization drift fails closed.
+
+The host snapshot is an operator-owned input, not self-attesting runtime proof.
+A later reviewed executor must obtain the unit, PID, listener, filesystem and
+environment-key observations independently, without printing environment
+values. No source command here stops a unit, installs an archive, switches a
+link, starts a service or performs rollback.
+
+Subscription internal routes participate in the existing bounded structured
+HTTP metrics using exact route templates only. The metrics contain method,
+template, status and duration; they never contain raw URLs, headers, request
+bodies, tokens or identifiers. There is no release, system-evidence or metrics
+HTTP endpoint.
+
 ## Backup preparation and privacy boundary
 
 The discovered reserve DEV uses a dedicated loopback Mongo process with a separate
@@ -90,3 +122,19 @@ to a replica set or provision a new fixture database implicitly.
 - Runtime contracts/context, entitlement lifecycle, activation and deadline
   worker stay OFF; LK allowlist unchanged. Only a separate activation gate may
   alter them.
+
+## Separate DEV Mongo preflight
+
+The DEV wrapper requires the existing canary boundary plus an explicit
+replicaSet=rs0 URI without directConnection, one writable loopback member, the
+exact fixture sentinel and a pinned database/target digest. It never weakens or
+replaces the generic production index command. The read-only sequence is
+subscriptions:dev-mongo:target-fingerprint,
+subscriptions:dev-mongo:check, then subscriptions:dev-indexes:check.
+
+subscriptions:dev-indexes:apply remains a Mongo mutation and additionally
+requires the existing SUBSCRIPTIONS_INDEX_APPLY=CONFIRM gate. The application
+service flags remain false; runtime/projector/binding index flags are scoped
+only to the guarded one-shot child process. The sentinel-plan helper is inert:
+it returns execute=false and writeAuthorized=false; creating the sentinel still
+requires a separately reviewed mutation tool and exact authorization.

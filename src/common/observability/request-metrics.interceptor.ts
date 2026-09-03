@@ -10,6 +10,23 @@ import { RequestMetricsService } from './request-metrics.service';
 
 @Injectable()
 export class RequestMetricsInterceptor implements NestInterceptor {
+  private readonly subscriptionRoutes = new Set([
+    '/api/internal/subscriptions/shadow-quote',
+    '/api/internal/subscriptions/entitlements/reserve',
+    '/api/internal/subscriptions/entitlements/confirm',
+    '/api/internal/subscriptions/entitlements/release',
+    '/api/internal/subscriptions/runtime-context',
+    '/api/internal/subscriptions/sale-readiness',
+    '/api/internal/subscriptions/activate-first-use',
+    '/internal/subscriptions/shadow-quote',
+    '/internal/subscriptions/entitlements/reserve',
+    '/internal/subscriptions/entitlements/confirm',
+    '/internal/subscriptions/entitlements/release',
+    '/internal/subscriptions/runtime-context',
+    '/internal/subscriptions/sale-readiness',
+    '/internal/subscriptions/activate-first-use'
+  ]);
+
   constructor(private readonly metrics: RequestMetricsService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -65,13 +82,12 @@ export class RequestMetricsInterceptor implements NestInterceptor {
   }): string {
     const routeTemplate = String(request?.route?.path ?? '').trim();
     const baseUrl = String(request?.baseUrl ?? '').trim();
-    if (routeTemplate) {
-      return `${baseUrl}${routeTemplate}`;
-    }
-
+    const routedPath = routeTemplate ? `${baseUrl}${routeTemplate}` : '';
     const fallback = String(request?.originalUrl ?? request?.url ?? '').trim();
     const [pathOnly] = fallback.split('?');
-    return pathOnly || '/';
+    if (this.subscriptionRoutes.has(routedPath)) return routedPath;
+    if (this.subscriptionRoutes.has(pathOnly)) return pathOnly;
+    return routedPath || pathOnly || '/';
   }
 
   private shouldTrackRoute(path: string): boolean {
@@ -79,7 +95,8 @@ export class RequestMetricsInterceptor implements NestInterceptor {
       path.startsWith('/api/messenger') ||
       path.startsWith('/api/support') ||
       path.startsWith('/messenger') ||
-      path.startsWith('/support')
+      path.startsWith('/support') ||
+      this.subscriptionRoutes.has(path)
     );
   }
 

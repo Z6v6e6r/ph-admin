@@ -2,7 +2,7 @@
 
 Status: **ISOLATED CANDIDATE / NOT RUN IN PRODUCTION**.
 
-The one-shot tool exports only the thirteen managed subscription collections and
+The one-shot tool exports only the fourteen managed subscription collections and
 their index metadata. It never changes MongoDB, calls Viva, publishes a policy,
 enables a feature flag or restores data. A production run is a separate
 operations gate.
@@ -32,6 +32,12 @@ operations gate.
 The archive is a recovery artifact, not a restore authorization. There is no
 automatic restore command. Any restore needs a separately reviewed procedure,
 target attestation, dry run and explicit production approval.
+
+The three DEV-canary collections are intentionally outside this production
+backup schema. Therefore this command is not a complete backup or restore
+artifact for the isolated DEV canary database. A separate versioned DEV archive
+verifier and restore rehearsal remain required before sentinel, index or canary
+writes; do not broaden or relabel the production v4 archive to cover that gap.
 
 ## Preparation commands
 
