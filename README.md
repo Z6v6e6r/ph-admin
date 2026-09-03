@@ -138,6 +138,9 @@ API работает на `http://localhost:3000/api`.
 - `VIVA_TOURNAMENT_LOOKAHEAD_DAYS=14` (опционально; на сколько дней вперед грузить турниры)
 - `VIVA_END_USER_TIMEOUT_MS=5000` (опционально; timeout запросов к Viva End-User API)
 - `VIVA_TOURNAMENT_SNAPSHOT_MANUAL_REFRESH_COOLDOWN_MS=15000` (опционально; минимальный интервал между ручными обновлениями выбранного дня; параллельные запросы объединяются)
+- `TOURNAMENTS_VIVA_STATUS_SYNC_INTERVAL_MS=3600000` (опционально; интервал сверки отменённых Viva-турниров; `0` полностью отключает worker)
+- `TOURNAMENTS_VIVA_STATUS_SYNC_RUN_ON_STARTUP=true|false` (опционально; немедленная сверка при старте; по умолчанию `false` в production и `true` вне production)
+- `QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED=true|false` (опционально; включает фоновые автоответы Messenger/Support; по умолчанию `false` в production и `true` вне production)
 - `TOURNAMENTS_HOSTING_ACCESS_CACHE_TTL_MS=15000` (опционально; короткий cache/single-flight проверки поля доступа в Viva-профиле, чтобы повторные нажатия не создавали profile fan-out)
 - `TOURNAMENTS_MONGODB_URI=mongodb://...` (опционально; отдельный Mongo URI для кастомных турниров, иначе используется `MONGODB_URI`)
 - `TOURNAMENTS_MONGODB_DB=tournaments` (опционально; база кастомных турниров, по умолчанию `tournaments`)
@@ -347,7 +350,8 @@ curl "http://localhost:3000/api/tournaments/public/pervyy-turnir/join?format=jso
 Источник staff-учеток:
 
 - если доступен `MONGODB_URI`, auth читает учетки из Mongo-коллекции `admin_users`
-- если Mongo-коллекция пуста, но задан `ADMIN_AUTH_USERS_JSON`, пользователи автоматически сидируются в Mongo при старте
+- если Mongo-коллекция пуста, но задан `ADMIN_AUTH_USERS_JSON`, вне production пользователи автоматически сидируются в Mongo при старте
+- production startup никогда не сидирует пользователей или роли: при пустой коллекции `ADMIN_AUTH_USERS_JSON` используется только в памяти процесса, а постоянное заполнение выполняется отдельным явно подтверждённым действием
 - если Mongo недоступен, используется `ADMIN_AUTH_USERS_JSON`
 
 Dev fallback:

@@ -1,6 +1,10 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
-import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
+import {
+  ensureMongoIndex,
+  isMongoIndexReadinessError,
+  isProductionRuntime
+} from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { AdminAuditEntry, AdminRoleDefinition, AdminUserRecord } from './auth.types';
 
@@ -71,6 +75,9 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
     if (!this.db || users.length === 0) {
       return;
     }
+    if (isProductionRuntime()) {
+      throw new Error('AUTH_PRODUCTION_BOOTSTRAP_WRITE_FORBIDDEN:seedUsers');
+    }
 
     await this.users().bulkWrite(
       users.map((user) => ({
@@ -109,6 +116,9 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
   async seedRoles(roles: AdminRoleDefinition[]): Promise<void> {
     if (!this.db || roles.length === 0) {
       return;
+    }
+    if (isProductionRuntime()) {
+      throw new Error('AUTH_PRODUCTION_BOOTSTRAP_WRITE_FORBIDDEN:seedRoles');
     }
     await this.roles().bulkWrite(
       roles.map((role) => ({

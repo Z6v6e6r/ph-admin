@@ -1,6 +1,11 @@
 import * as assert from 'node:assert/strict';
 import { MongoClient } from 'mongodb';
+import { AuthPersistenceService } from '../src/auth/auth-persistence.service';
+import { AuthService } from '../src/auth/auth.service';
 import { ensureMongoIndex } from '../src/common/mongo-index.guard';
+import { Role } from '../src/common/rbac/role.enum';
+import { MessengerPersistenceService } from '../src/messenger/messenger-persistence.service';
+import { MessengerService } from '../src/messenger/messenger.service';
 import { PlayerRatingRepository } from '../src/player-ratings/player-ratings.repository';
 
 const uri = String(process.env.PRODUCTION_MONGO_INDEX_GUARD_TEST_URI ?? '').trim();
@@ -102,6 +107,112 @@ async function main(): Promise<void> {
       if (previousRatingsDb === undefined) delete process.env.PLAYER_RATINGS_MONGODB_DB;
       else process.env.PLAYER_RATINGS_MONGODB_DB = previousRatingsDb;
       await client.db(ratingsDbName).dropDatabase().catch(() => undefined);
+    }
+
+    const authDbName = `${dbName}_auth`;
+    const authDb = client.db(authDbName);
+    const previousAuthEnvironment = {
+      NODE_ENV: process.env.NODE_ENV,
+      ADMIN_AUTH_ENABLED: process.env.ADMIN_AUTH_ENABLED,
+      ADMIN_AUTH_SECRET: process.env.ADMIN_AUTH_SECRET,
+      ADMIN_AUTH_USERS_JSON: process.env.ADMIN_AUTH_USERS_JSON,
+      QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED: process.env.QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED,
+      TELEGRAM_STATION_MAPPINGS: process.env.TELEGRAM_STATION_MAPPINGS,
+      MONGODB_DB: process.env.MONGODB_DB
+    };
+    try {
+      await authDb.collection('admin_roles').insertOne({
+        id: Role.SUPER_ADMIN,
+        name: 'Fixture superadmin',
+        permissions: ['*'],
+        stationIds: [],
+        isSystem: true,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString()
+      });
+      await authDb.collection('admin_users').insertOne({
+        id: 'fixture-admin',
+        login: 'fixture_admin',
+        password: 'not-used',
+        roles: [Role.SUPER_ADMIN],
+        roleIds: [Role.SUPER_ADMIN],
+        stationIds: [],
+        connectorRoutes: [],
+        active: true
+      });
+
+      process.env.NODE_ENV = ' PRODUCTION ';
+      process.env.ADMIN_AUTH_ENABLED = 'true';
+      process.env.ADMIN_AUTH_SECRET = 'production-startup-write-guard-secret';
+      delete process.env.ADMIN_AUTH_USERS_JSON;
+      delete process.env.QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED;
+      delete process.env.TELEGRAM_STATION_MAPPINGS;
+      process.env.MONGODB_DB = authDbName;
+
+      const persistence = new AuthPersistenceService();
+      (persistence as unknown as { db: unknown }).db = authDb;
+      const authService = new AuthService(persistence);
+      commands.length = 0;
+
+      await authService.onModuleInit();
+      await authService.listAdminUsers();
+      await authService.listAdminRoles();
+
+      assert.ok(commands.includes('find'));
+      assert.deepEqual(
+        commands.filter((name) => ['insert', 'update', 'delete', 'findAndModify', 'bulkWrite'].includes(name)),
+        [],
+        'production auth bootstrap and refresh paths must issue no Mongo write command'
+      );
+      await assert.rejects(
+        persistence.seedUsers([{
+          id: 'forbidden-seed',
+          login: 'forbidden_seed',
+          password: 'not-used',
+          roles: [Role.SUPER_ADMIN],
+          roleIds: [Role.SUPER_ADMIN],
+          stationIds: [],
+          connectorRoutes: [],
+          active: true
+        }]),
+        /AUTH_PRODUCTION_BOOTSTRAP_WRITE_FORBIDDEN:seedUsers/
+      );
+      await assert.rejects(
+        persistence.seedRoles([{
+          id: 'forbidden-role',
+          name: 'Forbidden role',
+          permissions: [],
+          stationIds: [],
+          isSystem: false,
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString()
+        }]),
+        /AUTH_PRODUCTION_BOOTSTRAP_WRITE_FORBIDDEN:seedRoles/
+      );
+      assert.deepEqual(
+        commands.filter((name) => ['insert', 'update', 'delete', 'findAndModify', 'bulkWrite'].includes(name)),
+        []
+      );
+
+      const messengerPersistence = new MessengerPersistenceService();
+      (messengerPersistence as unknown as { db: unknown }).db = authDb;
+      const messenger = new MessengerService({} as never, {} as never, messengerPersistence);
+      commands.length = 0;
+      await messenger.onModuleInit();
+      await messenger.onApplicationBootstrap();
+      messenger.onModuleDestroy();
+      assert.ok(commands.includes('find'));
+      assert.deepEqual(
+        commands.filter((name) => ['insert', 'update', 'delete', 'findAndModify', 'bulkWrite'].includes(name)),
+        [],
+        'production messenger bootstrap must hydrate without persisting defaults'
+      );
+    } finally {
+      for (const [key, value] of Object.entries(previousAuthEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await authDb.dropDatabase().catch(() => undefined);
     }
   } finally {
     await client.db(dbName).dropDatabase().catch(() => undefined);

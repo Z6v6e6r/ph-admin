@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { isProductionRuntime } from '../common/mongo-index.guard';
 import { TournamentsService } from './tournaments.service';
 
 type VivaTournamentSyncTrigger = 'startup' | 'interval';
@@ -42,7 +43,7 @@ export class TournamentsVivaStatusSyncService implements OnModuleInit, OnModuleD
   );
   private readonly runOnStartup = this.readBooleanEnv(
     'TOURNAMENTS_VIVA_STATUS_SYNC_RUN_ON_STARTUP',
-    true
+    !isProductionRuntime()
   );
   private readonly maxRunLogEntries = this.readPositiveNumberEnv(
     'TOURNAMENTS_VIVA_STATUS_SYNC_LOG_LIMIT',

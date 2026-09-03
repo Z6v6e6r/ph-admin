@@ -2,6 +2,9 @@
 
 This runbook deploys the app on one Linux VM with Docker Compose.
 
+For a systemd switch or rollback that must remain write-free during startup and
+browser verification, follow `deploy/PRODUCTION_WRITE_FREE_RELEASE_GATES.md`.
+
 For mapping to current PadlHub infra (IP/domain/limits), see:
 - `deploy/PADLHUB_INFRA_BLUEPRINT.md`
 

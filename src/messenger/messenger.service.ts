@@ -13,6 +13,7 @@ import {
   MessageAttachment,
   MessageAttachmentType
 } from '../common/messages/message-attachment.types';
+import { isProductionRuntime } from '../common/mongo-index.guard';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
@@ -75,6 +76,11 @@ type MessageObserver = (thread: ChatThread, message: ChatMessage) => void | Prom
 @Injectable()
 export class MessengerService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(MessengerService.name);
+  private readonly productionRuntime = isProductionRuntime();
+  private readonly noReplyQuickReplySweepEnabled = this.readBooleanEnv(
+    'QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED',
+    !this.productionRuntime
+  );
   private readonly threads = new Map<string, ChatThread>();
   private readonly messages = new Map<string, ChatMessage[]>();
   private readonly pendingStaffResponses = new Map<string, PendingStaffResponse[]>();
@@ -133,7 +139,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       for (const station of state.stations) {
         this.stationConfigs.set(station.stationId, station);
       }
-    } else {
+    } else if (!this.productionRuntime) {
       for (const station of this.stationConfigs.values()) {
         this.persistence.persistStation(station);
       }
@@ -146,7 +152,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       for (const connector of state.connectors) {
         this.connectorConfigs.set(connector.id, this.normalizeLoadedConnectorConfig(connector));
       }
-    } else {
+    } else if (!this.productionRuntime) {
       for (const connector of this.connectorConfigs.values()) {
         this.persistence.persistConnector(connector);
       }
@@ -157,7 +163,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       for (const rule of state.accessRules) {
         this.accessRules.set(rule.id, rule);
       }
-    } else {
+    } else if (!this.productionRuntime) {
       for (const rule of this.accessRules.values()) {
         this.persistence.persistAccessRule(rule);
       }
@@ -1684,7 +1690,10 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     }
   }
 
-  private ensureDefaultStationConfigs(now = new Date().toISOString()): void {
+  private ensureDefaultStationConfigs(
+    now = new Date().toISOString(),
+    persist = !this.productionRuntime
+  ): void {
     const mappings = parseSupportStationMappings(
       process.env.TELEGRAM_STATION_MAPPINGS
     );
@@ -1701,7 +1710,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
             updatedAt: now
           };
           this.stationConfigs.set(updated.stationId, updated);
-          this.persistence.persistStation(updated);
+          if (persist) {
+            this.persistence.persistStation(updated);
+          }
         }
         continue;
       }
@@ -1714,7 +1725,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
         updatedAt: now
       };
       this.stationConfigs.set(station.stationId, station);
-      this.persistence.persistStation(station);
+      if (persist) {
+        this.persistence.persistStation(station);
+      }
     }
   }
 
@@ -2149,7 +2162,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   }
 
   private ensureNoReplyQuickReplyTimer(): void {
-    if (this.noReplyQuickReplyTimer) {
+    if (!this.noReplyQuickReplySweepEnabled || this.noReplyQuickReplyTimer) {
       return;
     }
     this.noReplyQuickReplyTimer = setInterval(() => {
@@ -2379,6 +2392,14 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
     }
     const normalized = value.trim();
     return normalized || undefined;
+  }
+
+  private readBooleanEnv(name: string, fallback: boolean): boolean {
+    const raw = String(process.env[name] ?? '').trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+    if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+    return fallback;
   }
 
   private captureMemoryUsageSnapshot(): {
