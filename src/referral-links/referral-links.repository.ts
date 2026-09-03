@@ -1,6 +1,11 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Collection, Db, Document, Filter, MongoClient, MongoServerError } from 'mongodb';
 import {
+  ensureMongoIndex,
+  isMongoIndexReadinessError,
+  isProductionRuntime
+} from '../common/mongo-index.guard';
+import {
   ReferralOpenEvent,
   ReferralSaleSnapshot,
   StoredReferralLink
@@ -82,17 +87,19 @@ export class ReferralLinksRepository implements OnModuleInit, OnModuleDestroy {
       this.db = client.db(this.dbName);
       const autoCreate = this.readBoolean(
         process.env.REFERRAL_LINKS_AUTO_CREATE_INDEXES,
-        process.env.NODE_ENV !== 'production'
+        !isProductionRuntime()
       );
       if (autoCreate) await this.ensureIndexes();
       else await this.verifyIndexes();
       this.unavailableReason = '';
       this.logger.log(`Referral links persistence enabled. db=${this.dbName}`);
     } catch (error) {
-      this.unavailableReason = `Referral links persistence unavailable: ${String(error)}`;
-      this.logger.error(this.unavailableReason);
+      this.unavailableReason = 'Referral links persistence initialization failed';
+      this.logger.error(`Referral links persistence unavailable: ${String(error)}`);
       this.db = undefined;
       await client.close().catch(() => undefined);
+      this.client = undefined;
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -277,17 +284,17 @@ export class ReferralLinksRepository implements OnModuleInit, OnModuleDestroy {
 
   private async ensureIndexes(): Promise<void> {
     for (const index of REFERRAL_LINK_REQUIRED_INDEXES.links) {
-      await this.links().createIndex(index.key, {
+      await ensureMongoIndex(this.links(), index.key, {
         name: index.name,
         unique: index.unique,
         ...(Object.prototype.hasOwnProperty.call(index, 'sparse') ? { sparse: true } : {})
       });
     }
     for (const index of REFERRAL_LINK_REQUIRED_INDEXES.events) {
-      await this.events().createIndex(index.key, { name: index.name, unique: index.unique });
+      await ensureMongoIndex(this.events(), index.key, { name: index.name, unique: index.unique });
     }
     for (const index of REFERRAL_LINK_REQUIRED_INDEXES.sales) {
-      await this.sales().createIndex(index.key, { name: index.name, unique: index.unique });
+      await ensureMongoIndex(this.sales(), index.key, { name: index.name, unique: index.unique });
     }
   }
 
@@ -301,7 +308,16 @@ export class ReferralLinksRepository implements OnModuleInit, OnModuleDestroy {
     collection: Collection<TSchema>,
     expected: readonly { name: string; key: object; unique: boolean; sparse?: boolean }[]
   ): Promise<void> {
-    const existing = await collection.indexes();
+    let existing: Document[];
+    try {
+      existing = await collection.indexes();
+    } catch (error) {
+      if (!isProductionRuntime()) throw error;
+      const cause = error instanceof Error ? error.name : 'UnknownError';
+      throw new Error(
+        `MONGO_INDEX_READINESS_CHECK_FAILED:${collection.collectionName}:required_manifest:${cause}`
+      );
+    }
     for (const target of expected) {
       const actual = existing.find((item) => item.name === target.name);
       if (
@@ -310,6 +326,11 @@ export class ReferralLinksRepository implements OnModuleInit, OnModuleDestroy {
         || Boolean(actual.unique) !== target.unique
         || Boolean(actual.sparse) !== Boolean(target.sparse)
       ) {
+        if (isProductionRuntime()) {
+          throw new Error(
+            `MONGO_INDEX_NOT_READY:${collection.collectionName}:${target.name}`
+          );
+        }
         throw new Error(`Referral links index mismatch: ${target.name}`);
       }
     }

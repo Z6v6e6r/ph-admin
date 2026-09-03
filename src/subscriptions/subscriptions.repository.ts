@@ -9,6 +9,7 @@ import {
   MongoServerError,
   TransactionOptions
 } from 'mongodb';
+import { ensureMongoIndex } from '../common/mongo-index.guard';
 import type { SubscriptionInstanceProjectionPlan } from './subscription-provider-instance-projector.service';
 import { subscriptionPublicationHistoryMatchesResolution } from './subscription-instance-policy-resolution';
 import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
@@ -2549,47 +2550,47 @@ export class SubscriptionsRepository {
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { subscriptionTypeId: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[0].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { codeNorm: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[1].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[2].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { state: 1, updatedAt: -1, subscriptionTypeId: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.types[3].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { subscriptionTypeId: 1, version: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.policies[0].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.policies[1].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { subscriptionTypeId: 1, status: 1, version: -1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.policies[2].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { releaseProgramId: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.programs[0].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.programs[1].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { stationId: 1, state: 1, updatedAt: -1, releaseProgramId: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.programs[2].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { subscriptionTypeId: 1, stationId: 1, state: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.programs[3].name }
       )
@@ -2776,19 +2777,19 @@ export class SubscriptionsRepository {
   private async ensureTestIndexes(): Promise<void> {
     await Promise.all([
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.offers.map((index) =>
-        this.testOffers().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testOffers(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.inventories.map((index) =>
-        this.testInventories().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testInventories(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.reservations.map((index) =>
-        this.testReservations().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testReservations(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.purchases.map((index) =>
-        this.testPurchases().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testPurchases(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.events.map((index) =>
-        this.testEvents().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testEvents(), index.key, { unique: index.unique, name: index.name })
       )
     ]);
   }

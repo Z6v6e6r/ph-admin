@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { Collection, Db, Document, Filter, MongoClient, ObjectId, OptionalId } from 'mongodb';
 import {
+  ensureMongoIndex,
+  isMongoIndexReadinessError
+} from '../common/mongo-index.guard';
+import {
   AmericanoGeneratorConfig,
   AmericanoHistoricalMatch,
   AmericanoHistoricalRound,
@@ -857,20 +861,21 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const collection = this.requireDb().collection<MongoCustomTournamentDocument>(this.collectionName);
     if (!this.indexesEnsured) {
       try {
-        await collection.createIndex({ id: 1 }, { unique: true });
-        await collection.createIndex({ slug: 1 }, { unique: true });
-        await collection.createIndex(
+        await ensureMongoIndex(collection, { id: 1 }, { unique: true });
+        await ensureMongoIndex(collection, { slug: 1 }, { unique: true });
+        await ensureMongoIndex(collection,
           { sourceTournamentId: 1 },
           {
             unique: true,
             partialFilterExpression: { sourceTournamentId: { $type: 'string' } }
           }
         );
-        await collection.createIndex(
+        await ensureMongoIndex(collection,
           { exerciseId: 1 },
           { partialFilterExpression: { exerciseId: { $type: 'string' } } }
         );
       } catch (error) {
+        if (isMongoIndexReadinessError(error)) throw error;
         this.logger.warn(`Failed to ensure custom tournaments indexes: ${String(error)}`);
       }
       this.indexesEnsured = true;

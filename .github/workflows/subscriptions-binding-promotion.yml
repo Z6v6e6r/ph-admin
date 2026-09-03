@@ -73,6 +73,9 @@ jobs:
         env:
           SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:backend-release-attestation
+      - run: npm run test:production-mongo-index-guard
+        env:
+          PRODUCTION_MONGO_INDEX_GUARD_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:subscriptions
       - run: npm run test:auth-rbac
       - run: npx tsc -p tsconfig.json --noEmit

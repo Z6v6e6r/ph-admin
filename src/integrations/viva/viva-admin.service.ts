@@ -10,6 +10,7 @@ import {
 import { createHash } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../../common/constants/dialogs-mongo.constants';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../../common/mongo-index.guard';
 
 export type VivaClientCabinetStatus = 'FOUND' | 'NOT_FOUND' | 'DISABLED';
 
@@ -303,6 +304,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`MongoDB connect failed for Viva settings: ${String(error)}`);
       this.db = undefined;
       await this.safeCloseClient();
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -2585,7 +2587,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async ensureIndexes(): Promise<void> {
-    await this.settings().createIndex({ key: 1 }, { unique: true });
+    await ensureMongoIndex(this.settings(), { key: 1 }, { unique: true });
   }
 
   private async safeCloseClient(): Promise<void> {

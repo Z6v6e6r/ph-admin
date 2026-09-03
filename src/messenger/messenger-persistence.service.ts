@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import {
   AiReplySuggestion,
@@ -70,6 +71,7 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
       this.logger.error(`MongoDB connect failed: ${String(error)}`);
       this.db = undefined;
       await this.safeCloseClient();
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -285,18 +287,18 @@ export class MessengerPersistenceService implements OnModuleInit, OnModuleDestro
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.threads().createIndex({ id: 1 }, { unique: true }),
-      this.threads().createIndex({ connector: 1, stationId: 1, updatedAt: -1 }),
-      this.messages().createIndex({ id: 1 }, { unique: true }),
-      this.messages().createIndex({ threadId: 1, createdAt: 1 }),
-      this.stations().createIndex({ stationId: 1 }, { unique: true }),
-      this.connectors().createIndex({ id: 1 }, { unique: true }),
-      this.accessRules().createIndex({ id: 1 }, { unique: true }),
-      this.metrics().createIndex({ threadId: 1 }, { unique: true }),
-      this.aiConfigs().createIndex({ threadId: 1 }, { unique: true }),
-      this.aiInsights().createIndex({ threadId: 1 }, { unique: true }),
-      this.aiSuggestions().createIndex({ id: 1 }, { unique: true }),
-      this.aiSuggestions().createIndex({ threadId: 1, createdAt: -1 })
+      ensureMongoIndex(this.threads(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.threads(), { connector: 1, stationId: 1, updatedAt: -1 }),
+      ensureMongoIndex(this.messages(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.messages(), { threadId: 1, createdAt: 1 }),
+      ensureMongoIndex(this.stations(), { stationId: 1 }, { unique: true }),
+      ensureMongoIndex(this.connectors(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.accessRules(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.metrics(), { threadId: 1 }, { unique: true }),
+      ensureMongoIndex(this.aiConfigs(), { threadId: 1 }, { unique: true }),
+      ensureMongoIndex(this.aiInsights(), { threadId: 1 }, { unique: true }),
+      ensureMongoIndex(this.aiSuggestions(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.aiSuggestions(), { threadId: 1, createdAt: -1 })
     ]);
   }
 

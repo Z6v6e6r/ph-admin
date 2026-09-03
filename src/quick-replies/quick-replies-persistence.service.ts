@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import {
   QuickReplyRule,
@@ -41,6 +42,7 @@ export class QuickRepliesPersistenceService implements OnModuleInit, OnModuleDes
       this.logger.error(`MongoDB quick replies connect failed: ${String(error)}`);
       this.db = undefined;
       await this.safeCloseClient();
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -110,10 +112,10 @@ export class QuickRepliesPersistenceService implements OnModuleInit, OnModuleDes
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.rules().createIndex({ id: 1 }, { unique: true }),
-      this.rules().createIndex({ isActive: 1, triggerType: 1, mode: 1, updatedAt: -1 }),
-      this.usageLogs().createIndex({ id: 1 }, { unique: true }),
-      this.usageLogs().createIndex({ ruleId: 1, createdAt: -1 })
+      ensureMongoIndex(this.rules(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.rules(), { isActive: 1, triggerType: 1, mode: 1, updatedAt: -1 }),
+      ensureMongoIndex(this.usageLogs(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.usageLogs(), { ruleId: 1, createdAt: -1 })
     ]);
   }
 

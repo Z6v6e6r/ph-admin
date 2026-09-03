@@ -10,6 +10,11 @@ import {
   TransactionOptions
 } from 'mongodb';
 import {
+  ensureMongoIndex,
+  isProductionRuntime,
+  mongoIndexesAreEquivalent
+} from '../common/mongo-index.guard';
+import {
   PlayerRatingEventDocument,
   PadlHubPlayerLevelProjectionOutboxDocument,
   PadlHubPlayerLevelProjectionPayload,
@@ -30,18 +35,39 @@ export class PlayerRatingRepository {
   ).trim() || 'games';
   private client?: MongoClient;
   private db?: Db;
+  private connectPromise?: Promise<void>;
 
   async connect(): Promise<void> {
     if (this.db) return;
+    if (this.connectPromise) return this.connectPromise;
     if (!this.mongoUri) throw new Error('PLAYER_RATINGS_MONGODB_URI or MONGODB_URI is required');
+    const pending = this.connectOnce();
+    this.connectPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.connectPromise === pending) this.connectPromise = undefined;
+    }
+  }
+
+  private async connectOnce(): Promise<void> {
     const client = new MongoClient(this.mongoUri, { serverSelectionTimeoutMS: 5000, maxPoolSize: 10 });
-    await client.connect();
-    this.client = client;
-    this.db = client.db(this.dbName);
-    await this.ensureIndexes();
+    try {
+      await client.connect();
+      const db = client.db(this.dbName);
+      await this.ensureIndexes(db);
+      this.client = client;
+      this.db = db;
+    } catch (error) {
+      this.client = undefined;
+      this.db = undefined;
+      await client.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
+    await this.connectPromise?.catch(() => undefined);
     await this.client?.close().catch(() => undefined);
     this.client = undefined;
     this.db = undefined;
@@ -433,15 +459,22 @@ export class PlayerRatingRepository {
     if (!this.client) throw new Error('Player ratings MongoDB is not connected');
     return this.client;
   }
-  private async ensureIndexes(): Promise<void> {
+  private async ensureIndexes(db?: Db): Promise<void> {
+    const states = db?.collection<PlayerRatingStateDocument>('player_rating_state') ?? this.states();
+    const events = db?.collection<PlayerRatingEventDocument>('rating_events') ?? this.events();
+    const outbox = db?.collection<PlayerRatingProjectionOutboxDocument>('rating_projection_outbox')
+      ?? this.outbox();
+    const padlHubOutbox = db
+      ?.collection<PadlHubPlayerLevelProjectionOutboxDocument>('player_level_projection_outbox')
+      ?? this.padlHubOutbox();
     const indexes = [
       this.ensureIndex(
-        this.states(),
+        states,
         { playerKey: 1 },
         { unique: true, name: 'player_rating_state_key_uq' }
       ),
       this.ensureIndex(
-        this.states(),
+        states,
         { clientId: 1 },
         {
           unique: true,
@@ -450,7 +483,7 @@ export class PlayerRatingRepository {
         }
       ),
       this.ensureIndex(
-        this.states(),
+        states,
         { phoneNorm: 1 },
         {
           unique: true,
@@ -459,22 +492,22 @@ export class PlayerRatingRepository {
         }
       ),
       this.ensureIndex(
-        this.states(),
+        states,
         { nameSearch: 1, lastEventAt: -1 },
         { name: 'nameSearch_1_lastEventAt_-1' }
       ),
       this.ensureIndex(
-        this.events(),
+        events,
         { idempotencyKey: 1 },
         { unique: true, name: 'rating_event_idempotency_uq' }
       ),
       this.ensureIndex(
-        this.events(),
+        events,
         { 'player.key': 1, occurredAt: -1 },
         { name: 'rating_event_player_time' }
       ),
       this.ensureIndex(
-        this.outbox(),
+        outbox,
         { status: 1, nextAttemptAt: 1 },
         { name: 'rating_projection_pending' }
       )
@@ -482,12 +515,12 @@ export class PlayerRatingRepository {
     if (this.padlHubProjectionEnabled) {
       indexes.push(
         this.ensureIndex(
-          this.padlHubOutbox(),
+          padlHubOutbox,
           { playerKey: 1 },
           { unique: true, name: 'player_level_projection_player_uq' }
         ),
         this.ensureIndex(
-          this.padlHubOutbox(),
+          padlHubOutbox,
           { status: 1, nextAttemptAt: 1, playerKey: 1 },
           { name: 'player_level_projection_pending' }
         )
@@ -501,34 +534,21 @@ export class PlayerRatingRepository {
     key: IndexSpecification,
     options: CreateIndexesOptions
   ): Promise<string> {
-    try {
-      const existing = await collection.listIndexes().toArray();
-      const equivalent = existing.find((index) => indexesAreEquivalent(index, key, options));
-      if (equivalent?.name) return equivalent.name;
-    } catch (error) {
-      if (!isNamespaceNotFound(error)) throw error;
+    if (!isProductionRuntime()) {
+      try {
+        const existing = await collection.listIndexes().toArray();
+        const equivalent = existing.find((index) => mongoIndexesAreEquivalent(index, key, options));
+        if (equivalent?.name) return equivalent.name;
+      } catch (error) {
+        if (!isNamespaceNotFound(error)) throw error;
+      }
     }
-    return collection.createIndex(key, options);
+    return ensureMongoIndex(collection, key, options);
   }
 }
 
 function readBoolean(value: unknown): boolean {
   return String(value ?? '').trim().toLowerCase() === 'true';
-}
-
-function indexesAreEquivalent(
-  existing: Document,
-  key: IndexSpecification,
-  options: CreateIndexesOptions
-): boolean {
-  return JSON.stringify(existing.key ?? null) === JSON.stringify(key)
-    && Boolean(existing.unique) === Boolean(options.unique)
-    && Boolean(existing.sparse) === Boolean(options.sparse)
-    && Boolean(existing.hidden) === Boolean(options.hidden)
-    && (existing.expireAfterSeconds ?? null) === (options.expireAfterSeconds ?? null)
-    && JSON.stringify(existing.partialFilterExpression ?? null)
-      === JSON.stringify(options.partialFilterExpression ?? null)
-    && JSON.stringify(existing.collation ?? null) === JSON.stringify(options.collation ?? null);
 }
 
 function isNamespaceNotFound(error: unknown): boolean {

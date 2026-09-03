@@ -8,6 +8,7 @@ import {
 import { randomUUID, timingSafeEqual } from 'crypto';
 import { Collection, Db, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { UpdateCabinetHomeAdvertisingDto } from './dto/update-cabinet-home-advertising.dto';
 import { RecordAdvertisingEngagementDto } from './dto/record-advertising-engagement.dto';
 import {
@@ -121,6 +122,7 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
       this.cabinetForMeCardLoaded = true;
       this.splitPaymentPromoLoaded = true;
       await this.safeCloseClient();
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -1582,12 +1584,12 @@ export class AdvertisingService implements OnModuleInit, OnModuleDestroy {
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.settings().createIndex({ key: 1 }, { unique: true }),
-      this.assets().createIndex({ id: 1 }, { unique: true }),
-      this.assets().createIndex({ kind: 1, updatedAt: -1 }),
-      this.engagements().createIndex({ eventId: 1 }, { unique: true }),
-      this.engagements().createIndex({ placement: 1, adId: 1, kind: 1, occurredAt: -1 }),
-      this.engagements().createIndex({ placement: 1, phoneE164: 1, occurredAt: -1 })
+      ensureMongoIndex(this.settings(), { key: 1 }, { unique: true }),
+      ensureMongoIndex(this.assets(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.assets(), { kind: 1, updatedAt: -1 }),
+      ensureMongoIndex(this.engagements(), { eventId: 1 }, { unique: true }),
+      ensureMongoIndex(this.engagements(), { placement: 1, adId: 1, kind: 1, occurredAt: -1 }),
+      ensureMongoIndex(this.engagements(), { placement: 1, phoneE164: 1, occurredAt: -1 })
     ]);
   }
 

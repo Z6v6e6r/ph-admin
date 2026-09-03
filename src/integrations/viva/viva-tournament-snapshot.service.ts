@@ -1,5 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
+import {
+  ensureMongoIndex,
+  isMongoIndexReadinessError,
+  isProductionRuntime
+} from '../../common/mongo-index.guard';
 import { Tournament } from '../../tournaments/tournaments.types';
 import { VivaTournamentsService } from './viva-tournaments.service';
 
@@ -117,7 +122,7 @@ export interface VivaTournamentSnapshotDayRevalidationResult {
 type VivaTournamentSnapshotDocument = Document & VivaTournamentSnapshot;
 
 @Injectable()
-export class VivaTournamentSnapshotService implements OnModuleDestroy {
+export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(VivaTournamentSnapshotService.name);
   private readonly snapshotKey = 'default';
   private readonly readModelEnabled = this.readBooleanEnv('VIVA_TOURNAMENT_SNAPSHOT_READ_MODEL', false);
@@ -201,6 +206,22 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
         this.scheduleRefreshIfDue('interval');
       }, this.tickMs);
       this.refreshTimer.unref?.();
+    }
+  }
+
+  async onModuleInit(): Promise<void> {
+    if (
+      (!this.refreshEnabled && !this.readModelEnabled && !this.publicDateRevalidationEnabled)
+      || !this.mongoUri
+      || !isProductionRuntime()
+    ) {
+      return;
+    }
+    try {
+      await this.collection();
+    } catch (error) {
+      await this.onModuleDestroy();
+      throw error;
     }
   }
 
@@ -673,6 +694,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     } catch (error) {
       this.lastHydrateFailureAt = Date.now();
       this.logger.warn(`Failed to hydrate Viva tournament snapshot: ${String(error)}`);
+      if (isMongoIndexReadinessError(error)) throw error;
     }
     return this.snapshot;
   }
@@ -736,6 +758,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
           error: this.lastError
         })
       );
+      if (isMongoIndexReadinessError(error)) throw error;
       return this.snapshot ?? null;
     }
   }
@@ -797,6 +820,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
           error: this.lastError
         })
       );
+      if (isMongoIndexReadinessError(error)) throw error;
       return {
         response: {
           enabled: true,
@@ -857,6 +881,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
             error: this.formatError(error)
           })
         );
+        if (isMongoIndexReadinessError(error)) throw error;
       }
     }
 
@@ -962,6 +987,7 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
       return true;
     } catch (error) {
       this.logger.warn(`Failed to persist Viva tournament snapshot: ${String(error)}`);
+      if (isMongoIndexReadinessError(error)) throw error;
       return false;
     }
   }
@@ -982,9 +1008,10 @@ export class VivaTournamentSnapshotService implements OnModuleDestroy {
     const collection = this.requireDb().collection<VivaTournamentSnapshotDocument>(this.collectionName);
     if (!this.indexesEnsured) {
       try {
-        await collection.createIndex({ key: 1 }, { unique: true });
-        await collection.createIndex({ lastSuccessfulAt: -1 });
+        await ensureMongoIndex(collection, { key: 1 }, { unique: true });
+        await ensureMongoIndex(collection, { lastSuccessfulAt: -1 });
       } catch (error) {
+        if (isMongoIndexReadinessError(error)) throw error;
         this.logger.warn(`Failed to ensure Viva tournament snapshot indexes: ${String(error)}`);
       }
       this.indexesEnsured = true;

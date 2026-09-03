@@ -1,5 +1,10 @@
-import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
+import {
+  ensureMongoIndex,
+  isMongoIndexReadinessError,
+  isProductionRuntime
+} from '../../common/mongo-index.guard';
 
 export type VivaReferenceCacheType =
   | 'studios'
@@ -51,7 +56,7 @@ type VivaReferenceCacheDocument = Document & {
 };
 
 @Injectable()
-export class VivaReferenceCacheService implements OnModuleDestroy {
+export class VivaReferenceCacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(VivaReferenceCacheService.name);
   private readonly enabled = this.readBooleanEnv('VIVA_REFERENCE_CACHE_ENABLED', false);
   private readonly mongoUri = this.normalizeString(
@@ -84,6 +89,16 @@ export class VivaReferenceCacheService implements OnModuleDestroy {
   private indexesEnsured = false;
 
   constructor(@Optional() private readonly now: () => number = () => Date.now()) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!this.enabled || !this.mongoUri || !isProductionRuntime()) return;
+    try {
+      await this.collection();
+    } catch (error) {
+      await this.onModuleDestroy();
+      throw error;
+    }
+  }
 
   async onModuleDestroy(): Promise<void> {
     if (this.client) {
@@ -194,6 +209,7 @@ export class VivaReferenceCacheService implements OnModuleDestroy {
       return this.toEntry<T>(document);
     } catch (error) {
       this.logger.warn(`Failed to hydrate Viva reference cache ${key}: ${String(error)}`);
+      if (isMongoIndexReadinessError(error)) throw error;
       return undefined;
     }
   }
@@ -220,6 +236,7 @@ export class VivaReferenceCacheService implements OnModuleDestroy {
       );
     } catch (error) {
       this.logger.warn(`Failed to persist Viva reference cache ${entry.key}: ${String(error)}`);
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -239,10 +256,11 @@ export class VivaReferenceCacheService implements OnModuleDestroy {
     const collection = this.requireDb().collection<VivaReferenceCacheDocument>(this.collectionName);
     if (!this.indexesEnsured) {
       try {
-        await collection.createIndex({ key: 1 }, { unique: true });
-        await collection.createIndex({ type: 1, widgetId: 1 });
-        await collection.createIndex({ expiresAt: 1 });
+        await ensureMongoIndex(collection, { key: 1 }, { unique: true });
+        await ensureMongoIndex(collection, { type: 1, widgetId: 1 });
+        await ensureMongoIndex(collection, { expiresAt: 1 });
       } catch (error) {
+        if (isMongoIndexReadinessError(error)) throw error;
         this.logger.warn(`Failed to ensure Viva reference cache indexes: ${String(error)}`);
       }
       this.indexesEnsured = true;

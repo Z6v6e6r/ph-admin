@@ -75,6 +75,7 @@
     "subscriptions:instance-projector:dev-canary:check": "ts-node scripts/managed-subscriptions-instance-projector-dev-canary.ts --check",
     "subscriptions:instance-projector:dev-canary:apply": "ts-node scripts/managed-subscriptions-instance-projector-dev-canary.ts --apply",
     "test:backend-release-attestation": "node --test test/backend-release-attestation.test.mjs",
+    "test:production-mongo-index-guard": "ts-node test/production-mongo-index-guard.test.ts && ts-node test/production-mongo-index-guard.mongodb.test.ts",
     "test:subscriptions-binding-promotion": "ts-node test/subscriptions-legacy-binding-promotion.test.ts && ts-node test/subscriptions-legacy-binding-promotion.mongodb.test.ts",
     "test:subscriptions-synthetic-projection:mongo": "ts-node test/subscriptions-synthetic-canonical-projection.mongodb.test.ts",
     "test:subscriptions-trusted-shadow-adapter": "ts-node test/subscriptions-trusted-shadow-adapter.test.ts",

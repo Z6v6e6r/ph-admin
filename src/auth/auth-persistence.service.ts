@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { AdminAuditEntry, AdminRoleDefinition, AdminUserRecord } from './auth.types';
 
@@ -45,6 +46,7 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`MongoDB connect failed: ${String(error)}`);
       this.db = undefined;
       await this.safeCloseClient();
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -179,12 +181,12 @@ export class AuthPersistenceService implements OnModuleInit, OnModuleDestroy {
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.users().createIndex({ id: 1 }, { unique: true }),
-      this.users().createIndex({ login: 1 }, { unique: true }),
-      this.roles().createIndex({ id: 1 }, { unique: true }),
-      this.audit().createIndex({ at: -1 }),
-      this.audit().createIndex({ 'actor.id': 1, at: -1 }),
-      this.audit().createIndex({ targetId: 1, at: -1 })
+      ensureMongoIndex(this.users(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.users(), { login: 1 }, { unique: true }),
+      ensureMongoIndex(this.roles(), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.audit(), { at: -1 }),
+      ensureMongoIndex(this.audit(), { 'actor.id': 1, at: -1 }),
+      ensureMongoIndex(this.audit(), { targetId: 1, at: -1 })
     ]);
   }
 
