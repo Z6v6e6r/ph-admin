@@ -21,8 +21,25 @@ import { gzipSync } from 'node:zlib';
 
 export const BACKEND_RELEASE_SCHEMA = 'ph-admin-backend-release-attestation-v1';
 export const BACKEND_RELEASE_TARGET_SCHEMA = 'ph-admin-backend-release-target-v1';
+export const DEV_RELEASE_SCHEMA = 'ph-admin-subscriptions-dev-release-attestation-v1';
+export const DEV_RELEASE_TARGET = Object.freeze({
+  schema: 'ph-admin-subscriptions-dev-release-target-v1',
+  repository: 'Z6v6e6r/ph-admin',
+  component: 'subscriptions-dev-backend',
+  environment: 'DEV',
+  hostAlias: 'lk-reserve-89',
+  serviceName: 'phab-subscriptions-dev.service',
+  releaseRoot: '/opt/phab-subscriptions-dev/releases',
+  currentLink: '/opt/phab-subscriptions-dev/current',
+  apiOrigin: 'http://127.0.0.1:3036',
+  buildCommand: 'npm run build',
+  entrypoint: 'node dist/main.js',
+  nodeVersion: 'v22.13.1',
+  npmVersion: '11.1.0'
+});
 const SCRIPT_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_TARGET = join(SCRIPT_ROOT, 'deploy/release-targets/lk1-subscriptions-backend.json');
+const DEV_TARGET_PATH = 'deploy/release-targets/subscriptions-dev-backend.json';
 const REQUIRED_TARGET_KEYS = Object.freeze([
   'schema', 'repository', 'component', 'serviceName', 'buildCommand', 'entrypoint',
   'nodeVersion', 'npmVersion'
@@ -105,11 +122,29 @@ export function canonicalGitHubRepository(value) {
   return (ssh?.[1] ?? https?.[1] ?? sshUrl?.[1] ?? '').toLowerCase();
 }
 
-export function validateReleaseTarget(value) {
+export function validateReleaseProfile(profile) {
+  if (!['production', 'subscriptions-dev'].includes(profile)) {
+    fail('BACKEND_RELEASE_PROFILE_INVALID', 'Select an explicit supported release profile');
+  }
+  return profile;
+}
+
+export function validateReleaseTarget(value, profile = 'production') {
+  validateReleaseProfile(profile);
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     fail('BACKEND_RELEASE_TARGET_INVALID', 'Release target must be an object');
   }
   const actualKeys = Object.keys(value).sort();
+  if (profile === 'subscriptions-dev') {
+    if (JSON.stringify(actualKeys) !== JSON.stringify(Object.keys(DEV_RELEASE_TARGET).sort())) {
+      fail('BACKEND_RELEASE_TARGET_SHAPE_INVALID', 'DEV target contains missing or unexpected fields');
+    }
+    if (Object.entries(DEV_RELEASE_TARGET).some(([key, expected]) => value[key] !== expected)) {
+      fail('BACKEND_RELEASE_TARGET_MISMATCH', 'DEV target differs from the approved isolated target');
+    }
+    // Canonical key order is part of the DEV target digest.
+    return DEV_RELEASE_TARGET;
+  }
   if (JSON.stringify(actualKeys) !== JSON.stringify([...REQUIRED_TARGET_KEYS].sort())) {
     fail('BACKEND_RELEASE_TARGET_SHAPE_INVALID', 'Release target contains missing or unexpected fields');
   }
@@ -126,7 +161,7 @@ export function validateReleaseTarget(value) {
   return Object.freeze({ ...value });
 }
 
-async function readTarget(path) {
+async function readTarget(path, profile) {
   const configured = resolve(path);
   let parsed;
   try {
@@ -134,7 +169,27 @@ async function readTarget(path) {
   } catch {
     fail('BACKEND_RELEASE_TARGET_INVALID', 'Release target cannot be parsed');
   }
-  return validateReleaseTarget(parsed);
+  return validateReleaseTarget(parsed, profile);
+}
+
+export function releaseIdentity(target, head, profile = 'production') {
+  const checked = validateReleaseTarget(target, profile);
+  const sha = requiredSha(head, 'BACKEND_RELEASE_HEAD_INVALID');
+  return profile === 'subscriptions-dev' ? {
+    schema: DEV_RELEASE_SCHEMA,
+    rootName: `ph-admin-subscriptions-dev-${sha.slice(0, 12)}`,
+    metadata: {
+      profile,
+      target: checked,
+      targetSha256: sha256(JSON.stringify(checked)),
+      builderSourceCommit: sha,
+      activationAuthorized: false
+    }
+  } : {
+    schema: BACKEND_RELEASE_SCHEMA,
+    rootName: `ph-admin-backend-${sha.slice(0, 12)}`,
+    metadata: {}
+  };
 }
 
 async function assertPrivateOutput(output, sourceRoot) {
@@ -384,13 +439,16 @@ export async function buildBackendReleaseAttestation({
   expectedHead,
   expectedTree,
   trustedRef = 'refs/remotes/origin/main',
-  targetPath = DEFAULT_TARGET
+  profile = 'production',
+  targetPath
 }) {
+  validateReleaseProfile(profile);
   const sourceRoot = await realpath(resolve(source));
   const approvedHead = requiredSha(expectedHead, 'BACKEND_RELEASE_HEAD_INVALID');
   const approvedTree = requiredSha(expectedTree, 'BACKEND_RELEASE_TREE_INVALID');
   const outputPath = await assertPrivateOutput(output, sourceRoot);
-  const target = await readTarget(targetPath);
+  const target = await readTarget(targetPath ?? (profile === 'subscriptions-dev'
+    ? join(sourceRoot, DEV_TARGET_PATH) : DEFAULT_TARGET), profile);
   const actualRepository = canonicalGitHubRepository(
     command('git', ['remote', 'get-url', 'origin'], sourceRoot)
   );
@@ -416,6 +474,16 @@ export async function buildBackendReleaseAttestation({
   }
   if (command('git', ['status', '--porcelain=v1', '--untracked-files=all'], sourceRoot)) {
     fail('BACKEND_RELEASE_DIRTY_SOURCE', 'Exact source worktree is dirty');
+  }
+  if (profile === 'subscriptions-dev') {
+    // Never attest new DEV tooling as if it belonged to an older runtime SHA.
+    const trackedBuilder = command('git', ['show', `${approvedHead}:scripts/build-backend-release-attestation.mjs`], sourceRoot);
+    const runningBuilder = (await readFile(fileURLToPath(import.meta.url), 'utf8')).trim();
+    if (trackedBuilder !== runningBuilder) {
+      fail('BACKEND_RELEASE_BUILDER_SOURCE_MISMATCH', 'DEV builder must belong to the attested source commit');
+    }
+    const trackedTarget = JSON.parse(command('git', ['show', `${approvedHead}:${DEV_TARGET_PATH}`], sourceRoot));
+    validateReleaseTarget(trackedTarget, profile);
   }
   try {
     command('git', ['symbolic-ref', '-q', 'HEAD'], sourceRoot);
@@ -459,7 +527,8 @@ export async function buildBackendReleaseAttestation({
         fail('BACKEND_RELEASE_RUNTIME_FILE_MISSING', `Required runtime file is absent: ${required}`);
       }
     }
-    const releaseRootName = `ph-admin-backend-${approvedHead.slice(0, 12)}`;
+    const identity = releaseIdentity(target, approvedHead, profile);
+    const releaseRootName = identity.rootName;
     const releaseRoot = join(stage, releaseRootName);
     await mkdir(releaseRoot, { mode: 0o755 });
     const inventory = [];
@@ -477,7 +546,7 @@ export async function buildBackendReleaseAttestation({
     }
     const sourceEpoch = Number(command('git', ['show', '-s', '--format=%ct', approvedHead], sourceRoot));
     const manifest = {
-      schema: BACKEND_RELEASE_SCHEMA,
+      schema: identity.schema,
       repository: target.repository,
       component: target.component,
       sourceCommit: approvedHead,
@@ -486,6 +555,7 @@ export async function buildBackendReleaseAttestation({
       sourceCommitTime: new Date(sourceEpoch * 1000).toISOString(),
       sourceDirty: false,
       serviceName: target.serviceName,
+      ...identity.metadata,
       buildCommand: target.buildCommand,
       entrypoint: target.entrypoint,
       nodeVersion,
@@ -511,11 +581,12 @@ export async function buildBackendReleaseAttestation({
       flag: 'wx', mode: 0o600
     });
     return {
-      schema: BACKEND_RELEASE_SCHEMA,
+      schema: identity.schema,
       repository: target.repository,
       sourceCommit: approvedHead,
       sourceTree: approvedTree,
       serviceName: target.serviceName,
+      ...identity.metadata,
       entrypoint: target.entrypoint,
       nodeVersion,
       npmVersion,
@@ -533,19 +604,32 @@ export async function buildBackendReleaseAttestation({
   }
 }
 
-function argument(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+export function parseReleaseArguments(args) {
+  const allowed = new Set(['--source', '--output', '--expected-head', '--expected-tree', '--trusted-ref', '--profile', '--target']);
+  const result = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const key = args[index];
+    const value = args[index + 1];
+    if (!allowed.has(key) || Object.hasOwn(result, key)
+      || !value || value.startsWith('--')) {
+      fail('BACKEND_RELEASE_ARGUMENT_INVALID', 'Unknown, duplicate or missing release argument');
+    }
+    result[key] = value;
+  }
+  validateReleaseProfile(result['--profile'] ?? 'production');
+  return result;
 }
 
 async function main() {
+  const args = parseReleaseArguments(process.argv.slice(2));
   const result = await buildBackendReleaseAttestation({
-    source: argument('--source'),
-    output: argument('--output'),
-    expectedHead: argument('--expected-head'),
-    expectedTree: argument('--expected-tree'),
-    trustedRef: argument('--trusted-ref') ?? 'refs/remotes/origin/main',
-    targetPath: argument('--target') ?? DEFAULT_TARGET
+    source: args['--source'],
+    output: args['--output'],
+    expectedHead: args['--expected-head'],
+    expectedTree: args['--expected-tree'],
+    trustedRef: args['--trusted-ref'] ?? 'refs/remotes/origin/main',
+    profile: args['--profile'] ?? 'production',
+    targetPath: args['--target']
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
