@@ -21,6 +21,7 @@ import {
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProjectionFence,
   StoredSubscriptionProviderMapping,
+  StoredReleaseProgram,
   SubscriptionProviderScope,
   SubscriptionRuntimeCompatibility
 } from './subscriptions.types';
@@ -57,6 +58,21 @@ export interface SubscriptionSaleReadinessResult {
     status: 'UNAVAILABLE' | 'CURRENT';
     checkpointAsOf: string | null;
   };
+  binding: {
+    mappingId: string;
+    mappingRevision: number;
+    subscriptionTypeId: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: string;
+    fenceId: string;
+    fenceRevision: number;
+    fenceDigest: string;
+    releaseProgramId: string;
+    releaseProgramRevision: number;
+    releasePhaseId: string;
+    projectorReconciliationDigest: string;
+  } | null;
   blockers: Array<{ code: string }>;
 }
 
@@ -70,6 +86,11 @@ export class SubscriptionSaleReadinessService {
   ): Promise<SubscriptionSaleReadinessResult> {
     this.assertEnabled();
     this.assertIntegrationToken(integrationToken);
+    return this.checkTrusted(dto);
+  }
+
+  async checkTrusted(dto: SubscriptionSaleReadinessDto): Promise<SubscriptionSaleReadinessResult> {
+    this.assertEnabled();
     const tenantId = this.requireConfiguredTenantId();
     const maxStalenessSeconds = this.requireMaxStalenessSeconds();
     const requiredCompatibility = publicationAdapterRuntimeCompatibility(
@@ -88,7 +109,8 @@ export class SubscriptionSaleReadinessService {
       providerScope,
       checkedAt: checkedAt.toISOString(),
       requiredCompatibility,
-      instanceProjector: { status: 'UNAVAILABLE' as const, checkpointAsOf: null }
+      instanceProjector: { status: 'UNAVAILABLE' as const, checkpointAsOf: null },
+      binding: null
     };
 
     if (!this.compatibilityMatches(dto, requiredCompatibility)) {
@@ -106,6 +128,21 @@ export class SubscriptionSaleReadinessService {
     const blockers: string[] = [];
     if (!this.flag('SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED')) {
       blockers.push('SUBSCRIPTIONS_SALE_READINESS_RUNTIME_CONTEXT_DISABLED');
+    }
+    if (!this.flag('SUBSCRIPTIONS_SALE_BINDING_ENABLED')) {
+      blockers.push('SUBSCRIPTIONS_SALE_READINESS_BINDING_DISABLED');
+    }
+    const bindingToken = String(
+      process.env.SUBSCRIPTIONS_SALE_BINDING_INTEGRATION_TOKEN ?? ''
+    ).trim();
+    const readinessToken = String(
+      process.env.SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_TOKEN ?? ''
+    ).trim();
+    if (Buffer.byteLength(bindingToken, 'utf8') < 32) {
+      blockers.push('SUBSCRIPTIONS_SALE_READINESS_BINDING_NOT_CONFIGURED');
+    }
+    if (bindingToken && readinessToken && bindingToken === readinessToken) {
+      blockers.push('SUBSCRIPTIONS_SALE_READINESS_BINDING_TOKEN_NOT_DISTINCT');
     }
     const identity = {
       tenantId,
@@ -179,6 +216,7 @@ export class SubscriptionSaleReadinessService {
       status: 'UNAVAILABLE',
       checkpointAsOf: null
     };
+    let binding: SubscriptionSaleReadinessResult['binding'] = null;
     if (mapping && publication
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED')
       && this.flag('SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED')) {
@@ -201,12 +239,38 @@ export class SubscriptionSaleReadinessService {
         maxStalenessSeconds,
         requiredCompatibility
       )) {
+        const releaseProgram = await this.read(() =>
+          this.repository.releaseProgramById(checkpoint.binding.releaseProgramId)
+        );
+        if (!releaseProgram || !this.releaseProgramIsCurrent(
+          releaseProgram,
+          checkpoint,
+          publication,
+          dto.providerProductId
+        )) {
+          blockers.push('SUBSCRIPTIONS_SALE_READINESS_RELEASE_PROGRAM_UNAVAILABLE');
+        } else {
         instanceProjector = {
           status: 'CURRENT',
           checkpointAsOf: checkpoint.coverage.coverageThrough
         };
+        binding = {
+          mappingId: checkpoint.binding.mappingId,
+          mappingRevision: checkpoint.binding.mappingRevision,
+          subscriptionTypeId: checkpoint.binding.subscriptionTypeId,
+          publicationId: checkpoint.binding.publicationId,
+          policyVersion: checkpoint.binding.policyVersion,
+          policyDigest: checkpoint.binding.policyDigest,
+          fenceId: checkpoint.binding.fenceId,
+          fenceRevision: checkpoint.binding.fenceRevision,
+          fenceDigest: checkpoint.binding.fenceDigest,
+          releaseProgramId: checkpoint.binding.releaseProgramId,
+          releaseProgramRevision: checkpoint.binding.releaseProgramRevision,
+          releasePhaseId: checkpoint.binding.releasePhaseId,
+          projectorReconciliationDigest: checkpoint.reconciliation.reconciliationDigest
+        };
         const [mappingAfterCheckpoint, publicationAfterCheckpoint, fenceAfterCheckpoint,
-          publicationHistoryAfterCheckpoint] = await Promise.all([
+          publicationHistoryAfterCheckpoint, releaseProgramAfterCheckpoint] = await Promise.all([
           this.read(() => this.repository.runtimeProviderMappingByProviderIdentity(identity)),
           this.read(() => this.repository.runtimePolicyPublicationByVersion(
             publication.subscriptionTypeId,
@@ -217,6 +281,9 @@ export class SubscriptionSaleReadinessService {
           )),
           this.read(() => this.repository.runtimePolicyPublicationHistoryByType(
             publication.subscriptionTypeId
+          )),
+          this.read(() => this.repository.releaseProgramById(
+            checkpoint.binding.releaseProgramId
           ))
         ]);
         if (!mappingAfterCheckpoint
@@ -233,6 +300,10 @@ export class SubscriptionSaleReadinessService {
           || fenceAfterCheckpoint.lastProjectorReconciliationDigest
             !== fence.lastProjectorReconciliationDigest
           || checkpoint.schemaVersion !== 3
+          || !releaseProgramAfterCheckpoint
+          || releaseProgramAfterCheckpoint.releaseProgramId !== releaseProgram.releaseProgramId
+          || releaseProgramAfterCheckpoint.revision !== releaseProgram.revision
+          || releaseProgramAfterCheckpoint.state !== releaseProgram.state
           || !checkpoint.policyResolution
           || !subscriptionPublicationHistoryMatchesResolution(
             publicationHistoryAfterCheckpoint,
@@ -240,6 +311,8 @@ export class SubscriptionSaleReadinessService {
           )) {
           blockers.push('SUBSCRIPTIONS_SALE_READINESS_EVIDENCE_CHANGED');
           instanceProjector = { status: 'UNAVAILABLE', checkpointAsOf: null };
+          binding = null;
+        }
         }
       }
     }
@@ -251,6 +324,7 @@ export class SubscriptionSaleReadinessService {
       ...base,
       ready: uniqueBlockers.length === 0,
       instanceProjector,
+      binding: uniqueBlockers.length === 0 ? binding : null,
       mapping: mapping ? this.mappingView(mapping) : null,
       publication: publication ? this.publicationView(publication) : null,
       blockers: uniqueBlockers.map((code) => ({ code }))
@@ -373,6 +447,32 @@ export class SubscriptionSaleReadinessService {
         requiredCompatibility
       )
       && this.runtimeCompatibilityMatches(compatibility, requiredCompatibility);
+  }
+
+  private releaseProgramIsCurrent(
+    program: StoredReleaseProgram,
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint,
+    publication: StoredSubscriptionPolicyPublication,
+    providerProductId: string
+  ): boolean {
+    const phase = program.phases.find(
+      (item) => item.releasePhaseId === checkpoint.binding.releasePhaseId
+    );
+    return program.state === 'ACTIVE'
+      && program.releaseProgramId === checkpoint.binding.releaseProgramId
+      && program.revision === checkpoint.binding.releaseProgramRevision
+      && program.subscriptionTypeId === publication.subscriptionTypeId
+      && publication.runtimeProjection.stationAccessRules.some((rule) =>
+        rule.enabled && (rule.selector.kind === 'ALL_STATIONS'
+          || (rule.selector.kind === 'STATION_LIST'
+            && rule.selector.stationIds.includes(program.stationId))))
+      && !!phase
+      && phase.mode === 'DAILY_DROP'
+      && phase.totalQuantity === 100
+      && phase.dailyDropQuantity === 10
+      && phase.providerProductRef === providerProductId
+      && phase.price.currency === 'RUB'
+      && phase.price.amountMinor > 0;
   }
 
   private mappingView(mapping: StoredSubscriptionProviderMapping): SaleReadinessMapping {

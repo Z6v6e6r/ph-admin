@@ -46,6 +46,13 @@ test('records only a bounded subscription route template', async () => {
   }));
   assert.equal(rows.length, 2);
   assert.equal(rows[1].route, 'POST /api/internal/subscriptions/shadow-quote');
+
+  await lastValueFrom(interceptor.intercept(context('/sale-bindings/confirm', 200), {
+    handle: () => of({ state: 'BOUND', clientSubscriptionId: 'private-id' })
+  }));
+  assert.equal(rows.length, 3);
+  assert.equal(rows[2].route, 'POST /api/internal/subscriptions/sale-bindings/confirm');
+  assert.doesNotMatch(JSON.stringify(rows[2]), /private-id|BOUND/);
 });
 
 test('records subscription errors without exception body and ignores unlisted raw paths', async () => {

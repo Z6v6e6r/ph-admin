@@ -906,6 +906,238 @@ export class SubscriptionsRepository {
     }
   }
 
+  async applyConfirmedRuntimeSaleBinding(input: {
+    instance: StoredSubscriptionInstance;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+    mappingSnapshot: StoredSubscriptionProviderMapping;
+    checkpointSnapshot: StoredSubscriptionInstanceProjectorCheckpoint;
+    fenceSnapshot: StoredSubscriptionProjectionFence;
+    publicationHistorySnapshot: StoredSubscriptionPolicyPublication[];
+    releaseProgramSnapshot: StoredReleaseProgram;
+  }): Promise<'INSERTED' | 'EXACT_REPLAY'> {
+    this.assertRuntimeContractsEnabled();
+    this.assertInstanceProjectorContractsEnabled();
+    validateStoredSubscriptionInstance(input.instance);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    validateStoredSubscriptionProviderMapping(input.mappingSnapshot);
+    validateStoredSubscriptionInstanceProjectorCheckpoint(input.checkpointSnapshot);
+    validateStoredSubscriptionProjectionFence(input.fenceSnapshot);
+    input.publicationHistorySnapshot.forEach(validateStoredSubscriptionPolicyPublication);
+    if (input.operation.kind !== 'PURCHASE'
+      || input.operation.state !== 'CONFIRMED'
+      || input.operation.subscriptionInstanceId !== input.instance.subscriptionInstanceId
+      || input.ledger.eventType !== 'PURCHASE_PAID'
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.instance.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.instance.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_LINK_MISMATCH');
+    }
+
+    const checkpointIdentity = this.instanceProjectorIdentity(input.checkpointSnapshot);
+    const exactReplay = async (): Promise<boolean> => {
+      const [instance, operation, ledger, outbox] = await Promise.all([
+        this.runtimeInstances().findOne(
+          {
+            tenantId: input.instance.tenantId,
+            providerClientId: input.instance.providerClientId,
+            clientSubscriptionId: input.instance.clientSubscriptionId
+          },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeOperations().findOne(
+          { operationId: input.operation.operationId },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeLedger().findOne(
+          { eventId: input.ledger.eventId },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeOutbox().findOne(
+          { outboxEventId: input.outbox.outboxEventId },
+          { projection: { _id: 0 } }
+        )
+      ]);
+      return isDeepStrictEqual(instance, input.instance)
+        && isDeepStrictEqual(operation, input.operation)
+        && isDeepStrictEqual(ledger, input.ledger)
+        && isDeepStrictEqual(outbox, input.outbox);
+    };
+
+    const session = this.requireClient().startSession();
+    let result: 'INSERTED' | 'EXACT_REPLAY' | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const [mapping, checkpoint, fence, publicationHistory, releaseProgram,
+          existingInstance, existingOperation, existingLedger, existingOutbox] = await Promise.all([
+          this.runtimeMappings().findOne(
+            { mappingId: input.mappingSnapshot.mappingId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeInstanceProjectorCheckpoints().findOne(
+            checkpointIdentity,
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeProjectionFences().findOne(
+            { fenceId: input.fenceSnapshot.fenceId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimePublications().find(
+            { subscriptionTypeId: input.instance.subscriptionTypeId },
+            { projection: { _id: 0 }, session }
+          ).sort({ effectiveAt: 1, publicationId: 1 }).toArray(),
+          this.programs().findOne(
+            { releaseProgramId: input.releaseProgramSnapshot.releaseProgramId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeInstances().findOne(
+            {
+              tenantId: input.instance.tenantId,
+              providerClientId: input.instance.providerClientId,
+              clientSubscriptionId: input.instance.clientSubscriptionId
+            },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeOperations().findOne(
+            { operationId: input.operation.operationId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeLedger().findOne(
+            { eventId: input.ledger.eventId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeOutbox().findOne(
+            { outboxEventId: input.outbox.outboxEventId },
+            { projection: { _id: 0 }, session }
+          )
+        ]);
+        if (!isDeepStrictEqual(mapping, input.mappingSnapshot)
+          || !isDeepStrictEqual(checkpoint, input.checkpointSnapshot)
+          || !isDeepStrictEqual(fence, input.fenceSnapshot)
+          || !isDeepStrictEqual(publicationHistory, input.publicationHistorySnapshot)
+          || !isDeepStrictEqual(releaseProgram, input.releaseProgramSnapshot)
+          || checkpoint?.state !== 'CURRENT'
+          || checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
+          || checkpoint.binding.mappingId !== input.instance.mappingId
+          || checkpoint.binding.subscriptionTypeId !== input.instance.subscriptionTypeId
+          || checkpoint.binding.policyVersion !== input.instance.policyVersion
+          || checkpoint.binding.policyDigest !== input.instance.policyDigest
+          || checkpoint.binding.releaseProgramId !== input.instance.releaseProgramId
+          || checkpoint.binding.releasePhaseId !== input.instance.releasePhaseId
+          || fence?.lastProjectorReconciliationDigest
+            !== checkpoint.reconciliation.reconciliationDigest) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_SOURCE_CHANGED');
+        }
+        const existing = [existingInstance, existingOperation, existingLedger, existingOutbox];
+        if (existing.some(Boolean)) {
+          if (isDeepStrictEqual(existingInstance, input.instance)
+            && isDeepStrictEqual(existingOperation, input.operation)
+            && isDeepStrictEqual(existingLedger, input.ledger)
+            && isDeepStrictEqual(existingOutbox, input.outbox)) {
+            result = 'EXACT_REPLAY';
+            return;
+          }
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT');
+        }
+        await this.runtimeInstances().insertOne(structuredClone(input.instance), { session });
+        await this.runtimeOperations().insertOne(structuredClone(input.operation), { session });
+        await this.runtimeLedger().insertOne(structuredClone(input.ledger), { session });
+        await this.runtimeOutbox().insertOne(structuredClone(input.outbox), { session });
+        result = 'INSERTED';
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (!this.isDuplicateKey(error) || !(await exactReplay())) throw error;
+      result = 'EXACT_REPLAY';
+    } finally {
+      await session.endSession();
+    }
+    if (!result) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_TRANSACTION_EMPTY');
+    }
+    if (!(await exactReplay())) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_POSTCOMMIT_READBACK_FAILED');
+    }
+    return result;
+  }
+
+  async confirmedRuntimeSaleBindingReplay(input: {
+    tenantId: string;
+    providerClientId: string;
+    clientSubscriptionId: string;
+    providerProductId: string;
+    subscriptionInstanceId: string;
+    operationId: string;
+    ledgerEventId: string;
+    outboxEventId: string;
+    idempotencyKeyHash: string;
+    requestHash: string;
+    correlationId: string;
+    providerTransactionId: string;
+  }): Promise<StoredSubscriptionInstance | null> {
+    this.assertRuntimeContractsEnabled();
+    this.assertInstanceProjectorContractsEnabled();
+    const [instance, operation, ledger, outbox] = await Promise.all([
+      this.runtimeInstances().findOne(
+        {
+          tenantId: input.tenantId,
+          providerClientId: input.providerClientId,
+          clientSubscriptionId: input.clientSubscriptionId
+        },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeOperations().findOne(
+        { operationId: input.operationId },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeLedger().findOne(
+        { eventId: input.ledgerEventId },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeOutbox().findOne(
+        { outboxEventId: input.outboxEventId },
+        { projection: { _id: 0 } }
+      )
+    ]);
+    const existing = [instance, operation, ledger, outbox];
+    if (!existing.some(Boolean)) return null;
+    if (!instance || !operation || !ledger || !outbox) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT'
+      );
+    }
+    validateStoredSubscriptionInstance(instance);
+    validateStoredSubscriptionRuntimeOperation(operation);
+    validateStoredSubscriptionUsageLedgerEvent(ledger);
+    validateStoredSubscriptionOutboxEvent(outbox);
+    if (instance.subscriptionInstanceId !== input.subscriptionInstanceId
+      || instance.tenantId !== input.tenantId
+      || instance.provider !== 'VIVA'
+      || instance.providerProductId !== input.providerProductId
+      || instance.providerClientId !== input.providerClientId
+      || instance.clientSubscriptionId !== input.clientSubscriptionId
+      || operation.subscriptionInstanceId !== instance.subscriptionInstanceId
+      || operation.kind !== 'PURCHASE'
+      || operation.state !== 'CONFIRMED'
+      || operation.idempotency.keyHash !== input.idempotencyKeyHash
+      || operation.idempotency.requestHash !== input.requestHash
+      || operation.correlationId !== input.correlationId
+      || operation.providerCorrelationId !== input.providerTransactionId
+      || ledger.eventType !== 'PURCHASE_PAID'
+      || ledger.operationId !== operation.operationId
+      || ledger.subscriptionInstanceId !== instance.subscriptionInstanceId
+      || outbox.ledgerEventId !== ledger.eventId
+      || outbox.subscriptionInstanceId !== instance.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT'
+      );
+    }
+    return structuredClone(instance);
+  }
+
   async legacyBindingPromotionSnapshot(
     identity: SubscriptionLegacyBindingPromotionIdentity
   ): Promise<SubscriptionLegacyBindingPromotionSnapshot> {

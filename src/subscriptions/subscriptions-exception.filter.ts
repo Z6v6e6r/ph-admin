@@ -62,7 +62,8 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     const isIntegrationTokenRejection = [
       'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN',
       'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN',
-      'SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_FORBIDDEN'
+      'SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_FORBIDDEN',
+      'SUBSCRIPTIONS_SALE_BINDING_INTEGRATION_FORBIDDEN'
     ].includes(domainCode);
     const status = rawStatus === HttpStatus.FORBIDDEN && !request.user && !isIntegrationTokenRejection
       ? HttpStatus.UNAUTHORIZED

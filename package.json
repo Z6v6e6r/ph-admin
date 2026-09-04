@@ -27,6 +27,7 @@
     "referral-links:release:verify": "node scripts/verify-referral-links-release.mjs",
     "subscriptions:annual-v2:check": "ts-node scripts/managed-subscriptions-annual-v2-candidates.ts --check",
     "test:subscriptions-sale-readiness": "ts-node test/subscriptions-sale-readiness.test.ts",
+    "test:subscriptions-sale-binding": "ts-node test/subscriptions-sale-binding.test.ts",
     "subscriptions:backup:target-fingerprint": "node scripts/managed-subscriptions-backup.mjs --target-fingerprint",
     "subscriptions:backup:check": "node scripts/managed-subscriptions-backup.mjs --check",
     "subscriptions:backup:create": "node scripts/managed-subscriptions-backup.mjs --create",

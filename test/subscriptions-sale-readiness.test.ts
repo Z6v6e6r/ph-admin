@@ -18,7 +18,10 @@ import {
 } from '../src/subscriptions/subscription-projection-fence';
 import { SubscriptionTrustedShadowController } from '../src/subscriptions/subscriptions.controller';
 import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions-exception.filter';
-import { StoredSubscriptionPolicyPublication } from '../src/subscriptions/subscriptions.types';
+import {
+  StoredReleaseProgram,
+  StoredSubscriptionPolicyPublication
+} from '../src/subscriptions/subscriptions.types';
 
 const TOKEN = 'sale-readiness-integration-token-2026';
 const TENANT_ID = 'tenant:iSkq6G';
@@ -183,6 +186,37 @@ const projectionFence = () => ({
   updatedAt: '2026-08-24T09:59:30.000Z'
 });
 
+const releaseProgram = (): StoredReleaseProgram => ({
+  schemaVersion: 1,
+  releaseProgramId: 'release-program:piter-annual',
+  subscriptionTypeId: publication().subscriptionTypeId,
+  stationId: STATION_ID,
+  timezone: 'Europe/Moscow',
+  state: 'ACTIVE',
+  revision: 1,
+  phases: [{
+    releasePhaseId: 'release-phase:piter-annual',
+    order: 1,
+    mode: 'DAILY_DROP',
+    totalQuantity: 100,
+    dailyDropQuantity: 10,
+    dailyDropLocalTime: null,
+    price: { amountMinor: 5680000, currency: 'RUB' },
+    activation: 'MANUAL',
+    scheduledAt: null,
+    providerProductRef: PRODUCT_ID
+  }],
+  createdAt: '2026-08-23T10:00:00.000Z',
+  updatedAt: '2026-08-24T09:30:00.000Z',
+  createdBy: 'admin:subscriptions',
+  idempotency: {
+    actorId: 'admin:subscriptions',
+    key: 'release-program-piter-annual',
+    requestHash: 'c'.repeat(64),
+    correlationId: 'corr:release-program-piter-annual'
+  }
+});
+
 const checkpoint = () => ({
   schemaVersion: 3 as const,
   checkpointId: 'checkpoint:piter-annual',
@@ -261,6 +295,7 @@ class RepositoryStub {
   publicationHistoryReads = 0;
   checkpointReads = 0;
   fenceReads = 0;
+  releaseProgramReads = 0;
   lastMappingIdentity: unknown = null;
   firstMapping: any = mapping();
   secondMapping: any = this.firstMapping;
@@ -272,6 +307,8 @@ class RepositoryStub {
   currentCheckpoint: any = null;
   firstFence: any = projectionFence();
   secondFence: any = this.firstFence;
+  firstReleaseProgram: any = releaseProgram();
+  secondReleaseProgram: any = this.firstReleaseProgram;
   connectError: Error | null = null;
 
   async connectReadOnly(): Promise<void> {
@@ -312,6 +349,13 @@ class RepositoryStub {
     this.fenceReads += 1;
     return this.fenceReads === 1 ? this.firstFence : this.secondFence;
   }
+
+  async releaseProgramById() {
+    this.releaseProgramReads += 1;
+    return this.releaseProgramReads === 1
+      ? this.firstReleaseProgram
+      : this.secondReleaseProgram;
+  }
 }
 
 class FixedClockService extends SubscriptionSaleReadinessService {
@@ -343,6 +387,9 @@ function configure(): void {
   process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = TENANT_ID;
   process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS = '3600';
   process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_SALE_BINDING_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_SALE_BINDING_INTEGRATION_TOKEN =
+    'sale-binding-integration-token-at-least-32-bytes';
   process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED = 'false';
   process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_READINESS_ENABLED = 'false';
 }
@@ -607,6 +654,16 @@ async function verifyFailClosedAndDrift(): Promise<void> {
   ]);
 
   configure();
+  const sharedCredential = service();
+  process.env.SUBSCRIPTIONS_SALE_BINDING_INTEGRATION_TOKEN = TOKEN;
+  const sharedCredentialResult = await sharedCredential.service.check(TOKEN, dto());
+  const sharedCredentialBlockers = blockerCodes(sharedCredentialResult);
+  assert.ok(sharedCredentialBlockers.includes(
+    'SUBSCRIPTIONS_SALE_READINESS_BINDING_TOKEN_NOT_DISTINCT'
+  ));
+  assert.equal(sharedCredentialResult.ready, false);
+
+  configure();
   const unavailable = service();
   unavailable.repository.connectError = new Error('Mongo unavailable');
   await assert.rejects(
@@ -623,7 +680,8 @@ async function verifyControllerAndFilter(): Promise<void> {
     {} as any,
     {} as any,
     {} as any,
-    checked.service
+    checked.service,
+    {} as any
   );
   const headers = new Map<string, string>();
   const response = {

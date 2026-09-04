@@ -32,10 +32,15 @@ import {
   ReserveSubscriptionEntitlementDto
 } from './dto/subscription-entitlement-lifecycle.dto';
 import { SubscriptionSaleReadinessDto } from './dto/subscription-sale-readiness.dto';
+import { ConfirmSubscriptionSaleBindingDto } from './dto/confirm-subscription-sale-binding.dto';
 import {
   SubscriptionSaleReadinessResult,
   SubscriptionSaleReadinessService
 } from './subscription-sale-readiness.service';
+import {
+  SubscriptionSaleBindingResult,
+  SubscriptionSaleBindingService
+} from './subscription-sale-binding.service';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
@@ -302,7 +307,8 @@ export class SubscriptionTrustedShadowController {
     private readonly entitlements: SubscriptionEntitlementLifecycleService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
     private readonly activation: SubscriptionActivationService,
-    private readonly saleReadinessService: SubscriptionSaleReadinessService
+    private readonly saleReadinessService: SubscriptionSaleReadinessService,
+    private readonly saleBindingService: SubscriptionSaleBindingService
   ) {}
 
   @Post('shadow-quote')
@@ -393,6 +399,28 @@ export class SubscriptionTrustedShadowController {
       validCorrelationId ? correlationId : `corr:${randomUUID()}`
     );
     return this.saleReadinessService.check(integrationToken, dto);
+  }
+
+  @Post('sale-bindings/confirm')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  async confirmSaleBinding(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: ConfirmSubscriptionSaleBindingDto,
+    @Res({ passthrough: true }) response: Response
+  ): Promise<SubscriptionSaleBindingResult> {
+    const result = await this.saleBindingService.confirm(
+      integrationToken,
+      idempotencyKey,
+      correlationId,
+      dto
+    );
+    if (result.replayed) response.setHeader('Idempotency-Replayed', 'true');
+    return result;
   }
 
   @Post('activate-first-use')

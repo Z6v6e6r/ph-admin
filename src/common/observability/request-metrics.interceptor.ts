@@ -17,6 +17,7 @@ export class RequestMetricsInterceptor implements NestInterceptor {
     '/api/internal/subscriptions/entitlements/release',
     '/api/internal/subscriptions/runtime-context',
     '/api/internal/subscriptions/sale-readiness',
+    '/api/internal/subscriptions/sale-bindings/confirm',
     '/api/internal/subscriptions/activate-first-use',
     '/internal/subscriptions/shadow-quote',
     '/internal/subscriptions/entitlements/reserve',
@@ -24,6 +25,7 @@ export class RequestMetricsInterceptor implements NestInterceptor {
     '/internal/subscriptions/entitlements/release',
     '/internal/subscriptions/runtime-context',
     '/internal/subscriptions/sale-readiness',
+    '/internal/subscriptions/sale-bindings/confirm',
     '/internal/subscriptions/activate-first-use'
   ]);
 
