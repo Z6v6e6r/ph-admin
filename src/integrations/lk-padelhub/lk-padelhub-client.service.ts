@@ -38,7 +38,7 @@ export class LkPadelHubClientService {
   async createGamePlayerRemovalRequest(
     gameId: string,
     request: {
-      target: { bookingId: string; clientId: string };
+      target: { bookingId: string | null; clientId: string };
       expectedMembershipVersion: string;
       visitAction: GamePlayerRemovalRefundPolicy;
       idempotencyKey: string;

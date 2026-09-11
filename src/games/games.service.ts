@@ -509,6 +509,11 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const target = this.resolvePlayerRemovalTarget(existing, participant, normalizedPlayerId);
+    if (!target.bookingId && request.refundPolicy === 'RETURN_VISIT') {
+      throw new ConflictException(
+        'Participant has no paid visit to return; remove the player without visit return'
+      );
+    }
 
     return this.lkPadelHubClient.createGamePlayerRemovalRequest(gameId, {
       target: {
@@ -554,7 +559,7 @@ export class GamesService implements OnModuleDestroy {
     game: MongoGameDoc,
     participant: MongoGameParticipant,
     requestedPlayerId: string
-  ): { bookingId: string; clientId: string; membershipVersion: string } {
+  ): { bookingId: string | null; clientId: string; membershipVersion: string } {
     const clientId = this.readParticipantClientId(participant);
     if (!clientId || this.normalizeRemovalIdentity(clientId) !== this.normalizeRemovalIdentity(requestedPlayerId)) {
       throw new ConflictException('Player identity is not current');
@@ -571,23 +576,6 @@ export class GamesService implements OnModuleDestroy {
         this.normalizeRemovalIdentity(this.readParticipantClientId(payment)) ===
           this.normalizeRemovalIdentity(clientId)
     );
-    if (targetPayments.length === 0) {
-      throw new ConflictException('No active payment for this participant was found');
-    }
-
-    const bookingIds = Array.from(
-      new Set(
-        targetPayments
-          .flatMap((payment) => [
-            ...this.toStringArray(payment.bookingIds),
-            this.readString(payment.bookingId)
-          ])
-          .filter((bookingId): bookingId is string => Boolean(bookingId))
-      )
-    );
-    if (bookingIds.length !== 1) {
-      throw new ConflictException('The participant payment must have exactly one active booking');
-    }
 
     const activeParticipants = (Array.isArray(game.participants) ? game.participants : []).filter(
       (item) =>
@@ -597,6 +585,26 @@ export class GamesService implements OnModuleDestroy {
     );
     if (activeParticipants.length === 0) {
       throw new ConflictException('Player is no longer an active participant');
+    }
+
+    // Local invite-link memberships have no Viva payment/booking row. LK still
+    // owns the durable removal, but it can only run without a visit return.
+    let bookingId: string | null = null;
+    if (targetPayments.length > 0) {
+      const bookingIds = Array.from(
+        new Set(
+          targetPayments
+            .flatMap((payment) => [
+              ...this.toStringArray(payment.bookingIds),
+              this.readString(payment.bookingId)
+            ])
+            .filter((value): value is string => Boolean(value))
+        )
+      );
+      if (bookingIds.length !== 1) {
+        throw new ConflictException('The participant payment must have exactly one active booking');
+      }
+      bookingId = bookingIds[0];
     }
     const activeWaitlist = (Array.isArray(game.waitlist) ? game.waitlist : []).filter(
       (item) =>
@@ -630,7 +638,7 @@ export class GamesService implements OnModuleDestroy {
     }
 
     return {
-      bookingId: bookingIds[0],
+      bookingId,
       clientId,
       membershipVersion
     };
