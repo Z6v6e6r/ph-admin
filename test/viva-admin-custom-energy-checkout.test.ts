@@ -408,6 +408,28 @@ async function main(): Promise<void> {
     assert.equal(byV1PlusLookupResult.clientId, 'client-by-v1-plus');
     assert.equal(byV1PlusLookupResult.transactionId, 'transaction-by-v1-plus');
     assert.equal(byV1PlusLookupResult.paymentUrl, 'https://pay.example/by-v1-plus');
+
+    let ambiguousPostCount = 0;
+    globalThis.fetch = (async () => {
+      ambiguousPostCount += 1;
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({ message: 'ambiguous provider result' })
+      } as Response;
+    }) as typeof fetch;
+    await assert.rejects(
+      () => (freshService as unknown as {
+        createAdminTransactionWithReturnUrlFallback: (input: Record<string, unknown>) => Promise<unknown>;
+      }).createAdminTransactionWithReturnUrlFallback({
+        token: 'admin-token',
+        baseUrl: 'https://api.vivacrm.ru',
+        payload: { successUrl: 'https://padlhub.ru/success' },
+        fallbackPayload: {},
+        hasReturnUrls: true
+      })
+    );
+    assert.equal(ambiguousPostCount, 1, 'ambiguous 5xx must not trigger fallback POST');
   } finally {
     globalThis.fetch = originalFetch;
   }
