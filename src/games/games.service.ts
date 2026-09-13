@@ -509,7 +509,7 @@ export class GamesService implements OnModuleDestroy {
     }
 
     const target = this.resolvePlayerRemovalTarget(existing, participant, normalizedPlayerId);
-    if (!target.bookingId && request.refundPolicy === 'RETURN_VISIT') {
+    if (!target.bookingId && !target.needsDiscovery && request.refundPolicy === 'RETURN_VISIT') {
       throw new ConflictException(
         'Participant has no paid visit to return; remove the player without visit return'
       );
@@ -559,7 +559,7 @@ export class GamesService implements OnModuleDestroy {
     game: MongoGameDoc,
     participant: MongoGameParticipant,
     requestedPlayerId: string
-  ): { bookingId: string | null; clientId: string; membershipVersion: string } {
+  ): { bookingId: string | null; clientId: string; membershipVersion: string; needsDiscovery: boolean } {
     const clientId = this.readParticipantClientId(participant);
     if (!clientId || this.normalizeRemovalIdentity(clientId) !== this.normalizeRemovalIdentity(requestedPlayerId)) {
       throw new ConflictException('Player identity is not current');
@@ -587,31 +587,32 @@ export class GamesService implements OnModuleDestroy {
       throw new ConflictException('Player is no longer an active participant');
     }
 
-    // Local invite-link memberships have no Viva payment/booking row. LK still
-    // owns the durable removal, but it can only run without a visit return.
-    let bookingId: string | null = null;
-    if (targetPayments.length > 0) {
-      const bookingIds = Array.from(
-        new Set(
-          targetPayments
-            .flatMap((payment) => [
-              ...this.toStringArray(payment.bookingIds),
-              this.readString(payment.bookingId)
-            ])
-            .filter((value): value is string => Boolean(value))
-        )
-      );
-      if (bookingIds.length !== 1) {
-        throw new ConflictException('The participant payment must have exactly one active booking');
-      }
-      bookingId = bookingIds[0];
-    }
     const activeWaitlist = (Array.isArray(game.waitlist) ? game.waitlist : []).filter(
       (item) =>
         !this.isInactiveRemovalMember(item.status) &&
         this.normalizeRemovalIdentity(this.readParticipantClientId(item)) ===
           this.normalizeRemovalIdentity(clientId)
     );
+    // Re-added Viva participants can have a current roster booking while the
+    // payment ledger contains only the expired previous generation.
+    if (targetPayments.some((item) => !this.readString(item.bookingId)
+      && !this.readString(item.vivaBookingId) && this.toStringArray(item.bookingIds).length === 0)) {
+      throw new ConflictException('The participant payment must have exactly one active booking');
+    }
+    const bookingIds = Array.from(new Set(
+      [...targetPayments, ...activeParticipants, ...activeWaitlist]
+        .flatMap((item) => [
+          ...this.toStringArray(item.bookingIds),
+          this.readString(item.bookingId),
+          this.readString(item.vivaBookingId)
+        ])
+        .filter((value): value is string => Boolean(value))
+        .map((value) => value.toLowerCase())
+    ));
+    if (bookingIds.length > 1 || (targetPayments.length > 0 && bookingIds.length !== 1)) {
+      throw new ConflictException('The participant payment must have exactly one active booking');
+    }
+    const bookingId = bookingIds[0] ?? null;
     const participantPhone = this.normalizePhone(
       this.readString(participant.phoneNorm) ?? this.readString(participant.phone)
     );
@@ -621,7 +622,7 @@ export class GamesService implements OnModuleDestroy {
       Object.keys(joinResponse).length > 0 && !this.isInactiveRemovalMember(joinResponse.status)
         ? joinResponse
         : {};
-    const membershipVersion = this.stableRemovalMembershipVersion([
+    let membershipVersion = this.stableRemovalMembershipVersion([
       ...targetPayments.flatMap((item) => [
         item.membershipId,
         ...this.toStringArray(item.bookingIds),
@@ -633,6 +634,19 @@ export class GamesService implements OnModuleDestroy {
       activeJoinResponse.membershipId,
       activeJoinResponse.paymentRef
     ]);
+    const snapshot = this.readString(game.updatedAt);
+    const exerciseId = this.readString(splitPayment.vivaExerciseId)
+      ?? this.readString(this.toRecord(game.booking).vivaExerciseId)
+      ?? this.readString(this.toRecord(game.booking).exerciseId)
+      ?? this.readString(metadata.vivaExerciseId) ?? this.readString(metadata.exerciseId);
+    const needsDiscovery = !bookingId && activeParticipants.length === 1
+      && String(participant.source || '').toUpperCase() === 'ADMIN'
+      && Boolean(exerciseId && snapshot && Number.isFinite(Date.parse(snapshot)));
+    if (!membershipVersion && needsDiscovery) {
+      membershipVersion = this.stableRemovalMembershipVersion([
+        'viva-discovery', this.readString(game.id), clientId, exerciseId, snapshot
+      ]);
+    }
     if (!membershipVersion) {
       throw new ConflictException('Unable to establish the current participant membership version');
     }
@@ -640,7 +654,8 @@ export class GamesService implements OnModuleDestroy {
     return {
       bookingId,
       clientId,
-      membershipVersion
+      membershipVersion,
+      needsDiscovery
     };
   }
 
