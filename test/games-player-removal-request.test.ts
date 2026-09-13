@@ -376,7 +376,65 @@ async function testAdminUiDoesNotOptimisticallyRemovePlayer() {
   assert.doesNotMatch(source, /LK_PADELHUB_STAFF_INTEGRATION_TOKEN/);
 }
 
+async function testReaddedVivaBookingUsesFreshGeneration() {
+  configureEnvironment();
+  const game = createLocalMembershipGame({
+    participants: [{ id: 'client-1', name: 'Rejoined player', source: 'ADMIN', status: 'CONFIRMED',
+      bookingId: 'booking-new', membershipId: 'viva-booking:booking-new' }],
+    metadata: { splitPayment: { payments: [{ clientId: 'client-1', bookingId: 'booking-old',
+      status: 'EXPIRED', paymentRef: 'payment-old' }] } }
+  });
+  const before = structuredClone(game);
+  const { service, getUpdateCalls } = createService(game);
+  await withFetch(async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.target, { clientId: 'client-1', bookingId: 'booking-new' });
+    assert.equal(body.expectedMembershipVersion, expectedMembershipVersion(['booking-new', 'viva-booking:booking-new']));
+    assert.equal(body.visitAction, 'RETURN_VISIT');
+    return new Response(JSON.stringify({ operationId: 'leave-new', gameId: 'game-1', playerId: 'client-1',
+      status: 'IN_PROGRESS', visitAction: 'RETURN_VISIT' }), { status: 202 });
+  }, async () => {
+    await service.requestPlayerRemoval('game-1', 'client-1', { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'rejoin-001' }, admin);
+  });
+  assert.equal(getUpdateCalls(), 0);
+  assert.deepEqual(game, before);
+
+  const conflicting = createService({ ...game, metadata: { splitPayment: { payments: [
+    { clientId: 'client-1', bookingId: 'booking-other', status: 'PAID' }
+  ] } } }).service;
+  await withFetch(async () => { throw new Error('must not reach LK with ambiguous booking'); }, async () => {
+    await assert.rejects(() => conflicting.requestPlayerRemoval('game-1', 'client-1',
+      { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'rejoin-002' }, admin), ConflictException);
+  });
+}
+
+async function testUnboundAdminRejoinUsesSnapshotDiscovery() {
+  configureEnvironment();
+  const snapshot = '2026-09-13T10:44:00.000Z';
+  const game = createLocalMembershipGame({ updatedAt: snapshot,
+    participants: [{ id: 'client-1', source: 'ADMIN', status: 'CONFIRMED' }],
+    metadata: { splitPayment: { vivaExerciseId: 'exercise-1', payments: [
+      { clientId: 'client-1', bookingId: 'booking-old', status: 'EXPIRED' }
+    ] } }
+  });
+  const { service, getUpdateCalls } = createService(game);
+  await withFetch(async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.target, { clientId: 'client-1', bookingId: null });
+    assert.equal(body.expectedMembershipVersion, expectedMembershipVersion([
+      'viva-discovery', 'game-1', 'client-1', 'exercise-1', snapshot
+    ]));
+    return new Response(JSON.stringify({ operationId: 'leave-discovery', gameId: 'game-1', playerId: 'client-1',
+      status: 'IN_PROGRESS', visitAction: 'RETURN_VISIT' }), { status: 202 });
+  }, async () => {
+    await service.requestPlayerRemoval('game-1', 'client-1', { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'discovery-001' }, admin);
+  });
+  assert.equal(getUpdateCalls(), 0);
+}
+
 async function main() {
+  await testUnboundAdminRejoinUsesSnapshotDiscovery();
+  await testReaddedVivaBookingUsesFreshGeneration();
   await testPostForwardingAndPendingNoMongoMutation();
   await testNoReturnForwarding();
   await testPostRejectsMissingOwnerPlayerId();
