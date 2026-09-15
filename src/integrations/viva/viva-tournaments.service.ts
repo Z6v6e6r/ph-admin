@@ -26,6 +26,11 @@ interface VivaExerciseTypeResolution {
 
 type VivaRawRecord = Record<string, unknown>;
 
+// This direction also belongs to the tournament category in Viva's catalog,
+// but existing exercises retain their original closed category.
+const CORPORATE_TOURNAMENT_DIRECTION_ID = '6078';
+const CLOSED_EXERCISE_TYPE_ID = '840';
+
 const VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -569,7 +574,9 @@ export class VivaTournamentsService {
     query.set('dateTo', dateTo);
     studioIds.forEach((studioId) => query.append('studioIds', studioId));
     if (includeExerciseTypeIds) {
-      this.exerciseTypeIds.forEach((typeId) => query.append('exerciseTypeIds', typeId));
+      // Discover closed-only dates too; individual exercises are still filtered below.
+      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID])
+        .forEach((typeId) => query.append('exerciseTypeIds', typeId));
     }
 
     const payload = await this.fetchJson(`exercises/dates?${query.toString()}`, undefined, widgetId);
@@ -730,7 +737,10 @@ export class VivaTournamentsService {
       this.readDisplayName(direction) ??
       this.readDisplayName(type);
     const exerciseType = this.resolveExerciseType(exercise);
-    if (!this.isTournamentExercise(name, exerciseType)) {
+    const isClosedCorporateTournament =
+      exerciseType.id === CLOSED_EXERCISE_TYPE_ID
+      && this.readString(direction?.id) === CORPORATE_TOURNAMENT_DIRECTION_ID;
+    if (!isClosedCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
       return null;
     }
 
@@ -839,6 +849,7 @@ export class VivaTournamentsService {
       id,
       source: 'VIVA',
       exerciseId,
+      ...(isClosedCorporateTournament ? { isPublic: false } : {}),
       name:
         name ||
         [exerciseType.name, studioId ? studioNames.get(studioId) : undefined]
