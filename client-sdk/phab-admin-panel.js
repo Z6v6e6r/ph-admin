@@ -6100,7 +6100,7 @@
       }
       .phab-advertising-card-variants{
         display:grid;
-        grid-template-columns:minmax(112px,178px) minmax(0,1fr);
+        grid-template-columns:minmax(112px,172px) minmax(0,1fr);
         gap:12px;
         align-items:end;
         margin:8px 18px 0;
@@ -6108,7 +6108,7 @@
       .phab-advertising-card-variants.is-modal{
         width:100%;
         margin:0;
-        grid-template-columns:minmax(150px,178px) minmax(260px,1fr);
+        grid-template-columns:minmax(150px,172px) minmax(260px,1fr);
       }
       .phab-advertising-card-preview{
         min-width:0;
@@ -6137,10 +6137,10 @@
       }
       .phab-advertising-card-preview-stage.is-dragging{cursor:grabbing}
       .phab-advertising-card-preview.is-square .phab-advertising-card-preview-stage{
-        aspect-ratio:1 / 1;
+        aspect-ratio:172 / 266;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-stage{
-        aspect-ratio:335 / 164;
+        aspect-ratio:351 / 120;
       }
       .phab-advertising-card-preview-stage::after{
         content:'';
@@ -6182,7 +6182,7 @@
         color:#fff;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-content{
-        padding:14px;
+        padding:10px;
       }
       .phab-advertising-card-preview-badge,
       .phab-advertising-card-preview-footer{
@@ -6208,12 +6208,17 @@
         text-overflow:ellipsis;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-title{
-        max-width:75%;
-        font-size:16px;
+        max-width:100%;
+        font-size:13px;
+        white-space:nowrap;
+        flex-shrink:0;
       }
       .phab-advertising-card-preview-footer{
         margin-top:7px;
         border-radius:7px;
+      }
+      .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-footer{
+        margin-top:4px;
       }
       .phab-advertising-dots{
         display:flex;
@@ -6564,7 +6569,7 @@
         .phab-advertising-card-variants.is-modal{
           grid-template-columns:minmax(0,1fr);
         }
-        .phab-advertising-card-preview.is-square{width:min(178px,100%)}
+        .phab-advertising-card-preview.is-square{width:min(172px,100%)}
         .phab-advertising-card-uploads{grid-template-columns:1fr}
       }
       @media (max-width:1500px){
@@ -11894,14 +11899,14 @@
     advertisingEditorPanel.appendChild(advertisingCardVariants);
 
     var advertisingEditorSquarePreview = createAdvertisingCardPreview(
-      'Квадратная карточка · 178 × 178 px в ЛК',
+      'Вертикальная карточка · ≈ 172 × 266 px в ЛК',
       'is-square',
       'square'
     );
     advertisingCardVariants.appendChild(advertisingEditorSquarePreview.root);
 
     var advertisingEditorHorizontalPreview = createAdvertisingCardPreview(
-      'Горизонтальная карточка · 335 × 164 px в ЛК',
+      'Горизонтальный баннер · 351 × 120 px в ЛК',
       'is-horizontal',
       'horizontal'
     );
@@ -12071,13 +12076,13 @@
 
     var advertisingSquareUpload = createAdvertisingCardUpload(
       'square',
-      'Квадратное изображение',
-      'Итоговый файл: 178 × 178 px.'
+      'Вертикальное изображение',
+      'Исходник: 800 × 1200 px или больше. Итоговый WebP в 2×: 344 × 532 px. Края обрезаются; высота карточки может растягиваться по соседней карточке события.'
     );
     var advertisingHorizontalUpload = createAdvertisingCardUpload(
       'horizontal',
       'Горизонтальное изображение',
-      'Итоговый файл: 335 × 164 px.'
+      'Исходник: 1600 × 500 px или больше. Итоговый WebP в 2×: 702 × 240 px. Ширина адаптивная, края обрезаются.'
     );
 
     var advertisingCropControls = document.createElement('div');
@@ -12259,14 +12264,14 @@
     advertisingPreviewModalBody.appendChild(advertisingModalCardVariants);
 
     var advertisingModalSquarePreview = createAdvertisingCardPreview(
-      'Квадратная карточка · 178 × 178',
+      'Вертикальная карточка · ≈ 172 × 266',
       'is-square',
       'square'
     );
     advertisingModalCardVariants.appendChild(advertisingModalSquarePreview.root);
 
     var advertisingModalHorizontalPreview = createAdvertisingCardPreview(
-      'Горизонтальная карточка · 335 × 164',
+      'Горизонтальный баннер · 351 × 120',
       'is-horizontal',
       'horizontal'
     );
@@ -15426,14 +15431,18 @@
         : isBlock2
           ? 'Блок 2 · Нижний баннер на главной. Управляйте порядком показа и видимостью.'
           : isBlock3
-            ? 'Блок 3 · Узкая рекламная плашка между карточками в разделе «Для меня».'
-            : 'Блок 4 · Рекламная карточка для сетки и вертикального списка «Для меня».';
+            ? 'Блок 3 · Горизонтальный баннер между карточками в разделе «Для меня»: 351 × 120 px. Ширина адаптивная, изображение заполняет блок с обрезкой краёв.'
+            : 'Блок 4 · Вертикальная карточка ≈ 172 × 266 px и горизонтальный баннер 351 × 120 px. Ширина адаптивная. Вертикальная карточка может растягиваться по высоте соседней карточки события. Изображения заполняют блок с обрезкой краёв.';
+      if (isBlock3 || isBlock4) {
+        dom.advertisingPlacementDescription.textContent +=
+          ' Текст, логотип и главный объект размещайте ближе к центру, с отступом 15% от краёв; по краям оставляйте фон и декор. Скругления, бейдж «Акция» и индикаторы слайдов добавляет интерфейс — не включайте их в изображение.';
+      }
       dom.advertisingDraftFileMeta.textContent = isBlock1
         ? 'Размер баннера: 670 × 240 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.'
         : isBlock3
-          ? 'Размер плашки: 670 × 120 px, JPG, PNG или WebP до 15 МБ.'
+          ? 'Исходник: 1600 × 500 px или больше, JPG, PNG или WebP до 15 МБ. Итоговый WebP в 2×: 702 × 240 px.'
           : isBlock4
-            ? 'Для карточки используются два отдельных изображения фактических размеров ЛК.'
+            ? 'Для карточки используются два изображения в 2×: вертикальное 344 × 532 px и горизонтальное 702 × 240 px.'
             : 'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
       dom.advertisingDraftFileBlock.className = isBlock4 ? 'phab-admin-hidden' : '';
       dom.advertisingCardFileBlocks.className = isBlock4
@@ -15452,6 +15461,7 @@
       dom.advertisingPreview.className = isBlock4
         ? 'phab-advertising-preview phab-admin-hidden'
         : 'phab-advertising-preview';
+      dom.advertisingPreview.style.aspectRatio = isBlock3 ? '351 / 120' : '';
       dom.advertisingCardVariants.className = isBlock4
         ? 'phab-advertising-card-variants'
         : 'phab-advertising-card-variants phab-admin-hidden';
@@ -34077,11 +34087,11 @@
       return state.advertisingSubtab === 'cabinetHomeTop'
         ? { width: 670, height: 240 }
         : state.advertisingSubtab === 'cabinetForMeStrip'
-          ? { width: 670, height: 120 }
+          ? { width: 702, height: 240 }
         : state.advertisingSubtab === 'cabinetForMeCard'
             ? cardVariant === 'horizontal'
-              ? { width: 335, height: 164 }
-              : { width: 178, height: 178 }
+              ? { width: 702, height: 240 }
+              : { width: 344, height: 532 }
             : { width: 1600, height: 900 };
     }
 
@@ -34106,8 +34116,8 @@
       dom.advertisingCropY.output.textContent = String(imageState.crop.offsetY);
       dom.advertisingCropHeadLabel.textContent =
         normalized === 'square'
-          ? 'Кадрирование: квадрат 178 × 178'
-          : 'Кадрирование: горизонталь 335 × 164';
+          ? 'Кадрирование: вертикаль 344 × 532 px (2×)'
+          : 'Кадрирование: горизонталь 702 × 240 px (2×)';
       dom.advertisingCropControls.className = imageState.sourceFile
         ? 'phab-advertising-crop-controls'
         : 'phab-advertising-crop-controls phab-admin-hidden';
@@ -34318,7 +34328,11 @@
       var isCardPlacement = state.advertisingSubtab === 'cabinetForMeCard';
       dom.advertisingPreviewModalMeta.textContent = isCardPlacement
         ? 'Два варианта карточки в разделе «Для меня»'
-        : 'Мобильная ширина · соотношение баннера 16:9';
+        : state.advertisingSubtab === 'cabinetForMeStrip'
+          ? 'Горизонтальный баннер · 351 × 120 px · ширина адаптивная'
+          : 'Мобильная ширина · соотношение баннера 16:9';
+      dom.advertisingPreviewModalImage.style.aspectRatio =
+        state.advertisingSubtab === 'cabinetForMeStrip' ? '351 / 120' : '';
       dom.advertisingMobileFrame.className = isCardPlacement
         ? 'phab-advertising-mobile-frame phab-admin-hidden'
         : 'phab-advertising-mobile-frame';
@@ -34453,7 +34467,7 @@
             !state.advertisingEditorCardImages.square.dataUrl ||
             !state.advertisingEditorCardImages.horizontal.dataUrl
           ) {
-            setStatus('Загрузите квадратное и горизонтальное изображения', true);
+            setStatus('Загрузите вертикальное и горизонтальное изображения', true);
             return null;
           }
         } else if (!state.advertisingEditorImageDataUrl) {
