@@ -12076,13 +12076,13 @@
 
     var advertisingSquareUpload = createAdvertisingCardUpload(
       'square',
-      'Вертикальное изображение',
-      'Исходник: 800 × 1200 px или больше. Итоговый WebP в 2×: 344 × 532 px. Края обрезаются; высота карточки может растягиваться по соседней карточке события.'
+      'Квадратное изображение',
+      'Исходник: 480 × 480 px или больше. Итоговый WebP: 480 × 480 px. В вертикальной карточке края обрезаются.'
     );
     var advertisingHorizontalUpload = createAdvertisingCardUpload(
       'horizontal',
       'Горизонтальное изображение',
-      'Исходник: 1600 × 500 px или больше. Итоговый WebP в 2×: 702 × 240 px. Ширина адаптивная, края обрезаются.'
+      'Исходник: 720 × 360 px или больше. Итоговый WebP: 720 × 360 px. В баннере края обрезаются.'
     );
 
     var advertisingCropControls = document.createElement('div');
@@ -15442,7 +15442,7 @@
         : isBlock3
           ? 'Исходник: 1600 × 500 px или больше, JPG, PNG или WebP до 15 МБ. Итоговый WebP в 2×: 702 × 240 px.'
           : isBlock4
-            ? 'Для карточки используются два изображения в 2×: вертикальное 344 × 532 px и горизонтальное 702 × 240 px.'
+            ? 'Для карточки используются два изображения: квадратное 480 × 480 px и горизонтальное 720 × 360 px. Для чёткости загружайте исходники не меньше этих размеров.'
             : 'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
       dom.advertisingDraftFileBlock.className = isBlock4 ? 'phab-admin-hidden' : '';
       dom.advertisingCardFileBlocks.className = isBlock4
@@ -34090,8 +34090,8 @@
           ? { width: 702, height: 240 }
         : state.advertisingSubtab === 'cabinetForMeCard'
             ? cardVariant === 'horizontal'
-              ? { width: 702, height: 240 }
-              : { width: 344, height: 532 }
+              ? { width: 720, height: 360 }
+              : { width: 480, height: 480 }
             : { width: 1600, height: 900 };
     }
 
@@ -34116,8 +34116,8 @@
       dom.advertisingCropY.output.textContent = String(imageState.crop.offsetY);
       dom.advertisingCropHeadLabel.textContent =
         normalized === 'square'
-          ? 'Кадрирование: вертикаль 344 × 532 px (2×)'
-          : 'Кадрирование: горизонталь 702 × 240 px (2×)';
+          ? 'Кадрирование: квадрат 480 × 480 px'
+          : 'Кадрирование: горизонталь 720 × 360 px';
       dom.advertisingCropControls.className = imageState.sourceFile
         ? 'phab-advertising-crop-controls'
         : 'phab-advertising-crop-controls phab-admin-hidden';
