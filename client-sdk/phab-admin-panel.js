@@ -36345,6 +36345,15 @@
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
     }
 
+    function notificationValueWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'значений';
+      if (mod10 === 1) return 'значение';
+      if (mod10 >= 2 && mod10 <= 4) return 'значения';
+      return 'значений';
+    }
+
     function showNotificationAuth(message, isError) {
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
@@ -36532,10 +36541,27 @@
         var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
         if (deepLink) payload.deepLink = deepLink;
         var result = await notificationApi.createCampaign(payload);
-        var skipped = Number(result.unresolvedCount || 0);
+        // The API reports `unresolvedCount` as `inputCount - matchedCount`, which also counts a value
+        // that merely named an already matched person (a phone and a user id of one operator-picked
+        // recipient). The preview knows the values that truly reached nobody, so the warning uses that
+        // count instead of a number that would contradict the preview the operator just read.
+        var previewResolution = notificationState.resolution || {};
+        var skipped =
+          (Array.isArray(previewResolution.unresolvedPhones)
+            ? previewResolution.unresolvedPhones.length
+            : 0) +
+          (Array.isArray(previewResolution.unresolvedUserIds)
+            ? previewResolution.unresolvedUserIds.length
+            : 0);
         setNotificationResult(
           dom.notificationResult,
-          (skipped > 0 ? 'Кампания принята частично: ' + skipped + ' значений не нашли получателя.\n' : 'Кампания принята.\n') +
+          (skipped > 0
+            ? 'Кампания принята частично: ' +
+              skipped +
+              ' ' +
+              notificationValueWord(skipped) +
+              ' не нашли получателя.\n'
+            : 'Кампания принята.\n') +
             'Inbox: ' +
             Number(result.inAppCreatedCount || 0) +
             ', Web Push в очереди: ' +

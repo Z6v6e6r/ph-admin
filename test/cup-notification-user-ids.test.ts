@@ -73,6 +73,11 @@ async function main(): Promise<void> {
     /dom\.notificationPreviewBtn\.disabled = selection\.total === 0 \|\| blocked;/,
     'a blocked or empty selector must disable the recipient preview'
   );
+  assert.match(
+    panel,
+    /notificationState\.resolution\.matched\.length === 0 \|\|\s*\n\s*blocked \|\|/,
+    'a blocked selector must disable sending'
+  );
 
   // A resolve answer that arrives after the recipients changed must be discarded.
   assert.match(
@@ -99,8 +104,13 @@ async function main(): Promise<void> {
   );
   assert.match(
     panel,
-    /var skipped = Number\(result\.unresolvedCount \|\| 0\);/,
-    'a partial campaign must report the selector values that reached nobody'
+    /var skipped =\s*\n\s*\(Array\.isArray\(previewResolution\.unresolvedPhones\)/,
+    'a partial campaign must report the values that reached nobody, not the API value counter'
+  );
+  assert.match(
+    panel,
+    /notificationValueWord\(skipped\)/,
+    'the partial-campaign line must pluralise the skipped count'
   );
 }
 
