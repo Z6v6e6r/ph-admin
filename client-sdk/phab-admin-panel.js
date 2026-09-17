@@ -8589,6 +8589,14 @@
     }
 
     return {
+      // A short-lived admin token pasted by the operator replaces the phone-code login while the
+      // contour has no code delivery. The token is verified by the next admin request.
+      setAccessToken: function (token) {
+        accessToken = String(token || '');
+      },
+      hasAccessToken: function () {
+        return Boolean(accessToken);
+      },
       restoreSession: async function () {
         try {
           return await refreshSession();
@@ -9332,6 +9340,12 @@
       '<input class="phab-admin-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="0000" data-notification-code></label>' +
       '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn" type="button" data-notification-login>Получить код</button></div>' +
       '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-auth-status>Проверяем существующую сессию…</div>' +
+      '<details class="phab-admin-notifications-token"><summary>Технический вход по admin-токену (временно)</summary>' +
+      '<p class="phab-admin-notifications-meta">Пока в контуре нет доставки кодов. Токен действует ограниченное время и сохраняется только в этой вкладке.</p>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub admin-токен</span>' +
+      '<input class="phab-admin-input" type="password" autocomplete="off" spellcheck="false" placeholder="eyJhbGciOiJIUzI1NiIs…" data-notification-admin-token></label>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn-secondary" type="button" data-notification-token-login>Войти по токену</button></div>' +
+      '</details>' +
       '</div></section>' +
       '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
       '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
@@ -9383,6 +9397,8 @@
     var notificationCodeInput = notificationNode('[data-notification-code]');
     var notificationLoginBtn = notificationNode('[data-notification-login]');
     var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
+    var notificationAdminTokenInput = notificationNode('[data-notification-admin-token]');
+    var notificationTokenLoginBtn = notificationNode('[data-notification-token-login]');
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
     var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
     var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
@@ -13122,6 +13138,8 @@
       notificationCodeInput: notificationCodeInput,
       notificationLoginBtn: notificationLoginBtn,
       notificationAuthStatus: notificationAuthStatus,
+      notificationAdminTokenInput: notificationAdminTokenInput,
+      notificationTokenLoginBtn: notificationTokenLoginBtn,
       notificationPhonesInput: notificationPhonesInput,
       notificationUserIdsInput: notificationUserIdsInput,
       notificationUserIdWarning: notificationUserIdWarning,
@@ -14225,6 +14243,25 @@
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
+
+    function readStoredNotificationToken() {
+      try {
+        return String(window.sessionStorage.getItem(NOTIFICATION_TOKEN_STORAGE_KEY) || '').trim();
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    function storeNotificationToken(token) {
+      try {
+        if (token) window.sessionStorage.setItem(NOTIFICATION_TOKEN_STORAGE_KEY, token);
+        else window.sessionStorage.removeItem(NOTIFICATION_TOKEN_STORAGE_KEY);
+      } catch (_error) {
+        // Without sessionStorage the token still works for the lifetime of this page.
+      }
+    }
+
     var notificationState = {
       session: null,
       challengeId: '',
@@ -36343,6 +36380,7 @@
         !String(dom.notificationBodyInput.value || '').trim() ||
         selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
+      dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
     }
 
     function notificationValueWord(count) {
@@ -36411,9 +36449,24 @@
       notificationState.restoring = true;
       setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
       try {
+        var storedToken = readStoredNotificationToken();
+        if (storedToken) {
+          notificationApi.setAccessToken(storedToken);
+          notificationState.session = { accessToken: storedToken };
+          await loadNotificationCapabilities();
+          if (notificationState.session && notificationState.capabilities) return;
+          notificationApi.setAccessToken('');
+          notificationState.session = null;
+          storeNotificationToken('');
+        }
         var session = await notificationApi.restoreSession();
         if (!session) {
-          showNotificationAuth('Сессия отправки не найдена. Получите локальный код и войдите.', false);
+          showNotificationAuth(
+            storedToken
+              ? 'Токен истёк или не подошёл. Вставьте новый admin-токен или войдите по коду.'
+              : 'Сессия отправки не найдена. Получите локальный код и войдите.',
+            false
+          );
           return;
         }
         notificationState.session = session;
@@ -36463,6 +36516,52 @@
         setNotificationResult(
           dom.notificationAuthStatus,
           error && error.message ? error.message : 'Не удалось войти.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
+    async function submitNotificationTokenLogin() {
+      if (!notificationApi) return;
+      var token = String(dom.notificationAdminTokenInput.value || '').trim();
+      if (token.split('.').length !== 3) {
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          'Токен должен быть JWT вида header.payload.signature.',
+          true
+        );
+        return;
+      }
+      notificationState.busy = 'token';
+      updateNotificationControls();
+      try {
+        notificationApi.setAccessToken(token);
+        notificationState.session = { accessToken: token };
+        // The capabilities read is the first admin request, so it proves the token and the permission.
+        notificationState.capabilities = await notificationApi.getCapabilities();
+        storeNotificationToken(token);
+        dom.notificationAdminTokenInput.value = '';
+        renderNotificationCapabilities();
+        showNotificationWorkspace();
+        setNotificationResult(dom.notificationAuthStatus, 'Сессия по токену активна.', false);
+        setStatus('Контур уведомлений подключён по токену', false);
+      } catch (error) {
+        notificationApi.setAccessToken('');
+        notificationState.session = null;
+        notificationState.capabilities = null;
+        storeNotificationToken('');
+        var rejected = error && (error.status === 401 || error.status === 403);
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          rejected
+            ? 'Токен не принят: ' +
+              (error && error.message ? error.message : 'сессия недействительна.')
+            : error && error.message
+              ? error.message
+              : 'Токен не подошёл.',
           true
         );
       } finally {
@@ -37705,6 +37804,8 @@
         }
       } finally {
         cfg.authToken = '';
+        storeNotificationToken('');
+        if (notificationApi) notificationApi.setAccessToken('');
         try {
           window.localStorage.removeItem('phab_admin_token');
         } catch (_error) {
@@ -37865,6 +37966,9 @@
       );
       dom.notificationChannelInputs.forEach(function (input) {
         input.addEventListener('change', updateNotificationControls);
+      });
+      dom.notificationTokenLoginBtn.addEventListener('click', function () {
+        submitNotificationTokenLogin().catch(handleError);
       });
       dom.notificationPreviewBtn.addEventListener('click', function () {
         previewNotificationRecipients().catch(handleError);
