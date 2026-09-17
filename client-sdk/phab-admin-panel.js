@@ -8630,11 +8630,11 @@
       getCapabilities: function () {
         return adminRequest('/notifications/capabilities', 'GET', null, '', true);
       },
-      resolveRecipients: function (phones) {
+      resolveRecipients: function (selector) {
         return adminRequest(
           '/notifications/recipients/resolve',
           'POST',
-          { phones: phones },
+          selector,
           '',
           true
         );
@@ -9335,9 +9335,12 @@
       '</div></section>' +
       '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
       '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
-      '<div><h3>1. Получатели</h3><p>До 100 номеров — с новой строки, через запятую или точку с запятой.</p></div>' +
+      '<div><h3>1. Получатели</h3><p>До 100 значений всего: номера или PadlHub ID — с новой строки, через запятую или точку с запятой.</p></div>' +
       '<label class="phab-admin-notifications-field"><span>Номера телефонов</span>' +
       '<textarea class="phab-admin-input" placeholder="+7 999 123-45-67&#10;+7 999 765-43-21" data-notification-phones></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub ID пользователей</span>' +
+      '<textarea class="phab-admin-input" placeholder="d938caf6-4eca-49d3-8f78-c7ab1b967a41&#10;96d1b47c-dc5c-493f-836c-827f01c31546" data-notification-user-ids></textarea></label>' +
+      '<div class="phab-admin-notifications-result phab-admin-hidden" aria-live="polite" data-notification-user-id-warning></div>' +
       '<div class="phab-admin-notifications-row"><span class="phab-admin-notifications-meta" data-notification-phone-count>0 номеров</span>' +
       '<button class="phab-admin-btn-secondary" type="button" data-notification-preview>Проверить получателей</button></div>' +
       '<div><h3>2. Способ отправки</h3><p>Недоступные провайдеры нельзя выбрать.</p></div>' +
@@ -9381,6 +9384,8 @@
     var notificationLoginBtn = notificationNode('[data-notification-login]');
     var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
+    var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
+    var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
     var notificationPhoneCount = notificationNode('[data-notification-phone-count]');
     var notificationPreviewBtn = notificationNode('[data-notification-preview]');
     var notificationChannelInputs = Array.prototype.slice.call(
@@ -13118,6 +13123,8 @@
       notificationLoginBtn: notificationLoginBtn,
       notificationAuthStatus: notificationAuthStatus,
       notificationPhonesInput: notificationPhonesInput,
+      notificationUserIdsInput: notificationUserIdsInput,
+      notificationUserIdWarning: notificationUserIdWarning,
       notificationPhoneCount: notificationPhoneCount,
       notificationPreviewBtn: notificationPreviewBtn,
       notificationChannelInputs: notificationChannelInputs,
@@ -14224,7 +14231,10 @@
       capabilities: null,
       resolution: null,
       restoring: false,
-      busy: ''
+      busy: '',
+      // Bumped on every recipient edit, so a resolve answer for an older selector can be discarded
+      // instead of re-arming the send button for recipients that were never previewed.
+      recipientRevision: 0
     };
     var locationAdminState = {
       items: [],
@@ -36185,6 +36195,45 @@
     async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
+    var NOTIFICATION_USER_ID_PATTERN =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    // A mistyped PadlHub ID must never be dropped silently: the operator would believe the campaign
+    // reached a recipient that it never addressed, so invalid values are shown and block sending.
+    function parseNotificationUserIds() {
+      var ids = [];
+      var invalid = [];
+      Array.from(
+        new Set(
+          String(dom.notificationUserIdsInput.value || '')
+            .split(/[\s,;]+/)
+            .map(function (userId) { return userId.trim().toLowerCase(); })
+            .filter(Boolean)
+        )
+      ).forEach(function (userId) {
+        if (NOTIFICATION_USER_ID_PATTERN.test(userId)) ids.push(userId);
+        else invalid.push(userId);
+      });
+      return { ids: ids, invalid: invalid };
+    }
+
+    var NOTIFICATION_RECIPIENT_LIMIT = 100;
+
+    function notificationRecipientSelection() {
+      var phones = parseNotificationPhones();
+      var userIds = parseNotificationUserIds();
+      var selector = {};
+      if (phones.length) selector.phones = phones;
+      if (userIds.ids.length) selector.userIds = userIds.ids;
+      return {
+        selector: selector,
+        phones: phones.length,
+        userIds: userIds.ids.length,
+        total: phones.length + userIds.ids.length,
+        invalidUserIds: userIds.invalid
+      };
+    }
+
     function parseNotificationPhones() {
       return Array.from(
         new Set(
@@ -36262,19 +36311,47 @@
     }
 
     function updateNotificationControls() {
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
       var selectedChannels = selectedNotificationChannels();
-      dom.notificationPhoneCount.textContent = phones.length + ' номеров';
-      dom.notificationPreviewBtn.disabled = phones.length === 0 || Boolean(notificationState.busy);
+      var hasInvalidUserIds = selection.invalidUserIds.length > 0;
+      var overLimit = selection.total > NOTIFICATION_RECIPIENT_LIMIT;
+      dom.notificationPhoneCount.textContent =
+        selection.phones + ' номеров · ' + selection.userIds + ' PadlHub ID';
+      if (hasInvalidUserIds || overLimit) {
+        dom.notificationUserIdWarning.classList.remove('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent = hasInvalidUserIds
+          ? 'Не похоже на PadlHub ID: ' +
+            selection.invalidUserIds.join(', ') +
+            '. Исправьте или удалите эти значения — пока они здесь, отправка заблокирована.'
+          : 'Не более ' +
+            NOTIFICATION_RECIPIENT_LIMIT +
+            ' значений всего, сейчас ' +
+            selection.total +
+            '. Уберите лишние — пока их больше, отправка заблокирована.';
+      } else {
+        dom.notificationUserIdWarning.classList.add('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent = '';
+      }
+      var blocked = hasInvalidUserIds || overLimit || Boolean(notificationState.busy);
+      dom.notificationPreviewBtn.disabled = selection.total === 0 || blocked;
       dom.notificationSendBtn.disabled =
         !notificationState.resolution ||
         !Array.isArray(notificationState.resolution.matched) ||
         notificationState.resolution.matched.length === 0 ||
+        blocked ||
         !String(dom.notificationTitleInput.value || '').trim() ||
         !String(dom.notificationBodyInput.value || '').trim() ||
-        selectedChannels.length === 0 ||
-        Boolean(notificationState.busy);
+        selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
+    }
+
+    function notificationValueWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'значений';
+      if (mod10 === 1) return 'значение';
+      if (mod10 >= 2 && mod10 <= 4) return 'значения';
+      return 'значений';
     }
 
     function showNotificationAuth(message, isError) {
@@ -36396,30 +36473,47 @@
 
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
+      var revision = notificationState.recipientRevision;
       notificationState.busy = 'preview';
       notificationState.resolution = null;
       setNotificationResult(dom.notificationResolution, 'Проверяем получателей…', false);
       updateNotificationControls();
       try {
-        var resolution = await notificationApi.resolveRecipients(phones);
+        var resolution = await notificationApi.resolveRecipients(selection.selector);
+        if (revision !== notificationState.recipientRevision) {
+          // The operator edited the recipients while this answer was in flight: it describes values
+          // that are no longer selected, so it must not enable the send button.
+          setNotificationResult(
+            dom.notificationResolution,
+            'Получатели изменились во время проверки. Проверьте их снова.',
+            true
+          );
+          return;
+        }
         notificationState.resolution = resolution;
         var matched = Array.isArray(resolution.matched) ? resolution.matched : [];
         var unresolved = Array.isArray(resolution.unresolvedPhones)
           ? resolution.unresolvedPhones
           : [];
+        var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
+          ? resolution.unresolvedUserIds
+          : [];
         var lines = [
           'Найдено: ' + matched.length,
-          'Не найдено: ' + unresolved.length
+          'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
         ];
         matched.slice(0, 20).forEach(function (recipient) {
           lines.push(
             '• ' +
               String(recipient.displayName || 'Получатель') +
               ' · ' +
-              String(recipient.phoneMasked || '')
+              String(recipient.phoneMasked || recipient.userId || '')
           );
         });
+        if (unresolvedUserIds.length) {
+          lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
+        }
         setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
       } catch (error) {
         setNotificationResult(
@@ -36439,24 +36533,42 @@
       setNotificationResult(dom.notificationResult, 'Отправляем кампанию…', false);
       updateNotificationControls();
       try {
-        var payload = {
-          phones: parseNotificationPhones(),
+        var payload = Object.assign({}, notificationRecipientSelection().selector, {
           title: String(dom.notificationTitleInput.value || '').trim(),
           body: String(dom.notificationBodyInput.value || '').trim(),
           channels: selectedNotificationChannels()
-        };
+        });
         var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
         if (deepLink) payload.deepLink = deepLink;
         var result = await notificationApi.createCampaign(payload);
+        // The API reports `unresolvedCount` as `inputCount - matchedCount`, which also counts a value
+        // that merely named an already matched person (a phone and a user id of one operator-picked
+        // recipient). The preview knows the values that truly reached nobody, so the warning uses that
+        // count instead of a number that would contradict the preview the operator just read.
+        var previewResolution = notificationState.resolution || {};
+        var skipped =
+          (Array.isArray(previewResolution.unresolvedPhones)
+            ? previewResolution.unresolvedPhones.length
+            : 0) +
+          (Array.isArray(previewResolution.unresolvedUserIds)
+            ? previewResolution.unresolvedUserIds.length
+            : 0);
         setNotificationResult(
           dom.notificationResult,
-          'Кампания принята.\nInbox: ' +
+          (skipped > 0
+            ? 'Кампания принята частично: ' +
+              skipped +
+              ' ' +
+              notificationValueWord(skipped) +
+              ' не нашли получателя.\n'
+            : 'Кампания принята.\n') +
+            'Inbox: ' +
             Number(result.inAppCreatedCount || 0) +
             ', Web Push в очереди: ' +
             Number(result.pushQueuedCount || 0) +
             '.\nID: ' +
             String(result.campaignId || '').slice(0, 8),
-          false
+          skipped > 0
         );
         setStatus('Кампания уведомлений принята', false);
       } catch (error) {
@@ -37734,14 +37846,17 @@
         event.preventDefault();
         submitNotificationLogin().catch(handleError);
       });
-      dom.notificationPhonesInput.addEventListener('input', function () {
-        notificationState.resolution = null;
-        setNotificationResult(
-          dom.notificationResolution,
-          'Проверьте номера перед отправкой кампании.',
-          false
-        );
-        updateNotificationControls();
+      [dom.notificationPhonesInput, dom.notificationUserIdsInput].forEach(function (input) {
+        input.addEventListener('input', function () {
+          notificationState.resolution = null;
+          notificationState.recipientRevision += 1;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
       });
       [dom.notificationTitleInput, dom.notificationBodyInput, dom.notificationDeepLinkInput].forEach(
         function (input) {
