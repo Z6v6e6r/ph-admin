@@ -7478,6 +7478,16 @@
         background:rgba(255,70,78,.1);
         color:#9f1735;
       }
+      .phab-admin-notifications-token{
+        margin-top:10px;
+        padding:10px 12px;
+        border:1px dashed rgba(51,0,32,.22);
+        border-radius:13px;
+        background:rgba(255,255,255,.6);
+      }
+      .phab-admin-notifications-token summary{cursor:pointer;font-size:12px;font-weight:600;color:rgba(51,0,32,.72)}
+      .phab-admin-notifications-token[open] summary{margin-bottom:8px}
+      .phab-admin-notifications-token .phab-admin-notifications-meta{display:block;margin-bottom:8px}
       .phab-admin-notifications-actions{display:flex;gap:8px;flex-wrap:wrap}
       .phab-admin-notifications-actions .phab-admin-btn{flex:1 1 180px}
       .phab-subscriptions{display:flex;flex-direction:column;gap:14px;padding:4px}
@@ -8589,6 +8599,11 @@
     }
 
     return {
+      // A short-lived admin token pasted by the operator replaces the phone-code login while the
+      // contour has no code delivery. The token is verified by the next admin request.
+      setAccessToken: function (token) {
+        accessToken = String(token || '');
+      },
       restoreSession: async function () {
         try {
           return await refreshSession();
@@ -8627,8 +8642,10 @@
         accessToken = session && session.accessToken ? String(session.accessToken) : '';
         return session;
       },
-      getCapabilities: function () {
-        return adminRequest('/notifications/capabilities', 'GET', null, '', true);
+      getCapabilities: function (allowRefresh) {
+        // Callers that verify a pasted token pass false: the 401 retry would silently continue with the
+        // cookie session and report a rejected token as accepted.
+        return adminRequest('/notifications/capabilities', 'GET', null, '', allowRefresh !== false);
       },
       resolveRecipients: function (selector) {
         return adminRequest(
@@ -9332,6 +9349,12 @@
       '<input class="phab-admin-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="0000" data-notification-code></label>' +
       '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn" type="button" data-notification-login>Получить код</button></div>' +
       '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-auth-status>Проверяем существующую сессию…</div>' +
+      '<details class="phab-admin-notifications-token"><summary>Технический вход по admin-токену (временно)</summary>' +
+      '<p class="phab-admin-notifications-meta">Пока в контуре нет доставки кодов. Токен действует ограниченное время и сохраняется только в этой вкладке.</p>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub admin-токен</span>' +
+      '<input class="phab-admin-input" type="password" autocomplete="off" spellcheck="false" placeholder="eyJhbGciOiJIUzI1NiIs…" data-notification-admin-token></label>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn-secondary" type="button" data-notification-token-login>Войти по токену</button></div>' +
+      '</details>' +
       '</div></section>' +
       '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
       '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
@@ -9383,6 +9406,8 @@
     var notificationCodeInput = notificationNode('[data-notification-code]');
     var notificationLoginBtn = notificationNode('[data-notification-login]');
     var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
+    var notificationAdminTokenInput = notificationNode('[data-notification-admin-token]');
+    var notificationTokenLoginBtn = notificationNode('[data-notification-token-login]');
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
     var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
     var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
@@ -13122,6 +13147,8 @@
       notificationCodeInput: notificationCodeInput,
       notificationLoginBtn: notificationLoginBtn,
       notificationAuthStatus: notificationAuthStatus,
+      notificationAdminTokenInput: notificationAdminTokenInput,
+      notificationTokenLoginBtn: notificationTokenLoginBtn,
       notificationPhonesInput: notificationPhonesInput,
       notificationUserIdsInput: notificationUserIdsInput,
       notificationUserIdWarning: notificationUserIdWarning,
@@ -14225,6 +14252,25 @@
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
+
+    function readStoredNotificationToken() {
+      try {
+        return String(window.sessionStorage.getItem(NOTIFICATION_TOKEN_STORAGE_KEY) || '').trim();
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    function storeNotificationToken(token) {
+      try {
+        if (token) window.sessionStorage.setItem(NOTIFICATION_TOKEN_STORAGE_KEY, token);
+        else window.sessionStorage.removeItem(NOTIFICATION_TOKEN_STORAGE_KEY);
+      } catch (_error) {
+        // Without sessionStorage the token still works for the lifetime of this page.
+      }
+    }
+
     var notificationState = {
       session: null,
       challengeId: '',
@@ -15363,8 +15409,10 @@
         locationAdminState.error = error && error.message
           ? error.message
           : 'Не удалось загрузить карточки станций.';
-        if (error && (error.status === 401 || error.status === 403)) {
-          notificationState.session = null;
+        if (notificationSessionExpired(error)) {
+          // The station cards share the notification session, so an expired one is handled here too.
+          locationAdminState.error =
+            'Операторская PadlHub-сессия истекла. Войдите заново во вкладке «Уведомления».';
         }
       } finally {
         locationAdminState.loading = false;
@@ -36343,6 +36391,7 @@
         !String(dom.notificationBodyInput.value || '').trim() ||
         selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
+      dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
     }
 
     function notificationValueWord(count) {
@@ -36352,6 +36401,20 @@
       if (mod10 === 1) return 'значение';
       if (mod10 >= 2 && mod10 <= 4) return 'значения';
       return 'значений';
+    }
+
+    // A 401/403 on any admin call means the session or the token is no longer usable, so the block
+    // returns to the login card and forgets a token that cannot work any more.
+    function notificationSessionExpired(error) {
+      if (!error || (error.status !== 401 && error.status !== 403)) return false;
+      if (notificationApi) notificationApi.setAccessToken('');
+      storeNotificationToken('');
+      notificationState.capabilities = null;
+      showNotificationAuth(
+        'Сессия истекла. Войдите по коду или вставьте новый admin-токен.',
+        true
+      );
+      return true;
     }
 
     function showNotificationAuth(message, isError) {
@@ -36372,12 +36435,13 @@
       updateNotificationControls();
     }
 
-    async function loadNotificationCapabilities() {
+    async function loadNotificationCapabilities(options) {
       if (!notificationApi || !notificationState.session) return;
+      var allowRefresh = !(options && options.allowRefresh === false);
       notificationState.busy = 'capabilities';
       updateNotificationControls();
       try {
-        notificationState.capabilities = await notificationApi.getCapabilities();
+        notificationState.capabilities = await notificationApi.getCapabilities(allowRefresh);
         renderNotificationCapabilities();
         showNotificationWorkspace();
         setStatus('Каналы уведомлений загружены', false);
@@ -36411,9 +36475,31 @@
       notificationState.restoring = true;
       setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
       try {
+        var storedToken = readStoredNotificationToken();
+        if (storedToken) {
+          notificationApi.setAccessToken(storedToken);
+          notificationState.session = { accessToken: storedToken };
+          try {
+            await loadNotificationCapabilities({ allowRefresh: false });
+          } catch (storedTokenError) {
+            // A transient failure keeps the token for a retry; an auth failure falls through.
+            if (!(storedTokenError && (storedTokenError.status === 401 || storedTokenError.status === 403))) {
+              throw storedTokenError;
+            }
+          }
+          if (notificationState.session && notificationState.capabilities) return;
+          notificationApi.setAccessToken('');
+          notificationState.session = null;
+          storeNotificationToken('');
+        }
         var session = await notificationApi.restoreSession();
         if (!session) {
-          showNotificationAuth('Сессия отправки не найдена. Получите локальный код и войдите.', false);
+          showNotificationAuth(
+            storedToken
+              ? 'Токен истёк или не подошёл. Вставьте новый admin-токен или войдите по коду.'
+              : 'Сессия отправки не найдена. Получите локальный код и войдите.',
+            false
+          );
           return;
         }
         notificationState.session = session;
@@ -36471,6 +36557,55 @@
       }
     }
 
+    async function submitNotificationTokenLogin() {
+      if (!notificationApi) return;
+      var token = String(dom.notificationAdminTokenInput.value || '').trim();
+      if (token.split('.').length !== 3) {
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          'Токен должен быть JWT вида header.payload.signature.',
+          true
+        );
+        return;
+      }
+      notificationState.busy = 'token';
+      updateNotificationControls();
+      try {
+        notificationApi.setAccessToken(token);
+        notificationState.session = { accessToken: token };
+        // The capabilities read is the first admin request, so it proves the token and the permission.
+        // It runs without the cookie fallback: a rejected token must fail here, not silently continue
+        // as another session.
+        notificationState.capabilities = await notificationApi.getCapabilities(false);
+        storeNotificationToken(token);
+        dom.notificationAdminTokenInput.value = '';
+        renderNotificationCapabilities();
+        showNotificationWorkspace();
+        setNotificationResult(dom.notificationAuthStatus, 'Сессия по токену активна.', false);
+        setStatus('Контур уведомлений подключён по токену', false);
+      } catch (error) {
+        notificationApi.setAccessToken('');
+        notificationState.session = null;
+        notificationState.capabilities = null;
+        storeNotificationToken('');
+        dom.notificationAdminTokenInput.value = '';
+        var rejected = error && (error.status === 401 || error.status === 403);
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          rejected
+            ? 'Токен не принят: ' +
+              (error && error.message ? error.message : 'сессия недействительна.')
+            : error && error.message
+              ? error.message
+              : 'Токен не подошёл.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
       var selection = notificationRecipientSelection();
@@ -36516,6 +36651,7 @@
         }
         setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResolution,
           error && error.message ? error.message : 'Не удалось проверить получателей.',
@@ -36572,6 +36708,7 @@
         );
         setStatus('Кампания уведомлений принята', false);
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResult,
           error && error.message ? error.message : 'Не удалось отправить кампанию.',
@@ -37705,6 +37842,8 @@
         }
       } finally {
         cfg.authToken = '';
+        storeNotificationToken('');
+        if (notificationApi) notificationApi.setAccessToken('');
         try {
           window.localStorage.removeItem('phab_admin_token');
         } catch (_error) {
@@ -37865,6 +38004,9 @@
       );
       dom.notificationChannelInputs.forEach(function (input) {
         input.addEventListener('change', updateNotificationControls);
+      });
+      dom.notificationTokenLoginBtn.addEventListener('click', function () {
+        submitNotificationTokenLogin().catch(handleError);
       });
       dom.notificationPreviewBtn.addEventListener('click', function () {
         previewNotificationRecipients().catch(handleError);
