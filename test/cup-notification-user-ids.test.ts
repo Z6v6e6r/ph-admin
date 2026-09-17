@@ -128,6 +128,43 @@ async function main(): Promise<void> {
     /'Внимание: Web Push недоступен у ' \+\s*\n\s*withoutWebPush\.length \+\s*\n\s*' из ' \+\s*\n\s*matched\.length \+/,
     'a phone that resolved to an account without Web Push must warn the operator'
   );
+  // The warning and the ordering must follow the SELECTED channels, not an account's total channels.
+  assert.match(
+    panel,
+    /function selectedChannelCount\(recipient\) \{\s*\n\s*return notificationRecipientChannels\(recipient\)\.filter\(function \(channel\) \{\s*\n\s*return selected\.indexOf\(channel\) >= 0;/,
+    'reachability must be measured against the selected channels'
+  );
+  assert.match(
+    panel,
+    /var ordered = matched\.slice\(\)\.sort\(function \(left, right\) \{\s*\n\s*return selectedChannelCount\(right\) - selectedChannelCount\(left\);/,
+    'the preview must list reachable recipients first for every selected channel'
+  );
+  assert.match(
+    panel,
+    /var nothingReachable = matched\.filter\(function \(recipient\) \{\s*\n\s*return selectedChannelCount\(recipient\) === 0;/,
+    'recipients without any selected channel must be counted separately'
+  );
+  assert.match(
+    panel,
+    /:\s*у них нет ни одного из выбранных каналов\./,
+    'a recipient with no channels at all must not be promised in-app delivery'
+  );
+  assert.match(
+    panel,
+    /matched\.length === 0 \|\| nothingReachable\.length === matched\.length/,
+    'only a fully undeliverable preview may be styled as an error'
+  );
+  // Changing the channels changes what the preview means, so it must invalidate the preview.
+  assert.match(
+    panel,
+    /dom\.notificationChannelInputs\.forEach\(function \(input\) \{\s*\n\s*input\.addEventListener\('change', function \(\) \{\s*\n\s*\/\/ The preview is computed per selected channel, so changing the channels makes it stale\.\s*\n\s*notificationState\.resolution = null;/,
+    'a channel change must invalidate the recipient preview'
+  );
+  assert.match(
+    panel,
+    /notificationRecipientWord\(ordered\.length - 20\)/,
+    'the truncation line must use a plural form'
+  );
   assert.match(
     panel,
     /var skipped =\s*\n\s*\(Array\.isArray\(previewResolution\.unresolvedPhones\)/,

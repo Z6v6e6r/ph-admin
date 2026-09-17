@@ -36394,6 +36394,15 @@
       dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
     }
 
+    function notificationRecipientWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'получателей';
+      if (mod10 === 1) return 'получатель';
+      if (mod10 >= 2 && mod10 <= 4) return 'получателя';
+      return 'получателей';
+    }
+
     function notificationValueWord(count) {
       var mod100 = count % 100;
       var mod10 = count % 10;
@@ -36650,23 +36659,26 @@
         var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
           ? resolution.unresolvedUserIds
           : [];
-        var wantsWebPush = selectedNotificationChannels().indexOf('WEB_PUSH') >= 0;
+        var selected = selectedNotificationChannels();
+        var wantsWebPush = selected.indexOf('WEB_PUSH') >= 0;
+        // Reachability is measured against the channels the operator selected, not against the account's
+        // total channel count, so the sort can never list an unreachable account before a reachable one.
+        function selectedChannelCount(recipient) {
+          return notificationRecipientChannels(recipient).filter(function (channel) {
+            return selected.indexOf(channel) >= 0;
+          }).length;
+        }
+        var ordered = matched.slice().sort(function (left, right) {
+          return selectedChannelCount(right) - selectedChannelCount(left);
+        });
         var withoutWebPush = wantsWebPush
           ? matched.filter(function (recipient) {
               return notificationRecipientChannels(recipient).indexOf('WEB_PUSH') < 0;
             })
           : [];
-        // Recipients with more channels first, so an operator sees who can actually be reached before
-        // the accounts a campaign can only suppress.
-        var ordered =
-          withoutWebPush.length > 0
-            ? matched.slice().sort(function (left, right) {
-                return (
-                  notificationRecipientChannels(right).length -
-                  notificationRecipientChannels(left).length
-                );
-              })
-            : matched;
+        var nothingReachable = matched.filter(function (recipient) {
+          return selectedChannelCount(recipient) === 0;
+        });
         var lines = [
           'Найдено: ' + matched.length,
           'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
@@ -36677,10 +36689,18 @@
           if (channels.length && wantsWebPush && channels.indexOf('WEB_PUSH') < 0) {
             notes.push('Web Push недоступен');
           }
+          if (channels.length && selectedChannelCount(recipient) === 0) {
+            notes.push('ни один из выбранных каналов недоступен');
+          }
           lines.push('• ' + notificationRecipientLabel(recipient) + ' — ' + notes.join(', '));
         });
         if (ordered.length > 20) {
-          lines.push('… и ещё ' + (ordered.length - 20) + ' получателей');
+          lines.push(
+            '… и ещё ' +
+              (ordered.length - 20) +
+              ' ' +
+              notificationRecipientWord(ordered.length - 20)
+          );
         }
         if (unresolvedUserIds.length) {
           lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
@@ -36688,17 +36708,27 @@
         if (withoutWebPush.length) {
           lines.push('');
           lines.push(
+            // After "из N" Russian always takes the genitive plural, so no plural form is chosen here.
             'Внимание: Web Push недоступен у ' +
               withoutWebPush.length +
               ' из ' +
               matched.length +
-              ' получателей — они получат только уведомление в приложении. Проверьте, что телефон нашёлся на нужном аккаунте.'
+              ' получателей. Проверьте, что телефон нашёлся на нужном аккаунте.'
+          );
+        }
+        if (nothingReachable.length) {
+          lines.push(
+            'Ничего не получат ' +
+              nothingReachable.length +
+              ' ' +
+              notificationRecipientWord(nothingReachable.length) +
+              ': у них нет ни одного из выбранных каналов.'
           );
         }
         setNotificationResult(
           dom.notificationResolution,
           lines.join('\n'),
-          matched.length === 0 || withoutWebPush.length === matched.length
+          matched.length === 0 || nothingReachable.length === matched.length
         );
       } catch (error) {
         if (notificationSessionExpired(error)) return;
@@ -38053,7 +38083,16 @@
         }
       );
       dom.notificationChannelInputs.forEach(function (input) {
-        input.addEventListener('change', updateNotificationControls);
+        input.addEventListener('change', function () {
+          // The preview is computed per selected channel, so changing the channels makes it stale.
+          notificationState.resolution = null;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
       });
       dom.notificationTokenLoginBtn.addEventListener('click', function () {
         submitNotificationTokenLogin().catch(handleError);
