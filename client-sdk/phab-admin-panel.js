@@ -8630,11 +8630,11 @@
       getCapabilities: function () {
         return adminRequest('/notifications/capabilities', 'GET', null, '', true);
       },
-      resolveRecipients: function (phones) {
+      resolveRecipients: function (selector) {
         return adminRequest(
           '/notifications/recipients/resolve',
           'POST',
-          { phones: phones },
+          selector,
           '',
           true
         );
@@ -9335,9 +9335,12 @@
       '</div></section>' +
       '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
       '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
-      '<div><h3>1. Получатели</h3><p>До 100 номеров — с новой строки, через запятую или точку с запятой.</p></div>' +
+      '<div><h3>1. Получатели</h3><p>До 100 значений всего: номера или PadlHub ID — с новой строки, через запятую или точку с запятой.</p></div>' +
       '<label class="phab-admin-notifications-field"><span>Номера телефонов</span>' +
       '<textarea class="phab-admin-input" placeholder="+7 999 123-45-67&#10;+7 999 765-43-21" data-notification-phones></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub ID пользователей</span>' +
+      '<textarea class="phab-admin-input" placeholder="d938caf6-4eca-49d3-8f78-c7ab1b967a41&#10;96d1b47c-dc5c-493f-836c-827f01c31546" data-notification-user-ids></textarea></label>' +
+      '<div class="phab-admin-notifications-result phab-admin-hidden" aria-live="polite" data-notification-user-id-warning></div>' +
       '<div class="phab-admin-notifications-row"><span class="phab-admin-notifications-meta" data-notification-phone-count>0 номеров</span>' +
       '<button class="phab-admin-btn-secondary" type="button" data-notification-preview>Проверить получателей</button></div>' +
       '<div><h3>2. Способ отправки</h3><p>Недоступные провайдеры нельзя выбрать.</p></div>' +
@@ -9381,6 +9384,8 @@
     var notificationLoginBtn = notificationNode('[data-notification-login]');
     var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
+    var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
+    var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
     var notificationPhoneCount = notificationNode('[data-notification-phone-count]');
     var notificationPreviewBtn = notificationNode('[data-notification-preview]');
     var notificationChannelInputs = Array.prototype.slice.call(
@@ -13118,6 +13123,8 @@
       notificationLoginBtn: notificationLoginBtn,
       notificationAuthStatus: notificationAuthStatus,
       notificationPhonesInput: notificationPhonesInput,
+      notificationUserIdsInput: notificationUserIdsInput,
+      notificationUserIdWarning: notificationUserIdWarning,
       notificationPhoneCount: notificationPhoneCount,
       notificationPreviewBtn: notificationPreviewBtn,
       notificationChannelInputs: notificationChannelInputs,
@@ -36185,6 +36192,42 @@
     async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
+    var NOTIFICATION_USER_ID_PATTERN =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    // A mistyped PadlHub ID must never be dropped silently: the operator would believe the campaign
+    // reached a recipient that it never addressed, so invalid values are shown and block sending.
+    function parseNotificationUserIds() {
+      var ids = [];
+      var invalid = [];
+      Array.from(
+        new Set(
+          String(dom.notificationUserIdsInput.value || '')
+            .split(/[\s,;]+/)
+            .map(function (userId) { return userId.trim().toLowerCase(); })
+            .filter(Boolean)
+        )
+      ).forEach(function (userId) {
+        if (NOTIFICATION_USER_ID_PATTERN.test(userId)) ids.push(userId);
+        else invalid.push(userId);
+      });
+      return { ids: ids, invalid: invalid };
+    }
+
+    function notificationRecipientSelection() {
+      var phones = parseNotificationPhones();
+      var userIds = parseNotificationUserIds();
+      var selector = {};
+      if (phones.length) selector.phones = phones;
+      if (userIds.ids.length) selector.userIds = userIds.ids;
+      return {
+        selector: selector,
+        phones: phones.length,
+        userIds: userIds.ids.length,
+        invalidUserIds: userIds.invalid
+      };
+    }
+
     function parseNotificationPhones() {
       return Array.from(
         new Set(
@@ -36262,14 +36305,30 @@
     }
 
     function updateNotificationControls() {
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
       var selectedChannels = selectedNotificationChannels();
-      dom.notificationPhoneCount.textContent = phones.length + ' номеров';
-      dom.notificationPreviewBtn.disabled = phones.length === 0 || Boolean(notificationState.busy);
+      var hasInvalidUserIds = selection.invalidUserIds.length > 0;
+      dom.notificationPhoneCount.textContent =
+        selection.phones + ' номеров · ' + selection.userIds + ' PadlHub ID';
+      if (hasInvalidUserIds) {
+        dom.notificationUserIdWarning.classList.remove('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent =
+          'Не похоже на PadlHub ID: ' +
+          selection.invalidUserIds.join(', ') +
+          '. Исправьте или удалите эти значения — пока они здесь, отправка заблокирована.';
+      } else {
+        dom.notificationUserIdWarning.classList.add('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent = '';
+      }
+      dom.notificationPreviewBtn.disabled =
+        selection.phones + selection.userIds === 0 ||
+        hasInvalidUserIds ||
+        Boolean(notificationState.busy);
       dom.notificationSendBtn.disabled =
         !notificationState.resolution ||
         !Array.isArray(notificationState.resolution.matched) ||
         notificationState.resolution.matched.length === 0 ||
+        hasInvalidUserIds ||
         !String(dom.notificationTitleInput.value || '').trim() ||
         !String(dom.notificationBodyInput.value || '').trim() ||
         selectedChannels.length === 0 ||
@@ -36396,30 +36455,36 @@
 
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
       notificationState.busy = 'preview';
       notificationState.resolution = null;
       setNotificationResult(dom.notificationResolution, 'Проверяем получателей…', false);
       updateNotificationControls();
       try {
-        var resolution = await notificationApi.resolveRecipients(phones);
+        var resolution = await notificationApi.resolveRecipients(selection.selector);
         notificationState.resolution = resolution;
         var matched = Array.isArray(resolution.matched) ? resolution.matched : [];
         var unresolved = Array.isArray(resolution.unresolvedPhones)
           ? resolution.unresolvedPhones
           : [];
+        var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
+          ? resolution.unresolvedUserIds
+          : [];
         var lines = [
           'Найдено: ' + matched.length,
-          'Не найдено: ' + unresolved.length
+          'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
         ];
         matched.slice(0, 20).forEach(function (recipient) {
           lines.push(
             '• ' +
               String(recipient.displayName || 'Получатель') +
               ' · ' +
-              String(recipient.phoneMasked || '')
+              String(recipient.phoneMasked || recipient.userId || '')
           );
         });
+        if (unresolvedUserIds.length) {
+          lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
+        }
         setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
       } catch (error) {
         setNotificationResult(
@@ -36439,12 +36504,11 @@
       setNotificationResult(dom.notificationResult, 'Отправляем кампанию…', false);
       updateNotificationControls();
       try {
-        var payload = {
-          phones: parseNotificationPhones(),
+        var payload = Object.assign({}, notificationRecipientSelection().selector, {
           title: String(dom.notificationTitleInput.value || '').trim(),
           body: String(dom.notificationBodyInput.value || '').trim(),
           channels: selectedNotificationChannels()
-        };
+        });
         var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
         if (deepLink) payload.deepLink = deepLink;
         var result = await notificationApi.createCampaign(payload);
@@ -37734,14 +37798,16 @@
         event.preventDefault();
         submitNotificationLogin().catch(handleError);
       });
-      dom.notificationPhonesInput.addEventListener('input', function () {
-        notificationState.resolution = null;
-        setNotificationResult(
-          dom.notificationResolution,
-          'Проверьте номера перед отправкой кампании.',
-          false
-        );
-        updateNotificationControls();
+      [dom.notificationPhonesInput, dom.notificationUserIdsInput].forEach(function (input) {
+        input.addEventListener('input', function () {
+          notificationState.resolution = null;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
       });
       [dom.notificationTitleInput, dom.notificationBodyInput, dom.notificationDeepLinkInput].forEach(
         function (input) {
