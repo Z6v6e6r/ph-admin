@@ -110,8 +110,23 @@ async function main(): Promise<void> {
   );
   assert.match(
     panel,
-    /String\(recipient\.phoneMasked \|\| recipient\.userId \|\| ''\)/,
-    'a recipient resolved by user id has no masked phone and must fall back to the id'
+    /var contact = String\(\(recipient && recipient\.phoneMasked\) \|\| 'без телефона'\);/,
+    'a recipient without a masked phone must be labelled instead of printing an empty contact'
+  );
+  assert.match(
+    panel,
+    /var id = String\(\(recipient && recipient\.userId\) \|\| ''\)\.slice\(0, 8\);/,
+    'the preview must show which PadlHub account a phone resolved to'
+  );
+  assert.match(
+    panel,
+    /var notes = \[channels\.length \? channels\.join\(' \+ '\) : 'нет доступных каналов'\];/,
+    'the preview must show the channels an account can receive on'
+  );
+  assert.match(
+    panel,
+    /'Внимание: Web Push недоступен у ' \+\s*\n\s*withoutWebPush\.length \+\s*\n\s*' из ' \+\s*\n\s*matched\.length \+/,
+    'a phone that resolved to an account without Web Push must warn the operator'
   );
   assert.match(
     panel,

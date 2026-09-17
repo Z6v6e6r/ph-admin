@@ -36606,6 +36606,22 @@
       }
     }
 
+    function notificationRecipientChannels(recipient) {
+      return Array.isArray(recipient && recipient.availableChannels)
+        ? recipient.availableChannels
+        : [];
+    }
+
+    // A phone can resolve to a different account than the operator expects (the verified login phone
+    // and the provider mapping can belong to two accounts of one person), so the preview always shows
+    // the PadlHub id next to the name and the channels that account can actually receive.
+    function notificationRecipientLabel(recipient) {
+      var name = String((recipient && recipient.displayName) || 'Получатель');
+      var contact = String((recipient && recipient.phoneMasked) || 'без телефона');
+      var id = String((recipient && recipient.userId) || '').slice(0, 8);
+      return name + ' · ' + contact + (id ? ' · ' + id : '');
+    }
+
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
       var selection = notificationRecipientSelection();
@@ -36634,22 +36650,56 @@
         var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
           ? resolution.unresolvedUserIds
           : [];
+        var wantsWebPush = selectedNotificationChannels().indexOf('WEB_PUSH') >= 0;
+        var withoutWebPush = wantsWebPush
+          ? matched.filter(function (recipient) {
+              return notificationRecipientChannels(recipient).indexOf('WEB_PUSH') < 0;
+            })
+          : [];
+        // Recipients with more channels first, so an operator sees who can actually be reached before
+        // the accounts a campaign can only suppress.
+        var ordered =
+          withoutWebPush.length > 0
+            ? matched.slice().sort(function (left, right) {
+                return (
+                  notificationRecipientChannels(right).length -
+                  notificationRecipientChannels(left).length
+                );
+              })
+            : matched;
         var lines = [
           'Найдено: ' + matched.length,
           'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
         ];
-        matched.slice(0, 20).forEach(function (recipient) {
-          lines.push(
-            '• ' +
-              String(recipient.displayName || 'Получатель') +
-              ' · ' +
-              String(recipient.phoneMasked || recipient.userId || '')
-          );
+        ordered.slice(0, 20).forEach(function (recipient) {
+          var channels = notificationRecipientChannels(recipient);
+          var notes = [channels.length ? channels.join(' + ') : 'нет доступных каналов'];
+          if (channels.length && wantsWebPush && channels.indexOf('WEB_PUSH') < 0) {
+            notes.push('Web Push недоступен');
+          }
+          lines.push('• ' + notificationRecipientLabel(recipient) + ' — ' + notes.join(', '));
         });
+        if (ordered.length > 20) {
+          lines.push('… и ещё ' + (ordered.length - 20) + ' получателей');
+        }
         if (unresolvedUserIds.length) {
           lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
         }
-        setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
+        if (withoutWebPush.length) {
+          lines.push('');
+          lines.push(
+            'Внимание: Web Push недоступен у ' +
+              withoutWebPush.length +
+              ' из ' +
+              matched.length +
+              ' получателей — они получат только уведомление в приложении. Проверьте, что телефон нашёлся на нужном аккаунте.'
+          );
+        }
+        setNotificationResult(
+          dom.notificationResolution,
+          lines.join('\n'),
+          matched.length === 0 || withoutWebPush.length === matched.length
+        );
       } catch (error) {
         if (notificationSessionExpired(error)) return;
         setNotificationResult(
