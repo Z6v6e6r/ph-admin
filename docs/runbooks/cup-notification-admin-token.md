@@ -41,7 +41,7 @@ const payload = b64(
     permissions: ["notifications.manage"],
     sid: randomUUID(),
     iat: now,
-    exp: now + Number(process.argv[5] || 3600),
+    exp: now + Math.min(Number(process.argv[5] || 3600), 7200),
     iss: env.JWT_ISSUER,
     aud: env.JWT_ADMIN_AUDIENCE || "phub-admin",
   }),

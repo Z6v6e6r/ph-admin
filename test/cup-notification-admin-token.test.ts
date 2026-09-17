@@ -136,6 +136,31 @@ async function main(): Promise<void> {
     /function notificationSessionExpired\(error\) \{\s*\n\s*if \(!error \|\| \(error\.status !== 401 && error\.status !== 403\)\) return false;/,
     'only an auth failure may close the notification session'
   );
+  // The helper's effects are the fix itself, so they are asserted, not only its call sites.
+  const expiryHelperStart = panel.indexOf('function notificationSessionExpired(error)');
+  const expiryHelperBody = panel.slice(expiryHelperStart, panel.indexOf('\n    }', expiryHelperStart));
+  for (const effect of [
+    "notificationApi.setAccessToken('')",
+    "storeNotificationToken('')",
+    'showNotificationAuth(',
+  ]) {
+    assert.ok(
+      expiryHelperBody.includes(effect),
+      'an expired session must run ' + effect + ' in the shared handler'
+    );
+  }
+  // The station cards share the notification session and must not keep a dead token armed.
+  assert.match(
+    panel,
+    /if \(notificationSessionExpired\(error\)\) \{\s*\n\s*\/\/ The station cards share the notification session/,
+    'the station cards must handle an expired notification session the same way'
+  );
+  // A transient failure while verifying a stored token keeps it for a retry.
+  assert.match(
+    panel,
+    /if \(!\(storedTokenError && \(storedTokenError\.status === 401 \|\| storedTokenError\.status === 403\)\)\) \{\s*\n\s*throw storedTokenError;/,
+    'a transient failure must keep the stored token and surface the error'
+  );
   assert.match(
     panel,
     /var storedToken = readStoredNotificationToken\(\);[\s\S]{0,220}?notificationApi\.setAccessToken\(storedToken\);/,

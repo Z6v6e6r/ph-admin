@@ -15409,8 +15409,10 @@
         locationAdminState.error = error && error.message
           ? error.message
           : 'Не удалось загрузить карточки станций.';
-        if (error && (error.status === 401 || error.status === 403)) {
-          notificationState.session = null;
+        if (notificationSessionExpired(error)) {
+          // The station cards share the notification session, so an expired one is handled here too.
+          locationAdminState.error =
+            'Операторская PadlHub-сессия истекла. Войдите заново во вкладке «Уведомления».';
         }
       } finally {
         locationAdminState.loading = false;
