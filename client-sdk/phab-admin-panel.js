@@ -36329,6 +36329,7 @@
     }
 
     function renderNotificationCapabilities() {
+      var selectedSignature = selectedNotificationChannels().join(',');
       var capabilities =
         notificationState.capabilities && Array.isArray(notificationState.capabilities.channels)
           ? notificationState.capabilities.channels
@@ -36355,6 +36356,16 @@
       if (!hasSelected) {
         var fallback = dom.notificationChannelInputs.find(function (input) { return !input.disabled; });
         if (fallback) fallback.checked = true;
+      }
+      if (notificationState.resolution && selectedNotificationChannels().join(',') !== selectedSignature) {
+        // A refreshed capability set can switch a selected channel off without firing `change`, so the
+        // preview is invalidated here as well instead of being kept for channels that no longer apply.
+        notificationState.resolution = null;
+        setNotificationResult(
+          dom.notificationResolution,
+          'Доступные каналы изменились. Проверьте получателей снова.',
+          false
+        );
       }
     }
 
@@ -36392,6 +36403,22 @@
         selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
       dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
+    }
+
+    function notificationRecipientGenitiveWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod10 === 1 && mod100 !== 11) return 'получателя';
+      return 'получателей';
+    }
+
+    function notificationRecipientWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'получателей';
+      if (mod10 === 1) return 'получатель';
+      if (mod10 >= 2 && mod10 <= 4) return 'получателя';
+      return 'получателей';
     }
 
     function notificationValueWord(count) {
@@ -36606,6 +36633,22 @@
       }
     }
 
+    function notificationRecipientChannels(recipient) {
+      return Array.isArray(recipient && recipient.availableChannels)
+        ? recipient.availableChannels
+        : [];
+    }
+
+    // A phone can resolve to a different account than the operator expects (the verified login phone
+    // and the provider mapping can belong to two accounts of one person), so the preview always shows
+    // the PadlHub id next to the name and the channels that account can actually receive.
+    function notificationRecipientLabel(recipient) {
+      var name = String((recipient && recipient.displayName) || 'Получатель');
+      var contact = String((recipient && recipient.phoneMasked) || 'без телефона');
+      var id = String((recipient && recipient.userId) || '').slice(0, 8);
+      return name + ' · ' + contact + (id ? ' · ' + id : '');
+    }
+
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
       var selection = notificationRecipientSelection();
@@ -36634,22 +36677,79 @@
         var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
           ? resolution.unresolvedUserIds
           : [];
+        var selected = selectedNotificationChannels();
+        var wantsWebPush = selected.indexOf('WEB_PUSH') >= 0;
+        // Reachability is measured against the channels the operator selected, not against the account's
+        // total channel count, so the sort can never list an unreachable account before a reachable one.
+        function selectedChannelCount(recipient) {
+          return notificationRecipientChannels(recipient).filter(function (channel) {
+            return selected.indexOf(channel) >= 0;
+          }).length;
+        }
+        var ordered = matched.slice().sort(function (left, right) {
+          return selectedChannelCount(right) - selectedChannelCount(left);
+        });
+        var withoutWebPush = wantsWebPush
+          ? matched.filter(function (recipient) {
+              return notificationRecipientChannels(recipient).indexOf('WEB_PUSH') < 0;
+            })
+          : [];
+        var nothingReachable = matched.filter(function (recipient) {
+          return selectedChannelCount(recipient) === 0;
+        });
         var lines = [
           'Найдено: ' + matched.length,
           'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
         ];
-        matched.slice(0, 20).forEach(function (recipient) {
-          lines.push(
-            '• ' +
-              String(recipient.displayName || 'Получатель') +
-              ' · ' +
-              String(recipient.phoneMasked || recipient.userId || '')
-          );
+        ordered.slice(0, 20).forEach(function (recipient) {
+          var channels = notificationRecipientChannels(recipient);
+          var notes = [channels.length ? channels.join(' + ') : 'нет доступных каналов'];
+          if (channels.length && wantsWebPush && channels.indexOf('WEB_PUSH') < 0) {
+            notes.push('Web Push недоступен');
+          }
+          if (channels.length && selectedChannelCount(recipient) === 0) {
+            notes.push('ни один из выбранных каналов недоступен');
+          }
+          lines.push('• ' + notificationRecipientLabel(recipient) + ' — ' + notes.join(', '));
         });
+        if (ordered.length > 20) {
+          lines.push(
+            '… и ещё ' +
+              (ordered.length - 20) +
+              ' ' +
+              notificationRecipientWord(ordered.length - 20)
+          );
+        }
         if (unresolvedUserIds.length) {
           lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
         }
-        setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
+        if (withoutWebPush.length) {
+          lines.push('');
+          lines.push(
+            // After "из N" Russian takes the genitive: singular for 1/21/31, plural otherwise.
+            'Внимание: Web Push недоступен у ' +
+              withoutWebPush.length +
+              ' из ' +
+              matched.length +
+              ' ' +
+              notificationRecipientGenitiveWord(matched.length) +
+              '. Проверьте, что телефон нашёлся на нужном аккаунте.'
+          );
+        }
+        if (nothingReachable.length) {
+          lines.push(
+            'Ничего не получат ' +
+              nothingReachable.length +
+              ' ' +
+              notificationRecipientWord(nothingReachable.length) +
+              ': у них нет ни одного из выбранных каналов.'
+          );
+        }
+        setNotificationResult(
+          dom.notificationResolution,
+          lines.join('\n'),
+          matched.length === 0 || nothingReachable.length === matched.length
+        );
       } catch (error) {
         if (notificationSessionExpired(error)) return;
         setNotificationResult(
@@ -38003,7 +38103,16 @@
         }
       );
       dom.notificationChannelInputs.forEach(function (input) {
-        input.addEventListener('change', updateNotificationControls);
+        input.addEventListener('change', function () {
+          // The preview is computed per selected channel, so changing the channels makes it stale.
+          notificationState.resolution = null;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
       });
       dom.notificationTokenLoginBtn.addEventListener('click', function () {
         submitNotificationTokenLogin().catch(handleError);
