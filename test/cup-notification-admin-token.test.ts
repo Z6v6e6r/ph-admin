@@ -17,11 +17,6 @@ async function main(): Promise<void> {
     /setAccessToken: function \(token\) \{\s*\n\s*accessToken = String\(token \|\| ''\);/,
     'the notification client must accept an operator-supplied access token'
   );
-  assert.match(
-    panel,
-    /hasAccessToken: function \(\) \{\s*\n\s*return Boolean\(accessToken\);/,
-    'the notification client must expose whether a token is set'
-  );
 
   // The field, its button, the DOM map and the listener are one wiring unit.
   assert.match(
@@ -61,11 +56,49 @@ async function main(): Promise<void> {
     /if \(token\.split\('\.'\)\.length !== 3\) \{/,
     'a value that is not a JWT must be rejected before any request'
   );
-  // The capabilities read is the proof of the token and of the notifications.manage permission.
+  // The capabilities read is the proof of the token and of the notifications.manage permission, and it
+  // must not fall back to the cookie session: that retry would report a rejected token as accepted.
   assert.match(
     panel,
-    /notificationState\.capabilities = await notificationApi\.getCapabilities\(\);/,
-    'the token must be verified by the first admin request'
+    /getCapabilities: function \(allowRefresh\) \{/,
+    'capabilities must accept an explicit refresh policy'
+  );
+  assert.match(
+    panel,
+    /return adminRequest\('\/notifications\/capabilities', 'GET', null, '', allowRefresh !== false\);/,
+    'capabilities must be requestable without the cookie-session fallback'
+  );
+  assert.match(
+    panel,
+    /notificationState\.capabilities = await notificationApi\.getCapabilities\(false\);/,
+    'the pasted token must be verified without the cookie fallback'
+  );
+  assert.match(
+    panel,
+    /await loadNotificationCapabilities\(\{ allowRefresh: false \}\);/,
+    'a stored token must be verified without the cookie fallback too'
+  );
+  assert.match(
+    panel,
+    /getCapabilities\(false\);\s*\n\s*storeNotificationToken\(token\);\s*\n\s*dom\.notificationAdminTokenInput\.value = '';\s*\n\s*renderNotificationCapabilities\(\);\s*\n\s*showNotificationWorkspace\(\);/,
+    'the workspace must open only after the token was verified'
+  );
+  // The order above is not enough on its own: a second, earlier open would also satisfy it.
+  const tokenLoginStart = panel.indexOf('async function submitNotificationTokenLogin');
+  const tokenVerifyIndex = panel.indexOf('getCapabilities(false)', tokenLoginStart);
+  assert.ok(tokenLoginStart >= 0 && tokenVerifyIndex > tokenLoginStart, 'token login must verify the token');
+  assert.ok(
+    !panel.slice(tokenLoginStart, tokenVerifyIndex).includes('showNotificationWorkspace'),
+    'the workspace must not be opened before the token was verified'
+  );
+  // The refresh policy argument must not be overridden inside the capabilities request.
+  const capabilitiesStart = panel.indexOf('getCapabilities: function (allowRefresh)');
+  assert.ok(capabilitiesStart >= 0, 'capabilities must accept a refresh policy');
+  const capabilitiesBody = panel.slice(capabilitiesStart, panel.indexOf('},', capabilitiesStart));
+  assert.doesNotMatch(
+    capabilitiesBody,
+    /allowRefresh\s*=\s*true/,
+    'the capabilities request must not force the cookie-session fallback'
   );
 
   // Tab-scoped storage only, and forgotten on logout.
@@ -81,8 +114,27 @@ async function main(): Promise<void> {
   );
   assert.doesNotMatch(
     panel,
-    /localStorage\.setItem\(NOTIFICATION_TOKEN_STORAGE_KEY/,
-    'the admin token must never be written to localStorage'
+    /localStorage\.setItem\([^)]*phab_notification_admin_token/,
+    'the admin token must never be written to localStorage, not even by its literal key'
+  );
+
+  // A rejected token must forget both the stored value and the value in the field.
+  assert.match(
+    panel,
+    /notificationApi\.setAccessToken\(''\);\s*\n\s*notificationState\.session = null;\s*\n\s*notificationState\.capabilities = null;\s*\n\s*storeNotificationToken\(''\);\s*\n\s*dom\.notificationAdminTokenInput\.value = '';/,
+    'a rejected token must be forgotten while the phone login stays available'
+  );
+
+  // An expired session must return the operator to the login card from both admin calls.
+  assert.equal(
+    panel.split('if (notificationSessionExpired(error)) return;').length - 1,
+    2,
+    'preview and send must both handle an expired session'
+  );
+  assert.match(
+    panel,
+    /function notificationSessionExpired\(error\) \{\s*\n\s*if \(!error \|\| \(error\.status !== 401 && error\.status !== 403\)\) return false;/,
+    'only an auth failure may close the notification session'
   );
   assert.match(
     panel,

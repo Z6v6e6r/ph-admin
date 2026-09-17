@@ -23,6 +23,17 @@ async function main(): Promise<void> {
     /Object\.assign\(\{\}, notificationRecipientSelection\(\)\.selector, \{/,
     'the campaign payload must be built from the recipient selector'
   );
+  // An empty selector array must never be sent: the API rejects `{phones: []}` and `{userIds: []}`.
+  assert.match(
+    panel,
+    /if \(phones\.length\) selector\.phones = phones;/,
+    'an empty phone selector must be omitted from the payload'
+  );
+  assert.match(
+    panel,
+    /if \(userIds\.ids\.length\) selector\.userIds = userIds\.ids;/,
+    'an empty user-id selector must be omitted from the payload'
+  );
 
   // The field, its warning node, the DOM map and the listeners are one wiring unit: dropping any of
   // them throws while binding events, which takes the whole CUP panel down.

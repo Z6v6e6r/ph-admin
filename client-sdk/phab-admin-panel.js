@@ -7478,6 +7478,16 @@
         background:rgba(255,70,78,.1);
         color:#9f1735;
       }
+      .phab-admin-notifications-token{
+        margin-top:10px;
+        padding:10px 12px;
+        border:1px dashed rgba(51,0,32,.22);
+        border-radius:13px;
+        background:rgba(255,255,255,.6);
+      }
+      .phab-admin-notifications-token summary{cursor:pointer;font-size:12px;font-weight:600;color:rgba(51,0,32,.72)}
+      .phab-admin-notifications-token[open] summary{margin-bottom:8px}
+      .phab-admin-notifications-token .phab-admin-notifications-meta{display:block;margin-bottom:8px}
       .phab-admin-notifications-actions{display:flex;gap:8px;flex-wrap:wrap}
       .phab-admin-notifications-actions .phab-admin-btn{flex:1 1 180px}
       .phab-subscriptions{display:flex;flex-direction:column;gap:14px;padding:4px}
@@ -8594,9 +8604,6 @@
       setAccessToken: function (token) {
         accessToken = String(token || '');
       },
-      hasAccessToken: function () {
-        return Boolean(accessToken);
-      },
       restoreSession: async function () {
         try {
           return await refreshSession();
@@ -8635,8 +8642,10 @@
         accessToken = session && session.accessToken ? String(session.accessToken) : '';
         return session;
       },
-      getCapabilities: function () {
-        return adminRequest('/notifications/capabilities', 'GET', null, '', true);
+      getCapabilities: function (allowRefresh) {
+        // Callers that verify a pasted token pass false: the 401 retry would silently continue with the
+        // cookie session and report a rejected token as accepted.
+        return adminRequest('/notifications/capabilities', 'GET', null, '', allowRefresh !== false);
       },
       resolveRecipients: function (selector) {
         return adminRequest(
@@ -36392,6 +36401,20 @@
       return 'значений';
     }
 
+    // A 401/403 on any admin call means the session or the token is no longer usable, so the block
+    // returns to the login card and forgets a token that cannot work any more.
+    function notificationSessionExpired(error) {
+      if (!error || (error.status !== 401 && error.status !== 403)) return false;
+      if (notificationApi) notificationApi.setAccessToken('');
+      storeNotificationToken('');
+      notificationState.capabilities = null;
+      showNotificationAuth(
+        'Сессия истекла. Войдите по коду или вставьте новый admin-токен.',
+        true
+      );
+      return true;
+    }
+
     function showNotificationAuth(message, isError) {
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
@@ -36410,12 +36433,13 @@
       updateNotificationControls();
     }
 
-    async function loadNotificationCapabilities() {
+    async function loadNotificationCapabilities(options) {
       if (!notificationApi || !notificationState.session) return;
+      var allowRefresh = !(options && options.allowRefresh === false);
       notificationState.busy = 'capabilities';
       updateNotificationControls();
       try {
-        notificationState.capabilities = await notificationApi.getCapabilities();
+        notificationState.capabilities = await notificationApi.getCapabilities(allowRefresh);
         renderNotificationCapabilities();
         showNotificationWorkspace();
         setStatus('Каналы уведомлений загружены', false);
@@ -36453,7 +36477,14 @@
         if (storedToken) {
           notificationApi.setAccessToken(storedToken);
           notificationState.session = { accessToken: storedToken };
-          await loadNotificationCapabilities();
+          try {
+            await loadNotificationCapabilities({ allowRefresh: false });
+          } catch (storedTokenError) {
+            // A transient failure keeps the token for a retry; an auth failure falls through.
+            if (!(storedTokenError && (storedTokenError.status === 401 || storedTokenError.status === 403))) {
+              throw storedTokenError;
+            }
+          }
           if (notificationState.session && notificationState.capabilities) return;
           notificationApi.setAccessToken('');
           notificationState.session = null;
@@ -36541,7 +36572,9 @@
         notificationApi.setAccessToken(token);
         notificationState.session = { accessToken: token };
         // The capabilities read is the first admin request, so it proves the token and the permission.
-        notificationState.capabilities = await notificationApi.getCapabilities();
+        // It runs without the cookie fallback: a rejected token must fail here, not silently continue
+        // as another session.
+        notificationState.capabilities = await notificationApi.getCapabilities(false);
         storeNotificationToken(token);
         dom.notificationAdminTokenInput.value = '';
         renderNotificationCapabilities();
@@ -36553,6 +36586,7 @@
         notificationState.session = null;
         notificationState.capabilities = null;
         storeNotificationToken('');
+        dom.notificationAdminTokenInput.value = '';
         var rejected = error && (error.status === 401 || error.status === 403);
         setNotificationResult(
           dom.notificationAuthStatus,
@@ -36615,6 +36649,7 @@
         }
         setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResolution,
           error && error.message ? error.message : 'Не удалось проверить получателей.',
@@ -36671,6 +36706,7 @@
         );
         setStatus('Кампания уведомлений принята', false);
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResult,
           error && error.message ? error.message : 'Не удалось отправить кампанию.',

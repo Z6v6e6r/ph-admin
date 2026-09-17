@@ -57,7 +57,8 @@ node /root/cup-mint-token.mjs <runtime-env-root>/api.env <admin-user-id> <tenant
 ```
 
 The script reads the signing secret on the host and never prints it or the token. Keep the token TTL
-short (one hour is enough for a verification round).
+short: **one hour is enough and two hours is the ceiling** (`3600`, at most `7200`). Mint for a single
+named operator account, never for a shared or service account.
 
 ## Use it in the CUP
 
@@ -65,12 +66,19 @@ short (one hour is enough for a verification round).
 2. Expand «Технический вход по admin-токену (временно)».
 3. Print the token on the host and paste it:
    `ssh <host> 'cat /root/.cup-admin-token'`
-4. Press «Войти по токену». The first request is the channel-capabilities read, so a token without
-   the `notifications.manage` permission is rejected immediately and never reaches a campaign.
+4. Press «Войти по токену». The first request is the channel-capabilities read, and it runs
+   **without** the session-refresh fallback, so a token that is expired, minted for the wrong
+   audience, or missing `notifications.manage` is rejected here and never reaches a campaign; the
+   rejected value is dropped from both the tab storage and the input field. The workspace opens only
+   after that read succeeds.
 
-The panel keeps the token in this tab's `sessionStorage` only, clears the input after use, and
-forgets the token on «Выйти». A token that expired while stored is dropped and the block returns to
-the code flow.
+The panel keeps the token in this tab's `sessionStorage` only, clears the input after use (also on
+rejection), and forgets the token on «Выйти». A token that expired while stored is dropped and the
+block returns to the code flow; a session that expires in the middle of a round hides the workspace
+and returns the operator to the login card instead of leaving an armed dead session.
+
+Note that `sessionStorage` is per tab but not a secret store: a duplicated tab or a script in the
+same origin can read it. That is why the TTL above is a hard ceiling.
 
 ## Clean up
 
@@ -78,8 +86,13 @@ the code flow.
   `ssh <host> 'rm -f /root/.cup-admin-token /root/cup-mint-token.mjs'`
 - Never copy the token into a repository, an env file, a ticket or a chat.
 
-## Removal criterion
+## Owner and removal
 
-Delete the technical token path from `client-sdk/phab-admin-panel.js` once the CUP block has a
-production login that does not depend on SMS delivery (for example the provider OAuth flow), or once
-the target contour has working code delivery.
+- Owner: the CUP operator lead who runs the verification round; the change itself is owned by the
+  panel maintainers.
+- Review date: **2026-10-17**. If the path is still needed then, re-confirm the entry or remove it.
+- Removal criterion: delete the technical token path from `client-sdk/phab-admin-panel.js` (composer
+  section, `setAccessToken` plumbing, the `submitNotificationTokenLogin` branch and the
+  `sessionStorage` key) once the CUP block has a production login that does not depend on SMS
+  delivery (for example the provider OAuth flow), or once the target contour has working code
+  delivery. Both panel tests must be updated in the same change.
