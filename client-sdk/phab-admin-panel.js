@@ -36329,6 +36329,7 @@
     }
 
     function renderNotificationCapabilities() {
+      var selectedSignature = selectedNotificationChannels().join(',');
       var capabilities =
         notificationState.capabilities && Array.isArray(notificationState.capabilities.channels)
           ? notificationState.capabilities.channels
@@ -36355,6 +36356,16 @@
       if (!hasSelected) {
         var fallback = dom.notificationChannelInputs.find(function (input) { return !input.disabled; });
         if (fallback) fallback.checked = true;
+      }
+      if (notificationState.resolution && selectedNotificationChannels().join(',') !== selectedSignature) {
+        // A refreshed capability set can switch a selected channel off without firing `change`, so the
+        // preview is invalidated here as well instead of being kept for channels that no longer apply.
+        notificationState.resolution = null;
+        setNotificationResult(
+          dom.notificationResolution,
+          'Доступные каналы изменились. Проверьте получателей снова.',
+          false
+        );
       }
     }
 
@@ -36392,6 +36403,13 @@
         selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
       dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
+    }
+
+    function notificationRecipientGenitiveWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod10 === 1 && mod100 !== 11) return 'получателя';
+      return 'получателей';
     }
 
     function notificationRecipientWord(count) {
@@ -36708,12 +36726,14 @@
         if (withoutWebPush.length) {
           lines.push('');
           lines.push(
-            // After "из N" Russian always takes the genitive plural, so no plural form is chosen here.
+            // After "из N" Russian takes the genitive: singular for 1/21/31, plural otherwise.
             'Внимание: Web Push недоступен у ' +
               withoutWebPush.length +
               ' из ' +
               matched.length +
-              ' получателей. Проверьте, что телефон нашёлся на нужном аккаунте.'
+              ' ' +
+              notificationRecipientGenitiveWord(matched.length) +
+              '. Проверьте, что телефон нашёлся на нужном аккаунте.'
           );
         }
         if (nothingReachable.length) {

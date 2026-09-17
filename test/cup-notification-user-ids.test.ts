@@ -165,6 +165,42 @@ async function main(): Promise<void> {
     /notificationRecipientWord\(ordered\.length - 20\)/,
     'the truncation line must use a plural form'
   );
+  // The warning trigger, the invalidation tail and the count sources must be pinned, not only the text.
+  assert.match(
+    panel,
+    /var withoutWebPush = wantsWebPush\s*\n\s*\? matched\.filter\(function \(recipient\) \{\s*\n\s*return notificationRecipientChannels\(recipient\)\.indexOf\('WEB_PUSH'\) < 0;/,
+    'the Web Push warning must be driven by the matched recipients, not a constant'
+  );
+  assert.match(
+    panel,
+    /'Ничего не получат ' \+\s*\n\s*nothingReachable\.length \+/,
+    'the nothing-reachable line must count the recipients without a selected channel'
+  );
+  assert.match(
+    panel,
+    /notificationRecipientGenitiveWord\(matched\.length\)/,
+    'the "из N" warning must use the genitive form'
+  );
+  assert.match(
+    panel,
+    /if \(mod10 === 1 && mod100 !== 11\) return 'получателя';/,
+    'the genitive form must be singular for 1/21/31'
+  );
+  assert.equal(
+    panel.split("  if (mod10 === 1) return 'получатель';").length - 1,
+    1,
+    'the nominative plural helper must keep its singular form'
+  );
+  assert.match(
+    panel,
+    /'Доступные каналы изменились\. Проверьте получателей снова\.'/,
+    'a capability refresh must invalidate a stale preview'
+  );
+  assert.match(
+    panel,
+    /notificationState\.resolution = null;\s*\n\s*setNotificationResult\(\s*\n\s*dom\.notificationResolution,\s*\n\s*'Проверьте получателей перед отправкой кампании\.',\s*\n\s*false\s*\n\s*\);\s*\n\s*updateNotificationControls\(\);/,
+    'the channel-change invalidation must also re-evaluate the send button'
+  );
   assert.match(
     panel,
     /var skipped =\s*\n\s*\(Array\.isArray\(previewResolution\.unresolvedPhones\)/,
