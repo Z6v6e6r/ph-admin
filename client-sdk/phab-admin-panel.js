@@ -12076,8 +12076,8 @@
 
     var advertisingSquareUpload = createAdvertisingCardUpload(
       'square',
-      'Квадратное изображение',
-      'Исходник: 480 × 480 px или больше. Итоговый WebP: 480 × 480 px. В вертикальной карточке края обрезаются.'
+      'Портретное изображение',
+      'Исходник: 400 × 532 px или больше. Итоговый WebP: 400 × 532 px (≈ 3:4). В вертикальной карточке края обрезаются.'
     );
     var advertisingHorizontalUpload = createAdvertisingCardUpload(
       'horizontal',
@@ -13812,8 +13812,10 @@
     var href = String(ad.href || '').trim();
     var imageUrl = String(ad.imageUrl || '').trim();
     var imageAssetId = String(ad.imageAssetId || '').trim();
-    var squareImageUrl = String(ad.squareImageUrl || imageUrl).trim();
+    var squareImageUrl = String(ad.squareImageUrl || '').trim();
     var horizontalImageUrl = String(ad.horizontalImageUrl || imageUrl).trim();
+    // Legacy records can alias both slots to the same horizontal asset.
+    if (squareImageUrl === horizontalImageUrl) squareImageUrl = '';
     if (!href || !imageUrl) {
       return null;
     }
@@ -13826,7 +13828,7 @@
       imageUrl: imageUrl,
       imageAssetId: imageAssetId,
       squareImageUrl: squareImageUrl,
-      squareImageAssetId: String(ad.squareImageAssetId || imageAssetId).trim(),
+      squareImageAssetId: squareImageUrl ? String(ad.squareImageAssetId || '').trim() : '',
       horizontalImageUrl: horizontalImageUrl,
       horizontalImageAssetId: String(ad.horizontalImageAssetId || imageAssetId).trim(),
       isActive: ad.isActive !== false,
@@ -15442,7 +15444,7 @@
         : isBlock3
           ? 'Исходник: 1600 × 500 px или больше, JPG, PNG или WebP до 15 МБ. Итоговый WebP в 2×: 702 × 240 px.'
           : isBlock4
-            ? 'Для карточки используются два изображения: квадратное 480 × 480 px и горизонтальное 720 × 360 px. Для чёткости загружайте исходники не меньше этих размеров.'
+            ? 'Для карточки используются два изображения: портретное 400 × 532 px (≈ 3:4) и горизонтальное 720 × 360 px. Для чёткости загружайте исходники не меньше этих размеров.'
             : 'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
       dom.advertisingDraftFileBlock.className = isBlock4 ? 'phab-admin-hidden' : '';
       dom.advertisingCardFileBlocks.className = isBlock4
@@ -34091,7 +34093,7 @@
         : state.advertisingSubtab === 'cabinetForMeCard'
             ? cardVariant === 'horizontal'
               ? { width: 720, height: 360 }
-              : { width: 480, height: 480 }
+              : { width: 400, height: 532 }
             : { width: 1600, height: 900 };
     }
 
@@ -34116,7 +34118,7 @@
       dom.advertisingCropY.output.textContent = String(imageState.crop.offsetY);
       dom.advertisingCropHeadLabel.textContent =
         normalized === 'square'
-          ? 'Кадрирование: квадрат 480 × 480 px'
+          ? 'Кадрирование: портрет 400 × 532 px'
           : 'Кадрирование: горизонталь 720 × 360 px';
       dom.advertisingCropControls.className = imageState.sourceFile
         ? 'phab-advertising-crop-controls'
@@ -34312,7 +34314,7 @@
       var cardImageUrls = {
         square:
           state.advertisingEditorCardImages.square.previewUrl ||
-          (item && (item.squareImageUrl || item.imageUrl) ? String(item.squareImageUrl || item.imageUrl) : ''),
+          (item && item.squareImageUrl ? String(item.squareImageUrl) : ''),
         horizontal:
           state.advertisingEditorCardImages.horizontal.previewUrl ||
           (item && (item.horizontalImageUrl || item.imageUrl)
@@ -34416,7 +34418,7 @@
       var sources = [
         {
           variant: 'square',
-          url: String(item.squareImageUrl || item.imageUrl || '')
+          url: String(item.squareImageUrl || '')
         },
         {
           variant: 'horizontal',
@@ -34460,6 +34462,13 @@
       if (!hrefIsValid) {
         dom.advertisingDraftHrefInput.focus();
         return null;
+      }
+      if (state.advertisingSubtab === 'cabinetForMeCard') {
+        var item = getAdvertisingEditorItem();
+        if (!state.advertisingEditorCardImages.square.dataUrl && !(item && item.squareImageUrl)) {
+          setStatus('Загрузите портретное изображение 400 × 532 px для карточки', true);
+          return null;
+        }
       }
       if (state.advertisingEditorMode === 'create') {
         if (state.advertisingSubtab === 'cabinetForMeCard') {
@@ -35004,8 +35013,8 @@
       var cardImageUrls = {
         square:
           state.advertisingEditorCardImages.square.previewUrl ||
-          (item && (item.squareImageUrl || item.imageUrl)
-            ? String(item.squareImageUrl || item.imageUrl)
+          (item && item.squareImageUrl
+            ? String(item.squareImageUrl)
             : ''),
         horizontal:
           state.advertisingEditorCardImages.horizontal.previewUrl ||
