@@ -5,39 +5,54 @@ import { resolve } from 'path';
 /**
  * The CUP notification composer may address recipients by phone number and/or by PadlHub user id.
  * The panel is a browser asset without a unit-test runtime, so this guards the served contract: the
- * request payloads carry a selector object, a malformed PadlHub id is surfaced instead of silently
- * dropped, and the additive `unresolvedUserIds` response field is read defensively.
+ * request payloads carry a selector object, the new field is really wired into the shared DOM map and
+ * listeners, a malformed id or an over-limit selection blocks sending instead of being dropped
+ * silently, and a stale resolution cannot arm the send button.
  */
 async function main(): Promise<void> {
   const panel = readFileSync(resolve(__dirname, '../client-sdk/phab-admin-panel.js'), 'utf8');
 
+  // Payload contract.
   assert.match(
     panel,
     /resolveRecipients: function \(selector\) \{[\s\S]{0,220}?'POST',\s*\n\s*selector,/,
     'recipient resolution must forward the whole selector, not a phone-only payload'
   );
-
   assert.match(
     panel,
-    /data-notification-user-ids/,
-    'the composer must expose a PadlHub ID field'
-  );
-  assert.match(
-    panel,
-    /data-notification-user-id-warning/,
-    'the composer must expose a warning node for malformed PadlHub ids'
+    /Object\.assign\(\{\}, notificationRecipientSelection\(\)\.selector, \{/,
+    'the campaign payload must be built from the recipient selector'
   );
 
+  // The field, its warning node, the DOM map and the listeners are one wiring unit: dropping any of
+  // them throws while binding events, which takes the whole CUP panel down.
   assert.match(
     panel,
-    /function parseNotificationUserIds\(\)/,
-    'PadlHub ids must be parsed and validated before sending'
+    /'<label class="phab-admin-notifications-field"><span>PadlHub ID пользователей<\/span>' \+\s*\n\s*'<textarea[^']*data-notification-user-ids><\/textarea><\/label>' \+/,
+    'the composer must render a PadlHub ID textarea'
   );
   assert.match(
     panel,
-    /NOTIFICATION_USER_ID_PATTERN\s*=\s*\n?\s*\/\^\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\$\//,
-    'the id check must accept canonical UUIDs only'
+    /var notificationUserIdsInput = notificationNode\('\[data-notification-user-ids\]'\);/,
+    'the PadlHub ID textarea must be resolved to a control reference'
   );
+  assert.match(
+    panel,
+    /notificationUserIdsInput: notificationUserIdsInput,/,
+    'the PadlHub ID control must be exposed on the shared DOM map'
+  );
+  assert.match(
+    panel,
+    /notificationUserIdWarning: notificationUserIdWarning,/,
+    'the warning control must be exposed on the shared DOM map'
+  );
+  assert.match(
+    panel,
+    /\[dom\.notificationPhonesInput, dom\.notificationUserIdsInput\]\.forEach\(function \(input\) \{/,
+    'editing either recipient field must invalidate the preview'
+  );
+
+  // Validation and gating.
   assert.match(
     panel,
     /if \(NOTIFICATION_USER_ID_PATTERN\.test\(userId\)\) ids\.push\(userId\);\s*\n\s*else invalid\.push\(userId\);/,
@@ -45,20 +60,33 @@ async function main(): Promise<void> {
   );
   assert.match(
     panel,
-    /dom\.notificationPreviewBtn\.disabled =\s*\n\s*selection\.phones \+ selection\.userIds === 0 \|\|\s*\n\s*hasInvalidUserIds \|\|/,
-    'a malformed id must block the recipient preview'
+    /var blocked = hasInvalidUserIds \|\| overLimit \|\| Boolean\(notificationState\.busy\);/,
+    'malformed ids and over-limit selections must be computed as a blocking state'
   );
   assert.match(
     panel,
-    /dom\.notificationSendBtn\.disabled =[\s\S]{0,400}?hasInvalidUserIds \|\|/,
-    'a malformed id must block sending the campaign'
+    /var overLimit = selection\.total > NOTIFICATION_RECIPIENT_LIMIT;/,
+    'the composer must enforce the documented 100-value limit'
+  );
+  assert.match(
+    panel,
+    /dom\.notificationPreviewBtn\.disabled = selection\.total === 0 \|\| blocked;/,
+    'a blocked or empty selector must disable the recipient preview'
   );
 
+  // A resolve answer that arrives after the recipients changed must be discarded.
   assert.match(
     panel,
-    /Object\.assign\(\{\}, notificationRecipientSelection\(\)\.selector, \{/,
-    'the campaign payload must be built from the recipient selector'
+    /notificationState\.recipientRevision \+= 1;/,
+    'editing recipients must invalidate an in-flight resolution'
   );
+  assert.match(
+    panel,
+    /if \(revision !== notificationState\.recipientRevision\) \{/,
+    'a stale resolution must not re-arm the send button'
+  );
+
+  // Response handling.
   assert.match(
     panel,
     /Array\.isArray\(resolution\.unresolvedUserIds\)/,
@@ -68,6 +96,11 @@ async function main(): Promise<void> {
     panel,
     /String\(recipient\.phoneMasked \|\| recipient\.userId \|\| ''\)/,
     'a recipient resolved by user id has no masked phone and must fall back to the id'
+  );
+  assert.match(
+    panel,
+    /var skipped = Number\(result\.unresolvedCount \|\| 0\);/,
+    'a partial campaign must report the selector values that reached nobody'
   );
 }
 

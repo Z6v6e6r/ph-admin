@@ -14231,7 +14231,10 @@
       capabilities: null,
       resolution: null,
       restoring: false,
-      busy: ''
+      busy: '',
+      // Bumped on every recipient edit, so a resolve answer for an older selector can be discarded
+      // instead of re-arming the send button for recipients that were never previewed.
+      recipientRevision: 0
     };
     var locationAdminState = {
       items: [],
@@ -36214,6 +36217,8 @@
       return { ids: ids, invalid: invalid };
     }
 
+    var NOTIFICATION_RECIPIENT_LIMIT = 100;
+
     function notificationRecipientSelection() {
       var phones = parseNotificationPhones();
       var userIds = parseNotificationUserIds();
@@ -36224,6 +36229,7 @@
         selector: selector,
         phones: phones.length,
         userIds: userIds.ids.length,
+        total: phones.length + userIds.ids.length,
         invalidUserIds: userIds.invalid
       };
     }
@@ -36308,31 +36314,34 @@
       var selection = notificationRecipientSelection();
       var selectedChannels = selectedNotificationChannels();
       var hasInvalidUserIds = selection.invalidUserIds.length > 0;
+      var overLimit = selection.total > NOTIFICATION_RECIPIENT_LIMIT;
       dom.notificationPhoneCount.textContent =
         selection.phones + ' номеров · ' + selection.userIds + ' PadlHub ID';
-      if (hasInvalidUserIds) {
+      if (hasInvalidUserIds || overLimit) {
         dom.notificationUserIdWarning.classList.remove('phab-admin-hidden');
-        dom.notificationUserIdWarning.textContent =
-          'Не похоже на PadlHub ID: ' +
-          selection.invalidUserIds.join(', ') +
-          '. Исправьте или удалите эти значения — пока они здесь, отправка заблокирована.';
+        dom.notificationUserIdWarning.textContent = hasInvalidUserIds
+          ? 'Не похоже на PadlHub ID: ' +
+            selection.invalidUserIds.join(', ') +
+            '. Исправьте или удалите эти значения — пока они здесь, отправка заблокирована.'
+          : 'Не более ' +
+            NOTIFICATION_RECIPIENT_LIMIT +
+            ' значений всего, сейчас ' +
+            selection.total +
+            '. Уберите лишние — пока их больше, отправка заблокирована.';
       } else {
         dom.notificationUserIdWarning.classList.add('phab-admin-hidden');
         dom.notificationUserIdWarning.textContent = '';
       }
-      dom.notificationPreviewBtn.disabled =
-        selection.phones + selection.userIds === 0 ||
-        hasInvalidUserIds ||
-        Boolean(notificationState.busy);
+      var blocked = hasInvalidUserIds || overLimit || Boolean(notificationState.busy);
+      dom.notificationPreviewBtn.disabled = selection.total === 0 || blocked;
       dom.notificationSendBtn.disabled =
         !notificationState.resolution ||
         !Array.isArray(notificationState.resolution.matched) ||
         notificationState.resolution.matched.length === 0 ||
-        hasInvalidUserIds ||
+        blocked ||
         !String(dom.notificationTitleInput.value || '').trim() ||
         !String(dom.notificationBodyInput.value || '').trim() ||
-        selectedChannels.length === 0 ||
-        Boolean(notificationState.busy);
+        selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
     }
 
@@ -36456,12 +36465,23 @@
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
       var selection = notificationRecipientSelection();
+      var revision = notificationState.recipientRevision;
       notificationState.busy = 'preview';
       notificationState.resolution = null;
       setNotificationResult(dom.notificationResolution, 'Проверяем получателей…', false);
       updateNotificationControls();
       try {
         var resolution = await notificationApi.resolveRecipients(selection.selector);
+        if (revision !== notificationState.recipientRevision) {
+          // The operator edited the recipients while this answer was in flight: it describes values
+          // that are no longer selected, so it must not enable the send button.
+          setNotificationResult(
+            dom.notificationResolution,
+            'Получатели изменились во время проверки. Проверьте их снова.',
+            true
+          );
+          return;
+        }
         notificationState.resolution = resolution;
         var matched = Array.isArray(resolution.matched) ? resolution.matched : [];
         var unresolved = Array.isArray(resolution.unresolvedPhones)
@@ -36512,15 +36532,17 @@
         var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
         if (deepLink) payload.deepLink = deepLink;
         var result = await notificationApi.createCampaign(payload);
+        var skipped = Number(result.unresolvedCount || 0);
         setNotificationResult(
           dom.notificationResult,
-          'Кампания принята.\nInbox: ' +
+          (skipped > 0 ? 'Кампания принята частично: ' + skipped + ' значений не нашли получателя.\n' : 'Кампания принята.\n') +
+            'Inbox: ' +
             Number(result.inAppCreatedCount || 0) +
             ', Web Push в очереди: ' +
             Number(result.pushQueuedCount || 0) +
             '.\nID: ' +
             String(result.campaignId || '').slice(0, 8),
-          false
+          skipped > 0
         );
         setStatus('Кампания уведомлений принята', false);
       } catch (error) {
@@ -37801,6 +37823,7 @@
       [dom.notificationPhonesInput, dom.notificationUserIdsInput].forEach(function (input) {
         input.addEventListener('input', function () {
           notificationState.resolution = null;
+          notificationState.recipientRevision += 1;
           setNotificationResult(
             dom.notificationResolution,
             'Проверьте получателей перед отправкой кампании.',
