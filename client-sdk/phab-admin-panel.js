@@ -7427,6 +7427,8 @@
         color:rgba(51,0,32,.58);
         font-size:11px;
       }
+      .phab-admin-notifications-budget.is-tight{color:#8a5a00}
+      .phab-admin-notifications-budget.is-over{color:#b86400;font-weight:700}
       .phab-admin-notifications-channels{
         display:grid;
         grid-template-columns:repeat(2,minmax(0,1fr));
@@ -9390,8 +9392,10 @@
       '<span class="phab-admin-notifications-channel-icon">Ц</span><span class="phab-admin-notifications-channel-copy"><strong>Центр уведомлений</strong><small data-notification-channel-status>Проверяем канал…</small></span></label>' +
       '</div>' +
       '<div><h3>3. Сообщение</h3><p>Текст будет одинаковым для выбранных каналов.</p></div>' +
-      '<label class="phab-admin-notifications-field"><span>Заголовок</span><input class="phab-admin-input" maxlength="300" placeholder="Изменение времени игры" data-notification-title></label>' +
-      '<label class="phab-admin-notifications-field"><span>Текст уведомления</span><textarea class="phab-admin-input" maxlength="8000" placeholder="Ваша игра перенесена. Откройте приложение, чтобы посмотреть детали." data-notification-body></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>Заголовок</span><input class="phab-admin-input" maxlength="300" placeholder="Изменение времени игры" data-notification-title>' +
+      '<small class="phab-admin-notifications-meta phab-admin-notifications-budget" data-notification-title-budget>Баннер покажет до 40 символов</small></label>' +
+      '<label class="phab-admin-notifications-field"><span>Текст уведомления</span><textarea class="phab-admin-input" maxlength="8000" placeholder="Ваша игра перенесена. Откройте приложение, чтобы посмотреть детали." data-notification-body></textarea>' +
+      '<small class="phab-admin-notifications-meta phab-admin-notifications-budget" data-notification-body-budget>Баннер покажет первые 120 символов</small></label>' +
       '<label class="phab-admin-notifications-field"><span>Ссылка внутри PadlHub</span><input class="phab-admin-input" value="/notifications" placeholder="/notifications" data-notification-deep-link></label>' +
       '</section>' +
       '<aside class="phab-admin-notifications-stack">' +
@@ -9433,7 +9437,9 @@
       notificationsSection.querySelectorAll('[data-notification-channel]')
     );
     var notificationTitleInput = notificationNode('[data-notification-title]');
+    var notificationTitleBudget = notificationNode('[data-notification-title-budget]');
     var notificationBodyInput = notificationNode('[data-notification-body]');
+    var notificationBodyBudget = notificationNode('[data-notification-body-budget]');
     var notificationDeepLinkInput = notificationNode('[data-notification-deep-link]');
     var notificationResolution = notificationNode('[data-notification-resolution]');
     var notificationResult = notificationNode('[data-notification-result]');
@@ -13176,7 +13182,9 @@
       notificationPreviewBtn: notificationPreviewBtn,
       notificationChannelInputs: notificationChannelInputs,
       notificationTitleInput: notificationTitleInput,
+      notificationTitleBudget: notificationTitleBudget,
       notificationBodyInput: notificationBodyInput,
+      notificationBodyBudget: notificationBodyBudget,
       notificationDeepLinkInput: notificationDeepLinkInput,
       notificationResolution: notificationResolution,
       notificationResult: notificationResult,
@@ -36290,6 +36298,14 @@
 
     var NOTIFICATION_RECIPIENT_LIMIT = 100;
 
+    // The Admin API accepts a 300-character title because that is the in-app inbox limit, but the
+    // operating system truncates the system banner much earlier: about 40 characters on desktop and
+    // Android, about 30 on an iOS banner. The composer counts against the banner, because that is the
+    // text the recipient actually reads; a longer value is never blocked, it only loses the tail.
+    var NOTIFICATION_BANNER_TITLE_LIMIT = 40;
+    var NOTIFICATION_BANNER_TITLE_IOS_LIMIT = 30;
+    var NOTIFICATION_BANNER_BODY_LIMIT = 120;
+
     function notificationRecipientSelection() {
       var phones = parseNotificationPhones();
       var userIds = parseNotificationUserIds();
@@ -36392,9 +36408,35 @@
       }
     }
 
+    function renderNotificationTextBudget() {
+      var titleLength = String(dom.notificationTitleInput.value || '').trim().length;
+      var bodyLength = String(dom.notificationBodyInput.value || '').trim().length;
+      var titleOver = titleLength > NOTIFICATION_BANNER_TITLE_LIMIT;
+      var titleTight = !titleOver && titleLength > NOTIFICATION_BANNER_TITLE_IOS_LIMIT;
+      var titleText = titleLength + ' / ' + NOTIFICATION_BANNER_TITLE_LIMIT + ' символов для баннера';
+      if (titleOver) {
+        titleText += ' — баннер обрежет заголовок, в Центре уведомлений он останется целиком';
+      } else if (titleTight) {
+        titleText += ' — на iPhone баннер может обрезать';
+      }
+      // The tone rides on modifiers, so the muted base style keeps applying when the state changes.
+      dom.notificationTitleBudget.classList.toggle('is-over', titleOver);
+      dom.notificationTitleBudget.classList.toggle('is-tight', titleTight);
+      dom.notificationTitleBudget.textContent = titleText;
+      var bodyOver = bodyLength > NOTIFICATION_BANNER_BODY_LIMIT;
+      dom.notificationBodyBudget.classList.toggle('is-tight', bodyOver);
+      dom.notificationBodyBudget.textContent = bodyOver
+        ? bodyLength +
+          ' символов — в баннер войдут первые ' +
+          NOTIFICATION_BANNER_BODY_LIMIT +
+          ', остальное видно в Центре уведомлений'
+        : bodyLength + ' символов · в баннер войдут все';
+    }
+
     function updateNotificationControls() {
       var selection = notificationRecipientSelection();
       var selectedChannels = selectedNotificationChannels();
+      renderNotificationTextBudget();
       var hasInvalidUserIds = selection.invalidUserIds.length > 0;
       var overLimit = selection.total > NOTIFICATION_RECIPIENT_LIMIT;
       dom.notificationPhoneCount.textContent =
