@@ -125,11 +125,12 @@ async function main(): Promise<void> {
     'a rejected token must be forgotten while the phone login stays available'
   );
 
-  // An expired session must return the operator to the login card from both admin calls.
+  // An expired session must return the operator to the login card from every admin call: the
+  // recipient preview, the campaign send and the Web Push subscriber list.
   assert.equal(
     panel.split('if (notificationSessionExpired(error)) return;').length - 1,
-    2,
-    'preview and send must both handle an expired session'
+    3,
+    'preview, send and the subscriber list must all handle an expired session'
   );
   assert.match(
     panel,
