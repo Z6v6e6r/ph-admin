@@ -92,6 +92,18 @@ async function main(): Promise<void> {
     'each report line must be created as a text node'
   );
 
+  // The funnel is the only completion signal the panel can show, and it must stay labelled as a floor.
+  assert.match(
+    panel,
+    /' · показано ' \+\s*\n\s*String\(channel\.displayed \|\| 0\) \+\s*\n\s*' · открыто ' \+\s*\n\s*String\(channel\.opened \|\| 0\)/,
+    'the channel line must report displays and opens'
+  );
+  assert.match(
+    panel,
+    /' · показано ' \+\s*\n\s*String\(campaign\.pushDisplayed \|\| 0\) \+\s*\n\s*' · открыто ' \+\s*\n\s*String\(campaign\.pushOpened \|\| 0\)/,
+    'each campaign line must report displays and opens'
+  );
+
   // The subscriber row has to say which push service answered and whether the confirmation is old.
   assert.match(
     panel,

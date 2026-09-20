@@ -36860,6 +36860,10 @@
             String(channel.suppressed || 0) +
             ' · в работе ' +
             String(channel.pending || 0) +
+            ' · показано ' +
+            String(channel.displayed || 0) +
+            ' · открыто ' +
+            String(channel.opened || 0) +
             (channel.medianAcceptSeconds === undefined
               ? ''
               : ' · медиана ' + String(channel.medianAcceptSeconds) + ' с')
@@ -36929,7 +36933,11 @@
             ' · ошибок ' +
             String(campaign.pushFailed || 0) +
             ' · dead ' +
-            String(campaign.pushDead || 0)
+            String(campaign.pushDead || 0) +
+            ' · показано ' +
+            String(campaign.pushDisplayed || 0) +
+            ' · открыто ' +
+            String(campaign.pushOpened || 0)
         );
       });
     }
