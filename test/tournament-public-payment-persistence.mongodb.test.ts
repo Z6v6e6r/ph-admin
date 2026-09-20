@@ -155,6 +155,78 @@ async function main(): Promise<void> {
     assert.equal(storedAfterReplay?.participants?.length, 2);
 
     await collection.insertOne({
+      id: 'provider-attempt-cup',
+      source: 'CUSTOM',
+      slug: 'provider-attempt-cup',
+      publicUrl: '/api/tournaments/public/provider-attempt-cup',
+      name: 'Provider Attempt Cup',
+      status: 'REGISTRATION',
+      tournamentType: 'Американо',
+      accessLevels: ['C'],
+      gender: 'MIXED',
+      maxPlayers: 2,
+      participants: [{ name: 'Existing', phone: '79990003500', status: 'REGISTERED' }],
+      waitlist: [],
+      allowedManagerPhones: [],
+      skin: {},
+      mechanics: { enabled: false, config: {} },
+      details: { booking: { pendingJoinPayments: [] } },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    const attemptId = `tournament-payment:${randomUUID()}`;
+    assert.ok(await repository.reservePublicJoinPayment(
+      'provider-attempt-cup',
+      {
+        ...pending(attemptId, '79990003501'),
+        state: 'PROVIDER_CREATE_PENDING',
+        operationType: 'TRANSACTION',
+        amountMinor: undefined,
+        eligibilitySnapshot: {
+          ...pending(attemptId, '79990003501').eligibilitySnapshot,
+          activityId: 'provider-attempt-cup'
+        }
+      }
+    ));
+    const claimAt = new Date().toISOString();
+    const claims = await Promise.all([
+      repository.claimPublicJoinTransactionCreate(
+        'provider-attempt-cup', attemptId, '79990003501', claimAt
+      ),
+      repository.claimPublicJoinTransactionCreate(
+        'provider-attempt-cup', attemptId, '79990003501', claimAt
+      )
+    ]);
+    assert.equal(claims.filter(Boolean).length, 1, 'only one provider POST claim is granted');
+    assert.equal(
+      (await collection.findOne({ id: 'provider-attempt-cup' }))
+        ?.details?.booking?.pendingJoinPayments?.[0]?.state,
+      'PROVIDER_RESULT_UNKNOWN'
+    );
+    assert.ok(await repository.recordPublicJoinTransactionProviderIdentity(
+      'provider-attempt-cup',
+      attemptId,
+      '79990003501',
+      'provider-transaction-1'
+    ));
+    assert.ok(await repository.bindPublicJoinTransaction(
+      'provider-attempt-cup',
+      attemptId,
+      '79990003501',
+      'provider-transaction-1',
+      {
+        checkoutUrl: 'https://pay.example/provider-transaction-1',
+        amountMinor: 250000,
+        paymentExpiresAt: new Date(Date.now() + 1_200_000).toISOString()
+      }
+    ));
+    const boundAttempt = (await collection.findOne({ id: 'provider-attempt-cup' }))
+      ?.details?.booking?.pendingJoinPayments?.[0];
+    assert.equal(boundAttempt?.transactionId, attemptId);
+    assert.equal(boundAttempt?.providerTransactionId, 'provider-transaction-1');
+    assert.equal(boundAttempt?.state, 'PENDING_PAYMENT');
+
+    await collection.insertOne({
       id: 'ordinary-race-cup',
       source: 'CUSTOM',
       slug: 'ordinary-race-cup',
