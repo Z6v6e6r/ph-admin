@@ -126,11 +126,11 @@ async function main(): Promise<void> {
   );
 
   // An expired session must return the operator to the login card from every admin call: the
-  // recipient preview, the campaign send and the Web Push subscriber list.
+  // recipient preview, the campaign send, the Web Push subscriber list and the delivery report.
   assert.equal(
     panel.split('if (notificationSessionExpired(error)) return;').length - 1,
-    3,
-    'preview, send and the subscriber list must all handle an expired session'
+    4,
+    'preview, send, the subscriber list and the delivery report must all handle an expired session'
   );
   assert.match(
     panel,
