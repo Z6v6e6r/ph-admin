@@ -7427,6 +7427,14 @@
         color:rgba(51,0,32,.58);
         font-size:11px;
       }
+      .phab-admin-notifications-stats{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+      .phab-admin-notifications-stats strong{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        margin-top:6px;
+      }
       .phab-admin-notifications-budget.is-tight{color:#8a5a00}
       .phab-admin-notifications-budget.is-over{color:#b86400;font-weight:700}
       .phab-admin-notifications-channels{
@@ -8649,6 +8657,15 @@
         if (cursor) query += '&cursor=' + encodeURIComponent(String(cursor));
         return adminRequest('/notifications/web-push-subscribers' + query, 'GET', null, '', true);
       },
+      getDeliveryStats: function (days) {
+        return adminRequest(
+          '/notifications/delivery-stats?days=' + encodeURIComponent(String(days)),
+          'GET',
+          null,
+          '',
+          true
+        );
+      },
       getCapabilities: function (allowRefresh) {
         // Callers that verify a pasted token pass false: the 401 retry would silently continue with the
         // cookie session and report a rejected token as accepted.
@@ -9377,6 +9394,20 @@
       '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-subscribers-status>Список ещё не загружен.</div>' +
       '<div class="phab-admin-notifications-subscribers" data-notification-subscribers-list></div>' +
       '</details>' +
+      '<details class="phab-admin-notifications-token"><summary>Доставка пушей</summary>' +
+      '<p class="phab-admin-notifications-meta">Что случилось с отправленным: сколько шлюз принял, что отклонено и с каким кодом. У Web Push нет отчётов от провайдера, поэтому источник — собственные записи: «принято» значит, что пуш-сервис взял сообщение, а не что человек его увидел.</p>' +
+      '<div class="phab-admin-notifications-actions">' +
+      '<label class="phab-admin-notifications-field"><span>Период</span>' +
+      '<select class="phab-admin-input" data-notification-stats-days>' +
+      '<option value="1">1 день</option><option value="7" selected>7 дней</option><option value="30">30 дней</option><option value="90">90 дней</option>' +
+      '</select></label>' +
+      '<button class="phab-admin-btn-secondary" type="button" data-notification-stats-load>Показать отчёт</button></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-stats-status>Отчёт ещё не загружен.</div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-summary></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-failures></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-endpoints></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-campaigns></div>' +
+      '</details>' +
       '<div class="phab-admin-notifications-result phab-admin-hidden" aria-live="polite" data-notification-user-id-warning></div>' +
       '<div class="phab-admin-notifications-row"><span class="phab-admin-notifications-meta" data-notification-phone-count>0 номеров</span>' +
       '<button class="phab-admin-btn-secondary" type="button" data-notification-preview>Проверить получателей</button></div>' +
@@ -9431,6 +9462,13 @@
     var notificationSubscribersStatus = notificationNode('[data-notification-subscribers-status]');
     var notificationSubscribersLoad = notificationNode('[data-notification-subscribers-load]');
     var notificationSubscribersMore = notificationNode('[data-notification-subscribers-more]');
+    var notificationStatsDays = notificationNode('[data-notification-stats-days]');
+    var notificationStatsLoad = notificationNode('[data-notification-stats-load]');
+    var notificationStatsStatus = notificationNode('[data-notification-stats-status]');
+    var notificationStatsSummary = notificationNode('[data-notification-stats-summary]');
+    var notificationStatsFailures = notificationNode('[data-notification-stats-failures]');
+    var notificationStatsEndpoints = notificationNode('[data-notification-stats-endpoints]');
+    var notificationStatsCampaigns = notificationNode('[data-notification-stats-campaigns]');
     var notificationPhoneCount = notificationNode('[data-notification-phone-count]');
     var notificationPreviewBtn = notificationNode('[data-notification-preview]');
     var notificationChannelInputs = Array.prototype.slice.call(
@@ -13178,6 +13216,13 @@
       notificationSubscribersStatus: notificationSubscribersStatus,
       notificationSubscribersLoad: notificationSubscribersLoad,
       notificationSubscribersMore: notificationSubscribersMore,
+      notificationStatsDays: notificationStatsDays,
+      notificationStatsLoad: notificationStatsLoad,
+      notificationStatsStatus: notificationStatsStatus,
+      notificationStatsSummary: notificationStatsSummary,
+      notificationStatsFailures: notificationStatsFailures,
+      notificationStatsEndpoints: notificationStatsEndpoints,
+      notificationStatsCampaigns: notificationStatsCampaigns,
       notificationPhoneCount: notificationPhoneCount,
       notificationPreviewBtn: notificationPreviewBtn,
       notificationChannelInputs: notificationChannelInputs,
@@ -36307,6 +36352,10 @@
 
     var NOTIFICATION_RECIPIENT_LIMIT = 100;
 
+    // A subscription the device never confirmed again is probably gone: iOS drops the subscription when
+    // the Home Screen app is deleted, and the row only turns INVALID once the push service answers 410.
+    var NOTIFICATION_STALE_CONFIRMATION_DAYS = 7;
+
     // The Admin API accepts a 300-character title because that is the in-app inbox limit, but the
     // operating system truncates the system banner much earlier: about 40 characters on desktop and
     // Android, about 30 on an iOS banner. The composer counts against the banner, because that is the
@@ -36723,6 +36772,190 @@
       return name + ' · ' + contact + (id ? ' · ' + id : '');
     }
 
+    // Chrome and every Chromium browser subscribe through FCM, Safari and every browser on iOS through
+    // Apple, so the push service name is also the device family the operator needs to reason about.
+    function notificationPlatformLabels(platforms) {
+      var labels = { CHROME: 'Chrome', SAFARI: 'iPhone/iPad', OTHER: 'другое' };
+      if (!Array.isArray(platforms)) return [];
+      return platforms
+        .map(function (platform) {
+          return labels[String(platform)] || String(platform);
+        })
+        .filter(Boolean);
+    }
+
+    function notificationPlatformSuffix(platforms) {
+      var labels = notificationPlatformLabels(platforms);
+      return labels.length ? ' · ' + labels.join(', ') : '';
+    }
+
+    function notificationShortMoment(value) {
+      var parsed = Date.parse(String(value || ''));
+      if (!Number.isFinite(parsed)) return '';
+      var date = new Date(parsed);
+      var pad = function (part) {
+        return String(part).padStart(2, '0');
+      };
+      return (
+        pad(date.getDate()) +
+        '.' +
+        pad(date.getMonth() + 1) +
+        ' ' +
+        pad(date.getHours()) +
+        ':' +
+        pad(date.getMinutes())
+      );
+    }
+
+    function notificationConfirmationSuffix(lastConfirmedAt) {
+      var moment = notificationShortMoment(lastConfirmedAt);
+      if (!moment) return ' · подтверждение неизвестно';
+      var ageMs = Date.now() - Date.parse(String(lastConfirmedAt));
+      var stale = ageMs > NOTIFICATION_STALE_CONFIRMATION_DAYS * 24 * 60 * 60 * 1000;
+      return ' · подтверждён ' + moment + (stale ? ' (давно — вероятно, устройство заменено)' : '');
+    }
+
+    function appendNotificationStatLine(container, text) {
+      var line = document.createElement('div');
+      line.className = 'phab-admin-notifications-meta';
+      line.textContent = text;
+      container.appendChild(line);
+    }
+
+    function appendNotificationStatHeading(container, text) {
+      var heading = document.createElement('strong');
+      heading.textContent = text;
+      container.appendChild(heading);
+    }
+
+    /**
+     * The report is the operator's only view of what happened after a send: Web Push has no provider
+     * dashboard, so every number here is read back from our own delivery rows.
+     */
+    function renderNotificationDeliveryStats(stats) {
+      var summary = dom.notificationStatsSummary;
+      var failures = dom.notificationStatsFailures;
+      var endpoints = dom.notificationStatsEndpoints;
+      var campaigns = dom.notificationStatsCampaigns;
+      [summary, failures, endpoints, campaigns].forEach(function (node) {
+        node.textContent = '';
+      });
+
+      appendNotificationStatHeading(summary, 'По каналам');
+      var channels = Array.isArray(stats && stats.channels) ? stats.channels : [];
+      if (!channels.length) appendNotificationStatLine(summary, 'За выбранный период отправок не было.');
+      channels.forEach(function (channel) {
+        appendNotificationStatLine(
+          summary,
+          String(channel.channel || '—') +
+            ' · в очереди ' +
+            String(channel.queued || 0) +
+            ' · принято ' +
+            String(channel.accepted || 0) +
+            ' · ошибок ' +
+            String(channel.failed || 0) +
+            ' · dead ' +
+            String(channel.dead || 0) +
+            ' · подавлено ' +
+            String(channel.suppressed || 0) +
+            ' · в работе ' +
+            String(channel.pending || 0) +
+            (channel.medianAcceptSeconds === undefined
+              ? ''
+              : ' · медиана ' + String(channel.medianAcceptSeconds) + ' с')
+        );
+      });
+
+      appendNotificationStatHeading(failures, 'Ошибки');
+      var failureRows = Array.isArray(stats && stats.failures) ? stats.failures : [];
+      if (!failureRows.length) appendNotificationStatLine(failures, 'Ошибок за период нет.');
+      failureRows.forEach(function (failure) {
+        appendNotificationStatLine(
+          failures,
+          String(failure.errorCode || '—') +
+            ' · ' +
+            String(failure.count || 0) +
+            ' раз(а)' +
+            (notificationShortMoment(failure.lastOccurredAt)
+              ? ' · последний ' + notificationShortMoment(failure.lastOccurredAt)
+              : '')
+        );
+      });
+
+      appendNotificationStatHeading(endpoints, 'Устройства');
+      var health = (stats && stats.endpoints) || {};
+      var platformCounts = health.platforms || {};
+      // Only the services that actually have a subscription are worth a line: a row of zeros hides the
+      // one number the operator is looking for.
+      var platformText = Object.keys(platformCounts)
+        .filter(function (key) {
+          return Number(platformCounts[key] || 0) > 0;
+        })
+        .map(function (key) {
+          return (notificationPlatformLabels([key])[0] || key) + ' ' + String(platformCounts[key]);
+        })
+        .join(' · ');
+      appendNotificationStatLine(
+        endpoints,
+        'активных ' +
+          String(health.active || 0) +
+          ' · недействительных ' +
+          String(health.invalid || 0) +
+          ' · отозванных ' +
+          String(health.revoked || 0) +
+          ' · с приостановленной политикой ' +
+          String(health.suspendedPolicy || 0) +
+          (platformText ? ' · ' + platformText : '') +
+          (health.unreadableEndpoints
+            ? ' · нечитаемых ' + String(health.unreadableEndpoints)
+            : '')
+      );
+
+      appendNotificationStatHeading(campaigns, 'Последние кампании');
+      var campaignRows = Array.isArray(stats && stats.campaigns) ? stats.campaigns : [];
+      if (!campaignRows.length) appendNotificationStatLine(campaigns, 'Кампаний за период не было.');
+      campaignRows.forEach(function (campaign) {
+        appendNotificationStatLine(
+          campaigns,
+          (notificationShortMoment(campaign.createdAt) || '—') +
+            ' · ' +
+            String(campaign.campaignId || '').slice(0, 8) +
+            ' · получателей ' +
+            String(campaign.matchedCount || 0) +
+            ' · push в очереди ' +
+            String(campaign.pushQueuedCount || 0) +
+            ' · принято ' +
+            String(campaign.pushAccepted || 0) +
+            ' · ошибок ' +
+            String(campaign.pushFailed || 0) +
+            ' · dead ' +
+            String(campaign.pushDead || 0)
+        );
+      });
+    }
+
+    async function loadNotificationDeliveryStats() {
+      if (!notificationApi) return;
+      var days = Number(dom.notificationStatsDays.value || 7);
+      setNotificationResult(dom.notificationStatsStatus, 'Загружаем отчёт…', false);
+      try {
+        var stats = await notificationApi.getDeliveryStats(days);
+        renderNotificationDeliveryStats(stats || {});
+        setNotificationResult(
+          dom.notificationStatsStatus,
+          'Период: ' + days + ' дн. «Принято» — это приём пуш-сервисом, а не показ на устройстве.',
+          false
+        );
+      } catch (error) {
+        if (notificationSessionExpired(error)) return;
+        setNotificationResult(
+          dom.notificationStatsStatus,
+          error && error.message ? error.message : 'Не удалось загрузить отчёт.',
+          true
+        );
+      }
+    }
+
     function renderNotificationSubscribers(items, append) {
       if (!append) dom.notificationSubscribersList.textContent = '';
       if (!items.length && !append) {
@@ -36744,7 +36977,9 @@
           ' · ' +
           String(subscriber.userId || '').slice(0, 8) +
           ' · подписок ' +
-          String(subscriber.endpointCount || 0);
+          String(subscriber.endpointCount || 0) +
+          notificationPlatformSuffix(subscriber.platforms) +
+          notificationConfirmationSuffix(subscriber.lastConfirmedAt);
         row.setAttribute('data-notification-subscriber', String(subscriber.userId || ''));
         row.addEventListener('click', function () {
           addNotificationRecipient(String(subscriber.userId || ''));
@@ -38273,6 +38508,9 @@
       });
       dom.notificationSubscribersMore.addEventListener('click', function () {
         loadNotificationSubscribers({ append: true }).catch(handleError);
+      });
+      dom.notificationStatsLoad.addEventListener('click', function () {
+        loadNotificationDeliveryStats().catch(handleError);
       });
       dom.notificationPreviewBtn.addEventListener('click', function () {
         previewNotificationRecipients().catch(handleError);
