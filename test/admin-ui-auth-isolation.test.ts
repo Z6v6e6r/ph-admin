@@ -97,6 +97,7 @@ async function main(): Promise<void> {
   assert.deepEqual(config.roles, [Role.STATION_ADMIN]);
   assert.deepEqual(config.permissions, piterAdmin.permissions);
   assert.deepEqual(config.stationIds, ['Piter']);
+  assert.deepEqual(config.permissionStationScopes, piterAdmin.permissionStationScopes);
   assert.deepEqual(config.connectorRoutes, ['MAX_BOT', 'LK_WEB_MESSENGER']);
   assert.equal(panelCapture.getHeader('cache-control'), 'private, no-store');
   assert.equal(panelCapture.getHeader('referrer-policy'), 'no-referrer');

@@ -2,6 +2,8 @@ import { Role } from './role.enum';
 import { RequestUser } from './request-user.interface';
 
 export const ADMIN_PERMISSION_CATALOG = [
+  { key: 'traffic:read', label: 'Трафик и карантин: просмотр (все станции)' },
+  { key: 'traffic:write', label: 'Карантин IP: управление (все станции)' },
   { key: 'dialogs:read', label: 'Диалоги: чтение' },
   { key: 'dialogs:write', label: 'Диалоги: ответы и изменение статуса' },
   { key: 'games:read', label: 'Игры: чтение' },

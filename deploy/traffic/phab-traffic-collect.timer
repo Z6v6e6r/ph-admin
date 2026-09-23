@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh daily top 20 and close yesterday after Moscow midnight
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+OnCalendar=*-*-* 00:10:00 Europe/Moscow
+Persistent=true
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
