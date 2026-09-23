@@ -1,0 +1,44 @@
+name: traffic-quarantine
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/traffic-quarantine.yml'
+      - 'src/traffic/**'
+      - 'src/app.module.ts'
+      - 'src/auth/**'
+      - 'src/common/rbac/**'
+      - 'src/ui/ui.controller.ts'
+      - 'client-sdk/phab-admin-panel.js'
+      - 'scripts/traffic-edge.py'
+      - 'deploy/traffic/**'
+      - 'test/traffic*'
+      - 'package-lock.json'
+      - 'package.json'
+      - 'tsconfig*.json'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  traffic-quarantine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx ts-node test/traffic.test.ts
+      - run: python3 test/traffic-edge.test.py
+      - name: Install nginx for isolated localhost enforcement tests
+        run: sudo apt-get update -qq && sudo apt-get install -y nginx
+      - run: python3 test/traffic-nginx.test.py /usr/sbin/nginx
+      - run: node --check client-sdk/phab-admin-panel.js

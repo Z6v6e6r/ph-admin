@@ -43,7 +43,8 @@ def main(binary):
         server_config = (ROOT / 'deploy/traffic/server.conf').read_text().replace('/var/log/nginx/phab-traffic.jsonl', str(log))
         config = root / 'nginx.conf'
         # Only this fixture trusts its local test client as an ingress proxy.
-        config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } } }')
+        temp_paths = ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
+        config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + temp_paths + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } } }')
         base = [binary, '-p', temp, '-c', str(config)]
         subprocess.run(base + ['-t'], check=True, capture_output=True)
         proc = subprocess.Popen(base, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
