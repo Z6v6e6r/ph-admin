@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { isIP } from 'node:net';
 import { randomUUID } from 'node:crypto';
+import { readHistoryProtectionReport } from './history-protection-report';
 
 export const PROTECTED_IPS = ['188.127.235.140'];
 export interface TrafficRule {
@@ -82,15 +83,16 @@ export class TrafficService {
     if (!validDay(day)) throw new BadRequestException('Дата должна иметь формат YYYY-MM-DD');
     const cfg = this.config();
     if (!cfg.enabled) return { enabled: false, protectedIps: PROTECTED_IPS };
-    const [policy, edge, report] = await Promise.all([
+    const [policy, edge, report, historyProtection] = await Promise.all([
       this.policy(cfg.policy), this.readJson(join(cfg.reports, 'edge-status.json')),
-      this.readJson(join(cfg.reports, `${day}.json`))
+      this.readJson(join(cfg.reports, `${day}.json`)),
+      readHistoryProtectionReport(process.env.TRAFFIC_HISTORY_REPORT_FILE)
     ]);
     const fresh = edge && Number.isFinite(Date.parse(edge.checkedAt)) &&
       Date.now() - Date.parse(edge.checkedAt) < 180_000;
     return { enabled: true, scope: 'public-schedule', protectedIps: PROTECTED_IPS,
       policy, edge: edge || null, applied: Boolean(fresh && !edge.error && edge.appliedRevision === policy.revision),
-      report: report || null, day, timezone: 'Europe/Moscow' };
+      report: report || null, historyProtection, day, timezone: 'Europe/Moscow' };
   }
 
   async mutate(body: unknown, actorId: string) {
