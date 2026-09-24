@@ -57,6 +57,7 @@ import {
   SupportDialogsExportResult,
   SupportDialogSettings,
   SupportDialogReactionAnalytics,
+  SupportDialogScope,
   SupportDialogStatus,
   SupportDialogSummary,
   SupportDialogVivaStatus,
@@ -566,6 +567,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedDto.subject,
       normalizedDto.connector,
       selectedStationId,
+      this.resolveDialogScope(normalizedDto.dialogScope),
       createdAt
     );
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
@@ -2040,6 +2042,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return canonical;
   }
 
+  /**
+   * The stored scope of an ingest event, defaulting to the legacy client-scoped dialog. Nothing
+   * resolves on this value yet: it exists so the LK2 station tab can declare its scope once the
+   * contract has shipped.
+   */
+  private resolveDialogScope(rawScope: unknown): SupportDialogScope {
+    return rawScope === SupportDialogScope.STATION
+      ? SupportDialogScope.STATION
+      : SupportDialogScope.CLIENT;
+  }
+
   private resolveDialog(
     client: SupportClientProfile,
     stationId: string,
@@ -2047,6 +2060,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     subject: string | undefined,
     connector: SupportConnectorRoute,
     explicitSelectedStationId: string | undefined,
+    dialogScope: SupportDialogScope,
     createdAt: string
   ): SupportDialog {
     const existing = this.collapseOpenDialogs(client.id, connector);
@@ -2092,6 +2106,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       accessStationIds: this.mergeStationAccessIds([], [stationId]),
       writeStationIds: [stationId],
       readOnlyStationIds: [],
+      dialogScope,
       status: SupportDialogStatus.OPEN,
       authStatus: client.authStatus,
       currentPhone: client.primaryPhone,
@@ -2900,6 +2915,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       accessStationIds: this.getDialogAccessStationIds(dialog),
       writeStationIds: [...dialog.writeStationIds],
       readOnlyStationIds: [...dialog.readOnlyStationIds],
+      dialogScope: this.resolveDialogScope(dialog.dialogScope),
       isActiveForUser: canWriteForUser,
       isReadOnlyForUser: !canWriteForUser,
       isResolved: dialog.isResolved === true,
@@ -3145,6 +3161,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     return {
       ...dialog,
+      dialogScope: this.resolveDialogScope(dialog.dialogScope),
       status:
         dialog.status === SupportDialogStatus.CLOSED
           ? SupportDialogStatus.CLOSED

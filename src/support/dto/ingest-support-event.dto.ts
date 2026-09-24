@@ -14,6 +14,7 @@ import {
 import { MessageAttachmentDto } from '../../common/messages/message-attachment.dto';
 import {
   SupportConnectorRoute,
+  SupportDialogScope,
   SupportMessageDirection,
   SupportMessageKind,
   SupportPriority,
@@ -139,6 +140,14 @@ export class IngestSupportEventDto {
   @IsString()
   @MaxLength(160)
   stationName?: string;
+
+  /**
+   * Declared so the LK2 bridge may ask for a dialog per station. Optional and currently unused: an
+   * event without it keeps the legacy one-dialog-per-client behaviour.
+   */
+  @IsOptional()
+  @IsEnum(SupportDialogScope)
+  dialogScope?: SupportDialogScope;
 
   @IsOptional()
   @IsString()
