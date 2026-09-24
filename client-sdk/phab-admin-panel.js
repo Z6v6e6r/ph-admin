@@ -13838,6 +13838,8 @@
       '<label class="phab-admin-settings-label">Дата (Москва)<input class="phab-admin-settings-input" type="date" data-traffic-day></label>' +
       '<button type="button" class="phab-admin-btn" data-traffic-refresh>Обновить</button></div>' +
       '<p role="status" aria-live="polite" data-traffic-status></p><p data-traffic-report-status></p>' +
+      '<h3>Защита истории турниров</h3><p>Оперативные сигналы за последние 10–11 минут, независимо от выбранной даты. Сигнал требует проверки и не добавляет IP в карантин автоматически.</p>' +
+      '<p role="status" aria-live="polite" data-traffic-history-status></p><div style="overflow-x:auto" data-traffic-history-signals></div>' +
       '<div style="overflow-x:auto" data-traffic-top></div>' +
       '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников. Сохранённое правило начинает действовать после подтверждения сервером.</p>' +
       '<p data-traffic-protected></p><div data-traffic-rules></div>' +
@@ -13885,7 +13887,7 @@
         if (seq !== sequence || !active) return;
         if (!data.enabled) {
           q('status').textContent = 'Карантин ещё не подключён к серверу.';
-          ['top', 'rules', 'audit', 'report-status'].forEach(function (name) { q(name).textContent = ''; });
+          ['top', 'rules', 'audit', 'report-status', 'history-status', 'history-signals'].forEach(function (name) { q(name).textContent = ''; });
           return;
         }
         revision = data.policy.revision;
@@ -13893,6 +13895,33 @@
         q('protected').textContent = 'Разрешённые источники: ' + data.protectedIps.join(', ');
         q('status').textContent = data.applied ? 'Правила применены. Проверено: ' + time(data.edge.checkedAt) :
           'Применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
+        var protection = data.historyProtection || { state: 'not_configured' };
+        var modes = { off: 'Выключена', shadow: 'Наблюдение: запросы пропускаются', enforce: 'Ограничение частоты включено' };
+        var states = { not_configured: 'Мониторинг истории ещё не подключён.', missing: 'Ожидаем первый отчёт защиты истории.',
+          invalid: 'Некорректный отчёт защиты истории.', unavailable: 'Не удалось прочитать отчёт защиты истории.' };
+        q('history-status').textContent = states[protection.state] ||
+          (protection.state === 'stale' ? 'Нет свежего подтверждения. Последнее состояние: ' : '') +
+          (modes[protection.mode] || 'Неизвестный режим') + ' · проверено: ' + time(protection.checkedAt) +
+          ' · кеш: ' + (protection.cacheEnabled ? protection.cacheTtlMs + ' мс' : 'выключен') +
+          ' · лимит аккаунтов: ' + (protection.accountLimiterConfigured ? 'подключён' : 'не подключён') +
+          ' · превышений с запуска: ' + (protection.counters && protection.counters.wouldLimit || 0) +
+          ' · ограничено: ' + (protection.counters && protection.counters.limited || 0) +
+          ' · ответов из кеша: ' + (protection.counters && protection.counters.cacheHits || 0) +
+          ' · объединено: ' + (protection.counters && protection.counters.coalesced || 0) +
+          ' · обрывов: ' + (protection.counters && protection.counters.aborted || 0) +
+          (protection.counters && (protection.counters.identityUnavailable || protection.counters.identityResolverErrors || protection.counters.capacityFallback || protection.counters.telemetryErrors) ?
+            ' · Есть пропуски в защите или ошибки мониторинга — проверьте состояние службы.' : '');
+        var signalBody = table(q('history-signals'), ['IP', 'Запросов', 'Разных турниров', 'Пик / мин', '5xx', 'Обрывов', 'Медленных', 'Причины', '']);
+        signalBody.parentNode.setAttribute('aria-label', 'Оперативные сигналы защиты истории турниров');
+        var reasonLabels = { broad_scan: 'Перебор турниров', request_spike: 'Всплеск запросов', upstream_errors: 'Ошибки ответов', slow_responses: 'Медленные ответы', aborted_requests: 'Обрывы запросов' };
+        (protection.candidates || []).forEach(function (item) {
+          var row = signalBody.insertRow();
+          [item.ip, item.requests, (item.distinctCapped ? '≥' : '') + item.distinctTournaments, item.peakPerMinute, item.errors, item.aborted || 0, item.slow,
+            (item.reasons || []).map(function (r) { return reasonLabels[r] || r; }).join(', ')].forEach(function (value) { text(row, value, 'td'); });
+          var cell = document.createElement('td'); row.appendChild(cell);
+          if (protection.state === 'ok') action(cell, 'Проверить IP…', item.ip, 'add');
+        });
+        if (protection.state === 'ok' && !(protection.candidates || []).length) text(q('history-signals'), protection.mode === 'off' ? 'Сбор сигналов выключен.' : 'Активных сигналов нет.');
         var report = data.report;
         q('report-status').textContent = report ?
           'Запросов: ' + report.requests + ' · отброшено: ' + report.blocked + ' · OPTIONS: ' + report.options +
@@ -13944,7 +13973,7 @@
     return { load: load, setActive: function (value) {
       if (active === value) return; active = value; ++sequence;
       if (timer) window.clearInterval(timer); timer = null;
-      if (active) { load(); timer = window.setInterval(load, 60000); }
+      if (active) { load(); timer = window.setInterval(load, 15000); }
     } };
   }
 

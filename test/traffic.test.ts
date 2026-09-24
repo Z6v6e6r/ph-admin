@@ -61,6 +61,12 @@ async function main() {
     view = await service.overview('2026-09-24'); assert.equal(view.applied, false);
     await service.mutate({ action: 'remove', revision: 1, ip: saved.rules[0].ip, reason: 'Synthetic release' }, 'operator');
     view = await service.overview('2026-09-24'); assert.equal(view.policy.rules.length, 0); assert.equal(view.policy.audit.length, 2);
+    process.env.TRAFFIC_HISTORY_REPORT_FILE = join(dir, 'history.json');
+    view = await service.overview('2026-09-24'); assert.equal(view.historyProtection.state, 'missing');
+    await fs.writeFile(process.env.TRAFFIC_HISTORY_REPORT_FILE, '{broken');
+    view = await service.overview('2026-09-24'); assert.equal(view.historyProtection.state, 'unavailable');
+    assert.equal(view.policy.revision, 2); // An optional report failure must not break quarantine management.
+    delete process.env.TRAFFIC_HISTORY_REPORT_FILE;
     await fs.writeFile(process.env.TRAFFIC_POLICY_FILE!, '{broken');
     await assert.rejects(service.overview('2026-09-24'));
     console.log('Traffic: RBAC/session/CSRF, normalization/protection, durable CAS/race, missing/corrupt state, stale edge and date tests passed');

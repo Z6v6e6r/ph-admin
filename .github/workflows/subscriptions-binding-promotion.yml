@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/cup-traffic-quarantine-20260924]
   push:
     branches: [main]
 

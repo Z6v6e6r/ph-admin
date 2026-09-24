@@ -2,7 +2,7 @@ name: traffic-quarantine
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/cup-traffic-quarantine-20260924]
     paths:
       - '.github/workflows/traffic-quarantine.yml'
       - 'src/traffic/**'
@@ -14,6 +14,7 @@ on:
       - 'scripts/traffic-edge.py'
       - 'deploy/traffic/**'
       - 'test/traffic*'
+      - 'test/history-protection*'
       - 'package-lock.json'
       - 'package.json'
       - 'tsconfig*.json'
@@ -37,6 +38,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx ts-node test/traffic.test.ts
+      - run: npx ts-node test/history-protection.test.ts
       - run: python3 test/traffic-edge.test.py
       - name: Install nginx for isolated localhost enforcement tests
         run: sudo apt-get update -qq && sudo apt-get install -y nginx
