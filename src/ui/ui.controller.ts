@@ -356,6 +356,7 @@ export class UiController {
       roles,
       roleIds: authContext.user?.roleIds || roles,
       permissions: authContext.user ? authContext.user.permissions || [] : undefined,
+      permissionStationScopes: authContext.user?.permissionStationScopes,
       stationIds,
       connectorRoutes,
       title: query.title?.trim() || 'ЦУП Дворотека',

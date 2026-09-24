@@ -8,6 +8,7 @@
     roleIds: [],
     permissions: [],
     permissionsAuthoritative: false,
+    permissionStationScopes: {},
     role: '',
     stationIds: [],
     connectorRoutes: [],
@@ -185,6 +186,8 @@
     'CLIENT'
   ];
   var ADMIN_PERMISSION_OPTIONS = [
+    ['traffic:read', 'Трафик и карантин — просмотр'],
+    ['traffic:write', 'Карантин IP — управление'],
     ['dialogs:read', 'Диалоги — чтение'],
     ['dialogs:write', 'Диалоги — ответы и изменение статуса'],
     ['games:read', 'Игры — чтение'],
@@ -7779,6 +7782,8 @@
     }
 
     return {
+      getTraffic: function (day) { return request('/traffic?day=' + encodeURIComponent(day), 'GET'); },
+      updateQuarantine: function (payload) { return request('/traffic/quarantine', 'POST', payload); },
       getAllDialogs: function () {
         return request('/support/dialogs', 'GET');
       },
@@ -9288,6 +9293,12 @@
     tabPlayerRatings.textContent = 'Уровни';
     tabs.appendChild(tabPlayerRatings);
 
+    var tabTraffic = document.createElement('button');
+    tabTraffic.className = 'phab-admin-tab' + (canAccessTraffic(cfg) ? '' : ' phab-admin-hidden');
+    tabTraffic.type = 'button';
+    tabTraffic.textContent = 'Трафик и карантин';
+    tabs.appendChild(tabTraffic);
+
     var tabLogs = document.createElement('button');
     tabLogs.className = 'phab-admin-tab';
     tabLogs.type = 'button';
@@ -9565,6 +9576,10 @@
       'phab-admin-player-ratings-pane phab-admin-player-rating-detail';
     playerRatingDetail.setAttribute('aria-live', 'polite');
     playerRatingsLayout.appendChild(playerRatingDetail);
+
+    var trafficSection = document.createElement('div');
+    trafficSection.className = 'phab-admin-hidden';
+    content.appendChild(trafficSection);
 
     var logsSection = document.createElement('div');
     logsSection.className = 'phab-admin-hidden';
@@ -13185,6 +13200,8 @@
       tabGames: tabGames,
       tabNotifications: tabNotifications,
       tabPlayerRatings: tabPlayerRatings,
+      tabTraffic: tabTraffic,
+      trafficSection: trafficSection,
       tabLogs: tabLogs,
       tabTournaments: tabTournaments,
       tabCommunities: tabCommunities,
@@ -13812,6 +13829,136 @@
     return hasAnyRole(cfg, legacyPermissions[permission] || []);
   }
 
+  function createTrafficPane(root, api, cfg) {
+    root.style.minWidth = '0'; root.style.width = '100%'; root.style.overflow = 'auto';
+    root.innerHTML = '<style>.phab-traffic-card{padding:18px;gap:16px}.phab-traffic-card h2,.phab-traffic-card h3,.phab-traffic-card p{margin:0}.phab-traffic-card p{line-height:1.5}.phab-traffic-card table{width:100%;border-collapse:collapse;font-size:13px}.phab-traffic-card th,.phab-traffic-card td{padding:12px 10px;border-bottom:1px solid #eadfe7;text-align:left;white-space:nowrap}.phab-traffic-card th{font-size:12px;background:#faf6f9}.phab-traffic-card form label{flex:1 1 150px}.phab-traffic-card .phab-admin-settings-row{flex-wrap:wrap}.phab-traffic-card .phab-admin-settings-row p{overflow-wrap:anywhere;min-width:0;flex:1 1 240px}</style>' +
+      '<div class="phab-admin-settings-card phab-traffic-card">' +
+      '<h2>Трафик и карантин</h2><p>Топ-20 IP по московским суткам. OPTIONS учитываются отдельно. Большое число запросов само по себе не означает нарушение.</p>' +
+      '<div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">' +
+      '<label class="phab-admin-settings-label">Дата (Москва)<input class="phab-admin-settings-input" type="date" data-traffic-day></label>' +
+      '<button type="button" class="phab-admin-btn" data-traffic-refresh>Обновить</button></div>' +
+      '<p role="status" aria-live="polite" data-traffic-status></p><p data-traffic-report-status></p>' +
+      '<div style="overflow-x:auto" data-traffic-top></div>' +
+      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников. Сохранённое правило начинает действовать после подтверждения сервером.</p>' +
+      '<p data-traffic-protected></p><div data-traffic-rules></div>' +
+      '<form data-traffic-form style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">' +
+      '<label class="phab-admin-settings-label">IP<input class="phab-admin-settings-input" required maxlength="45" autocomplete="off" data-traffic-ip></label>' +
+      '<label class="phab-admin-settings-label">Причина<input class="phab-admin-settings-input" required maxlength="300" data-traffic-reason></label>' +
+      '<label class="phab-admin-settings-label">Действие<select class="phab-admin-settings-input" data-traffic-action><option value="add">Добавить / продлить</option><option value="remove">Снять карантин</option></select></label>' +
+      '<label class="phab-admin-settings-label">Срок<select class="phab-admin-settings-input" data-traffic-days><option value="1">24 часа</option><option value="7" selected>7 дней</option><option value="30">30 дней</option></select></label>' +
+      '<button type="submit" class="phab-admin-btn" disabled data-traffic-save>Сохранить</button></form>' +
+      '<details><summary>История изменений</summary><div data-traffic-audit></div></details></div>';
+    var q = function (name) { return root.querySelector('[data-traffic-' + name + ']'); };
+    var active = false, timer = null, revision = 0, sequence = 0, saving = false;
+    var write = canAccessTraffic(cfg) && hasGlobalTrafficPermission(cfg, 'traffic:write');
+    var date = new Date(Date.now() + 3 * 3600000 - 86400000).toISOString().slice(0, 10);
+    q('day').value = date;
+    q('form').hidden = !write;
+    q('form').style.display = write ? 'flex' : 'none';
+    function time(value) { return value ? new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—'; }
+    function text(parent, value, tag) {
+      var node = document.createElement(tag || 'p'); node.textContent = String(value); parent.appendChild(node); return node;
+    }
+    function table(parent, headings) {
+      parent.textContent = '';
+      var node = document.createElement('table'); node.className = 'phab-admin-table';
+      node.setAttribute('aria-label', 'Топ-20 IP за выбранные московские сутки');
+      var head = node.createTHead().insertRow();
+      headings.forEach(function (label) { var cell = text(head, label, 'th'); cell.scope = 'col'; });
+      parent.appendChild(node); return node.createTBody();
+    }
+    function pick(ip, action) {
+      q('ip').value = ip; q('action').value = action; q('reason').value = '';
+      q('form').scrollIntoView({ block: 'nearest' }); q('reason').focus();
+    }
+    function action(parent, label, ip, kind) {
+      if (!write) return;
+      var button = text(parent, label, 'button'); button.type = 'button'; button.className = 'phab-admin-btn';
+      button.addEventListener('click', function () { pick(ip, kind); });
+    }
+    async function load() {
+      var seq = ++sequence;
+      q('save').disabled = true;
+      q('status').textContent = 'Загружаем статистику…';
+      try {
+        var data = await api.getTraffic(q('day').value);
+        if (seq !== sequence || !active) return;
+        if (!data.enabled) {
+          q('status').textContent = 'Карантин ещё не подключён к серверу.';
+          ['top', 'rules', 'audit', 'report-status'].forEach(function (name) { q(name).textContent = ''; });
+          return;
+        }
+        revision = data.policy.revision;
+        q('save').disabled = !write || saving;
+        q('protected').textContent = 'Разрешённые источники: ' + data.protectedIps.join(', ');
+        q('status').textContent = data.applied ? 'Правила применены. Проверено: ' + time(data.edge.checkedAt) :
+          'Применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
+        var report = data.report;
+        q('report-status').textContent = report ?
+          'Запросов: ' + report.requests + ' · отброшено: ' + report.blocked + ' · OPTIONS: ' + report.options +
+          ' · отчёт обновлён: ' + time(report.generatedAt) +
+          (Date.now() - Date.parse(report.generatedAt) > 15 * 60000 && q('day').value >= new Date(Date.now() + 3 * 3600000 - 86400000).toISOString().slice(0, 10) ? ' · Нет свежей статистики.' : '') +
+          ' Данные собираются с ' + time(report.coverageStartedAt) + '.' + (report.partialDay ? ' Неполные сутки.' : '') + (report.rejectedLinesTotal ? ' Есть строки, которые не удалось разобрать: ' + report.rejectedLinesTotal : '') :
+          'За эту дату отчёт ещё не сформирован.';
+        var body = table(q('top'), ['IP', 'Запросов', 'Расписание', 'Турниры / история', 'Участники', 'Отброшено', 'Ошибки 5xx', 'Пик / мин', '']);
+        (report && report.top || []).forEach(function (item) {
+          var row = body.insertRow(), routes = item.routes || {};
+          [item.ip, item.requests, routes.schedule || 0, (routes.tournaments || 0) + (routes.history || 0), routes.participants || 0,
+            item.blocked, item.errors, item.peakPerMinute].forEach(function (value) { text(row, value, 'td'); });
+          var cell = document.createElement('td'); row.appendChild(cell);
+          if (item.protected) text(cell, 'Разрешён'); else action(cell, 'В карантин…', item.ip, 'add');
+        });
+        if (!report || !report.top.length) text(q('top'), 'Нет запросов в доступной выборке.');
+        q('rules').textContent = '';
+        data.policy.rules.forEach(function (rule) {
+          var row = document.createElement('div'); row.className = 'phab-admin-settings-row';
+          var applied = data.applied && data.edge.activeIps.indexOf(rule.ip) >= 0;
+          text(row, rule.ip + ' · ' + rule.reason + ' · отброшено за выбранный день: ' + (report && report.quarantined && report.quarantined[rule.ip] ? report.quarantined[rule.ip].blocked : 0) + ' · до ' + time(rule.expiresAt) + ' · ' +
+            (applied ? 'Отбрасываются' : Date.parse(rule.expiresAt) <= Date.now() ? 'Срок истёк; проверьте применение правил' : 'Ожидает подтверждения'));
+          action(row, 'Снять…', rule.ip, 'remove'); q('rules').appendChild(row);
+        });
+        if (!data.policy.rules.length) text(q('rules'), 'Список карантина пуст.');
+        q('audit').textContent = '';
+        data.policy.audit.slice(-50).reverse().forEach(function (event) {
+          text(q('audit'), time(event.at) + ' · ' + event.ip + ' · ' + (event.action === 'add' ? 'Добавлен / продлён' : 'Снят') +
+            ' · ' + event.reason + ' · ' + event.actorId);
+        });
+      } catch (error) {
+        if (seq !== sequence || !active) return;
+        q('status').textContent = 'Не удалось обновить данные: ' + (error.message || 'Ошибка запроса');
+        q('save').disabled = true;
+      }
+    }
+    q('form').addEventListener('submit', async function (event) {
+      event.preventDefault(); if (saving || q('save').disabled || !write) return;
+      saving = true; q('save').disabled = true; q('status').textContent = 'Сохраняем правило…';
+      try {
+        await api.updateQuarantine({ action: q('action').value, revision: revision, ip: q('ip').value.trim(),
+          reason: q('reason').value.trim(), expiresAt: new Date(Date.now() + Number(q('days').value) * 86400000).toISOString() });
+        q('ip').value = ''; q('reason').value = ''; saving = false; await load();
+      } catch (error) {
+        q('status').textContent = 'Изменение не подтверждено: ' + (error.message || 'Ошибка запроса') + '. Обновите список перед повтором.';
+      } finally { saving = false; }
+    });
+    q('refresh').addEventListener('click', load); q('day').addEventListener('change', load);
+    return { load: load, setActive: function (value) {
+      if (active === value) return; active = value; ++sequence;
+      if (timer) window.clearInterval(timer); timer = null;
+      if (active) { load(); timer = window.setInterval(load, 60000); }
+    } };
+  }
+
+  function canAccessTraffic(cfg) {
+    return hasGlobalTrafficPermission(cfg, 'traffic:read');
+  }
+
+  function hasGlobalTrafficPermission(cfg, permission) {
+    var scopes = cfg.permissionStationScopes || {};
+    var globalScope = Object.prototype.hasOwnProperty.call(scopes, permission)
+      ? scopes[permission] === null : !(cfg.stationIds || []).length;
+    return cfg.permissionsAuthoritative === true && hasPermission(cfg, permission) && globalScope;
+  }
+
   function canAccessSettings(cfg) {
     return hasPermission(cfg, 'settings:read') || hasPermission(cfg, 'admin-users:read');
   }
@@ -14326,6 +14473,7 @@
     var root = createRoot(cfg);
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
+    var trafficPane = createTrafficPane(dom.trafficSection, api, cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
     var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
 
@@ -16161,6 +16309,7 @@
           hidden: !cfg.notificationApiBaseUrl || isRestrictedStationAdmin
         },
         { value: 'playerRatings', label: 'Уровни', hidden: hidePlayerRatingsTab },
+        { value: 'traffic', label: 'Трафик и карантин', hidden: !canAccessTraffic(cfg) },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
         { value: 'tournaments', label: 'Турниры', hidden: !canAccessTournaments(cfg) },
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
@@ -38187,8 +38336,9 @@
     }
 
     function switchTab(nextTab) {
+      if (nextTab === 'traffic' && !canAccessTraffic(cfg)) nextTab = 'messages';
       if (!canAccessDialogs(cfg) && nextTab === 'messages') {
-        nextTab = canAccessGames(cfg) ? 'games' : canAccessTournaments(cfg) ? 'tournaments' : canAccessSettings(cfg) ? 'settings' : 'messages';
+        nextTab = canAccessGames(cfg) ? 'games' : canAccessTournaments(cfg) ? 'tournaments' : canAccessSettings(cfg) ? 'settings' : canAccessTraffic(cfg) ? 'traffic' : 'messages';
       }
       if (!canAccessGames(cfg) && nextTab === 'games') {
         nextTab = canAccessDialogs(cfg) ? 'messages' : 'tournaments';
@@ -38221,6 +38371,9 @@
         nextTab = 'messages';
       }
       state.activeTab = nextTab;
+      dom.tabTraffic.className = 'phab-admin-tab' + (nextTab === 'traffic' ? ' phab-admin-tab-active' : '') + (canAccessTraffic(cfg) ? '' : ' phab-admin-hidden');
+      dom.trafficSection.className = nextTab === 'traffic' ? '' : 'phab-admin-hidden';
+      trafficPane.setActive(nextTab === 'traffic');
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
       var isNotifications = nextTab === 'notifications';
@@ -38359,6 +38512,8 @@
           await ensureNotificationSession();
         } else if (state.activeTab === 'playerRatings') {
           await searchPlayerRatings(false);
+        } else if (state.activeTab === 'traffic') {
+          await trafficPane.load();
         } else if (state.activeTab === 'logs') {
           await loadGameEvents();
         } else if (state.activeTab === 'analytics') {
@@ -38544,6 +38699,7 @@
       dom.playerRatingEditModal.addEventListener('click', function (event) { if (event.target === dom.playerRatingEditModal) closePlayerRatingEdit(); });
       dom.playerRatingEditNumericInput.addEventListener('input', updatePlayerRatingEditPreview);
       dom.playerRatingEditForm.addEventListener('submit', function (event) { event.preventDefault(); savePlayerRatingEdit().catch(handleError); });
+      dom.tabTraffic.addEventListener('click', function () { switchTab('traffic'); });
       dom.tabLogs.addEventListener('click', function () {
         switchTab('logs');
         loadGameEvents().catch(handleError);
@@ -39723,6 +39879,7 @@
     }
 
     function destroy() {
+      trafficPane.setActive(false);
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }

@@ -1,0 +1,13 @@
+[Unit]
+Description=Apply CUP IP quarantine to nginx with readback
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/phab-traffic/traffic-edge.py sync
+User=root
+UMask=0027
+Nice=10
+TimeoutStartSec=90
+NoNewPrivileges=true
+PrivateTmp=true

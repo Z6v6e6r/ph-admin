@@ -20,6 +20,7 @@ import { SystemController } from './system/system.controller';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { UiController } from './ui/ui.controller';
 import { WebPushModule } from './web-push/web-push.module';
+import { TrafficModule } from './traffic/traffic.module';
 
 @Module({
   imports: [
@@ -36,7 +37,8 @@ import { WebPushModule } from './web-push/web-push.module';
     SubscriptionsModule,
     SupportModule,
     TelegramConnectorModule,
-    WebPushModule
+    WebPushModule,
+    TrafficModule
   ],
   controllers: [SystemController, UiController],
   providers: [
