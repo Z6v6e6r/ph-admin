@@ -287,6 +287,43 @@ async function verifyScopeIsStored(): Promise<void> {
   );
 }
 
+async function verifyStationScopeIsAlsoInert(): Promise<void> {
+  const persistence = new InMemorySupportPersistence(emptyState());
+  const service = createService(persistence);
+  await service.hydrateFromPersistence();
+
+  const first = await service.ingestEvent(
+    event({
+      dialogScope: SupportDialogScope.STATION,
+      selectedStationId: 'Yasenevo',
+      selectedStationName: 'Ясенево'
+    })
+  );
+  assert.equal(first.dialog.dialogScope, SupportDialogScope.STATION);
+
+  const second = await service.ingestEvent(
+    event({
+      dialogScope: SupportDialogScope.STATION,
+      selectedStationId: 'Nagatinskaya',
+      selectedStationName: 'Нагатинская',
+      stationId: 'Nagatinskaya',
+      stationName: 'Нагатинская',
+      text: 'И ещё'
+    })
+  );
+  assert.equal(
+    second.dialog.id,
+    first.dialog.id,
+    'a station-scoped event still resolves to the one dialog of this slice'
+  );
+  assert.equal(persistence.dialogs().length, 1);
+  assert.equal(
+    second.dialog.stationId,
+    'Nagatinskaya',
+    'an explicit selection still moves the station'
+  );
+}
+
 async function verifySummaryDefaults(): Promise<void> {
   const persistence = new InMemorySupportPersistence({
     ...emptyState(),
@@ -316,6 +353,7 @@ async function main(): Promise<void> {
   await verifyContract();
   await verifyResolutionIsUnchanged();
   await verifyScopeIsStored();
+  await verifyStationScopeIsAlsoInert();
   await verifySummaryDefaults();
   console.log('Support dialog scope expand test passed');
 }
