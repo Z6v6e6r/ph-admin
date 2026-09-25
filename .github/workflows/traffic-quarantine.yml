@@ -12,6 +12,7 @@ on:
       - 'src/ui/ui.controller.ts'
       - 'client-sdk/phab-admin-panel.js'
       - 'scripts/traffic-edge.py'
+      - 'scripts/traffic-replica.py'
       - 'deploy/traffic/**'
       - 'test/traffic*'
       - 'test/history-protection*'
@@ -40,6 +41,7 @@ jobs:
       - run: npx ts-node test/traffic.test.ts
       - run: npx ts-node test/history-protection.test.ts
       - run: python3 test/traffic-edge.test.py
+      - run: python3 test/traffic-replica.test.py
       - name: Install nginx for isolated localhost enforcement tests
         run: sudo apt-get update -qq && sudo apt-get install -y nginx
       - run: python3 test/traffic-nginx.test.py /usr/sbin/nginx
