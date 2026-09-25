@@ -8,6 +8,7 @@ ExecStart=/usr/bin/python3 /opt/phab-traffic/traffic-edge.py sync
 User=root
 UMask=0027
 Nice=10
-TimeoutStartSec=90
+# Allow nginx validation/reload/readback plus a complete rollback before SIGTERM.
+TimeoutStartSec=180
 NoNewPrivileges=true
 PrivateTmp=true
