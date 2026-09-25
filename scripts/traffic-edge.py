@@ -86,7 +86,12 @@ def render_policy(policy, now=None):
         if expires > now:
             active.append(ip)
     rules_text = ''.join(f'{ip} 1;\n' for ip in sorted(active))
-    digest = hashlib.sha256(rules_text.encode()).hexdigest()
+    # A later empty policy must not match a still-draining worker's earlier empty
+    # policy (ABA). Active IPs also belong in the identity: expiry changes nginx
+    # behavior without advancing the administrator's revision.
+    identity = json.dumps({'protocol': 2, 'revision': policy['revision'], 'active': sorted(active)},
+                          sort_keys=True, separators=(',', ':'))
+    digest = hashlib.sha256(identity.encode()).hexdigest()
     config = 'geo $remote_addr $phab_quarantined {\ndefault 0;\n' + rules_text + '}\n'
     config += 'map $host $phab_traffic_policy_digest { default "' + digest + '"; }\n'
     return config, sorted(active), digest

@@ -44,18 +44,32 @@ def main(binary):
         config = root / 'nginx.conf'
         # Only this fixture trusts its local test client as an ingress proxy.
         temp_paths = ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
-        config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + temp_paths + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } } }')
+        config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + temp_paths + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nadd_header X-Fixture-Policy $phab_traffic_policy_digest always;\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } } }')
         base = [binary, '-p', temp, '-c', str(config)]
         subprocess.run(base + ['-t'], check=True, capture_output=True)
         proc = subprocess.Popen(base, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        blocked_responses = 0
+        last_identity = None
         def request(path, ip='203.0.113.9', method='GET'):
+            nonlocal blocked_responses, last_identity
+            last_identity = None
             conn = http.client.HTTPConnection('127.0.0.1', listen, timeout=2)
             try:
                 conn.request(method, path, headers={'X-Fixture-IP': ip, 'X-Forwarded-For': '188.127.235.140'})
-                response = conn.getresponse(); response.read(); return response.status
+                response = conn.getresponse(); last_identity = response.getheader('X-Fixture-Policy'); response.read(); return response.status
             except http.client.RemoteDisconnected:
+                blocked_responses += 1
                 return 444
             finally: conn.close()
+        def await_public_policy(expected, digest):
+            # The digest probe proves that a new worker loaded the policy. Nginx
+            # gracefully retires old listeners; do not pretend it is a drain barrier.
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                status = request('/lk/games?public=true')
+                if status == expected and (expected == 444 or last_identity == digest): return
+                time.sleep(0.05)
+            raise AssertionError(f'Public policy did not converge: expected {expected}, last {status}, identity {last_identity}')
         def probe(digest):
             for _ in range(30):
                 conn = http.client.HTTPConnection('127.0.0.1', probe_port, timeout=1)
@@ -75,6 +89,7 @@ def main(binary):
             policy.write_text(json.dumps(blocked))
             receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
             assert receipt['appliedRevision'] == 1
+            await_public_policy(444, receipt['appliedHash'])
             cases = ['/lk/games?public=true', '/lk/games?available=yes', '/lk/games?find=available',
                      '/lk/games/by-phone?public=true', '/lk/games?public=%74rue', '/lk/games?publ%69c=%31',
                      '/lk/games?p%75blic=%20%54%52%55%45%20', '/lk/games?public[]=true',
@@ -92,19 +107,29 @@ def main(binary):
             assert request('/lk/games?public=true', ip='188.127.235.140') == 200
             assert request('/lk/games?public=true', ip='203.0.113.10') == 200
             policy.write_text(json.dumps({**empty, 'revision': 2}))
-            traffic.sync_policy(policy, target, root, binary, runner, probe)
-            assert request('/lk/games?public=true') == 200
+            receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
+            await_public_policy(200, receipt['appliedHash'])
+            # Exercise later generations with the same effective empty/blocked lists.
+            # Each sync must acknowledge that revision, not an earlier matching list.
+            for revision in range(3, 9):
+                current = {**(blocked if revision % 2 else empty), 'revision': revision}
+                policy.write_text(json.dumps(current))
+                receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
+                assert receipt['appliedRevision'] == revision
+                assert receipt['appliedHash'] == traffic.render_policy(current)[2]
+                await_public_policy(444 if revision % 2 else 200, receipt['appliedHash'])
         finally:
             subprocess.run(base + ['-s', 'quit'], check=False, capture_output=True)
             proc.wait(timeout=10); upstream.shutdown()
         lines = [json.loads(line) for line in log.read_text().splitlines()]
-        assert sum(e['blocked'] == 1 and e['status'] == 444 for e in lines) == len(cases)
+        assert blocked_responses >= len(cases) + 4
+        assert sum(e['blocked'] == 1 and e['status'] == 444 for e in lines) == blocked_responses
         assert all(set(e) == {'id','ts','ip','method','route','status','bytes','blocked'} for e in lines)
         assert '79990000000' not in log.read_text()
         db = traffic.open_database(root / 'stats.sqlite'); traffic.ingest(db, [log])
         day = dt.datetime.now(traffic.MSK).date().isoformat(); report = traffic.report_day(db, day)
-        assert report['blocked'] == len(cases)
-        assert report['quarantined']['203.0.113.9']['blocked'] == len(cases)
+        assert report['blocked'] == blocked_responses
+        assert report['quarantined']['203.0.113.9']['blocked'] == blocked_responses
         db.close()
         print('nginx e2e passed: aliases/encoded flags, public-only drop, zero upstream calls, protected IP, POST/OPTIONS/private reads, readback/removal, sanitized logs and collector')
 

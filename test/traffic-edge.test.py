@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 import subprocess
 import sys
 
@@ -41,6 +42,45 @@ class TrafficTest(unittest.TestCase):
             with self.assertRaises(RuntimeError): traffic.sync_policy(policy, target, root, runner=runner, probe=lambda digest: None)
             self.assertEqual(target.read_text(), before)
             self.assertEqual(json.loads((root / 'edge-status.json').read_text())['appliedRevision'], 1)
+
+    def test_policy_identity_distinguishes_aba_and_expiry(self):
+        empty = {'version': 1, 'revision': 0, 'rules': []}
+        blocked = self.policy(revision=1)
+        initial = traffic.render_policy(empty)[2]
+        active = traffic.render_policy(blocked)[2]
+        removed = traffic.render_policy({**empty, 'revision': 2})[2]
+        self.assertEqual(len({initial, active, removed}), 3)
+        self.assertEqual(removed, traffic.render_policy({**empty, 'revision': 2})[2])
+        expires = dt.datetime.fromisoformat(blocked['rules'][0]['expiresAt'])
+        before = traffic.render_policy(blocked, expires - dt.timedelta(seconds=1))[2]
+        after = traffic.render_policy(blocked, expires)[2]
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, traffic.render_policy({**empty, 'revision': 1}, expires)[2])
+
+    def test_stale_empty_worker_cannot_acknowledge_removal(self):
+        empty = {'version': 1, 'revision': 0, 'rules': []}
+        stale = traffic.render_policy(empty)[2]
+        opener = MagicMock()
+        response = opener.open.return_value.__enter__.return_value
+        response.geturl.return_value = 'http://127.0.0.1:18147/traffic-policy'
+        response.read.return_value = stale.encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); policy = root / 'policy.json'; target = root / 'policy.conf'
+            blocked = self.policy(revision=1)
+            target.write_text(traffic.render_policy(blocked)[0])
+            (root / 'edge-status.json').write_text(json.dumps({'appliedRevision': 1}))
+            policy.write_text(json.dumps({**empty, 'revision': 2}))
+            before = target.read_text(); calls = []
+            with patch.object(traffic.urllib.request, 'build_opener', return_value=opener), patch.object(traffic.time, 'sleep'):
+                with self.assertRaisesRegex(RuntimeError, 'sync_failed'):
+                    traffic.sync_policy(policy, target, root, runner=calls.append)
+            self.assertEqual(target.read_text(), before)
+            receipt = json.loads((root / 'edge-status.json').read_text())
+            self.assertEqual(receipt['appliedRevision'], 1)
+            self.assertEqual(receipt['desiredRevision'], 2)
+            self.assertTrue(receipt['error'])
+            self.assertEqual(len(calls), 4)  # Validate/reload candidate, then validate/reload preimage.
+            self.assertEqual(opener.open.call_count, 30)
 
     def test_rotation_replay_partial_tail_midnight_and_top20(self):
         with tempfile.TemporaryDirectory() as tmp:
