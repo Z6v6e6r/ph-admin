@@ -51,10 +51,11 @@ def main(binary):
         reserve_config = (ROOT / 'deploy/traffic/replication-reserve.conf').read_text()
         config = root / 'nginx.conf'
         # Only this fixture trusts its local test client as an ingress proxy.
-        temp_paths = 'open_file_cache max=100 inactive=10m; open_file_cache_valid 10m;\n' + ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
+        temp_paths = 'access_log off; open_file_cache max=100 inactive=10m; open_file_cache_valid 10m;\n' + ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
         config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + temp_paths + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nadd_header X-Fixture-Policy $phab_traffic_policy_digest always;\n' + source_config + '\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } }\nserver { listen 127.0.0.1:' + str(reserve_port) + ';\n' + reserve_config + '\nlocation / { proxy_set_header X-Fixture-IP 89.108.64.209; proxy_pass http://127.0.0.1:' + str(listen) + '; } } }')
         base = [binary, '-p', temp, '-c', str(config)]
-        subprocess.run(base + ['-t'], check=True, capture_output=True)
+        checked = subprocess.run(base + ['-t'], capture_output=True, text=True)
+        assert checked.returncode == 0, checked.stderr  # Fixture paths/data only, no live configuration.
         proc = subprocess.Popen(base, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         blocked_responses = 0
         last_identity = None
