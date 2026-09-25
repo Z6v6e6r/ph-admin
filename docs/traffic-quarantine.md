@@ -40,7 +40,7 @@ access log остаются нагрузкой edge.
   с `TRAFFIC_ADMIN_ORIGIN`; reflected CORS приложения не заменяет этот guard.
 - Один экземпляр ЦУП на одном сервере. Durable JSON, межпроцессный lock-directory,
   CAS revision, временный файл, fsync, atomic rename. Не использовать NFS/несколько
-  реплик: перед горизонтальным масштабированием потребуется общий transactional store.
+  пишущих реплик: перед горизонтальным масштабированием потребуется общий transactional store.
 - В той же атомарной записи сохраняется аудит: автор, IP, действие, причина, время,
   revision. До 1000 правил, до 5000 событий и 1.8 MB. При заполнении новые изменения
   отклоняются до контролируемого архивирования; история не удаляется автоматически.
@@ -152,6 +152,7 @@ preimages, подтверждённая топология, rollback и окно
 ```sh
 npx ts-node test/traffic.test.ts
 python3 test/traffic-edge.test.py
+python3 test/traffic-replica.test.py
 python3 test/traffic-nginx.test.py /absolute/path/to/nginx
 node --check client-sdk/phab-admin-panel.js
 npm run test:auth-rbac
@@ -164,3 +165,73 @@ nginx e2e использует ephemeral localhost ports и синтетичес
 private read/POST/OPTIONS, reload/readback/removal, sanitized logs и actual aggregation.
 Для реального Mongo/production эти команды не являются проверкой: новая функция
 вообще не создаёт Mongo collection/index и не меняет существующую auth persistence.
+
+## Резервный вход 89: локальное применение общей политики
+
+ЦУП на 147 остаётся единственным writer. На 89 нет второго ЦУП, доступа к Mongo,
+копии аудита или нового административного SSH-ключа. `traffic-replica.py export`
+каждые 30 секунд публикует только `version`, `revision`, `rules[{ip,expiresAt}]`
+и `sourceGeneratedAt`. Каталог `/var/lib/phab-traffic-export` — root:root 0755,
+файл `policy.json` — root:root 0644; исходный файл ЦУП сохраняет прежние права.
+Экспорт проверяет защищённые адреса и монотонность revision. Адреса обоих общих
+прокси `147.45.103.3` и `89.108.64.209` дополнительно запрещены в реплике.
+Эти два адреса нельзя добавлять в ЦУП: существующий writer их специально не
+исключает, а exporter отвергнет такую политику целиком и сохранит прежний snapshot.
+Ошибка экспорта и расхождение revision требуют исправления правила оператором.
+
+`replication-source.conf` подключается **только** к HTTPS server `padlhub.su`.
+Точный адрес `/__phab_traffic_policy` отдаёт статический snapshot только соединению
+с `89.108.64.209`; остальным — 403, запись и выполнение команд отсутствуют.
+GET/HEAD разрешены, POST запрещён; `Cache-Control: no-store`, ETag/304 выключены.
+Перед активацией проверить отсутствие унаследованного real_ip-контракта, который
+позволил бы произвольному клиенту подменить адрес соединения. На 89 и 147
+карантин продолжает использовать `$remote_addr`, а не клиентские XFF/X-Real-IP.
+До включения экспорта добавить `replication-reserve.conf` во все public server89:
+этот exact path возвращает 404 и никогда не проксируется. Иначе внешний клиент
+мог бы заимствовать разрешённый source IP89 через публичный прокси. Двухзвенный
+nginx e2e проверяет также URL-кодирование и нормализацию этого пути.
+
+На 89 установить из одного immutable source SHA оба Python helper, прежние
+`http.conf`/`server.conf` и logrotate, новые `phab-traffic-replica.service/.timer`.
+Отдельный `phab-traffic-sync.timer` на 89 **не включать**. Реплика сама запускает
+локальный sync под тем же `.sync.lock`. Сборщик можно подключить прежними collect
+units; он пишет отдельный поток и собственные отчёты 89.
+
+Каждую минуту резерв получает фиксированный HTTPS URL с проверкой TLS CA/hostname,
+без proxy env/redirect, не более 1 MB и с общим deadline 12 секунд. Snapshot старше
+180 секунд, из будущего дальше 60 секунд, повреждённый JSON/повторные ключи,
+защищённые IP и понижение revision отвергаются. Прежняя revision с изменёнными
+правилами тоже отвергается. Корневой файл `/var/lib/phab-traffic/replica/policy.json`
+(каталог 0700, файл 0640) — watermark **последней принятой** версии, даже если
+последующее применение nginx не удалось. Новая версия записывается fsync/rename.
+
+После ошибки передачи локальный sync всё равно проверяет сроки и readback прежних
+правил. Ошибка не очищает карантин и не продлевает срок. Но снятие/добавление правила
+во время разрыва связи дойдёт до 89 только после восстановления связи; выключенный
+timer задерживает и expiry. При исправных таймерах обычная задержка — до примерно
+90 секунд плюс время reload. Не обещать синхронное применение на двух входах.
+
+`reports/replica-status.json` раздельно содержит sourceGeneratedAt/sourceFetchedAt,
+receivedRevision и appliedRevision, fetchError/applyError; `edge-status.json`
+подтверждает локальный nginx. Неудачная передача оставляет прежний sourceFetchedAt
+и завершает unit ошибкой **после** попытки локального применения. Проверять возраст
+sourceGeneratedAt и локального receipt, состояния export/replica timers и журнал
+ошибок. Текущая вкладка ЦУП и её top-20/receipt относятся к **147**: она не объединяет
+статистику прокси и не подтверждает 89. Отчёты 89 проверяются отдельно, суммирование
+двух журналов без устранения дублей недопустимо. Доставка внешних alerts не включена.
+
+Порядок активации: сохранить nginx preimages и hashes обоих серверов; проверить
+candidate и rollback конфигурации в изоляции; сначала подключить deny endpoint
+во всех public vhost89 и выбранный API vhost с пустой bootstrap geo, сохранив старые
+access_log/CORS/proxy настройки. Проверить 404 на89, затем поставить exporter и
+закрытый location147; проверить TLS fetch с89 и403 с другого IP; получить актуальный
+snapshot на89; `nginx -t → reload → digest`; включить timers; проверить отдельные receipts
+и доступные public health/OPTIONS, затем реальные отбрасывания в sanitized журнале.
+Изолированный nginx e2e проверяет 444 без upstream, HEAD, разрешённый188, приватные
+reads, POST/OPTIONS/CORS, служебный ACL и подмену forwarding headers.
+
+Откат расширения: остановить новые timers/services; сохранить policy/receipts/logs;
+вернуть только изменённые nginx vhost/includes по CAS preimages, проверить и reload;
+отключить добавленный export endpoint. Исходные policy, backend, основной sync и
+collect на 147 сохраняются. Реплику с прежним непустым desired state после отката
+автоматически не запускать. Артефакты и evidence не удалять.
