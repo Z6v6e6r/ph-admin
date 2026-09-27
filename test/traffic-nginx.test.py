@@ -79,7 +79,23 @@ def main(binary):
                 finally: conn.close()
                 time.sleep(0.1)
             raise RuntimeError('fixture readback mismatch')
-        def runner(args): subprocess.run(base + args[1:], check=True, capture_output=True)
+        def worker_pids():
+            rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True).splitlines()
+            return {int(parts[0]) for row in rows if len(parts := row.split(None, 2)) == 3
+                    and parts[1] == str(proc.pid) and parts[2].startswith('nginx: worker process')}
+        def runner(args):
+            retiring = worker_pids() if args[-2:] == ['-s', 'reload'] else set()
+            subprocess.run(base + args[1:], check=True, capture_output=True)
+            if retiring:
+                # Reload acknowledgement/digest does not drain the previous listener.
+                # This isolated fixture closes every connection, so wait for its old
+                # workers to exit before asserting that every new request is blocked.
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    current = worker_pids()
+                    if current and not (current & retiring): return
+                    time.sleep(0.05)
+                raise AssertionError('Previous fixture nginx workers did not retire')
         def assert_scope(path, expected, method='GET'):
             conn = http.client.HTTPConnection('127.0.0.1', probe_port, timeout=2)
             try:
