@@ -30,7 +30,7 @@ def main(binary):
     class Upstream(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             received.append((self.command, self.path)); self.send_response(200); self.end_headers(); self.wfile.write(b'ok')
-        do_HEAD = do_POST = do_OPTIONS = do_GET
+        do_HEAD = do_POST = do_OPTIONS = do_PUT = do_PATCH = do_DELETE = do_GET
         def log_message(self, *args): pass
     upstream = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
@@ -79,7 +79,32 @@ def main(binary):
                 finally: conn.close()
                 time.sleep(0.1)
             raise RuntimeError('fixture readback mismatch')
-        def runner(args): subprocess.run(base + args[1:], check=True, capture_output=True)
+        def worker_pids():
+            rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True).splitlines()
+            return {int(parts[0]) for row in rows if len(parts := row.split(None, 2)) == 3
+                    and parts[1] == str(proc.pid) and parts[2].startswith('nginx: worker process')}
+        def runner(args):
+            retiring = worker_pids() if args[-2:] == ['-s', 'reload'] else set()
+            subprocess.run(base + args[1:], check=True, capture_output=True)
+            if retiring:
+                # Reload acknowledgement/digest does not drain the previous listener.
+                # This isolated fixture closes every connection, so wait for its old
+                # workers to exit before asserting that every new request is blocked.
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    current = worker_pids()
+                    if current and not (current & retiring): return
+                    time.sleep(0.05)
+                raise AssertionError('Previous fixture nginx workers did not retire')
+        def assert_scope(path, expected, method='GET'):
+            conn = http.client.HTTPConnection('127.0.0.1', probe_port, timeout=2)
+            try:
+                conn.request(method, path, headers={'Connection': 'close'})
+                response = conn.getresponse(); response.read()
+                assert response.status == 404
+                assert response.getheader('X-Phab-Traffic-Scope') == 'community-reads-v1'
+                assert response.getheader('X-Phab-Traffic-Public-Read') == str(expected), (method, path)
+            finally: conn.close()
         try:
             for _ in range(30):
                 try:
@@ -99,6 +124,51 @@ def main(binary):
             before = len(received)
             for path in cases: assert request(path) == 444, path
             assert len(received) == before, 'Blocked requests reached upstream'
+            community_cases = [
+                '/lk/communities', '/lk/communities/?view=all', '/lk/communities/synthetic',
+                '/lk/communities/synthetic/feed?limit=50&beforeTs=synthetic',
+                '/lk/communities/synthetic/feed/post/thread', '/lk/communities/synthetic/ranking',
+                '/lk/communities/synthetic/rating', '/communities/synthetic/rating',
+                '/lk/communities/synthetic/players/player/rating',
+                '/communities/synthetic/players/player/rating',
+                '/api/communities/public', '/api/communities/public/list',
+                '/api/communities/public/feed', '/api/communities/public/feed/list',
+                '/lk/communities/synthetic/feed/', '/LK/COMMUNITIES/synthetic/FEED',
+                '/lk/commun%69ties/synthetic/%66eed', '/lk/communities/synthetic%2Ffeed',
+                '/lk//communities/synthetic/feed', '/lk/communities/other/../synthetic/feed',
+                '/lk/communities/synthetic/feed?public=false&clientId=synthetic',
+                '/communities/synthetic/players/player/rating/?public=false',
+                '/API/COMMUNITIES/PUBLIC/FEED/LIST/?limit=1',
+            ]
+            before = len(received)
+            for path in community_cases:
+                for method in ['GET', 'HEAD']:
+                    assert request(path, method=method) == 444, (method, path)
+                    assert_scope(path, 1, method)
+            assert len(received) == before, 'Quarantined community reads reached upstream'
+            community_allowed = [
+                '/lk/communities/synthetic/messages', '/lk/communities/synthetic/messages/',
+                '/lk/communities/synthetic/messages/read', '/lk/communities/synthetic/feed/post/comments',
+                '/lk/communities/synthetic/feed/post/reaction', '/lk/communities/synthetic/feed/post/archive',
+                '/lk/communities/synthetic/members/manage', '/lk/communities/synthetic/feed-extra',
+                '/lk/communities-extra/synthetic/feed', '/lk/communities/synthetic/feed/post/thread-extra',
+                '/communities/synthetic/rating-extra', '/communities/synthetic/players/player/rating-extra',
+                '/api/communities', '/api/communities/synthetic', '/api/communities/publicity',
+                '/api/communities/public/showcase', '/api/communities/public/feed/showcase',
+                '/api/communities/public/feed/list-extra', '/api/communities/public/feed/list/extra',
+                '/lk/media/community-logo/synthetic/thumb', '/lk/chats/by-phone?clientId=synthetic',
+                '/api/messenger/dialogs', '/lk/auth', '/api/payment/fixture',
+            ]
+            for path in community_allowed:
+                for method in ['GET', 'HEAD']:
+                    assert request(path, method=method) == 200, (method, path)
+                    assert_scope(path, 0, method)
+            for path in community_cases:
+                for method in ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']:
+                    assert request(path, method=method) == 200, (method, path)
+                    assert_scope(path, 0, method)
+                for ip in ['188.127.235.140', '203.0.113.10']:
+                    assert request(path, ip=ip) == 200, (ip, path)
             for path in ['/lk/games?phone=%2B79990000000', '/lk/games/by-phone?clientId=synthetic',
                          '/lk/games?public=false&clientId=synthetic', '/lk/games/pay_fixture/result/state', '/api/health']:
                 assert request(path) == 200, path
@@ -109,6 +179,7 @@ def main(binary):
             policy.write_text(json.dumps({**empty, 'revision': 2}))
             receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
             await_public_policy(200, receipt['appliedHash'])
+            for path in community_cases: assert request(path) == 200, path
             # Exercise later generations with the same effective empty/blocked lists.
             # Each sync must acknowledge that revision, not an earlier matching list.
             for revision in range(3, 9):
@@ -118,6 +189,33 @@ def main(binary):
                 assert receipt['appliedRevision'] == revision
                 assert receipt['appliedHash'] == traffic.render_policy(current)[2]
                 await_public_policy(444 if revision % 2 else 200, receipt['appliedHash'])
+                assert request('/lk/communities/synthetic/feed') == (444 if revision % 2 else 200)
+            # Rehearse removing the route scope while an IP remains quarantined.
+            # Policy digest is unchanged; scope probes identify the config generation.
+            active = {**blocked, 'revision': 9}
+            policy.write_text(json.dumps(active))
+            receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
+            await_public_policy(444, receipt['appliedHash'])
+            candidate = config.read_text()
+            previous = '\n'.join(line for line in candidate.splitlines()
+                                 if not ('~*^(GET|HEAD)' in line and 'communities' in line)
+                                 and 'add_header X-Phab-Traffic-' not in line)
+            config.write_text(previous)
+            runner([binary, '-t']); runner([binary, '-s', 'reload']); probe(receipt['appliedHash'])
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if request('/lk/communities/synthetic/feed') == 200: break
+                time.sleep(0.05)
+            else: raise AssertionError('Previous community scope did not return after rollback')
+            assert request('/lk/games?public=true') == 444, 'Rollback removed existing quarantine'
+            config.write_text(candidate)
+            runner([binary, '-t']); runner([binary, '-s', 'reload']); probe(receipt['appliedHash'])
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if request('/lk/communities/synthetic/feed') == 444: break
+                time.sleep(0.05)
+            else: raise AssertionError('Community scope did not return after reapplication')
+            assert_scope('/lk/communities/synthetic/feed', 1)
         finally:
             subprocess.run(base + ['-s', 'quit'], check=False, capture_output=True)
             proc.wait(timeout=10); upstream.shutdown()
@@ -131,7 +229,7 @@ def main(binary):
         assert report['blocked'] == blocked_responses
         assert report['quarantined']['203.0.113.9']['blocked'] == blocked_responses
         db.close()
-        print('nginx e2e passed: aliases/encoded flags, public-only drop, zero upstream calls, protected IP, POST/OPTIONS/private reads, readback/removal, sanitized logs and collector')
+        print('nginx e2e passed: community aliases/normalized paths, zero upstream calls, protected/ordinary IPs, chats/mutations/OPTIONS, scope readback/rollback, policy removal, sanitized logs and collector')
 
 
 if __name__ == '__main__': main(sys.argv[1])

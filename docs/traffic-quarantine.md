@@ -14,15 +14,30 @@ API и обработчик nginx независимо запрещают его
 или снять его с обязательной причиной. Никакого автоматического добавления по
 объёму запросов и никаких заранее внесённых подозрительных IP.
 
-Область первого запуска: публичные GET/HEAD расписания и турниров.
+Область карантина: GET/HEAD расписания, турниров и данных сообществ.
 Поддержаны `/lk/games`, `/lk/games/by-phone` с public/available/find и значениями
 true/1/yes/available/find, включая URL-кодирование; `/lk/tournaments`,
 `/lk/tournaments/americano/history`, `/lk/tournaments/participants` и
 `/lk/games/:id/participants`. Неоднозначные повторные/структурные public flags
 консервативно считаются публичным запросом, если содержат разрешающее значение.
-Обычные запросы по phone/clientId без public flags, авторизация, оплаты,
+Для сообществ флаг public не требуется: покрыты каталог и карточка
+`/lk/communities`, `/lk/communities/:id`, лента `/feed`, ветка `/feed/:postId/thread`,
+`/ranking`, `/rating` и `/players/:playerId/rating`; оба маршрута рейтинга также
+покрыты через алиасы `/communities/:id/...` без префикса `/lk`. Публичные JSON API
+ЦУП `/api/communities/public`, `/list`, `/feed`, `/feed/list` входят в тот же scope.
+Чаты `/lk/communities/:id/messages`, media и административные API ЦУП сохраняются.
+Карантин ограничивает каталог, карточки, ленты и рейтинги, а не все данные сообщества.
+В статистике эти маршруты остаются в совместимой категории `other`.
+Запросы `/lk/games` и `/lk/games/by-phone` по phone/clientId без public flags, авторизация, оплаты,
 POST/PATCH/DELETE и OPTIONS не отбрасываются. Это не блокировка всего ЛК.
 При изменении public-mode контракта LK1 необходимо обновить edge selector и e2e.
+
+При выпуске изменённого scope проверять на loopback `127.0.0.1:18147` заголовок
+`X-Phab-Traffic-Scope: community-reads-v1` и `X-Phab-Traffic-Public-Read: 1` на GET/HEAD
+целевого URI, а также `0` на чатах, соседних путях и POST/OPTIONS. Эти probes отвечают
+404 без upstream; тело `/traffic-policy` сохраняет прежний digest. Один digest политики
+не доказывает загрузку новых маршрутов. Для production дополнительно нужны свежие
+nginx SHA, `nginx -t`, reload и наблюдение реальных отбрасываний на каждом входе.
 
 nginx возвращает **444**, закрывая соединение без тела и передачи в upstream.
 Это снижает нагрузку Node-RED/Mongo, но сетевой клиент может заметить закрытие.
