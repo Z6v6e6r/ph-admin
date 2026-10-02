@@ -39,6 +39,8 @@ function tournamentFixture(): CustomTournament {
 
 function serviceFixture(tournament: CustomTournament) {
   let failFinalize = false;
+  let failProviderBind = false;
+  let failProviderClaim = false;
   const persistence = {
     isEnabled: () => true,
     findCustomTournamentById: async (id: string) => id === tournament.id ? tournament : null,
@@ -54,6 +56,8 @@ function serviceFixture(tournament: CustomTournament) {
         const record = item as Record<string, unknown>;
         return record.phone === pending.phone
           && (record.state === undefined
+            || record.state === 'PROVIDER_CREATE_PENDING'
+            || record.state === 'PROVIDER_RESULT_UNKNOWN'
             || record.state === 'PENDING_PAYMENT'
             || record.state === 'PAID_PENDING_FINALIZATION');
       })) {
@@ -61,6 +65,93 @@ function serviceFixture(tournament: CustomTournament) {
       }
       booking.pendingJoinPayments = [...current, pending];
       tournament.details = { ...details, booking };
+      return tournament;
+    },
+    claimPublicJoinTransactionCreate: async (
+      _id: string,
+      attemptId: string,
+      phone: string,
+      attemptedAt: string
+    ) => {
+      if (failProviderClaim) return null;
+      const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+      const current = Array.isArray(booking.pendingJoinPayments)
+        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+        : [];
+      const pending = current.find((item) => (
+        item.transactionId === attemptId
+        && item.phone === phone
+        && item.state === 'PROVIDER_CREATE_PENDING'
+        && !item.providerCreateAttemptedAt
+      ));
+      if (!pending) return null;
+      pending.state = 'PROVIDER_RESULT_UNKNOWN';
+      pending.providerCreateAttemptedAt = attemptedAt;
+      return tournament;
+    },
+    bindPublicJoinTransaction: async (
+      _id: string,
+      attemptId: string,
+      phone: string,
+      providerTransactionId: string,
+      providerResult: Record<string, unknown>
+    ) => {
+      if (failProviderBind) return null;
+      const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+      const current = Array.isArray(booking.pendingJoinPayments)
+        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+        : [];
+      const pending = current.find((item) => (
+        item.transactionId === attemptId
+        && item.phone === phone
+        && item.state === 'PROVIDER_RESULT_UNKNOWN'
+      ));
+      if (!pending) return null;
+      Object.assign(pending, providerResult, {
+        providerTransactionId,
+        state: 'PENDING_PAYMENT'
+      });
+      return tournament;
+    },
+    recordPublicJoinTransactionProviderIdentity: async (
+      _id: string,
+      attemptId: string,
+      phone: string,
+      providerTransactionId: string
+    ) => {
+      const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+      const current = Array.isArray(booking.pendingJoinPayments)
+        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+        : [];
+      const pending = current.find((item) => (
+        item.transactionId === attemptId
+        && item.phone === phone
+        && item.state === 'PROVIDER_RESULT_UNKNOWN'
+      ));
+      if (!pending) return null;
+      pending.providerTransactionId = providerTransactionId;
+      return tournament;
+    },
+    failPublicJoinTransactionCreate: async (
+      _id: string,
+      attemptId: string,
+      phone: string,
+      failedAt: string,
+      failureCode: string
+    ) => {
+      const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+      const current = Array.isArray(booking.pendingJoinPayments)
+        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+        : [];
+      const pending = current.find((item) => (
+        item.transactionId === attemptId
+        && item.phone === phone
+        && item.state === 'PROVIDER_RESULT_UNKNOWN'
+      ));
+      if (!pending) return null;
+      pending.state = 'FAILED';
+      pending.failedAt = failedAt;
+      pending.failureCode = failureCode;
       return tournament;
     },
     markPublicJoinPaymentPaid: async (
@@ -154,6 +245,12 @@ function serviceFixture(tournament: CustomTournament) {
     service,
     setFailFinalize(value: boolean) {
       failFinalize = value;
+    },
+    setFailProviderBind(value: boolean) {
+      failProviderBind = value;
+    },
+    setFailProviderClaim(value: boolean) {
+      failProviderClaim = value;
     }
   };
 }
@@ -170,7 +267,13 @@ async function main(): Promise<void> {
   const fixture = serviceFixture(tournament);
   const originalFetch = globalThis.fetch;
   let transactionCounter = 0;
-  let transactionResponseMode: 'EXACT' | 'GENERIC_ID' = 'EXACT';
+  let transactionResponseMode:
+    | 'EXACT'
+    | 'GENERIC_ID'
+    | 'TIMEOUT'
+    | 'REJECTED'
+    | 'AMBIGUOUS_409'
+    | 'SERVER_ERROR' = 'EXACT';
   let statusPayload: Record<string, unknown> = {};
   let statusAuthorization = '';
   let statusLookupCount = 0;
@@ -193,6 +296,33 @@ async function main(): Promise<void> {
     }
     if (value.endsWith('/transactions')) {
       transactionCounter += 1;
+      if (transactionResponseMode === 'TIMEOUT') {
+        throw new Error('simulated ambiguous provider timeout');
+      }
+      if (transactionResponseMode === 'REJECTED') {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          json: async () => ({ message: 'provider rejected request with phone +79990009999' })
+        } as Response;
+      }
+      if (transactionResponseMode === 'AMBIGUOUS_409') {
+        return {
+          ok: false,
+          status: 409,
+          headers: new Headers(),
+          json: async () => ({ message: 'provider conflict with unknown write outcome' })
+        } as Response;
+      }
+      if (transactionResponseMode === 'SERVER_ERROR') {
+        return {
+          ok: false,
+          status: 503,
+          headers: new Headers(),
+          json: async () => ({ message: 'provider uncertain' })
+        } as Response;
+      }
       const transactionIdentity = transactionResponseMode === 'EXACT'
         ? { transactionId: `secure-transaction-${transactionCounter}` }
         : { id: `generic-id-${transactionCounter}` };
@@ -232,7 +362,8 @@ async function main(): Promise<void> {
     });
     assert.equal(started.code, 'PURCHASE_STARTED');
     const pending = pendingPayments(tournament)[0];
-    assert.equal(pending?.transactionId, 'secure-transaction-1');
+    assert.match(String(pending?.transactionId), /^tournament-payment:/);
+    assert.equal(pending?.providerTransactionId, 'secure-transaction-1');
     assert.equal(pending?.phone, '79990002201');
     assert.equal(pending?.exerciseId, 'exercise-payment-binding');
     assert.equal(pending?.studioId, 'studio-payment-binding');
@@ -336,7 +467,7 @@ async function main(): Promise<void> {
     const expiringPending = pendingPayments(tournament).find(
       (item) => item.phone === '79990002205'
     );
-    assert.equal(expiringPending?.transactionId, 'secure-transaction-3');
+    assert.equal(expiringPending?.providerTransactionId, 'secure-transaction-3');
     if (expiringPending) {
       expiringPending.paymentExpiresAt = new Date(Date.now() - 60_000).toISOString();
     }
@@ -352,7 +483,9 @@ async function main(): Promise<void> {
     });
     assert.equal(expiredRelease.code, 'PURCHASE_REQUIRED');
     assert.equal(
-      pendingPayments(tournament).find((item) => item.transactionId === 'secure-transaction-3')?.state,
+      pendingPayments(tournament).find(
+        (item) => item.providerTransactionId === 'secure-transaction-3'
+      )?.state,
       'EXPIRED'
     );
 
@@ -378,10 +511,150 @@ async function main(): Promise<void> {
       failUrl: 'https://padlhub.ru/fail',
       vivaAuthorizationHeader: 'Bearer generic-token'
     });
-    assert.equal(genericIdResponse.code, 'PURCHASE_REQUIRED');
+    assert.equal(genericIdResponse.code, 'BOOKING_FAILED');
     assert.equal(
-      pendingPayments(tournament).some((item) => item.phone === '79990002203'),
-      false
+      pendingPayments(tournament).find((item) => item.phone === '79990002203')?.state,
+      'PROVIDER_RESULT_UNKNOWN'
+    );
+
+    transactionResponseMode = 'TIMEOUT';
+    const timeoutStart = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+      name: 'Игрок timeout',
+      phone: '+7 999 000-22-06',
+      levelLabel: 'C',
+      selectedPurchaseOptionId: 'secure-product',
+      successUrl: 'https://padlhub.ru/success',
+      failUrl: 'https://padlhub.ru/fail',
+      vivaAuthorizationHeader: 'Bearer timeout-token'
+    });
+    assert.equal(timeoutStart.code, 'BOOKING_FAILED');
+    assert.equal(
+      pendingPayments(tournament).find((item) => item.phone === '79990002206')?.state,
+      'PROVIDER_RESULT_UNKNOWN'
+    );
+    const postsAfterTimeout = transactionCounter;
+    const timeoutRetry = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+      name: 'Игрок timeout',
+      phone: '+7 999 000-22-06',
+      levelLabel: 'C',
+      selectedPurchaseOptionId: 'secure-product',
+      successUrl: 'https://padlhub.ru/success',
+      failUrl: 'https://padlhub.ru/fail',
+      vivaAuthorizationHeader: 'Bearer timeout-token'
+    });
+    assert.equal(timeoutRetry.code, 'BOOKING_FAILED');
+    assert.equal(transactionCounter, postsAfterTimeout, 'timeout retry must not POST again');
+
+    transactionResponseMode = 'AMBIGUOUS_409';
+    const conflictStart = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок conflict',
+        phone: '+7 999 000-22-10',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer conflict-token'
+      }
+    );
+    assert.equal(conflictStart.code, 'BOOKING_FAILED');
+    assert.equal(
+      pendingPayments(tournament).find((item) => item.phone === '79990002210')?.state,
+      'PROVIDER_RESULT_UNKNOWN'
+    );
+    const postsAfterConflict = transactionCounter;
+    const conflictRetry = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок conflict',
+        phone: '+7 999 000-22-10',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer conflict-token'
+      }
+    );
+    assert.equal(conflictRetry.code, 'BOOKING_FAILED');
+    assert.equal(transactionCounter, postsAfterConflict, '409 retry must not POST again');
+
+    transactionResponseMode = 'EXACT';
+    fixture.setFailProviderBind(true);
+    const bindCrashEquivalent = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок bind crash',
+        phone: '+7 999 000-22-07',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer bind-crash-token'
+      }
+    );
+    assert.equal(bindCrashEquivalent.code, 'BOOKING_FAILED');
+    const postsAfterBindCrash = transactionCounter;
+    fixture.setFailProviderBind(false);
+    const bindCrashRetry = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок bind crash',
+        phone: '+7 999 000-22-07',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer bind-crash-token'
+      }
+    );
+    assert.equal(bindCrashRetry.code, 'BOOKING_FAILED');
+    assert.equal(transactionCounter, postsAfterBindCrash, 'bind crash retry must not POST again');
+
+    fixture.setFailProviderClaim(true);
+    const crashBeforePost = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+      name: 'Игрок pre-post crash',
+      phone: '+7 999 000-22-09',
+      levelLabel: 'C',
+      selectedPurchaseOptionId: 'secure-product',
+      successUrl: 'https://padlhub.ru/success',
+      failUrl: 'https://padlhub.ru/fail',
+      vivaAuthorizationHeader: 'Bearer pre-post-token'
+    });
+    assert.equal(crashBeforePost.code, 'BOOKING_FAILED');
+    const postsBeforeSafeResume = transactionCounter;
+    fixture.setFailProviderClaim(false);
+    const resumedBeforePost = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок pre-post crash',
+        phone: '+7 999 000-22-09',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer pre-post-token'
+      }
+    );
+    assert.equal(resumedBeforePost.code, 'PURCHASE_STARTED');
+    assert.equal(transactionCounter, postsBeforeSafeResume + 1);
+
+    transactionResponseMode = 'REJECTED';
+    await assert.rejects(
+      () => fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+        name: 'Игрок rejected',
+        phone: '+7 999 000-22-08',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer rejected-token'
+      }),
+      /Viva transaction failed with status 400/
+    );
+    assert.equal(
+      pendingPayments(tournament).find((item) => item.phone === '79990002208')?.state,
+      'FAILED'
     );
 
     const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;

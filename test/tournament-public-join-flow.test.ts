@@ -117,6 +117,91 @@ function createService(
         tournament.details = { ...details, booking };
         return tournament;
       },
+      claimPublicJoinTransactionCreate: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        attemptedAt: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_CREATE_PENDING'
+          && !item.providerCreateAttemptedAt
+        ));
+        if (!pending) return null;
+        pending.state = 'PROVIDER_RESULT_UNKNOWN';
+        pending.providerCreateAttemptedAt = attemptedAt;
+        return tournament;
+      },
+      bindPublicJoinTransaction: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        providerTransactionId: string,
+        providerResult: Record<string, unknown>
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_RESULT_UNKNOWN'
+        ));
+        if (!pending) return null;
+        Object.assign(pending, providerResult, {
+          providerTransactionId,
+          state: 'PENDING_PAYMENT'
+        });
+        return tournament;
+      },
+      recordPublicJoinTransactionProviderIdentity: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        providerTransactionId: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_RESULT_UNKNOWN'
+        ));
+        if (!pending) return null;
+        pending.providerTransactionId = providerTransactionId;
+        return tournament;
+      },
+      failPublicJoinTransactionCreate: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        failedAt: string,
+        failureCode: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_RESULT_UNKNOWN'
+        ));
+        if (!pending) return null;
+        pending.state = 'FAILED';
+        pending.failedAt = failedAt;
+        pending.failureCode = failureCode;
+        return tournament;
+      },
       claimPublicJoinSubscriptionBooking: async (
         _id: string,
         operationId: string,
