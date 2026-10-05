@@ -200,6 +200,63 @@ async function main(): Promise<void> {
     const storedAfterReplay = await collection.findOne({ id: 'atomic-payment-cup' });
     assert.equal(storedAfterReplay?.participants?.length, 2);
 
+    await insertPaymentTournament('same-request-cup');
+    const sameRequestPhone = '79990003401';
+    const sameRequestAttemptA = `tournament-payment:${randomUUID()}`;
+    const sameRequestAttemptB = `tournament-payment:${randomUUID()}`;
+    const sameRequestReservations = await Promise.all([
+      repository.reservePublicJoinPayment(
+        'same-request-cup',
+        {
+          ...pending(sameRequestAttemptA, sameRequestPhone),
+          state: 'PROVIDER_CREATE_PENDING',
+          operationType: 'TRANSACTION',
+          amountMinor: undefined,
+          eligibilitySnapshot: {
+            ...pending(sameRequestAttemptA, sameRequestPhone).eligibilitySnapshot,
+            activityId: 'same-request-cup'
+          }
+        }
+      ),
+      repository.reservePublicJoinPayment(
+        'same-request-cup',
+        {
+          ...pending(sameRequestAttemptB, sameRequestPhone),
+          state: 'PROVIDER_CREATE_PENDING',
+          operationType: 'TRANSACTION',
+          amountMinor: undefined,
+          eligibilitySnapshot: {
+            ...pending(sameRequestAttemptB, sameRequestPhone).eligibilitySnapshot,
+            activityId: 'same-request-cup'
+          }
+        }
+      )
+    ]);
+    assert.equal(
+      sameRequestReservations.filter(Boolean).length,
+      1,
+      'two concurrent logical retries reserve one local attempt'
+    );
+    const sameRequestClaims = await Promise.all([
+      repository.claimPublicJoinTransactionCreate(
+        'same-request-cup',
+        sameRequestAttemptA,
+        sameRequestPhone,
+        new Date().toISOString()
+      ),
+      repository.claimPublicJoinTransactionCreate(
+        'same-request-cup',
+        sameRequestAttemptB,
+        sameRequestPhone,
+        new Date().toISOString()
+      )
+    ]);
+    assert.equal(
+      sameRequestClaims.filter(Boolean).length,
+      1,
+      'the surviving local attempt grants one provider POST claim'
+    );
+
     await collection.insertOne({
       id: 'provider-attempt-cup',
       source: 'CUSTOM',
