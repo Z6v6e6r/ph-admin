@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { Request } from 'express';
+import { isProductionRuntime } from '../common/mongo-index.guard';
 import {
   ADMIN_PERMISSION_CATALOG,
   ADMIN_PERMISSION_KEYS,
@@ -60,6 +61,7 @@ interface AdminRoleInput {
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
+  private readonly productionRuntime = isProductionRuntime();
   private readonly authEnabled = this.readBooleanEnv('ADMIN_AUTH_ENABLED', true);
   private readonly requireStaffToken = this.readBooleanEnv(
     'ADMIN_AUTH_REQUIRE_STAFF_TOKEN',
@@ -446,7 +448,9 @@ export class AuthService implements OnModuleInit {
   private async initializeRoles(): Promise<void> {
     const defaults = this.defaultRoles();
     if (this.persistence.isEnabled()) {
-      await this.persistence.seedRoles(defaults);
+      if (!this.productionRuntime) {
+        await this.persistence.seedRoles(defaults);
+      }
       const persisted = await this.persistence.loadRoles();
       this.setRoles(persisted.length > 0 ? persisted : defaults);
       return;
@@ -468,9 +472,15 @@ export class AuthService implements OnModuleInit {
         return;
       }
       if (envUsers.length > 0) {
-        await this.persistence.seedUsers(envUsers);
+        if (!this.productionRuntime) {
+          await this.persistence.seedUsers(envUsers);
+          this.logger.warn(`Seeded admin users to MongoDB: ${envUsers.length}`);
+        } else {
+          this.logger.log(
+            `Loaded admin users from ADMIN_AUTH_USERS_JSON without production bootstrap writes: ${envUsers.length}`
+          );
+        }
         this.setUsers(envUsers);
-        this.logger.warn(`Seeded admin users to MongoDB: ${envUsers.length}`);
         return;
       }
     }
@@ -478,11 +488,11 @@ export class AuthService implements OnModuleInit {
       this.setUsers(envUsers);
       return;
     }
-    if (process.env.NODE_ENV === 'production') {
+    if (this.productionRuntime) {
       throw new Error('ADMIN_AUTH_ENABLED=true but no admin users found in MongoDB or ADMIN_AUTH_USERS_JSON');
     }
     const fallbackUser = this.buildFallbackUser();
-    if (this.persistence.isEnabled()) {
+    if (this.persistence.isEnabled() && !this.productionRuntime) {
       await this.persistence.seedUsers([fallbackUser]);
     }
     this.setUsers([fallbackUser]);
@@ -496,7 +506,7 @@ export class AuthService implements OnModuleInit {
     const persistedUsers = await this.persistence.loadUsers();
     if (persistedUsers.length > 0) {
       this.setUsers(persistedUsers);
-    } else if (this.usersByLogin.size > 0) {
+    } else if (this.usersByLogin.size > 0 && !this.productionRuntime) {
       await this.persistence.seedUsers(Array.from(this.usersByLogin.values()));
     }
   }

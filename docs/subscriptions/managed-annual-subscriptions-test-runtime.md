@@ -28,6 +28,23 @@ SUBSCRIPTIONS_MONGODB_DB=<отдельная тестовая база>
 SUBSCRIPTIONS_TEST_HASH_PEPPER=<отдельное значение не короче 32 символов>
 ```
 
+Для read-only расчёта точной цены выбранного слота или игры в обычном `lk_dev`
+тестовый backend принимает только идентификаторы браузера и сопоставляет их с
+явным серверным каталогом:
+
+```env
+SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON=[{"targetKind":"NEW_GAME","slotId":"...","stationId":"...","roomId":"...","masterServiceId":"...","subServiceIds":["..."],"startsAt":"2026-08-31T18:00:00.000Z","durationMinutes":90,"courtPriceMinor":900000},{"targetKind":"GAME_AGGREGATE","gameId":"pay_...","stationId":"...","startsAt":"2026-08-31T18:00:00.000Z","durationMinutes":120,"courtPriceMinor":1200000}]
+```
+
+- endpoint: `POST /v1/subscription-test/offers/:offerId/usage-scenarios/resolved-quote`;
+- token передаётся только в `X-Subscription-Test-Token`;
+- цена приходит только из серверного каталога, делится на четыре равные доли и
+  обязана делиться на четыре без округления;
+- неизвестный слот, игра, лишнее поле браузера, несовпадение станции или неверная
+  конфигурация завершаются fail-closed;
+- endpoint не создаёт резерв, игру, платёж или запись Viva и возвращает
+  `providerCalls: 0`.
+
 Флаг test runtime по умолчанию выключен. Не направлять его в production MongoDB для ручного UI-прогона.
 
 Если `SUBSCRIPTIONS_AUTO_CREATE_INDEXES=false`, до включения runtime нужен отдельный reviewed gate:

@@ -12,12 +12,16 @@ adds the exact selectors required by the LK evaluator:
 
 - `activeServicesLimit { enabled, max, scope }`;
 - `bookingWindow { enabled, days }`;
+- `dailyUsagePolicy { actions, limitExceeded, percentage }`: old rows default
+  to all actions + `BLOCK`, while a game-only `PERCENT_DISCOUNT` can quote the
+  complete service price with a configured discount after the free daily quota;
 - ordered `stationAccessRules` for home, selected or all stations, each with an
   independent fixed surcharge;
 - benefit rules with exact action, event type, product type, duration and
   station selectors;
 - `PARTIAL_PRICE_PERCENT_DISCOUNT` with integer fraction and percentage, for
-  example `1 / 4` of the server price followed by a `20%` discount;
+  example `1 / 3` of a 90-minute price or `1 / 2` of a 120-minute price followed
+  by a `30%` discount for time beyond the free hour;
 - `ADD_ON_PRODUCT` + `PURCHASE_ADD_ON_PRODUCT` for appendable product benefits.
 
 Old model-v2 rows remain readable. New writes use stored schema v3. Legacy and
@@ -95,7 +99,8 @@ closed:
 4. exact provider read-back and restart reconciliation;
 5. sanitized Golden HARs for identity, 60/90/120 create/join, partial price,
    station surcharge, payment timeout, cancellation, refund and no-show;
-6. shadow quote on reserve/dev with no provider mutation.
+6. shadow quote on reserve/dev with no provider mutation;
+7. payment evidence and compensation semantics for every non-zero quote.
 
 Unmapped legacy plans retain their existing flow. Once a provider product is
 explicitly mapped to managed runtime, missing or stale evidence fails closed and
@@ -104,11 +109,13 @@ must never fall back to name-based legacy rules.
 ## Test matrix for the next checkpoint
 
 - identity: exact product/client/clientSubscription ownership and mismatch;
-- evaluator: toggles off/on, 3-active limit race, 3/4/5-day window boundaries;
+- evaluator: toggles off/on, 4-active limit race, legacy daily block and
+  game-only daily over-limit discount, 3/4/5-day window boundaries;
 - station rows: home, selected, all, surcharge, no match and equal-priority
   overlap;
-- benefits: 60 free, 90 quarter-minus-N-percent, 120 disabled, game discount
-  disabled while group/tournament remains enabled, add-on product match/miss;
+- benefits: 60 free, 90/120 excess-time share minus 30%, second game at full
+  price minus 30%, group/tournament minus 50% without consuming the game-day
+  quota, add-on product match/miss;
 - Saga: duplicate idempotency replay/conflict, provider timeout-after-accept,
   restart, out-of-order callbacks and exact reconciliation;
 - compensation: early/late/client/station cancellation, refund, unpaid expiry

@@ -8,6 +8,7 @@
     roleIds: [],
     permissions: [],
     permissionsAuthoritative: false,
+    permissionStationScopes: {},
     role: '',
     stationIds: [],
     connectorRoutes: [],
@@ -185,6 +186,8 @@
     'CLIENT'
   ];
   var ADMIN_PERMISSION_OPTIONS = [
+    ['traffic:read', 'Трафик и карантин — просмотр'],
+    ['traffic:write', 'Карантин IP — управление'],
     ['dialogs:read', 'Диалоги — чтение'],
     ['dialogs:write', 'Диалоги — ответы и изменение статуса'],
     ['games:read', 'Игры — чтение'],
@@ -6100,7 +6103,7 @@
       }
       .phab-advertising-card-variants{
         display:grid;
-        grid-template-columns:minmax(112px,178px) minmax(0,1fr);
+        grid-template-columns:minmax(112px,172px) minmax(0,1fr);
         gap:12px;
         align-items:end;
         margin:8px 18px 0;
@@ -6108,7 +6111,7 @@
       .phab-advertising-card-variants.is-modal{
         width:100%;
         margin:0;
-        grid-template-columns:minmax(150px,178px) minmax(260px,1fr);
+        grid-template-columns:minmax(150px,172px) minmax(260px,1fr);
       }
       .phab-advertising-card-preview{
         min-width:0;
@@ -6137,10 +6140,10 @@
       }
       .phab-advertising-card-preview-stage.is-dragging{cursor:grabbing}
       .phab-advertising-card-preview.is-square .phab-advertising-card-preview-stage{
-        aspect-ratio:1 / 1;
+        aspect-ratio:172 / 266;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-stage{
-        aspect-ratio:335 / 164;
+        aspect-ratio:351 / 120;
       }
       .phab-advertising-card-preview-stage::after{
         content:'';
@@ -6182,7 +6185,7 @@
         color:#fff;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-content{
-        padding:14px;
+        padding:10px;
       }
       .phab-advertising-card-preview-badge,
       .phab-advertising-card-preview-footer{
@@ -6208,12 +6211,17 @@
         text-overflow:ellipsis;
       }
       .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-title{
-        max-width:75%;
-        font-size:16px;
+        max-width:100%;
+        font-size:13px;
+        white-space:nowrap;
+        flex-shrink:0;
       }
       .phab-advertising-card-preview-footer{
         margin-top:7px;
         border-radius:7px;
+      }
+      .phab-advertising-card-preview.is-horizontal .phab-advertising-card-preview-footer{
+        margin-top:4px;
       }
       .phab-advertising-dots{
         display:flex;
@@ -6564,7 +6572,7 @@
         .phab-advertising-card-variants.is-modal{
           grid-template-columns:minmax(0,1fr);
         }
-        .phab-advertising-card-preview.is-square{width:min(178px,100%)}
+        .phab-advertising-card-preview.is-square{width:min(172px,100%)}
         .phab-advertising-card-uploads{grid-template-columns:1fr}
       }
       @media (max-width:1500px){
@@ -7422,6 +7430,16 @@
         color:rgba(51,0,32,.58);
         font-size:11px;
       }
+      .phab-admin-notifications-stats{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+      .phab-admin-notifications-stats strong{
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        margin-top:6px;
+      }
+      .phab-admin-notifications-budget.is-tight{color:#8a5a00}
+      .phab-admin-notifications-budget.is-over{color:#b86400;font-weight:700}
       .phab-admin-notifications-channels{
         display:grid;
         grid-template-columns:repeat(2,minmax(0,1fr));
@@ -7473,6 +7491,16 @@
         background:rgba(255,70,78,.1);
         color:#9f1735;
       }
+      .phab-admin-notifications-token{
+        margin-top:10px;
+        padding:10px 12px;
+        border:1px dashed rgba(51,0,32,.22);
+        border-radius:13px;
+        background:rgba(255,255,255,.6);
+      }
+      .phab-admin-notifications-token summary{cursor:pointer;font-size:12px;font-weight:600;color:rgba(51,0,32,.72)}
+      .phab-admin-notifications-token[open] summary{margin-bottom:8px}
+      .phab-admin-notifications-token .phab-admin-notifications-meta{display:block;margin-bottom:8px}
       .phab-admin-notifications-actions{display:flex;gap:8px;flex-wrap:wrap}
       .phab-admin-notifications-actions .phab-admin-btn{flex:1 1 180px}
       .phab-subscriptions{display:flex;flex-direction:column;gap:14px;padding:4px}
@@ -7754,6 +7782,8 @@
     }
 
     return {
+      getTraffic: function (day) { return request('/traffic?day=' + encodeURIComponent(day), 'GET'); },
+      updateQuarantine: function (payload) { return request('/traffic/quarantine', 'POST', payload); },
       getAllDialogs: function () {
         return request('/support/dialogs', 'GET');
       },
@@ -8584,6 +8614,11 @@
     }
 
     return {
+      // A short-lived admin token pasted by the operator replaces the phone-code login while the
+      // contour has no code delivery. The token is verified by the next admin request.
+      setAccessToken: function (token) {
+        accessToken = String(token || '');
+      },
       restoreSession: async function () {
         try {
           return await refreshSession();
@@ -8622,14 +8657,30 @@
         accessToken = session && session.accessToken ? String(session.accessToken) : '';
         return session;
       },
-      getCapabilities: function () {
-        return adminRequest('/notifications/capabilities', 'GET', null, '', true);
+      listWebPushSubscribers: function (limit, cursor) {
+        var query = '?limit=' + encodeURIComponent(String(limit));
+        if (cursor) query += '&cursor=' + encodeURIComponent(String(cursor));
+        return adminRequest('/notifications/web-push-subscribers' + query, 'GET', null, '', true);
       },
-      resolveRecipients: function (phones) {
+      getDeliveryStats: function (days) {
+        return adminRequest(
+          '/notifications/delivery-stats?days=' + encodeURIComponent(String(days)),
+          'GET',
+          null,
+          '',
+          true
+        );
+      },
+      getCapabilities: function (allowRefresh) {
+        // Callers that verify a pasted token pass false: the 401 retry would silently continue with the
+        // cookie session and report a rejected token as accepted.
+        return adminRequest('/notifications/capabilities', 'GET', null, '', allowRefresh !== false);
+      },
+      resolveRecipients: function (selector) {
         return adminRequest(
           '/notifications/recipients/resolve',
           'POST',
-          { phones: phones },
+          selector,
           '',
           true
         );
@@ -9242,6 +9293,12 @@
     tabPlayerRatings.textContent = 'Уровни';
     tabs.appendChild(tabPlayerRatings);
 
+    var tabTraffic = document.createElement('button');
+    tabTraffic.className = 'phab-admin-tab' + (canAccessTraffic(cfg) ? '' : ' phab-admin-hidden');
+    tabTraffic.type = 'button';
+    tabTraffic.textContent = 'Трафик и карантин';
+    tabs.appendChild(tabTraffic);
+
     var tabLogs = document.createElement('button');
     tabLogs.className = 'phab-admin-tab';
     tabLogs.type = 'button';
@@ -9327,12 +9384,42 @@
       '<input class="phab-admin-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="4" placeholder="0000" data-notification-code></label>' +
       '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn" type="button" data-notification-login>Получить код</button></div>' +
       '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-auth-status>Проверяем существующую сессию…</div>' +
+      '<details class="phab-admin-notifications-token"><summary>Технический вход по admin-токену (временно)</summary>' +
+      '<p class="phab-admin-notifications-meta">Пока в контуре нет доставки кодов. Токен действует ограниченное время и сохраняется только в этой вкладке.</p>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub admin-токен</span>' +
+      '<input class="phab-admin-input" type="password" autocomplete="off" spellcheck="false" placeholder="eyJhbGciOiJIUzI1NiIs…" data-notification-admin-token></label>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn-secondary" type="button" data-notification-token-login>Войти по токену</button></div>' +
+      '</details>' +
       '</div></section>' +
       '<div class="phab-admin-notifications-grid phab-admin-hidden" data-notification-workspace>' +
       '<section class="phab-admin-notifications-card phab-admin-notifications-stack">' +
-      '<div><h3>1. Получатели</h3><p>До 100 номеров — с новой строки, через запятую или точку с запятой.</p></div>' +
+      '<div><h3>1. Получатели</h3><p>До 100 значений всего: номера или PadlHub ID — с новой строки, через запятую или точку с запятой.</p></div>' +
       '<label class="phab-admin-notifications-field"><span>Номера телефонов</span>' +
       '<textarea class="phab-admin-input" placeholder="+7 999 123-45-67&#10;+7 999 765-43-21" data-notification-phones></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>PadlHub ID пользователей</span>' +
+      '<textarea class="phab-admin-input" placeholder="d938caf6-4eca-49d3-8f78-c7ab1b967a41&#10;96d1b47c-dc5c-493f-836c-827f01c31546" data-notification-user-ids></textarea></label>' +
+      '<details class="phab-admin-notifications-token"><summary>У кого подключён Web Push</summary>' +
+      '<p class="phab-admin-notifications-meta">Список аккаунтов, которые прямо сейчас могут получить push. Нажмите на строку, чтобы добавить получателя по PadlHub ID.</p>' +
+      '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn-secondary" type="button" data-notification-subscribers-load>Показать список</button>' +
+      '<button class="phab-admin-btn-secondary phab-admin-hidden" type="button" data-notification-subscribers-more>Показать ещё</button></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-subscribers-status>Список ещё не загружен.</div>' +
+      '<div class="phab-admin-notifications-subscribers" data-notification-subscribers-list></div>' +
+      '</details>' +
+      '<details class="phab-admin-notifications-token"><summary>Доставка пушей</summary>' +
+      '<p class="phab-admin-notifications-meta">Что случилось с отправленным: сколько шлюз принял, что отклонено и с каким кодом. У Web Push нет отчётов от провайдера, поэтому источник — собственные записи: «принято» значит, что пуш-сервис взял сообщение, а не что человек его увидел.</p>' +
+      '<div class="phab-admin-notifications-actions">' +
+      '<label class="phab-admin-notifications-field"><span>Период</span>' +
+      '<select class="phab-admin-input" data-notification-stats-days>' +
+      '<option value="1">1 день</option><option value="7" selected>7 дней</option><option value="30">30 дней</option><option value="90">90 дней</option>' +
+      '</select></label>' +
+      '<button class="phab-admin-btn-secondary" type="button" data-notification-stats-load>Показать отчёт</button></div>' +
+      '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-stats-status>Отчёт ещё не загружен.</div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-summary></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-failures></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-endpoints></div>' +
+      '<div class="phab-admin-notifications-stats" data-notification-stats-campaigns></div>' +
+      '</details>' +
+      '<div class="phab-admin-notifications-result phab-admin-hidden" aria-live="polite" data-notification-user-id-warning></div>' +
       '<div class="phab-admin-notifications-row"><span class="phab-admin-notifications-meta" data-notification-phone-count>0 номеров</span>' +
       '<button class="phab-admin-btn-secondary" type="button" data-notification-preview>Проверить получателей</button></div>' +
       '<div><h3>2. Способ отправки</h3><p>Недоступные провайдеры нельзя выбрать.</p></div>' +
@@ -9347,8 +9434,10 @@
       '<span class="phab-admin-notifications-channel-icon">Ц</span><span class="phab-admin-notifications-channel-copy"><strong>Центр уведомлений</strong><small data-notification-channel-status>Проверяем канал…</small></span></label>' +
       '</div>' +
       '<div><h3>3. Сообщение</h3><p>Текст будет одинаковым для выбранных каналов.</p></div>' +
-      '<label class="phab-admin-notifications-field"><span>Заголовок</span><input class="phab-admin-input" maxlength="300" placeholder="Изменение времени игры" data-notification-title></label>' +
-      '<label class="phab-admin-notifications-field"><span>Текст уведомления</span><textarea class="phab-admin-input" maxlength="8000" placeholder="Ваша игра перенесена. Откройте приложение, чтобы посмотреть детали." data-notification-body></textarea></label>' +
+      '<label class="phab-admin-notifications-field"><span>Заголовок</span><input class="phab-admin-input" maxlength="300" placeholder="Изменение времени игры" data-notification-title>' +
+      '<small class="phab-admin-notifications-meta phab-admin-notifications-budget" data-notification-title-budget>Баннер покажет до 40 символов</small></label>' +
+      '<label class="phab-admin-notifications-field"><span>Текст уведомления</span><textarea class="phab-admin-input" maxlength="8000" placeholder="Ваша игра перенесена. Откройте приложение, чтобы посмотреть детали." data-notification-body></textarea>' +
+      '<small class="phab-admin-notifications-meta phab-admin-notifications-budget" data-notification-body-budget>Баннер покажет первые 120 символов</small></label>' +
       '<label class="phab-admin-notifications-field"><span>Ссылка внутри PadlHub</span><input class="phab-admin-input" value="/notifications" placeholder="/notifications" data-notification-deep-link></label>' +
       '</section>' +
       '<aside class="phab-admin-notifications-stack">' +
@@ -9375,14 +9464,31 @@
     var notificationCodeInput = notificationNode('[data-notification-code]');
     var notificationLoginBtn = notificationNode('[data-notification-login]');
     var notificationAuthStatus = notificationNode('[data-notification-auth-status]');
+    var notificationAdminTokenInput = notificationNode('[data-notification-admin-token]');
+    var notificationTokenLoginBtn = notificationNode('[data-notification-token-login]');
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
+    var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
+    var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
+    var notificationSubscribersList = notificationNode('[data-notification-subscribers-list]');
+    var notificationSubscribersStatus = notificationNode('[data-notification-subscribers-status]');
+    var notificationSubscribersLoad = notificationNode('[data-notification-subscribers-load]');
+    var notificationSubscribersMore = notificationNode('[data-notification-subscribers-more]');
+    var notificationStatsDays = notificationNode('[data-notification-stats-days]');
+    var notificationStatsLoad = notificationNode('[data-notification-stats-load]');
+    var notificationStatsStatus = notificationNode('[data-notification-stats-status]');
+    var notificationStatsSummary = notificationNode('[data-notification-stats-summary]');
+    var notificationStatsFailures = notificationNode('[data-notification-stats-failures]');
+    var notificationStatsEndpoints = notificationNode('[data-notification-stats-endpoints]');
+    var notificationStatsCampaigns = notificationNode('[data-notification-stats-campaigns]');
     var notificationPhoneCount = notificationNode('[data-notification-phone-count]');
     var notificationPreviewBtn = notificationNode('[data-notification-preview]');
     var notificationChannelInputs = Array.prototype.slice.call(
       notificationsSection.querySelectorAll('[data-notification-channel]')
     );
     var notificationTitleInput = notificationNode('[data-notification-title]');
+    var notificationTitleBudget = notificationNode('[data-notification-title-budget]');
     var notificationBodyInput = notificationNode('[data-notification-body]');
+    var notificationBodyBudget = notificationNode('[data-notification-body-budget]');
     var notificationDeepLinkInput = notificationNode('[data-notification-deep-link]');
     var notificationResolution = notificationNode('[data-notification-resolution]');
     var notificationResult = notificationNode('[data-notification-result]');
@@ -9471,6 +9577,10 @@
     playerRatingDetail.setAttribute('aria-live', 'polite');
     playerRatingsLayout.appendChild(playerRatingDetail);
 
+    var trafficSection = document.createElement('div');
+    trafficSection.className = 'phab-admin-hidden';
+    content.appendChild(trafficSection);
+
     var logsSection = document.createElement('div');
     logsSection.className = 'phab-admin-hidden';
     content.appendChild(logsSection);
@@ -9528,9 +9638,10 @@
       '<label class="phab-subscriptions-field"><span>Дата-кандидат</span><input class="phab-admin-input" type="datetime-local" data-subscription-effective-at required></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Создание игр</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-create-enabled>Разрешено</label><div class="phab-subscriptions-actions"><label class="phab-subscriptions-check"><input type="checkbox" value="60" checked data-subscription-create-duration>60 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="90" checked data-subscription-create-duration>90 мин</label><label class="phab-subscriptions-check"><input type="checkbox" value="120" checked data-subscription-create-duration>120 мин</label></div></div>' +
       '<div class="phab-subscriptions-field is-wide"><span>Присоединение к играм</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-join-enabled>Разрешено</label><label class="phab-subscriptions-field"><span>Разрешённый диапазон длительности</span><div class="phab-subscriptions-actions"><select class="phab-admin-input" data-subscription-join-min><option>60</option><option>90</option><option>120</option></select><select class="phab-admin-input" data-subscription-join-max><option>60</option><option>90</option><option selected>120</option></select></div></label></div>' +
-      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="3" data-subscription-active-limit></label>' +
+      '<label class="phab-subscriptions-field"><span>Активных услуг максимум</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-active-limit-enabled>Ограничивать</label><input class="phab-admin-input" type="number" min="1" value="4" data-subscription-active-limit></label>' +
       '<label class="phab-subscriptions-field"><span>Окно записи, дней</span><label class="phab-subscriptions-check"><input type="checkbox" checked data-subscription-booking-window-enabled>Ограничивать</label><select class="phab-admin-input" data-subscription-booking-window><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option><option>13</option><option>14</option></select></label>' +
       '<label class="phab-subscriptions-field"><span>Использований в день</span><input class="phab-admin-input" type="number" min="0" value="1" data-subscription-daily-limit></label>' +
+      '<label class="phab-subscriptions-field"><span>После дневного лимита игр</span><select class="phab-admin-input" data-subscription-daily-exceeded><option value="BLOCK">Запретить</option><option value="PERCENT_DISCOUNT" selected>Полная цена со скидкой</option></select><input class="phab-admin-input" type="number" min="0" max="100" value="30" aria-label="Скидка после дневного лимита, процентов" data-subscription-daily-discount></label>' +
       '<label class="phab-subscriptions-field"><span>Что считать активной услугой</span><select class="phab-admin-input" data-subscription-active-scope><option value="SUBSCRIPTION_BENEFIT_ONLY">Только услуги по подписке</option><option value="ALL_BOOKINGS">Все записи</option></select></label>' +
       '<div class="phab-subscriptions-field is-wide"><span>Списание единиц (кандидат до проверки Viva)</span><div class="phab-subscriptions-actions"><label>60 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="60"></label><label>90 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="90"></label><label>120 мин <input class="phab-admin-input" type="number" min="0" value="1" data-subscription-unit="120"></label></div></div>' +
       '<div class="phab-subscriptions-field is-wide"><span>Доступ по станциям</span><div class="phab-subscriptions-actions"><button class="phab-admin-btn-secondary" type="button" data-subscription-station-rule-add>+ Строка станций</button></div><div class="phab-subscriptions-phases" data-subscription-station-rules></div></div>' +
@@ -9653,6 +9764,8 @@
     var subscriptionBookingWindowInput = subscriptionsSection.querySelector('[data-subscription-booking-window]');
     var subscriptionBookingWindowEnabledInput = subscriptionsSection.querySelector('[data-subscription-booking-window-enabled]');
     var subscriptionDailyLimitInput = subscriptionsSection.querySelector('[data-subscription-daily-limit]');
+    var subscriptionDailyExceededInput = subscriptionsSection.querySelector('[data-subscription-daily-exceeded]');
+    var subscriptionDailyDiscountInput = subscriptionsSection.querySelector('[data-subscription-daily-discount]');
     var subscriptionActiveScopeInput = subscriptionsSection.querySelector('[data-subscription-active-scope]');
     var subscriptionUnitInputs = Array.prototype.slice.call(subscriptionsSection.querySelectorAll('[data-subscription-unit]'));
     var subscriptionBenefits = subscriptionsSection.querySelector('[data-subscription-benefits]');
@@ -10949,6 +11062,17 @@
     stationNameInput.placeholder = 'Москва #1';
     stationForm.appendChild(stationNameInput);
 
+    var stationBroadcastBoxIdLabel = document.createElement('label');
+    stationBroadcastBoxIdLabel.className = 'phab-admin-settings-label';
+    stationBroadcastBoxIdLabel.textContent = 'ID приставки трансляции';
+    stationForm.appendChild(stationBroadcastBoxIdLabel);
+
+    var stationBroadcastBoxIdInput = document.createElement('input');
+    stationBroadcastBoxIdInput.className = 'phab-admin-settings-input';
+    stationBroadcastBoxIdInput.placeholder = 'UUID приставки';
+    stationBroadcastBoxIdInput.autocomplete = 'off';
+    stationForm.appendChild(stationBroadcastBoxIdInput);
+
     var stationActiveWrap = document.createElement('label');
     stationActiveWrap.className = 'phab-admin-check';
     stationForm.appendChild(stationActiveWrap);
@@ -11880,14 +12004,14 @@
     advertisingEditorPanel.appendChild(advertisingCardVariants);
 
     var advertisingEditorSquarePreview = createAdvertisingCardPreview(
-      'Квадратная карточка · 178 × 178 px в ЛК',
+      'Вертикальная карточка · ≈ 172 × 266 px в ЛК',
       'is-square',
       'square'
     );
     advertisingCardVariants.appendChild(advertisingEditorSquarePreview.root);
 
     var advertisingEditorHorizontalPreview = createAdvertisingCardPreview(
-      'Горизонтальная карточка · 335 × 164 px в ЛК',
+      'Горизонтальный баннер · 351 × 120 px в ЛК',
       'is-horizontal',
       'horizontal'
     );
@@ -12057,13 +12181,13 @@
 
     var advertisingSquareUpload = createAdvertisingCardUpload(
       'square',
-      'Квадратное изображение',
-      'Итоговый файл: 178 × 178 px.'
+      'Портретное изображение',
+      'Исходник: 400 × 532 px или больше. Итоговый WebP: 400 × 532 px (≈ 3:4). В вертикальной карточке края обрезаются.'
     );
     var advertisingHorizontalUpload = createAdvertisingCardUpload(
       'horizontal',
       'Горизонтальное изображение',
-      'Итоговый файл: 335 × 164 px.'
+      'Исходник: 720 × 360 px или больше. Итоговый WebP: 720 × 360 px. В баннере края обрезаются.'
     );
 
     var advertisingCropControls = document.createElement('div');
@@ -12245,14 +12369,14 @@
     advertisingPreviewModalBody.appendChild(advertisingModalCardVariants);
 
     var advertisingModalSquarePreview = createAdvertisingCardPreview(
-      'Квадратная карточка · 178 × 178',
+      'Вертикальная карточка · ≈ 172 × 266',
       'is-square',
       'square'
     );
     advertisingModalCardVariants.appendChild(advertisingModalSquarePreview.root);
 
     var advertisingModalHorizontalPreview = createAdvertisingCardPreview(
-      'Горизонтальная карточка · 335 × 164',
+      'Горизонтальный баннер · 351 × 120',
       'is-horizontal',
       'horizontal'
     );
@@ -13076,6 +13200,8 @@
       tabGames: tabGames,
       tabNotifications: tabNotifications,
       tabPlayerRatings: tabPlayerRatings,
+      tabTraffic: tabTraffic,
+      trafficSection: trafficSection,
       tabLogs: tabLogs,
       tabTournaments: tabTournaments,
       tabCommunities: tabCommunities,
@@ -13098,12 +13224,29 @@
       notificationCodeInput: notificationCodeInput,
       notificationLoginBtn: notificationLoginBtn,
       notificationAuthStatus: notificationAuthStatus,
+      notificationAdminTokenInput: notificationAdminTokenInput,
+      notificationTokenLoginBtn: notificationTokenLoginBtn,
       notificationPhonesInput: notificationPhonesInput,
+      notificationUserIdsInput: notificationUserIdsInput,
+      notificationUserIdWarning: notificationUserIdWarning,
+      notificationSubscribersList: notificationSubscribersList,
+      notificationSubscribersStatus: notificationSubscribersStatus,
+      notificationSubscribersLoad: notificationSubscribersLoad,
+      notificationSubscribersMore: notificationSubscribersMore,
+      notificationStatsDays: notificationStatsDays,
+      notificationStatsLoad: notificationStatsLoad,
+      notificationStatsStatus: notificationStatsStatus,
+      notificationStatsSummary: notificationStatsSummary,
+      notificationStatsFailures: notificationStatsFailures,
+      notificationStatsEndpoints: notificationStatsEndpoints,
+      notificationStatsCampaigns: notificationStatsCampaigns,
       notificationPhoneCount: notificationPhoneCount,
       notificationPreviewBtn: notificationPreviewBtn,
       notificationChannelInputs: notificationChannelInputs,
       notificationTitleInput: notificationTitleInput,
+      notificationTitleBudget: notificationTitleBudget,
       notificationBodyInput: notificationBodyInput,
+      notificationBodyBudget: notificationBodyBudget,
       notificationDeepLinkInput: notificationDeepLinkInput,
       notificationResolution: notificationResolution,
       notificationResult: notificationResult,
@@ -13150,6 +13293,8 @@
       subscriptionBookingWindowInput: subscriptionBookingWindowInput,
       subscriptionBookingWindowEnabledInput: subscriptionBookingWindowEnabledInput,
       subscriptionDailyLimitInput: subscriptionDailyLimitInput,
+      subscriptionDailyExceededInput: subscriptionDailyExceededInput,
+      subscriptionDailyDiscountInput: subscriptionDailyDiscountInput,
       subscriptionActiveScopeInput: subscriptionActiveScopeInput,
       subscriptionUnitInputs: subscriptionUnitInputs,
       subscriptionBenefits: subscriptionBenefits,
@@ -13502,6 +13647,7 @@
       stationList: stationList,
       stationIdInput: stationIdInput,
       stationNameInput: stationNameInput,
+      stationBroadcastBoxIdInput: stationBroadcastBoxIdInput,
       stationActiveInput: stationActiveInput,
       stationCreateBtn: stationCreateBtn,
       connectorList: connectorList,
@@ -13683,6 +13829,165 @@
     return hasAnyRole(cfg, legacyPermissions[permission] || []);
   }
 
+  function createTrafficPane(root, api, cfg) {
+    root.style.minWidth = '0'; root.style.width = '100%'; root.style.overflow = 'auto';
+    root.innerHTML = '<style>.phab-traffic-card{padding:18px;gap:16px}.phab-traffic-card h2,.phab-traffic-card h3,.phab-traffic-card p{margin:0}.phab-traffic-card p{line-height:1.5}.phab-traffic-card table{width:100%;border-collapse:collapse;font-size:13px}.phab-traffic-card th,.phab-traffic-card td{padding:12px 10px;border-bottom:1px solid #eadfe7;text-align:left;white-space:nowrap}.phab-traffic-card th{font-size:12px;background:#faf6f9}.phab-traffic-card form label{flex:1 1 150px}.phab-traffic-card .phab-admin-settings-row{flex-wrap:wrap}.phab-traffic-card .phab-admin-settings-row p{overflow-wrap:anywhere;min-width:0;flex:1 1 240px}</style>' +
+      '<div class="phab-admin-settings-card phab-traffic-card">' +
+      '<h2>Трафик и карантин</h2><p>Топ-20 IP по московским суткам. OPTIONS учитываются отдельно. Большое число запросов само по себе не означает нарушение.</p>' +
+      '<div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">' +
+      '<label class="phab-admin-settings-label">Дата (Москва)<input class="phab-admin-settings-input" type="date" data-traffic-day></label>' +
+      '<button type="button" class="phab-admin-btn" data-traffic-refresh>Обновить</button></div>' +
+      '<p role="status" aria-live="polite" data-traffic-status></p><p data-traffic-report-status></p>' +
+      '<h3>Защита истории турниров</h3><p>Оперативные сигналы за последние 10–11 минут, независимо от выбранной даты. Сигнал требует проверки и не добавляет IP в карантин автоматически.</p>' +
+      '<p role="status" aria-live="polite" data-traffic-history-status></p><div style="overflow-x:auto" data-traffic-history-signals></div>' +
+      '<div style="overflow-x:auto" data-traffic-top></div>' +
+      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников. Сохранённое правило начинает действовать после подтверждения сервером.</p>' +
+      '<p data-traffic-protected></p><div data-traffic-rules></div>' +
+      '<form data-traffic-form style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">' +
+      '<label class="phab-admin-settings-label">IP<input class="phab-admin-settings-input" required maxlength="45" autocomplete="off" data-traffic-ip></label>' +
+      '<label class="phab-admin-settings-label">Причина<input class="phab-admin-settings-input" required maxlength="300" data-traffic-reason></label>' +
+      '<label class="phab-admin-settings-label">Действие<select class="phab-admin-settings-input" data-traffic-action><option value="add">Добавить / продлить</option><option value="remove">Снять карантин</option></select></label>' +
+      '<label class="phab-admin-settings-label">Срок<select class="phab-admin-settings-input" data-traffic-days><option value="1">24 часа</option><option value="7" selected>7 дней</option><option value="30">30 дней</option></select></label>' +
+      '<button type="submit" class="phab-admin-btn" disabled data-traffic-save>Сохранить</button></form>' +
+      '<details><summary>История изменений</summary><div data-traffic-audit></div></details></div>';
+    var q = function (name) { return root.querySelector('[data-traffic-' + name + ']'); };
+    var active = false, timer = null, revision = 0, sequence = 0, saving = false;
+    var write = canAccessTraffic(cfg) && hasGlobalTrafficPermission(cfg, 'traffic:write');
+    var date = new Date(Date.now() + 3 * 3600000 - 86400000).toISOString().slice(0, 10);
+    q('day').value = date;
+    q('form').hidden = !write;
+    q('form').style.display = write ? 'flex' : 'none';
+    function time(value) { return value ? new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—'; }
+    function text(parent, value, tag) {
+      var node = document.createElement(tag || 'p'); node.textContent = String(value); parent.appendChild(node); return node;
+    }
+    function table(parent, headings) {
+      parent.textContent = '';
+      var node = document.createElement('table'); node.className = 'phab-admin-table';
+      node.setAttribute('aria-label', 'Топ-20 IP за выбранные московские сутки');
+      var head = node.createTHead().insertRow();
+      headings.forEach(function (label) { var cell = text(head, label, 'th'); cell.scope = 'col'; });
+      parent.appendChild(node); return node.createTBody();
+    }
+    function pick(ip, action) {
+      q('ip').value = ip; q('action').value = action; q('reason').value = '';
+      q('form').scrollIntoView({ block: 'nearest' }); q('reason').focus();
+    }
+    function action(parent, label, ip, kind) {
+      if (!write) return;
+      var button = text(parent, label, 'button'); button.type = 'button'; button.className = 'phab-admin-btn';
+      button.addEventListener('click', function () { pick(ip, kind); });
+    }
+    async function load() {
+      var seq = ++sequence;
+      q('save').disabled = true;
+      q('status').textContent = 'Загружаем статистику…';
+      try {
+        var data = await api.getTraffic(q('day').value);
+        if (seq !== sequence || !active) return;
+        if (!data.enabled) {
+          q('status').textContent = 'Карантин ещё не подключён к серверу.';
+          ['top', 'rules', 'audit', 'report-status', 'history-status', 'history-signals'].forEach(function (name) { q(name).textContent = ''; });
+          return;
+        }
+        revision = data.policy.revision;
+        q('save').disabled = !write || saving;
+        q('protected').textContent = 'Разрешённые источники: ' + data.protectedIps.join(', ');
+        q('status').textContent = data.applied ? 'Правила применены. Проверено: ' + time(data.edge.checkedAt) :
+          'Применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
+        var protection = data.historyProtection || { state: 'not_configured' };
+        var modes = { off: 'Выключена', shadow: 'Наблюдение: запросы пропускаются', enforce: 'Ограничение частоты включено' };
+        var states = { not_configured: 'Мониторинг истории ещё не подключён.', missing: 'Ожидаем первый отчёт защиты истории.',
+          invalid: 'Некорректный отчёт защиты истории.', unavailable: 'Не удалось прочитать отчёт защиты истории.' };
+        q('history-status').textContent = states[protection.state] ||
+          (protection.state === 'stale' ? 'Нет свежего подтверждения. Последнее состояние: ' : '') +
+          (modes[protection.mode] || 'Неизвестный режим') + ' · проверено: ' + time(protection.checkedAt) +
+          ' · кеш: ' + (protection.cacheEnabled ? protection.cacheTtlMs + ' мс' : 'выключен') +
+          ' · лимит аккаунтов: ' + (protection.accountLimiterConfigured ? 'подключён' : 'не подключён') +
+          ' · превышений с запуска: ' + (protection.counters && protection.counters.wouldLimit || 0) +
+          ' · ограничено: ' + (protection.counters && protection.counters.limited || 0) +
+          ' · ответов из кеша: ' + (protection.counters && protection.counters.cacheHits || 0) +
+          ' · объединено: ' + (protection.counters && protection.counters.coalesced || 0) +
+          ' · обрывов: ' + (protection.counters && protection.counters.aborted || 0) +
+          (protection.counters && (protection.counters.identityUnavailable || protection.counters.identityResolverErrors || protection.counters.capacityFallback || protection.counters.telemetryErrors) ?
+            ' · Есть пропуски в защите или ошибки мониторинга — проверьте состояние службы.' : '');
+        var signalBody = table(q('history-signals'), ['IP', 'Запросов', 'Разных турниров', 'Пик / мин', '5xx', 'Обрывов', 'Медленных', 'Причины', '']);
+        signalBody.parentNode.setAttribute('aria-label', 'Оперативные сигналы защиты истории турниров');
+        var reasonLabels = { broad_scan: 'Перебор турниров', request_spike: 'Всплеск запросов', upstream_errors: 'Ошибки ответов', slow_responses: 'Медленные ответы', aborted_requests: 'Обрывы запросов' };
+        (protection.candidates || []).forEach(function (item) {
+          var row = signalBody.insertRow();
+          [item.ip, item.requests, (item.distinctCapped ? '≥' : '') + item.distinctTournaments, item.peakPerMinute, item.errors, item.aborted || 0, item.slow,
+            (item.reasons || []).map(function (r) { return reasonLabels[r] || r; }).join(', ')].forEach(function (value) { text(row, value, 'td'); });
+          var cell = document.createElement('td'); row.appendChild(cell);
+          if (protection.state === 'ok') action(cell, 'Проверить IP…', item.ip, 'add');
+        });
+        if (protection.state === 'ok' && !(protection.candidates || []).length) text(q('history-signals'), protection.mode === 'off' ? 'Сбор сигналов выключен.' : 'Активных сигналов нет.');
+        var report = data.report;
+        q('report-status').textContent = report ?
+          'Запросов: ' + report.requests + ' · отброшено: ' + report.blocked + ' · OPTIONS: ' + report.options +
+          ' · отчёт обновлён: ' + time(report.generatedAt) +
+          (Date.now() - Date.parse(report.generatedAt) > 15 * 60000 && q('day').value >= new Date(Date.now() + 3 * 3600000 - 86400000).toISOString().slice(0, 10) ? ' · Нет свежей статистики.' : '') +
+          ' Данные собираются с ' + time(report.coverageStartedAt) + '.' + (report.partialDay ? ' Неполные сутки.' : '') + (report.rejectedLinesTotal ? ' Есть строки, которые не удалось разобрать: ' + report.rejectedLinesTotal : '') :
+          'За эту дату отчёт ещё не сформирован.';
+        var body = table(q('top'), ['IP', 'Запросов', 'Расписание', 'Турниры / история', 'Участники', 'Отброшено', 'Ошибки 5xx', 'Пик / мин', '']);
+        (report && report.top || []).forEach(function (item) {
+          var row = body.insertRow(), routes = item.routes || {};
+          [item.ip, item.requests, routes.schedule || 0, (routes.tournaments || 0) + (routes.history || 0), routes.participants || 0,
+            item.blocked, item.errors, item.peakPerMinute].forEach(function (value) { text(row, value, 'td'); });
+          var cell = document.createElement('td'); row.appendChild(cell);
+          if (item.protected) text(cell, 'Разрешён'); else action(cell, 'В карантин…', item.ip, 'add');
+        });
+        if (!report || !report.top.length) text(q('top'), 'Нет запросов в доступной выборке.');
+        q('rules').textContent = '';
+        data.policy.rules.forEach(function (rule) {
+          var row = document.createElement('div'); row.className = 'phab-admin-settings-row';
+          var applied = data.applied && data.edge.activeIps.indexOf(rule.ip) >= 0;
+          text(row, rule.ip + ' · ' + rule.reason + ' · отброшено за выбранный день: ' + (report && report.quarantined && report.quarantined[rule.ip] ? report.quarantined[rule.ip].blocked : 0) + ' · до ' + time(rule.expiresAt) + ' · ' +
+            (applied ? 'Отбрасываются' : Date.parse(rule.expiresAt) <= Date.now() ? 'Срок истёк; проверьте применение правил' : 'Ожидает подтверждения'));
+          action(row, 'Снять…', rule.ip, 'remove'); q('rules').appendChild(row);
+        });
+        if (!data.policy.rules.length) text(q('rules'), 'Список карантина пуст.');
+        q('audit').textContent = '';
+        data.policy.audit.slice(-50).reverse().forEach(function (event) {
+          text(q('audit'), time(event.at) + ' · ' + event.ip + ' · ' + (event.action === 'add' ? 'Добавлен / продлён' : 'Снят') +
+            ' · ' + event.reason + ' · ' + event.actorId);
+        });
+      } catch (error) {
+        if (seq !== sequence || !active) return;
+        q('status').textContent = 'Не удалось обновить данные: ' + (error.message || 'Ошибка запроса');
+        q('save').disabled = true;
+      }
+    }
+    q('form').addEventListener('submit', async function (event) {
+      event.preventDefault(); if (saving || q('save').disabled || !write) return;
+      saving = true; q('save').disabled = true; q('status').textContent = 'Сохраняем правило…';
+      try {
+        await api.updateQuarantine({ action: q('action').value, revision: revision, ip: q('ip').value.trim(),
+          reason: q('reason').value.trim(), expiresAt: new Date(Date.now() + Number(q('days').value) * 86400000).toISOString() });
+        q('ip').value = ''; q('reason').value = ''; saving = false; await load();
+      } catch (error) {
+        q('status').textContent = 'Изменение не подтверждено: ' + (error.message || 'Ошибка запроса') + '. Обновите список перед повтором.';
+      } finally { saving = false; }
+    });
+    q('refresh').addEventListener('click', load); q('day').addEventListener('change', load);
+    return { load: load, setActive: function (value) {
+      if (active === value) return; active = value; ++sequence;
+      if (timer) window.clearInterval(timer); timer = null;
+      if (active) { load(); timer = window.setInterval(load, 15000); }
+    } };
+  }
+
+  function canAccessTraffic(cfg) {
+    return hasGlobalTrafficPermission(cfg, 'traffic:read');
+  }
+
+  function hasGlobalTrafficPermission(cfg, permission) {
+    var scopes = cfg.permissionStationScopes || {};
+    var globalScope = Object.prototype.hasOwnProperty.call(scopes, permission)
+      ? scopes[permission] === null : !(cfg.stationIds || []).length;
+    return cfg.permissionsAuthoritative === true && hasPermission(cfg, permission) && globalScope;
+  }
+
   function canAccessSettings(cfg) {
     return hasPermission(cfg, 'settings:read') || hasPermission(cfg, 'admin-users:read');
   }
@@ -13790,8 +14095,10 @@
     var href = String(ad.href || '').trim();
     var imageUrl = String(ad.imageUrl || '').trim();
     var imageAssetId = String(ad.imageAssetId || '').trim();
-    var squareImageUrl = String(ad.squareImageUrl || imageUrl).trim();
+    var squareImageUrl = String(ad.squareImageUrl || '').trim();
     var horizontalImageUrl = String(ad.horizontalImageUrl || imageUrl).trim();
+    // Legacy records can alias both slots to the same horizontal asset.
+    if (squareImageUrl === horizontalImageUrl) squareImageUrl = '';
     if (!href || !imageUrl) {
       return null;
     }
@@ -13804,7 +14111,7 @@
       imageUrl: imageUrl,
       imageAssetId: imageAssetId,
       squareImageUrl: squareImageUrl,
-      squareImageAssetId: String(ad.squareImageAssetId || imageAssetId).trim(),
+      squareImageAssetId: squareImageUrl ? String(ad.squareImageAssetId || '').trim() : '',
       horizontalImageUrl: horizontalImageUrl,
       horizontalImageAssetId: String(ad.horizontalImageAssetId || imageAssetId).trim(),
       isActive: ad.isActive !== false,
@@ -14195,14 +14502,40 @@
     var root = createRoot(cfg);
     var dom = createLayout(root, cfg);
     var api = createApi(cfg);
+    var trafficPane = createTrafficPane(dom.trafficSection, api, cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
+
+    function readStoredNotificationToken() {
+      try {
+        return String(window.sessionStorage.getItem(NOTIFICATION_TOKEN_STORAGE_KEY) || '').trim();
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    function storeNotificationToken(token) {
+      try {
+        if (token) window.sessionStorage.setItem(NOTIFICATION_TOKEN_STORAGE_KEY, token);
+        else window.sessionStorage.removeItem(NOTIFICATION_TOKEN_STORAGE_KEY);
+      } catch (_error) {
+        // Without sessionStorage the token still works for the lifetime of this page.
+      }
+    }
+
     var notificationState = {
       session: null,
       challengeId: '',
       capabilities: null,
       resolution: null,
       restoring: false,
-      busy: ''
+      busy: '',
+      // Bumped on every recipient edit, so a resolve answer for an older selector can be discarded
+      // instead of re-arming the send button for recipients that were never previewed.
+      recipientRevision: 0,
+      // Keyset page state for the "who has Web Push" list.
+      subscriberCursor: '',
+      subscriberLoading: false
     };
     var locationAdminState = {
       items: [],
@@ -15331,8 +15664,10 @@
         locationAdminState.error = error && error.message
           ? error.message
           : 'Не удалось загрузить карточки станций.';
-        if (error && (error.status === 401 || error.status === 403)) {
-          notificationState.session = null;
+        if (notificationSessionExpired(error)) {
+          // The station cards share the notification session, so an expired one is handled here too.
+          locationAdminState.error =
+            'Операторская PadlHub-сессия истекла. Войдите заново во вкладке «Уведомления».';
         }
       } finally {
         locationAdminState.loading = false;
@@ -15409,14 +15744,18 @@
         : isBlock2
           ? 'Блок 2 · Нижний баннер на главной. Управляйте порядком показа и видимостью.'
           : isBlock3
-            ? 'Блок 3 · Узкая рекламная плашка между карточками в разделе «Для меня».'
-            : 'Блок 4 · Рекламная карточка для сетки и вертикального списка «Для меня».';
+            ? 'Блок 3 · Горизонтальный баннер между карточками в разделе «Для меня»: 351 × 120 px. Ширина адаптивная, изображение заполняет блок с обрезкой краёв.'
+            : 'Блок 4 · Вертикальная карточка ≈ 172 × 266 px и горизонтальный баннер 351 × 120 px. Ширина адаптивная. Вертикальная карточка может растягиваться по высоте соседней карточки события. Изображения заполняют блок с обрезкой краёв.';
+      if (isBlock3 || isBlock4) {
+        dom.advertisingPlacementDescription.textContent +=
+          ' Текст, логотип и главный объект размещайте ближе к центру, с отступом 15% от краёв; по краям оставляйте фон и декор. Скругления, бейдж «Акция» и индикаторы слайдов добавляет интерфейс — не включайте их в изображение.';
+      }
       dom.advertisingDraftFileMeta.textContent = isBlock1
         ? 'Размер баннера: 670 × 240 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.'
         : isBlock3
-          ? 'Размер плашки: 670 × 120 px, JPG, PNG или WebP до 15 МБ.'
+          ? 'Исходник: 1600 × 500 px или больше, JPG, PNG или WebP до 15 МБ. Итоговый WebP в 2×: 702 × 240 px.'
           : isBlock4
-            ? 'Для карточки используются два отдельных изображения фактических размеров ЛК.'
+            ? 'Для карточки используются два изображения: портретное 400 × 532 px (≈ 3:4) и горизонтальное 720 × 360 px. Для чёткости загружайте исходники не меньше этих размеров.'
             : 'Рекомендуемый размер: 1920 × 1080 px, JPG, PNG или WebP до 15 МБ. Файл будет оптимизирован автоматически.';
       dom.advertisingDraftFileBlock.className = isBlock4 ? 'phab-admin-hidden' : '';
       dom.advertisingCardFileBlocks.className = isBlock4
@@ -15435,6 +15774,7 @@
       dom.advertisingPreview.className = isBlock4
         ? 'phab-advertising-preview phab-admin-hidden'
         : 'phab-advertising-preview';
+      dom.advertisingPreview.style.aspectRatio = isBlock3 ? '351 / 120' : '';
       dom.advertisingCardVariants.className = isBlock4
         ? 'phab-advertising-card-variants'
         : 'phab-advertising-card-variants phab-admin-hidden';
@@ -15998,6 +16338,7 @@
           hidden: !cfg.notificationApiBaseUrl || isRestrictedStationAdmin
         },
         { value: 'playerRatings', label: 'Уровни', hidden: hidePlayerRatingsTab },
+        { value: 'traffic', label: 'Трафик и карантин', hidden: !canAccessTraffic(cfg) },
         { value: 'logs', label: 'Логи', hidden: isRestrictedStationAdmin },
         { value: 'tournaments', label: 'Турниры', hidden: !canAccessTournaments(cfg) },
         { value: 'communities', label: 'Сообщества', hidden: hideCommunitiesTab },
@@ -32832,8 +33173,36 @@
         var meta = document.createElement('div');
         meta.className = 'phab-admin-settings-row-meta';
         meta.textContent =
-          (station.isActive ? 'active' : 'inactive') + ' · обновлено ' + formatTime(station.updatedAt);
+          (station.isActive ? 'active' : 'inactive') +
+          ' · приставка: ' +
+          (station.tournamentBroadcastBoxId || 'не привязана') +
+          ' · обновлено ' +
+          formatTime(station.updatedAt);
         main.appendChild(meta);
+
+        var broadcastEditor = document.createElement('div');
+        broadcastEditor.className = 'phab-admin-settings-form';
+        main.appendChild(broadcastEditor);
+
+        var broadcastInput = document.createElement('input');
+        broadcastInput.className = 'phab-admin-settings-input';
+        broadcastInput.value = String(station.tournamentBroadcastBoxId || '');
+        broadcastInput.placeholder = 'UUID приставки';
+        broadcastInput.autocomplete = 'off';
+        broadcastInput.setAttribute(
+          'aria-label',
+          'ID приставки трансляции для ' + station.stationName
+        );
+        broadcastEditor.appendChild(broadcastInput);
+
+        var saveBroadcastBtn = document.createElement('button');
+        saveBroadcastBtn.type = 'button';
+        saveBroadcastBtn.className = 'phab-admin-btn-secondary';
+        saveBroadcastBtn.textContent = 'Сохранить ID';
+        saveBroadcastBtn.addEventListener('click', function () {
+          saveStationBroadcastBoxId(station, broadcastInput, saveBroadcastBtn).catch(handleError);
+        });
+        broadcastEditor.appendChild(saveBroadcastBtn);
 
         var action = document.createElement('button');
         action.type = 'button';
@@ -34032,11 +34401,11 @@
       return state.advertisingSubtab === 'cabinetHomeTop'
         ? { width: 670, height: 240 }
         : state.advertisingSubtab === 'cabinetForMeStrip'
-          ? { width: 670, height: 120 }
+          ? { width: 702, height: 240 }
         : state.advertisingSubtab === 'cabinetForMeCard'
             ? cardVariant === 'horizontal'
-              ? { width: 335, height: 164 }
-              : { width: 178, height: 178 }
+              ? { width: 720, height: 360 }
+              : { width: 400, height: 532 }
             : { width: 1600, height: 900 };
     }
 
@@ -34061,8 +34430,8 @@
       dom.advertisingCropY.output.textContent = String(imageState.crop.offsetY);
       dom.advertisingCropHeadLabel.textContent =
         normalized === 'square'
-          ? 'Кадрирование: квадрат 178 × 178'
-          : 'Кадрирование: горизонталь 335 × 164';
+          ? 'Кадрирование: портрет 400 × 532 px'
+          : 'Кадрирование: горизонталь 720 × 360 px';
       dom.advertisingCropControls.className = imageState.sourceFile
         ? 'phab-advertising-crop-controls'
         : 'phab-advertising-crop-controls phab-admin-hidden';
@@ -34257,7 +34626,7 @@
       var cardImageUrls = {
         square:
           state.advertisingEditorCardImages.square.previewUrl ||
-          (item && (item.squareImageUrl || item.imageUrl) ? String(item.squareImageUrl || item.imageUrl) : ''),
+          (item && item.squareImageUrl ? String(item.squareImageUrl) : ''),
         horizontal:
           state.advertisingEditorCardImages.horizontal.previewUrl ||
           (item && (item.horizontalImageUrl || item.imageUrl)
@@ -34273,7 +34642,11 @@
       var isCardPlacement = state.advertisingSubtab === 'cabinetForMeCard';
       dom.advertisingPreviewModalMeta.textContent = isCardPlacement
         ? 'Два варианта карточки в разделе «Для меня»'
-        : 'Мобильная ширина · соотношение баннера 16:9';
+        : state.advertisingSubtab === 'cabinetForMeStrip'
+          ? 'Горизонтальный баннер · 351 × 120 px · ширина адаптивная'
+          : 'Мобильная ширина · соотношение баннера 16:9';
+      dom.advertisingPreviewModalImage.style.aspectRatio =
+        state.advertisingSubtab === 'cabinetForMeStrip' ? '351 / 120' : '';
       dom.advertisingMobileFrame.className = isCardPlacement
         ? 'phab-advertising-mobile-frame phab-admin-hidden'
         : 'phab-advertising-mobile-frame';
@@ -34357,7 +34730,7 @@
       var sources = [
         {
           variant: 'square',
-          url: String(item.squareImageUrl || item.imageUrl || '')
+          url: String(item.squareImageUrl || '')
         },
         {
           variant: 'horizontal',
@@ -34402,13 +34775,20 @@
         dom.advertisingDraftHrefInput.focus();
         return null;
       }
+      if (state.advertisingSubtab === 'cabinetForMeCard') {
+        var item = getAdvertisingEditorItem();
+        if (!state.advertisingEditorCardImages.square.dataUrl && !(item && item.squareImageUrl)) {
+          setStatus('Загрузите портретное изображение 400 × 532 px для карточки', true);
+          return null;
+        }
+      }
       if (state.advertisingEditorMode === 'create') {
         if (state.advertisingSubtab === 'cabinetForMeCard') {
           if (
             !state.advertisingEditorCardImages.square.dataUrl ||
             !state.advertisingEditorCardImages.horizontal.dataUrl
           ) {
-            setStatus('Загрузите квадратное и горизонтальное изображения', true);
+            setStatus('Загрузите вертикальное и горизонтальное изображения', true);
             return null;
           }
         } else if (!state.advertisingEditorImageDataUrl) {
@@ -34945,8 +35325,8 @@
       var cardImageUrls = {
         square:
           state.advertisingEditorCardImages.square.previewUrl ||
-          (item && (item.squareImageUrl || item.imageUrl)
-            ? String(item.squareImageUrl || item.imageUrl)
+          (item && item.squareImageUrl
+            ? String(item.squareImageUrl)
             : ''),
         horizontal:
           state.advertisingEditorCardImages.horizontal.previewUrl ||
@@ -35900,10 +36280,13 @@
         await api.createStation({
           stationId: stationId,
           stationName: String(dom.stationNameInput.value || '').trim() || undefined,
+          tournamentBroadcastBoxId:
+            String(dom.stationBroadcastBoxIdInput.value || '').trim() || undefined,
           isActive: Boolean(dom.stationActiveInput.checked)
         });
         dom.stationIdInput.value = '';
         dom.stationNameInput.value = '';
+        dom.stationBroadcastBoxIdInput.value = '';
         dom.stationActiveInput.checked = true;
         await loadSettings();
         await refreshDialogsView();
@@ -35918,6 +36301,25 @@
       await loadSettings();
       await refreshDialogsView();
       setStatus('Станция обновлена', false);
+    }
+
+    async function saveStationBroadcastBoxId(station, input, button) {
+      var tournamentBroadcastBoxId = String(input.value || '').trim();
+      button.disabled = true;
+      try {
+        await api.updateStation(station.stationId, {
+          tournamentBroadcastBoxId: tournamentBroadcastBoxId || null
+        });
+        await loadSettings();
+        setStatus(
+          tournamentBroadcastBoxId
+            ? 'ID приставки сохранён'
+            : 'Привязка приставки удалена',
+          false
+        );
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function createConnector() {
@@ -36104,6 +36506,57 @@
     async function savePlayerRatingEdit() { var player = state.selectedPlayerRating; var ratingNumeric = Number(dom.playerRatingEditNumericInput.value); var reason = String(dom.playerRatingEditReasonInput.value || '').trim(); if (!player || mapPlayerRatingGradeV1(ratingNumeric) === '-' || reason.length < 10) { dom.playerRatingEditError.textContent = 'Укажите рейтинг от 1 до 7 и причину не короче 10 символов.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); return; } state.playerRatingEditSubmitting = true; dom.playerRatingEditSaveBtn.disabled = true; try { var key = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random(); var result = await api.changePlayerRating(player.playerKey, { ratingNumeric: ratingNumeric, reason: reason, expectedLastEventId: player.lastEventId, idempotencyKey: key }); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); closePlayerRatingEdit(); await loadPlayerRatingEvents(); setStatus('Уровень сохранён в ЦУП. Статус синхронизации с Viva: ' + playerRatingStatusLabel(result.projection && result.projection.status), false); } catch (error) { if (error && error.status === 409) { dom.playerRatingEditError.textContent = 'Карточка устарела. Актуальное изменение загружено — повторите корректировку.'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); await selectPlayerRating(player.playerKey); } else { dom.playerRatingEditError.textContent = error && error.message ? error.message : 'Не удалось сохранить уровень'; dom.playerRatingEditError.classList.remove('phab-admin-hidden'); } } finally { state.playerRatingEditSubmitting = false; dom.playerRatingEditSaveBtn.disabled = false; } }
     async function retryPlayerRatingProjection() { var player = state.selectedPlayerRating; if (!player) return; var result = await api.retryPlayerRatingProjection(player.playerKey); state.selectedPlayerRating = result.state; replacePlayerRatingInList(result.state); renderPlayerRatingDetail(); setStatus('Задача синхронизации Viva переведена в ожидание.', false); }
 
+    var NOTIFICATION_USER_ID_PATTERN =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    // A mistyped PadlHub ID must never be dropped silently: the operator would believe the campaign
+    // reached a recipient that it never addressed, so invalid values are shown and block sending.
+    function parseNotificationUserIds() {
+      var ids = [];
+      var invalid = [];
+      Array.from(
+        new Set(
+          String(dom.notificationUserIdsInput.value || '')
+            .split(/[\s,;]+/)
+            .map(function (userId) { return userId.trim().toLowerCase(); })
+            .filter(Boolean)
+        )
+      ).forEach(function (userId) {
+        if (NOTIFICATION_USER_ID_PATTERN.test(userId)) ids.push(userId);
+        else invalid.push(userId);
+      });
+      return { ids: ids, invalid: invalid };
+    }
+
+    var NOTIFICATION_RECIPIENT_LIMIT = 100;
+
+    // A subscription the device never confirmed again is probably gone: iOS drops the subscription when
+    // the Home Screen app is deleted, and the row only turns INVALID once the push service answers 410.
+    var NOTIFICATION_STALE_CONFIRMATION_DAYS = 7;
+
+    // The Admin API accepts a 300-character title because that is the in-app inbox limit, but the
+    // operating system truncates the system banner much earlier: about 40 characters on desktop and
+    // Android, about 30 on an iOS banner. The composer counts against the banner, because that is the
+    // text the recipient actually reads; a longer value is never blocked, it only loses the tail.
+    var NOTIFICATION_BANNER_TITLE_LIMIT = 40;
+    var NOTIFICATION_BANNER_TITLE_IOS_LIMIT = 30;
+    var NOTIFICATION_BANNER_BODY_LIMIT = 120;
+
+    function notificationRecipientSelection() {
+      var phones = parseNotificationPhones();
+      var userIds = parseNotificationUserIds();
+      var selector = {};
+      if (phones.length) selector.phones = phones;
+      if (userIds.ids.length) selector.userIds = userIds.ids;
+      return {
+        selector: selector,
+        phones: phones.length,
+        userIds: userIds.ids.length,
+        total: phones.length + userIds.ids.length,
+        invalidUserIds: userIds.invalid
+      };
+    }
+
     function parseNotificationPhones() {
       return Array.from(
         new Set(
@@ -36151,6 +36604,7 @@
     }
 
     function renderNotificationCapabilities() {
+      var selectedSignature = selectedNotificationChannels().join(',');
       var capabilities =
         notificationState.capabilities && Array.isArray(notificationState.capabilities.channels)
           ? notificationState.capabilities.channels
@@ -36178,22 +36632,117 @@
         var fallback = dom.notificationChannelInputs.find(function (input) { return !input.disabled; });
         if (fallback) fallback.checked = true;
       }
+      if (notificationState.resolution && selectedNotificationChannels().join(',') !== selectedSignature) {
+        // A refreshed capability set can switch a selected channel off without firing `change`, so the
+        // preview is invalidated here as well instead of being kept for channels that no longer apply.
+        notificationState.resolution = null;
+        setNotificationResult(
+          dom.notificationResolution,
+          'Доступные каналы изменились. Проверьте получателей снова.',
+          false
+        );
+      }
+    }
+
+    function renderNotificationTextBudget() {
+      var titleLength = String(dom.notificationTitleInput.value || '').trim().length;
+      var bodyLength = String(dom.notificationBodyInput.value || '').trim().length;
+      var titleOver = titleLength > NOTIFICATION_BANNER_TITLE_LIMIT;
+      var titleTight = !titleOver && titleLength > NOTIFICATION_BANNER_TITLE_IOS_LIMIT;
+      var titleText = titleLength + ' / ' + NOTIFICATION_BANNER_TITLE_LIMIT + ' символов для баннера';
+      if (titleOver) {
+        titleText += ' — баннер обрежет заголовок, в Центре уведомлений он останется целиком';
+      } else if (titleTight) {
+        titleText += ' — на iPhone баннер может обрезать';
+      }
+      // The tone rides on modifiers, so the muted base style keeps applying when the state changes.
+      dom.notificationTitleBudget.classList.toggle('is-over', titleOver);
+      dom.notificationTitleBudget.classList.toggle('is-tight', titleTight);
+      dom.notificationTitleBudget.textContent = titleText;
+      var bodyOver = bodyLength > NOTIFICATION_BANNER_BODY_LIMIT;
+      dom.notificationBodyBudget.classList.toggle('is-tight', bodyOver);
+      dom.notificationBodyBudget.textContent = bodyOver
+        ? bodyLength +
+          ' символов — в баннер войдут первые ' +
+          NOTIFICATION_BANNER_BODY_LIMIT +
+          ', остальное видно в Центре уведомлений'
+        : bodyLength + ' символов · в баннер войдут все';
     }
 
     function updateNotificationControls() {
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
       var selectedChannels = selectedNotificationChannels();
-      dom.notificationPhoneCount.textContent = phones.length + ' номеров';
-      dom.notificationPreviewBtn.disabled = phones.length === 0 || Boolean(notificationState.busy);
+      renderNotificationTextBudget();
+      var hasInvalidUserIds = selection.invalidUserIds.length > 0;
+      var overLimit = selection.total > NOTIFICATION_RECIPIENT_LIMIT;
+      dom.notificationPhoneCount.textContent =
+        selection.phones + ' номеров · ' + selection.userIds + ' PadlHub ID';
+      if (hasInvalidUserIds || overLimit) {
+        dom.notificationUserIdWarning.classList.remove('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent = hasInvalidUserIds
+          ? 'Не похоже на PadlHub ID: ' +
+            selection.invalidUserIds.join(', ') +
+            '. Исправьте или удалите эти значения — пока они здесь, отправка заблокирована.'
+          : 'Не более ' +
+            NOTIFICATION_RECIPIENT_LIMIT +
+            ' значений всего, сейчас ' +
+            selection.total +
+            '. Уберите лишние — пока их больше, отправка заблокирована.';
+      } else {
+        dom.notificationUserIdWarning.classList.add('phab-admin-hidden');
+        dom.notificationUserIdWarning.textContent = '';
+      }
+      var blocked = hasInvalidUserIds || overLimit || Boolean(notificationState.busy);
+      dom.notificationPreviewBtn.disabled = selection.total === 0 || blocked;
       dom.notificationSendBtn.disabled =
         !notificationState.resolution ||
         !Array.isArray(notificationState.resolution.matched) ||
         notificationState.resolution.matched.length === 0 ||
+        blocked ||
         !String(dom.notificationTitleInput.value || '').trim() ||
         !String(dom.notificationBodyInput.value || '').trim() ||
-        selectedChannels.length === 0 ||
-        Boolean(notificationState.busy);
+        selectedChannels.length === 0;
       dom.notificationLoginBtn.disabled = Boolean(notificationState.busy);
+      dom.notificationTokenLoginBtn.disabled = Boolean(notificationState.busy);
+    }
+
+    function notificationRecipientGenitiveWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod10 === 1 && mod100 !== 11) return 'получателя';
+      return 'получателей';
+    }
+
+    function notificationRecipientWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'получателей';
+      if (mod10 === 1) return 'получатель';
+      if (mod10 >= 2 && mod10 <= 4) return 'получателя';
+      return 'получателей';
+    }
+
+    function notificationValueWord(count) {
+      var mod100 = count % 100;
+      var mod10 = count % 10;
+      if (mod100 >= 11 && mod100 <= 14) return 'значений';
+      if (mod10 === 1) return 'значение';
+      if (mod10 >= 2 && mod10 <= 4) return 'значения';
+      return 'значений';
+    }
+
+    // A 401/403 on any admin call means the session or the token is no longer usable, so the block
+    // returns to the login card and forgets a token that cannot work any more.
+    function notificationSessionExpired(error) {
+      if (!error || (error.status !== 401 && error.status !== 403)) return false;
+      if (notificationApi) notificationApi.setAccessToken('');
+      storeNotificationToken('');
+      notificationState.capabilities = null;
+      showNotificationAuth(
+        'Сессия истекла. Войдите по коду или вставьте новый admin-токен.',
+        true
+      );
+      return true;
     }
 
     function showNotificationAuth(message, isError) {
@@ -36214,12 +36763,13 @@
       updateNotificationControls();
     }
 
-    async function loadNotificationCapabilities() {
+    async function loadNotificationCapabilities(options) {
       if (!notificationApi || !notificationState.session) return;
+      var allowRefresh = !(options && options.allowRefresh === false);
       notificationState.busy = 'capabilities';
       updateNotificationControls();
       try {
-        notificationState.capabilities = await notificationApi.getCapabilities();
+        notificationState.capabilities = await notificationApi.getCapabilities(allowRefresh);
         renderNotificationCapabilities();
         showNotificationWorkspace();
         setStatus('Каналы уведомлений загружены', false);
@@ -36253,9 +36803,31 @@
       notificationState.restoring = true;
       setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
       try {
+        var storedToken = readStoredNotificationToken();
+        if (storedToken) {
+          notificationApi.setAccessToken(storedToken);
+          notificationState.session = { accessToken: storedToken };
+          try {
+            await loadNotificationCapabilities({ allowRefresh: false });
+          } catch (storedTokenError) {
+            // A transient failure keeps the token for a retry; an auth failure falls through.
+            if (!(storedTokenError && (storedTokenError.status === 401 || storedTokenError.status === 403))) {
+              throw storedTokenError;
+            }
+          }
+          if (notificationState.session && notificationState.capabilities) return;
+          notificationApi.setAccessToken('');
+          notificationState.session = null;
+          storeNotificationToken('');
+        }
         var session = await notificationApi.restoreSession();
         if (!session) {
-          showNotificationAuth('Сессия отправки не найдена. Получите локальный код и войдите.', false);
+          showNotificationAuth(
+            storedToken
+              ? 'Токен истёк или не подошёл. Вставьте новый admin-токен или войдите по коду.'
+              : 'Сессия отправки не найдена. Получите локальный код и войдите.',
+            false
+          );
           return;
         }
         notificationState.session = session;
@@ -36313,34 +36885,445 @@
       }
     }
 
+    async function submitNotificationTokenLogin() {
+      if (!notificationApi) return;
+      var token = String(dom.notificationAdminTokenInput.value || '').trim();
+      if (token.split('.').length !== 3) {
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          'Токен должен быть JWT вида header.payload.signature.',
+          true
+        );
+        return;
+      }
+      notificationState.busy = 'token';
+      updateNotificationControls();
+      try {
+        notificationApi.setAccessToken(token);
+        notificationState.session = { accessToken: token };
+        // The capabilities read is the first admin request, so it proves the token and the permission.
+        // It runs without the cookie fallback: a rejected token must fail here, not silently continue
+        // as another session.
+        notificationState.capabilities = await notificationApi.getCapabilities(false);
+        storeNotificationToken(token);
+        dom.notificationAdminTokenInput.value = '';
+        renderNotificationCapabilities();
+        showNotificationWorkspace();
+        setNotificationResult(dom.notificationAuthStatus, 'Сессия по токену активна.', false);
+        setStatus('Контур уведомлений подключён по токену', false);
+      } catch (error) {
+        notificationApi.setAccessToken('');
+        notificationState.session = null;
+        notificationState.capabilities = null;
+        storeNotificationToken('');
+        dom.notificationAdminTokenInput.value = '';
+        var rejected = error && (error.status === 401 || error.status === 403);
+        setNotificationResult(
+          dom.notificationAuthStatus,
+          rejected
+            ? 'Токен не принят: ' +
+              (error && error.message ? error.message : 'сессия недействительна.')
+            : error && error.message
+              ? error.message
+              : 'Токен не подошёл.',
+          true
+        );
+      } finally {
+        notificationState.busy = '';
+        updateNotificationControls();
+      }
+    }
+
+    function notificationRecipientChannels(recipient) {
+      return Array.isArray(recipient && recipient.availableChannels)
+        ? recipient.availableChannels
+        : [];
+    }
+
+    // A phone can resolve to a different account than the operator expects (the verified login phone
+    // and the provider mapping can belong to two accounts of one person), so the preview always shows
+    // the PadlHub id next to the name and the channels that account can actually receive.
+    function notificationRecipientLabel(recipient) {
+      var name = String((recipient && recipient.displayName) || 'Получатель');
+      var contact = String((recipient && recipient.phoneMasked) || 'без телефона');
+      var id = String((recipient && recipient.userId) || '').slice(0, 8);
+      return name + ' · ' + contact + (id ? ' · ' + id : '');
+    }
+
+    // Chrome and every Chromium browser subscribe through FCM, Safari and every browser on iOS through
+    // Apple, so the push service name is also the device family the operator needs to reason about.
+    function notificationPlatformLabels(platforms) {
+      var labels = { CHROME: 'Chrome', SAFARI: 'iPhone/iPad', OTHER: 'другое' };
+      if (!Array.isArray(platforms)) return [];
+      return platforms
+        .map(function (platform) {
+          return labels[String(platform)] || String(platform);
+        })
+        .filter(Boolean);
+    }
+
+    function notificationPlatformSuffix(platforms) {
+      var labels = notificationPlatformLabels(platforms);
+      return labels.length ? ' · ' + labels.join(', ') : '';
+    }
+
+    function notificationShortMoment(value) {
+      var parsed = Date.parse(String(value || ''));
+      if (!Number.isFinite(parsed)) return '';
+      var date = new Date(parsed);
+      var pad = function (part) {
+        return String(part).padStart(2, '0');
+      };
+      return (
+        pad(date.getDate()) +
+        '.' +
+        pad(date.getMonth() + 1) +
+        ' ' +
+        pad(date.getHours()) +
+        ':' +
+        pad(date.getMinutes())
+      );
+    }
+
+    function notificationConfirmationSuffix(lastConfirmedAt) {
+      var moment = notificationShortMoment(lastConfirmedAt);
+      if (!moment) return ' · подтверждение неизвестно';
+      var ageMs = Date.now() - Date.parse(String(lastConfirmedAt));
+      var stale = ageMs > NOTIFICATION_STALE_CONFIRMATION_DAYS * 24 * 60 * 60 * 1000;
+      return ' · подтверждён ' + moment + (stale ? ' (давно — вероятно, устройство заменено)' : '');
+    }
+
+    function appendNotificationStatLine(container, text) {
+      var line = document.createElement('div');
+      line.className = 'phab-admin-notifications-meta';
+      line.textContent = text;
+      container.appendChild(line);
+    }
+
+    function appendNotificationStatHeading(container, text) {
+      var heading = document.createElement('strong');
+      heading.textContent = text;
+      container.appendChild(heading);
+    }
+
+    /**
+     * The report is the operator's only view of what happened after a send: Web Push has no provider
+     * dashboard, so every number here is read back from our own delivery rows.
+     */
+    function renderNotificationDeliveryStats(stats) {
+      var summary = dom.notificationStatsSummary;
+      var failures = dom.notificationStatsFailures;
+      var endpoints = dom.notificationStatsEndpoints;
+      var campaigns = dom.notificationStatsCampaigns;
+      [summary, failures, endpoints, campaigns].forEach(function (node) {
+        node.textContent = '';
+      });
+
+      appendNotificationStatHeading(summary, 'По каналам');
+      var channels = Array.isArray(stats && stats.channels) ? stats.channels : [];
+      if (!channels.length) appendNotificationStatLine(summary, 'За выбранный период отправок не было.');
+      channels.forEach(function (channel) {
+        appendNotificationStatLine(
+          summary,
+          String(channel.channel || '—') +
+            ' · в очереди ' +
+            String(channel.queued || 0) +
+            ' · принято ' +
+            String(channel.accepted || 0) +
+            ' · ошибок ' +
+            String(channel.failed || 0) +
+            ' · dead ' +
+            String(channel.dead || 0) +
+            ' · подавлено ' +
+            String(channel.suppressed || 0) +
+            ' · в работе ' +
+            String(channel.pending || 0) +
+            ' · показано ' +
+            String(channel.displayed || 0) +
+            ' · открыто ' +
+            String(channel.opened || 0) +
+            (channel.medianAcceptSeconds === undefined
+              ? ''
+              : ' · медиана ' + String(channel.medianAcceptSeconds) + ' с')
+        );
+      });
+
+      appendNotificationStatHeading(failures, 'Ошибки');
+      var failureRows = Array.isArray(stats && stats.failures) ? stats.failures : [];
+      if (!failureRows.length) appendNotificationStatLine(failures, 'Ошибок за период нет.');
+      failureRows.forEach(function (failure) {
+        appendNotificationStatLine(
+          failures,
+          String(failure.errorCode || '—') +
+            ' · ' +
+            String(failure.count || 0) +
+            ' раз(а)' +
+            (notificationShortMoment(failure.lastOccurredAt)
+              ? ' · последний ' + notificationShortMoment(failure.lastOccurredAt)
+              : '')
+        );
+      });
+
+      appendNotificationStatHeading(endpoints, 'Устройства');
+      var health = (stats && stats.endpoints) || {};
+      var platformCounts = health.platforms || {};
+      // Only the services that actually have a subscription are worth a line: a row of zeros hides the
+      // one number the operator is looking for.
+      var platformText = Object.keys(platformCounts)
+        .filter(function (key) {
+          return Number(platformCounts[key] || 0) > 0;
+        })
+        .map(function (key) {
+          return (notificationPlatformLabels([key])[0] || key) + ' ' + String(platformCounts[key]);
+        })
+        .join(' · ');
+      appendNotificationStatLine(
+        endpoints,
+        'активных ' +
+          String(health.active || 0) +
+          ' · недействительных ' +
+          String(health.invalid || 0) +
+          ' · отозванных ' +
+          String(health.revoked || 0) +
+          ' · с приостановленной политикой ' +
+          String(health.suspendedPolicy || 0) +
+          (platformText ? ' · ' + platformText : '') +
+          (health.unreadableEndpoints
+            ? ' · нечитаемых ' + String(health.unreadableEndpoints)
+            : '')
+      );
+
+      appendNotificationStatHeading(campaigns, 'Последние кампании');
+      var campaignRows = Array.isArray(stats && stats.campaigns) ? stats.campaigns : [];
+      if (!campaignRows.length) appendNotificationStatLine(campaigns, 'Кампаний за период не было.');
+      campaignRows.forEach(function (campaign) {
+        appendNotificationStatLine(
+          campaigns,
+          (notificationShortMoment(campaign.createdAt) || '—') +
+            ' · ' +
+            String(campaign.campaignId || '').slice(0, 8) +
+            ' · получателей ' +
+            String(campaign.matchedCount || 0) +
+            ' · push в очереди ' +
+            String(campaign.pushQueuedCount || 0) +
+            ' · принято ' +
+            String(campaign.pushAccepted || 0) +
+            ' · ошибок ' +
+            String(campaign.pushFailed || 0) +
+            ' · dead ' +
+            String(campaign.pushDead || 0) +
+            ' · показано ' +
+            String(campaign.pushDisplayed || 0) +
+            ' · открыто ' +
+            String(campaign.pushOpened || 0)
+        );
+      });
+    }
+
+    async function loadNotificationDeliveryStats() {
+      if (!notificationApi) return;
+      var days = Number(dom.notificationStatsDays.value || 7);
+      setNotificationResult(dom.notificationStatsStatus, 'Загружаем отчёт…', false);
+      try {
+        var stats = await notificationApi.getDeliveryStats(days);
+        renderNotificationDeliveryStats(stats || {});
+        setNotificationResult(
+          dom.notificationStatsStatus,
+          'Период: ' + days + ' дн. «Принято» — это приём пуш-сервисом, а не показ на устройстве.',
+          false
+        );
+      } catch (error) {
+        if (notificationSessionExpired(error)) return;
+        setNotificationResult(
+          dom.notificationStatsStatus,
+          error && error.message ? error.message : 'Не удалось загрузить отчёт.',
+          true
+        );
+      }
+    }
+
+    function renderNotificationSubscribers(items, append) {
+      if (!append) dom.notificationSubscribersList.textContent = '';
+      if (!items.length && !append) {
+        setNotificationResult(dom.notificationSubscribersStatus, 'Активных Web Push-подписок не найдено.', false);
+        return;
+      }
+      setNotificationResult(dom.notificationSubscribersStatus, 'Найдено: ' + items.length, false);
+      for (const subscriber of items) {
+        var row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'phab-admin-btn-secondary';
+        row.style.display = 'block';
+        row.style.width = '100%';
+        row.style.marginBottom = '6px';
+        row.textContent =
+          String(subscriber.displayName || 'Получатель') +
+          ' · ' +
+          String(subscriber.phoneMasked || 'без телефона') +
+          ' · ' +
+          String(subscriber.userId || '').slice(0, 8) +
+          ' · подписок ' +
+          String(subscriber.endpointCount || 0) +
+          notificationPlatformSuffix(subscriber.platforms) +
+          notificationConfirmationSuffix(subscriber.lastConfirmedAt);
+        row.setAttribute('data-notification-subscriber', String(subscriber.userId || ''));
+        row.addEventListener('click', function () {
+          addNotificationRecipient(String(subscriber.userId || ''));
+        });
+        dom.notificationSubscribersList.appendChild(row);
+      }
+    }
+
+    // Appending to the existing text keeps whatever the operator typed and reuses the normal input
+    // path, so the preview is invalidated exactly as if the id had been typed by hand.
+    function addNotificationRecipient(userId) {
+      if (!userId) return;
+      var current = String(dom.notificationUserIdsInput.value || '');
+      var existing = current
+        .split(/[\s,;]+/)
+        .map(function (entry) { return entry.trim().toLowerCase(); })
+        .filter(Boolean);
+      if (existing.indexOf(userId.toLowerCase()) >= 0) {
+        setNotificationResult(dom.notificationSubscribersStatus, 'Этот получатель уже добавлен.', false);
+        return;
+      }
+      dom.notificationUserIdsInput.value = current.trim() ? current.replace(/\s+$/, '') + '\n' + userId : userId;
+      dom.notificationUserIdsInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+      setNotificationResult(dom.notificationSubscribersStatus, 'Получатель добавлен в список получателей.', false);
+    }
+
+    async function loadNotificationSubscribers(options) {
+      if (!notificationApi || notificationState.subscriberLoading) return;
+      var append = Boolean(options && options.append);
+      notificationState.subscriberLoading = true;
+      if (!append) notificationState.subscriberCursor = '';
+      try {
+        var page = await notificationApi.listWebPushSubscribers(
+          20,
+          append ? notificationState.subscriberCursor : ''
+        );
+        var items = Array.isArray(page && page.items) ? page.items : [];
+        notificationState.subscriberCursor = String((page && page.nextCursor) || '');
+        renderNotificationSubscribers(items, append);
+        dom.notificationSubscribersMore.classList.toggle(
+          'phab-admin-hidden',
+          !notificationState.subscriberCursor
+        );
+      } catch (error) {
+        if (notificationSessionExpired(error)) return;
+        setNotificationResult(
+          dom.notificationSubscribersStatus,
+          error && error.message ? error.message : 'Не удалось загрузить список подписок.',
+          true
+        );
+      } finally {
+        notificationState.subscriberLoading = false;
+      }
+    }
+
     async function previewNotificationRecipients() {
       if (!notificationApi) return;
-      var phones = parseNotificationPhones();
+      var selection = notificationRecipientSelection();
+      var revision = notificationState.recipientRevision;
       notificationState.busy = 'preview';
       notificationState.resolution = null;
       setNotificationResult(dom.notificationResolution, 'Проверяем получателей…', false);
       updateNotificationControls();
       try {
-        var resolution = await notificationApi.resolveRecipients(phones);
+        var resolution = await notificationApi.resolveRecipients(selection.selector);
+        if (revision !== notificationState.recipientRevision) {
+          // The operator edited the recipients while this answer was in flight: it describes values
+          // that are no longer selected, so it must not enable the send button.
+          setNotificationResult(
+            dom.notificationResolution,
+            'Получатели изменились во время проверки. Проверьте их снова.',
+            true
+          );
+          return;
+        }
         notificationState.resolution = resolution;
         var matched = Array.isArray(resolution.matched) ? resolution.matched : [];
         var unresolved = Array.isArray(resolution.unresolvedPhones)
           ? resolution.unresolvedPhones
           : [];
+        var unresolvedUserIds = Array.isArray(resolution.unresolvedUserIds)
+          ? resolution.unresolvedUserIds
+          : [];
+        var selected = selectedNotificationChannels();
+        var wantsWebPush = selected.indexOf('WEB_PUSH') >= 0;
+        // Reachability is measured against the channels the operator selected, not against the account's
+        // total channel count, so the sort can never list an unreachable account before a reachable one.
+        function selectedChannelCount(recipient) {
+          return notificationRecipientChannels(recipient).filter(function (channel) {
+            return selected.indexOf(channel) >= 0;
+          }).length;
+        }
+        var ordered = matched.slice().sort(function (left, right) {
+          return selectedChannelCount(right) - selectedChannelCount(left);
+        });
+        var withoutWebPush = wantsWebPush
+          ? matched.filter(function (recipient) {
+              return notificationRecipientChannels(recipient).indexOf('WEB_PUSH') < 0;
+            })
+          : [];
+        var nothingReachable = matched.filter(function (recipient) {
+          return selectedChannelCount(recipient) === 0;
+        });
         var lines = [
           'Найдено: ' + matched.length,
-          'Не найдено: ' + unresolved.length
+          'Не найдено: ' + (unresolved.length + unresolvedUserIds.length)
         ];
-        matched.slice(0, 20).forEach(function (recipient) {
-          lines.push(
-            '• ' +
-              String(recipient.displayName || 'Получатель') +
-              ' · ' +
-              String(recipient.phoneMasked || '')
-          );
+        ordered.slice(0, 20).forEach(function (recipient) {
+          var channels = notificationRecipientChannels(recipient);
+          var notes = [channels.length ? channels.join(' + ') : 'нет доступных каналов'];
+          if (channels.length && wantsWebPush && channels.indexOf('WEB_PUSH') < 0) {
+            notes.push('Web Push недоступен');
+          }
+          if (channels.length && selectedChannelCount(recipient) === 0) {
+            notes.push('ни один из выбранных каналов недоступен');
+          }
+          lines.push('• ' + notificationRecipientLabel(recipient) + ' — ' + notes.join(', '));
         });
-        setNotificationResult(dom.notificationResolution, lines.join('\n'), matched.length === 0);
+        if (ordered.length > 20) {
+          lines.push(
+            '… и ещё ' +
+              (ordered.length - 20) +
+              ' ' +
+              notificationRecipientWord(ordered.length - 20)
+          );
+        }
+        if (unresolvedUserIds.length) {
+          lines.push('Не найдены PadlHub ID: ' + unresolvedUserIds.join(', '));
+        }
+        if (withoutWebPush.length) {
+          lines.push('');
+          lines.push(
+            // After "из N" Russian takes the genitive: singular for 1/21/31, plural otherwise.
+            'Внимание: Web Push недоступен у ' +
+              withoutWebPush.length +
+              ' из ' +
+              matched.length +
+              ' ' +
+              notificationRecipientGenitiveWord(matched.length) +
+              '. Проверьте, что телефон нашёлся на нужном аккаунте.'
+          );
+        }
+        if (nothingReachable.length) {
+          lines.push(
+            'Ничего не получат ' +
+              nothingReachable.length +
+              ' ' +
+              notificationRecipientWord(nothingReachable.length) +
+              ': у них нет ни одного из выбранных каналов.'
+          );
+        }
+        setNotificationResult(
+          dom.notificationResolution,
+          lines.join('\n'),
+          matched.length === 0 || nothingReachable.length === matched.length
+        );
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResolution,
           error && error.message ? error.message : 'Не удалось проверить получателей.',
@@ -36358,27 +37341,46 @@
       setNotificationResult(dom.notificationResult, 'Отправляем кампанию…', false);
       updateNotificationControls();
       try {
-        var payload = {
-          phones: parseNotificationPhones(),
+        var payload = Object.assign({}, notificationRecipientSelection().selector, {
           title: String(dom.notificationTitleInput.value || '').trim(),
           body: String(dom.notificationBodyInput.value || '').trim(),
           channels: selectedNotificationChannels()
-        };
+        });
         var deepLink = String(dom.notificationDeepLinkInput.value || '').trim();
         if (deepLink) payload.deepLink = deepLink;
         var result = await notificationApi.createCampaign(payload);
+        // The API reports `unresolvedCount` as `inputCount - matchedCount`, which also counts a value
+        // that merely named an already matched person (a phone and a user id of one operator-picked
+        // recipient). The preview knows the values that truly reached nobody, so the warning uses that
+        // count instead of a number that would contradict the preview the operator just read.
+        var previewResolution = notificationState.resolution || {};
+        var skipped =
+          (Array.isArray(previewResolution.unresolvedPhones)
+            ? previewResolution.unresolvedPhones.length
+            : 0) +
+          (Array.isArray(previewResolution.unresolvedUserIds)
+            ? previewResolution.unresolvedUserIds.length
+            : 0);
         setNotificationResult(
           dom.notificationResult,
-          'Кампания принята.\nInbox: ' +
+          (skipped > 0
+            ? 'Кампания принята частично: ' +
+              skipped +
+              ' ' +
+              notificationValueWord(skipped) +
+              ' не нашли получателя.\n'
+            : 'Кампания принята.\n') +
+            'Inbox: ' +
             Number(result.inAppCreatedCount || 0) +
             ', Web Push в очереди: ' +
             Number(result.pushQueuedCount || 0) +
             '.\nID: ' +
             String(result.campaignId || '').slice(0, 8),
-          false
+          skipped > 0
         );
         setStatus('Кампания уведомлений принята', false);
       } catch (error) {
+        if (notificationSessionExpired(error)) return;
         setNotificationResult(
           dom.notificationResult,
           error && error.message ? error.message : 'Не удалось отправить кампанию.',
@@ -36781,6 +37783,16 @@
                 (testOffer.accessToken ? ' · новая одноразово показанная ссылка' : ' · существующий оффер');
               card.appendChild(offerMeta);
             }
+            if (testOffer && testOffer.usageScenarioUrl) {
+              var usageLink = document.createElement('a');
+              usageLink.className = 'phab-admin-btn-secondary';
+              usageLink.href = testOffer.usageScenarioUrl;
+              usageLink.target = '_blank';
+              usageLink.rel = 'noopener noreferrer';
+              usageLink.textContent = 'Проверить ограничения в lk_dev';
+              usageLink.setAttribute('aria-label', 'Открыть DEV-проверку ограничений и скидок без реальных записей');
+              card.appendChild(usageLink);
+            }
           }
           dom.subscriptionProgramsList.appendChild(card);
         });
@@ -37074,7 +38086,7 @@
         state.subscriptions.testActionByProgram[programId] = {
           busy: false,
           message: offer && offer.storefrontPath
-            ? 'Ссылка создана. Она ведёт только в fake-контур.'
+            ? 'Ссылки созданы. Они ведут только в fake-контур.'
             : 'Оффер уже существует; секретная ссылка повторно не раскрывается.'
         };
         setStatus('Тестовый оффер создан без Viva и реальной оплаты', false);
@@ -37247,6 +38259,13 @@
             : null
         },
         dailyUsageLimit: Number(dom.subscriptionDailyLimitInput.value || 0),
+        dailyUsagePolicy: {
+          actions: ['CREATE_GAME', 'JOIN_GAME'],
+          limitExceeded: dom.subscriptionDailyExceededInput.value,
+          percentage: dom.subscriptionDailyExceededInput.value === 'PERCENT_DISCOUNT'
+            ? Number(dom.subscriptionDailyDiscountInput.value || 0)
+            : null
+        },
         activeServiceScope: dom.subscriptionActiveScopeInput.value,
         usageUnitsByDuration: usageUnits,
         stationAccessRules: subscriptionStationRulesPayload(),
@@ -37346,8 +38365,9 @@
     }
 
     function switchTab(nextTab) {
+      if (nextTab === 'traffic' && !canAccessTraffic(cfg)) nextTab = 'messages';
       if (!canAccessDialogs(cfg) && nextTab === 'messages') {
-        nextTab = canAccessGames(cfg) ? 'games' : canAccessTournaments(cfg) ? 'tournaments' : canAccessSettings(cfg) ? 'settings' : 'messages';
+        nextTab = canAccessGames(cfg) ? 'games' : canAccessTournaments(cfg) ? 'tournaments' : canAccessSettings(cfg) ? 'settings' : canAccessTraffic(cfg) ? 'traffic' : 'messages';
       }
       if (!canAccessGames(cfg) && nextTab === 'games') {
         nextTab = canAccessDialogs(cfg) ? 'messages' : 'tournaments';
@@ -37380,6 +38400,9 @@
         nextTab = 'messages';
       }
       state.activeTab = nextTab;
+      dom.tabTraffic.className = 'phab-admin-tab' + (nextTab === 'traffic' ? ' phab-admin-tab-active' : '') + (canAccessTraffic(cfg) ? '' : ' phab-admin-hidden');
+      dom.trafficSection.className = nextTab === 'traffic' ? '' : 'phab-admin-hidden';
+      trafficPane.setActive(nextTab === 'traffic');
       var isMessages = nextTab === 'messages';
       var isGames = nextTab === 'games';
       var isNotifications = nextTab === 'notifications';
@@ -37495,6 +38518,8 @@
         }
       } finally {
         cfg.authToken = '';
+        storeNotificationToken('');
+        if (notificationApi) notificationApi.setAccessToken('');
         try {
           window.localStorage.removeItem('phab_admin_token');
         } catch (_error) {
@@ -37516,6 +38541,8 @@
           await ensureNotificationSession();
         } else if (state.activeTab === 'playerRatings') {
           await searchPlayerRatings(false);
+        } else if (state.activeTab === 'traffic') {
+          await trafficPane.load();
         } else if (state.activeTab === 'logs') {
           await loadGameEvents();
         } else if (state.activeTab === 'analytics') {
@@ -37636,14 +38663,17 @@
         event.preventDefault();
         submitNotificationLogin().catch(handleError);
       });
-      dom.notificationPhonesInput.addEventListener('input', function () {
-        notificationState.resolution = null;
-        setNotificationResult(
-          dom.notificationResolution,
-          'Проверьте номера перед отправкой кампании.',
-          false
-        );
-        updateNotificationControls();
+      [dom.notificationPhonesInput, dom.notificationUserIdsInput].forEach(function (input) {
+        input.addEventListener('input', function () {
+          notificationState.resolution = null;
+          notificationState.recipientRevision += 1;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
       });
       [dom.notificationTitleInput, dom.notificationBodyInput, dom.notificationDeepLinkInput].forEach(
         function (input) {
@@ -37651,7 +38681,28 @@
         }
       );
       dom.notificationChannelInputs.forEach(function (input) {
-        input.addEventListener('change', updateNotificationControls);
+        input.addEventListener('change', function () {
+          // The preview is computed per selected channel, so changing the channels makes it stale.
+          notificationState.resolution = null;
+          setNotificationResult(
+            dom.notificationResolution,
+            'Проверьте получателей перед отправкой кампании.',
+            false
+          );
+          updateNotificationControls();
+        });
+      });
+      dom.notificationTokenLoginBtn.addEventListener('click', function () {
+        submitNotificationTokenLogin().catch(handleError);
+      });
+      dom.notificationSubscribersLoad.addEventListener('click', function () {
+        loadNotificationSubscribers().catch(handleError);
+      });
+      dom.notificationSubscribersMore.addEventListener('click', function () {
+        loadNotificationSubscribers({ append: true }).catch(handleError);
+      });
+      dom.notificationStatsLoad.addEventListener('click', function () {
+        loadNotificationDeliveryStats().catch(handleError);
       });
       dom.notificationPreviewBtn.addEventListener('click', function () {
         previewNotificationRecipients().catch(handleError);
@@ -37677,6 +38728,7 @@
       dom.playerRatingEditModal.addEventListener('click', function (event) { if (event.target === dom.playerRatingEditModal) closePlayerRatingEdit(); });
       dom.playerRatingEditNumericInput.addEventListener('input', updatePlayerRatingEditPreview);
       dom.playerRatingEditForm.addEventListener('submit', function (event) { event.preventDefault(); savePlayerRatingEdit().catch(handleError); });
+      dom.tabTraffic.addEventListener('click', function () { switchTab('traffic'); });
       dom.tabLogs.addEventListener('click', function () {
         switchTab('logs');
         loadGameEvents().catch(handleError);
@@ -38856,6 +39908,7 @@
     }
 
     function destroy() {
+      trafficPane.setActive(false);
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }

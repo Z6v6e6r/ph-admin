@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import {
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionRuntimeOperation,
-  StoredSubscriptionUsageLedgerEvent
+  StoredSubscriptionUsageLedgerEvent,
+  SubscriptionRuntimeCompatibility
 } from './subscriptions.types';
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -64,6 +68,9 @@ const LEDGER_EVENT_TYPES = [
   'SURCHARGE_REFUNDED', 'ADD_ON_CHARGED', 'ADD_ON_REFUNDED', 'ADMIN_ADJUSTED'
 ] as const;
 const OUTBOX_STATUSES = ['PENDING', 'DELIVERED', 'DEAD_LETTER'] as const;
+const INSTANCE_PROJECTOR_SCOPE_KINDS = ['TENANT', 'STATION', 'STATION_SET'] as const;
+const INSTANCE_PROJECTOR_EVIDENCE_PATTERN =
+  /^[a-z][a-z0-9_]{2,63}:sha256:[a-f0-9]{64}$/;
 const ACTIVATED_INSTANCE_STATES = new Set([
   'ACTIVE', 'FROZEN', 'EXPIRED', 'CANCELLED', 'REFUNDED', 'REVOKED'
 ]);
@@ -240,6 +247,23 @@ const hash = (value: unknown, field: string): string => {
   return normalized;
 };
 
+const validateRuntimeCompatibility = (value: unknown): SubscriptionRuntimeCompatibility => {
+  const compatibility = value as Partial<SubscriptionRuntimeCompatibility> | null;
+  if (!compatibility || typeof compatibility !== 'object') {
+    fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_INVALID');
+  }
+  assertExactKeys(
+    compatibility as object,
+    ['adapterId', 'contractVersion', 'capabilityDigest'],
+    'runtimeCompatibility'
+  );
+  const resolved = compatibility as SubscriptionRuntimeCompatibility;
+  requiredId(resolved.adapterId, 'runtimeCompatibility.adapterId');
+  positiveInteger(resolved.contractVersion, 'runtimeCompatibility.contractVersion');
+  digest(resolved.capabilityDigest, 'runtimeCompatibility.capabilityDigest');
+  return resolved;
+};
+
 const validateMoney = (
   money: { amountMinor: number; currency: 'RUB' },
   field: string
@@ -263,6 +287,9 @@ const validateUsageBuckets = (
 };
 
 const assertExactKeys = (value: object, expected: readonly string[], field: string): void => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail('SUBSCRIPTION_RUNTIME_SHAPE_INVALID', { field });
+  }
   const actual = Object.keys(value).sort();
   const canonical = [...expected].sort();
   if (JSON.stringify(actual) !== JSON.stringify(canonical)) {
@@ -503,6 +530,33 @@ const validateRuntimeProjection = (
     fail('SUBSCRIPTION_PUBLICATION_BOOKING_WINDOW_INVALID');
   }
   positiveInteger(value.dailyUsageLimit, 'runtimeProjection.dailyUsageLimit');
+  if (value.dailyUsagePolicy !== undefined) {
+    const dailyUsageActions = validateUniqueIdArray(
+      value.dailyUsagePolicy.actions,
+      'runtimeProjection.dailyUsagePolicy.actions'
+    );
+    if (dailyUsageActions.length === 0
+      || dailyUsageActions.some((action) => !SUBSCRIPTION_ACTIONS.includes(
+        action as (typeof SUBSCRIPTION_ACTIONS)[number]
+      ))) {
+      fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_ACTIONS_INVALID');
+    }
+    oneOf(
+      value.dailyUsagePolicy.limitExceeded,
+      ['BLOCK', 'PERCENT_DISCOUNT'],
+      'SUBSCRIPTION_PUBLICATION_DAILY_USAGE_EXCEEDED_INVALID',
+      'runtimeProjection.dailyUsagePolicy.limitExceeded'
+    );
+    if (value.dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT') {
+      const percentage = nonNegativeInteger(
+        value.dailyUsagePolicy.percentage,
+        'runtimeProjection.dailyUsagePolicy.percentage'
+      );
+      if (percentage > 100) fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_DISCOUNT_INVALID');
+    } else if (value.dailyUsagePolicy.percentage !== null) {
+      fail('SUBSCRIPTION_PUBLICATION_DAILY_USAGE_DISCOUNT_INVALID');
+    }
+  }
   for (const duration of ['60', '90', '120'] as const) {
     positiveInteger(
       value.usageUnitsByDuration?.[duration],
@@ -690,7 +744,7 @@ export function validateStoredSubscriptionCanonicalTargetSnapshot(
 export function validateStoredSubscriptionPolicyPublication(
   value: StoredSubscriptionPolicyPublication
 ): void {
-  if (![1, 2].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  if (![1, 2, 3].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
   requiredId(value.publicationId, 'publicationId');
   requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
   positiveInteger(value.policyVersion, 'policyVersion');
@@ -704,6 +758,13 @@ export function validateStoredSubscriptionPolicyPublication(
   requiredId(value.approvalAuditRef, 'approvalAuditRef');
   if (value.schemaVersion === 2 && !value.idempotency) {
     fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+  }
+  if ((value.schemaVersion === 1 || value.schemaVersion === 2) && value.runtimeCompatibility !== undefined) {
+    fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_UNATTESTED');
+  }
+  if (value.schemaVersion === 3) {
+    if (!value.idempotency) fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+    validateRuntimeCompatibility(value.runtimeCompatibility);
   }
   if (value.idempotency) {
     requiredId(value.idempotency.actorId, 'idempotency.actorId');
@@ -737,6 +798,47 @@ export function validateStoredSubscriptionPolicyPublication(
       'supersededAt'
     );
   }
+}
+
+export function validateStoredSubscriptionProjectionFence(
+  value: StoredSubscriptionProjectionFence
+): void {
+  if (value.schemaVersion !== 1) fail('SUBSCRIPTION_PROJECTION_FENCE_SCHEMA_INVALID');
+  assertExactKeys(value as object, [
+    'schemaVersion', 'fenceId', 'subscriptionTypeId', 'bindingRevision', 'bindingDigest',
+    'binding', 'coordinationRevision', 'lastProjectorReconciliationDigest', 'createdAt',
+    'updatedAt'
+  ], 'projectionFence');
+  requiredId(value.fenceId, 'fenceId');
+  requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
+  positiveInteger(value.bindingRevision, 'bindingRevision');
+  digest(value.bindingDigest, 'bindingDigest');
+  positiveInteger(value.coordinationRevision, 'coordinationRevision');
+  if (value.lastProjectorReconciliationDigest !== null) {
+    digest(value.lastProjectorReconciliationDigest, 'lastProjectorReconciliationDigest');
+  }
+  assertExactKeys(value.binding as object, [
+    'mappingId', 'mappingRevision', 'subscriptionTypeId', 'publicationId', 'policyVersion',
+    'policyDigest', 'runtimeCompatibility'
+  ], 'projectionFence.binding');
+  requiredId(value.binding.mappingId, 'binding.mappingId');
+  positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
+  requiredId(value.binding.subscriptionTypeId, 'binding.subscriptionTypeId');
+  requiredId(value.binding.publicationId, 'binding.publicationId');
+  positiveInteger(value.binding.policyVersion, 'binding.policyVersion');
+  digest(value.binding.policyDigest, 'binding.policyDigest');
+  validateRuntimeCompatibility(value.binding.runtimeCompatibility);
+  if (value.binding.subscriptionTypeId !== value.subscriptionTypeId) {
+    fail('SUBSCRIPTION_PROJECTION_FENCE_BINDING_MISMATCH');
+  }
+  requiredInstant(value.createdAt, 'createdAt');
+  requiredInstant(value.updatedAt, 'updatedAt');
+  assertInstantOrder(
+    value.createdAt,
+    value.updatedAt,
+    'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID',
+    'updatedAt'
+  );
 }
 
 export function validateStoredSubscriptionInstance(value: StoredSubscriptionInstance): void {
@@ -801,6 +903,289 @@ export function validateStoredSubscriptionInstance(value: StoredSubscriptionInst
   validateReconciliation(value.reconciliation, 'reconciliation');
 }
 
+export function validateStoredSubscriptionInstanceProjectorCheckpoint(
+  value: StoredSubscriptionInstanceProjectorCheckpoint
+): void {
+  if (![2, 3].includes(value.schemaVersion) || value.provider !== 'VIVA') {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CHECKPOINT_SCHEMA_INVALID');
+  }
+  assertExactKeys(value as object, [
+    'schemaVersion', 'checkpointId', 'tenantId', 'provider', 'providerProductId', 'providerScope',
+    'approvalRef', 'binding', 'producer', 'state', 'coverage', 'reconciliation', 'failure',
+    'lease', 'revision', 'createdAt', 'updatedAt',
+    ...(value.schemaVersion === 3 ? ['policyResolution'] : [])
+  ], 'instanceProjectorCheckpoint');
+  requiredId(value.checkpointId, 'checkpointId');
+  requiredId(value.tenantId, 'tenantId');
+  requiredId(value.providerProductId, 'providerProductId');
+  assertExactKeys(value.providerScope as object, ['kind', 'scopeId'], 'providerScope');
+  oneOf(value.providerScope.kind, INSTANCE_PROJECTOR_SCOPE_KINDS,
+    'SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID', 'providerScope.kind');
+  if (value.providerScope.kind === 'STATION_SET') {
+    if (!STATION_SET_SCOPE_PATTERN.test(value.providerScope.scopeId)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_SCOPE_INVALID', { field: 'providerScope.scopeId' });
+    }
+  } else requiredId(value.providerScope.scopeId, 'providerScope.scopeId');
+  if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.approvalRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_APPROVAL_REF_INVALID');
+  }
+
+  assertExactKeys(value.binding as object, [
+    'fenceId', 'fenceRevision', 'fenceDigest', 'mappingId', 'mappingRevision',
+    'subscriptionTypeId', 'publicationId', 'policyVersion',
+    'policyDigest', 'releaseProgramId', 'releaseProgramRevision', 'releasePhaseId',
+    'runtimeCompatibility'
+  ], 'binding');
+  requiredId(value.binding.fenceId, 'binding.fenceId');
+  positiveInteger(value.binding.fenceRevision, 'binding.fenceRevision');
+  digest(value.binding.fenceDigest, 'binding.fenceDigest');
+  requiredId(value.binding.mappingId, 'binding.mappingId');
+  positiveInteger(value.binding.mappingRevision, 'binding.mappingRevision');
+  requiredId(value.binding.subscriptionTypeId, 'binding.subscriptionTypeId');
+  requiredId(value.binding.publicationId, 'binding.publicationId');
+  positiveInteger(value.binding.policyVersion, 'binding.policyVersion');
+  digest(value.binding.policyDigest, 'binding.policyDigest');
+  requiredId(value.binding.releaseProgramId, 'binding.releaseProgramId');
+  positiveInteger(value.binding.releaseProgramRevision, 'binding.releaseProgramRevision');
+  requiredId(value.binding.releasePhaseId, 'binding.releasePhaseId');
+  validateRuntimeCompatibility(value.binding.runtimeCompatibility);
+
+  assertExactKeys(value.producer as object, [
+    'producerId', 'contractVersion', 'producerCapabilityDigest', 'sourceContractDigest',
+    'authorityDigest'
+  ], 'producer');
+  if (value.producer.producerId !== 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR'
+    || value.producer.contractVersion !== 2) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_PRODUCER_INVALID');
+  }
+  digest(value.producer.producerCapabilityDigest, 'producer.producerCapabilityDigest');
+  digest(value.producer.sourceContractDigest, 'producer.sourceContractDigest');
+  digest(value.producer.authorityDigest, 'producer.authorityDigest');
+
+  if (value.schemaVersion === 2) {
+    if (value.policyResolution !== undefined) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_INVALID');
+    }
+  } else {
+    if (!value.policyResolution || typeof value.policyResolution !== 'object') {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_REQUIRED');
+    }
+    const resolution = value.policyResolution!;
+    assertExactKeys(resolution as object, [
+      'publicationHistory', 'selections', 'resolutionDigest'
+    ], 'policyResolution');
+    assertExactKeys(resolution.publicationHistory as object, [
+      'historyDigest', 'entries'
+    ], 'policyResolution.publicationHistory');
+    digest(resolution.publicationHistory.historyDigest, 'policyResolution.publicationHistory.historyDigest');
+    if (!Array.isArray(resolution.publicationHistory.entries)
+      || resolution.publicationHistory.entries.length < 1) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+    }
+    const publicationIds = new Set<string>();
+    const policyVersions = new Set<number>();
+    const publicationEntriesById = new Map<string,
+      (typeof resolution.publicationHistory.entries)[number]>();
+    for (const [index, entry] of resolution.publicationHistory.entries.entries()) {
+      assertExactKeys(entry as object, [
+        'publicationId', 'subscriptionTypeId', 'policyVersion', 'policyDigest', 'mappingId',
+        'state', 'effectiveAt'
+      ], 'policyResolution.publicationHistory.entry');
+      requiredId(entry.publicationId, 'policyResolution.publicationHistory.publicationId');
+      requiredId(entry.subscriptionTypeId, 'policyResolution.publicationHistory.subscriptionTypeId');
+      positiveInteger(entry.policyVersion, 'policyResolution.publicationHistory.policyVersion');
+      digest(entry.policyDigest, 'policyResolution.publicationHistory.policyDigest');
+      requiredId(entry.mappingId, 'policyResolution.publicationHistory.mappingId');
+      oneOf(entry.state, PUBLICATION_STATES,
+        'SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID',
+        'policyResolution.publicationHistory.state');
+      requiredInstant(entry.effectiveAt, 'policyResolution.publicationHistory.effectiveAt');
+      if (entry.subscriptionTypeId !== value.binding.subscriptionTypeId
+        || publicationIds.has(entry.publicationId)
+        || policyVersions.has(entry.policyVersion)) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+      }
+      const previous = resolution.publicationHistory.entries[index - 1];
+      if (previous && (Date.parse(previous.effectiveAt) >= Date.parse(entry.effectiveAt)
+        || previous.policyVersion >= entry.policyVersion)) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_HISTORY_INVALID');
+      }
+      publicationIds.add(entry.publicationId);
+      policyVersions.add(entry.policyVersion);
+      publicationEntriesById.set(entry.publicationId, entry);
+    }
+    if (!Array.isArray(resolution.selections) || resolution.selections.length < 1) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+    }
+    const selectionIds = new Set<string>();
+    for (const selection of resolution.selections) {
+      assertExactKeys(selection as object, [
+        'subscriptionInstanceId', 'providerClientId', 'clientSubscriptionId', 'purchasedAt',
+        'publicationId', 'policyVersion', 'policyDigest', 'mappingId'
+      ], 'policyResolution.selection');
+      requiredId(selection.subscriptionInstanceId, 'policyResolution.selection.subscriptionInstanceId');
+      requiredId(selection.providerClientId, 'policyResolution.selection.providerClientId');
+      requiredId(selection.clientSubscriptionId, 'policyResolution.selection.clientSubscriptionId');
+      requiredInstant(selection.purchasedAt, 'policyResolution.selection.purchasedAt');
+      requiredId(selection.publicationId, 'policyResolution.selection.publicationId');
+      positiveInteger(selection.policyVersion, 'policyResolution.selection.policyVersion');
+      digest(selection.policyDigest, 'policyResolution.selection.policyDigest');
+      requiredId(selection.mappingId, 'policyResolution.selection.mappingId');
+      const selectedPublication = publicationEntriesById.get(selection.publicationId);
+      if (selectionIds.has(selection.subscriptionInstanceId)
+        || !selectedPublication
+        || selectedPublication.policyVersion !== selection.policyVersion
+        || selectedPublication.policyDigest !== selection.policyDigest
+        || selectedPublication.mappingId !== selection.mappingId
+        || selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS') {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+      }
+      selectionIds.add(selection.subscriptionInstanceId);
+    }
+    digest(resolution.resolutionDigest, 'policyResolution.resolutionDigest');
+    const computedResolutionDigest = `sha256:${createHash('sha256')
+      .update(canonicalStringify({
+        publicationHistory: resolution.publicationHistory,
+        selections: resolution.selections
+      }))
+      .digest('hex')}`;
+    if (computedResolutionDigest !== resolution.resolutionDigest) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_RESOLUTION_INVALID');
+    }
+  }
+  oneOf(value.state, ['CURRENT', 'FAILED'], 'SUBSCRIPTION_INSTANCE_PROJECTOR_STATE_INVALID', 'state');
+
+  if (!value.coverage || typeof value.coverage !== 'object') {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+  }
+  if (value.coverage.kind === 'ORDERED_CHANGE_FEED') {
+    assertExactKeys(value.coverage, ['kind', 'watermark', 'watermarkDigest', 'coverageThrough'], 'coverage');
+    if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.coverage.watermark)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_WATERMARK_INVALID');
+    }
+    digest(value.coverage.watermarkDigest, 'coverage.watermarkDigest');
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+  } else if (value.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT') {
+    assertExactKeys(value.coverage, ['kind', 'snapshotId', 'snapshotDigest', 'coverageThrough', 'sourceItemCount'], 'coverage');
+    requiredId(value.coverage.snapshotId, 'coverage.snapshotId');
+    digest(value.coverage.snapshotDigest, 'coverage.snapshotDigest');
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+    nonNegativeInteger(value.coverage.sourceItemCount, 'coverage.sourceItemCount');
+  } else if (value.coverage.kind === 'EXACT_ALLOWLIST_CANARY') {
+    assertExactKeys(value.coverage, [
+      'kind', 'clientSubscriptionIds', 'coverageThrough', 'sourceItemCount'
+    ], 'coverage');
+    if (!Array.isArray(value.coverage.clientSubscriptionIds)
+      || value.coverage.clientSubscriptionIds.length !== 2
+      || new Set(value.coverage.clientSubscriptionIds).size !== 2) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+    }
+    value.coverage.clientSubscriptionIds.forEach((id) =>
+      requiredId(id, 'coverage.clientSubscriptionIds'));
+    requiredInstant(value.coverage.coverageThrough, 'coverage.coverageThrough');
+    if (value.coverage.sourceItemCount !== 2) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+    }
+  } else fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_INVALID');
+  if (value.schemaVersion === 3 && value.policyResolution) {
+    if (value.coverage.kind !== 'ORDERED_CHANGE_FEED'
+      && value.policyResolution.selections.length !== value.coverage.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+    }
+    if (value.coverage.kind === 'EXACT_ALLOWLIST_CANARY') {
+      const selectedIds = value.policyResolution.selections
+        .map((selection) => selection.clientSubscriptionId)
+        .sort();
+      if (!isDeepStrictEqual(
+        selectedIds,
+        [...value.coverage.clientSubscriptionIds].sort()
+      )) {
+        fail('SUBSCRIPTION_INSTANCE_PROJECTOR_POLICY_SELECTION_INVALID');
+      }
+    }
+  }
+
+  assertExactKeys(value.reconciliation as object, [
+    'runId', 'mode', 'startedAt', 'completedAt', 'sourceItemCount', 'insertedCount', 'updatedCount',
+    'replayedCount', 'terminalCount', 'failureCount', 'sourceEvidenceRef', 'resultEvidenceRef',
+    'reconciliationDigest'
+  ], 'reconciliation');
+  requiredId(value.reconciliation.runId, 'reconciliation.runId');
+  oneOf(value.reconciliation.mode, ['INITIAL_FULL', 'INCREMENTAL', 'FULL_RECONCILIATION'],
+    'SUBSCRIPTION_INSTANCE_PROJECTOR_RECONCILIATION_INVALID', 'reconciliation.mode');
+  requiredInstant(value.reconciliation.startedAt, 'reconciliation.startedAt');
+  optionalInstant(value.reconciliation.completedAt, 'reconciliation.completedAt');
+  nonNegativeInteger(value.reconciliation.sourceItemCount, 'reconciliation.sourceItemCount');
+  for (const field of ['insertedCount', 'updatedCount', 'replayedCount', 'terminalCount', 'failureCount'] as const) {
+    nonNegativeInteger(value.reconciliation[field], `reconciliation.${field}`);
+  }
+  if (value.reconciliation.insertedCount + value.reconciliation.updatedCount
+    + value.reconciliation.replayedCount + value.reconciliation.terminalCount
+    > value.reconciliation.sourceItemCount) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
+  }
+  if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.reconciliation.sourceEvidenceRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+      field: 'reconciliation.sourceEvidenceRef'
+    });
+  }
+  if (value.reconciliation.resultEvidenceRef !== null
+    && !INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.reconciliation.resultEvidenceRef)) {
+    fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+      field: 'reconciliation.resultEvidenceRef'
+    });
+  }
+  digest(value.reconciliation.reconciliationDigest, 'reconciliation.reconciliationDigest');
+  if (value.reconciliation.completedAt !== null) {
+    assertInstantOrder(value.reconciliation.startedAt, value.reconciliation.completedAt,
+      'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'reconciliation.completedAt');
+    assertInstantOrder(value.coverage.coverageThrough, value.reconciliation.completedAt,
+      'SUBSCRIPTION_INSTANCE_PROJECTOR_COVERAGE_TIME_INVALID', 'coverage.coverageThrough');
+  }
+
+  if (value.failure !== null) {
+    assertExactKeys(value.failure as object, ['code', 'detectedAt', 'evidenceRef'], 'failure');
+    requiredId(value.failure.code, 'failure.code');
+    requiredInstant(value.failure.detectedAt, 'failure.detectedAt');
+    if (!INSTANCE_PROJECTOR_EVIDENCE_PATTERN.test(value.failure.evidenceRef)) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_EVIDENCE_REF_INVALID', {
+        field: 'failure.evidenceRef'
+      });
+    }
+  }
+  if (value.lease !== null) {
+    assertExactKeys(value.lease as object, ['runId', 'epoch', 'ownerIdHash', 'acquiredAt', 'expiresAt'], 'lease');
+    requiredId(value.lease.runId, 'lease.runId');
+    positiveInteger(value.lease.epoch, 'lease.epoch');
+    digest(value.lease.ownerIdHash, 'lease.ownerIdHash');
+    requiredInstant(value.lease.acquiredAt, 'lease.acquiredAt');
+    requiredInstant(value.lease.expiresAt, 'lease.expiresAt');
+    assertInstantOrder(value.lease.acquiredAt, value.lease.expiresAt,
+      'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'lease.expiresAt');
+  }
+  if (value.state === 'CURRENT') {
+    if (value.failure !== null || value.lease !== null || value.reconciliation.failureCount !== 0
+      || value.reconciliation.completedAt === null) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_CURRENT_INVALID');
+    }
+    const accounted = value.reconciliation.insertedCount
+      + value.reconciliation.updatedCount
+      + value.reconciliation.replayedCount
+      + value.reconciliation.terminalCount;
+    if (accounted !== value.reconciliation.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
+    }
+    if (value.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT'
+      && value.coverage.sourceItemCount !== value.reconciliation.sourceItemCount) {
+      fail('SUBSCRIPTION_INSTANCE_PROJECTOR_COUNT_INVALID');
+    }
+  } else if (value.failure === null) fail('SUBSCRIPTION_INSTANCE_PROJECTOR_FAILED_INVALID');
+  positiveInteger(value.revision, 'revision');
+  requiredInstant(value.createdAt, 'createdAt');
+  requiredInstant(value.updatedAt, 'updatedAt');
+  assertInstantOrder(value.createdAt, value.updatedAt, 'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID', 'updatedAt');
+}
+
 export function validateStoredSubscriptionEntitlementAggregate(
   value: StoredSubscriptionEntitlementAggregate
 ): void {
@@ -837,6 +1222,39 @@ export function validateStoredSubscriptionEntitlementAggregate(
       'SUBSCRIPTION_AGGREGATE_RESERVATION_STATE_INVALID',
       'activeServices.state'
     );
+    if (reservation.usageBuckets !== undefined) {
+      assertExactKeys(reservation.usageBuckets, [
+        'localDate', 'localWeek', 'localMonth', 'dailyUsageDelta',
+        'weeklyUsageDelta', 'monthlyUsageDelta', 'remainingUnitsDelta',
+        'futureBookingDelta'
+      ], 'activeServices.usageBuckets');
+      if (!LOCAL_DATE_PATTERN.test(reservation.usageBuckets.localDate)
+        || !LOCAL_WEEK_PATTERN.test(reservation.usageBuckets.localWeek)
+        || !LOCAL_MONTH_PATTERN.test(reservation.usageBuckets.localMonth)) {
+        fail('SUBSCRIPTION_RUNTIME_USAGE_BUCKET_KEY_INVALID', {
+          field: 'activeServices.usageBuckets'
+        });
+      }
+      nonNegativeInteger(
+        reservation.usageBuckets.dailyUsageDelta,
+        'activeServices.usageBuckets.dailyUsageDelta'
+      );
+      positiveInteger(
+        reservation.usageBuckets.weeklyUsageDelta,
+        'activeServices.usageBuckets.weeklyUsageDelta'
+      );
+      positiveInteger(
+        reservation.usageBuckets.monthlyUsageDelta,
+        'activeServices.usageBuckets.monthlyUsageDelta'
+      );
+      nonNegativeInteger(
+        reservation.usageBuckets.remainingUnitsDelta,
+        'activeServices.usageBuckets.remainingUnitsDelta'
+      );
+      if (reservation.usageBuckets.futureBookingDelta !== 1) {
+        fail('SUBSCRIPTION_AGGREGATE_FUTURE_DELTA_INVALID');
+      }
+    }
   }
   for (const startsAt of value.futureServiceStartsAt) {
     requiredInstant(startsAt, 'futureServiceStartsAt');

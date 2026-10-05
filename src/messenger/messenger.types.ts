@@ -91,6 +91,7 @@ export interface MessengerStationConfig {
   stationId: string;
   stationName: string;
   isActive: boolean;
+  tournamentBroadcastBoxId?: string;
   createdAt: string;
   updatedAt: string;
 }

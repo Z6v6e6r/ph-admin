@@ -25,6 +25,13 @@ const PUBLIC_ERROR_CODES = new Set([
   'TEST_INVENTORY_CONTENTION',
   'TEST_RESERVATION_NOT_PENDING',
   'TEST_ACTIVATION_BLOCKED',
+  'SUBSCRIPTION_USAGE_TEST_POLICY_MISMATCH',
+  'SUBSCRIPTION_USAGE_TEST_TARGET_UNKNOWN',
+  'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID',
+  'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND',
+  'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_STATION_MISMATCH',
+  'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_NOT_CONFIGURED',
+  'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_CONFIG_INVALID',
   'SUBSCRIPTIONS_ACTIVATION_REVISION_CONFLICT',
   'SUBSCRIPTIONS_ACTIVATION_STATE_CONFLICT',
   'SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED',
@@ -54,7 +61,9 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     const domainCode = typeof body.code === 'string' ? body.code : '';
     const isIntegrationTokenRejection = [
       'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN',
-      'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN'
+      'SUBSCRIPTIONS_ACTIVATION_INTEGRATION_FORBIDDEN',
+      'SUBSCRIPTIONS_SALE_READINESS_INTEGRATION_FORBIDDEN',
+      'SUBSCRIPTIONS_SALE_BINDING_INTEGRATION_FORBIDDEN'
     ].includes(domainCode);
     const status = rawStatus === HttpStatus.FORBIDDEN && !request.user && !isIntegrationTokenRejection
       ? HttpStatus.UNAUTHORIZED
@@ -78,6 +87,8 @@ export class SubscriptionsExceptionFilter implements ExceptionFilter {
     }
 
     response.setHeader('X-Correlation-Id', correlationId);
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
     response.status(status).json({
       error: {
         code,

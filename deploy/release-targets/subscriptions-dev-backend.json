@@ -1,0 +1,15 @@
+{
+  "schema": "ph-admin-subscriptions-dev-release-target-v1",
+  "repository": "Z6v6e6r/ph-admin",
+  "component": "subscriptions-dev-backend",
+  "environment": "DEV",
+  "hostAlias": "lk-reserve-89",
+  "serviceName": "phab-subscriptions-dev.service",
+  "releaseRoot": "/opt/phab-subscriptions-dev/releases",
+  "currentLink": "/opt/phab-subscriptions-dev/current",
+  "apiOrigin": "http://127.0.0.1:3036",
+  "buildCommand": "npm run build",
+  "entrypoint": "node dist/main.js",
+  "nodeVersion": "v22.13.1",
+  "npmVersion": "11.1.0"
+}

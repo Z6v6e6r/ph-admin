@@ -26,6 +26,16 @@ export enum SupportDialogStatus {
   CLOSED = 'CLOSED'
 }
 
+/**
+ * The dialog identity an ingest event belongs to. `CLIENT` is the legacy shape: one open dialog per
+ * client and connector whose station moves. `STATION` reserves a dialog per station for the LK2
+ * station tab. This slice only stores the value; nothing resolves on it yet.
+ */
+export enum SupportDialogScope {
+  CLIENT = 'CLIENT',
+  STATION = 'STATION'
+}
+
 export type SupportDialogVivaStatus = 'FOUND' | 'NOT_FOUND' | 'DISABLED';
 
 export interface SupportDialogSettings {
@@ -130,6 +140,8 @@ export interface SupportDialog {
   accessStationIds: string[];
   writeStationIds: string[];
   readOnlyStationIds: string[];
+  /** Absent on legacy rows; the read path treats that as `CLIENT`. */
+  dialogScope?: SupportDialogScope;
   status: SupportDialogStatus;
   authStatus: SupportClientAuthStatus;
   currentPhone?: string;
@@ -207,6 +219,7 @@ export interface SupportDialogSummary {
   accessStationIds: string[];
   writeStationIds: string[];
   readOnlyStationIds: string[];
+  dialogScope: SupportDialogScope;
   isActiveForUser: boolean;
   isReadOnlyForUser: boolean;
   isResolved: boolean;

@@ -28,6 +28,7 @@ export type SubscriptionAction =
   | 'BOOK_GROUP_TRAINING'
   | 'BOOK_TOURNAMENT'
   | 'PURCHASE_ADD_ON_PRODUCT';
+export type DailyUsageLimitExceededMode = 'BLOCK' | 'PERCENT_DISCOUNT';
 export type EventCategory = 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT';
 export type BenefitCategory = EventCategory | 'ADD_ON_PRODUCT';
 export type BenefitKind =
@@ -207,6 +208,11 @@ export interface SubscriptionPolicyVersion {
     days: number | null;
   };
   dailyUsageLimit: number;
+  dailyUsagePolicy?: {
+    actions: SubscriptionAction[];
+    limitExceeded: DailyUsageLimitExceededMode;
+    percentage: number | null;
+  };
   activeServiceScope: ActiveServiceScope;
   usageUnitsByDuration: { '60': number; '90': number; '120': number };
   stationAccessRules?: SubscriptionStationAccessRule[];
@@ -343,9 +349,71 @@ export interface SubscriptionTestOfferView {
 export interface SubscriptionTestActivationResult extends SubscriptionTestOfferView {
   accessToken: string | null;
   storefrontPath: string | null;
+  usageScenarioUrl: string | null;
   tokenIssued: boolean;
   replayed: boolean;
   correlationId: string;
+}
+
+export interface SubscriptionUsageTestTargetView {
+  targetId: string;
+  title: string;
+  description: string;
+  action: SubscriptionAction;
+  courtPriceMinor: number | null;
+  participantCount: number;
+  target: SubscriptionShadowQuoteResolvedTarget;
+}
+
+export interface SubscriptionUsageTestScenarioView {
+  mode: 'HOSTED_DEV_SHADOW';
+  testOnly: true;
+  providerMode: 'FAKE_NO_VIVA';
+  evaluatedAt: string;
+  offer: {
+    offerId: string;
+    title: string;
+    stationId: string;
+    timeZone: string;
+  };
+  policySource: {
+    sourceStatus: SubscriptionPolicyStatus;
+    runtimeStatus: 'PUBLISHED';
+    sourceModelVersion: 2 | 3;
+    version: number;
+    digest: string;
+  };
+  limits: {
+    activeServicesEnabled: boolean;
+    maxActiveServices: number | null;
+    bookingWindowEnabled: boolean;
+    bookingWindowDays: number | null;
+    dailyUsageLimit: number;
+    dailyUsageActions: SubscriptionAction[];
+    dailyLimitExceeded: DailyUsageLimitExceededMode;
+    dailyLimitExceededPercentage: number | null;
+  };
+  targets: SubscriptionUsageTestTargetView[];
+}
+
+export interface SubscriptionUsageTestQuoteResult {
+  target: SubscriptionUsageTestTargetView;
+  decision: SubscriptionShadowQuoteResult;
+  bookingOutcome: {
+    allowed: boolean;
+    subscriptionApplied: boolean;
+    pricingMode: 'SUBSCRIPTION' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | 'BLOCKED';
+    finalPriceMinor: number | null;
+    reasonCodes: string[];
+  };
+}
+
+export interface SubscriptionUsageResolvedQuoteResult extends SubscriptionUsageTestQuoteResult {
+  resolution: {
+    source: 'SERVER_CONFIG';
+    providerCalls: 0;
+    browserPriceAccepted: false;
+  };
 }
 
 export interface SubscriptionImpactIssue {
@@ -593,6 +661,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
   activeServicesLimit: NonNullable<SubscriptionPolicyVersion['activeServicesLimit']>;
   bookingWindow: NonNullable<SubscriptionPolicyVersion['bookingWindow']>;
   dailyUsageLimit: number;
+  dailyUsagePolicy?: NonNullable<SubscriptionPolicyVersion['dailyUsagePolicy']>;
   usageUnitsByDuration: SubscriptionPolicyVersion['usageUnitsByDuration'];
   stationAccessRules: SubscriptionStationAccessRule[];
   benefitRules: BenefitRule[];
@@ -614,7 +683,7 @@ export interface SubscriptionRuntimeProjectionSnapshot {
 }
 
 export interface StoredSubscriptionPolicyPublication {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   publicationId: string;
   subscriptionTypeId: string;
   policyVersion: number;
@@ -631,6 +700,36 @@ export interface StoredSubscriptionPolicyPublication {
   impactPreviewRef: string;
   approvalAuditRef: string;
   idempotency?: SubscriptionIdempotency;
+  runtimeCompatibility?: SubscriptionRuntimeCompatibility;
+}
+
+export interface SubscriptionRuntimeCompatibility {
+  adapterId: string;
+  contractVersion: number;
+  capabilityDigest: `sha256:${string}`;
+}
+
+export interface SubscriptionProjectionFenceBinding {
+  mappingId: string;
+  mappingRevision: number;
+  subscriptionTypeId: string;
+  publicationId: string;
+  policyVersion: number;
+  policyDigest: `sha256:${string}`;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
+}
+
+export interface StoredSubscriptionProjectionFence {
+  schemaVersion: 1;
+  fenceId: string;
+  subscriptionTypeId: string;
+  bindingRevision: number;
+  bindingDigest: `sha256:${string}`;
+  binding: SubscriptionProjectionFenceBinding;
+  coordinationRevision: number;
+  lastProjectorReconciliationDigest: `sha256:${string}` | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SubscriptionInstanceEvidence {
@@ -674,12 +773,134 @@ export interface StoredSubscriptionInstance {
   updatedAt: string;
 }
 
+export interface StoredSubscriptionInstancePolicyResolution {
+  publicationHistory: {
+    historyDigest: `sha256:${string}`;
+    entries: Array<{
+      publicationId: string;
+      subscriptionTypeId: string;
+      policyVersion: number;
+      policyDigest: `sha256:${string}`;
+      mappingId: string;
+      state: SubscriptionPublicationState;
+      effectiveAt: string;
+    }>;
+  };
+  selections: Array<{
+    subscriptionInstanceId: string;
+    providerClientId: string;
+    clientSubscriptionId: string;
+    purchasedAt: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: `sha256:${string}`;
+    mappingId: string;
+  }>;
+  resolutionDigest: `sha256:${string}`;
+}
+
+export type SubscriptionInstanceProjectorCheckpointState = 'CURRENT' | 'FAILED';
+export type SubscriptionInstanceProjectorCoverage =
+  | {
+    kind: 'ORDERED_CHANGE_FEED';
+    watermark: string;
+    watermarkDigest: `sha256:${string}`;
+    coverageThrough: string;
+  }
+  | {
+    kind: 'CONSISTENT_FULL_SNAPSHOT';
+    snapshotId: string;
+    snapshotDigest: `sha256:${string}`;
+    coverageThrough: string;
+    sourceItemCount: number;
+  }
+  | {
+    kind: 'EXACT_ALLOWLIST_CANARY';
+    clientSubscriptionIds: [string, string];
+    coverageThrough: string;
+    sourceItemCount: 2;
+  };
+
+export interface StoredSubscriptionInstanceProjectorCheckpoint {
+  schemaVersion: 2 | 3;
+  checkpointId: string;
+  tenantId: string;
+  provider: 'VIVA';
+  providerProductId: string;
+  providerScope: {
+    kind: Exclude<SubscriptionProviderScopeKind, 'STUDIO'>;
+    scopeId: string;
+  };
+  approvalRef: string;
+  binding: {
+    fenceId: string;
+    fenceRevision: number;
+    fenceDigest: `sha256:${string}`;
+    mappingId: string;
+    mappingRevision: number;
+    subscriptionTypeId: string;
+    publicationId: string;
+    policyVersion: number;
+    policyDigest: `sha256:${string}`;
+    releaseProgramId: string;
+    releaseProgramRevision: number;
+    releasePhaseId: string;
+    runtimeCompatibility: SubscriptionRuntimeCompatibility;
+  };
+  producer: {
+    producerId: 'VIVA_ANNUAL_SUBSCRIPTION_INSTANCE_PROJECTOR';
+    contractVersion: 2;
+    producerCapabilityDigest: `sha256:${string}`;
+    sourceContractDigest: `sha256:${string}`;
+    authorityDigest: `sha256:${string}`;
+  };
+  policyResolution?: StoredSubscriptionInstancePolicyResolution;
+  state: SubscriptionInstanceProjectorCheckpointState;
+  coverage: SubscriptionInstanceProjectorCoverage;
+  reconciliation: {
+    runId: string;
+    mode: 'INITIAL_FULL' | 'INCREMENTAL' | 'FULL_RECONCILIATION';
+    startedAt: string;
+    completedAt: string | null;
+    sourceItemCount: number;
+    insertedCount: number;
+    updatedCount: number;
+    replayedCount: number;
+    terminalCount: number;
+    failureCount: number;
+    sourceEvidenceRef: string;
+    resultEvidenceRef: string | null;
+    reconciliationDigest: `sha256:${string}`;
+  };
+  failure: { code: string; detectedAt: string; evidenceRef: string } | null;
+  lease: {
+    runId: string;
+    epoch: number;
+    ownerIdHash: `sha256:${string}`;
+    acquiredAt: string;
+    expiresAt: string;
+  } | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SubscriptionEntitlementReservation {
   operationId: string;
   targetId: string;
   startsAt: string;
   usageUnits: number;
   state: 'RESERVED' | 'CONFIRMED';
+  usageBuckets?: {
+    localDate: string;
+    localWeek: string;
+    localMonth: string;
+    dailyUsageDelta: number;
+    weeklyUsageDelta: number;
+    monthlyUsageDelta: number;
+    remainingUnitsDelta: number;
+    futureBookingDelta: 1;
+  };
 }
 
 export interface StoredSubscriptionEntitlementAggregate {
@@ -802,6 +1023,13 @@ export interface SubscriptionShadowQuoteResult {
   maxActiveServices: number | null;
   dailyUsed: number | null;
   dailyLimit: number | null;
+  usageBucket?: {
+    localDate: string;
+    localWeek: string;
+    localMonth: string;
+  } | null;
+  dailyUsageApplies?: boolean | null;
+  dailyLimitExceeded?: boolean | null;
   benefit: SubscriptionShadowQuoteAppliedBenefit | null;
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }
@@ -849,6 +1077,7 @@ export interface SubscriptionPolicyPublicationPreview {
   dictionaryRevision: string;
   dictionaryEvidenceRef: string;
   policyDigest: string;
+  runtimeCompatibility: SubscriptionRuntimeCompatibility;
   impactPreviewRef: string;
   runtimeProjection: SubscriptionRuntimeProjectionSnapshot;
   publicationMode: 'INITIAL' | 'SUPERSESSION';

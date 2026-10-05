@@ -106,29 +106,19 @@ async function testVivaTournamentsUsesGovernorSingleflight(): Promise<void> {
   const originalWidgetId = process.env.VIVA_END_USER_WIDGET_ID;
   const originalGovernorEnabled = process.env.VIVA_GOVERNOR_ENABLED;
   let fetchCount = 0;
-  let release: ((response: Response) => void) | undefined;
+  let release: (() => void) | undefined;
 
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
-  process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
+  process.env.VIVA_END_USER_WIDGET_ID = 'iSkq6G';
   process.env.VIVA_GOVERNOR_ENABLED = 'true';
 
-  const responsePromise = new Promise<Response>((resolve) => {
+  const responsePromise = new Promise<void>((resolve) => {
     release = resolve;
   });
   globalThis.fetch = (async () => {
     fetchCount += 1;
-    return responsePromise;
-  }) as typeof fetch;
-
-  try {
-    const governor = new VivaRequestGovernorService();
-    const service = new VivaTournamentsService(undefined, governor);
-    const first = service.listTournaments({ date: '2026-07-04' });
-    const second = service.listTournaments({ date: '2026-07-04' });
-
-    await Promise.resolve();
-    assert.equal(fetchCount, 1);
-    release?.(new Response(
+    await responsePromise;
+    return new Response(
       JSON.stringify([
         {
           id: 'tournament-1',
@@ -142,12 +132,23 @@ async function testVivaTournamentsUsesGovernorSingleflight(): Promise<void> {
         status: 200,
         headers: { 'content-type': 'application/json' }
       }
-    ));
+    );
+  }) as typeof fetch;
+
+  try {
+    const governor = new VivaRequestGovernorService();
+    const service = new VivaTournamentsService(undefined, governor);
+    const first = service.listTournaments({ date: '2026-07-04' });
+    const second = service.listTournaments({ date: '2026-07-04' });
+
+    await Promise.resolve();
+    assert.equal(fetchCount, 2);
+    release?.();
 
     const [firstResult, secondResult] = await Promise.all([first, second]);
     assert.equal(firstResult?.length, 1);
     assert.equal(secondResult?.length, 1);
-    assert.equal(fetchCount, 1);
+    assert.equal(fetchCount, 2);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiBaseUrl === undefined) {
@@ -176,15 +177,16 @@ async function testVivaTournamentsGovernorDisabledByDefault(): Promise<void> {
   let fetchCount = 0;
 
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
-  process.env.VIVA_END_USER_WIDGET_ID = 'widget-test';
+  process.env.VIVA_END_USER_WIDGET_ID = 'iSkq6G';
   delete process.env.VIVA_GOVERNOR_ENABLED;
 
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (input: string | URL | Request) => {
     fetchCount += 1;
+    const url = new URL(String(input));
     return new Response(
       JSON.stringify([
         {
-          id: `tournament-${fetchCount}`,
+          id: url.searchParams.has('studioId') ? 'piter-tournament' : 'base-tournament',
           name: 'Padel tournament',
           exerciseTypeId: '839',
           startsAt: '2026-07-04T19:00:00+03:00',
@@ -206,9 +208,9 @@ async function testVivaTournamentsGovernorDisabledByDefault(): Promise<void> {
       service.listTournaments({ date: '2026-07-04' })
     ]);
 
-    assert.equal(fetchCount, 2);
-    assert.equal(firstResult?.length, 1);
-    assert.equal(secondResult?.length, 1);
+    assert.equal(fetchCount, 4);
+    assert.equal(firstResult?.length, 2);
+    assert.equal(secondResult?.length, 2);
     assert.equal(service.getRequestGovernorDiagnostics().enabled, false);
   } finally {
     globalThis.fetch = originalFetch;

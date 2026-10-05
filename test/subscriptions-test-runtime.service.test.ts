@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException
 } from '@nestjs/common';
+import { validate } from 'class-validator';
 import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { RequestUser } from '../src/common/rbac/request-user.interface';
 import { Role } from '../src/common/rbac/role.enum';
@@ -20,6 +21,8 @@ import { SubscriptionsExceptionFilter } from '../src/subscriptions/subscriptions
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionsService } from '../src/subscriptions/subscriptions.service';
 import { SubscriptionsTestRuntimeService } from '../src/subscriptions/subscriptions-test-runtime.service';
+import { SubscriptionUsageResolvedQuoteDto } from '../src/subscriptions/dto/subscription-usage-resolved-quote.dto';
+import { resolveSubscriptionUsageTestBookingOutcome } from '../src/subscriptions/subscription-usage-test-runtime';
 import {
   StoredReleaseProgram,
   StoredSubscriptionPolicyVersion,
@@ -426,6 +429,87 @@ function fixture(firstQuantity = 2): InMemoryRuntimeRepository {
   return repository;
 }
 
+function annualUsageFixture(): InMemoryRuntimeRepository {
+  const repository = fixture(3);
+  const policy = repository.policies[0];
+  policy.modelVersion = 3;
+  policy.activeServicesLimit = {
+    enabled: true,
+    max: 4,
+    scope: 'SUBSCRIPTION_BENEFIT_ONLY'
+  };
+  policy.bookingWindow = { enabled: true, days: 4 };
+  policy.capabilities.usage.maxFutureBookings = 4;
+  policy.dailyUsagePolicy = {
+    actions: ['CREATE_GAME', 'JOIN_GAME'],
+    limitExceeded: 'PERCENT_DISCOUNT',
+    percentage: 30
+  };
+  policy.stationAccessRules = [{
+    ruleId: 'annual-home-station',
+    enabled: true,
+    priority: 100,
+    selector: { kind: 'HOME_STATION', stationIds: [] },
+    surcharge: { kind: 'NONE', amountMinor: 0 }
+  }];
+  const common = {
+    enabled: true,
+    category: 'GAME' as const,
+    actions: ['CREATE_GAME', 'JOIN_GAME'] as const,
+    externalEventTypeIds: ['event_type:open-game'],
+    productTypeIds: [] as string[],
+    stationIds: ['yas'],
+    valueMinor: null,
+    priority: 100
+  };
+  policy.benefitRules = [{
+    ...common,
+    ruleId: 'annual-game-60',
+    actions: [...common.actions],
+    durationMinutes: [60],
+    kind: 'FREE_ENTITLEMENT',
+    percentage: null,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'annual-game-90',
+    actions: [...common.actions],
+    durationMinutes: [90],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 3 }
+  }, {
+    ...common,
+    ruleId: 'annual-game-120',
+    actions: [...common.actions],
+    durationMinutes: [120],
+    kind: 'PARTIAL_PRICE_PERCENT_DISCOUNT',
+    percentage: 30,
+    partialPrice: { numerator: 1, denominator: 2 }
+  }, {
+    ...common,
+    ruleId: 'annual-group-50',
+    category: 'GROUP_TRAINING',
+    actions: ['BOOK_GROUP_TRAINING'],
+    externalEventTypeIds: ['event_type:group-training'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }, {
+    ...common,
+    ruleId: 'annual-tournament-50',
+    category: 'TOURNAMENT',
+    actions: ['BOOK_TOURNAMENT'],
+    externalEventTypeIds: ['event_type:tournament'],
+    durationMinutes: [60, 90, 120],
+    kind: 'PERCENT_DISCOUNT',
+    percentage: 50,
+    partialPrice: null
+  }];
+  return repository;
+}
+
 function command(suffix: string) {
   return {
     idempotencyKey: `runtime-test-${suffix.padEnd(16, 'x')}`,
@@ -510,6 +594,7 @@ async function testActivationTokenReservationAndFakeOutcomes(): Promise<void> {
   assert.equal(activated.currentPhase?.available, 3);
   assert.ok(activated.accessToken && activated.accessToken.length >= 32);
   assert.match(activated.storefrontPath ?? '', /^\/api\/ui\/subscription-test#offerId=.*&token=/);
+  assert.match(activated.usageScenarioUrl ?? '', /^https:\/\/padlhub\.ru\/lk_dev\?subscriptionTest=1#offerId=.*&token=/);
   assert.notEqual(repository.offers[0].accessTokenHash, activated.accessToken);
   assert.equal(JSON.stringify(repository.offers).includes(activated.accessToken as string), false);
   assert.match(repository.offers[0].accessTokenHash, /^[a-f0-9]{64}$/);
@@ -621,6 +706,330 @@ async function testActivationTokenReservationAndFakeOutcomes(): Promise<void> {
     [failed.inventory?.currentPhase?.available, failed.inventory?.currentPhase?.reserved, failed.inventory?.currentPhase?.sold],
     [2, 0, 1]
   );
+}
+
+async function testHostedAnnualUsageScenarios(): Promise<void> {
+  const repository = annualUsageFixture();
+  const service = new SubscriptionsTestRuntimeService(repository as unknown as SubscriptionsRepository);
+  process.env.SUBSCRIPTIONS_ADMIN_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER = 'runtime-test-pepper-32-bytes-minimum-value';
+  const activated = await activate(service);
+  const token = activated.accessToken as string;
+  const scenarios = await service.usageScenarios(activated.offerId, token);
+  assert.equal(scenarios.mode, 'HOSTED_DEV_SHADOW');
+  assert.equal(scenarios.providerMode, 'FAKE_NO_VIVA');
+  assert.equal(scenarios.policySource.sourceStatus, 'DRAFT');
+  assert.equal(scenarios.policySource.runtimeStatus, 'PUBLISHED');
+  assert.equal(scenarios.limits.maxActiveServices, 4);
+  assert.deepEqual(scenarios.limits.dailyUsageActions, ['CREATE_GAME', 'JOIN_GAME']);
+  assert.equal(scenarios.targets.length, 8);
+  const create90Target = scenarios.targets.find((target) => target.targetId === 'annual-create-90');
+  assert.equal(create90Target?.courtPriceMinor, 900_000);
+  assert.equal(create90Target?.participantCount, 4);
+  assert.equal(create90Target?.target.basePriceMinor, 225_000);
+
+  const quote = (targetId: string, activeServices = 0, dailyGameUsage = 0) => (
+    service.quoteUsageScenario(activated.offerId, token, { targetId, activeServices, dailyGameUsage })
+  );
+  assert.equal((await quote('annual-create-60')).decision.benefit?.finalPriceMinor, 0);
+  assert.equal((await quote('annual-create-90')).decision.benefit?.finalPriceMinor, 52_500);
+  assert.equal((await quote('annual-create-120')).decision.benefit?.finalPriceMinor, 105_000);
+  assert.equal((await quote('annual-join-90')).decision.benefit?.finalPriceMinor, 52_500);
+  assert.equal((await quote('annual-create-60', 0, 1)).decision.benefit?.finalPriceMinor, 105_000);
+  assert.equal((await quote('annual-create-90', 0, 1)).decision.benefit?.finalPriceMinor, 157_500);
+  const excess = await quote('annual-join-120', 0, 1);
+  assert.equal(excess.decision.benefit?.kind, 'PERCENT_DISCOUNT');
+  assert.equal(excess.decision.benefit?.ruleId, 'daily-usage-limit-exceeded');
+  assert.equal(excess.decision.benefit?.finalPriceMinor, 210_000);
+  assert.equal((await quote('annual-group-60', 0, 1)).decision.benefit?.finalPriceMinor, 150_000);
+  assert.equal((await quote('annual-tournament-120', 0, 1)).decision.benefit?.finalPriceMinor, 250_000);
+  const activeLimit = await quote('annual-create-60', 4, 0);
+  assert.ok(activeLimit.decision.blockers.some((item) => item.code === 'ACTIVE_SERVICES_LIMIT_REACHED'));
+  assert.equal(activeLimit.decision.eligible, false);
+  assert.deepEqual(activeLimit.bookingOutcome, {
+    allowed: true,
+    subscriptionApplied: false,
+    pricingMode: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
+    finalPriceMinor: 150_000,
+    reasonCodes: ['ACTIVE_SERVICES_LIMIT_REACHED', 'FUTURE_BOOKINGS_LIMIT_REACHED']
+  });
+  assert.equal((await quote('annual-join-120', 4, 0)).bookingOutcome.finalPriceMinor, 300_000);
+  assert.equal((await quote('annual-group-60', 4, 0)).bookingOutcome.pricingMode, 'BLOCKED');
+  const mixedBlockers = {
+    ...activeLimit.decision,
+    blockers: [...activeLimit.decision.blockers, {
+      code: 'STATION_NOT_ALLOWED',
+      message: 'Станция не включена в правила подписки',
+      details: null
+    }]
+  };
+  assert.equal(
+    resolveSubscriptionUsageTestBookingOutcome(activeLimit.target, mixedBlockers).pricingMode,
+    'BLOCKED'
+  );
+  const invalidFullPriceTarget = {
+    ...activeLimit.target,
+    target: { ...activeLimit.target.target, basePriceMinor: -1 }
+  };
+  assert.equal(
+    resolveSubscriptionUsageTestBookingOutcome(invalidFullPriceTarget, activeLimit.decision).pricingMode,
+    'BLOCKED'
+  );
+  await expectException(
+    () => service.usageScenarios(activated.offerId, 'invalid-token'),
+    NotFoundException
+  );
+
+  const mismatchedRepository = fixture();
+  const mismatched = new SubscriptionsTestRuntimeService(
+    mismatchedRepository as unknown as SubscriptionsRepository
+  );
+  const mismatchedOffer = await activate(mismatched);
+  const mismatch = await expectException(
+    () => mismatched.usageScenarios(mismatchedOffer.offerId, mismatchedOffer.accessToken as string),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(mismatch), 'SUBSCRIPTION_USAGE_TEST_POLICY_MISMATCH');
+}
+
+async function testHostedExactTargetQuotes(): Promise<void> {
+  const repository = annualUsageFixture();
+  const service = new SubscriptionsTestRuntimeService(repository as unknown as SubscriptionsRepository);
+  process.env.SUBSCRIPTIONS_ADMIN_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER = 'runtime-test-pepper-32-bytes-minimum-value';
+  const activated = await activate(service);
+  const token = activated.accessToken as string;
+  const scenarios = await service.usageScenarios(activated.offerId, token);
+  const startsAt90 = scenarios.targets.find((target) => target.targetId === 'annual-create-90')?.target.startsAt;
+  const startsAt120 = scenarios.targets.find((target) => target.targetId === 'annual-join-120')?.target.startsAt;
+  const startsAtGroup = scenarios.targets.find((target) => target.targetId === 'annual-group-60')?.target.startsAt;
+  const startsAtTournament = scenarios.targets.find((target) => target.targetId === 'annual-tournament-120')?.target.startsAt;
+  assert.ok(startsAt90);
+  assert.ok(startsAt120);
+  assert.ok(startsAtGroup);
+  assert.ok(startsAtTournament);
+  const createTarget = {
+    targetKind: 'NEW_GAME' as const,
+    slotId: 'slot-exact-90',
+    stationId: scenarios.offer.stationId,
+    roomId: 'room-exact-1',
+    masterServiceId: 'master-exact-1',
+    subServiceIds: ['sub-exact-2', 'sub-exact-1'],
+    startsAt: startsAt90,
+    durationMinutes: 90 as const
+  };
+  const joinTarget = {
+    targetKind: 'GAME_AGGREGATE' as const,
+    gameId: 'pay_exact-game-120'
+  };
+  const groupTarget = {
+    targetKind: 'EVENT_AGGREGATE' as const,
+    eventId: 'group_exact-60'
+  };
+  const tournamentTarget = {
+    targetKind: 'EVENT_AGGREGATE' as const,
+    eventId: 'tournament_exact-120'
+  };
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([
+    { ...createTarget, subServiceIds: [...createTarget.subServiceIds].reverse(), courtPriceMinor: 900_000 },
+    {
+      ...joinTarget,
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAt120,
+      durationMinutes: 120,
+      courtPriceMinor: 1_200_000
+    },
+    {
+      ...groupTarget,
+      action: 'BOOK_GROUP_TRAINING',
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAtGroup,
+      durationMinutes: 60,
+      basePriceMinor: 300_000
+    },
+    {
+      ...tournamentTarget,
+      action: 'BOOK_TOURNAMENT',
+      stationId: scenarios.offer.stationId,
+      startsAt: startsAtTournament,
+      durationMinutes: 90,
+      basePriceMinor: 500_000
+    }
+  ]);
+
+  const create90 = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME',
+    target: createTarget,
+    activeServices: 0,
+    dailyGameUsage: 0
+  });
+  assert.equal(create90.target.participantCount, 4);
+  assert.equal(create90.target.courtPriceMinor, 900_000);
+  assert.equal(create90.target.target.basePriceMinor, 225_000);
+  assert.equal(create90.decision.benefit?.finalPriceMinor, 52_500);
+  assert.deepEqual(create90.resolution, {
+    source: 'SERVER_CONFIG',
+    providerCalls: 0,
+    browserPriceAccepted: false
+  });
+
+  const dailyLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME', target: createTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(dailyLimit.decision.benefit?.finalPriceMinor, 157_500);
+
+  const activeLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'CREATE_GAME', target: createTarget, activeServices: 4, dailyGameUsage: 0
+  });
+  assert.deepEqual(activeLimit.bookingOutcome, {
+    allowed: true,
+    subscriptionApplied: false,
+    pricingMode: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
+    finalPriceMinor: 225_000,
+    reasonCodes: ['ACTIVE_SERVICES_LIMIT_REACHED', 'FUTURE_BOOKINGS_LIMIT_REACHED']
+  });
+
+  const join120 = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+  });
+  assert.equal(join120.target.target.basePriceMinor, 300_000);
+  assert.equal(join120.decision.benefit?.finalPriceMinor, 105_000);
+
+  const group = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_GROUP_TRAINING', target: groupTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(group.target.participantCount, 1);
+  assert.equal(group.target.courtPriceMinor, null);
+  assert.equal(group.target.target.basePriceMinor, 300_000);
+  assert.equal(group.decision.benefit?.finalPriceMinor, 150_000);
+  assert.equal(group.resolution.browserPriceAccepted, false);
+  const groupAtActiveLimit = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_GROUP_TRAINING', target: groupTarget, activeServices: 4, dailyGameUsage: 0
+  });
+  assert.equal(groupAtActiveLimit.bookingOutcome.pricingMode, 'BLOCKED');
+  assert.equal(groupAtActiveLimit.bookingOutcome.finalPriceMinor, null);
+
+  const tournament = await service.quoteResolvedUsageScenario(activated.offerId, token, {
+    action: 'BOOK_TOURNAMENT', target: tournamentTarget, activeServices: 0, dailyGameUsage: 1
+  });
+  assert.equal(tournament.target.participantCount, 1);
+  assert.equal(tournament.target.courtPriceMinor, null);
+  assert.equal(tournament.target.target.durationMinutes, 90);
+  assert.equal(tournament.target.target.basePriceMinor, 500_000);
+  assert.equal(tournament.decision.benefit?.finalPriceMinor, 250_000);
+  assert.equal(tournament.resolution.providerCalls, 0);
+
+  const browserPrice = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME',
+      target: { ...joinTarget, courtPriceMinor: 1 },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    BadRequestException
+  );
+  assert.equal(exceptionCode(browserPrice), 'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID');
+
+  const browserEventPrice = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'BOOK_GROUP_TRAINING',
+      target: { ...groupTarget, basePriceMinor: 1 },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    BadRequestException
+  );
+  assert.equal(exceptionCode(browserEventPrice), 'SUBSCRIPTION_USAGE_TEST_RESOLVED_TARGET_INVALID');
+
+  const actionMismatch = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'BOOK_TOURNAMENT', target: groupTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(actionMismatch), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND');
+
+  const unknown = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME',
+      target: { targetKind: 'GAME_AGGREGATE', gameId: 'pay_unknown-game' },
+      activeServices: 0,
+      dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(unknown), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_NOT_FOUND');
+
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([{
+    ...joinTarget,
+    stationId: 'station-other',
+    startsAt: startsAt120,
+    durationMinutes: 120,
+    courtPriceMinor: 1_200_000
+  }]);
+  const stationMismatch = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    UnprocessableEntityException
+  );
+  assert.equal(exceptionCode(stationMismatch), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGET_STATION_MISMATCH');
+
+  process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON = JSON.stringify([{
+    ...joinTarget,
+    stationId: scenarios.offer.stationId,
+    startsAt: startsAt120,
+    durationMinutes: 120,
+    courtPriceMinor: 1_200_001
+  }]);
+  const invalidCatalog = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    ServiceUnavailableException
+  );
+  assert.equal(exceptionCode(invalidCatalog), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_CONFIG_INVALID');
+
+  delete process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON;
+  await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, 'invalid-token', {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    NotFoundException
+  );
+  const missingCatalog = await expectException(
+    () => service.quoteResolvedUsageScenario(activated.offerId, token, {
+      action: 'JOIN_GAME', target: joinTarget, activeServices: 0, dailyGameUsage: 0
+    }),
+    ServiceUnavailableException
+  );
+  assert.equal(exceptionCode(missingCatalog), 'SUBSCRIPTION_USAGE_TEST_EXACT_TARGETS_NOT_CONFIGURED');
+}
+
+async function testResolvedQuoteDtoActions(): Promise<void> {
+  for (const action of [
+    'CREATE_GAME',
+    'JOIN_GAME',
+    'BOOK_GROUP_TRAINING',
+    'BOOK_TOURNAMENT'
+  ] as const) {
+    const dto = Object.assign(new SubscriptionUsageResolvedQuoteDto(), {
+      action,
+      target: { targetKind: 'EVENT_AGGREGATE', eventId: 'dto-contract' },
+      activeServices: 0,
+      dailyGameUsage: 0
+    });
+    assert.deepEqual(await validate(dto), []);
+  }
+  const forbidden = Object.assign(new SubscriptionUsageResolvedQuoteDto(), {
+    action: 'PURCHASE_ADD_ON_PRODUCT',
+    target: { targetKind: 'EVENT_AGGREGATE', eventId: 'dto-contract' },
+    activeServices: 0,
+    dailyGameUsage: 0
+  });
+  assert.ok((await validate(forbidden)).some((error) => error.property === 'action'));
 }
 
 async function testPhaseRolloverAndLastUnitConcurrency(): Promise<void> {
@@ -877,9 +1286,13 @@ async function main(): Promise<void> {
   const originalAdmin = process.env.SUBSCRIPTIONS_ADMIN_ENABLED;
   const originalRuntime = process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED;
   const originalPepper = process.env.SUBSCRIPTIONS_TEST_HASH_PEPPER;
+  const originalExactTargets = process.env.SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON;
   try {
     await testFeatureGateAndImpactPreview();
     await testActivationTokenReservationAndFakeOutcomes();
+    await testHostedAnnualUsageScenarios();
+    await testResolvedQuoteDtoActions();
+    await testHostedExactTargetQuotes();
     await testPhaseRolloverAndLastUnitConcurrency();
     await testCreatingReservationCrashRecovery();
     await testTerminalPurchaseCrashRecovery();
@@ -903,6 +1316,7 @@ async function main(): Promise<void> {
     restoreEnv('SUBSCRIPTIONS_ADMIN_ENABLED', originalAdmin);
     restoreEnv('SUBSCRIPTIONS_TEST_RUNTIME_ENABLED', originalRuntime);
     restoreEnv('SUBSCRIPTIONS_TEST_HASH_PEPPER', originalPepper);
+    restoreEnv('SUBSCRIPTIONS_TEST_USAGE_EXACT_TARGETS_JSON', originalExactTargets);
   }
 }
 

@@ -298,6 +298,9 @@ export class SubscriptionShadowQuoteService {
       maxActiveServices: null,
       dailyUsed: null,
       dailyLimit: null,
+      usageBucket: null,
+      dailyUsageApplies: null,
+      dailyLimitExceeded: null,
       benefit: null,
       decision: null
     };

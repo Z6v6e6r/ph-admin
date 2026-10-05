@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, MongoClient } from 'mongodb';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
 import { StoredWebPushSubscription } from './web-push.types';
 
@@ -34,14 +35,14 @@ export class WebPushPersistenceService implements OnModuleInit, OnModuleDestroy 
       return;
     }
 
+    const client = new MongoClient(this.mongoUri, {
+      maxPoolSize: 10,
+      minPoolSize: 0,
+      connectTimeoutMS: 10_000,
+      serverSelectionTimeoutMS: 10_000,
+      retryWrites: true
+    });
     try {
-      const client = new MongoClient(this.mongoUri, {
-        maxPoolSize: 10,
-        minPoolSize: 0,
-        connectTimeoutMS: 10_000,
-        serverSelectionTimeoutMS: 10_000,
-        retryWrites: true
-      });
       await client.connect();
       this.client = client;
       this.db = client.db(this.mongoDb);
@@ -50,7 +51,9 @@ export class WebPushPersistenceService implements OnModuleInit, OnModuleDestroy 
     } catch (error) {
       this.client = null;
       this.db = null;
+      await client.close().catch(() => undefined);
       this.logger.error('Failed to initialize web push persistence', error as Error);
+      if (isMongoIndexReadinessError(error)) throw error;
     }
   }
 
@@ -125,8 +128,8 @@ export class WebPushPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.collection().createIndex({ clientId: 1, endpointHash: 1 }, { unique: true }),
-      this.collection().createIndex({ updatedAt: -1 })
+      ensureMongoIndex(this.collection(), { clientId: 1, endpointHash: 1 }, { unique: true }),
+      ensureMongoIndex(this.collection(), { updatedAt: -1 })
     ]);
   }
 

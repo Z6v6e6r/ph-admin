@@ -9,6 +9,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { isProductionRuntime } from '../common/mongo-index.guard';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
 import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
@@ -56,6 +57,7 @@ import {
   SupportDialogsExportResult,
   SupportDialogSettings,
   SupportDialogReactionAnalytics,
+  SupportDialogScope,
   SupportDialogStatus,
   SupportDialogSummary,
   SupportDialogVivaStatus,
@@ -116,6 +118,10 @@ type SupportMessageObserver = (
 export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private static readonly DAY_MS = 24 * 60 * 60 * 1000;
   private readonly logger = new Logger(SupportService.name);
+  private readonly noReplyQuickReplySweepEnabled = this.readBooleanEnv(
+    'QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED',
+    !isProductionRuntime()
+  );
   private readonly clients = new Map<string, SupportClientProfile>();
   private readonly dialogs = new Map<string, SupportDialog>();
   private readonly messages = new Map<string, SupportMessage[]>();
@@ -394,7 +400,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private ensureNoReplyQuickReplyTimer(): void {
-    if (this.noReplyQuickReplyTimer) {
+    if (!this.noReplyQuickReplySweepEnabled || this.noReplyQuickReplyTimer) {
       return;
     }
     this.noReplyQuickReplyTimer = setInterval(() => {
@@ -468,6 +474,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return 0;
     }
     return Math.max(1000, Math.floor(rawValue));
+  }
+
+  private readBooleanEnv(name: string, fallback: boolean): boolean {
+    const raw = String(process.env[name] ?? '').trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+    if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+    return fallback;
   }
 
   private resolveOutboxMaxAttempts(): number {
@@ -553,6 +567,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedDto.subject,
       normalizedDto.connector,
       selectedStationId,
+      this.resolveDialogScope(normalizedDto.dialogScope),
       createdAt
     );
     const kind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
@@ -2027,6 +2042,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return canonical;
   }
 
+  /**
+   * The stored scope of an ingest event, defaulting to the legacy client-scoped dialog. Nothing
+   * resolves on this value yet: it exists so the LK2 station tab can declare its scope once the
+   * contract has shipped.
+   */
+  private resolveDialogScope(rawScope: unknown): SupportDialogScope {
+    return rawScope === SupportDialogScope.STATION
+      ? SupportDialogScope.STATION
+      : SupportDialogScope.CLIENT;
+  }
+
   private resolveDialog(
     client: SupportClientProfile,
     stationId: string,
@@ -2034,6 +2060,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     subject: string | undefined,
     connector: SupportConnectorRoute,
     explicitSelectedStationId: string | undefined,
+    dialogScope: SupportDialogScope,
     createdAt: string
   ): SupportDialog {
     const existing = this.collapseOpenDialogs(client.id, connector);
@@ -2079,6 +2106,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       accessStationIds: this.mergeStationAccessIds([], [stationId]),
       writeStationIds: [stationId],
       readOnlyStationIds: [],
+      dialogScope,
       status: SupportDialogStatus.OPEN,
       authStatus: client.authStatus,
       currentPhone: client.primaryPhone,
@@ -2887,6 +2915,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       accessStationIds: this.getDialogAccessStationIds(dialog),
       writeStationIds: [...dialog.writeStationIds],
       readOnlyStationIds: [...dialog.readOnlyStationIds],
+      dialogScope: this.resolveDialogScope(dialog.dialogScope),
       isActiveForUser: canWriteForUser,
       isReadOnlyForUser: !canWriteForUser,
       isResolved: dialog.isResolved === true,
@@ -3132,6 +3161,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     return {
       ...dialog,
+      dialogScope: this.resolveDialogScope(dialog.dialogScope),
       status:
         dialog.status === SupportDialogStatus.CLOSED
           ? SupportDialogStatus.CLOSED

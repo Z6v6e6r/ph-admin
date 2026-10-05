@@ -19,6 +19,7 @@ const files = [
   'admin-panel-message.wav',
   'phab-admin-panel.js',
   'phab-gift-certificates-admin.js',
+  'phab-referral-links-admin.js',
   'phab-community-feed.js',
   'phab-communities-showcase.js',
   'phab-client-messenger.js',

@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
+import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
 import {
   SupportClientProfile,
   SupportConnectorRoute,
@@ -197,6 +198,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
           `MongoDB connect failed for backend=${config.key}: ${String(error)}`
         );
         await this.safeCloseBackend(state);
+        if (isMongoIndexReadinessError(error)) throw error;
       }
     }
 
@@ -1166,50 +1168,50 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   private async ensureIndexes(backend: SupportPersistenceBackendState): Promise<void> {
     await Promise.all([
-      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+      ensureMongoIndex(this.collection<SupportClientProfile>(backend, 'clients'),
         { id: 1 },
         { unique: true }
       ),
-      this.collection<SupportClientProfile>(backend, 'clients').createIndex({ phones: 1 }),
-      this.collection<SupportClientProfile>(backend, 'clients').createIndex({ emails: 1 }),
-      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+      ensureMongoIndex(this.collection<SupportClientProfile>(backend, 'clients'), { phones: 1 }),
+      ensureMongoIndex(this.collection<SupportClientProfile>(backend, 'clients'), { emails: 1 }),
+      ensureMongoIndex(this.collection<SupportClientProfile>(backend, 'clients'),
         { 'identities.connector': 1, 'identities.externalUserId': 1 }
       ),
-      this.collection<SupportClientProfile>(backend, 'clients').createIndex(
+      ensureMongoIndex(this.collection<SupportClientProfile>(backend, 'clients'),
         { 'identities.connector': 1, 'identities.externalChatId': 1 }
       ),
-      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ id: 1 }, { unique: true }),
-      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ stationId: 1, updatedAt: -1 }),
-      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ accessStationIds: 1, updatedAt: -1 }),
-      this.collection<SupportDialog>(backend, 'dialogs').createIndex({ clientId: 1, status: 1 }),
-      this.collection<SupportMessage>(backend, 'messages').createIndex({ id: 1 }, { unique: true }),
-      this.collection<SupportMessage>(backend, 'messages').createIndex({ dialogId: 1, createdAt: 1 }),
-      this.collection<SupportMessage>(backend, 'messages').createIndex({ clientId: 1, createdAt: 1 }),
-      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex(
+      ensureMongoIndex(this.collection<SupportDialog>(backend, 'dialogs'), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.collection<SupportDialog>(backend, 'dialogs'), { stationId: 1, updatedAt: -1 }),
+      ensureMongoIndex(this.collection<SupportDialog>(backend, 'dialogs'), { accessStationIds: 1, updatedAt: -1 }),
+      ensureMongoIndex(this.collection<SupportDialog>(backend, 'dialogs'), { clientId: 1, status: 1 }),
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'messages'), { id: 1 }, { unique: true }),
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'messages'), { dialogId: 1, createdAt: 1 }),
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'messages'), { clientId: 1, createdAt: 1 }),
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'serviceMessages'),
         { id: 1 },
         { unique: true }
       ),
-      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex({
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'serviceMessages'), {
         dialogId: 1,
         createdAt: 1
       }),
-      this.collection<SupportMessage>(backend, 'serviceMessages').createIndex({
+      ensureMongoIndex(this.collection<SupportMessage>(backend, 'serviceMessages'), {
         clientId: 1,
         createdAt: 1
       }),
-      this.collection<SupportResponseMetric>(backend, 'responseMetrics').createIndex(
+      ensureMongoIndex(this.collection<SupportResponseMetric>(backend, 'responseMetrics'),
         { id: 1 },
         { unique: true }
       ),
-      this.collection<SupportResponseMetric>(backend, 'responseMetrics').createIndex({
+      ensureMongoIndex(this.collection<SupportResponseMetric>(backend, 'responseMetrics'), {
         dialogId: 1,
         startedAt: -1
       }),
-      this.collection<SupportOutboxCommand>(backend, 'outbox').createIndex(
+      ensureMongoIndex(this.collection<SupportOutboxCommand>(backend, 'outbox'),
         { id: 1 },
         { unique: true }
       ),
-      this.collection<SupportOutboxCommand>(backend, 'outbox').createIndex({
+      ensureMongoIndex(this.collection<SupportOutboxCommand>(backend, 'outbox'), {
         connector: 1,
         status: 1,
         createdAt: 1

@@ -1,0 +1,14 @@
+[Unit]
+Description=Aggregate sanitized nginx traffic for CUP
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/phab-traffic/traffic-edge.py collect
+User=root
+UMask=0027
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=240
+NoNewPrivileges=true
+PrivateTmp=true

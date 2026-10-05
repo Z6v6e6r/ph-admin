@@ -26,6 +26,17 @@ interface VivaExerciseTypeResolution {
 
 type VivaRawRecord = Record<string, unknown>;
 
+// This direction also belongs to the tournament category in Viva's catalog,
+// but existing exercises retain their original closed category.
+const CORPORATE_TOURNAMENT_DIRECTION_ID = '6078';
+const CLOSED_EXERCISE_TYPE_ID = '840';
+
+const VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET: Readonly<
+  Record<string, readonly string[]>
+> = {
+  iSkq6G: ['1ea77cbf-bc36-49a1-96d6-f35c216a409b']
+};
+
 @Injectable()
 export class VivaTournamentsService {
   private readonly logger = new Logger(VivaTournamentsService.name);
@@ -104,8 +115,15 @@ export class VivaTournamentsService {
 
     const deduplicated = new Map<string, Tournament>();
     let loadedAtLeastOneWidget = false;
+    const requestedDate = this.normalizeDateKey(options?.date);
+    const widgetIds = requestedDate
+      ? [...this.widgetIds].sort((left, right) =>
+          Number(Boolean(VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[left]))
+          - Number(Boolean(VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[right]))
+        )
+      : this.widgetIds;
 
-    for (const widgetId of this.widgetIds) {
+    for (const widgetId of widgetIds) {
       try {
         const tournaments = await this.loadTournaments(widgetId, options);
         loadedAtLeastOneWidget = true;
@@ -116,6 +134,9 @@ export class VivaTournamentsService {
         this.logger.warn(
           `Failed to load Viva tournaments for widget ${widgetId}: ${String(error)}`
         );
+        if (requestedDate) {
+          return null;
+        }
       }
     }
 
@@ -273,7 +294,10 @@ export class VivaTournamentsService {
       dates.map((dateKey) => this.fetchExercisesByDate(
         dateKey,
         widgetId,
-        options?.includePast === true
+        options?.includePast === true,
+        requestedDate
+          ? VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET[widgetId] ?? []
+          : []
       ))
     );
 
@@ -475,13 +499,23 @@ export class VivaTournamentsService {
   private async fetchExercisesByDate(
     dateKey: string,
     widgetId: string,
-    includePast = false
+    includePast = false,
+    supplementalStudioIds: readonly string[] = []
   ): Promise<VivaRawRecord[]> {
-    const payload = await this.fetchJson('exercises', {
+    const query = {
       date: dateKey,
       ...(includePast ? { includePast: 'true', past: 'true' } : {})
-    }, widgetId);
-    return this.unwrapRecords(payload);
+    };
+    const payloads = await Promise.all([
+      this.fetchJson('exercises', query, widgetId),
+      ...supplementalStudioIds.map((studioId) => this.fetchJson(
+        'exercises',
+        { ...query, studioId },
+        widgetId
+      ))
+    ]);
+
+    return payloads.flatMap((payload) => this.unwrapRecords(payload));
   }
 
   private async fetchTournamentDates(
@@ -540,7 +574,9 @@ export class VivaTournamentsService {
     query.set('dateTo', dateTo);
     studioIds.forEach((studioId) => query.append('studioIds', studioId));
     if (includeExerciseTypeIds) {
-      this.exerciseTypeIds.forEach((typeId) => query.append('exerciseTypeIds', typeId));
+      // Discover closed-only dates too; individual exercises are still filtered below.
+      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID])
+        .forEach((typeId) => query.append('exerciseTypeIds', typeId));
     }
 
     const payload = await this.fetchJson(`exercises/dates?${query.toString()}`, undefined, widgetId);
@@ -701,7 +737,10 @@ export class VivaTournamentsService {
       this.readDisplayName(direction) ??
       this.readDisplayName(type);
     const exerciseType = this.resolveExerciseType(exercise);
-    if (!this.isTournamentExercise(name, exerciseType)) {
+    const isClosedCorporateTournament =
+      exerciseType.id === CLOSED_EXERCISE_TYPE_ID
+      && this.readString(direction?.id) === CORPORATE_TOURNAMENT_DIRECTION_ID;
+    if (!isClosedCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
       return null;
     }
 
@@ -810,6 +849,7 @@ export class VivaTournamentsService {
       id,
       source: 'VIVA',
       exerciseId,
+      ...(isClosedCorporateTournament ? { isPublic: false } : {}),
       name:
         name ||
         [exerciseType.name, studioId ? studioNames.get(studioId) : undefined]

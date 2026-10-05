@@ -74,6 +74,9 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.match(source, /data-subscriptions-tab="instances"[^>]*>Список подписок/);
   assert.match(source, /data-subscriptions-tab="analytics"[^>]*>Аналитика/);
   assert.match(source, /data-subscription-active-limit-enabled/);
+  assert.match(source, /data-subscription-daily-exceeded/);
+  assert.match(source, /data-subscription-daily-discount/);
+  assert.match(source, /actions: \['CREATE_GAME', 'JOIN_GAME'\]/);
   assert.match(source, /data-subscription-booking-window-enabled/);
   assert.match(source, /data-subscription-station-rule-add/);
   assert.match(source, /PARTIAL_PRICE_PERCENT_DISCOUNT/);

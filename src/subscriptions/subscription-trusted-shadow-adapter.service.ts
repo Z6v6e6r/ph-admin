@@ -7,9 +7,14 @@ import {
 import { createHmac, timingSafeEqual } from 'crypto';
 import { LkIdentityService } from '../lk-identity/lk-identity.service';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
+import { ReserveSubscriptionEntitlementDto } from './dto/subscription-entitlement-lifecycle.dto';
 import { SubscriptionCanonicalTargetResolverService } from './subscription-canonical-target-resolver.service';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
 import { SubscriptionShadowQuoteResult } from './subscriptions.types';
+import {
+  SubscriptionShadowQuoteIdentityContext,
+  SubscriptionShadowQuoteRequest
+} from './subscriptions.types';
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
 
@@ -39,8 +44,92 @@ export class SubscriptionTrustedShadowAdapterService {
     integrationToken: string | undefined,
     dto: SubscriptionShadowQuoteAdapterDto
   ): Promise<SubscriptionShadowQuoteResult> {
+    return this.shadowQuote.quote(await this.resolveRequest(
+      authorizationHeader,
+      integrationToken,
+      dto
+    ));
+  }
+
+  async resolveRequest(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: SubscriptionShadowQuoteAdapterDto
+  ): Promise<SubscriptionShadowQuoteRequest> {
+    const identity = await this.resolveIdentity(authorizationHeader, integrationToken);
+    const target = await this.targetResolver.resolve({
+      tenantId: identity.tenantId,
+      targetId: dto.target.targetId,
+      action: dto.action,
+      snapshotRevision: dto.target.snapshotRevision
+    });
+    return {
+      identity,
+      subscriptionInstanceId: dto.subscriptionInstanceId,
+      action: dto.action,
+      target
+    };
+  }
+
+  async resolveEntitlementRequest(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: ReserveSubscriptionEntitlementDto
+  ): Promise<SubscriptionShadowQuoteRequest> {
+    const identity = await this.resolveEntitlementIdentity(authorizationHeader, integrationToken);
+    const target = await this.targetResolver.resolveLatest({
+      tenantId: identity.tenantId,
+      targetId: dto.target.targetId,
+      action: dto.action
+    });
+    return {
+      identity,
+      subscriptionInstanceId: dto.subscriptionInstanceId,
+      action: dto.action,
+      target
+    };
+  }
+
+  async resolveIdentity(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined
+  ): Promise<SubscriptionShadowQuoteIdentityContext> {
+    return this.resolveIdentityWithToken(
+      authorizationHeader,
+      integrationToken,
+      'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN',
+      'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_NOT_CONFIGURED',
+      'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN'
+    );
+  }
+
+  async resolveEntitlementIdentity(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined
+  ): Promise<SubscriptionShadowQuoteIdentityContext> {
+    return this.resolveIdentityWithToken(
+      authorizationHeader,
+      integrationToken,
+      'SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN',
+      'SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_NOT_CONFIGURED',
+      'SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_FORBIDDEN'
+    );
+  }
+
+  private async resolveIdentityWithToken(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    tokenEnvironmentName: string,
+    notConfiguredCode: string,
+    forbiddenCode: string
+  ): Promise<SubscriptionShadowQuoteIdentityContext> {
     this.assertEnabled();
-    this.assertIntegrationToken(integrationToken);
+    this.assertIntegrationToken(
+      integrationToken,
+      tokenEnvironmentName,
+      notConfiguredCode,
+      forbiddenCode
+    );
     const tenantId = this.requireConfiguredId(
       'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
       'SUBSCRIPTIONS_RUNTIME_TENANT_ID_INVALID'
@@ -83,25 +172,13 @@ export class SubscriptionTrustedShadowAdapterService {
         verifiedAt
       ].join('\0'))
       .digest('hex');
-    const target = await this.targetResolver.resolve({
+    return {
+      resolutionSource: 'LK_IDENTITY',
       tenantId,
-      targetId: dto.target.targetId,
-      action: dto.action,
-      snapshotRevision: dto.target.snapshotRevision
-    });
-
-    return this.shadowQuote.quote({
-      identity: {
-        resolutionSource: 'LK_IDENTITY',
-        tenantId,
-        clientRefHash,
-        evidenceRef: `evidence:lk-identity:${identityEvidenceHash}`,
-        verifiedAt
-      },
-      subscriptionInstanceId: dto.subscriptionInstanceId,
-      action: dto.action,
-      target
-    });
+      clientRefHash,
+      evidenceRef: `evidence:lk-identity:${identityEvidenceHash}`,
+      verifiedAt
+    };
   }
 
   protected now(): Date {
@@ -117,11 +194,16 @@ export class SubscriptionTrustedShadowAdapterService {
     }
   }
 
-  private assertIntegrationToken(suppliedToken?: string): void {
-    const expected = String(process.env.SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_TOKEN ?? '').trim();
+  private assertIntegrationToken(
+    suppliedToken: string | undefined,
+    environmentName: string,
+    notConfiguredCode: string,
+    forbiddenCode: string
+  ): void {
+    const expected = String(process.env[environmentName] ?? '').trim();
     if (Buffer.byteLength(expected, 'utf8') < 32) {
       throw new ServiceUnavailableException({
-        code: 'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_NOT_CONFIGURED',
+        code: notConfiguredCode,
         message: 'Trusted subscription shadow adapter is not configured'
       });
     }
@@ -131,7 +213,7 @@ export class SubscriptionTrustedShadowAdapterService {
     if (expectedBuffer.length !== suppliedBuffer.length
       || !timingSafeEqual(expectedBuffer, suppliedBuffer)) {
       throw new ForbiddenException({
-        code: 'SUBSCRIPTIONS_SHADOW_QUOTE_INTEGRATION_FORBIDDEN',
+        code: forbiddenCode,
         message: 'Trusted subscription shadow adapter access is forbidden'
       });
     }

@@ -9,15 +9,36 @@ async function main(): Promise<void> {
 
   process.env.VIVA_END_USER_API_BASE_URL = 'https://viva.example';
   delete process.env.VIVA_END_USER_WIDGET_ID;
-  process.env.VIVA_END_USER_WIDGET_IDS = 'widget-a,widget-b';
+  process.env.VIVA_END_USER_WIDGET_IDS = 'iSkq6G,widget-b';
 
   const requestedUrls: string[] = [];
+  let failPiterRequest = false;
 
   globalThis.fetch = (async (input: string | URL | Request) => {
-    const url = String(input);
-    requestedUrls.push(url);
+    const url = new URL(String(input));
+    requestedUrls.push(url.toString());
 
-    if (url.includes('/end-user/api/v1/widget-a/exercises?date=2026-06-07')) {
+    if (
+      url.pathname.includes('/end-user/api/v1/iSkq6G/exercises')
+      && url.searchParams.has('studioId')
+    ) {
+      if (failPiterRequest) {
+        return new Response('Unavailable', { status: 503 });
+      }
+      return jsonResponse([
+        {
+          id: 'shared-tournament',
+          name: 'Питерский турнир',
+          exerciseTypeId: '839',
+          studio: { id: 'piter', name: 'Питер' },
+          startsAt: '2026-06-07T12:00:00+03:00',
+          endsAt: '2026-06-07T14:00:00+03:00',
+          clientsCount: 10
+        }
+      ]);
+    }
+
+    if (url.pathname.includes('/end-user/api/v1/iSkq6G/exercises')) {
       return jsonResponse([
         {
           id: 'from-widget-a',
@@ -26,11 +47,20 @@ async function main(): Promise<void> {
           studio: { id: 'skolkovo', name: 'Сколково' },
           startsAt: '2026-06-07T09:00:00+03:00',
           endsAt: '2026-06-07T11:00:00+03:00'
+        },
+        {
+          id: 'shared-tournament',
+          name: 'Питерский турнир',
+          exerciseTypeId: '839',
+          studio: { id: 'piter', name: 'Питер' },
+          startsAt: '2026-06-07T12:00:00+03:00',
+          endsAt: '2026-06-07T14:00:00+03:00',
+          clientsCount: 0
         }
       ]);
     }
 
-    if (url.includes('/end-user/api/v1/widget-b/exercises?date=2026-06-07')) {
+    if (url.pathname.includes('/end-user/api/v1/widget-b/exercises')) {
       return jsonResponse([
         {
           id: '73fe515e-2872-493b-a1c6-fb013e661e33',
@@ -42,6 +72,15 @@ async function main(): Promise<void> {
           room: { name: 'Корт №4 Панорамик 2 на 2' },
           maxClientsCount: 8,
           canceled: false
+        },
+        {
+          id: 'shared-tournament',
+          name: 'Shared tournament',
+          exerciseTypeId: '839',
+          studio: { id: 'other', name: 'Другой клуб' },
+          startsAt: '2026-06-07T12:00:00+03:00',
+          endsAt: '2026-06-07T14:00:00+03:00',
+          clientsCount: 2
         }
       ]);
     }
@@ -54,20 +93,41 @@ async function main(): Promise<void> {
     const tournaments = await service.listTournaments({ date: '2026-06-07' });
 
     assert.ok(Array.isArray(tournaments));
-    assert.equal(tournaments?.length, 2);
+    assert.equal(tournaments?.length, 3);
     assert.ok(tournaments?.some((item) => item.id === 'from-widget-a'));
     assert.ok(tournaments?.some((item) => item.id === '73fe515e-2872-493b-a1c6-fb013e661e33'));
     assert.equal(
       tournaments?.find((item) => item.id === '73fe515e-2872-493b-a1c6-fb013e661e33')?.studioName,
       'Сочи'
     );
+    assert.equal(
+      tournaments?.find((item) => item.id === 'shared-tournament')?.participantsCount,
+      10,
+      'the scoped iSkq6G record must win regardless of configured widget order'
+    );
 
     assert.ok(
-      requestedUrls.some((url) => url.includes('/end-user/api/v1/widget-a/exercises?date=2026-06-07'))
+      requestedUrls.some((url) => url.includes('/end-user/api/v1/iSkq6G/exercises?date=2026-06-07'))
     );
     assert.ok(
       requestedUrls.some((url) => url.includes('/end-user/api/v1/widget-b/exercises?date=2026-06-07'))
     );
+    assert.equal(requestedUrls.length, 3, 'date loading should add one Piter request globally');
+    assert.equal(
+      requestedUrls.filter((url) =>
+        url.includes('studioId=1ea77cbf-bc36-49a1-96d6-f35c216a409b')
+      ).length,
+      1
+    );
+
+    requestedUrls.length = 0;
+    failPiterRequest = true;
+    assert.equal(
+      await service.listTournaments({ date: '2026-06-07' }),
+      null,
+      'a failed widget leg must not expose a partial multi-widget date snapshot'
+    );
+    assert.equal(requestedUrls.length, 3);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv('VIVA_END_USER_API_BASE_URL', originalApiBaseUrl);

@@ -41,6 +41,19 @@ export function compileSubscriptionRuntimeProjection(
     activeServicesLimit: { ...policy.activeServicesLimit },
     bookingWindow: { ...policy.bookingWindow },
     dailyUsageLimit: policy.dailyUsageLimit,
+    dailyUsagePolicy: policy.dailyUsagePolicy
+      ? { ...policy.dailyUsagePolicy, actions: [...policy.dailyUsagePolicy.actions] }
+      : {
+        actions: [
+          'CREATE_GAME',
+          'JOIN_GAME',
+          'BOOK_GROUP_TRAINING',
+          'BOOK_TOURNAMENT',
+          'PURCHASE_ADD_ON_PRODUCT'
+        ],
+        limitExceeded: 'BLOCK',
+        percentage: null
+      },
     usageUnitsByDuration: { ...policy.usageUnitsByDuration },
     stationAccessRules: policy.stationAccessRules.map((rule) => ({
       ...rule,

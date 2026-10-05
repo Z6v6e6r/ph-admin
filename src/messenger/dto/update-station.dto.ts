@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateStationDto {
   @IsOptional()
@@ -10,4 +10,8 @@ export class UpdateStationDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  tournamentBroadcastBoxId?: string | null;
 }

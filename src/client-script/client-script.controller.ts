@@ -36,6 +36,14 @@ export class ClientScriptController {
     response.sendFile(filePath);
   }
 
+  @Get('referral-links-admin.js')
+  streamReferralLinksAdmin(@Res() response: Response): void {
+    const filePath = this.resolveScriptFile('phab-referral-links-admin.js');
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(filePath);
+  }
+
   @Get('admin-panel.download.js')
   downloadAdminPanel(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-admin-panel.js');

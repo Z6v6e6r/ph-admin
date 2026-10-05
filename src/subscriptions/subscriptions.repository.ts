@@ -1,12 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { Collection, Db, Filter, MongoClient, MongoServerError } from 'mongodb';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  Collection,
+  ClientSession,
+  Db,
+  Filter,
+  MongoClient,
+  MongoServerError,
+  TransactionOptions
+} from 'mongodb';
+import { ensureMongoIndex } from '../common/mongo-index.guard';
+import type { SubscriptionInstanceProjectionPlan } from './subscription-provider-instance-projector.service';
+import { subscriptionPublicationHistoryMatchesResolution } from './subscription-instance-policy-resolution';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import {
+  assertSubscriptionLegacyBindingPromotionPlanExact,
+  rebuildSubscriptionLegacyBindingPromotionPlan
+} from './subscription-legacy-binding-promotion.service';
+import type {
+  StoredSubscriptionRuntimeBindingPromotion,
+  SubscriptionLegacyBindingPromotionIdentity,
+  SubscriptionLegacyBindingPromotionPlan,
+  SubscriptionLegacyBindingPromotionSnapshot
+} from './subscription-legacy-binding-promotion.service';
 import {
   StoredReleaseProgram,
   StoredSubscriptionCanonicalTargetSnapshot,
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionInstance,
+  StoredSubscriptionInstanceProjectorCheckpoint,
   StoredSubscriptionOutboxEvent,
   StoredSubscriptionPolicyPublication,
+  StoredSubscriptionProjectionFence,
   StoredSubscriptionPolicyVersion,
   StoredSubscriptionProviderMapping,
   StoredSubscriptionRuntimeOperation,
@@ -24,12 +49,25 @@ import {
   validateStoredSubscriptionCanonicalTargetSnapshot,
   validateStoredSubscriptionEntitlementAggregate,
   validateStoredSubscriptionInstance,
+  validateStoredSubscriptionInstanceProjectorCheckpoint,
   validateStoredSubscriptionOutboxEvent,
   validateStoredSubscriptionPolicyPublication,
+  validateStoredSubscriptionProjectionFence,
   validateStoredSubscriptionProviderMapping,
   validateStoredSubscriptionRuntimeOperation,
   validateStoredSubscriptionUsageLedgerEvent
 } from './subscription-runtime-contracts';
+import {
+  buildSubscriptionProjectionFence,
+  subscriptionProjectionFenceBindingDigest,
+  subscriptionProjectionFenceId
+} from './subscription-projection-fence';
+
+const SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS: TransactionOptions = {
+  readConcern: { level: 'snapshot' },
+  writeConcern: { w: 'majority', j: true },
+  readPreference: 'primary'
+};
 
 export const SUBSCRIPTION_REQUIRED_INDEXES = {
   types: [
@@ -147,6 +185,18 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       sparse: true
     }
   ],
+  projectionFences: [
+    {
+      name: 'subscription_projection_fence_id_unique',
+      key: { fenceId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_projection_fence_type_unique',
+      key: { subscriptionTypeId: 1 },
+      unique: true
+    }
+  ],
   instances: [
     {
       name: 'subscription_instance_id_unique',
@@ -240,6 +290,51 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       key: { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 },
       unique: false
     }
+  ],
+  instanceProjectorCheckpoints: [
+    {
+      name: 'subscription_instance_projector_checkpoint_id_unique',
+      key: { checkpointId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_instance_projector_checkpoint_provider_scope_unique',
+      key: {
+        tenantId: 1,
+        provider: 1,
+        providerProductId: 1,
+        'providerScope.kind': 1,
+        'providerScope.scopeId': 1
+      },
+      unique: true
+    }
+  ],
+  bindingPromotions: [
+    {
+      name: 'subscription_runtime_binding_promotion_id_unique',
+      key: { promotionId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_runtime_binding_promotion_source_identity_unique',
+      key: {
+        tenantId: 1,
+        subscriptionTypeId: 1,
+        providerProductId: 1,
+        'providerScope.kind': 1,
+        'providerScope.scopeId': 1,
+        publicationId: 1,
+        mappingId: 1,
+        releaseProgramId: 1,
+        releasePhaseId: 1
+      },
+      unique: true
+    },
+    {
+      name: 'subscription_runtime_binding_promotion_type_product_lookup',
+      key: { subscriptionTypeId: 1, providerProductId: 1 },
+      unique: false
+    }
   ]
 } as const;
 
@@ -297,6 +392,7 @@ export class SubscriptionsRepository {
   }
 
   private async initialize(mode: 'DEFAULT' | 'VERIFY_ONLY'): Promise<void> {
+    this.assertInstanceProjectorConfiguration();
     if (!this.mongoUri) throw new Error('SUBSCRIPTIONS_MONGODB_URI or MONGODB_URI is required');
     if (!this.dbName) throw new Error('SUBSCRIPTIONS_MONGODB_DB is required');
     const client = new MongoClient(this.mongoUri, {
@@ -575,6 +671,663 @@ export class SubscriptionsRepository {
     return row;
   }
 
+  async runtimeInstanceProjectorCheckpointByProviderIdentity(input: {
+    tenantId: string;
+    provider: 'VIVA';
+    providerProductId: string;
+    providerScopeKind: Exclude<StoredSubscriptionInstanceProjectorCheckpoint['providerScope']['kind'], 'STUDIO'>;
+    providerScopeId: string;
+  }): Promise<StoredSubscriptionInstanceProjectorCheckpoint | null> {
+    this.assertInstanceProjectorContractsEnabled();
+    const row = await this.runtimeInstanceProjectorCheckpoints().findOne(
+      {
+        tenantId: input.tenantId,
+        provider: input.provider,
+        providerProductId: input.providerProductId,
+        'providerScope.kind': input.providerScopeKind,
+        'providerScope.scopeId': input.providerScopeId
+      },
+      { projection: { _id: 0 } }
+    );
+    if (row) validateStoredSubscriptionInstanceProjectorCheckpoint(row);
+    return row;
+  }
+
+  async preflightInitialRuntimeInstanceProjection(
+    plan: SubscriptionInstanceProjectionPlan
+  ): Promise<'READY_TO_INSERT' | 'EXACT_REPLAY'> {
+    this.assertInstanceProjectorContractsEnabled();
+    this.validateInitialProjectionPlan(plan);
+    const checkpoint = await this.runtimeInstanceProjectorCheckpoints().findOne(
+      this.instanceProjectorIdentity(plan.checkpoint),
+      { projection: { _id: 0 } }
+    );
+    const rows = await this.runtimeInstances()
+      .find(this.instanceProjectionProductFilter(plan.checkpoint), { projection: { _id: 0 } })
+      .sort({ subscriptionInstanceId: 1 })
+      .toArray();
+    rows.forEach(validateStoredSubscriptionInstance);
+    if (!checkpoint) {
+      if (rows.length !== 0) {
+        throw new SubscriptionRuntimeContractError(
+          'SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNCHECKPOINTED_INSTANCES_CONFLICT'
+        );
+      }
+      return 'READY_TO_INSERT';
+    }
+    validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
+    if (!isDeepStrictEqual(checkpoint, plan.checkpoint)
+      || !isDeepStrictEqual(rows, plan.instances)) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_INSTANCE_PROJECTOR_IMMUTABLE_CONFLICT'
+      );
+    }
+    return 'EXACT_REPLAY';
+  }
+
+  async applyInitialRuntimeInstanceProjection(
+    plan: SubscriptionInstanceProjectionPlan
+  ): Promise<'INSERTED' | 'EXACT_REPLAY'> {
+    this.assertInstanceProjectorContractsEnabled();
+    this.validateInitialProjectionPlan(plan);
+    const session = this.requireClient().startSession();
+    let result: 'INSERTED' | 'EXACT_REPLAY' | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const fence = await this.runtimeProjectionFences().findOne(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        );
+        const checkpoint = await this.runtimeInstanceProjectorCheckpoints().findOne(
+          this.instanceProjectorIdentity(plan.checkpoint),
+          { projection: { _id: 0 }, session }
+        );
+        const rows = await this.runtimeInstances()
+          .find(this.instanceProjectionProductFilter(plan.checkpoint), {
+            projection: { _id: 0 },
+            session
+          })
+          .sort({ subscriptionInstanceId: 1 })
+          .toArray();
+        const publicationHistory = await this.runtimePublications().find(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+        const mapping = await this.runtimeMappings().findOne(
+          { mappingId: plan.checkpoint.binding.mappingId },
+          { projection: { _id: 0 }, session }
+        );
+        const releaseProgram = await this.programs().findOne(
+          { releaseProgramId: plan.checkpoint.binding.releaseProgramId },
+          { projection: { _id: 0 }, session }
+        );
+        const subscriptionType = await this.types().findOne(
+          { subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId },
+          { projection: { _id: 0 }, session }
+        );
+        publicationHistory.forEach(validateStoredSubscriptionPolicyPublication);
+        if (plan.checkpoint.schemaVersion !== 3
+          || !plan.checkpoint.policyResolution
+          || !subscriptionPublicationHistoryMatchesResolution(
+            publicationHistory,
+            plan.checkpoint.policyResolution
+          )) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_POLICY_HISTORY_CONFLICT'
+          );
+        }
+        this.assertInitialProjectionSourcesCurrent({
+          plan,
+          mapping,
+          releaseProgram,
+          subscriptionType,
+          publicationHistory
+        });
+        const expectedFenceBinding = {
+          mappingId: plan.checkpoint.binding.mappingId,
+          mappingRevision: plan.checkpoint.binding.mappingRevision,
+          subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId,
+          publicationId: plan.checkpoint.binding.publicationId,
+          policyVersion: plan.checkpoint.binding.policyVersion,
+          policyDigest: plan.checkpoint.binding.policyDigest,
+          runtimeCompatibility: plan.checkpoint.binding.runtimeCompatibility
+        };
+        if (plan.checkpoint.binding.fenceId !== subscriptionProjectionFenceId(
+          plan.checkpoint.binding.subscriptionTypeId
+        )
+          || plan.checkpoint.binding.fenceDigest !== subscriptionProjectionFenceBindingDigest(
+            expectedFenceBinding
+          )
+          || (!fence && plan.checkpoint.binding.fenceRevision !== 1)) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CONFLICT'
+          );
+        }
+        if (fence) {
+          validateStoredSubscriptionProjectionFence(fence);
+          if (fence.fenceId !== plan.checkpoint.binding.fenceId
+            || fence.bindingRevision !== plan.checkpoint.binding.fenceRevision
+            || fence.bindingDigest !== plan.checkpoint.binding.fenceDigest
+            || fence.bindingDigest !== subscriptionProjectionFenceBindingDigest(fence.binding)
+            || fence.binding.mappingId !== plan.checkpoint.binding.mappingId
+            || fence.binding.mappingRevision !== plan.checkpoint.binding.mappingRevision
+            || fence.binding.publicationId !== plan.checkpoint.binding.publicationId
+            || fence.binding.policyVersion !== plan.checkpoint.binding.policyVersion
+            || fence.binding.policyDigest !== plan.checkpoint.binding.policyDigest) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CONFLICT'
+            );
+          }
+        }
+        rows.forEach(validateStoredSubscriptionInstance);
+        if (checkpoint) {
+          validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
+          if (!isDeepStrictEqual(checkpoint, plan.checkpoint)
+            || !isDeepStrictEqual(rows, plan.instances)
+            || !fence
+            || fence.lastProjectorReconciliationDigest
+              !== plan.checkpoint.reconciliation.reconciliationDigest) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTIONS_INSTANCE_PROJECTOR_IMMUTABLE_CONFLICT'
+            );
+          }
+          result = 'EXACT_REPLAY';
+          return;
+        }
+        if (rows.length !== 0 || (fence && fence.lastProjectorReconciliationDigest !== null)) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNCHECKPOINTED_INSTANCES_CONFLICT'
+          );
+        }
+        if (!fence) {
+          const bootstrapFence: StoredSubscriptionProjectionFence = {
+            schemaVersion: 1,
+            fenceId: plan.checkpoint.binding.fenceId,
+            subscriptionTypeId: plan.checkpoint.binding.subscriptionTypeId,
+            bindingRevision: 1,
+            bindingDigest: plan.checkpoint.binding.fenceDigest,
+            binding: expectedFenceBinding,
+            coordinationRevision: 1,
+            lastProjectorReconciliationDigest:
+              plan.checkpoint.reconciliation.reconciliationDigest,
+            createdAt: plan.checkpoint.createdAt,
+            updatedAt: plan.checkpoint.updatedAt
+          };
+          validateStoredSubscriptionProjectionFence(bootstrapFence);
+          await this.runtimeProjectionFences().insertOne(bootstrapFence, { session });
+        } else {
+          const fenceUpdate = await this.runtimeProjectionFences().updateOne(
+            {
+              fenceId: fence.fenceId,
+              subscriptionTypeId: fence.subscriptionTypeId,
+              bindingRevision: fence.bindingRevision,
+              bindingDigest: fence.bindingDigest,
+              coordinationRevision: fence.coordinationRevision,
+              lastProjectorReconciliationDigest: null
+            },
+            {
+              $set: {
+                lastProjectorReconciliationDigest:
+                  plan.checkpoint.reconciliation.reconciliationDigest,
+                updatedAt: plan.checkpoint.updatedAt
+              },
+              $inc: { coordinationRevision: 1 }
+            },
+            { session }
+          );
+          if (fenceUpdate.modifiedCount !== 1) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_CAS_CONFLICT'
+            );
+          }
+        }
+        const instanceWriteDocuments = plan.instances.map((instance) => structuredClone(instance));
+        const checkpointWriteDocument = structuredClone(plan.checkpoint);
+        await this.runtimeInstances().insertMany(instanceWriteDocuments, { ordered: true, session });
+        await this.runtimeInstanceProjectorCheckpoints().insertOne(checkpointWriteDocument, { session });
+        result = 'INSERTED';
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError(
+          'SUBSCRIPTIONS_INSTANCE_PROJECTOR_TRANSACTION_EMPTY'
+        );
+      }
+      if (result === 'INSERTED') {
+        const readBack = await this.preflightInitialRuntimeInstanceProjection(plan);
+        if (readBack !== 'EXACT_REPLAY') {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_INSTANCE_PROJECTOR_POSTCOMMIT_READBACK_FAILED'
+          );
+        }
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async applyConfirmedRuntimeSaleBinding(input: {
+    instance: StoredSubscriptionInstance;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+    mappingSnapshot: StoredSubscriptionProviderMapping;
+    checkpointSnapshot: StoredSubscriptionInstanceProjectorCheckpoint;
+    fenceSnapshot: StoredSubscriptionProjectionFence;
+    publicationHistorySnapshot: StoredSubscriptionPolicyPublication[];
+    releaseProgramSnapshot: StoredReleaseProgram;
+  }): Promise<'INSERTED' | 'EXACT_REPLAY'> {
+    this.assertRuntimeContractsEnabled();
+    this.assertInstanceProjectorContractsEnabled();
+    validateStoredSubscriptionInstance(input.instance);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    validateStoredSubscriptionProviderMapping(input.mappingSnapshot);
+    validateStoredSubscriptionInstanceProjectorCheckpoint(input.checkpointSnapshot);
+    validateStoredSubscriptionProjectionFence(input.fenceSnapshot);
+    input.publicationHistorySnapshot.forEach(validateStoredSubscriptionPolicyPublication);
+    if (input.operation.kind !== 'PURCHASE'
+      || input.operation.state !== 'CONFIRMED'
+      || input.operation.subscriptionInstanceId !== input.instance.subscriptionInstanceId
+      || input.ledger.eventType !== 'PURCHASE_PAID'
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.instance.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.instance.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_LINK_MISMATCH');
+    }
+
+    const checkpointIdentity = this.instanceProjectorIdentity(input.checkpointSnapshot);
+    const exactReplay = async (): Promise<boolean> => {
+      const [instance, operation, ledger, outbox] = await Promise.all([
+        this.runtimeInstances().findOne(
+          {
+            tenantId: input.instance.tenantId,
+            providerClientId: input.instance.providerClientId,
+            clientSubscriptionId: input.instance.clientSubscriptionId
+          },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeOperations().findOne(
+          { operationId: input.operation.operationId },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeLedger().findOne(
+          { eventId: input.ledger.eventId },
+          { projection: { _id: 0 } }
+        ),
+        this.runtimeOutbox().findOne(
+          { outboxEventId: input.outbox.outboxEventId },
+          { projection: { _id: 0 } }
+        )
+      ]);
+      return isDeepStrictEqual(instance, input.instance)
+        && isDeepStrictEqual(operation, input.operation)
+        && isDeepStrictEqual(ledger, input.ledger)
+        && isDeepStrictEqual(outbox, input.outbox);
+    };
+
+    const session = this.requireClient().startSession();
+    let result: 'INSERTED' | 'EXACT_REPLAY' | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const [mapping, checkpoint, fence, publicationHistory, releaseProgram,
+          existingInstance, existingOperation, existingLedger, existingOutbox] = await Promise.all([
+          this.runtimeMappings().findOne(
+            { mappingId: input.mappingSnapshot.mappingId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeInstanceProjectorCheckpoints().findOne(
+            checkpointIdentity,
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeProjectionFences().findOne(
+            { fenceId: input.fenceSnapshot.fenceId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimePublications().find(
+            { subscriptionTypeId: input.instance.subscriptionTypeId },
+            { projection: { _id: 0 }, session }
+          ).sort({ effectiveAt: 1, publicationId: 1 }).toArray(),
+          this.programs().findOne(
+            { releaseProgramId: input.releaseProgramSnapshot.releaseProgramId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeInstances().findOne(
+            {
+              tenantId: input.instance.tenantId,
+              providerClientId: input.instance.providerClientId,
+              clientSubscriptionId: input.instance.clientSubscriptionId
+            },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeOperations().findOne(
+            { operationId: input.operation.operationId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeLedger().findOne(
+            { eventId: input.ledger.eventId },
+            { projection: { _id: 0 }, session }
+          ),
+          this.runtimeOutbox().findOne(
+            { outboxEventId: input.outbox.outboxEventId },
+            { projection: { _id: 0 }, session }
+          )
+        ]);
+        if (!isDeepStrictEqual(mapping, input.mappingSnapshot)
+          || !isDeepStrictEqual(checkpoint, input.checkpointSnapshot)
+          || !isDeepStrictEqual(fence, input.fenceSnapshot)
+          || !isDeepStrictEqual(publicationHistory, input.publicationHistorySnapshot)
+          || !isDeepStrictEqual(releaseProgram, input.releaseProgramSnapshot)
+          || checkpoint?.state !== 'CURRENT'
+          || checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
+          || checkpoint.binding.mappingId !== input.instance.mappingId
+          || checkpoint.binding.subscriptionTypeId !== input.instance.subscriptionTypeId
+          || checkpoint.binding.policyVersion !== input.instance.policyVersion
+          || checkpoint.binding.policyDigest !== input.instance.policyDigest
+          || checkpoint.binding.releaseProgramId !== input.instance.releaseProgramId
+          || checkpoint.binding.releasePhaseId !== input.instance.releasePhaseId
+          || fence?.lastProjectorReconciliationDigest
+            !== checkpoint.reconciliation.reconciliationDigest) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_SOURCE_CHANGED');
+        }
+        const existing = [existingInstance, existingOperation, existingLedger, existingOutbox];
+        if (existing.some(Boolean)) {
+          if (isDeepStrictEqual(existingInstance, input.instance)
+            && isDeepStrictEqual(existingOperation, input.operation)
+            && isDeepStrictEqual(existingLedger, input.ledger)
+            && isDeepStrictEqual(existingOutbox, input.outbox)) {
+            result = 'EXACT_REPLAY';
+            return;
+          }
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT');
+        }
+        await this.runtimeInstances().insertOne(structuredClone(input.instance), { session });
+        await this.runtimeOperations().insertOne(structuredClone(input.operation), { session });
+        await this.runtimeLedger().insertOne(structuredClone(input.ledger), { session });
+        await this.runtimeOutbox().insertOne(structuredClone(input.outbox), { session });
+        result = 'INSERTED';
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (!this.isDuplicateKey(error) || !(await exactReplay())) throw error;
+      result = 'EXACT_REPLAY';
+    } finally {
+      await session.endSession();
+    }
+    if (!result) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_TRANSACTION_EMPTY');
+    }
+    if (!(await exactReplay())) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_SALE_BINDING_POSTCOMMIT_READBACK_FAILED');
+    }
+    return result;
+  }
+
+  async confirmedRuntimeSaleBindingReplay(input: {
+    tenantId: string;
+    providerClientId: string;
+    clientSubscriptionId: string;
+    providerProductId: string;
+    subscriptionInstanceId: string;
+    operationId: string;
+    ledgerEventId: string;
+    outboxEventId: string;
+    idempotencyKeyHash: string;
+    requestHash: string;
+    correlationId: string;
+    providerTransactionId: string;
+  }): Promise<StoredSubscriptionInstance | null> {
+    this.assertRuntimeContractsEnabled();
+    this.assertInstanceProjectorContractsEnabled();
+    const [instance, operation, ledger, outbox] = await Promise.all([
+      this.runtimeInstances().findOne(
+        {
+          tenantId: input.tenantId,
+          providerClientId: input.providerClientId,
+          clientSubscriptionId: input.clientSubscriptionId
+        },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeOperations().findOne(
+        { operationId: input.operationId },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeLedger().findOne(
+        { eventId: input.ledgerEventId },
+        { projection: { _id: 0 } }
+      ),
+      this.runtimeOutbox().findOne(
+        { outboxEventId: input.outboxEventId },
+        { projection: { _id: 0 } }
+      )
+    ]);
+    const existing = [instance, operation, ledger, outbox];
+    if (!existing.some(Boolean)) return null;
+    if (!instance || !operation || !ledger || !outbox) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT'
+      );
+    }
+    validateStoredSubscriptionInstance(instance);
+    validateStoredSubscriptionRuntimeOperation(operation);
+    validateStoredSubscriptionUsageLedgerEvent(ledger);
+    validateStoredSubscriptionOutboxEvent(outbox);
+    if (instance.subscriptionInstanceId !== input.subscriptionInstanceId
+      || instance.tenantId !== input.tenantId
+      || instance.provider !== 'VIVA'
+      || instance.providerProductId !== input.providerProductId
+      || instance.providerClientId !== input.providerClientId
+      || instance.clientSubscriptionId !== input.clientSubscriptionId
+      || operation.subscriptionInstanceId !== instance.subscriptionInstanceId
+      || operation.kind !== 'PURCHASE'
+      || operation.state !== 'CONFIRMED'
+      || operation.idempotency.keyHash !== input.idempotencyKeyHash
+      || operation.idempotency.requestHash !== input.requestHash
+      || operation.correlationId !== input.correlationId
+      || operation.providerCorrelationId !== input.providerTransactionId
+      || ledger.eventType !== 'PURCHASE_PAID'
+      || ledger.operationId !== operation.operationId
+      || ledger.subscriptionInstanceId !== instance.subscriptionInstanceId
+      || outbox.ledgerEventId !== ledger.eventId
+      || outbox.subscriptionInstanceId !== instance.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_SALE_BINDING_IMMUTABLE_CONFLICT'
+      );
+    }
+    return structuredClone(instance);
+  }
+
+  async legacyBindingPromotionSnapshot(
+    identity: SubscriptionLegacyBindingPromotionIdentity
+  ): Promise<SubscriptionLegacyBindingPromotionSnapshot> {
+    this.assertBindingPromotionContractsEnabled();
+    return this.legacyBindingPromotionSnapshotWithSession(identity);
+  }
+
+  async preflightLegacyBindingPromotion(
+    plan: SubscriptionLegacyBindingPromotionPlan
+  ): Promise<'READY_TO_PROMOTE' | 'EXACT_REPLAY'> {
+    this.assertBindingPromotionContractsEnabled();
+    const snapshot = await this.legacyBindingPromotionSnapshotWithSession(plan.identity);
+    const actual = rebuildSubscriptionLegacyBindingPromotionPlan(plan.manifest, snapshot);
+    assertSubscriptionLegacyBindingPromotionPlanExact(plan, actual);
+    return actual.status;
+  }
+
+  async applyLegacyBindingPromotion(
+    plan: SubscriptionLegacyBindingPromotionPlan
+  ): Promise<'PROMOTED' | 'EXACT_REPLAY'> {
+    this.assertBindingPromotionContractsEnabled();
+    const session = this.requireClient().startSession();
+    let result: 'PROMOTED' | 'EXACT_REPLAY' | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const snapshot = await this.legacyBindingPromotionSnapshotWithSession(
+          plan.identity,
+          session
+        );
+        const actual = rebuildSubscriptionLegacyBindingPromotionPlan(plan.manifest, snapshot);
+        assertSubscriptionLegacyBindingPromotionPlanExact(plan, actual);
+        if (actual.status === 'EXACT_REPLAY') {
+          result = 'EXACT_REPLAY';
+          return;
+        }
+        if (!actual.source) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_SOURCE_REQUIRED'
+          );
+        }
+        const mappingUpdate = await this.runtimeMappings().replaceOne(
+          {
+            mappingId: actual.source.mapping.mappingId,
+            tenantId: actual.source.mapping.tenantId,
+            provider: 'VIVA',
+            providerProductId: actual.source.mapping.providerProductId,
+            'providerScope.kind': actual.source.mapping.providerScope.kind,
+            'providerScope.scopeId': actual.source.mapping.providerScope.scopeId,
+            subscriptionTypeId: actual.source.mapping.subscriptionTypeId,
+            state: 'VERIFIED',
+            revision: actual.source.mapping.revision
+          },
+          actual.target.mapping,
+          { session }
+        );
+        if (mappingUpdate.matchedCount !== 1 || mappingUpdate.modifiedCount !== 1) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_MAPPING_CAS_CONFLICT'
+          );
+        }
+        const publicationUpdate = await this.runtimePublications().replaceOne(
+          {
+            publicationId: actual.source.publication.publicationId,
+            subscriptionTypeId: actual.source.publication.subscriptionTypeId,
+            policyVersion: actual.source.publication.policyVersion,
+            mappingId: actual.source.publication.mappingId,
+            schemaVersion: 2,
+            state: 'PUBLISHED',
+            runtimeCompatibility: { $exists: false }
+          },
+          actual.target.publication,
+          { session }
+        );
+        if (publicationUpdate.matchedCount !== 1 || publicationUpdate.modifiedCount !== 1) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_PUBLICATION_CAS_CONFLICT'
+          );
+        }
+        const programUpdate = await this.programs().replaceOne(
+          {
+            releaseProgramId: actual.source.releaseProgram.releaseProgramId,
+            subscriptionTypeId: actual.source.releaseProgram.subscriptionTypeId,
+            stationId: actual.source.releaseProgram.stationId,
+            state: 'DRAFT',
+            revision: actual.source.releaseProgram.revision,
+            'phases.releasePhaseId': actual.identity.releasePhaseId,
+            'phases.providerProductRef': null
+          },
+          actual.target.releaseProgram,
+          { session }
+        );
+        if (programUpdate.matchedCount !== 1 || programUpdate.modifiedCount !== 1) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_PROGRAM_CAS_CONFLICT'
+          );
+        }
+        const fenceInsert = await this.runtimeProjectionFences().insertOne(
+          actual.target.fence,
+          { session }
+        );
+        if (!fenceInsert.acknowledged) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_FENCE_INSERT_FAILED'
+          );
+        }
+        const checkpointInsert = await this.runtimeBindingPromotions().insertOne(
+          actual.target.promotion,
+          { session }
+        );
+        if (!checkpointInsert.acknowledged) {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_CHECKPOINT_INSERT_FAILED'
+          );
+        }
+        result = 'PROMOTED';
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError(
+          'SUBSCRIPTIONS_BINDING_PROMOTION_TRANSACTION_EMPTY'
+        );
+      }
+      if (result === 'PROMOTED') {
+        const readBack = await this.preflightLegacyBindingPromotion(plan);
+        if (readBack !== 'EXACT_REPLAY') {
+          throw new SubscriptionRuntimeContractError(
+            'SUBSCRIPTIONS_BINDING_PROMOTION_POSTCOMMIT_READBACK_FAILED'
+          );
+        }
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  private async legacyBindingPromotionSnapshotWithSession(
+    identity: SubscriptionLegacyBindingPromotionIdentity,
+    session?: ClientSession
+  ): Promise<SubscriptionLegacyBindingPromotionSnapshot> {
+    const options = session ? { projection: { _id: 0 }, session } : { projection: { _id: 0 } };
+    const [type, policy, publication, mapping, releaseProgram, fence, promotion,
+      instanceCount, projectorCheckpointCount] = await Promise.all([
+      this.types().findOne({ subscriptionTypeId: identity.subscriptionTypeId }, options),
+      this.policies().findOne(
+        { subscriptionTypeId: identity.subscriptionTypeId, version: identity.policyVersion },
+        options
+      ),
+      this.runtimePublications().findOne({ publicationId: identity.publicationId }, options),
+      this.runtimeMappings().findOne({ mappingId: identity.mappingId }, options),
+      this.programs().findOne({ releaseProgramId: identity.releaseProgramId }, options),
+      this.runtimeProjectionFences().findOne(
+        { subscriptionTypeId: identity.subscriptionTypeId },
+        options
+      ),
+      this.runtimeBindingPromotions().findOne({
+        tenantId: identity.tenantId,
+        subscriptionTypeId: identity.subscriptionTypeId,
+        providerProductId: identity.providerProductId,
+        publicationId: identity.publicationId,
+        mappingId: identity.mappingId,
+        releaseProgramId: identity.releaseProgramId,
+        releasePhaseId: identity.releasePhaseId
+      }, options),
+      this.runtimeInstances().countDocuments({
+        tenantId: identity.tenantId,
+        provider: 'VIVA',
+        providerProductId: identity.providerProductId,
+        subscriptionTypeId: identity.subscriptionTypeId
+      }, session ? { session } : undefined),
+      this.runtimeInstanceProjectorCheckpoints().countDocuments({
+        tenantId: identity.tenantId,
+        provider: 'VIVA',
+        providerProductId: identity.providerProductId,
+        'providerScope.kind': identity.providerScope.kind,
+        'providerScope.scopeId': identity.providerScope.scopeId
+      }, session ? { session } : undefined)
+    ]);
+    return {
+      type,
+      policy,
+      publication,
+      mapping,
+      releaseProgram,
+      fence,
+      promotion,
+      instanceCount,
+      projectorCheckpointCount
+    };
+  }
+
   async runtimeProviderMappingByIdempotency(input: {
     tenantId: string;
     actorId: string;
@@ -590,6 +1343,24 @@ export class SubscriptionsRepository {
       { projection: { _id: 0 } }
     );
     if (row) validateStoredSubscriptionProviderMapping(row);
+    return row;
+  }
+
+  async runtimeProjectionFenceByType(
+    subscriptionTypeId: string
+  ): Promise<StoredSubscriptionProjectionFence | null> {
+    this.assertInstanceProjectorContractsEnabled();
+    const row = await this.runtimeProjectionFences().findOne(
+      { subscriptionTypeId },
+      { projection: { _id: 0 } }
+    );
+    if (row) {
+      validateStoredSubscriptionProjectionFence(row);
+      if (row.fenceId !== subscriptionProjectionFenceId(row.subscriptionTypeId)
+        || row.bindingDigest !== subscriptionProjectionFenceBindingDigest(row.binding)) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PROJECTION_FENCE_DIGEST_MISMATCH');
+      }
+    }
     return row;
   }
 
@@ -610,6 +1381,18 @@ export class SubscriptionsRepository {
     );
     if (row) validateStoredSubscriptionPolicyPublication(row);
     return row;
+  }
+
+  async runtimePolicyPublicationHistoryByType(
+    subscriptionTypeId: string
+  ): Promise<StoredSubscriptionPolicyPublication[]> {
+    this.assertRuntimeContractsEnabled();
+    const rows = await this.runtimePublications().find(
+      { subscriptionTypeId },
+      { projection: { _id: 0 } }
+    ).sort({ effectiveAt: 1, publicationId: 1 }).toArray();
+    rows.forEach((row) => validateStoredSubscriptionPolicyPublication(row));
+    return rows;
   }
 
   async runtimePolicyPublicationByIdempotency(input: {
@@ -657,6 +1440,8 @@ export class SubscriptionsRepository {
     validateStoredSubscriptionPolicyPublication(input.publication);
     if (input.mapping.state !== 'VERIFIED'
       || input.publication.state !== 'PUBLISHED'
+      || input.publication.schemaVersion !== 3
+      || !input.publication.runtimeCompatibility
       || input.mapping.mappingId !== input.publication.mappingId
       || input.mapping.subscriptionTypeId !== input.publication.subscriptionTypeId) {
       throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_LINK_MISMATCH');
@@ -666,7 +1451,14 @@ export class SubscriptionsRepository {
     try {
       await session.withTransaction(async () => {
         const previousPolicyVersion = input.previousPolicyVersion;
-        const [type, policy, previousPolicy, previousPublication, persistedMapping] = await Promise.all([
+        const [
+          type,
+          policy,
+          previousPolicy,
+          previousPublication,
+          persistedMapping,
+          persistedFence
+        ] = await Promise.all([
           this.types().findOne(
             { subscriptionTypeId: input.publication.subscriptionTypeId },
             { projection: { _id: 0 }, session }
@@ -698,7 +1490,11 @@ export class SubscriptionsRepository {
             : this.runtimeMappings().findOne(
               { mappingId: input.mapping.mappingId },
               { projection: { _id: 0 }, session }
-            )
+            ),
+          this.runtimeProjectionFences().findOne(
+            { subscriptionTypeId: input.publication.subscriptionTypeId },
+            { projection: { _id: 0 }, session }
+          )
         ]);
         if (!type || !policy) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_NOT_FOUND');
@@ -711,6 +1507,12 @@ export class SubscriptionsRepository {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
         }
         const isInitial = input.previousPublicationId === null;
+        const previousMapping = !isInitial && previousPublication
+          ? await this.runtimeMappings().findOne(
+            { mappingId: previousPublication.mappingId },
+            { projection: { _id: 0 }, session }
+          )
+          : null;
         if (isInitial) {
           if (type.state !== 'DRAFT'
             || type.currentPolicyVersion !== null
@@ -718,6 +1520,7 @@ export class SubscriptionsRepository {
             || input.expectedPreviousPolicyRevision !== null
             || previousPolicy !== null
             || previousPublication !== null
+            || persistedFence !== null
             || !input.insertMapping
             || input.expectedMappingRevision !== null) {
             throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
@@ -736,8 +1539,35 @@ export class SubscriptionsRepository {
             || previousPublication.policyVersion !== previousPolicyVersion
             || previousPublication.state !== 'PUBLISHED'
             || previousPublication.supersededAt !== null
-            || previousPublication.supersededBy !== null) {
+            || previousPublication.supersededBy !== null
+            || !previousMapping) {
             throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
+          validateStoredSubscriptionProviderMapping(previousMapping);
+          validateStoredSubscriptionPolicyPublication(previousPublication);
+          if (Date.parse(input.publication.effectiveAt) <= Date.parse(previousPublication.effectiveAt)) {
+            throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
+          }
+          if (persistedFence) {
+            validateStoredSubscriptionProjectionFence(persistedFence);
+            if (persistedFence.fenceId !== subscriptionProjectionFenceId(type.subscriptionTypeId)
+              || persistedFence.bindingDigest !== subscriptionProjectionFenceBindingDigest(
+                persistedFence.binding
+              )
+              || persistedFence.binding.subscriptionTypeId !== type.subscriptionTypeId
+              || persistedFence.binding.publicationId !== previousPublication.publicationId
+              || persistedFence.binding.policyVersion !== previousPublication.policyVersion
+              || persistedFence.binding.policyDigest !== previousPublication.policyDigest
+              || persistedFence.binding.mappingId !== previousPublication.mappingId
+              || persistedFence.binding.mappingId !== previousMapping.mappingId
+              || persistedFence.binding.mappingRevision !== previousMapping.revision
+              || !previousPublication.runtimeCompatibility
+              || !isDeepStrictEqual(
+                persistedFence.binding.runtimeCompatibility,
+                previousPublication.runtimeCompatibility
+              )) {
+              throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_FENCE_CONFLICT');
+            }
           }
         }
         if (!input.insertMapping && (!persistedMapping
@@ -756,6 +1586,13 @@ export class SubscriptionsRepository {
         if (input.insertMapping && input.expectedMappingRevision !== null) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_SOURCE_CONFLICT');
         }
+
+        const nextFence = buildSubscriptionProjectionFence({
+          mapping: input.mapping,
+          publication: input.publication,
+          previous: persistedFence
+        });
+        validateStoredSubscriptionProjectionFence(nextFence);
 
         let mappingUpdate = { modifiedCount: input.insertMapping ? 1 : 0 };
         if (input.insertMapping) {
@@ -838,14 +1675,40 @@ export class SubscriptionsRepository {
           },
           { session }
         );
+        let fenceUpdate = { modifiedCount: isInitial || !persistedFence ? 1 : 0 };
+        if (isInitial || !persistedFence) {
+          await this.runtimeProjectionFences().insertOne(nextFence, { session });
+        } else {
+          fenceUpdate = await this.runtimeProjectionFences().updateOne(
+            {
+              fenceId: persistedFence!.fenceId,
+              subscriptionTypeId: persistedFence!.subscriptionTypeId,
+              bindingRevision: persistedFence!.bindingRevision,
+              coordinationRevision: persistedFence!.coordinationRevision,
+              bindingDigest: persistedFence!.bindingDigest
+            },
+            {
+              $set: {
+                bindingRevision: nextFence.bindingRevision,
+                bindingDigest: nextFence.bindingDigest,
+                binding: nextFence.binding,
+                coordinationRevision: nextFence.coordinationRevision,
+                lastProjectorReconciliationDigest: null,
+                updatedAt: nextFence.updatedAt
+              }
+            },
+            { session }
+          );
+        }
         if (policyUpdate.modifiedCount !== 1
           || typeUpdate.modifiedCount !== 1
           || mappingUpdate.modifiedCount !== 1
           || previousPolicyUpdate.modifiedCount !== 1
-          || previousPublicationUpdate.modifiedCount !== 1) {
+          || previousPublicationUpdate.modifiedCount !== 1
+          || fenceUpdate.modifiedCount !== 1) {
           throw new SubscriptionRuntimeContractError('SUBSCRIPTION_PUBLICATION_CAS_CONFLICT');
         }
-      });
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
     } finally {
       await session.endSession();
     }
@@ -1031,6 +1894,168 @@ export class SubscriptionsRepository {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionEntitlementAggregate(document);
     await this.runtimeAggregates().insertOne(document);
+  }
+
+  async reserveRuntimeEntitlement(input: {
+    expectedAggregateRevision: number;
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<{
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    replayed: boolean;
+  }> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionEntitlementAggregate(input.aggregate);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    const reservation = input.aggregate.activeServices.find(
+      (item) => item.operationId === input.operation.operationId
+    );
+    if (input.operation.kind !== 'BOOKING'
+      || input.operation.state !== 'RESERVED'
+      || input.operation.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || !reservation
+      || reservation.state !== 'RESERVED'
+      || input.ledger.eventType !== 'ENTITLEMENT_RESERVED'
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_RESERVATION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    let result: {
+      aggregate: StoredSubscriptionEntitlementAggregate;
+      operation: StoredSubscriptionRuntimeOperation;
+      replayed: boolean;
+    } | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const existing = await this.runtimeOperations().findOne({
+          tenantId: input.operation.tenantId,
+          'actor.actorId': input.operation.actor.actorId,
+          kind: input.operation.kind,
+          'idempotency.keyHash': input.operation.idempotency.keyHash
+        }, { projection: { _id: 0 }, session });
+        if (existing) {
+          validateStoredSubscriptionRuntimeOperation(existing);
+          if (existing.operationId !== input.operation.operationId
+            || existing.idempotency.requestHash !== input.operation.idempotency.requestHash) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT'
+            );
+          }
+          const aggregate = await this.runtimeAggregates().findOne(
+            { subscriptionInstanceId: input.aggregate.subscriptionInstanceId },
+            { projection: { _id: 0 }, session }
+          );
+          if (!aggregate) {
+            throw new SubscriptionRuntimeContractError(
+              'SUBSCRIPTION_ENTITLEMENT_AGGREGATE_NOT_FOUND'
+            );
+          }
+          validateStoredSubscriptionEntitlementAggregate(aggregate);
+          result = { aggregate, operation: existing, replayed: true };
+          return;
+        }
+
+        const aggregate = await this.runtimeAggregates().findOneAndReplace(
+          {
+            subscriptionInstanceId: input.aggregate.subscriptionInstanceId,
+            revision: input.expectedAggregateRevision
+          },
+          input.aggregate,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!aggregate) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        await this.runtimeOperations().insertOne(input.operation, { session });
+        await this.runtimeLedger().insertOne(input.ledger, { session });
+        await this.runtimeOutbox().insertOne(input.outbox, { session });
+        result = { aggregate, operation: input.operation, replayed: false };
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSACTION_EMPTY');
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async transitionRuntimeEntitlement(input: {
+    expectedAggregateRevision: number;
+    expectedOperationRevision: number;
+    expectedOperationStates: StoredSubscriptionRuntimeOperation['state'][];
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+    ledger: StoredSubscriptionUsageLedgerEvent;
+    outbox: StoredSubscriptionOutboxEvent;
+  }): Promise<{
+    aggregate: StoredSubscriptionEntitlementAggregate;
+    operation: StoredSubscriptionRuntimeOperation;
+  }> {
+    this.assertRuntimeContractsEnabled();
+    validateStoredSubscriptionEntitlementAggregate(input.aggregate);
+    validateStoredSubscriptionRuntimeOperation(input.operation);
+    validateStoredSubscriptionUsageLedgerEvent(input.ledger);
+    validateStoredSubscriptionOutboxEvent(input.outbox);
+    if (input.operation.kind !== 'BOOKING'
+      || input.operation.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.ledger.operationId !== input.operation.operationId
+      || input.ledger.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId
+      || input.outbox.ledgerEventId !== input.ledger.eventId
+      || input.outbox.subscriptionInstanceId !== input.aggregate.subscriptionInstanceId) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSITION_LINK_MISMATCH');
+    }
+
+    const session = this.requireClient().startSession();
+    let result: {
+      aggregate: StoredSubscriptionEntitlementAggregate;
+      operation: StoredSubscriptionRuntimeOperation;
+    } | null = null;
+    try {
+      await session.withTransaction(async () => {
+        const operation = await this.runtimeOperations().findOneAndReplace(
+          {
+            operationId: input.operation.operationId,
+            revision: input.expectedOperationRevision,
+            state: { $in: input.expectedOperationStates }
+          },
+          input.operation,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!operation) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        const aggregate = await this.runtimeAggregates().findOneAndReplace(
+          {
+            subscriptionInstanceId: input.aggregate.subscriptionInstanceId,
+            revision: input.expectedAggregateRevision
+          },
+          input.aggregate,
+          { projection: { _id: 0 }, returnDocument: 'after', session }
+        );
+        if (!aggregate) {
+          throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+        }
+        await this.runtimeLedger().insertOne(input.ledger, { session });
+        await this.runtimeOutbox().insertOne(input.outbox, { session });
+        result = { aggregate, operation };
+      }, SUBSCRIPTION_FENCED_TRANSACTION_OPTIONS);
+      if (!result) {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_TRANSACTION_EMPTY');
+      }
+      return result;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async runtimeOperationById(operationId: string): Promise<StoredSubscriptionRuntimeOperation | null> {
@@ -1488,6 +2513,149 @@ export class SubscriptionsRepository {
     return error instanceof MongoServerError && error.code === 11000;
   }
 
+  private validateInitialProjectionPlan(plan: SubscriptionInstanceProjectionPlan): void {
+    validateStoredSubscriptionInstanceProjectorCheckpoint(plan.checkpoint);
+    plan.instances.forEach(validateStoredSubscriptionInstance);
+    if (plan.instances.length < 1
+      || plan.checkpoint.schemaVersion !== 3
+      || !plan.checkpoint.policyResolution
+      || plan.checkpoint.state !== 'CURRENT'
+      || plan.checkpoint.coverage.kind !== 'CONSISTENT_FULL_SNAPSHOT'
+      || plan.checkpoint.reconciliation.mode !== 'INITIAL_FULL'
+      || plan.checkpoint.reconciliation.insertedCount !== plan.instances.length
+      || plan.checkpoint.reconciliation.replayedCount !== 0
+      || plan.instances.some((instance) =>
+        instance.tenantId !== plan.checkpoint.tenantId
+        || instance.provider !== plan.checkpoint.provider
+        || instance.providerProductId !== plan.checkpoint.providerProductId
+        || instance.subscriptionTypeId !== plan.checkpoint.binding.subscriptionTypeId
+        || instance.releaseProgramId !== plan.checkpoint.binding.releaseProgramId
+        || instance.releasePhaseId !== plan.checkpoint.binding.releasePhaseId)) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+    const resolution = plan.checkpoint.policyResolution;
+    if (resolution.selections.length !== plan.instances.length
+      || resolution.selections.some((selection, index) => {
+        const instance = plan.instances[index];
+        const selectedPublication = resolution.publicationHistory.entries.find(
+          (entry) => entry.publicationId === selection.publicationId
+        );
+        const expectedPublication = resolution.publicationHistory.entries
+          .filter((entry) => Date.parse(entry.effectiveAt) <= Date.parse(selection.purchasedAt))
+          .at(-1);
+        return !instance
+          || !selectedPublication
+          || expectedPublication?.publicationId !== selectedPublication.publicationId
+          || selection.subscriptionInstanceId !== instance.subscriptionInstanceId
+          || selection.providerClientId !== instance.providerClientId
+          || selection.clientSubscriptionId !== instance.clientSubscriptionId
+          || selection.purchasedAt !== instance.purchasedAt
+          || selection.policyVersion !== instance.policyVersion
+          || selection.policyDigest !== instance.policyDigest
+          || selection.mappingId !== instance.mappingId
+          || selectedPublication.policyVersion !== instance.policyVersion
+          || selectedPublication.policyDigest !== instance.policyDigest
+          || selectedPublication.mappingId !== instance.mappingId
+          || selectedPublication.state === 'DISABLED_FOR_NEW_OPERATIONS';
+      })) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID');
+    }
+  }
+
+  private assertInitialProjectionSourcesCurrent(input: {
+    plan: SubscriptionInstanceProjectionPlan;
+    mapping: StoredSubscriptionProviderMapping | null;
+    releaseProgram: StoredReleaseProgram | null;
+    subscriptionType: StoredSubscriptionType | null;
+    publicationHistory: StoredSubscriptionPolicyPublication[];
+  }): void {
+    const { plan, mapping, releaseProgram, subscriptionType, publicationHistory } = input;
+    const checkpoint = plan.checkpoint;
+    const publication = publicationHistory.at(-1);
+    if (mapping) validateStoredSubscriptionProviderMapping(mapping);
+    const phase = releaseProgram?.phases.find((item) =>
+      item.releasePhaseId === checkpoint.binding.releasePhaseId);
+    const scope = checkpoint.providerScope;
+    const releaseStationMatchesScope = publication && releaseProgram
+      ? scope.kind === 'STATION'
+        ? scope.scopeId === releaseProgram.stationId
+        : scope.kind === 'TENANT'
+          ? scope.scopeId === checkpoint.tenantId
+          : publication.runtimeProjection.stationAccessRules
+            .filter((rule) => rule.enabled && rule.selector.kind === 'STATION_LIST')
+            .flatMap((rule) => rule.selector.stationIds)
+            .includes(releaseProgram.stationId)
+      : false;
+    if (!mapping
+      || mapping.state !== 'VERIFIED'
+      || mapping.mappingId !== checkpoint.binding.mappingId
+      || mapping.revision !== checkpoint.binding.mappingRevision
+      || mapping.tenantId !== checkpoint.tenantId
+      || mapping.provider !== checkpoint.provider
+      || mapping.providerProductId !== checkpoint.providerProductId
+      || mapping.providerScope.kind !== checkpoint.providerScope.kind
+      || mapping.providerScope.scopeId !== checkpoint.providerScope.scopeId
+      || mapping.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+      || !publication
+      || publication.state !== 'PUBLISHED'
+      || publication.publicationId !== checkpoint.binding.publicationId
+      || publication.policyVersion !== checkpoint.binding.policyVersion
+      || publication.policyDigest !== checkpoint.binding.policyDigest
+      || publication.mappingId !== checkpoint.binding.mappingId
+      || !publication.runtimeCompatibility
+      || !isDeepStrictEqual(
+        publication.runtimeCompatibility,
+        checkpoint.binding.runtimeCompatibility
+      )
+      || !subscriptionProviderScopeMatchesProjection(
+        mapping.providerScope,
+        publication.runtimeProjection,
+        checkpoint.tenantId
+      )
+      || !subscriptionType
+      || subscriptionType.state !== 'ACTIVE'
+      || subscriptionType.currentPolicyVersion !== checkpoint.binding.policyVersion
+      || !releaseProgram
+      || releaseProgram.state === 'DRAFT'
+      || releaseProgram.subscriptionTypeId !== checkpoint.binding.subscriptionTypeId
+      || releaseProgram.revision !== checkpoint.binding.releaseProgramRevision
+      || !phase
+      || phase.providerProductRef !== checkpoint.providerProductId
+      || !releaseStationMatchesScope
+      || plan.instances.some((instance) =>
+        instance.homeStationId !== releaseProgram.stationId
+        || instance.mappingId !== mapping.mappingId
+        || instance.purchasePrice.amountMinor !== phase.price.amountMinor
+        || instance.purchasePrice.currency !== phase.price.currency)) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_INSTANCE_PROJECTOR_SOURCE_CONFLICT'
+      );
+    }
+  }
+
+  private instanceProjectorIdentity(
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint
+  ): Record<string, unknown> {
+    return {
+      tenantId: checkpoint.tenantId,
+      provider: checkpoint.provider,
+      providerProductId: checkpoint.providerProductId,
+      'providerScope.kind': checkpoint.providerScope.kind,
+      'providerScope.scopeId': checkpoint.providerScope.scopeId
+    };
+  }
+
+  private instanceProjectionProductFilter(
+    checkpoint: StoredSubscriptionInstanceProjectorCheckpoint
+  ): Filter<StoredSubscriptionInstance> {
+    return {
+      tenantId: checkpoint.tenantId,
+      provider: checkpoint.provider,
+      providerProductId: checkpoint.providerProductId,
+      subscriptionTypeId: checkpoint.binding.subscriptionTypeId
+    };
+  }
+
   private types(): Collection<StoredSubscriptionType> {
     return this.requireDb().collection<StoredSubscriptionType>('subscription_types');
   }
@@ -1514,8 +2682,26 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionPolicyPublication>('subscription_policy_publications');
   }
 
+  private runtimeProjectionFences(): Collection<StoredSubscriptionProjectionFence> {
+    return this.requireDb().collection<StoredSubscriptionProjectionFence>(
+      'subscription_projection_fences'
+    );
+  }
+
   private runtimeInstances(): Collection<StoredSubscriptionInstance> {
     return this.requireDb().collection<StoredSubscriptionInstance>('subscription_instances');
+  }
+
+  private runtimeInstanceProjectorCheckpoints(): Collection<StoredSubscriptionInstanceProjectorCheckpoint> {
+    return this.requireDb().collection<StoredSubscriptionInstanceProjectorCheckpoint>(
+      'subscription_instance_projector_checkpoints'
+    );
+  }
+
+  private runtimeBindingPromotions(): Collection<StoredSubscriptionRuntimeBindingPromotion> {
+    return this.requireDb().collection<StoredSubscriptionRuntimeBindingPromotion>(
+      'subscription_runtime_binding_promotions'
+    );
   }
 
   private runtimeAggregates(): Collection<StoredSubscriptionEntitlementAggregate> {
@@ -1596,47 +2782,47 @@ export class SubscriptionsRepository {
 
   private async ensureIndexes(): Promise<void> {
     await Promise.all([
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { subscriptionTypeId: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[0].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { codeNorm: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[1].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.types[2].name }
       ),
-      this.types().createIndex(
+      ensureMongoIndex(this.types(),
         { state: 1, updatedAt: -1, subscriptionTypeId: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.types[3].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { subscriptionTypeId: 1, version: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.policies[0].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.policies[1].name }
       ),
-      this.policies().createIndex(
+      ensureMongoIndex(this.policies(),
         { subscriptionTypeId: 1, status: 1, version: -1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.policies[2].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { releaseProgramId: 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.programs[0].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { 'idempotency.actorId': 1, 'idempotency.key': 1 },
         { unique: true, name: SUBSCRIPTION_REQUIRED_INDEXES.programs[1].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { stationId: 1, state: 1, updatedAt: -1, releaseProgramId: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.programs[2].name }
       ),
-      this.programs().createIndex(
+      ensureMongoIndex(this.programs(),
         { subscriptionTypeId: 1, stationId: 1, state: 1 },
         { name: SUBSCRIPTION_REQUIRED_INDEXES.programs[3].name }
       )
@@ -1680,6 +2866,47 @@ export class SubscriptionsRepository {
     }
   }
 
+  private instanceProjectorContractsEnabled(): boolean {
+    const value = String(process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED ?? '')
+      .trim()
+      .toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes';
+  }
+
+  private assertInstanceProjectorContractsEnabled(): void {
+    this.assertInstanceProjectorConfiguration();
+    if (!this.runtimeContractsEnabled()) this.assertRuntimeContractsEnabled();
+    if (!this.instanceProjectorContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_DISABLED');
+    }
+  }
+
+  private assertInstanceProjectorConfiguration(): void {
+    if (this.instanceProjectorContractsEnabled() && !this.runtimeContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_CONFIG_INVALID');
+    }
+    if (this.bindingPromotionContractsEnabled() && !this.runtimeContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_CONFIG_INVALID');
+    }
+  }
+
+  private bindingPromotionContractsEnabled(): boolean {
+    const value = String(process.env.SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_ENABLED ?? '')
+      .trim()
+      .toLowerCase();
+    return value === '1' || value === 'true' || value === 'yes';
+  }
+
+  private assertBindingPromotionContractsEnabled(): void {
+    this.assertInstanceProjectorConfiguration();
+    if (!this.runtimeContractsEnabled()) this.assertRuntimeContractsEnabled();
+    if (!this.bindingPromotionContractsEnabled()) {
+      throw new SubscriptionRuntimeContractError(
+        'SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_DISABLED'
+      );
+    }
+  }
+
   private testRuntimeEnabled(): boolean {
     const value = String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase();
     return value === '1' || value === 'true' || value === 'yes';
@@ -1698,6 +2925,10 @@ export class SubscriptionsRepository {
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.publications,
         actual: await this.runtimePublications().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.projectionFences,
+        actual: await this.runtimeProjectionFences().listIndexes().toArray()
       },
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.instances,
@@ -1729,24 +2960,68 @@ export class SubscriptionsRepository {
     if (missing.length) {
       throw new Error(`SUBSCRIPTIONS_RUNTIME_INDEXES_NOT_READY:${missing.join(',')}`);
     }
+    if (this.instanceProjectorContractsEnabled()) await this.verifyInstanceProjectorIndexes();
+    if (this.bindingPromotionContractsEnabled()) await this.verifyBindingPromotionIndexes();
+  }
+
+  private async verifyBindingPromotionIndexes(): Promise<void> {
+    try {
+      const actual = await this.runtimeBindingPromotions().listIndexes().toArray();
+      const missing = SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.bindingPromotions
+        .filter((expected) => !subscriptionIndexMatches(
+          actual.find((item) => item.name === expected.name),
+          expected
+        ))
+        .map((expected) => expected.name);
+      if (missing.length) {
+        throw new Error(`SUBSCRIPTIONS_BINDING_PROMOTION_INDEXES_NOT_READY:${missing.join(',')}`);
+      }
+    } catch (error) {
+      if (error instanceof Error
+        && error.message.startsWith('SUBSCRIPTIONS_BINDING_PROMOTION_INDEXES_NOT_READY:')) {
+        throw error;
+      }
+      throw new Error('SUBSCRIPTIONS_BINDING_PROMOTION_INDEXES_NOT_READY');
+    }
+  }
+
+  private async verifyInstanceProjectorIndexes(): Promise<void> {
+    try {
+      const actual = await this.runtimeInstanceProjectorCheckpoints().listIndexes().toArray();
+      const missing = SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.instanceProjectorCheckpoints
+        .filter((expected) => !subscriptionIndexMatches(
+          actual.find((item) => item.name === expected.name),
+          expected
+        ))
+        .map((expected) => expected.name);
+      if (missing.length) {
+        throw new Error(`SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY:${missing.join(',')}`);
+      }
+    } catch (error) {
+      if (error instanceof Error
+        && error.message.startsWith('SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY:')) {
+        throw error;
+      }
+      throw new Error('SUBSCRIPTIONS_INSTANCE_PROJECTOR_INDEXES_NOT_READY');
+    }
   }
 
   private async ensureTestIndexes(): Promise<void> {
     await Promise.all([
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.offers.map((index) =>
-        this.testOffers().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testOffers(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.inventories.map((index) =>
-        this.testInventories().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testInventories(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.reservations.map((index) =>
-        this.testReservations().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testReservations(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.purchases.map((index) =>
-        this.testPurchases().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testPurchases(), index.key, { unique: index.unique, name: index.name })
       ),
       ...SUBSCRIPTION_TEST_REQUIRED_INDEXES.events.map((index) =>
-        this.testEvents().createIndex(index.key, { unique: index.unique, name: index.name })
+        ensureMongoIndex(this.testEvents(), index.key, { unique: index.unique, name: index.name })
       )
     ]);
   }

@@ -51,6 +51,38 @@ function createGame(overrides: Partial<MutableGame> = {}): MutableGame {
   };
 }
 
+function createLocalMembershipGame(overrides: Partial<MutableGame> = {}): MutableGame {
+  return {
+    _id: 'mongo-game-local',
+    id: 'game-1',
+    organizer: { clientId: 'organizer-1', id: 'organizer-1', name: 'Организатор' },
+    participants: [
+      {
+        id: 'client-1',
+        name: 'Игрок по ссылке',
+        status: 'CONFIRMED',
+        membershipId: 'local:membership-1'
+      }
+    ],
+    metadata: {},
+    ...overrides
+  };
+}
+
+function expectedMembershipVersion(parts: string[]): string {
+  const values = Array.from(new Set(parts.filter((item) => Boolean(item)))).sort();
+  const hashPart = (value: string) => {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  };
+  const seed = values.join('|');
+  return `${hashPart(seed)}${hashPart([...seed].reverse().join(''))}`;
+}
+
 function createService(game: MutableGame): {
   service: GamesService;
   getUpdateCalls: () => number;
@@ -220,6 +252,77 @@ async function testMissingExactBookingFailsClosed() {
   );
 }
 
+async function testLocalMembershipRemovalWithoutBooking() {
+  configureEnvironment();
+  const { service, getUpdateCalls } = createService(createLocalMembershipGame());
+  let receivedBody: Record<string, unknown> | undefined;
+  await withFetch(async (_input, init) => {
+    receivedBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({ operationId: 'leave-local-1', gameId: 'game-1', playerId: 'client-1', status: 'DONE', visitAction: 'NO_RETURN' }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+  }, async () => {
+    const result = await service.requestPlayerRemoval(
+      'game-1',
+      'client-1',
+      { refundPolicy: 'NO_RETURN', idempotencyKey: 'idem-local-1' },
+      admin
+    );
+    assert.equal(result.status, 'DONE');
+    assert.equal(result.refundPolicy, 'NO_RETURN');
+  });
+  assert.ok(receivedBody);
+  assert.deepEqual(receivedBody.target, { bookingId: null, clientId: 'client-1' });
+  assert.equal(receivedBody.visitAction, 'NO_RETURN');
+  assert.equal(
+    receivedBody.expectedMembershipVersion,
+    expectedMembershipVersion(['local:membership-1'])
+  );
+  assert.equal(getUpdateCalls(), 0, 'booking-less removal must not mutate the CUP game document');
+}
+
+async function testLocalMembershipReturnVisitRejectedBeforeUpstreamCall() {
+  configureEnvironment();
+  const { service } = createService(createLocalMembershipGame());
+  let calls = 0;
+  await withFetch(async () => {
+    calls += 1;
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }, async () => {
+    await assert.rejects(
+      () =>
+        service.requestPlayerRemoval(
+          'game-1',
+          'client-1',
+          { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'idem-local-2' },
+          admin
+        ),
+      /no paid visit to return/
+    );
+  });
+  assert.equal(calls, 0, 'visit return without a payment must fail closed before LK');
+}
+
+async function testLocalMembershipWithoutVersionFailsClosed() {
+  configureEnvironment();
+  const { service } = createService(
+    createLocalMembershipGame({
+      participants: [{ id: 'client-1', name: 'Игрок по ссылке', status: 'CONFIRMED' }]
+    })
+  );
+  await assert.rejects(
+    () =>
+      service.requestPlayerRemoval(
+        'game-1',
+        'client-1',
+        { refundPolicy: 'NO_RETURN', idempotencyKey: 'idem-local-3' },
+        admin
+      ),
+    ConflictException
+  );
+}
+
 async function testStatusForwardingAndUpstreamFailure() {
   configureEnvironment();
   const { service } = createService(createGame());
@@ -273,12 +376,73 @@ async function testAdminUiDoesNotOptimisticallyRemovePlayer() {
   assert.doesNotMatch(source, /LK_PADELHUB_STAFF_INTEGRATION_TOKEN/);
 }
 
+async function testReaddedVivaBookingUsesFreshGeneration() {
+  configureEnvironment();
+  const game = createLocalMembershipGame({
+    participants: [{ id: 'client-1', name: 'Rejoined player', source: 'ADMIN', status: 'CONFIRMED',
+      bookingId: 'booking-new', membershipId: 'viva-booking:booking-new' }],
+    metadata: { splitPayment: { payments: [{ clientId: 'client-1', bookingId: 'booking-old',
+      status: 'EXPIRED', paymentRef: 'payment-old' }] } }
+  });
+  const before = structuredClone(game);
+  const { service, getUpdateCalls } = createService(game);
+  await withFetch(async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.target, { clientId: 'client-1', bookingId: 'booking-new' });
+    assert.equal(body.expectedMembershipVersion, expectedMembershipVersion(['booking-new', 'viva-booking:booking-new']));
+    assert.equal(body.visitAction, 'RETURN_VISIT');
+    return new Response(JSON.stringify({ operationId: 'leave-new', gameId: 'game-1', playerId: 'client-1',
+      status: 'IN_PROGRESS', visitAction: 'RETURN_VISIT' }), { status: 202 });
+  }, async () => {
+    await service.requestPlayerRemoval('game-1', 'client-1', { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'rejoin-001' }, admin);
+  });
+  assert.equal(getUpdateCalls(), 0);
+  assert.deepEqual(game, before);
+
+  const conflicting = createService({ ...game, metadata: { splitPayment: { payments: [
+    { clientId: 'client-1', bookingId: 'booking-other', status: 'PAID' }
+  ] } } }).service;
+  await withFetch(async () => { throw new Error('must not reach LK with ambiguous booking'); }, async () => {
+    await assert.rejects(() => conflicting.requestPlayerRemoval('game-1', 'client-1',
+      { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'rejoin-002' }, admin), ConflictException);
+  });
+}
+
+async function testUnboundAdminRejoinUsesSnapshotDiscovery() {
+  configureEnvironment();
+  const snapshot = '2026-09-13T10:44:00.000Z';
+  const game = createLocalMembershipGame({ updatedAt: snapshot,
+    participants: [{ id: 'client-1', source: 'ADMIN', status: 'CONFIRMED' }],
+    metadata: { splitPayment: { vivaExerciseId: 'exercise-1', payments: [
+      { clientId: 'client-1', bookingId: 'booking-old', status: 'EXPIRED' }
+    ] } }
+  });
+  const { service, getUpdateCalls } = createService(game);
+  await withFetch(async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.target, { clientId: 'client-1', bookingId: null });
+    assert.equal(body.expectedMembershipVersion, expectedMembershipVersion([
+      'viva-discovery', 'game-1', 'client-1', 'exercise-1', snapshot
+    ]));
+    return new Response(JSON.stringify({ operationId: 'leave-discovery', gameId: 'game-1', playerId: 'client-1',
+      status: 'IN_PROGRESS', visitAction: 'RETURN_VISIT' }), { status: 202 });
+  }, async () => {
+    await service.requestPlayerRemoval('game-1', 'client-1', { refundPolicy: 'RETURN_VISIT', idempotencyKey: 'discovery-001' }, admin);
+  });
+  assert.equal(getUpdateCalls(), 0);
+}
+
 async function main() {
+  await testUnboundAdminRejoinUsesSnapshotDiscovery();
+  await testReaddedVivaBookingUsesFreshGeneration();
   await testPostForwardingAndPendingNoMongoMutation();
   await testNoReturnForwarding();
   await testPostRejectsMissingOwnerPlayerId();
   await testMissingOrOrganizerTargetRejectedBeforeUpstreamCall();
   await testMissingExactBookingFailsClosed();
+  await testLocalMembershipRemovalWithoutBooking();
+  await testLocalMembershipReturnVisitRejectedBeforeUpstreamCall();
+  await testLocalMembershipWithoutVersionFailsClosed();
   await testStatusForwardingAndUpstreamFailure();
   await testAdminUiDoesNotOptimisticallyRemovePlayer();
   console.log('games player removal request test passed');

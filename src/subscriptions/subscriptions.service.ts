@@ -224,8 +224,15 @@ export class SubscriptionsService implements OnModuleDestroy {
       subscriptionTypeId: normalizedTypeId,
       policy: normalized
     });
+    const preDailyUsagePolicyRequestHash = dto.dailyUsagePolicy === undefined
+      ? this.requestHash('createSubscriptionPolicyVersion', {
+        subscriptionTypeId: normalizedTypeId,
+        policy: this.preDailyUsagePolicyShape(normalized)
+      })
+      : null;
     const hasV3PolicyInput = dto.activeServicesLimit !== undefined
       || dto.bookingWindow !== undefined
+      || dto.dailyUsagePolicy !== undefined
       || dto.stationAccessRules !== undefined
       || dto.benefitRules.some((rule) => (
         rule.actions !== undefined
@@ -255,7 +262,12 @@ export class SubscriptionsService implements OnModuleDestroy {
     if (existing) {
       return this.replayPolicy(
         existing,
-        [requestHash, ...(previousRequestHash ? [previousRequestHash] : []), ...(legacyRequestHash ? [legacyRequestHash] : [])],
+        [
+          requestHash,
+          ...(preDailyUsagePolicyRequestHash ? [preDailyUsagePolicyRequestHash] : []),
+          ...(previousRequestHash ? [previousRequestHash] : []),
+          ...(legacyRequestHash ? [legacyRequestHash] : [])
+        ],
         this.publicPolicy(existing)
       );
     }
@@ -559,6 +571,25 @@ export class SubscriptionsService implements OnModuleDestroy {
         }
         : { enabled: true, days: dto.bookingWindowDays },
       dailyUsageLimit: dto.dailyUsageLimit,
+      dailyUsagePolicy: dto.dailyUsagePolicy
+        ? {
+          actions: ([...new Set(dto.dailyUsagePolicy.actions)] as SubscriptionAction[]).sort(),
+          limitExceeded: dto.dailyUsagePolicy.limitExceeded,
+          percentage: dto.dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT'
+            ? dto.dailyUsagePolicy.percentage ?? null
+            : null
+        }
+        : {
+          actions: [
+            'CREATE_GAME' as const,
+            'JOIN_GAME' as const,
+            'BOOK_GROUP_TRAINING' as const,
+            'BOOK_TOURNAMENT' as const,
+            'PURCHASE_ADD_ON_PRODUCT' as const
+          ],
+          limitExceeded: 'BLOCK' as const,
+          percentage: null
+        },
       activeServiceScope: dto.activeServiceScope,
       usageUnitsByDuration: { ...dto.usageUnitsByDuration },
       stationAccessRules: (dto.stationAccessRules ?? [])
@@ -608,6 +639,31 @@ export class SubscriptionsService implements OnModuleDestroy {
   }
 
   private validateRawPolicyControls(dto: CreatePolicyVersionDto): void {
+    if (dto.dailyUsagePolicy) {
+      if (dto.dailyUsagePolicy.actions.length === 0) {
+        throw this.domainError(
+          'DAILY_USAGE_ACTIONS_REQUIRED',
+          'Для дневного лимита выберите хотя бы одно действие'
+        );
+      }
+      if (dto.dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT'
+        && (dto.dailyUsagePolicy.percentage == null
+          || !Number.isInteger(dto.dailyUsagePolicy.percentage)
+          || dto.dailyUsagePolicy.percentage < 0
+          || dto.dailyUsagePolicy.percentage > 100)) {
+        throw this.domainError(
+          'DAILY_USAGE_DISCOUNT_REQUIRED',
+          'Для превышения дневного лимита укажите процент скидки'
+        );
+      }
+      if (dto.dailyUsagePolicy.limitExceeded === 'BLOCK'
+        && dto.dailyUsagePolicy.percentage != null) {
+        throw this.domainError(
+          'DAILY_USAGE_DISCOUNT_FORBIDDEN',
+          'Процент скидки разрешён только для скидочного превышения дневного лимита'
+        );
+      }
+    }
     if (dto.activeServicesLimit) {
       if (dto.activeServicesLimit.enabled && dto.activeServicesLimit.max == null) {
         throw this.domainError(
@@ -683,7 +739,8 @@ export class SubscriptionsService implements OnModuleDestroy {
     ) {
       throw this.domainError('INVALID_JOIN_GAME_DURATION', 'Диапазон присоединения должен использовать 60, 90 или 120 минут');
     }
-    if (!policy.activeServicesLimit || !policy.bookingWindow || !policy.stationAccessRules) {
+    if (!policy.activeServicesLimit || !policy.bookingWindow
+      || !policy.dailyUsagePolicy || !policy.stationAccessRules) {
       throw this.domainError('RUNTIME_CONTROLS_REQUIRED', 'Не заполнены управляемые ограничения подписки');
     }
     if (policy.activeServicesLimit.enabled && !policy.activeServicesLimit.max) {
@@ -697,6 +754,29 @@ export class SubscriptionsService implements OnModuleDestroy {
     }
     if (!policy.bookingWindow.enabled && policy.bookingWindow.days !== null) {
       throw this.domainError('BOOKING_WINDOW_FORBIDDEN', 'Для отключённого окна записи количество дней должно быть пустым');
+    }
+    const supportedActions = new Set<SubscriptionAction>([
+      'CREATE_GAME',
+      'JOIN_GAME',
+      'BOOK_GROUP_TRAINING',
+      'BOOK_TOURNAMENT',
+      'PURCHASE_ADD_ON_PRODUCT'
+    ]);
+    if (!policy.dailyUsagePolicy.actions.length
+      || policy.dailyUsagePolicy.actions.some((action) => !supportedActions.has(action))) {
+      throw this.domainError(
+        'DAILY_USAGE_ACTIONS_INVALID',
+        'Для дневного лимита указаны неподдерживаемые действия'
+      );
+    }
+    if (policy.dailyUsagePolicy.limitExceeded === 'PERCENT_DISCOUNT'
+      && (policy.dailyUsagePolicy.percentage === null
+        || policy.dailyUsagePolicy.percentage < 0
+        || policy.dailyUsagePolicy.percentage > 100)) {
+      throw this.domainError(
+        'DAILY_USAGE_DISCOUNT_INVALID',
+        'Скидка после дневного лимита должна быть от 0 до 100 процентов'
+      );
     }
     this.validateStationAccessRules(policy.stationAccessRules);
     const ruleIds = new Set<string>();
@@ -1114,6 +1194,17 @@ export class SubscriptionsService implements OnModuleDestroy {
         enabled: true,
         days: row.bookingWindowDays
       },
+      dailyUsagePolicy: row.dailyUsagePolicy ?? {
+        actions: [
+          'CREATE_GAME',
+          'JOIN_GAME',
+          'BOOK_GROUP_TRAINING',
+          'BOOK_TOURNAMENT',
+          'PURCHASE_ADD_ON_PRODUCT'
+        ],
+        limitExceeded: 'BLOCK',
+        percentage: null
+      },
       stationAccessRules: row.stationAccessRules ?? [],
       benefitRules: (row.benefitRules ?? []).map((rule) => ({
         ...rule,
@@ -1176,6 +1267,7 @@ export class SubscriptionsService implements OnModuleDestroy {
     const {
       activeServicesLimit: _activeServicesLimit,
       bookingWindow: _bookingWindow,
+      dailyUsagePolicy: _dailyUsagePolicy,
       stationAccessRules: _stationAccessRules,
       ...previous
     } = policy;
@@ -1195,6 +1287,13 @@ export class SubscriptionsService implements OnModuleDestroy {
     };
   }
 
+  private preDailyUsagePolicyShape(
+    policy: ReturnType<SubscriptionsService['normalizePolicy']>
+  ): unknown {
+    const { dailyUsagePolicy: _dailyUsagePolicy, ...previous } = policy;
+    return previous;
+  }
+
   private legacyPolicyShape(
     policy: ReturnType<SubscriptionsService['normalizePolicy']>
   ): unknown {
@@ -1203,6 +1302,7 @@ export class SubscriptionsService implements OnModuleDestroy {
       capabilities: _capabilities,
       activeServicesLimit: _activeServicesLimit,
       bookingWindow: _bookingWindow,
+      dailyUsagePolicy: _dailyUsagePolicy,
       stationAccessRules: _stationAccessRules,
       ...legacy
     } = policy;

@@ -356,6 +356,7 @@ export class UiController {
       roles,
       roleIds: authContext.user?.roleIds || roles,
       permissions: authContext.user ? authContext.user.permissions || [] : undefined,
+      permissionStationScopes: authContext.user?.permissionStationScopes,
       stationIds,
       connectorRoutes,
       title: query.title?.trim() || 'ЦУП Дворотека',
@@ -370,6 +371,10 @@ export class UiController {
       subscriptionTestRuntimeEnabled:
         ['1', 'true', 'yes'].includes(
           String(process.env.SUBSCRIPTIONS_TEST_RUNTIME_ENABLED ?? '').trim().toLowerCase()
+        ),
+      referralLinksAdminEnabled:
+        ['1', 'true', 'yes'].includes(
+          String(process.env.REFERRAL_LINKS_ENABLED ?? '').trim().toLowerCase()
         ),
       notificationApiBaseUrl:
         query.notificationApiBaseUrl?.trim() ||
@@ -441,6 +446,7 @@ export class UiController {
     </script>
     <script src="/api/client-script/admin-panel.js"></script>
     <script src="/api/client-script/gift-certificates-admin.js"></script>
+    <script src="/api/client-script/referral-links-admin.js"></script>
     <script>
       (function bootstrap() {
         function start() {

@@ -12,6 +12,7 @@ import {
   Res,
   UseFilters
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SkipAdminMutationAudit } from '../common/observability/admin-audit.decorator';
@@ -25,10 +26,27 @@ import { CreateSubscriptionTypeDto } from './dto/create-subscription-type.dto';
 import { SubscriptionProviderMappingPreviewDto } from './dto/subscription-provider-mapping-preview.dto';
 import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quote-adapter.dto';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
+import {
+  ConfirmSubscriptionEntitlementDto,
+  ReleaseSubscriptionEntitlementDto,
+  ReserveSubscriptionEntitlementDto
+} from './dto/subscription-entitlement-lifecycle.dto';
+import { SubscriptionSaleReadinessDto } from './dto/subscription-sale-readiness.dto';
+import { ConfirmSubscriptionSaleBindingDto } from './dto/confirm-subscription-sale-binding.dto';
+import {
+  SubscriptionSaleReadinessResult,
+  SubscriptionSaleReadinessService
+} from './subscription-sale-readiness.service';
+import {
+  SubscriptionSaleBindingResult,
+  SubscriptionSaleBindingService
+} from './subscription-sale-binding.service';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
 import { FakeConfirmSubscriptionTestPurchaseDto } from './dto/fake-confirm-subscription-test-purchase.dto';
+import { SubscriptionUsageTestQuoteDto } from './dto/subscription-usage-test-quote.dto';
+import { SubscriptionUsageResolvedQuoteDto } from './dto/subscription-usage-resolved-quote.dto';
 import { SubscriptionImpactPreviewDto } from './dto/subscription-impact-preview.dto';
 import {
   PublishSubscriptionPolicyDto,
@@ -38,6 +56,11 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionProviderMappingPreviewService } from './subscription-provider-mapping-preview.service';
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
+import {
+  SubscriptionEntitlementLifecycleService,
+  SubscriptionEntitlementReserveResult,
+  SubscriptionEntitlementTransitionResult
+} from './subscription-entitlement-lifecycle.service';
 import {
   SubscriptionActivationResult,
   SubscriptionActivationService
@@ -62,6 +85,9 @@ import {
   SubscriptionTestOfferView,
   SubscriptionTestPurchaseView,
   SubscriptionTestReservationResult,
+  SubscriptionUsageTestQuoteResult,
+  SubscriptionUsageResolvedQuoteResult,
+  SubscriptionUsageTestScenarioView,
   SubscriptionType,
   SubscriptionTypePage
 } from './subscriptions.types';
@@ -278,8 +304,11 @@ export class SubscriptionsController {
 export class SubscriptionTrustedShadowController {
   constructor(
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
+    private readonly entitlements: SubscriptionEntitlementLifecycleService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
-    private readonly activation: SubscriptionActivationService
+    private readonly activation: SubscriptionActivationService,
+    private readonly saleReadinessService: SubscriptionSaleReadinessService,
+    private readonly saleBindingService: SubscriptionSaleBindingService
   ) {}
 
   @Post('shadow-quote')
@@ -295,6 +324,47 @@ export class SubscriptionTrustedShadowController {
     return this.adapter.quote(authorization, integrationToken, dto);
   }
 
+  @Post('entitlements/reserve')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  reserveEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: ReserveSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReserveResult> {
+    return this.entitlements.reserve(authorization, integrationToken, dto, {
+      idempotencyKey,
+      correlationId
+    });
+  }
+
+  @Post('entitlements/confirm')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  confirmEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: ConfirmSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementTransitionResult> {
+    return this.entitlements.confirm(authorization, integrationToken, dto);
+  }
+
+  @Post('entitlements/release')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  releaseEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: ReleaseSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementTransitionResult> {
+    return this.entitlements.release(authorization, integrationToken, dto);
+  }
+
   @Post('runtime-context')
   @SkipAdminMutationAudit()
   @HttpCode(HttpStatus.OK)
@@ -306,6 +376,51 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
+  }
+
+  @Post('sale-readiness')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  saleReadiness(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: SubscriptionSaleReadinessDto,
+    @Res({ passthrough: true }) response: Response
+  ): Promise<SubscriptionSaleReadinessResult> {
+    const validCorrelationId = typeof correlationId === 'string'
+      && correlationId === correlationId.trim()
+      && !/\s/.test(correlationId)
+      && correlationId.length >= 8
+      && correlationId.length <= 128;
+    response.setHeader(
+      'X-Correlation-Id',
+      validCorrelationId ? correlationId : `corr:${randomUUID()}`
+    );
+    return this.saleReadinessService.check(integrationToken, dto);
+  }
+
+  @Post('sale-bindings/confirm')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  async confirmSaleBinding(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: ConfirmSubscriptionSaleBindingDto,
+    @Res({ passthrough: true }) response: Response
+  ): Promise<SubscriptionSaleBindingResult> {
+    const result = await this.saleBindingService.confirm(
+      integrationToken,
+      idempotencyKey,
+      correlationId,
+      dto
+    );
+    if (result.replayed) response.setHeader('Idempotency-Replayed', 'true');
+    return result;
   }
 
   @Post('activate-first-use')
@@ -342,6 +457,38 @@ export class SubscriptionTestController {
     @Headers('x-subscription-test-token') accessToken: string | undefined
   ): Promise<SubscriptionTestOfferView> {
     return this.testRuntime.offerByCredentials(offerId, accessToken ?? '');
+  }
+
+  @Get('offers/:offerId/usage-scenarios')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  usageScenarios(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined
+  ): Promise<SubscriptionUsageTestScenarioView> {
+    return this.testRuntime.usageScenarios(offerId, accessToken ?? '');
+  }
+
+  @Post('offers/:offerId/usage-scenarios/quote')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quoteUsageScenario(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined,
+    @Body() dto: SubscriptionUsageTestQuoteDto
+  ): Promise<SubscriptionUsageTestQuoteResult> {
+    return this.testRuntime.quoteUsageScenario(offerId, accessToken ?? '', dto);
+  }
+
+  @Post('offers/:offerId/usage-scenarios/resolved-quote')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  quoteResolvedUsageScenario(
+    @Param('offerId') offerId: string,
+    @Headers('x-subscription-test-token') accessToken: string | undefined,
+    @Body() dto: SubscriptionUsageResolvedQuoteDto
+  ): Promise<SubscriptionUsageResolvedQuoteResult> {
+    return this.testRuntime.quoteResolvedUsageScenario(offerId, accessToken ?? '', dto);
   }
 
   @Post('offers/:offerId/reservations')

@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { MongoClient } from 'mongodb';
@@ -23,6 +24,8 @@ const ENV_NAMES = [
   'SUBSCRIPTIONS_SYNTHETIC_PROJECTION_APPLY',
   'SUBSCRIPTIONS_SYNTHETIC_PROJECTION_TARGET_SHA256',
   'SUBSCRIPTIONS_INDEX_APPLY',
+  'SUBSCRIPTIONS_INDEX_EXPECTED_DB',
+  'SUBSCRIPTIONS_INDEX_TARGET_SHA256',
   'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
   'SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS',
   'SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED'
@@ -58,6 +61,15 @@ async function run(): Promise<void> {
   process.env.SUBSCRIPTIONS_SYNTHETIC_PROJECTION_TARGET_SHA256 =
     syntheticProjectionTargetFingerprint();
   process.env.SUBSCRIPTIONS_INDEX_APPLY = 'CONFIRM';
+  const target = /^(mongodb(?:\+srv)?):\/\/([^/?#]+)(.*)$/i.exec(URI);
+  assert.ok(target);
+  process.env.SUBSCRIPTIONS_INDEX_EXPECTED_DB = DB;
+  process.env.SUBSCRIPTIONS_INDEX_TARGET_SHA256 = createHash('sha256').update(JSON.stringify({
+    scheme: target[1].toLowerCase(),
+    hosts: target[2].slice(target[2].lastIndexOf('@') + 1).trim().toLowerCase(),
+    database: DB,
+    connectionSuffix: target[3] || ''
+  })).digest('hex');
 
   const indexApply = spawnSync(
     process.execPath,

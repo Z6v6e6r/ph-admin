@@ -111,6 +111,13 @@ async function run(): Promise<void> {
     priceEvidenceRef: 'evidence:canonical-price-read',
     resolvedAt: '2026-08-19T09:59:50.000Z'
   });
+  const resolvedLatest = await resolver.resolveLatest({
+    tenantId: reference.tenantId,
+    targetId: reference.targetId,
+    action: reference.action
+  });
+  assert.equal(resolvedLatest.evidenceRef, 'evidence:canonical-target-read');
+  assert.equal(reads, 2);
 
   latest = { ...snapshotFixture(), revision: 8 };
   await assert.rejects(
