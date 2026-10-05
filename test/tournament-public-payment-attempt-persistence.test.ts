@@ -66,17 +66,6 @@ async function main(): Promise<void> {
   assert.match(bindJson, /PENDING_PAYMENT/);
   assert.match(bindJson, /250000/);
 
-  await repository.failPublicJoinTransactionCreate(
-    'cup-1',
-    'attempt-2',
-    '79990002222',
-    '2026-08-25T08:01:00.000Z',
-    'VIVA_HTTP_400'
-  );
-  const failedJson = JSON.stringify(calls.at(-1));
-  assert.match(failedJson, /FAILED/);
-  assert.match(failedJson, /VIVA_HTTP_400/);
-
   console.log('Tournament public payment attempt persistence contract test passed');
 }
 

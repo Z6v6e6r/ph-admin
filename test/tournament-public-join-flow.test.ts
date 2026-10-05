@@ -180,28 +180,6 @@ function createService(
         pending.providerTransactionId = providerTransactionId;
         return tournament;
       },
-      failPublicJoinTransactionCreate: async (
-        _id: string,
-        attemptId: string,
-        phone: string,
-        failedAt: string,
-        failureCode: string
-      ) => {
-        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
-        const current = Array.isArray(booking.pendingJoinPayments)
-          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
-          : [];
-        const pending = current.find((item) => (
-          item.transactionId === attemptId
-          && item.phone === phone
-          && item.state === 'PROVIDER_RESULT_UNKNOWN'
-        ));
-        if (!pending) return null;
-        pending.state = 'FAILED';
-        pending.failedAt = failedAt;
-        pending.failureCode = failureCode;
-        return tournament;
-      },
       claimPublicJoinSubscriptionBooking: async (
         _id: string,
         operationId: string,

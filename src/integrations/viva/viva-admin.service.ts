@@ -1552,40 +1552,6 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return responsePayload;
   }
 
-  private async createAdminTransactionWithReturnUrlFallback(input: {
-    token: string;
-    baseUrl: string;
-    payload: unknown;
-    fallbackPayload: unknown;
-    hasReturnUrls: boolean;
-  }): Promise<unknown> {
-    try {
-      return await this.fetchAdminJsonWithBody(
-        '/api/v1/transactions',
-        input.token,
-        input.baseUrl,
-        input.payload
-      );
-    } catch (error) {
-      if (
-        !input.hasReturnUrls
-        || !(error instanceof VivaAdminRequestRejectedError)
-        || error.providerStatus !== 400
-      ) {
-        throw error;
-      }
-      this.logger.warn(
-        'Viva admin transaction rejected return URLs with status 400; retrying without them'
-      );
-      return this.fetchAdminJsonWithBody(
-        '/api/v1/transactions',
-        input.token,
-        input.baseUrl,
-        input.fallbackPayload
-      );
-    }
-  }
-
   private async createOrReuseTournamentEnergyCheckout(input: {
     token: string;
     baseUrl: string;
@@ -1633,13 +1599,12 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       ...(input.successUrl ? { successUrl: input.successUrl } : {}),
       ...(input.failUrl ? { failUrl: input.failUrl } : {})
     };
-    const responsePayload = await this.createAdminTransactionWithReturnUrlFallback({
-      token: input.token,
-      baseUrl: input.baseUrl,
-      payload,
-      fallbackPayload: basePayload,
-      hasReturnUrls: Boolean(input.successUrl || input.failUrl)
-    });
+    const responsePayload = await this.fetchAdminJsonWithBody(
+      '/api/v1/transactions',
+      input.token,
+      input.baseUrl,
+      payload
+    );
     const parsed = this.parseAdminTransactionResponse(responsePayload);
     return {
       clientId: input.clientId,

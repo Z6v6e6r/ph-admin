@@ -4,9 +4,15 @@ import {
   buildDecisionElementMatch,
   isLegacyPendingPayment,
   isProviderUnresolvedAttempt,
+  LEGACY_REQUIRED_RESOLUTION,
   pendingFingerprint,
   validateDecision
 } from '../scripts/reconcile-public-tournament-pending-payments.mjs';
+
+assert.equal(
+  LEGACY_REQUIRED_RESOLUTION,
+  'PAID_BOUND or leave unresolved; UNPAID is not terminal'
+);
 
 const legacy = { transactionId: 'tx-legacy', phone: '79990000001', createdAt: '2026-08-01' };
 assert.equal(isLegacyPendingPayment(legacy), true);
@@ -23,17 +29,6 @@ assert.equal(isLegacyPendingPayment({
 }), false);
 assert.match(pendingFingerprint(legacy), /^[0-9a-f]{64}$/);
 
-const expired = validateDecision({
-  tournamentId: 'tournament-1',
-  transactionId: 'tx-legacy',
-  phone: '79990000001',
-  expectedFingerprint: pendingFingerprint(legacy),
-  verifiedAt: '2026-08-17T10:00:00.000Z',
-  resolution: 'EXPIRED_UNPAID',
-  providerStatus: 'UNPAID'
-});
-assert.equal(expired.replacement.state, 'EXPIRED');
-
 assert.throws(() => validateDecision({
   tournamentId: 'tournament-1',
   transactionId: 'tx-legacy',
@@ -41,8 +36,8 @@ assert.throws(() => validateDecision({
   expectedFingerprint: pendingFingerprint(legacy),
   verifiedAt: '2026-08-17T10:00:00.000Z',
   resolution: 'EXPIRED_UNPAID',
-  providerStatus: 'PAID'
-}), /providerStatus=UNPAID/);
+  providerStatus: 'UNPAID'
+}), /PROVIDER_BOUND or PAID_BOUND/);
 
 const paidReplacement = {
   ...legacy,

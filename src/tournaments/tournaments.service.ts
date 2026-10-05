@@ -135,7 +135,6 @@ interface VivaJoinTransactionResponse {
 
 type VivaJoinTransactionCreationResult =
   | { outcome: 'CREATED'; transaction: VivaJoinTransactionResponse }
-  | { outcome: 'REJECTED'; providerStatus: number }
   | {
       outcome: 'UNKNOWN';
       reasonCode: 'TRANSPORT_ERROR' | 'PROVIDER_4XX_UNKNOWN' | 'PROVIDER_5XX';
@@ -1970,26 +1969,6 @@ export class TournamentsService {
             fallbackName: input.name,
             fallbackLevelLabel: normalizedLevel
           });
-        }
-        if (verification.status === 'UNPAID') {
-          const expiredAt = new Date().toISOString();
-          const expired = await this.tournamentsPersistence.expirePublicJoinPayment(
-            tournament.id,
-            existingPending.transactionId,
-            normalizedPhone,
-            expiredAt
-          );
-          if (expired) {
-            this.invalidatePublicDirectoryCache();
-            return {
-              ok: false,
-              code: 'PURCHASE_REQUIRED',
-              message: 'Срок предыдущей неоплаченной операции истёк. Место освобождено, повторите создание оплаты.',
-              tournamentId: tournament.id,
-              tournamentSlug: tournament.slug,
-              payment
-            };
-          }
         }
       }
       return {
@@ -5624,23 +5603,6 @@ export class TournamentsService {
       failUrl: input.input.failUrl,
       authorizationHeader: input.input.vivaAuthorizationHeader
     });
-    if (creation.outcome === 'REJECTED') {
-      const failedAt = new Date().toISOString();
-      const failed = await this.tournamentsPersistence.failPublicJoinTransactionCreate(
-        claimed.id,
-        input.pending.transactionId,
-        input.pending.phone,
-        failedAt,
-        `VIVA_HTTP_${creation.providerStatus}`
-      );
-      if (!failed) {
-        return this.buildProviderTransactionRecoveryRequired(claimed, input.payment);
-      }
-      this.invalidatePublicDirectoryCache();
-      throw new BadRequestException(
-        `Viva transaction failed with status ${creation.providerStatus}`
-      );
-    }
     if (creation.outcome === 'UNKNOWN') {
       this.logTournamentPaymentProviderResultUnknown(
         claimed.id,
@@ -5823,9 +5785,6 @@ export class TournamentsService {
 
     const responsePayload = (await response.json().catch(() => null)) as unknown;
     if (!response.ok) {
-      if ([400, 401, 403, 404, 422].includes(response.status)) {
-        return { outcome: 'REJECTED', providerStatus: response.status };
-      }
       return {
         outcome: 'UNKNOWN',
         reasonCode:

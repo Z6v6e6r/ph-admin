@@ -16,13 +16,15 @@ an apply decision is prepared:
 - `PROVIDER_RESULT_UNKNOWN` means a provider POST may have happened. Never repeat the POST. If a
   `providerTransactionId` was captured, reconcile that exact transaction; otherwise use an
   authoritative Viva search approved for the incident or leave the attempt unresolved.
+- Viva transaction-create non-2xx responses are `UNKNOWN` unless a provider contract proves that a
+  specific machine-readable rejection means no transaction was created. HTTP status alone is not
+  retry-safe and must not release the attempt for a new POST.
 - A decision for `PROVIDER_RESULT_UNKNOWN` must include the exact local `transactionId`,
   `currentState`, stored `providerTransactionId`, phone and record fingerprint. `PROVIDER_BOUND`
   requires a complete still-payable provider result; `PAID_BOUND` requires exact paid evidence
   whose `operationId` equals the separate `providerTransactionId`. Attempts without a captured
   provider identity cannot be applied by this tool and remain unresolved.
 
-- `EXPIRED_UNPAID` requires exact provider `transactionId`, exact status `UNPAID` and `verifiedAt`.
 - `PAID_BOUND` requires a complete replacement with tournament/exercise/studio/widget/product,
   amount/currency, eligibility snapshot, and exact `verifiedPayment` evidence.
 
@@ -41,5 +43,12 @@ records, or release a potentially paid seat.
 only from exact Viva booking evidence; neither this tool nor an automatic retry replays the provider write.
 The same fail-closed rule applies to `PROVIDER_RESULT_UNKNOWN`: it continues to reserve capacity until
 authoritative provider evidence resolves the attempt.
+`UNPAID` is not treated as terminal: without a proven provider terminal-state contract, neither the
+request path nor this tool expires the attempt or permits a replacement provider POST.
+
+`providerTransactionId` is protected across tournament documents by the partial unique index
+`tournament_pending_provider_transaction_uq`. Production application startup is verify-only for
+Mongo indexes: provision and duplicate-check this index through a separately authorized operator
+step before deploying this code. This PR does not create or change any live Mongo index.
 After apply, rerun dry-run; deployment remains blocked until `count` is zero and paid replacements
 have been finalized through the normal idempotent recovery path.

@@ -132,28 +132,6 @@ function serviceFixture(tournament: CustomTournament) {
       pending.providerTransactionId = providerTransactionId;
       return tournament;
     },
-    failPublicJoinTransactionCreate: async (
-      _id: string,
-      attemptId: string,
-      phone: string,
-      failedAt: string,
-      failureCode: string
-    ) => {
-      const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
-      const current = Array.isArray(booking.pendingJoinPayments)
-        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
-        : [];
-      const pending = current.find((item) => (
-        item.transactionId === attemptId
-        && item.phone === phone
-        && item.state === 'PROVIDER_RESULT_UNKNOWN'
-      ));
-      if (!pending) return null;
-      pending.state = 'FAILED';
-      pending.failedAt = failedAt;
-      pending.failureCode = failureCode;
-      return tournament;
-    },
     markPublicJoinPaymentPaid: async (
       _id: string,
       transactionId: string,
@@ -174,26 +152,6 @@ function serviceFixture(tournament: CustomTournament) {
         state: 'PAID_PENDING_FINALIZATION',
         verifiedPayment
       };
-      booking.pendingJoinPayments = current;
-      tournament.details = { ...details, booking };
-      return tournament;
-    },
-    expirePublicJoinPayment: async (
-      _id: string,
-      transactionId: string,
-      phone: string,
-      expiredAt: string
-    ) => {
-      const details = tournament.details ?? {};
-      const booking = (details.booking ?? {}) as Record<string, unknown>;
-      const current = Array.isArray(booking.pendingJoinPayments)
-        ? booking.pendingJoinPayments as Array<Record<string, unknown>>
-        : [];
-      const index = current.findIndex((item) => (
-        item.transactionId === transactionId && item.phone === phone
-      ));
-      if (index < 0) return null;
-      current[index] = { ...current[index], state: 'EXPIRED', expiredAt };
       booking.pendingJoinPayments = current;
       tournament.details = { ...details, booking };
       return tournament;
@@ -472,7 +430,7 @@ async function main(): Promise<void> {
       expiringPending.paymentExpiresAt = new Date(Date.now() - 60_000).toISOString();
     }
     statusPayload = { transactionId: 'secure-transaction-3', transactionStatus: 'UNPAID' };
-    const expiredRelease = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    const expiredUnpaid = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
       name: 'Игрок expired recovery',
       phone: '+7 999 000-22-05',
       levelLabel: 'C',
@@ -481,15 +439,16 @@ async function main(): Promise<void> {
       failUrl: 'https://padlhub.ru/fail',
       vivaAuthorizationHeader: 'Bearer expired-token'
     });
-    assert.equal(expiredRelease.code, 'PURCHASE_REQUIRED');
+    assert.equal(expiredUnpaid.code, 'BOOKING_FAILED');
     assert.equal(
       pendingPayments(tournament).find(
         (item) => item.providerTransactionId === 'secure-transaction-3'
       )?.state,
-      'EXPIRED'
+      'PENDING_PAYMENT'
     );
 
-    const restartedAfterExpiry = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    const postsAfterExpiredUnpaid = transactionCounter;
+    const retryAfterExpiredUnpaid = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
       name: 'Игрок expired recovery',
       phone: '+7 999 000-22-05',
       levelLabel: 'C',
@@ -498,8 +457,28 @@ async function main(): Promise<void> {
       failUrl: 'https://padlhub.ru/fail',
       vivaAuthorizationHeader: 'Bearer expired-token'
     });
-    assert.equal(restartedAfterExpiry.code, 'PURCHASE_STARTED');
-    assert.equal(restartedAfterExpiry.payment?.transactionId, 'secure-transaction-4');
+    assert.equal(retryAfterExpiredUnpaid.code, 'BOOKING_FAILED');
+    assert.equal(
+      transactionCounter,
+      postsAfterExpiredUnpaid,
+      'UNPAID without a proven terminal state must not permit another POST'
+    );
+    statusPayload = { transactionId: 'secure-transaction-3', transactionStatus: 'PAID' };
+    const latePaidConfirmation = await fixture.service.confirmPublicJoinAfterPayment(
+      tournament.slug,
+      {
+        phone: '+7 999 000-22-05',
+        vivaAuthorizationHeader: 'Bearer expired-token'
+      }
+    );
+    assert.equal(latePaidConfirmation.code, 'REGISTERED');
+    assert.equal(transactionCounter, postsAfterExpiredUnpaid);
+    assert.equal(
+      pendingPayments(tournament).some(
+        (item) => item.providerTransactionId === 'secure-transaction-3'
+      ),
+      false
+    );
 
     transactionResponseMode = 'GENERIC_ID';
     const genericIdResponse = await fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
@@ -640,8 +619,9 @@ async function main(): Promise<void> {
     assert.equal(transactionCounter, postsBeforeSafeResume + 1);
 
     transactionResponseMode = 'REJECTED';
-    await assert.rejects(
-      () => fixture.service.createPublicJoinPurchaseTransaction(tournament.slug, {
+    const unprovenRejected = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
         name: 'Игрок rejected',
         phone: '+7 999 000-22-08',
         levelLabel: 'C',
@@ -649,12 +629,31 @@ async function main(): Promise<void> {
         successUrl: 'https://padlhub.ru/success',
         failUrl: 'https://padlhub.ru/fail',
         vivaAuthorizationHeader: 'Bearer rejected-token'
-      }),
-      /Viva transaction failed with status 400/
+      }
     );
+    assert.equal(unprovenRejected.code, 'BOOKING_FAILED');
     assert.equal(
       pendingPayments(tournament).find((item) => item.phone === '79990002208')?.state,
-      'FAILED'
+      'PROVIDER_RESULT_UNKNOWN'
+    );
+    const postsAfterUnprovenRejection = transactionCounter;
+    const unprovenRejectedRetry = await fixture.service.createPublicJoinPurchaseTransaction(
+      tournament.slug,
+      {
+        name: 'Игрок rejected',
+        phone: '+7 999 000-22-08',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'secure-product',
+        successUrl: 'https://padlhub.ru/success',
+        failUrl: 'https://padlhub.ru/fail',
+        vivaAuthorizationHeader: 'Bearer rejected-token'
+      }
+    );
+    assert.equal(unprovenRejectedRetry.code, 'BOOKING_FAILED');
+    assert.equal(
+      transactionCounter,
+      postsAfterUnprovenRejection,
+      'unproven 400 rejection retry must not POST again'
     );
 
     const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;

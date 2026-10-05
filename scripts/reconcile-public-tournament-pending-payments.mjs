@@ -12,6 +12,8 @@ const ACTIVE_STATES = new Set([
   'BOOKING_CREATION_IN_PROGRESS',
   'PAID_PENDING_FINALIZATION'
 ]);
+export const LEGACY_REQUIRED_RESOLUTION =
+  'PAID_BOUND or leave unresolved; UNPAID is not terminal';
 
 export function isProviderUnresolvedAttempt(value) {
   return Boolean(
@@ -69,35 +71,8 @@ export function validateDecision(decision) {
   }
   const verifiedAt = assertString(decision.verifiedAt, 'verifiedAt');
   if (!Number.isFinite(Date.parse(verifiedAt))) throw new Error('verifiedAt must be ISO datetime');
-  if (decision.resolution === 'EXPIRED_UNPAID') {
-    if (currentState !== undefined) {
-      throw new Error('EXPIRED_UNPAID is only supported for legacy pending rows');
-    }
-    if (decision.providerStatus !== 'UNPAID') {
-      throw new Error('EXPIRED_UNPAID requires exact providerStatus=UNPAID');
-    }
-    return {
-      tournamentId,
-      transactionId,
-      phone,
-      expectedFingerprint,
-      currentState,
-      providerTransactionId,
-      replacement: {
-        transactionId,
-        phone,
-        state: 'EXPIRED',
-        expiredAt: verifiedAt,
-        reconciliation: {
-          resolution: 'EXPIRED_UNPAID',
-          providerStatus: 'UNPAID',
-          verifiedAt
-        }
-      }
-    };
-  }
   if (decision.resolution !== 'PAID_BOUND' && decision.resolution !== 'PROVIDER_BOUND') {
-    throw new Error('resolution must be EXPIRED_UNPAID, PROVIDER_BOUND or PAID_BOUND');
+    throw new Error('resolution must be PROVIDER_BOUND or PAID_BOUND');
   }
   const replacement = decision.replacement;
   if (!replacement || typeof replacement !== 'object' || Array.isArray(replacement)) {
@@ -242,7 +217,7 @@ async function main() {
             transactionIdHash: pendingFingerprint(payment.transactionId).slice(0, 16),
             phoneMasked: maskPhone(String(payment.phone)),
             expectedFingerprint: pendingFingerprint(payment),
-            requiredResolution: 'EXPIRED_UNPAID or PAID_BOUND'
+            requiredResolution: LEGACY_REQUIRED_RESOLUTION
           }];
         });
       });
