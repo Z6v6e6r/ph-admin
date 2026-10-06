@@ -1008,9 +1008,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
           {
             name: 'tournament_pending_provider_transaction_uq',
             unique: true,
-            partialFilterExpression: {
-              'details.booking.pendingJoinPayments.providerTransactionId': { $type: 'string' }
-            }
+            sparse: true
           }
         );
       } catch (error) {

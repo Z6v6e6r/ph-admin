@@ -46,12 +46,13 @@ authoritative provider evidence resolves the attempt.
 `UNPAID` is not treated as terminal: without a proven provider terminal-state contract, neither the
 request path nor this tool expires the attempt or permits a replacement provider POST.
 
-Once provisioned and physically verified, the partial unique index
+Once provisioned and physically verified, the sparse unique index
 `tournament_pending_provider_transaction_uq` is intended to reject duplicate
 `providerTransactionId` values across tournament documents. Production application startup is
 verify-only for Mongo indexes: provision and duplicate-check this index through a separately
 authorized operator step before deploying this code. Before approval, run the replica-set test that
-covers duplicate rejection and mixed array elements. This PR does not create or change any live
-Mongo index.
+covers duplicate rejection and mixed array elements. Sparse indexing is required here so unresolved
+array elements without a provider identity do not produce a conflicting `null` key. This PR does
+not create or change any live Mongo index.
 After apply, rerun dry-run; deployment remains blocked until `count` is zero and paid replacements
 have been finalized through the normal idempotent recovery path.
