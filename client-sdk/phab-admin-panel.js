@@ -4555,6 +4555,46 @@
       .phab-location-repeat.is-amenity{
         grid-template-columns:minmax(110px,.8fr) minmax(0,1.3fr) minmax(0,1.6fr) auto;
       }
+      .phab-location-recommendation-group{
+        display:grid;
+        gap:8px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:12px;
+        background:rgba(246,243,250,.5);
+      }
+      .phab-location-recommendation-group h5{margin:0;font-size:11px;}
+      .phab-location-recommendation-list{
+        display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(156px,1fr));
+        gap:8px;
+      }
+      .phab-location-recommendation-row{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:7px;
+        align-items:center;
+        padding:7px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:#fff;
+      }
+      .phab-location-recommendation-row img{
+        width:100%;
+        aspect-ratio:16/9;
+        grid-column:1/-1;
+        object-fit:cover;
+        border-radius:7px;
+        background:rgba(51,0,32,.07);
+      }
+      .phab-location-recommendation-empty{
+        margin:0;
+        padding:9px;
+        border:1px dashed rgba(51,0,32,.16);
+        border-radius:9px;
+        color:rgba(51,0,32,.58);
+        font-size:10px;
+      }
       .phab-location-schedule{display:grid;gap:6px;}
       .phab-location-day{
         display:grid;
@@ -4662,6 +4702,7 @@
         .phab-location-fields{grid-template-columns:1fr;}
         .phab-location-field.is-wide{grid-column:auto;}
         .phab-location-repeat,.phab-location-repeat.is-amenity{grid-template-columns:1fr;}
+        .phab-location-recommendation-list{grid-template-columns:1fr;}
         .phab-location-day{grid-template-columns:30px 78px minmax(0,1fr);}
       }
       .phab-admin-settings-quick-head{
@@ -8589,8 +8630,8 @@
       }
     }
 
-    async function adminBinaryRequest(path, file, allowRefresh) {
-      var idempotencyKey = operationId();
+    async function adminBinaryRequest(path, file, allowRefresh, operationKey) {
+      var idempotencyKey = operationKey || operationId();
       var headers = requestHeaders({
         'Content-Type': String(file.type || 'application/octet-stream'),
         'Idempotency-Key': idempotencyKey
@@ -8607,7 +8648,7 @@
       } catch (error) {
         if (error && error.status === 401 && allowRefresh !== false) {
           await refreshSession();
-          return adminBinaryRequest(path, file, false);
+          return adminBinaryRequest(path, file, false, idempotencyKey);
         }
         throw error;
       }
@@ -8748,6 +8789,60 @@
     ['OTHER', 'Другое']
   ];
 
+  var LOCATION_RECOMMENDATION_EVENT_TYPES = [
+    { eventType: 'GAME', label: 'Игра' },
+    { eventType: 'COACH_GAME', label: 'Игра с тренером' },
+    { eventType: 'TRAINING', label: 'Тренировка' },
+    { eventType: 'TOURNAMENT', label: 'Турнир' }
+  ];
+
+  function locationRecommendationMediaUrl(assetId, apiBaseUrl, tenantKey) {
+    var normalizedAssetId = String(assetId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalizedAssetId)) {
+      throw new Error('Некорректный идентификатор фото рекомендательной карточки.');
+    }
+    var base = String(apiBaseUrl || '').replace(/\/+$/, '');
+    var tenant = encodeURIComponent(String(tenantKey || 'local-padel'));
+    return base + '/public/api/v1/' + tenant + '/location-media/' + normalizedAssetId;
+  }
+
+  function validateLocationRecommendationPhotos(photos) {
+    if (!Array.isArray(photos)) {
+      throw new Error('Фото рекомендательных карточек должны быть списком.');
+    }
+    if (photos.length > 48) {
+      throw new Error('Для рекомендательных карточек можно добавить не больше 48 фотографий.');
+    }
+    var eventTypes = LOCATION_RECOMMENDATION_EVENT_TYPES.map(function (item) { return item.eventType; });
+    var bindings = new Set();
+    return photos.map(function (photo, index) {
+      if (!photo || typeof photo !== 'object') {
+        throw new Error('Фото рекомендательной карточки №' + (index + 1) + ' заполнено некорректно.');
+      }
+      var assetId = String(photo.assetId || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(assetId)) {
+        throw new Error('Укажите корректный идентификатор фото рекомендательной карточки.');
+      }
+      var eventType = String(photo.eventType || '');
+      if (eventTypes.indexOf(eventType) < 0) {
+        throw new Error('Укажите корректный тип рекомендательной карточки.');
+      }
+      if (typeof photo.isActive !== 'boolean') {
+        throw new Error('Укажите активность фото рекомендательной карточки.');
+      }
+      var sortOrder = Number(photo.sortOrder);
+      if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 99) {
+        throw new Error('Порядок фото рекомендательной карточки должен быть от 0 до 99.');
+      }
+      var binding = eventType + ':' + assetId;
+      if (bindings.has(binding)) {
+        throw new Error('Одно фото нельзя добавить дважды для одного типа карточки.');
+      }
+      bindings.add(binding);
+      return { assetId: assetId, eventType: eventType, isActive: photo.isActive, sortOrder: sortOrder };
+    });
+  }
+
   function createEmptyLocationProfile() {
     return {
       slug: '',
@@ -8771,6 +8866,7 @@
       }),
       amenities: [],
       gallery: [],
+      recommendationPhotos: [],
       publicationStatus: 'DRAFT',
       showOnHome: true,
       sortOrder: 100
@@ -8836,6 +8932,13 @@
           };
         })
       : [];
+    profile.recommendationPhotos = source.recommendationPhotos === undefined
+      ? []
+      : Array.isArray(source.recommendationPhotos)
+        ? source.recommendationPhotos.map(function (photo) {
+            return photo && typeof photo === 'object' ? Object.assign({}, photo) : photo;
+          })
+        : source.recommendationPhotos;
     profile.publicationStatus = ['DRAFT', 'PUBLISHED', 'ARCHIVED'].indexOf(source.publicationStatus) >= 0
       ? source.publicationStatus
       : 'DRAFT';
@@ -14544,6 +14647,9 @@
       profile: createEmptyLocationProfile(),
       loading: false,
       saving: false,
+      uploading: false,
+      selectionRevision: 0,
+      photoUploadOperation: '',
       loaded: false,
       error: '',
       query: ''
@@ -15094,6 +15200,12 @@
           };
         });
 
+      current.recommendationPhotos = Array.isArray(current.recommendationPhotos)
+        ? current.recommendationPhotos.map(function (photo) {
+            return photo && typeof photo === 'object' ? Object.assign({}, photo) : photo;
+          })
+        : current.recommendationPhotos;
+
       if (!current.slug && current.title) current.slug = slugifyLocationTitle(current.title);
       if (strict) {
         if (!current.title) throw new Error('Укажите название станции.');
@@ -15117,6 +15229,7 @@
         if (current.phoneE164 && !/^\+[1-9]\d{7,14}$/.test(current.phoneE164)) {
           throw new Error('Телефон укажите в международном формате, например +79990000000.');
         }
+        current.recommendationPhotos = validateLocationRecommendationPhotos(current.recommendationPhotos);
       }
       return current;
     }
@@ -15179,6 +15292,7 @@
         button.className =
           'phab-location-row' +
           (location.id === locationAdminState.selectedId ? ' is-active' : '');
+        button.disabled = locationAdminState.uploading || locationAdminState.saving;
         var cover = Array.isArray(location.gallery)
           ? location.gallery.find(function (image) { return image.isCover; })
           : null;
@@ -15203,6 +15317,8 @@
         copy.appendChild(status);
         button.appendChild(copy);
         button.addEventListener('click', function () {
+          if (locationAdminState.uploading || locationAdminState.saving) return;
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = location.id;
           locationAdminState.version = Number(location.version || 1);
           locationAdminState.profile = editableLocationProfile(location);
@@ -15274,6 +15390,112 @@
         });
         row.appendChild(remove);
         root.appendChild(row);
+      });
+    }
+
+    function renderLocationRecommendationPhotos(editor, profile) {
+      var root = editor.querySelector('[data-location-recommendation-photos]');
+      if (!root) return;
+      clearNode(root);
+      var photos = Array.isArray(profile.recommendationPhotos) ? profile.recommendationPhotos : [];
+      var sectionTitle = document.createElement('h4');
+      sectionTitle.textContent = 'Фото рекомендательных карточек';
+      root.appendChild(sectionTitle);
+      var sectionCopy = document.createElement('p');
+      sectionCopy.className = 'phab-admin-settings-row-meta';
+      sectionCopy.textContent = 'Активируйте нужные фото, затем сохраните черновик или опубликуйте станцию. Активированные фото появятся в карточках после публикации станции.';
+      root.appendChild(sectionCopy);
+      LOCATION_RECOMMENDATION_EVENT_TYPES.forEach(function (type) {
+        var group = document.createElement('section');
+        group.className = 'phab-location-recommendation-group';
+        var head = document.createElement('div');
+        head.className = 'phab-location-panel-head';
+        var title = document.createElement('h5');
+        title.textContent = type.label;
+        head.appendChild(title);
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.multiple = true;
+        input.className = 'phab-admin-hidden';
+        input.setAttribute('data-location-recommendation-upload-input', type.eventType);
+        head.appendChild(input);
+        var upload = document.createElement('button');
+        upload.type = 'button';
+        upload.className = 'phab-admin-btn-secondary';
+        upload.textContent = locationAdminState.uploading ? 'Загружаем…' : '+ Загрузить фото';
+        upload.disabled = locationAdminState.uploading || locationAdminState.saving || photos.length >= 48;
+        upload.addEventListener('click', function () {
+          if (!upload.disabled) input.click();
+        });
+        input.addEventListener('change', function () {
+          var files = Array.prototype.slice.call(input.files || []);
+          input.value = '';
+          if (files.length > 0) uploadLocationRecommendationPhotos(type.eventType, files, editor).catch(handleError);
+        });
+        head.appendChild(upload);
+        group.appendChild(head);
+        var rows = document.createElement('div');
+        rows.className = 'phab-location-recommendation-list';
+        var typePhotos = photos.filter(function (photo) {
+          return photo && photo.eventType === type.eventType;
+        });
+        typePhotos.forEach(function (photo) {
+          var index = photos.indexOf(photo);
+          var row = document.createElement('article');
+          row.className = 'phab-location-recommendation-row';
+          row.setAttribute('data-location-recommendation-photo-index', String(index));
+          var preview = document.createElement('img');
+          preview.alt = 'Фото для карточки «' + type.label + '»';
+          try {
+            preview.src = locationRecommendationMediaUrl(
+              photo.assetId,
+              cfg.notificationApiBaseUrl,
+              cfg.notificationTenantKey
+            );
+          } catch (_error) {
+            preview.alt = 'Некорректное фото для карточки «' + type.label + '»';
+          }
+          row.appendChild(preview);
+          var activeLabel = document.createElement('label');
+          activeLabel.className = 'phab-location-inline-check';
+          var active = document.createElement('input');
+          active.type = 'checkbox';
+          active.checked = photo.isActive === true;
+          active.disabled = locationAdminState.uploading || locationAdminState.saving;
+          active.setAttribute('data-recommendation-active', '');
+          active.setAttribute('aria-label', 'Использовать фото ' + (typePhotos.indexOf(photo) + 1) + ' для карточки «' + type.label + '»');
+          active.addEventListener('change', function () {
+            locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+            locationAdminState.profile.recommendationPhotos[index].isActive = active.checked;
+          });
+          activeLabel.appendChild(active);
+          activeLabel.appendChild(document.createTextNode('Активно'));
+          row.appendChild(activeLabel);
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'phab-admin-btn-secondary';
+          remove.textContent = 'Удалить';
+          remove.disabled = locationAdminState.uploading || locationAdminState.saving;
+          remove.addEventListener('click', function () {
+            locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+            locationAdminState.profile.recommendationPhotos.splice(index, 1);
+            locationAdminState.profile.recommendationPhotos.forEach(function (item, itemIndex) {
+              item.sortOrder = itemIndex;
+            });
+            renderLocationAdmin();
+          });
+          row.appendChild(remove);
+          rows.appendChild(row);
+        });
+        if (typePhotos.length === 0) {
+          var empty = document.createElement('p');
+          empty.className = 'phab-location-recommendation-empty';
+          empty.textContent = 'Фото для этого типа ещё не добавлены.';
+          rows.appendChild(empty);
+        }
+        group.appendChild(rows);
+        root.appendChild(group);
       });
     }
 
@@ -15378,6 +15600,7 @@
               '<label class="phab-location-field">Количество кортов<input type="number" min="0" max="999" data-location-field="courtCount"></label>' +
             '</div></section>' +
             '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Галерея</h4><input class="phab-admin-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-location-upload-input><button type="button" class="phab-admin-btn-secondary" data-location-upload>+ Загрузить фото</button><button type="button" class="phab-admin-btn-secondary" data-location-add-image>+ Ссылка</button></div><div class="phab-location-repeat-list" data-location-gallery></div></section>' +
+            '<section class="phab-location-section" data-location-recommendation-photos><h4>Фото рекомендательных карточек</h4><p class="phab-admin-settings-row-meta">Загрузите фото для типа карточки, активируйте нужные варианты, затем сохраните черновик или опубликуйте станцию.</p></section>' +
             '<section class="phab-location-section"><h4>Режим работы</h4><div class="phab-location-schedule" data-location-schedule></div><p class="phab-admin-settings-row-meta">Можно указать несколько интервалов через запятую, включая ночной график.</p></section>' +
             '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Преимущества</h4><button type="button" class="phab-admin-btn-secondary" data-location-add-amenity>+ Преимущество</button></div><div class="phab-location-repeat-list" data-location-amenities></div></section>' +
             '<section class="phab-location-section"><h4>Адрес и контакты</h4><div class="phab-location-fields">' +
@@ -15429,24 +15652,26 @@
       setField('showOnHome', profile.showOnHome);
       setField('sortOrder', profile.sortOrder);
       renderLocationGalleryRows(editor, profile);
+      renderLocationRecommendationPhotos(editor, profile);
       renderLocationAmenityRows(editor, profile);
       renderLocationSchedule(editor, profile);
 
       var uploadInput = editor.querySelector('[data-location-upload-input]');
       var uploadButton = editor.querySelector('[data-location-upload]');
-      uploadButton.disabled = locationAdminState.uploading === true;
+      uploadButton.disabled = locationAdminState.uploading === true || locationAdminState.saving === true;
       uploadButton.textContent = locationAdminState.uploading ? 'Загружаем…' : '+ Загрузить фото';
       uploadButton.addEventListener('click', function () {
-        if (!locationAdminState.uploading) uploadInput.click();
+        if (!locationAdminState.uploading && !locationAdminState.saving) uploadInput.click();
       });
       uploadInput.addEventListener('change', function () {
         var file = uploadInput.files && uploadInput.files[0];
         uploadInput.value = '';
-        if (!file || locationAdminState.uploading) return;
+        if (!file || locationAdminState.uploading || locationAdminState.saving) return;
         uploadLocationAdminPhoto(file, editor).catch(handleError);
       });
 
       editor.querySelector('[data-location-add-image]').addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
         locationAdminState.profile = readLocationProfileFromEditor(editor, false);
         if (locationAdminState.profile.gallery.length >= 12) {
           setStatus('В галерее может быть не больше 12 изображений', true);
@@ -15461,6 +15686,7 @@
         renderLocationAdmin();
       });
       editor.querySelector('[data-location-add-amenity]').addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
         locationAdminState.profile = readLocationProfileFromEditor(editor, false);
         if (locationAdminState.profile.amenities.length >= 16) {
           setStatus('Можно добавить не больше 16 преимуществ', true);
@@ -15486,27 +15712,43 @@
         syncLocationPreview(editor);
       });
       Array.prototype.slice.call(editor.querySelectorAll('[data-location-save]')).forEach(function (button) {
-        button.disabled = locationAdminState.saving;
+        button.disabled = locationAdminState.saving || locationAdminState.uploading;
         button.addEventListener('click', function () {
           saveLocationAdmin(String(button.getAttribute('data-location-save') || 'DRAFT'), editor).catch(handleError);
         });
       });
       if (!selected) editor.querySelector('[data-location-save="ARCHIVED"]').classList.add('phab-admin-hidden');
+      if (locationAdminState.uploading || locationAdminState.saving) {
+        Array.prototype.slice.call(editor.querySelectorAll('input, select, textarea, button')).forEach(function (control) {
+          control.disabled = true;
+        });
+      }
       syncLocationPreview(editor);
     }
 
     async function uploadLocationAdminPhoto(file, editor) {
-      if (!notificationApi || locationAdminState.uploading) return;
+      if (!notificationApi || locationAdminState.uploading || locationAdminState.saving) return;
       var profile = readLocationProfileFromEditor(editor, false);
       if (profile.gallery.length >= 12) {
         throw new Error('В галерее может быть не больше 12 изображений.');
       }
       locationAdminState.uploading = true;
+      var selectedId = locationAdminState.selectedId;
+      var selectionRevision = locationAdminState.selectionRevision;
+      var uploadOperation = 'gallery-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      locationAdminState.photoUploadOperation = uploadOperation;
       locationAdminState.profile = profile;
       locationAdminState.error = '';
       renderLocationAdmin();
       try {
         var asset = await notificationApi.uploadLocationMedia(file);
+        if (
+          locationAdminState.photoUploadOperation !== uploadOperation ||
+          locationAdminState.selectionRevision !== selectionRevision ||
+          locationAdminState.selectedId !== selectedId
+        ) {
+          return;
+        }
         if (!asset || !asset.mediaUrl) {
           throw new Error('PadlHub Admin API не вернул ссылку на загруженное изображение.');
         }
@@ -15519,6 +15761,13 @@
         locationAdminState.profile = profile;
         setStatus('Фотография загружена и сохранена как WebP.', false);
       } catch (error) {
+        if (
+          locationAdminState.photoUploadOperation !== uploadOperation ||
+          locationAdminState.selectionRevision !== selectionRevision ||
+          locationAdminState.selectedId !== selectedId
+        ) {
+          return;
+        }
         locationAdminState.error = error && error.message
           ? error.message
           : 'Не удалось загрузить фотографию.';
@@ -15527,8 +15776,101 @@
         }
         throw error;
       } finally {
-        locationAdminState.uploading = false;
-        renderLocationAdmin();
+        if (locationAdminState.photoUploadOperation === uploadOperation) {
+          locationAdminState.uploading = false;
+          locationAdminState.photoUploadOperation = '';
+          renderLocationAdmin();
+        }
+      }
+    }
+
+    async function uploadLocationRecommendationPhotos(eventType, files, editor) {
+      if (!notificationApi || locationAdminState.uploading || locationAdminState.saving) return;
+      if (!LOCATION_RECOMMENDATION_EVENT_TYPES.some(function (item) { return item.eventType === eventType; })) {
+        throw new Error('Укажите корректный тип рекомендательной карточки.');
+      }
+      var profile = readLocationProfileFromEditor(editor, false);
+      var existing = validateLocationRecommendationPhotos(profile.recommendationPhotos);
+      var available = 48 - existing.length;
+      if (available <= 0) {
+        throw new Error('Для рекомендательных карточек можно добавить не больше 48 фотографий.');
+      }
+      var batch = Array.prototype.slice.call(files || [], 0, available);
+      var selectedId = locationAdminState.selectedId;
+      var selectionRevision = locationAdminState.selectionRevision;
+      var uploadOperation = 'recommendation-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      var bindings = new Set(existing.map(function (photo) { return photo.eventType + ':' + photo.assetId; }));
+      var added = 0;
+      var skipped = 0;
+      var failed = 0;
+      function ownsUpload() {
+        return (
+          locationAdminState.photoUploadOperation === uploadOperation &&
+          locationAdminState.selectionRevision === selectionRevision &&
+          locationAdminState.selectedId === selectedId
+        );
+      }
+      locationAdminState.uploading = true;
+      locationAdminState.photoUploadOperation = uploadOperation;
+      locationAdminState.profile = profile;
+      locationAdminState.error = '';
+      renderLocationAdmin();
+      try {
+        for (var index = 0; index < batch.length; index += 1) {
+          if (!ownsUpload()) return;
+          var asset;
+          try {
+            asset = await notificationApi.uploadLocationMedia(batch[index]);
+          } catch (error) {
+            if (!ownsUpload()) return;
+            if (error && (error.status === 401 || error.status === 403)) {
+              notificationState.session = null;
+              throw error;
+            }
+            failed += 1;
+            continue;
+          }
+          if (!ownsUpload()) return;
+          var assetId = asset && asset.id ? String(asset.id).trim().toLowerCase() : '';
+          var binding = eventType + ':' + assetId;
+          if (bindings.has(binding)) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            locationRecommendationMediaUrl(assetId, cfg.notificationApiBaseUrl, cfg.notificationTenantKey);
+          } catch (_invalidAsset) {
+            failed += 1;
+            continue;
+          }
+          bindings.add(binding);
+          profile.recommendationPhotos.push({
+            assetId: assetId,
+            eventType: eventType,
+            isActive: false,
+            sortOrder: profile.recommendationPhotos.length
+          });
+          added += 1;
+          locationAdminState.profile = profile;
+        }
+        if (!ownsUpload()) return;
+        if (added === 0 && skipped > 0 && failed === 0) {
+          setStatus('Все выбранные фото уже добавлены для этого типа карточки.', false);
+        } else {
+          setStatus(
+            'Добавлено фото: ' + added +
+              (skipped ? ', уже было добавлено: ' + skipped : '') +
+              (failed ? ', не удалось загрузить: ' + failed : '') +
+              '. Активируйте нужные варианты и сохраните станцию.',
+            failed > 0 && added === 0
+          );
+        }
+      } finally {
+        if (locationAdminState.photoUploadOperation === uploadOperation) {
+          locationAdminState.uploading = false;
+          locationAdminState.photoUploadOperation = '';
+          renderLocationAdmin();
+        }
       }
     }
 
@@ -15617,7 +15959,11 @@
         locationAdminState.query = String(search.value || '');
         renderLocationAdminList(listPanel.querySelector('[data-location-list]'));
       });
-      listPanel.querySelector('[data-location-create]').addEventListener('click', function () {
+      var createLocationButton = listPanel.querySelector('[data-location-create]');
+      createLocationButton.disabled = locationAdminState.uploading || locationAdminState.saving;
+      createLocationButton.addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
+        locationAdminState.selectionRevision += 1;
         locationAdminState.selectedId = '';
         locationAdminState.version = null;
         locationAdminState.profile = createEmptyLocationProfile();
@@ -15632,8 +15978,13 @@
       renderLocationEditor(editor);
     }
 
-    async function loadLocationAdmin(preferredId) {
-      if (!notificationApi || locationAdminState.loading) return;
+    async function loadLocationAdmin(preferredId, allowDuringSave) {
+      if (
+        !notificationApi ||
+        locationAdminState.loading ||
+        locationAdminState.uploading ||
+        (locationAdminState.saving && allowDuringSave !== true)
+      ) return;
       locationAdminState.loading = true;
       locationAdminState.error = '';
       renderLocationAdmin();
@@ -15651,10 +16002,12 @@
           return item.id === (preferredId || locationAdminState.selectedId);
         }) || locationAdminState.items[0] || null;
         if (selected) {
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = selected.id;
           locationAdminState.version = Number(selected.version || 1);
           locationAdminState.profile = editableLocationProfile(selected);
         } else {
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = '';
           locationAdminState.version = null;
           locationAdminState.profile = createEmptyLocationProfile();
@@ -15676,7 +16029,7 @@
     }
 
     async function saveLocationAdmin(status, editor) {
-      if (!notificationApi || locationAdminState.saving) return;
+      if (!notificationApi || locationAdminState.saving || locationAdminState.uploading) return;
       var profile = readLocationProfileFromEditor(editor, true);
       profile.publicationStatus = status;
       var completeness = locationCompleteness(profile);
@@ -15698,7 +16051,7 @@
         } else {
           result = await notificationApi.createLocation(profile);
         }
-        await loadLocationAdmin(result && result.id ? result.id : locationAdminState.selectedId);
+        await loadLocationAdmin(result && result.id ? result.id : locationAdminState.selectedId, true);
         setStatus(
           status === 'PUBLISHED'
             ? 'Карточка станции опубликована'
