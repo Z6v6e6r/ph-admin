@@ -122,6 +122,7 @@ export interface SupportDialogPhoneLookupOptions {
 }
 
 export interface SupportClientLookupQuery {
+  requireAllBackends?: boolean;
   phone?: string;
   email?: string;
   connector?: SupportConnectorRoute;
@@ -439,6 +440,12 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   async findClients(query: SupportClientLookupQuery): Promise<SupportClientProfile[]> {
+    if (query.requireAllBackends) {
+      const active = new Set(this.getActiveBackends().map((backend) => backend.config.key));
+      if (this.backendConfigs.some((config) => config.uri && !active.has(config.key))) {
+        throw new Error('Support identity lookup backend unavailable');
+      }
+    }
     const normalizedPhone = this.normalizePhoneForLookup(query.phone ?? '');
     const normalizedEmail = this.normalizeLookupEmail(query.email);
     const normalizedExternalUserId = this.normalizeLookupIdentity(query.externalUserId);
