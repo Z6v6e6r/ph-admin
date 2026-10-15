@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -49,6 +50,19 @@ export class CommunitiesController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.communitiesService.findById(id);
+  }
+
+  // Existing community staff roles still apply; this endpoint never accepts a
+  // member phone/clientId as authorization and never writes rating state.
+  @Header('Cache-Control', 'private, no-store')
+  @Get(':id/results-export')
+  resultsExport(
+    @Param('id') id: string,
+    @Query() query: Record<string, unknown>,
+    @CurrentUser() user?: RequestUser
+  ) {
+    if (!user) throw new UnauthorizedException('User context is missing');
+    return this.communitiesService.getResultsExport(id, query, user);
   }
 
   @Patch(':id')

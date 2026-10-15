@@ -7623,6 +7623,244 @@
     document.head.appendChild(style);
   }
 
+  function communityResultsExportOptions(period, from, to, places) {
+    if (['month', 'week', 'all', 'custom'].indexOf(period) < 0) {
+      throw new Error('Выберите период.');
+    }
+    places = Number(places);
+    if (!Number.isInteger(places) || places < 1 || places > 50) {
+      throw new Error('Количество мест — целое число от 1 до 50.');
+    }
+    var options = { period: period, places: places };
+    if (period === 'custom') {
+      [from, to].forEach(function (value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+            !Number.isFinite(Date.parse(value + 'T00:00:00Z')) ||
+            new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) !== value) {
+          throw new Error('Укажите корректные даты начала и окончания.');
+        }
+      });
+      if (from > to) throw new Error('Дата окончания не может быть раньше даты начала.');
+      options.from = from;
+      options.to = to;
+    }
+    return options;
+  }
+
+  function communityResultsExportRows(payload, communityId, options) {
+    if (!payload || String(payload.communityId) !== String(communityId) ||
+        payload.period !== options.period || payload.degraded === true ||
+        !Number.isFinite(Date.parse(payload.dataAsOf)) ||
+        (options.period === 'custom' && (payload.from !== options.from || payload.to !== options.to)) ||
+        !Array.isArray(payload.rows)) {
+      throw new Error('Сервер не вернул рейтинг за выбранный период. Выгрузка отменена.');
+    }
+    return payload.rows.slice(0, options.places).map(function (row) {
+      var score = row.score;
+      if (typeof row.name !== 'string' || !row.name.trim() || typeof score !== 'number' ||
+          !Number.isFinite(score) || !Number.isInteger(row.rank) || row.rank < 1) {
+        throw new Error('В рейтинге отсутствуют имя или очки. Выгрузка отменена.');
+      }
+      return { name: row.name, score: score, rank: row.rank };
+    });
+  }
+
+  function createCommunityResultsExportDialog(community, loadRanking) {
+    var opener = document.activeElement;
+    var dialog = document.createElement('dialog');
+    dialog.className = 'phab-community-results-export';
+    dialog.setAttribute('aria-label', 'Выгрузить результаты сообщества');
+    dialog.innerHTML = '<style>' +
+      '.phab-community-results-export{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-height:90vh;overflow:auto;border:1px solid #eadce5;border-radius:20px;padding:24px;color:#330020;background:#fff;font-family:inherit}' +
+      '.phab-community-results-export::backdrop{background:#21001588}' +
+      '.phab-community-results-export header{display:flex;align-items:start;justify-content:space-between;gap:16px}' +
+      '.phab-community-results-export h2{margin:0;font-size:22px}' +
+      '.phab-community-results-export p{font-size:14px;line-height:1.5}' +
+      '.phab-community-results-export form{display:grid;gap:16px}' +
+      '.phab-community-results-export label{display:grid;gap:6px;font-size:14px;min-width:0}' +
+      '.phab-community-results-export input,.phab-community-results-export select{box-sizing:border-box;width:100%;min-width:0;padding:10px;border:1px solid #d8c6d0;border-radius:10px;background:#fff;color:#330020;font:inherit}' +
+      '.phab-community-results-export .phab-results-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}' +
+      '.phab-community-results-export [hidden]{display:none!important}' +
+      '.phab-community-results-export canvas{display:block;width:100%;height:auto;border-radius:12px}' +
+      '.phab-community-results-export footer{display:flex;flex-wrap:wrap;gap:10px}' +
+      '.phab-community-results-export button{cursor:pointer}' +
+      '.phab-community-results-export button:disabled{opacity:.5;cursor:default}' +
+      '@media(max-width:480px){.phab-community-results-export{padding:16px}.phab-community-results-export .phab-results-fields{grid-template-columns:1fr}}' +
+      '</style><header><h2>Выгрузить результаты</h2><button type="button" class="phab-admin-modal-close" aria-label="Закрыть выгрузку">×</button></header>' +
+      '<p data-community></p><form><label>Шаблон (фон)<select name="template"><option value="light">Светлый</option><option value="dark">Тёмный</option><option value="custom">Загрузить свой фон</option></select></label>' +
+      '<label data-upload hidden>Фон PNG, JPEG или WebP (до 10 МБ)<input name="background" type="file" accept="image/png,image/jpeg,image/webp"></label>' +
+      '<div class="phab-results-fields"><label>Количество мест<input name="places" type="number" min="1" max="50" step="1" value="10" required></label>' +
+      '<label>Период<select name="period"><option value="month">Текущий месяц</option><option value="week">Текущая неделя</option><option value="all">Всё время</option><option value="custom">Дата от — до</option></select></label></div>' +
+      '<div class="phab-results-fields" data-dates hidden><label>Дата от<input name="from" type="date"></label><label>Дата до<input name="to" type="date"></label></div>' +
+      '<p>Календарные периоды — по Москве, неделя с понедельника. Обе даты диапазона включаются. Фон остаётся в браузере.</p>' +
+      '<p role="status" aria-live="polite" data-status>Выберите параметры и сформируйте изображение.</p>' +
+      '<canvas hidden aria-label="Предпросмотр результатов"></canvas>' +
+      '<footer><button class="phab-admin-btn" type="submit">Сформировать</button><button class="phab-admin-btn-secondary" type="button" data-download disabled>Скачать PNG</button></footer></form>';
+    document.body.appendChild(dialog);
+    dialog.querySelector('[data-community]').textContent = String(community.name || 'Сообщество');
+    var form = dialog.querySelector('form');
+    var template = form.elements.template;
+    var period = form.elements.period;
+    var canvas = dialog.querySelector('canvas');
+    var status = dialog.querySelector('[data-status]');
+    var download = dialog.querySelector('[data-download]');
+    var submit = form.querySelector('[type="submit"]');
+    var revision = 0;
+    var closed = false;
+    var background = null;
+    var pendingImage = null;
+    var objectUrl = null;
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      revision++;
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      if (pendingImage) pendingImage.src = '';
+      dialog.close();
+      dialog.remove();
+      if (opener && opener.isConnected) opener.focus();
+    }
+    function invalidate() {
+      revision++;
+      download.disabled = true;
+      canvas.hidden = true;
+      submit.disabled = false;
+      status.textContent = 'Параметры изменены. Сформируйте изображение.';
+      dialog.querySelector('[data-upload]').hidden = template.value !== 'custom';
+      dialog.querySelector('[data-dates]').hidden = period.value !== 'custom';
+      form.elements.from.required = period.value === 'custom';
+      form.elements.to.required = period.value === 'custom';
+    }
+    form.addEventListener('input', invalidate);
+    form.addEventListener('change', invalidate);
+    form.elements.background.addEventListener('change', function () {
+      background = null;
+      if (pendingImage) pendingImage.src = '';
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      var file = form.elements.background.files[0];
+      if (!file) return;
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 10 * 1024 * 1024) {
+        status.textContent = 'Выберите PNG, JPEG или WebP размером до 10 МБ.';
+        return;
+      }
+      var image = new Image();
+      pendingImage = image;
+      objectUrl = window.URL.createObjectURL(file);
+      image.onload = function () {
+        if (closed || pendingImage !== image) return;
+        if (image.naturalWidth * image.naturalHeight > 16000000) {
+          status.textContent = 'Фон слишком большой: максимум 16 мегапикселей.';
+          return;
+        }
+        background = image;
+        status.textContent = 'Фон загружен. Сформируйте изображение.';
+      };
+      image.onerror = function () {
+        if (!closed && pendingImage === image) status.textContent = 'Не удалось прочитать изображение фона.';
+      };
+      image.src = objectUrl;
+    });
+    function fitText(ctx, text, x, y, maxWidth, size) {
+      text = String(text);
+      ctx.font = '700 ' + size + 'px sans-serif';
+      while (ctx.measureText(text).width > maxWidth && text.length > 1) text = text.slice(0, -2) + '…';
+      ctx.fillText(text, x, y);
+    }
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var current = ++revision;
+      download.disabled = true;
+      canvas.hidden = true;
+      try {
+        var options = communityResultsExportOptions(period.value, form.elements.from.value, form.elements.to.value, form.elements.places.value);
+        if (template.value === 'custom' && !background) throw new Error('Сначала загрузите фон.');
+        submit.disabled = true;
+        status.textContent = 'Загружаем результаты…';
+        var payload = await loadRanking(options);
+        if (closed || current !== revision) return;
+        var rows = communityResultsExportRows(payload, community.id, options);
+        if (!rows.length) throw new Error('За выбранный период результатов нет.');
+        canvas.width = 1080;
+        canvas.height = Math.max(1080, 430 + rows.length * 84);
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Браузер не поддерживает создание изображения.');
+        var dark = template.value === 'dark' || template.value === 'custom';
+        ctx.fillStyle = dark ? '#250019' : '#fff5fa';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (template.value === 'custom') {
+          var scale = Math.max(canvas.width / background.naturalWidth, canvas.height / background.naturalHeight);
+          var width = background.naturalWidth * scale;
+          var height = background.naturalHeight * scale;
+          ctx.drawImage(background, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+          ctx.fillStyle = '#16000fc9';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.fillStyle = dark ? '#83e5cb' : '#007f6a';
+        fitText(ctx, 'ПАДЛХАБ · РЕЗУЛЬТАТЫ', 64, 90, 950, 26);
+        ctx.fillStyle = dark ? '#ffffff' : '#330020';
+        fitText(ctx, community.name || 'Сообщество', 64, 160, 950, 42);
+        var labels = { month: 'Текущий месяц', week: 'Текущая неделя', all: 'Всё время' };
+        var periodLabel = options.period === 'custom' ? options.from + ' — ' + options.to : labels[options.period];
+        fitText(ctx, periodLabel + ' · Москва', 64, 215, 950, 26);
+        ctx.font = '22px sans-serif';
+        ctx.fillText('МЕСТО', 64, 288);
+        ctx.fillText('ИГРОК', 186, 288);
+        ctx.textAlign = 'right';
+        ctx.fillText('ОЧКИ', 1016, 288);
+        ctx.textAlign = 'left';
+        rows.forEach(function (row, index) {
+          var y = 310 + index * 84;
+          ctx.fillStyle = dark ? '#ffffff18' : '#3300200b';
+          ctx.fillRect(48, y, 984, 72);
+          ctx.fillStyle = dark ? '#ffffff' : '#330020';
+          fitText(ctx, row.rank, 72, y + 47, 94, 30);
+          fitText(ctx, row.name, 186, y + 47, 620, 30);
+          ctx.textAlign = 'right';
+          fitText(ctx, row.score.toLocaleString('ru-RU'), 1008, y + 47, 170, 30);
+          ctx.textAlign = 'left';
+        });
+        ctx.fillStyle = dark ? '#ffffffaa' : '#33002099';
+        var dataAsOf = new Date(payload.dataAsOf).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+        fitText(ctx, 'Данные на ' + dataAsOf + ' · Москва', 64, canvas.height - 38, 950, 20);
+        canvas.hidden = false;
+        download.disabled = false;
+        status.textContent = 'Готово. Показано мест: ' + rows.length + '. Данные на ' + dataAsOf + ' (Москва).';
+      } catch (error) {
+        if (!closed && current === revision) status.textContent = error.message || 'Не удалось сформировать результаты.';
+      } finally {
+        if (!closed && current === revision) submit.disabled = false;
+      }
+    });
+    download.addEventListener('click', function () {
+      var current = revision;
+      canvas.toBlob(function (blob) {
+        if (closed || current !== revision) return;
+        if (!blob) { status.textContent = 'Не удалось создать PNG. Повторите попытку.'; return; }
+        var url = window.URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = 'community-results-' + period.value + '.png';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 1000);
+      }, 'image/png');
+    });
+    dialog.querySelector('header button').addEventListener('click', close);
+    dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+    dialog.addEventListener('keydown', function (event) { event.stopPropagation(); });
+    dialog.addEventListener('click', function (event) {
+      if (event.target !== dialog) return;
+      var rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+    });
+    dialog.showModal();
+    template.focus();
+    return { close: close };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -8293,6 +8531,14 @@
             '/ranking?' +
             params.toString()
         );
+      },
+      exportCommunityResults: function (communityId, query) {
+        var params = new URLSearchParams();
+        params.set('period', String(query.period));
+        params.set('places', String(query.places));
+        if (query.from) params.set('from', String(query.from));
+        if (query.to) params.set('to', String(query.to));
+        return request('/communities/' + encodeURIComponent(communityId) + '/results-export?' + params.toString(), 'GET');
       },
       updateCommunity: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId), 'PATCH', payload);
@@ -27750,6 +27996,14 @@
       });
     }
 
+    var communityResultsExportDialog = null;
+    function openCommunityResultsExport(community) {
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
+      communityResultsExportDialog = createCommunityResultsExportDialog(community, function (options) {
+        return api.exportCommunityResults(community.id, options);
+      });
+    }
+
     function getSelectedCommunity() {
       if (!state.selectedCommunityId) {
         return null;
@@ -32820,6 +33074,13 @@
           function () {
             openCommunitySettingsFromModeration(community.id);
           }
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          'Выгрузить результаты',
+          'phab-admin-community-main-action phab-admin-community-main-action-accent',
+          function () { openCommunityResultsExport(community); }
         )
       );
       dom.communityActions.appendChild(
@@ -39909,6 +40170,7 @@
 
     function destroy() {
       trafficPane.setActive(false);
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }
