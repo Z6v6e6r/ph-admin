@@ -8,6 +8,7 @@ const DAY_MS = 86400000;
 const MOSCOW_OFFSET_MS = 3 * 3600000;
 export interface CommunityResultsWindow {
   period: 'all' | 'month' | 'week' | 'custom';
+  details?: 'templates-v1';
   from?: string;
   to?: string;
   places: number;
@@ -28,6 +29,9 @@ function parseDate(value: unknown): number {
 }
 
 export function resolveCommunityResultsWindow(query: Record<string, unknown>, nowTs = Date.now()): CommunityResultsWindow {
+  if (query.details !== undefined && query.details !== 'templates-v1') {
+    throw new BadRequestException('RESULTS_EXPORT_INVALID_DETAILS');
+  }
   const period = query.period ?? 'month';
   if (period !== 'month' && period !== 'week' && period !== 'all' && period !== 'custom') {
     throw new BadRequestException('RESULTS_EXPORT_INVALID_PERIOD');
@@ -54,6 +58,7 @@ export function resolveCommunityResultsWindow(query: Record<string, unknown>, no
     if (startTs >= endExclusiveTs) throw new BadRequestException('RESULTS_EXPORT_INVALID_RANGE');
   }
   return { period, places, startTs, endExclusiveTs, nowTs,
+    ...(query.details === 'templates-v1' ? {details: 'templates-v1' as const} : {}),
     ...(period === 'custom' ? {from: query.from as string, to: query.to as string} : {}) };
 }
 
@@ -106,7 +111,20 @@ export function buildCommunityResultsExport(communityId: string, source: Communi
       const isIdentifier = identifiers.some(value => value && name === value);
       // Legacy display names can fall back to phone or an internal ID. Redact
       // only presentation; never change canonical ordering or scores.
-      return {rank: row.rank, name: isIdentifier || name.replace(/\D/g, '').length >= 10 ? 'Игрок ' + row.rank : name, score: row.overallScore};
+      const tournaments = selected.filter(fact => fact.playerKey === row.playerKey && fact.eventType === 'tournament');
+      const participationKnown = tournaments.every(fact => fact.eventType === 'tournament' && fact.metrics.tournamentsPlayed === 1);
+      const finishesKnown = participationKnown && tournaments.every(fact => fact.eventType === 'tournament' &&
+        Number.isInteger(fact.metrics.place) && fact.metrics.place > 0 &&
+        Number.isInteger(fact.metrics.participantsCount) && fact.metrics.participantsCount >= fact.metrics.place);
+      return {
+        rank: row.rank, name: isIdentifier || name.replace(/\D/g, '').length >= 10 ? 'Игрок ' + row.rank : name,
+        score: row.overallScore,
+        ...(window.details === 'templates-v1' ? {statistics: {
+          tournamentsPlayed: participationKnown ? row.tournamentsPlayed : null,
+          // Tournament victories (first place), never wins in individual matches.
+          tournamentsWon: finishesKnown ? tournaments.filter(fact => fact.eventType === 'tournament' && fact.metrics.place === 1).length : null
+        }} : {})
+      };
     })
   };
 }
