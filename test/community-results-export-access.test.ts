@@ -32,10 +32,10 @@ async function main() {
   const snapshot = buildCommunityRatingSnapshot({communityId:'synthetic-community',facts:[],members:[],period:'all'});
   let exportedCommunity = mapped;
   (persistence as any).readCommunityRatingExportSource = async () => { reads++; return {community:exportedCommunity,snapshot,facts:[]}; };
-  assert.deepEqual((await controller.resultsExport('synthetic-community',{period:'all'},user)).rows,[]);
+  assert.deepEqual((await controller.resultsExport('synthetic-community',{period:'all',details:'templates-v1'},user)).rows,[]);
   assert.equal(reads,1);
   exportedCommunity = actualMapper.toCommunity({id:'synthetic-community',name:'Тест',stationId:'station-b'});
-  await assert.rejects(() => service.getResultsExport('synthetic-community',{period:'all'},user),/RESULTS_EXPORT_ACCESS_DENIED/);
+  await assert.rejects(() => service.getResultsExport('synthetic-community',{period:'all',details:'templates-v1'},user),/RESULTS_EXPORT_ACCESS_DENIED/);
   persistence.findCommunityById = async () => actualMapper.toCommunity({id:'synthetic-community',name:'Тест'});
   await assert.rejects(() => service.getResultsExport('synthetic-community',{period:'all'},user),/RESULTS_EXPORT_ACCESS_DENIED/);
   console.log('Community results export auth, station scope and no-store tests passed');

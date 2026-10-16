@@ -70,3 +70,17 @@ test('canonical engine files retain their explicit upstream pin', () => {
     assert.equal(createHash('sha256').update(readFileSync(new URL(name, root))).digest('hex'), info.localSha256, name);
   }
 });
+
+test('template requests allow only validated optional statistics and preserve the old row shape',()=>{
+  const api=helpers();
+  const payload={communityId:'fixture',period:'all',dataAsOf:'2026-10-16T10:00:00Z',rows:[{rank:1,name:'Игрок',score:42,statistics:{tournamentsPlayed:4,tournamentsWon:1,playerId:'private'}}]};
+  const options={period:'all',places:10,details:'templates-v1'};
+  const rows=api.communityResultsExportRows(payload,'fixture',options);
+  assert.equal(rows[0].statistics.tournamentsPlayed,4);
+  assert.equal(rows[0].statistics.tournamentsWon,1);
+  assert.equal(rows[0].statistics.playerId,undefined);
+  assert.equal(api.communityResultsExportRows(payload,'fixture',{period:'all',places:10})[0].statistics,undefined);
+  for(const statistics of [{tournamentsPlayed:-1,tournamentsWon:0},{tournamentsPlayed:1,tournamentsWon:'1'},{tournamentsPlayed:1,tournamentsWon:2}]) {
+    assert.throws(()=>api.communityResultsExportRows({...payload,rows:[{...payload.rows[0],statistics}]},'fixture',options));
+  }
+});

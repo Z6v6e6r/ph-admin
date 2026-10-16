@@ -37,8 +37,15 @@ const server = createServer(async (req,res) => {
     const result = buildCommunityResultsExport('fixture-community',{snapshot,facts},resolveCommunityResultsWindow(query,now));
     if (mode === 'empty') result.rows = [];
     if (mode === 'wrong-period') result.period = 'all';
+    if (mode === 'many') result.rows = Array.from({length:Number(query.places)},(_,i)=>({rank:i+1,name:'Тестовый игрок '+(i+1),score:100-i,statistics:{tournamentsPlayed:4,tournamentsWon:1}}));
     res.writeHead(mode === 'error' ? 503 : 200,{'Content-Type':'application/json','Cache-Control':'no-store'});
     res.end(JSON.stringify(result));
+  } else if (url.pathname === '/client-script/community-results-templates.js') {
+    res.setHeader('Content-Type','application/javascript');
+    res.end(readFileSync(new URL('../client-sdk/phab-community-results-templates.js',import.meta.url)));
+  } else if (url.pathname === '/client-script/community-results-assets.json') {
+    res.setHeader('Content-Type','application/json');
+    res.end(readFileSync(new URL('../dist/client-sdk/community-results-assets.json',import.meta.url)));
   } else {
     res.setHeader('Content-Type','text/html; charset=utf-8');
     res.end('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Community export — synthetic local QA</title><style>body{font-family:sans-serif;background:#f7f0f4}.phab-admin-btn,.phab-admin-btn-secondary{padding:12px;border-radius:18px;border:0;background:#b8f1df;color:#330020;font-weight:700}.phab-admin-modal-close{border:0;background:none;font-size:24px}</style><button id="open">Выгрузить результаты</button><script>'+helpers+`
@@ -49,7 +56,7 @@ document.querySelector('#open').onclick = function () {
     var response = await fetch('/results-export?' + new URLSearchParams({...options,mode:window.fixtureMode}));
     if (!response.ok) throw new Error('Не удалось загрузить результаты. Повторите попытку.');
     return response.json();
-  });
+  }, function () {return loadCommunityResultsTemplates(location.origin);});
 };
 </script></html>`);
   }
@@ -160,14 +167,38 @@ try {
   assert.equal(await evaluate('document.activeElement.id'),'open');
   await evaluate("document.querySelector('#open').click();window.controller.close()");
   assert.equal(await evaluate("document.querySelector('dialog')"),null);
+  await evaluate("document.querySelector('#open').click();var f=document.querySelector('form');f.elements.template.value='01_klassika';f.elements.template.dispatchEvent(new Event('change',{bubbles:true}))");
+  assert.equal(await evaluate('f.elements.division.value'),'','do not silently label another community as the Start division');
+  assert.equal(await evaluate('f.checkValidity()'),false);
+  await evaluate("f.elements.division.value='start';f.elements.places.value=23;window.fixtureMode='many';f.requestSubmit()");
+  await statusIncludes('Готово.');
+  assert.equal(await evaluate("document.querySelector('canvas').height"),1350,'approved layout retains its 1080x1350 frame');
+  assert.equal(await evaluate('window.lastOptions.details'),'templates-v1');
+  assert.equal(await evaluate("document.querySelector('[data-page-label]').textContent"),'Страница 1 из 3');
+  assert.equal(await evaluate("document.querySelector('[data-next-page]').getBoundingClientRect().height >= 44"),true,'mobile page controls need a touch-sized target');
+  await evaluate("document.querySelector('[data-next-page]').click()");
+  assert.equal(await evaluate("document.querySelector('[data-page-label]').textContent"),'Страница 2 из 3');
+  await evaluate("document.querySelector('[data-download]').click()");
+  const templatePath=join(dir,'community-results-month-01_klassika-start-p02.png');
+  await waitUntil(()=>existsSync(templatePath),'template PNG download');
+  const templatePng=readFileSync(templatePath);
+  assert.equal(templatePng.readUInt32BE(16),1080);assert.equal(templatePng.readUInt32BE(20),1350);
+  await evaluate("document.querySelector('[data-pages]').scrollIntoView({block:'end'})");
+  const brandedMobile=await call('Page.captureScreenshot',{format:'png'});
+  writeFileSync(join(scratch,'community-results-branded-mobile.png'),Buffer.from(brandedMobile.data,'base64'));
+  assert.equal(await evaluate("document.querySelector('dialog').scrollWidth <= document.querySelector('dialog').clientWidth"),true);
+  await evaluate("document.querySelector('[name=division]').value='smash';document.querySelector('[name=division]').dispatchEvent(new Event('change',{bubbles:true}))");
+  assert.equal(await evaluate("document.querySelector('[data-download]').disabled"),true);
+  assert.equal(await evaluate("document.querySelector('[data-pages]').hidden"),true);
+  await evaluate('window.controller.close()');
   assert.deepEqual(browserErrors,[]);
   assert.ok(requests.every(url=>url.startsWith(base)||url.startsWith('blob:')||url.startsWith('data:')),'fixture must never contact a live service');
-  console.log('Browser LOCAL: month/week/all/custom, real PNG 1080×1080, upload, empty/error/mismatch/stale, mobile 390px, Escape/focus/unmount passed.');
+  console.log('Browser LOCAL: all periods, legacy PNG/upload, 1080x1350 template PNG download, 23-row pagination, stale/empty/error, mobile390, Escape/focus passed.');
   console.log('Screenshot: '+screenshotPath);
 } finally {
   if (socket) socket.close();
   chrome.kill();
   await new Promise(resolve => chrome.exitCode !== null ? resolve() : chrome.once('exit',resolve));
   await new Promise(resolve => server.close(resolve));
-  rmSync(dir,{recursive:true,force:true});
+  rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100});
 }

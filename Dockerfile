@@ -7,6 +7,7 @@ RUN npm ci
 COPY tsconfig*.json ./
 COPY src ./src
 COPY client-sdk ./client-sdk
+COPY assets ./assets
 COPY scripts ./scripts
 
 RUN npm run build
