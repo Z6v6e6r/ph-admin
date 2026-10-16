@@ -2,8 +2,13 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  OnModuleDestroy
+  OnModuleDestroy,
+  ServiceUnavailableException
 } from '@nestjs/common';
+import { CommunityResultsExportSource } from './community-results-export';
+import { CommunityRatingSnapshot } from './canonical-rating/aggregates';
+import { CommunityRatingFact } from './canonical-rating/facts';
+import { COMMUNITY_RATING_CALCULATION_VERSION } from './canonical-rating/contract';
 import { Collection, Db, Document, Filter, MongoClient, ObjectId, OptionalId } from 'mongodb';
 import {
   Community,
@@ -244,6 +249,26 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   async findCommunityById(id: string): Promise<Community | null> {
     const match = await this.findDocumentWithSourceById(id);
     return match ? this.toCommunity(match.document) : null;
+  }
+
+  async readCommunityRatingExportSource(id: string): Promise<(CommunityResultsExportSource & {community: Community}) | null> {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match || match.document.archived === true) return null;
+    const community = this.toCommunity(match.document);
+    if (!community) return null;
+    // Pin every rating read to the same database as the selected community.
+    const db = await this.database(match.dbName);
+    const filter = {communityId: id, period: 'all', tab: 'overall', calculationVersion: COMMUNITY_RATING_CALCULATION_VERSION};
+    const snapshots = db.collection('community_rating_snapshots');
+    const snapshot = await snapshots.findOne(filter, {maxTimeMS: 5000});
+    if (!snapshot || typeof snapshot.updatedAt !== 'string') return null;
+    const facts = await db.collection('community_rating_facts').find({
+      communityId: id, calculationVersion: COMMUNITY_RATING_CALCULATION_VERSION, collectedAt: snapshot.updatedAt
+    }, {maxTimeMS: 5000}).limit(20001).toArray();
+    if (facts.length > 20000) throw new ServiceUnavailableException('RESULTS_EXPORT_TOO_LARGE');
+    const after = await snapshots.findOne(filter, {maxTimeMS: 5000, projection: {updatedAt: 1}});
+    if (after?.updatedAt !== snapshot.updatedAt) throw new ServiceUnavailableException('RESULTS_EXPORT_RATING_UPDATING');
+    return {community, snapshot: snapshot as unknown as CommunityRatingSnapshot, facts: facts as unknown as CommunityRatingFact[]};
   }
 
   async updateCommunity(

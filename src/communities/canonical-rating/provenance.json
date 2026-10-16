@@ -1,0 +1,28 @@
+{
+  "repository": "Z6v6e6r/lk",
+  "commit": "c7aa9d379c973d3bdd8c3c43ecc5b3177c891f27",
+  "reason": "Read-only community results export; canonical formulas are not reimplemented.",
+  "files": {
+    "contract.ts": {
+      "source": "src/services/community-rating/contract.ts",
+      "upstreamSha256": "a31cea06f6aa21f3a5133ef45a57bb0cf61e0dfbdfbb93872e39e2fa8c52b2f2",
+      "localSha256": "a31cea06f6aa21f3a5133ef45a57bb0cf61e0dfbdfbb93872e39e2fa8c52b2f2"
+    },
+    "calculations.ts": {
+      "source": "src/services/community-rating/calculations.ts",
+      "upstreamSha256": "c7e1b62f9746a1085555ddc8a03d384f8cd57be8a43ae7d2d99b3f8f103fc8b9",
+      "localSha256": "52f1a47474fa81c69841927e614de7d0785efd3bed8e47b6fddbc86448b393b2"
+    },
+    "facts.ts": {
+      "source": "src/services/community-rating/facts.ts",
+      "selection": "CommunityRatingFactEventType through before RatingIdentity; CommunityRatingMemberSeed through before RatingSetScore (types only, one final newline)",
+      "upstreamSha256": "e219c6f93c566392ed9add9f34dace7e2ad1b58e38b802bc39fd0d517748cefa",
+      "localSha256": "7b0b0dec2625de8a3fc259fe7f21fca2c84264ca3330fbc0672cade13fefb448"
+    },
+    "aggregates.ts": {
+      "source": "src/services/community-rating/aggregates.ts",
+      "upstreamSha256": "83811c9f0af18254f5c5dda899ba08706edec44fde26c6f8265a3a8223935c41",
+      "localSha256": "0372d41bd723bab746f23da75b26fd3f847d978d369bb39b1802ee3c86e5be3d"
+    }
+  }
+}
