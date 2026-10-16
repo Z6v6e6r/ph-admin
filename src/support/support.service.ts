@@ -2209,7 +2209,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       currentPhone: client.primaryPhone,
       phones: [...client.phones],
       emails: [...client.emails],
-      connectors: [],
+      connectors: [connector],
       lastInboundConnector: undefined,
       lastReplyConnector: undefined,
       subject: normalizedSubject,

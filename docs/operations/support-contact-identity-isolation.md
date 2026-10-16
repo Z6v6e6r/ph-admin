@@ -26,8 +26,37 @@ use compare-and-swap transaction checks, guarded recovery and post-restart
 identity/history verification. Activating a compatible runtime artifact and
 restarting production remain separate operator actions.
 
-Validation: `npx ts-node test/support-contact-identity-isolation.test.ts`,
+New dialogs receive their connector before the first persistence write. Without
+that routing information, the initial write can target the primary backend while
+the completed dialog targets web/MAX; their asynchronous cross-backend cleanup
+can delete both copies. The identity acceptance includes durable dialog and
+message ownership, not only the in-memory client count.
+
+Validation: `npm run test:support-contact-identity`,
 `npm run test:support-client-resolve`, `npm run test:support-dialog-resolution`,
 `npm run test:support-outbox-max-attempts`, and `npm run build`. The regression
 checks forwarded contacts, mismatched identities/phones, partial caches,
 unavailable persistence, no-write failures and reload/reconciliation.
+
+## Physical persistence and process-restart acceptance
+
+Run `npm run test:support-contact-identity:mongo` with
+`SUPPORT_IDENTITY_MONGODB_TEST_URI` explicitly pointing to a disposable loopback
+replica set, for example
+`mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority`.
+There is no application-env or default-URI fallback. The test rejects credentials
+and non-fixture hosts, isolates primary/web/MAX in randomly named databases, and
+drops only those validated databases at completion. Never point it at a real or
+shared target.
+
+Five separate Node processes seed verified owners, forward contacts with either
+partial cache, reload persisted history, and exercise an actual closed Mongo
+connection plus a missing configured backend. No connector delivery, quick-reply
+worker or real provider runs. The checks cover physical profile copies, dialog
+and message ownership, and unchanged stored state on lookup failure.
+
+The exact-head workflow runs both this integration test and the focused support
+regressions. `node --test test/support-contact-identity-ci.test.mjs` guards their
+explicit wiring. This is LOCAL/CI evidence only: it does not accept the production
+operator journey, repair existing contaminated records, verify live Mongo rights,
+or authorize an installation or restart.

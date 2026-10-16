@@ -25,7 +25,11 @@ class Persistence {
   async findDialogIdsByPhone() { return []; }
   async findServiceMessages() { return []; }
   persistClient(row: SupportPersistedState['clients'][number]) { this.upsert('clients', row); }
-  persistDialog(row: SupportPersistedState['dialogs'][number]) { this.upsert('dialogs', row); }
+  persistDialog(row: SupportPersistedState['dialogs'][number]) {
+    assert.ok(row.connectors.length > 0,
+      'A new dialog must have its connector before the first persistence write');
+    this.upsert('dialogs', row);
+  }
   persistMessage(row: SupportPersistedState['messages'][number]) { this.upsert('messages', row); }
   persistServiceMessage() {}
   persistResponseMetric(row: SupportPersistedState['responseMetrics'][number]) { this.upsert('responseMetrics', row); }
