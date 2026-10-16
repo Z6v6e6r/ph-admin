@@ -28,6 +28,20 @@ export class ClientScriptController {
     response.sendFile(filePath);
   }
 
+  @Get('community-results-templates.js')
+  streamCommunityResultsTemplates(@Res() response: Response): void {
+    response.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(this.resolveScriptFile('phab-community-results-templates.js'));
+  }
+
+  @Get('community-results-assets.json')
+  streamCommunityResultsAssets(@Res() response: Response): void {
+    response.setHeader('Content-Type', 'application/json; charset=utf-8');
+    response.setHeader('Cache-Control', 'no-store, max-age=0');
+    response.sendFile(this.resolveScriptFile('community-results-assets.json'));
+  }
+
   @Get('gift-certificates-admin.js')
   streamGiftCertificatesAdmin(@Res() response: Response): void {
     const filePath = this.resolveScriptFile('phab-gift-certificates-admin.js');

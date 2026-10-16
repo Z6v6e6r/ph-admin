@@ -7623,6 +7623,341 @@
     document.head.appendChild(style);
   }
 
+  function communityResultsExportOptions(period, from, to, places) {
+    if (['month', 'week', 'all', 'custom'].indexOf(period) < 0) {
+      throw new Error('Выберите период.');
+    }
+    places = Number(places);
+    if (!Number.isInteger(places) || places < 1 || places > 50) {
+      throw new Error('Количество мест — целое число от 1 до 50.');
+    }
+    var options = { period: period, places: places };
+    if (period === 'custom') {
+      [from, to].forEach(function (value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+            !Number.isFinite(Date.parse(value + 'T00:00:00Z')) ||
+            new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) !== value) {
+          throw new Error('Укажите корректные даты начала и окончания.');
+        }
+      });
+      if (from > to) throw new Error('Дата окончания не может быть раньше даты начала.');
+      options.from = from;
+      options.to = to;
+    }
+    return options;
+  }
+
+  function communityResultsExportRows(payload, communityId, options) {
+    if (!payload || String(payload.communityId) !== String(communityId) ||
+        payload.period !== options.period || payload.degraded === true ||
+        !Number.isFinite(Date.parse(payload.dataAsOf)) ||
+        (options.period === 'custom' && (payload.from !== options.from || payload.to !== options.to)) ||
+        !Array.isArray(payload.rows)) {
+      throw new Error('Сервер не вернул рейтинг за выбранный период. Выгрузка отменена.');
+    }
+    return payload.rows.slice(0, options.places).map(function (row) {
+      var score = row.score;
+      if (typeof row.name !== 'string' || !row.name.trim() || typeof score !== 'number' ||
+          !Number.isFinite(score) || !Number.isInteger(row.rank) || row.rank < 1) {
+        throw new Error('В рейтинге отсутствуют имя или очки. Выгрузка отменена.');
+      }
+      var result = { name: row.name, score: score, rank: row.rank };
+      if (options.details === 'templates-v1' && row.statistics) {
+        var played = row.statistics.tournamentsPlayed;
+        var won = row.statistics.tournamentsWon;
+        if ([played, won].some(function (value) {return value !== null && (!Number.isInteger(value) || value < 0);}) ||
+            (played !== null && won !== null && won > played)) throw new Error('Некорректная статистика турниров.');
+        result.statistics = {tournamentsPlayed: played, tournamentsWon: won};
+      }
+      return result;
+    });
+  }
+
+  var communityTemplateLoads = {};
+  function loadCommunityResultsTemplates(baseUrl) {
+    var base = String(baseUrl).replace(/\/+$/, '');
+    if (!communityTemplateLoads[base]) {
+      var ready = window.PHABCommunityResultsTemplates ? Promise.resolve() : new Promise(function (resolve, reject) {
+        var script = document.createElement('script');
+        var timer = setTimeout(function () {script.remove(); reject(new Error('Не удалось загрузить шаблоны.'));}, 15000);
+        script.src = base + '/client-script/community-results-templates.js';
+        script.onload = function () {clearTimeout(timer); script.remove(); resolve();};
+        script.onerror = function () {clearTimeout(timer); script.remove(); reject(new Error('Не удалось загрузить шаблоны.'));};
+        document.head.appendChild(script);
+      });
+      communityTemplateLoads[base] = ready.then(async function () {
+        var abort = new AbortController();
+        var timer = setTimeout(function () {abort.abort();}, 15000);
+        try {
+          var response = await fetch(base + '/client-script/community-results-assets.json', {credentials: 'omit', cache: 'no-store', signal: abort.signal});
+          if (!response.ok) throw new Error('Не удалось загрузить оформление шаблонов.');
+          var assets = await response.json();
+          var renderer = window.PHABCommunityResultsTemplates;
+          if (!renderer || typeof renderer.render !== 'function' || assets.version !== 'vnd-results-templates-v1') throw new Error('Версия шаблонов недоступна.');
+          return {renderer: renderer, assets: assets};
+        } finally {clearTimeout(timer);}
+      }).catch(function (error) {delete communityTemplateLoads[base]; throw error;});
+    }
+    return communityTemplateLoads[base];
+  }
+
+  function createCommunityResultsExportDialog(community, loadRanking, loadTemplates) {
+    var opener = document.activeElement;
+    var dialog = document.createElement('dialog');
+    dialog.className = 'phab-community-results-export';
+    dialog.setAttribute('aria-label', 'Выгрузить результаты сообщества');
+    dialog.innerHTML = '<style>' +
+      '.phab-community-results-export{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-height:90vh;overflow:auto;border:1px solid #eadce5;border-radius:20px;padding:24px;color:#330020;background:#fff;font-family:inherit}' +
+      '.phab-community-results-export::backdrop{background:#21001588}' +
+      '.phab-community-results-export header{display:flex;align-items:start;justify-content:space-between;gap:16px}' +
+      '.phab-community-results-export h2{margin:0;font-size:22px}' +
+      '.phab-community-results-export p{font-size:14px;line-height:1.5}' +
+      '.phab-community-results-export form{display:grid;gap:16px}' +
+      '.phab-community-results-export label{display:grid;gap:6px;font-size:14px;min-width:0}' +
+      '.phab-community-results-export input,.phab-community-results-export select{box-sizing:border-box;width:100%;min-width:0;padding:10px;border:1px solid #d8c6d0;border-radius:10px;background:#fff;color:#330020;font:inherit}' +
+      '.phab-community-results-export .phab-results-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}' +
+      '.phab-community-results-export [hidden]{display:none!important}' +
+      '.phab-community-results-export canvas{display:block;width:100%;height:auto;border-radius:12px}' +
+      '.phab-community-results-export footer{display:flex;flex-wrap:wrap;gap:10px}' +
+      '.phab-community-results-export button{cursor:pointer;min-width:44px;min-height:44px}' +
+      '.phab-community-results-export nav{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+      '.phab-community-results-export button:disabled{opacity:.5;cursor:default}' +
+      '@media(max-width:480px){.phab-community-results-export{padding:16px}.phab-community-results-export .phab-results-fields{grid-template-columns:1fr}}' +
+      '</style><header><h2>Выгрузить результаты</h2><button type="button" class="phab-admin-modal-close" aria-label="Закрыть выгрузку">×</button></header>' +
+      '<p data-community></p><form><label>Дизайн<select name="template"><option value="light">Светлый</option><option value="dark">Тёмный</option><option value="custom">Загрузить свой фон</option><option value="01_klassika">Классика · 1080×1350</option><option value="02_temnaya_arena">Тёмная арена · 1080×1350</option><option value="03_podium">Подиум · 1080×1350</option><option value="04_tablo">Табло · 1080×1350</option><option value="05_oblozhka">Обложка · 1080×1350</option></select></label>' +
+      '<label data-division hidden>Оформление дивизиона<select name="division"><option value="">Выберите дивизион</option><option value="start">Старт · D</option><option value="rokot">Рокот · D+/C</option><option value="smash">Смэш · C/C+</option></select><small>Подпись и цвет макета, не фильтр игроков. Выбирайте оформление своего сообщества.</small></label>' +
+      '<label data-upload hidden>Фон PNG, JPEG или WebP (до 10 МБ)<input name="background" type="file" accept="image/png,image/jpeg,image/webp"></label>' +
+      '<div class="phab-results-fields"><label>Количество мест<input name="places" type="number" min="1" max="50" step="1" value="10" required></label>' +
+      '<label>Период<select name="period"><option value="month">Текущий месяц</option><option value="week">Текущая неделя</option><option value="all">Всё время</option><option value="custom">Дата от — до</option></select></label></div>' +
+      '<div class="phab-results-fields" data-dates hidden><label>Дата от<input name="from" type="date"></label><label>Дата до<input name="to" type="date"></label></div>' +
+      '<p>Календарные периоды — по Москве, неделя с понедельника. Обе даты диапазона включаются. Фон остаётся в браузере.</p>' +
+      '<p role="status" aria-live="polite" data-status>Выберите параметры и сформируйте изображение.</p>' +
+      '<canvas hidden aria-label="Предпросмотр результатов"></canvas>' +
+      '<nav data-pages hidden aria-label="Страницы выгрузки"><button type="button" data-prev-page aria-label="Предыдущая страница">←</button> <span data-page-label aria-live="polite"></span> <button type="button" data-next-page aria-label="Следующая страница">→</button></nav>' +
+      '<small>Брендированные макеты: до 10 мест на изображение. PNG скачивается для выбранной страницы. Победы — первые места в турнирах по каноническому рейтингу. Недоступные сведения о турах и перемещениях не показываются.</small>' +
+      '<footer><button class="phab-admin-btn" type="submit">Сформировать</button><button class="phab-admin-btn-secondary" type="button" data-download disabled>Скачать PNG</button></footer></form>';
+    document.body.appendChild(dialog);
+    dialog.querySelector('[data-community]').textContent = String(community.name || 'Сообщество');
+    var form = dialog.querySelector('form');
+    var template = form.elements.template;
+    var period = form.elements.period;
+    var canvas = dialog.querySelector('canvas');
+    var status = dialog.querySelector('[data-status]');
+    var download = dialog.querySelector('[data-download]');
+    var submit = form.querySelector('[type="submit"]');
+    var revision = 0;
+    var closed = false;
+    var background = null;
+    var pendingImage = null;
+    var objectUrl = null;
+    var pageCanvases = [];
+    var pageIndex = 0;
+    var pagesNav = dialog.querySelector('[data-pages]');
+    function isPreset() {return /^(01_klassika|02_temnaya_arena|03_podium|04_tablo|05_oblozhka)$/.test(template.value);}
+    function showPage() {
+      var page = pageCanvases[pageIndex];
+      if (!page) return;
+      canvas.width = page.width; canvas.height = page.height;
+      canvas.getContext('2d').drawImage(page, 0, 0);
+      dialog.querySelector('[data-page-label]').textContent = 'Страница ' + (pageIndex + 1) + ' из ' + pageCanvases.length;
+      dialog.querySelector('[data-prev-page]').disabled = pageIndex === 0;
+      dialog.querySelector('[data-next-page]').disabled = pageIndex === pageCanvases.length - 1;
+    }
+    dialog.querySelector('[data-prev-page]').onclick = function () {if (pageIndex > 0) {pageIndex--; showPage();}};
+    dialog.querySelector('[data-next-page]').onclick = function () {if (pageIndex + 1 < pageCanvases.length) {pageIndex++; showPage();}};
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      revision++;
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      if (pendingImage) pendingImage.src = '';
+      pageCanvases = [];
+      dialog.close();
+      dialog.remove();
+      if (opener && opener.isConnected) opener.focus();
+    }
+    function invalidate() {
+      revision++;
+      download.disabled = true;
+      canvas.hidden = true;
+      pageCanvases = [];
+      pageIndex = 0;
+      pagesNav.hidden = true;
+      submit.disabled = false;
+      status.textContent = 'Параметры изменены. Сформируйте изображение.';
+      dialog.querySelector('[data-upload]').hidden = template.value !== 'custom';
+      dialog.querySelector('[data-division]').hidden = !isPreset();
+      form.elements.division.required = isPreset();
+      dialog.querySelector('[data-dates]').hidden = period.value !== 'custom';
+      form.elements.from.required = period.value === 'custom';
+      form.elements.to.required = period.value === 'custom';
+    }
+    form.addEventListener('input', invalidate);
+    form.addEventListener('change', invalidate);
+    form.elements.background.addEventListener('change', function () {
+      background = null;
+      if (pendingImage) pendingImage.src = '';
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      var file = form.elements.background.files[0];
+      if (!file) return;
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 10 * 1024 * 1024) {
+        status.textContent = 'Выберите PNG, JPEG или WebP размером до 10 МБ.';
+        return;
+      }
+      var image = new Image();
+      pendingImage = image;
+      objectUrl = window.URL.createObjectURL(file);
+      image.onload = function () {
+        if (closed || pendingImage !== image) return;
+        if (image.naturalWidth * image.naturalHeight > 16000000) {
+          status.textContent = 'Фон слишком большой: максимум 16 мегапикселей.';
+          return;
+        }
+        background = image;
+        status.textContent = 'Фон загружен. Сформируйте изображение.';
+      };
+      image.onerror = function () {
+        if (!closed && pendingImage === image) status.textContent = 'Не удалось прочитать изображение фона.';
+      };
+      image.src = objectUrl;
+    });
+    function fitText(ctx, text, x, y, maxWidth, size) {
+      text = String(text);
+      ctx.font = '700 ' + size + 'px sans-serif';
+      while (ctx.measureText(text).width > maxWidth && text.length > 1) text = text.slice(0, -2) + '…';
+      ctx.fillText(text, x, y);
+    }
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var current = ++revision;
+      download.disabled = true;
+      canvas.hidden = true;
+      pagesNav.hidden = true;
+      pageCanvases = [];
+      try {
+        var options = communityResultsExportOptions(period.value, form.elements.from.value, form.elements.to.value, form.elements.places.value);
+        var preset = isPreset();
+        var chosenTemplate = template.value;
+        var division = form.elements.division.value;
+        if (preset && ['start', 'rokot', 'smash'].indexOf(division) < 0) throw new Error('Выберите оформление дивизиона.');
+        if (preset) options.details = 'templates-v1';
+        if (template.value === 'custom' && !background) throw new Error('Сначала загрузите фон.');
+        submit.disabled = true;
+        status.textContent = 'Загружаем результаты…';
+        var payload = await loadRanking(options);
+        if (closed || current !== revision) return;
+        var rows = communityResultsExportRows(payload, community.id, options);
+        if (!rows.length) throw new Error('За выбранный период результатов нет.');
+        if (preset) {
+          if (!loadTemplates) throw new Error('Шаблоны не подключены.');
+          status.textContent = 'Отрисовываем шаблон…';
+          var library = await loadTemplates();
+          if (closed || current !== revision) return;
+          var chunks = library.renderer.paginate(rows);
+          var rendered = [];
+          var presetPeriodLabel = options.period === 'all' ? 'Всё время' : options.period === 'month' && payload.rangeFrom
+            ? new Date(payload.rangeFrom).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow', month: 'long', year: 'numeric'})
+            : options.period === 'custom' ? options.from.split('-').reverse().join('.') + ' — ' + options.to.split('-').reverse().join('.')
+            : payload.rangeFrom && payload.rangeToExclusive
+              ? new Date(payload.rangeFrom).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow'}) + ' — ' + new Date(Date.parse(payload.rangeToExclusive) - 1).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow'})
+              : 'Выбранный период';
+          for (var page = 0; page < chunks.length; page++) {
+            rendered.push(await library.renderer.render({design: chosenTemplate, division: division, rows: chunks[page],
+              communityName: String(community.name || 'Сообщество'), periodLabel: presetPeriodLabel, dataAsOf: payload.dataAsOf,
+              page: page, pageCount: chunks.length}, library.assets));
+            if (closed || current !== revision) return;
+          }
+          pageCanvases = rendered;
+          pageIndex = 0;
+          showPage();
+          pagesNav.hidden = chunks.length < 2;
+          canvas.hidden = false;
+          download.disabled = false;
+          status.textContent = 'Готово. Показано мест: ' + rows.length + '. Страниц PNG: ' + chunks.length + '.';
+          return;
+        }
+        canvas.width = 1080;
+        canvas.height = Math.max(1080, 430 + rows.length * 84);
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Браузер не поддерживает создание изображения.');
+        var dark = template.value === 'dark' || template.value === 'custom';
+        ctx.fillStyle = dark ? '#250019' : '#fff5fa';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (template.value === 'custom') {
+          var scale = Math.max(canvas.width / background.naturalWidth, canvas.height / background.naturalHeight);
+          var width = background.naturalWidth * scale;
+          var height = background.naturalHeight * scale;
+          ctx.drawImage(background, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+          ctx.fillStyle = '#16000fc9';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.fillStyle = dark ? '#83e5cb' : '#007f6a';
+        fitText(ctx, 'ПАДЛХАБ · РЕЗУЛЬТАТЫ', 64, 90, 950, 26);
+        ctx.fillStyle = dark ? '#ffffff' : '#330020';
+        fitText(ctx, community.name || 'Сообщество', 64, 160, 950, 42);
+        var labels = { month: 'Текущий месяц', week: 'Текущая неделя', all: 'Всё время' };
+        var periodLabel = options.period === 'custom' ? options.from + ' — ' + options.to : labels[options.period];
+        fitText(ctx, periodLabel + ' · Москва', 64, 215, 950, 26);
+        ctx.font = '22px sans-serif';
+        ctx.fillText('МЕСТО', 64, 288);
+        ctx.fillText('ИГРОК', 186, 288);
+        ctx.textAlign = 'right';
+        ctx.fillText('ОЧКИ', 1016, 288);
+        ctx.textAlign = 'left';
+        rows.forEach(function (row, index) {
+          var y = 310 + index * 84;
+          ctx.fillStyle = dark ? '#ffffff18' : '#3300200b';
+          ctx.fillRect(48, y, 984, 72);
+          ctx.fillStyle = dark ? '#ffffff' : '#330020';
+          fitText(ctx, row.rank, 72, y + 47, 94, 30);
+          fitText(ctx, row.name, 186, y + 47, 620, 30);
+          ctx.textAlign = 'right';
+          fitText(ctx, row.score.toLocaleString('ru-RU'), 1008, y + 47, 170, 30);
+          ctx.textAlign = 'left';
+        });
+        ctx.fillStyle = dark ? '#ffffffaa' : '#33002099';
+        var dataAsOf = new Date(payload.dataAsOf).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+        fitText(ctx, 'Данные на ' + dataAsOf + ' · Москва', 64, canvas.height - 38, 950, 20);
+        canvas.hidden = false;
+        download.disabled = false;
+        status.textContent = 'Готово. Показано мест: ' + rows.length + '. Данные на ' + dataAsOf + ' (Москва).';
+      } catch (error) {
+        if (!closed && current === revision) status.textContent = error.message || 'Не удалось сформировать результаты.';
+      } finally {
+        if (!closed && current === revision) submit.disabled = false;
+      }
+    });
+    download.addEventListener('click', function () {
+      var current = revision;
+      var fileName = 'community-results-' + period.value + (isPreset() ? '-' + template.value + '-' + form.elements.division.value + '-p' + String(pageIndex + 1).padStart(2, '0') : '') + '.png';
+      canvas.toBlob(function (blob) {
+        if (closed || current !== revision) return;
+        if (!blob) { status.textContent = 'Не удалось создать PNG. Повторите попытку.'; return; }
+        var url = window.URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 1000);
+      }, 'image/png');
+    });
+    dialog.querySelector('header button').addEventListener('click', close);
+    dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+    dialog.addEventListener('keydown', function (event) { event.stopPropagation(); });
+    dialog.addEventListener('click', function (event) {
+      if (event.target !== dialog) return;
+      var rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+    });
+    dialog.showModal();
+    template.focus();
+    return { close: close };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -8293,6 +8628,15 @@
             '/ranking?' +
             params.toString()
         );
+      },
+      exportCommunityResults: function (communityId, query) {
+        var params = new URLSearchParams();
+        params.set('period', String(query.period));
+        params.set('places', String(query.places));
+        if (query.from) params.set('from', String(query.from));
+        if (query.to) params.set('to', String(query.to));
+        if (query.details === 'templates-v1') params.set('details', query.details);
+        return request('/communities/' + encodeURIComponent(communityId) + '/results-export?' + params.toString(), 'GET');
       },
       updateCommunity: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId), 'PATCH', payload);
@@ -27750,6 +28094,14 @@
       });
     }
 
+    var communityResultsExportDialog = null;
+    function openCommunityResultsExport(community) {
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
+      communityResultsExportDialog = createCommunityResultsExportDialog(community, function (options) {
+        return api.exportCommunityResults(community.id, options);
+      }, function () {return loadCommunityResultsTemplates(cfg.apiBaseUrl);});
+    }
+
     function getSelectedCommunity() {
       if (!state.selectedCommunityId) {
         return null;
@@ -32820,6 +33172,13 @@
           function () {
             openCommunitySettingsFromModeration(community.id);
           }
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          'Выгрузить результаты',
+          'phab-admin-community-main-action phab-admin-community-main-action-accent',
+          function () { openCommunityResultsExport(community); }
         )
       );
       dom.communityActions.appendChild(
@@ -39909,6 +40268,7 @@
 
     function destroy() {
       trafficPane.setActive(false);
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }
