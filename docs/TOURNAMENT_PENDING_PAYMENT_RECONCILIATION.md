@@ -2,6 +2,10 @@
 
 This is a mandatory pre-deploy gate before enforcing the new bound tournament payment lifecycle.
 The command is dry-run by default and never calls Viva or changes MongoDB.
+`TOURNAMENTS_MONGODB_DB` is now mandatory: there is no implicit `ph_admin` or
+generic `MONGODB_DB` fallback in this recovery command. Before running, independently
+verify that the explicit database, URI and collection match the admitted runtime.
+The report echoes only database/collection names, never the URI or credentials.
 
 ```bash
 npm run tournaments:pending-payments:reconcile
@@ -36,8 +40,14 @@ npm run tournaments:pending-payments:reconcile -- \
   --apply
 ```
 
-The script validates every decision and uses an element-level CAS over state plus local/provider
-identities. It stops on a changed or already reconciled record. It does not infer paid state, delete
+The script validates the entire plan before writing and each decision again on apply.
+It checks the approved element fingerprint, rejects duplicate matching elements,
+and atomically matches the document ID plus the complete pending-array preimage.
+Concurrent field edits, sibling insertion/removal or reordering cause a CAS failure;
+their state is not overwritten. A stopped batch may have applied earlier decisions:
+retain its plan and reconcile readback before preparing a new one; it is not an
+all-or-nothing batch transaction.
+It stops on a changed or already reconciled record. It does not infer paid state, delete
 records, or release a potentially paid seat.
 `BOOKING_CREATION_IN_PROGRESS` is a valid capacity-holding subscription recovery state. Resolve it
 only from exact Viva booking evidence; neither this tool nor an automatic retry replays the provider write.
@@ -54,5 +64,32 @@ authorized operator step before deploying this code. Before approval, run the re
 covers duplicate rejection and mixed array elements. Sparse indexing is required here so unresolved
 array elements without a provider identity do not produce a conflicting `null` key. This PR does
 not create or change any live Mongo index.
-After apply, rerun dry-run; deployment remains blocked until `count` is zero and paid replacements
-have been finalized through the normal idempotent recovery path.
+## Report interpretation and unresolved active records
+
+The report now inventories every retained pending entry, including active states,
+terminal entries still retained in the array, malformed records and non-array
+pending storage. `count` is the number of reported rows, not a deployment gate or
+a number of payable/retryable transactions. `readyForDeployment` is always false:
+even an empty report cannot attest target identity, indexes, durability or acceptance.
+
+`ACTIVE_PAYMENT_BINDING_INCOMPLETE` means that a `PENDING_PAYMENT` entry lacks
+binding fields required for review. It is visible but deliberately not accepted by
+`--apply`: capture its exact protected preimage and independently attribute provider
+evidence, then prepare a separately reviewed record-specific repair. Without that
+evidence leave it explicitly unresolved and holding capacity. Never convert it to
+FAILED/EXPIRED or issue a replacement POST merely to clear the report. This command
+does not provide a generic malformed-active-state repair or an operator UI.
+
+After any apply, rerun dry-run and verify each approved transition and unchanged
+unresolved attempt; finalize paid replacements through the normal idempotent path.
+An owner must review the retained active/recovery queue independently of installation.
+Use `reasonCode`, `state`, masked phone and hashed local/provider IDs to triage;
+protected raw identifiers must come from authorized readback, not a public report.
+
+LOCAL/CI regression includes target refusal before connection, malformed-active
+reporting, successful physical Mongo apply, replay rejection, concurrent nested-field
+change, concurrent sibling insertion and duplicate-element rejection. Run the physical
+test only against an explicitly owned disposable replica set via
+`RECONCILIATION_MONGODB_TEST_URI`; it creates and drops a randomly named synthetic DB.
+Live inspection, index provisioning, actual repair and provider evidence remain
+separate operational actions. These tests do not establish them.
