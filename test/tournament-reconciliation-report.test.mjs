@@ -25,3 +25,29 @@ test('report retains malformed active attempts and makes zero count non-authorit
   assert.equal(empty.count, 0);
   assert.equal(empty.readyForDeployment, false);
 });
+
+for (const [kind, state] of [
+  ['object', { phone: '70000000001', checkoutUrl: 'https://pay.example/private-checkout' }],
+  ['array', ['70000000001', 'https://pay.example/private-checkout']],
+  ['unknown string', '70000000001 https://pay.example/private-checkout']
+]) {
+  test(`report does not echo a malformed ${kind} state`, () => {
+    const payment = { transactionId: 'synthetic-attempt', phone: '70000000002', state };
+    const report = recovery.buildPendingReport([
+      { id: 'cup', details: { booking: { pendingJoinPayments: [payment] } } }
+    ], { databaseName: 'test_db', collectionName: 'custom_tournaments' });
+    assert.equal(report.count, 1, 'Malformed state must not hide its record');
+    assert.equal(report.rows[0].state, null);
+    assert.equal(report.rows[0].expectedFingerprint, recovery.pendingFingerprint(payment));
+    assert.doesNotMatch(JSON.stringify(report), /70000000001|70000000002|private-checkout|pay\.example/);
+  });
+}
+
+test('report preserves only known active and terminal state labels', () => {
+  const states = ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN', 'PENDING_PAYMENT',
+    'BOOKING_CREATION_IN_PROGRESS', 'PAID_PENDING_FINALIZATION', 'EXPIRED', 'FAILED'];
+  const report = recovery.buildPendingReport([{ id: 'cup', details: { booking: {
+    pendingJoinPayments: states.map(state => ({ transactionId: state, phone: '70000000001', state }))
+  } } }], { databaseName: 'test_db', collectionName: 'custom_tournaments' });
+  assert.deepEqual(report.rows.map(row => row.state), states);
+});

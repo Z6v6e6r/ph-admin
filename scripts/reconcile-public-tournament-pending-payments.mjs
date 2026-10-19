@@ -12,6 +12,7 @@ const ACTIVE_STATES = new Set([
   'BOOKING_CREATION_IN_PROGRESS',
   'PAID_PENDING_FINALIZATION'
 ]);
+const REPORTABLE_STATES = new Set([...ACTIVE_STATES, 'EXPIRED', 'FAILED']);
 export const LEGACY_REQUIRED_RESOLUTION =
   'PAID_BOUND or leave unresolved; UNPAID is not terminal';
 
@@ -195,7 +196,7 @@ export function buildPendingReport(documents, target) {
         providerTransactionIdHash: typeof record?.providerTransactionId === 'string'
           ? pendingFingerprint(record.providerTransactionId).slice(0, 16) : null,
         phoneMasked: maskPhone(String(record?.phone ?? '')),
-        state: record?.state ?? null,
+        state: typeof record?.state === 'string' && REPORTABLE_STATES.has(record.state) ? record.state : null,
         expectedFingerprint: pendingFingerprint(payment ?? null),
         reasonCode: 'PENDING_RECORD_REQUIRES_REVIEW',
         requiredResolution: 'MANUAL_BINDING_REVIEW; NO AUTOMATIC RETRY OR RELEASE'
