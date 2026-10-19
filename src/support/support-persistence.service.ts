@@ -470,6 +470,24 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
     const limit = Math.min(Math.max(Math.floor(query.limit ?? 20), 1), 100);
     const clientsById = new Map<string, TimestampedEntity<SupportClientProfile>>();
+    const strictBindings = new Map<string, string>();
+    const checkStrictBinding = (client: SupportClientProfile): void => {
+      const binding = JSON.stringify({
+        authStatus: client.authStatus,
+        primaryPhone: client.primaryPhone ?? null,
+        phones: [...new Set(client.phones)].sort(),
+        emails: [...new Set(client.emails)].sort(),
+        identities: [...new Set(client.identities.map((identity) => JSON.stringify([
+          identity.connector, identity.externalUserId ?? null, identity.externalChatId ?? null,
+          identity.externalThreadId ?? null
+        ])))].sort()
+      });
+      const previous = strictBindings.get(client.id);
+      if (previous !== undefined && previous !== binding) {
+        throw new Error('Support identity lookup snapshots conflict');
+      }
+      strictBindings.set(client.id, binding);
+    };
 
     for (const backend of activeBackends) {
       const lookups: Array<Promise<SupportClientProfile[]>> = [];
@@ -552,6 +570,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       const lookupResults = await Promise.all(lookups);
       for (const clients of lookupResults) {
         for (const client of clients) {
+          if (query.requireAllBackends) checkStrictBinding(client);
           this.upsertByTimestamp(
             clientsById,
             client.id,
@@ -559,6 +578,17 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
             this.resolveClientTimestamp(client)
           );
         }
+      }
+    }
+
+    if (query.requireAllBackends && clientsById.size > 0) {
+      // A divergent copy may not match the original identity query at all. Read
+      // every discovered ID across all backends before selecting one full profile.
+      const ids = [...clientsById.keys()];
+      for (const backend of activeBackends) {
+        const copies = await this.collection<SupportClientProfile>(backend, 'clients')
+          .find({ id: { $in: ids } }, { projection: { _id: 0 } }).toArray();
+        for (const copy of copies) checkStrictBinding(copy);
       }
     }
 

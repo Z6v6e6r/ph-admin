@@ -5,7 +5,7 @@ import { Db, MongoClient } from 'mongodb';
 import { SupportConnectorRegistry } from '../src/support/connectors/support-connector.registry';
 import { SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportService } from '../src/support/support.service';
-import { SupportConnectorRoute, SupportMessageKind } from '../src/support/support.types';
+import { SupportClientAuthStatus, SupportConnectorRoute, SupportMessageKind } from '../src/support/support.types';
 
 const aPhone = '70000000001';
 const bPhone = '70000000002';
@@ -184,6 +184,64 @@ async function phase(name: string, prefix: string, expected: ExpectedContact[]):
           dialogId: forwarded.dialog.id, phone, email: 'shared@example.invalid' });
         await settled(client, prefix);
       }
+    } else if (name === 'backend-conflict') {
+      const maxClients = client.db(databaseNames(prefix)[2]).collection('support_clients');
+      const original = await maxClients.findOne({ phones: aPhone });
+      assert.ok(original);
+      for (const conflict of ['unverified-equal', 'unverified-newer', 'other-phone', 'missing-identity', 'wrong-pair']) {
+        const changed = { ...original };
+        if (conflict.startsWith('unverified')) {
+          changed.authStatus = SupportClientAuthStatus.UNVERIFIED;
+          changed.primaryPhone = null;
+          changed.phones = [];
+        } else if (conflict === 'other-phone') {
+          changed.primaryPhone = sharedPhone;
+          changed.phones = [sharedPhone];
+        } else if (conflict === 'missing-identity') {
+          changed.identities = [];
+        } else {
+          changed.identities = original.identities.map((identity: { externalUserId?: string }) =>
+            identity.externalUserId === 'max-a' ? { ...identity, externalChatId: 'wrong-chat' } : identity);
+        }
+        if (conflict !== 'unverified-equal') {
+          changed.updatedAt = new Date(Date.parse(original.updatedAt) + 60_000).toISOString();
+        }
+        const partial = support(persistence);
+        try {
+          await maxClients.replaceOne({ _id: original._id }, changed);
+          await partial.resolveClient({ phone: bPhone });
+          const before = await snapshot(client, prefix);
+          await assert.rejects(persistence.findClients({ connector: SupportConnectorRoute.MAX_BOT,
+            externalUserId: 'max-a', externalChatId: 'max-chat-a', requireAllBackends: true }),
+          /Support identity lookup snapshots conflict/, `Strict lookup must reject ${conflict}`);
+          await assert.rejects(partial.ingestEvent({ connector: SupportConnectorRoute.MAX_BOT,
+            externalUserId: 'max-a', externalChatId: 'max-chat-a', phone: bPhone,
+            kind: SupportMessageKind.CONTACT }),
+          (error: unknown) => (error as { getStatus(): number }).getStatus() === 503);
+          await settled(client, prefix);
+          assert.deepEqual(await snapshot(client, prefix), before);
+          // Legacy read callers retain timestamp-ranked availability; strict ingest does not.
+          assert.ok((await persistence.findClients({ connector: SupportConnectorRoute.MAX_BOT,
+            externalUserId: 'max-a' })).length > 0);
+        } finally {
+          partial.onModuleDestroy();
+          await maxClients.replaceOne({ _id: original._id }, original);
+        }
+      }
+      try {
+        await maxClients.replaceOne({ _id: original._id }, { ...original,
+          displayName: 'Updated display only', updatedAt: new Date(Date.parse(original.updatedAt) + 60_000).toISOString(),
+          identities: [...original.identities].reverse().map(identity => ({ ...identity,
+            displayName: 'Updated identity label', lastSeenAt: new Date().toISOString() })) });
+        const before = await snapshot(client, prefix);
+        const coherent = await persistence.findClients({ connector: SupportConnectorRoute.MAX_BOT,
+          externalUserId: 'max-a', externalChatId: 'max-chat-a', requireAllBackends: true });
+        assert.equal(coherent.length, 1, 'Non-security metadata and identity order may differ');
+        assert.equal(coherent[0].id, original.id);
+        assert.deepEqual(await snapshot(client, prefix), before);
+      } finally {
+        await maxClients.replaceOne({ _id: original._id }, original);
+      }
     } else if (name === 'lookup-failure') {
       await service.resolveClient({ phone: bPhone });
       await settled(client, prefix);
@@ -261,7 +319,7 @@ async function main(): Promise<void> {
     assert.equal(typeof (await client.db('admin').command({ hello: 1 })).setName, 'string');
     const pids = new Set<number>();
     let expected: ExpectedContact[] = [];
-    for (const name of ['seed', 'partial-a', 'partial-b', 'reload', 'lookup-failure']) {
+    for (const name of ['seed', 'partial-a', 'partial-b', 'reload', 'backend-conflict', 'lookup-failure']) {
       const result = spawnSync(process.execPath,
         ['-r', 'ts-node/register', __filename, '--phase', name, prefix, JSON.stringify(expected)], {
           cwd: process.cwd(), timeout: 120000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
@@ -289,7 +347,7 @@ async function main(): Promise<void> {
       pids.add(completed.pid);
       console.log(`Support Mongo identity phase passed: ${name} (separate process)`);
     }
-    assert.equal(pids.size, 5);
+    assert.equal(pids.size, 6);
     assert.equal(expected.length, 4);
     console.log('Support contact identity Mongo process-restart tests passed');
   } finally {
