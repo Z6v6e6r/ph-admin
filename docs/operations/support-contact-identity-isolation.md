@@ -14,6 +14,15 @@ one connector identity return 400. A known verified LK/MAX sender with a
 conflicting message phone also returns 400. Existing lookup callers keep their
 availability behavior because strict backend readiness is opt-in.
 
+Event timestamps are not identity versions. Persisted candidates participate in
+owner/pair checks even when a partial cache has an equal or newer timestamp.
+Candidates with the same client ID but inconsistent verification status, primary
+phone, phone set or email set return 503 before cache replacement or writes. A
+lagging UNVERIFIED Mongo row must not downgrade a VERIFIED cached owner, and the
+reverse divergence must not silently promote one. This can temporarily reject
+ingest while asynchronous persistence catches up; it never licenses merging two
+owners or replaying outbound delivery.
+
 The initial phone-based linking flow is preserved when no sender identity is
 known. Already contaminated profiles/messages require a separate authorized
 repair: this guard does not split existing records or alter runtime caches.
@@ -53,7 +62,10 @@ Five separate Node processes seed verified owners, forward contacts with either
 partial cache, reload persisted history, and exercise an actual closed Mongo
 connection plus a missing configured backend. No connector delivery, quick-reply
 worker or real provider runs. The checks cover physical profile copies, dialog
-and message ownership, and unchanged stored state on lookup failure.
+and message ownership, and unchanged stored state on lookup failure. Expected
+shared-contact message IDs cross process boundaries; their exact set, metadata,
+owner and physical MAX-backend location are asserted after reload/reconciliation.
+The fixture cannot pass by iterating over an empty returned message list.
 
 The exact-head workflow runs both this integration test and the focused support
 regressions. `node --test test/support-contact-identity-ci.test.mjs` guards their

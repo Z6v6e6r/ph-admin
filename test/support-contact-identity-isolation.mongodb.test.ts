@@ -16,6 +16,14 @@ const collections = [
   'support_service_messages', 'support_response_metrics', 'support_outbox'
 ];
 
+interface ExpectedContact {
+  id: string;
+  clientId: string;
+  dialogId: string;
+  phone: string;
+  email: string;
+}
+
 function testUri(): string {
   const raw = process.env.SUPPORT_IDENTITY_MONGODB_TEST_URI;
   assert.ok(raw, 'SUPPORT_IDENTITY_MONGODB_TEST_URI is required; there is no live/default fallback');
@@ -75,7 +83,7 @@ async function settled(client: MongoClient, prefix: string): Promise<void> {
   assert.fail('Support fixture did not reach a stable persisted state');
 }
 
-async function assertOwners(persistence: SupportPersistenceService): Promise<void> {
+async function assertOwners(persistence: SupportPersistenceService, expected: ExpectedContact[]) {
   const state = await persistence.loadState();
   assert.equal(state.clients.length, 2, 'A and B must remain two persisted clients');
   const a = state.clients.find(client => client.phones.includes(aPhone));
@@ -99,15 +107,24 @@ async function assertOwners(persistence: SupportPersistenceService): Promise<voi
     assert.equal(state.dialogs.find(dialog => dialog.id === message.dialogId)?.clientId, owner.id,
       JSON.stringify({ message, dialogs: state.dialogs }));
   }
-  for (const message of state.messages.filter(item => item.meta?.sharedContact)) {
+  const shared = state.messages.filter(item => item.meta?.sharedContact);
+  assert.deepEqual(shared.map(message => message.id).sort(), expected.map(message => message.id).sort(),
+    'Every returned shared-contact message must actually persist, including after process restart');
+  for (const contact of expected) {
+    const message = shared.find(item => item.id === contact.id);
+    assert.ok(message, `Missing persisted shared contact ${contact.id}`);
     assert.equal(message.clientId, a.id);
+    assert.equal(message.clientId, contact.clientId);
+    assert.equal(message.dialogId, contact.dialogId);
     assert.equal(message.phone, aPhone);
     assert.ok(message.email == null, 'A shared contact email must not become sender identity');
+    assert.deepEqual(message.meta?.sharedContact, { phone: contact.phone, email: contact.email });
     assert.equal(state.dialogs.find(dialog => dialog.id === message.dialogId)?.clientId, a.id);
   }
+  return [a, b];
 }
 
-async function phase(name: string, prefix: string): Promise<void> {
+async function phase(name: string, prefix: string, expected: ExpectedContact[]): Promise<void> {
   const uri = testUri();
   databaseNames(prefix);
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 2000 });
@@ -138,6 +155,7 @@ async function phase(name: string, prefix: string): Promise<void> {
       }
     } else if (name === 'reload') {
       await service.hydrateFromPersistence();
+      (service as unknown as { reconcileState(): void }).reconcileState();
       const a = await service.resolveClient({ phone: aPhone });
       const b = await service.resolveClient({ phone: bPhone });
       assert.ok(a.client);
@@ -161,6 +179,9 @@ async function phase(name: string, prefix: string): Promise<void> {
         assert.equal(forwarded.message?.phone, aPhone);
         assert.equal(forwarded.message?.email, undefined);
         assert.deepEqual(forwarded.message?.meta?.sharedContact, { phone, email: 'shared@example.invalid' });
+        assert.ok(forwarded.message);
+        expected.push({ id: forwarded.message.id, clientId: forwarded.client.id,
+          dialogId: forwarded.dialog.id, phone, email: 'shared@example.invalid' });
         await settled(client, prefix);
       }
     } else if (name === 'lookup-failure') {
@@ -189,20 +210,40 @@ async function phase(name: string, prefix: string): Promise<void> {
         (error: unknown) => (error as { getStatus(): number }).getStatus() === 503);
       await settled(client, prefix);
       assert.deepEqual(await snapshot(client, prefix), before);
-      console.log(`SUPPORT_IDENTITY_PHASE:${JSON.stringify({ name, pid: process.pid })}`);
+      console.log(`SUPPORT_IDENTITY_PHASE:${JSON.stringify({ name, pid: process.pid, expected })}`);
       return;
     } else {
       assert.fail('Unknown test phase');
     }
     await settled(client, prefix);
-    await assertOwners(persistence);
+    const owners = await assertOwners(persistence, expected);
     // Check each physical backend copy, not only loadState's deduplicated view.
     for (const db of databaseNames(prefix)) {
       const clients = await client.db(db).collection('support_clients').find({}).toArray();
       assert.equal(clients.length, 2);
-      assert.ok(clients.every(item => item.phones.length === 1));
+      for (const owner of owners) {
+        const actual = clients.find(item => item.id === owner.id);
+        assert.ok(actual);
+        assert.deepEqual(actual.phones, owner.phones);
+        const identities = (values: typeof owner.identities) => values.map(identity =>
+          [identity.connector, identity.externalUserId, identity.externalChatId].join(':')).sort();
+        assert.deepEqual(identities(actual.identities), identities(owner.identities));
+      }
+      for (const contact of expected) {
+        const message = await client.db(db).collection('support_messages').findOne({ id: contact.id });
+        if (db.endsWith('_max')) {
+          assert.ok(message, `Missing contact in physical MAX backend: ${contact.id}`);
+          assert.equal(message.clientId, contact.clientId);
+          assert.equal(message.dialogId, contact.dialogId);
+          assert.deepEqual(message.meta.sharedContact, { phone: contact.phone, email: contact.email });
+          const dialog = await client.db(db).collection('support_dialogs').findOne({ id: contact.dialogId });
+          assert.equal(dialog?.clientId, contact.clientId);
+        } else {
+          assert.equal(message, null, 'A shared contact must not be written to an unrelated backend');
+        }
+      }
     }
-    console.log(`SUPPORT_IDENTITY_PHASE:${JSON.stringify({ name, pid: process.pid })}`);
+    console.log(`SUPPORT_IDENTITY_PHASE:${JSON.stringify({ name, pid: process.pid, expected })}`);
   } finally {
     service.onModuleDestroy();
     await persistence.onModuleDestroy();
@@ -219,9 +260,10 @@ async function main(): Promise<void> {
     await client.connect();
     assert.equal(typeof (await client.db('admin').command({ hello: 1 })).setName, 'string');
     const pids = new Set<number>();
+    let expected: ExpectedContact[] = [];
     for (const name of ['seed', 'partial-a', 'partial-b', 'reload', 'lookup-failure']) {
       const result = spawnSync(process.execPath,
-        ['-r', 'ts-node/register', __filename, '--phase', name, prefix], {
+        ['-r', 'ts-node/register', __filename, '--phase', name, prefix, JSON.stringify(expected)], {
           cwd: process.cwd(), timeout: 120000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
           env: {
             PATH: process.env.PATH,
@@ -240,20 +282,27 @@ async function main(): Promise<void> {
       assert.ok(marker, 'A real subprocess must report completion');
       const completed = JSON.parse(marker.slice('SUPPORT_IDENTITY_PHASE:'.length));
       assert.equal(completed.name, name);
+      assert.equal(completed.expected.length, expected.length + (name.startsWith('partial-') ? 2 : 0));
+      expected = completed.expected;
       assert.notEqual(completed.pid, process.pid);
       assert.equal(pids.has(completed.pid), false);
       pids.add(completed.pid);
       console.log(`Support Mongo identity phase passed: ${name} (separate process)`);
     }
     assert.equal(pids.size, 5);
+    assert.equal(expected.length, 4);
     console.log('Support contact identity Mongo process-restart tests passed');
   } finally {
     // Only this invocation's validated, randomly named disposable databases.
-    for (const name of names) await client.db(name).dropDatabase();
-    await client.close();
+    try {
+      for (const name of names) await client.db(name).dropDatabase();
+    } finally {
+      await client.close();
+    }
   }
 }
 
 const phaseIndex = process.argv.indexOf('--phase');
-void (phaseIndex < 0 ? main() : phase(process.argv[phaseIndex + 1], process.argv[phaseIndex + 2]))
+void (phaseIndex < 0 ? main() : phase(process.argv[phaseIndex + 1], process.argv[phaseIndex + 2],
+  JSON.parse(process.argv[phaseIndex + 3])))
   .catch(error => { console.error(error); process.exitCode = 1; });

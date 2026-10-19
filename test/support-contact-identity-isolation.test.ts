@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { SupportConnectorRegistry } from '../src/support/connectors/support-connector.registry';
 import { SupportClientLookupQuery, SupportPersistedState, SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportService } from '../src/support/support.service';
-import { SupportConnectorRoute, SupportMessageKind } from '../src/support/support.types';
+import { SupportClientAuthStatus, SupportConnectorRoute, SupportMessageKind } from '../src/support/support.types';
 
 class Persistence {
   state: SupportPersistedState = { clients: [], dialogs: [], messages: [], responseMetrics: [], outbox: [] };
@@ -118,6 +118,80 @@ async function main() {
           kind: SupportMessageKind.CONTACT }), (error: any) => error.getStatus() === 503);
         assert.deepEqual(partialPersistence.state, beforeFailure);
       } finally { partial.onModuleDestroy(); }
+    }
+
+    for (const timestampOffset of [0, 60_000]) {
+      const versionedPersistence = new Persistence();
+      versionedPersistence.state = structuredClone(seeded);
+      const versioned = service(versionedPersistence);
+      try {
+        const cachedA = structuredClone(seeded.clients.find(client => client.id === a.client.id)!);
+        cachedA.identities = cachedA.identities.filter(identity => identity.connector !== SupportConnectorRoute.MAX_BOT);
+        cachedA.updatedAt = new Date(Date.parse(cachedA.updatedAt) + timestampOffset).toISOString();
+        const cache = versioned as unknown as { cacheClientFromPersistence(client: typeof a.client): Promise<unknown> };
+        await cache.cacheClientFromPersistence(cachedA);
+        await cache.cacheClientFromPersistence(seeded.clients.find(client => client.id === b.client.id)!);
+        const forwarded = await versioned.ingestEvent({ connector: SupportConnectorRoute.MAX_BOT,
+          externalUserId: 'max-a', externalChatId: 'max-chat-a', phone: bPhone,
+          kind: SupportMessageKind.CONTACT });
+        assert.equal(forwarded.client.id, a.client.id,
+          `Persisted identity must not be hidden by cache timestamp offset ${timestampOffset}`);
+        assert.deepEqual(forwarded.client.phones, [aPhone]);
+        const persistedB = versionedPersistence.state.clients.find(client => client.id === b.client.id)!;
+        assert.deepEqual(persistedB, seeded.clients.find(client => client.id === b.client.id));
+        assert.equal(versionedPersistence.state.clients.length, 2);
+      } finally { versioned.onModuleDestroy(); }
+    }
+
+    for (const conflict of ['other-owner', 'different-pair']) {
+      const conflictingPersistence = new Persistence();
+      conflictingPersistence.state = structuredClone(seeded);
+      const conflicting = service(conflictingPersistence);
+      try {
+        const cached = structuredClone(seeded.clients.find(client =>
+          client.id === (conflict === 'other-owner' ? b.client.id : a.client.id))!);
+        const senderIdentity = structuredClone(seeded.clients.find(client => client.id === a.client.id)!
+          .identities.find(identity => identity.externalUserId === 'max-a')!);
+        if (conflict === 'other-owner') cached.identities.push(senderIdentity);
+        else cached.identities.find(identity => identity.externalUserId === 'max-a')!.externalChatId = 'wrong-chat';
+        cached.updatedAt = new Date(Date.parse(cached.updatedAt) + 60_000).toISOString();
+        await (conflicting as unknown as { cacheClientFromPersistence(client: typeof a.client): Promise<unknown> })
+          .cacheClientFromPersistence(cached);
+        const before = structuredClone(conflictingPersistence.state);
+        await assert.rejects(conflicting.ingestEvent({ connector: SupportConnectorRoute.MAX_BOT,
+          externalUserId: 'max-a', externalChatId: 'max-chat-a', phone: bPhone,
+          kind: SupportMessageKind.CONTACT }), (error: any) => error.getStatus() === 400);
+        assert.deepEqual(conflictingPersistence.state, before);
+      } finally { conflicting.onModuleDestroy(); }
+    }
+
+    for (const divergence of ['persisted-unverified', 'persisted-other-phone', 'cached-unverified']) {
+      const laggingPersistence = new Persistence();
+      laggingPersistence.state = structuredClone(seeded);
+      const lagging = service(laggingPersistence);
+      try {
+        const cachedA = structuredClone(seeded.clients.find(client => client.id === a.client.id)!);
+        const persistedA = laggingPersistence.state.clients.find(client => client.id === a.client.id)!;
+        const unverified = divergence === 'cached-unverified' ? cachedA : persistedA;
+        if (divergence === 'persisted-other-phone') {
+          persistedA.primaryPhone = otherPhone;
+          persistedA.phones = [otherPhone];
+        } else {
+          unverified.authStatus = SupportClientAuthStatus.UNVERIFIED;
+          unverified.primaryPhone = undefined;
+          unverified.phones = [];
+        }
+        const cache = lagging as unknown as { cacheClientFromPersistence(client: typeof a.client): Promise<unknown> };
+        await cache.cacheClientFromPersistence(cachedA);
+        await cache.cacheClientFromPersistence(seeded.clients.find(client => client.id === b.client.id)!);
+        const before = structuredClone(laggingPersistence.state);
+        await assert.rejects(lagging.ingestEvent({ connector: SupportConnectorRoute.MAX_BOT,
+          externalUserId: 'max-a', externalChatId: 'max-chat-a', phone: bPhone,
+          kind: SupportMessageKind.CONTACT }), (error: any) => error.getStatus() === 503,
+          `Ambiguous auth/phone state must fail closed: ${divergence}`);
+        assert.deepEqual(laggingPersistence.state, before);
+        assert.deepEqual((lagging as unknown as { clients: Map<string, typeof cachedA> }).clients.get(cachedA.id), cachedA);
+      } finally { lagging.onModuleDestroy(); }
     }
 
     const beforePairFailures = structuredClone(persistence.state);

@@ -1718,6 +1718,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (!supplied.length) return null;
 
     // A cached phone owner cannot prove that the sender identity is absent in Mongo.
+    const persistedCandidates: SupportClientProfile[] = [];
     try {
       for (const value of new Set(supplied.map((field) => dto[field]!))) {
         const persisted = await this.persistence.findClients({
@@ -1730,40 +1731,67 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         if (persisted.length >= 100) {
           throw new ServiceUnavailableException('Support identity lookup is ambiguous');
         }
-        for (const client of persisted) {
-          const cached = this.clients.get(client.id);
-          if (!cached || this.toTimestamp(client.updatedAt) > this.toTimestamp(cached.updatedAt)) {
-            await this.cacheClientFromPersistence(client);
-          }
-        }
+        persistedCandidates.push(...persisted.map((client) => this.normalizeLoadedClient(client)));
       }
     } catch {
       throw new ServiceUnavailableException('Support identity lookup is unavailable');
     }
 
+    // Event timestamps are not versions. Validate every persisted candidate before
+    // replacing any cache entry; neither a newer cache nor a refresh may hide a conflict.
+    const candidates = [...this.clients.values(), ...persistedCandidates];
     const owners: SupportClientProfile[] = [];
     for (const field of supplied) {
       const value = dto[field];
       const otherField = field === 'externalUserId' ? 'externalChatId' : 'externalUserId';
-      const matches = Array.from(this.clients.values()).filter((client) =>
+      const matches = candidates.filter((client) =>
         client.identities.some((identity) => identity.connector === dto.connector && identity[field] === value)
       );
-      const crossed = Array.from(this.clients.values()).filter((client) =>
+      const crossed = candidates.filter((client) =>
         client.identities.some((identity) => identity.connector === dto.connector && identity[otherField] === value)
       );
-      if (matches.length > 1 || crossed.some((client) => !matches.some((match) => match.id === client.id))) {
+      if (new Set(matches.map((client) => client.id)).size > 1 ||
+        crossed.some((client) => !matches.some((match) => match.id === client.id))) {
         throw new BadRequestException('Support identity fields conflict');
       }
-      if (matches[0]) owners.push(matches[0]);
+      owners.push(...matches);
     }
     if (!owners.length) return null;
     if (owners.some((owner) => owner.id !== owners[0].id)) {
       throw new BadRequestException('Support user and chat identities belong to different clients');
     }
-    const owner = owners[0];
-    if (!owner.identities.some((identity) => identity.connector === dto.connector &&
-      supplied.every((field) => identity[field] === dto[field]))) {
+    const ownerId = owners[0].id;
+    const hasPair = (client: SupportClientProfile) => client.identities.some((identity) =>
+      identity.connector === dto.connector && supplied.every((field) => identity[field] === dto[field]));
+    const owner = persistedCandidates.find((client) => client.id === ownerId && hasPair(client)) ??
+      candidates.find((client) => client.id === ownerId && hasPair(client));
+    const conflictingPair = supplied.length > 1 && candidates.some((client) =>
+      client.id === ownerId && client.identities.some((identity) =>
+        identity.connector === dto.connector &&
+        supplied.some((field) => identity[field] === dto[field]) &&
+        !supplied.every((field) => identity[field] === dto[field])));
+    if (!owner || conflictingPair) {
       throw new BadRequestException('Support user and chat identity pair conflicts');
+    }
+    const identityBinding = (client: SupportClientProfile) => JSON.stringify({
+      authStatus: client.authStatus,
+      primaryPhone: client.primaryPhone ?? null,
+      phones: [...new Set(client.phones)].sort(),
+      emails: [...new Set(client.emails)].sort()
+    });
+    if (candidates.some((client) => client.id === ownerId &&
+      identityBinding(client) !== identityBinding(owner))) {
+      // Persistence is asynchronous and event timestamps are not versions. Do not
+      // downgrade, upgrade or combine conflicting identity bindings during ingest.
+      throw new ServiceUnavailableException('Support identity binding is inconsistent');
+    }
+    if (persistedCandidates.includes(owner)) {
+      try {
+        // Use one complete persisted profile, not a timestamp-ranked mix of identities.
+        return await this.cacheClientFromPersistence(owner);
+      } catch {
+        throw new ServiceUnavailableException('Support identity lookup is unavailable');
+      }
     }
     return owner;
   }
