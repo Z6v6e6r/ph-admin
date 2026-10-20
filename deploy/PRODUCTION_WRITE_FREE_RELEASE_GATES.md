@@ -83,3 +83,60 @@ Capture Mongo collection counters/fingerprints and provider/outbound-call
 counters before and after both phases. The release is write-free only when all
 in-scope deltas are zero and the exact candidate/rollback identities remain
 unchanged.
+
+## Opt-in maintenance bootstrap (preparation, not deployment admission)
+
+`PHAB_RELEASE_MAINTENANCE_ENABLED=true` selects a minimal startup graph instead
+of `AppModule`: the existing auth and client-script modules, system/UI
+controllers and roles guard. Business, provider and background-worker modules
+are not instantiated. The selector defaults to `false`; any other value than
+trimmed/case-normalized `true` or `false` fails startup. This is a process-start
+setting, not a request/header toggle.
+
+Maintenance requires all ten runtime-gate values above explicitly, including
+`TOURNAMENTS_VIVA_STATUS_SYNC_INTERVAL_MS=0`. Before listening, bootstrap awaits
+auth persistence readiness and the Nest lifecycle, and requires persistent
+auth, enforced staff tokens and a configured non-default admin signing secret.
+Auth persistence shares one initialization between readiness and the lifecycle
+hook. Production index checks remain read-only; users/roles are not seeded.
+This introduces no credential, role, index or database-configuration change.
+
+The fence runs before body parsing, CORS, guards and controllers. Only exact
+GET/HEAD paths are admitted:
+
+- `/api/health`
+- `/api/auth/me`
+- `/api/ui/admin`
+- `/api/client-script/admin-panel.js`
+- `/api/client-script/gift-certificates-admin.js`
+- `/api/client-script/referral-links-admin.js`
+
+Other requests receive HTTP503 with `code=RELEASE_MAINTENANCE`, no-store and
+correlation/release-mode headers. This includes login/logout, OPTIONS,
+callbacks, queue pulls and the **mutating GET** tournament payment return
+(`paymentsuccess=true`). The admin shell may load while its business requests
+are unavailable; this is degraded containment, not normal product acceptance.
+No successful callback acknowledgment or upstream retry is manufactured.
+
+**Do not activate this profile until callback/in-flight custody is admitted.**
+An outbound support/Telegram outbox is not an inbound retry queue. Where a
+bridge acknowledges upstream before CUP accepts the event, rejecting that
+event can lose delivery. A disk Node-RED snapshot or an anonymous GET `/flows`
+returning401 does not attest the deployed graph or a drain. Require exact
+active ingress/ack/retry evidence and an approved loss-safe transition. Do not
+invent an inbox, replay provider writes or change Node-RED/routing to bypass
+this gate.
+
+The profile alone is not a switch/recovery executor, an attested rollback
+artifact, Node executable custody, pre/post smoke evidence or zero-write
+production proof. All preceding gates still apply. In particular, do not
+restart the legacy tournament payment writer after newer attempt states have
+been written; a read-only recovery runtime must itself be fully admitted.
+
+Flag owner/purpose: CUP release owner (Alexey), bounded R1 deployment/recovery
+containment. Activation requires the admitted maintenance window; deactivation
+requires callback/in-flight recovery, post-smoke and explicit reopening
+admission. No automatic reopening. Review/remove after R1 production acceptance
+before reuse for another release. With the selector absent/false, the normal
+application graph, parsers, prefix, CORS, validation and listen settings remain
+selected.
