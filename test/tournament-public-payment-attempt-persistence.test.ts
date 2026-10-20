@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { MongoClient } from 'mongodb';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
 
 interface CapturedCall {
@@ -7,7 +8,51 @@ interface CapturedCall {
   options: Record<string, unknown>;
 }
 
+async function verifyExplicitClientWriteConcern(): Promise<void> {
+  const envKeys = ['TOURNAMENTS_MONGODB_URI', 'MONGODB_URI', 'TOURNAMENTS_MONGODB_DB'] as const;
+  const previousEnv = new Map(envKeys.map((key) => [key, process.env[key]]));
+  const originalConnect = MongoClient.prototype.connect;
+  const clients: MongoClient[] = [];
+  const connectionIntercepted = new Error('Options-only test: do not connect');
+  MongoClient.prototype.connect = async function () {
+    clients.push(this);
+    throw connectionIntercepted;
+  };
+  try {
+    for (const [uriKey, query] of [
+      ['TOURNAMENTS_MONGODB_URI', ''],
+      ['TOURNAMENTS_MONGODB_URI', '?w=1&journal=false'],
+      ['MONGODB_URI', '?w=0&journal=false']
+    ] as const) {
+      delete process.env.TOURNAMENTS_MONGODB_URI;
+      delete process.env.MONGODB_URI;
+      process.env[uriKey] = 'mongodb:' + '//127.0.0.1:1/' + query;
+      process.env.TOURNAMENTS_MONGODB_DB = 'phab_payment_binding_options_only';
+      const repository = new TournamentsPersistenceService();
+      await assert.rejects(
+        () => repository.findCustomTournamentById('options-only'),
+        (error) => error === connectionIntercepted
+      );
+      const client = clients.at(-1);
+      assert.ok(client, 'the real Mongo driver constructor must be exercised');
+      assert.equal(client.options.writeConcern?.w, 'majority', 'payment writes require explicit majority');
+      assert.equal(client.options.writeConcern?.j, true, 'payment acknowledgments must wait for journal');
+      assert.equal(client.options.writeConcern?.wtimeoutMS, 5000, 'replication acknowledgment wait is bounded');
+      await repository.onModuleDestroy();
+    }
+  } finally {
+    MongoClient.prototype.connect = originalConnect;
+    for (const key of envKeys) {
+      const previous = previousEnv.get(key);
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+    await Promise.all(clients.map((client) => client.close()));
+  }
+}
+
 async function main(): Promise<void> {
+  await verifyExplicitClientWriteConcern();
   const calls: CapturedCall[] = [];
   const repository = new TournamentsPersistenceService();
   (repository as unknown as {

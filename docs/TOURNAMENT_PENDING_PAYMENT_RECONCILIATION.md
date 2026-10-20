@@ -7,6 +7,37 @@ generic `MONGODB_DB` fallback in this recovery command. Before running, independ
 verify that the explicit database, URI and collection match the admitted runtime.
 The report echoes only database/collection names, never the URI or credentials.
 
+## Runtime payment acknowledgment policy
+
+`TournamentsPersistenceService` explicitly configures its Mongo client with
+`w: 'majority'`, `j: true` and `wtimeoutMS: 5000`. This applies to its
+`custom_tournaments` mutations, including local attempt reservation, the provider
+POST claim, provider identity/binding, paid evidence and participant finalization.
+The client options override an omitted or weaker URI write concern; this path no
+longer depends on administrative access to inspect the cluster's defaults.
+
+The timeout bounds the server's replication-acknowledgment wait, not the whole
+request or network round trip. It does not cancel or roll back an applied write.
+A write-concern error must propagate rather than become a successful prerequisite
+for a provider POST. An ambiguously recorded claim remains unknown and must not
+permit a new attempt or another POST. An unclaimed saved local attempt can resume
+only through the existing atomic claim, retaining its original local ID.
+
+LOCAL/CI evidence uses the real Mongo driver to check URI-option precedence and
+observes actual application wire commands against the owned replica-set fixture.
+The service regression injects write-concern failures around persistence steps;
+the physical test also injects a lost acknowledgment after a real persisted claim.
+Those injected errors are not a multi-node quorum-outage or production failover
+rehearsal. Deployment must still bind the admitted source/artifact and runtime,
+verify target/index readiness and retain the compatible payment lifecycle.
+
+This runtime client policy does not attest the server's global defaults or other
+Mongo clients. The reconciliation CLI has its own client: any later live `--apply`
+still requires separate write-durability admission, an approved plan and verified
+readback. This change does not authorize or perform legacy-payment repairs.
+
+## Reconciliation command
+
 ```bash
 npm run tournaments:pending-payments:reconcile
 ```

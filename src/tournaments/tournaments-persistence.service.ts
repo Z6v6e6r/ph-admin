@@ -970,7 +970,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       if (!this.connectionPromise) {
         const client = new MongoClient(this.mongoUri, {
           serverSelectionTimeoutMS: 5000,
-          maxPoolSize: 10
+          maxPoolSize: 10,
+          writeConcern: {
+            w: 'majority',
+            j: true,
+            wtimeoutMS: 5000
+          }
         });
         this.client = client;
         this.connectionPromise = client.connect()
