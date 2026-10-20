@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('traffic', ROOT / 'scripts/traffic-edge.py')
@@ -46,12 +47,19 @@ def main(binary):
         target.write_text(traffic.render_policy(empty)[0]); policy.write_text(json.dumps(empty))
         http_config = (ROOT / 'deploy/traffic/http.conf').read_text().replace('/etc/nginx/phab-traffic/policy.conf', str(target)).replace('127.0.0.1:18147', '127.0.0.1:' + str(probe_port))
         server_config = (ROOT / 'deploy/traffic/server.conf').read_text().replace('/var/log/nginx/phab-traffic.jsonl', str(log))
+        quarantine_config = server_config
+        primary_log = root / 'primary-hops.log'
+        server_config += '\naccess_log ' + str(primary_log) + ' fixture_hops;\n'
         exported = root / 'export.json'; exported.write_text('{"minimal":"fixture"}')
         source_config = (ROOT / 'deploy/traffic/replication-source.conf').read_text().replace('/var/lib/phab-traffic-export/policy.json', str(exported))
         reserve_config = (ROOT / 'deploy/traffic/replication-reserve.conf').read_text()
+        # Fixture-only ingress identity, then the same mandatory local quarantine
+        # include used on the primary. Never add this header trust to production.
+        reserve_config = ('set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' +
+                          quarantine_config + '\n' + reserve_config)
         config = root / 'nginx.conf'
         # Only this fixture trusts its local test client as an ingress proxy.
-        temp_paths = 'access_log off; open_file_cache max=100 inactive=10m; open_file_cache_valid 10m;\n' + ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
+        temp_paths = 'log_format fixture_hops "$request_id";\naccess_log off; open_file_cache max=100 inactive=10m; open_file_cache_valid 10m;\n' + ''.join(f'{module}_temp_path {root / module};\n' for module in ['client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'])
         config.write_text('daemon off; worker_processes 1; error_log ' + str(root/'error.log') + '; pid ' + str(root/'nginx.pid') + ';\nevents {worker_connections 128;}\nhttp {\n' + temp_paths + http_config + '\nserver { listen 127.0.0.1:' + str(listen) + '; set_real_ip_from 127.0.0.1; real_ip_header X-Fixture-IP;\n' + server_config + '\nadd_header X-Fixture-Policy $phab_traffic_policy_digest always;\n' + source_config + '\nlocation / { proxy_pass http://127.0.0.1:' + str(upstream.server_port) + '; } }\nserver { listen 127.0.0.1:' + str(reserve_port) + ';\n' + reserve_config + '\nlocation / { proxy_set_header X-Fixture-IP 89.108.64.209; proxy_pass http://127.0.0.1:' + str(listen) + '; } } }')
         base = [binary, '-p', temp, '-c', str(config)]
         checked = subprocess.run(base + ['-t'], capture_output=True, text=True)
@@ -93,11 +101,15 @@ def main(binary):
                 time.sleep(0.1)
             raise RuntimeError('fixture readback mismatch')
         def worker_pids():
-            rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True).splitlines()
-            return {int(parts[0]) for row in rows if len(parts := row.split(None, 2)) == 3
-                    and parts[1] == str(proc.pid) and parts[2].startswith('nginx: worker process')}
+            # This fixture's master spawns only workers. Rosetta/QEMU can hide
+            # nginx's process title, so use parentage, not an args-prefix match.
+            rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid='], text=True).splitlines()
+            return {int(parts[0]) for row in rows if len(parts := row.split()) == 2
+                    and parts[1] == str(proc.pid)}
         def runner(args):
             retiring = worker_pids() if args[-2:] == ['-s', 'reload'] else set()
+            if args[-2:] == ['-s', 'reload']:
+                assert retiring, 'Fixture reload must observe a real worker generation'
             subprocess.run(base + args[1:], check=True, capture_output=True)
             if retiring:
                 # Reload acknowledgement/digest does not drain the previous listener.
@@ -172,6 +184,13 @@ def main(binary):
                     assert request(path, method=method) == 444, (method, path)
                     assert_scope(path, 1, method)
             assert len(received) == before, 'Quarantined community reads reached upstream'
+            primary_before = len(primary_log.read_text().splitlines())
+            backend_before = len(received)
+            for path in cases + community_cases:
+                for method in ['GET', 'HEAD']:
+                    assert request(path, method=method, destination=reserve_port) == 444, ('reserve', method, path)
+            assert len(primary_log.read_text().splitlines()) == primary_before, 'Reserve-blocked requests reached primary'
+            assert len(received) == backend_before, 'Reserve-blocked requests reached backend'
             community_allowed = [
                 '/lk/communities/synthetic/messages', '/lk/communities/synthetic/messages/',
                 '/lk/communities/synthetic/messages/read', '/lk/communities/synthetic/feed/post/comments',
@@ -189,17 +208,22 @@ def main(binary):
                 for method in ['GET', 'HEAD']:
                     assert request(path, method=method) == 200, (method, path)
                     assert_scope(path, 0, method)
+                    assert request(path, method=method, destination=reserve_port) == 200, ('reserve', method, path)
             for path in community_cases:
                 for method in ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']:
                     assert request(path, method=method) == 200, (method, path)
                     assert_scope(path, 0, method)
+                    assert request(path, method=method, destination=reserve_port) == 200, ('reserve', method, path)
                 for ip in ['188.127.235.140', '203.0.113.10']:
                     assert request(path, ip=ip) == 200, (ip, path)
+                    assert request(path, ip=ip, destination=reserve_port) == 200, ('reserve', ip, path)
             for path in ['/lk/games?phone=%2B79990000000', '/lk/games/by-phone?clientId=synthetic',
                          '/lk/games?public=false&clientId=synthetic', '/lk/games/pay_fixture/result/state', '/api/health']:
                 assert request(path) == 200, path
             assert request('/lk/games?public=true', method='POST') == 200
             assert request('/lk/games?public=true', method='OPTIONS') == 200
+            assert last_headers.get('Access-Control-Allow-Origin') == 'https://fixture.invalid'
+            assert request('/lk/games?public=true', method='OPTIONS', destination=reserve_port) == 200
             assert last_headers.get('Access-Control-Allow-Origin') == 'https://fixture.invalid'
             for path in ['/lk/chats', '/lk/subscription-bookings', '/api/payment/fixture']:
                 assert request(path, method='POST') == 200
@@ -209,6 +233,8 @@ def main(binary):
             receipt = traffic.sync_policy(policy, target, root, binary, runner, probe)
             await_public_policy(200, receipt['appliedHash'])
             for path in community_cases: assert request(path) == 200, path
+            for path in cases + community_cases:
+                assert request(path, destination=reserve_port) == 200, ('reserve removal', path)
             # Exercise later generations with the same effective empty/blocked lists.
             # Each sync must acknowledge that revision, not an earlier matching list.
             for revision in range(3, 9):
@@ -253,6 +279,42 @@ def main(binary):
             assert receipt['receivedRevision'] == receipt['appliedRevision'] == 10
             await_public_policy(444, receipt['appliedHash'])
             assert request('/lk/communities/synthetic/feed') == 444
+            # A genuinely unreachable next hop must not affect reserve drops.
+            candidate = config.read_text()
+            hop = 'proxy_pass http://127.0.0.1:' + str(listen) + ';'
+            assert candidate.count(hop) == 1
+            config.write_text(candidate.replace(hop, 'proxy_pass http://127.0.0.1:' + str(port()) + ';'))
+            runner([binary, '-t']); runner([binary, '-s', 'reload']); probe(receipt['appliedHash'])
+            assert request('/health', destination=reserve_port) == 502, 'Offline primary was not exercised'
+            primary_before = len(primary_log.read_text().splitlines())
+            backend_before = len(received)
+            for path in ['/lk/games?public=true', '/lk/communities/synthetic/feed']:
+                for method in ['GET', 'HEAD']:
+                    assert request(path, method=method, destination=reserve_port) == 444
+            assert len(primary_log.read_text().splitlines()) == primary_before
+            assert len(received) == backend_before
+            config.write_text(candidate)
+            runner([binary, '-t']); runner([binary, '-s', 'reload']); probe(receipt['appliedHash'])
+            # Advance only the isolated policy clock; a failed transfer must still
+            # expire the last accepted rules and reload actual nginx on both hops.
+            original_render = traffic.render_policy
+            after_expiry = dt.datetime.fromisoformat(blocked['rules'][0]['expiresAt']) + dt.timedelta(seconds=1)
+            def unavailable_source(): raise OSError('fixture source unavailable')
+            with patch.object(traffic, 'render_policy', side_effect=lambda value, now=None: original_render(value, after_expiry)):
+                try:
+                    replica.replica_sync(policy, target, root, fetch=unavailable_source,
+                        sync=lambda *args: traffic.sync_policy(*args, binary, runner, probe))
+                except RuntimeError as error:
+                    assert str(error) == 'replica_failed_check_receipts'
+                else:
+                    raise AssertionError('Fetch failure was hidden')
+            expired = json.loads((root / 'replica-status.json').read_text())
+            assert expired['receivedRevision'] == expired['appliedRevision'] == 10
+            assert expired['fetchError'] == 'replica_fetch_failed' and expired['applyError'] is None
+            assert json.loads(policy.read_text()) == snapshot, 'Failure changed the accepted watermark'
+            for destination in [listen, reserve_port]:
+                for path in ['/lk/games?public=true', '/lk/communities/synthetic/feed']:
+                    assert request(path, destination=destination) == 200, ('expiry', destination, path)
         finally:
             subprocess.run(base + ['-s', 'quit'], check=False, capture_output=True)
             proc.wait(timeout=10); upstream.shutdown()
@@ -266,7 +328,7 @@ def main(binary):
         assert report['blocked'] == blocked_responses
         assert report['quarantined']['203.0.113.9']['blocked'] == blocked_responses
         db.close()
-        print('nginx e2e passed: community aliases/normalized paths, zero upstream calls, protected/ordinary IPs, chats/mutations/OPTIONS, scope readback/rollback, policy removal, sanitized logs and collector')
+        print('nginx e2e passed: primary/reserve zero-hop drops, community scope, ACL/CORS/mutations, offline primary, replica receipt/expiry under failed transfer, scope rollback, sanitized logs and collector')
 
 
 if __name__ == '__main__': main(sys.argv[1])

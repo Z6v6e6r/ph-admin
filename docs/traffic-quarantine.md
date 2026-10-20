@@ -189,10 +189,15 @@ private read/POST/OPTIONS, reload/readback/removal, sanitized logs и actual agg
 и `sourceGeneratedAt`. Каталог `/var/lib/phab-traffic-export` — root:root 0755,
 файл `policy.json` — root:root 0644; исходный файл ЦУП сохраняет прежние права.
 Экспорт проверяет защищённые адреса и монотонность revision. Адреса обоих общих
-прокси `147.45.103.3` и `89.108.64.209` дополнительно запрещены в реплике.
-Эти два адреса нельзя добавлять в ЦУП: существующий writer их специально не
-исключает, а exporter отвергнет такую политику целиком и сохранит прежний snapshot.
-Ошибка экспорта и расхождение revision требуют исправления правила оператором.
+прокси `147.45.103.3` и `89.108.64.209` запрещены согласованно в writer ЦУП,
+основном helper и exporter, включая IPv4-mapped формы после нормализации.
+Такой add отклоняется до изменения policy, revision и audit, а не после сохранения
+несинхронизируемой политики. Перед установкой проверить весь существующий policy,
+включая истёкшие правила, на отсутствие обоих адресов. Если старый writer уже
+сохранил такой адрес, остановить допуск и отдельно разрешить точечное снятие правила
+до установки: новый reader откажется принимать такой policy. Не фильтровать правила
+автоматически, не подменять revision и не очищать snapshot. Ошибка экспорта и
+расхождение revision остаются отдельными причинами отказа допуска.
 
 `replication-source.conf` подключается **только** к HTTPS server `padlhub.su`.
 Точный адрес `/__phab_traffic_policy` отдаёт статический snapshot только соединению
@@ -242,8 +247,16 @@ access_log/CORS/proxy настройки. Проверить 404 на89, зат�
 закрытый location147; проверить TLS fetch с89 и403 с другого IP; получить актуальный
 snapshot на89; `nginx -t → reload → digest`; включить timers; проверить отдельные receipts
 и доступные public health/OPTIONS, затем реальные отбрасывания в sanitized журнале.
-Изолированный nginx e2e проверяет 444 без upstream, HEAD, разрешённый188, приватные
-reads, POST/OPTIONS/CORS, служебный ACL и подмену forwarding headers.
+Изолированный nginx e2e отдельно считает обращения к primary и backend: reserve
+останавливает GET/HEAD расписания/сообществ до обоих следующих hops. Сохраняются
+разрешённые адреса, private reads, мутации, OPTIONS/CORS и deny служебного endpoint.
+Проверяются недоступный primary (разрешённый запрос получает 502, ограниченный —
+444 без следующего hop), removal, scope rollback/reapply и реальный nginx reload
+для expiry при ошибке получения snapshot с управляемым fixture-clock. Это один
+изолированный nginx с двумя listeners, не доказательство двух установленных узлов.
+Fixture доверяет X-Fixture-IP только для тестов; production не получает такой trust.
+При reload fixture ждёт ухода старых workers по parent PID, в том числе под
+Rosetta/QEMU; один digest не является доказательством drain или версии selector.
 
 Откат расширения: остановить новые timers/services; сохранить policy/receipts/logs;
 вернуть только изменённые nginx vhost/includes по CAS preimages, проверить и reload;
