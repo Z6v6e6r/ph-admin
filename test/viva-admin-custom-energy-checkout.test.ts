@@ -118,7 +118,7 @@ async function main(): Promise<void> {
   }) as typeof fetch;
 
   try {
-    const result = await service.createTournamentEnergyCheckout({
+    await assert.rejects(() => service.createTournamentEnergyCheckout({
       clientPhone: '79123456789',
       clientId: 'client-1',
       studioId: 'studio-1',
@@ -129,25 +129,10 @@ async function main(): Promise<void> {
       successUrl: 'https://padlhub.ru/tournaments?paymentsuccess=true',
       failUrl: 'https://padlhub.ru/tournaments?paymentfailed=true',
       productName: 'Энергия турниры'
-    });
+    }), /status 400/);
 
-    assert.equal(transactionBodies.length, 2);
+    assert.equal(transactionBodies.length, 1, 'provider rejection must not trigger a second POST');
     assert.equal(transactionBodies[0]?.successUrl, 'https://padlhub.ru/tournaments?paymentsuccess=true');
-    assert.equal(transactionBodies[1]?.successUrl, undefined);
-    assert.equal(transactionBodies[1]?.clientPhone, '+79123456789');
-    assert.equal(transactionBodies[1]?.paymentMethod, 'SMS');
-    assert.equal(transactionBodies[1]?.discountReason, 'Участие в турнире «Название турнира» 09.05.2026');
-    const products = transactionBodies[1]?.products as Array<Record<string, unknown>>;
-    assert.equal(products[0]?.id, 'energy-product');
-    assert.equal(products[0]?.type, 'SUBSCRIPTION');
-    assert.equal(products[0]?.discount, 1750000);
-    assert.equal(result.clientId, 'client-1');
-    assert.equal(result.productId, 'energy-product');
-    assert.equal(result.transactionId, 'transaction-1');
-    assert.equal(result.subscriptionId, 'subscription-1');
-    assert.equal(result.paymentUrl, 'https://pay.example/admin-energy');
-    assert.equal(result.toPayMinor, 250000);
-    assert.equal(result.paymentExpiresAt, '2026-05-09T07:20:00+03:00');
 
     transactionBodies.length = 0;
     const observedSearchQueries = new Set<string>();
@@ -408,6 +393,7 @@ async function main(): Promise<void> {
     assert.equal(byV1PlusLookupResult.clientId, 'client-by-v1-plus');
     assert.equal(byV1PlusLookupResult.transactionId, 'transaction-by-v1-plus');
     assert.equal(byV1PlusLookupResult.paymentUrl, 'https://pay.example/by-v1-plus');
+
   } finally {
     globalThis.fetch = originalFetch;
   }

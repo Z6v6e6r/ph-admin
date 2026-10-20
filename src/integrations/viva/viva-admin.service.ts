@@ -209,6 +209,12 @@ class VivaAdminHttpError extends Error {
   }
 }
 
+class VivaAdminRequestRejectedError extends BadRequestException {
+  constructor(readonly providerStatus: number, path: string) {
+    super(`Viva CRM request ${path} failed with status ${providerStatus}`);
+  }
+}
+
 interface VivaAdminTransactionResponseParseResult {
   subscriptionId?: string;
   transactionId?: string;
@@ -331,7 +337,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     const request = this.fetchClientCabinetByPhone(normalizedPhone)
       .catch((error) => {
         this.logger.warn(
-          `Failed to resolve Viva client cabinet url for ${normalizedPhone}: ${String(error)}`
+          `Failed to resolve Viva client cabinet url for ${this.maskPhoneForLog(normalizedPhone)}: ${this.summarizeLogError(error)}`
         );
         return { phone: normalizedPhone, status: 'NOT_FOUND' as const };
       })
@@ -949,7 +955,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       });
       if (!response.ok) {
         this.logger.warn(
-          `Viva CRM lookup failed for ${lookupPhone}: ${response.status} ${response.statusText}`
+          `Viva CRM lookup failed for ${this.maskPhoneForLog(lookupPhone)}: ${response.status}`
         );
         continue;
       }
@@ -1019,7 +1025,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       });
       if (!response.ok) {
         this.logger.warn(
-          `Viva end-user profile lookup failed for ${input.phone}: ${response.status} ${response.statusText}`
+          `Viva end-user profile lookup failed for ${this.maskPhoneForLog(input.phone)}: ${response.status}`
         );
         return undefined;
       }
@@ -1027,7 +1033,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       return this.extractProfileLevelLabel(payload);
     } catch (error) {
       this.logger.warn(
-        `Failed to load Viva end-user profile for ${input.phone}: ${String(error)}`
+        `Failed to load Viva end-user profile for ${this.maskPhoneForLog(input.phone)}: ${this.summarizeLogError(error)}`
       );
       return undefined;
     }
@@ -1057,7 +1063,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
         records = this.unwrapRecords(payload);
       } catch (error) {
         this.logger.warn(
-          `Viva admin client search failed for ${queryPhone}: ${String(error)}`
+          `Viva admin client search failed for ${this.maskPhoneForLog(queryPhone)}: ${this.summarizeLogError(error)}`
         );
         continue;
       }
@@ -1435,6 +1441,24 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return message.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Unknown error';
   }
 
+  private summarizeLogError(error: unknown): string {
+    if (error instanceof VivaAdminHttpError || error instanceof VivaAdminRequestRejectedError) {
+      const status = error instanceof VivaAdminHttpError
+        ? error.status
+        : error.providerStatus;
+      return `${error.name}:status=${status}`;
+    }
+    return error instanceof Error && error.name ? error.name : 'UnknownError';
+  }
+
+  private maskPhoneForLog(phone: unknown): string {
+    const normalized = this.normalizePhone(phone);
+    if (!normalized) {
+      return 'phone:invalid';
+    }
+    return `phone:***${normalized.slice(-4)}`;
+  }
+
   private async updateClientCustomField(input: {
     clientId: string;
     field: VivaAdminClientRatingField;
@@ -1522,55 +1546,10 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     const responsePayload = await response.json().catch(() => null);
 
     if (!response.ok) {
-      const responseRecord = this.unwrapRecord(responsePayload);
-      const details = this.pickString(
-        responseRecord
-          ? (
-            responseRecord.message ??
-            responseRecord.error ??
-            responseRecord.description ??
-            responseRecord.detail
-          )
-          : undefined
-      );
-      throw new BadRequestException(
-        details
-          ? `Viva CRM request ${path} failed with status ${response.status}: ${details}`
-          : `Viva CRM request ${path} failed with status ${response.status}`
-      );
+      throw new VivaAdminRequestRejectedError(response.status, path);
     }
 
     return responsePayload;
-  }
-
-  private async createAdminTransactionWithReturnUrlFallback(input: {
-    token: string;
-    baseUrl: string;
-    payload: unknown;
-    fallbackPayload: unknown;
-    hasReturnUrls: boolean;
-  }): Promise<unknown> {
-    try {
-      return await this.fetchAdminJsonWithBody(
-        '/api/v1/transactions',
-        input.token,
-        input.baseUrl,
-        input.payload
-      );
-    } catch (error) {
-      if (!input.hasReturnUrls || !(error instanceof BadRequestException)) {
-        throw error;
-      }
-      this.logger.warn(
-        `Viva admin transaction rejected return URLs, retrying without them: ${String(error)}`
-      );
-      return this.fetchAdminJsonWithBody(
-        '/api/v1/transactions',
-        input.token,
-        input.baseUrl,
-        input.fallbackPayload
-      );
-    }
   }
 
   private async createOrReuseTournamentEnergyCheckout(input: {
@@ -1620,13 +1599,12 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       ...(input.successUrl ? { successUrl: input.successUrl } : {}),
       ...(input.failUrl ? { failUrl: input.failUrl } : {})
     };
-    const responsePayload = await this.createAdminTransactionWithReturnUrlFallback({
-      token: input.token,
-      baseUrl: input.baseUrl,
-      payload,
-      fallbackPayload: basePayload,
-      hasReturnUrls: Boolean(input.successUrl || input.failUrl)
-    });
+    const responsePayload = await this.fetchAdminJsonWithBody(
+      '/api/v1/transactions',
+      input.token,
+      input.baseUrl,
+      payload
+    );
     const parsed = this.parseAdminTransactionResponse(responsePayload);
     return {
       clientId: input.clientId,
@@ -1806,7 +1784,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
 
     this.tokenInflight = this.fetchAccessToken(resolved.config)
       .catch((error) => {
-        this.logger.warn(`Failed to fetch Viva CRM access token: ${String(error)}`);
+        this.logger.warn(`Failed to fetch Viva CRM access token: ${this.summarizeLogError(error)}`);
         return null;
       })
       .finally(() => {
