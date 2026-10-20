@@ -42,6 +42,36 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
           git rev-parse HEAD
           git rev-parse 'HEAD^{tree}'
+      - name: Support contact identity isolation and affected regressions
+        run: |
+          node --test test/support-contact-identity-ci.test.mjs
+          npm run test:support-contact-identity
+          npm run test:support-client-resolve
+          npm run test:support-dialog-resolution
+          npm run test:support-outbox-max-attempts
+      - name: Support contact identity Mongo process-restart regression
+        env:
+          SUPPORT_IDENTITY_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority
+        run: npm run test:support-contact-identity:mongo
+      - name: Tournament payment fail-closed regressions
+        run: |
+          node --test test/tournament-payment-ci.test.mjs
+          npx ts-node test/tournament-public-payment-binding.test.ts
+          npx ts-node test/tournament-public-join-flow.test.ts
+          npx ts-node test/tournament-public-payment-attempt-persistence.test.ts
+          node --test test/tournament-public-pending-reconciliation.test.mjs
+          node --test test/tournament-reconciliation-target.test.mjs test/tournament-reconciliation-report.test.mjs
+          npx ts-node test/viva-admin-payment-log-redaction.test.ts
+          npx ts-node test/viva-admin-custom-energy-checkout.test.ts
+          npx ts-node test/viva-admin-tournament-checkout-reuse.test.ts
+      - name: Tournament payment physical Mongo persistence regression
+        env:
+          TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority
+        run: npx ts-node test/tournament-public-payment-persistence.mongodb.test.ts
+      - name: Tournament reconciliation physical Mongo CAS regression
+        env:
+          RECONCILIATION_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority
+        run: node --test test/tournament-reconciliation.mongodb.test.mjs
       - name: Binding promotion unit and Mongo transaction tests
         env:
           SUBSCRIPTIONS_PROMOTION_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0

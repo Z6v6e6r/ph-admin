@@ -225,7 +225,7 @@ async function main(): Promise<void> {
     [],
     `Production Mongo index guard bypassed by: ${offenders.join(', ')}`
   );
-  assert.equal(guardedCalls, 79, 'all existing runtime Mongo index requests stay guarded');
+  assert.equal(guardedCalls, 80, 'all existing runtime Mongo index requests stay guarded');
 
   const referralSource = fs.readFileSync(
     path.join(sourceRoot, 'referral-links/referral-links.repository.ts'),
