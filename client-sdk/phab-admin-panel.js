@@ -14185,7 +14185,7 @@
       '<h3>Защита истории турниров</h3><p>Оперативные сигналы за последние 10–11 минут, независимо от выбранной даты. Сигнал требует проверки и не добавляет IP в карантин автоматически.</p>' +
       '<p role="status" aria-live="polite" data-traffic-history-status></p><div style="overflow-x:auto" data-traffic-history-signals></div>' +
       '<div style="overflow-x:auto" data-traffic-top></div>' +
-      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников. Сохранённое правило начинает действовать после подтверждения сервером.</p>' +
+      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников, а также ленты и рейтинги сообществ. Статус ниже подтверждает основной вход. Резервный вход проверяется отдельно.</p>' +
       '<p data-traffic-protected></p><div data-traffic-rules></div>' +
       '<form data-traffic-form style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">' +
       '<label class="phab-admin-settings-label">IP<input class="phab-admin-settings-input" required maxlength="45" autocomplete="off" data-traffic-ip></label>' +
@@ -14237,8 +14237,8 @@
         revision = data.policy.revision;
         q('save').disabled = !write || saving;
         q('protected').textContent = 'Разрешённые источники: ' + data.protectedIps.join(', ');
-        q('status').textContent = data.applied ? 'Правила применены. Проверено: ' + time(data.edge.checkedAt) :
-          'Применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
+        q('status').textContent = data.applied ? 'Основной вход: правила применены. Проверено: ' + time(data.edge.checkedAt) :
+          'Основной вход: применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
         var protection = data.historyProtection || { state: 'not_configured' };
         var modes = { off: 'Выключена', shadow: 'Наблюдение: запросы пропускаются', enforce: 'Ограничение частоты включено' };
         var states = { not_configured: 'Мониторинг истории ещё не подключён.', missing: 'Ожидаем первый отчёт защиты истории.',
