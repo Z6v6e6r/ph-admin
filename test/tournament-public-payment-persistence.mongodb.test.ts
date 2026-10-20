@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { MongoClient } from 'mongodb';
+import { MongoClient, MongoWriteConcernError } from 'mongodb';
 import { TournamentsPersistenceService } from '../src/tournaments/tournaments-persistence.service';
 
 async function main(): Promise<void> {
@@ -15,7 +15,10 @@ async function main(): Promise<void> {
   if (!databaseName.startsWith('phab_payment_binding_')) {
     throw new Error('Unsafe test database name');
   }
-  process.env.TOURNAMENTS_MONGODB_URI = mongoUri;
+  const repositoryUri = new URL(mongoUri);
+  repositoryUri.searchParams.set('w', '1');
+  repositoryUri.searchParams.set('journal', 'false');
+  process.env.TOURNAMENTS_MONGODB_URI = repositoryUri.toString();
   process.env.TOURNAMENTS_MONGODB_DB = databaseName;
   process.env.TOURNAMENTS_MONGODB_COLLECTION = collectionName;
 
@@ -121,8 +124,45 @@ async function main(): Promise<void> {
       paymentExpiresAt: new Date(Date.now() + 1_200_000).toISOString()
     };
   };
+  const applicationWrites: Array<{
+    commandName: string;
+    writeConcern?: Record<string, unknown>;
+  }> = [];
+  const assertExplicitWireWriteConcern = () => {
+    assert.ok(applicationWrites.length > 0, 'observe nonempty real application write commands');
+    for (const command of applicationWrites) {
+      assert.deepEqual(
+        command.writeConcern,
+        { w: 'majority', j: true, wtimeout: 5000 },
+        `${command.commandName} must send explicit durable acknowledgment options`
+      );
+    }
+  };
 
   try {
+    const originalConnect = MongoClient.prototype.connect;
+    MongoClient.prototype.connect = async function () {
+      // Enable test-only wire observation before opening this real driver client.
+      Object.assign(this.options, { monitorCommands: true });
+      this.on('commandStarted', (event) => {
+        if (
+          event.databaseName === databaseName
+          && ['insert', 'update', 'delete', 'findAndModify'].includes(event.commandName)
+        ) {
+          applicationWrites.push({
+            commandName: event.commandName,
+            writeConcern: event.command.writeConcern
+          });
+        }
+      });
+      await originalConnect.call(this);
+      return this;
+    };
+    try {
+      await repository.findCustomTournamentById('atomic-payment-cup');
+    } finally {
+      MongoClient.prototype.connect = originalConnect;
+    }
     const [first, second] = await Promise.all([
       repository.reservePublicJoinPayment(
         'atomic-payment-cup',
@@ -134,6 +174,7 @@ async function main(): Promise<void> {
       )
     ]);
     assert.equal([first, second].filter(Boolean).length, 1, 'only one final seat is reserved');
+    assertExplicitWireWriteConcern();
     const storedAfterReserve = await collection.findOne({ id: 'atomic-payment-cup' });
     const storedPending = storedAfterReserve?.details?.booking?.pendingJoinPayments as Array<Record<string, unknown>>;
     assert.equal(storedPending.length, 1);
@@ -334,6 +375,56 @@ async function main(): Promise<void> {
       'provider-attempt-cup', attemptId, '79990003501', new Date().toISOString()
     ), null);
     assert.equal(providerPostCount, postsBeforeBoundRetry, 'bound retry cannot POST');
+
+    await insertPaymentTournament('write-concern-ack-loss-cup');
+    const ackLossAttempt = `tournament-payment:${randomUUID()}`;
+    const ackLossPhone = '79990007301';
+    const ackLossPending = {
+      ...pending(ackLossAttempt, ackLossPhone),
+      state: 'PROVIDER_CREATE_PENDING',
+      operationType: 'TRANSACTION',
+      amountMinor: undefined,
+      eligibilitySnapshot: {
+        ...pending(ackLossAttempt, ackLossPhone).eligibilitySnapshot,
+        activityId: 'write-concern-ack-loss-cup'
+      }
+    };
+    assert.ok(await repository.reservePublicJoinPayment('write-concern-ack-loss-cup', ackLossPending));
+    const originalClaim = repository.claimPublicJoinTransactionCreate;
+    const lostAcknowledgment = new MongoWriteConcernError({
+      ok: 1,
+      writeConcernError: { code: 64, errmsg: 'Injected lost acknowledgment after a real Mongo claim' }
+    });
+    const postsBeforeAckLoss = providerPostCount;
+    repository.claimPublicJoinTransactionCreate = async (...args: Parameters<typeof originalClaim>) => {
+      assert.ok(await originalClaim.apply(repository, args), 'persist the real claim before losing acknowledgment');
+      throw lostAcknowledgment;
+    };
+    try {
+      await assert.rejects(async () => {
+        const claimed = await repository.claimPublicJoinTransactionCreate(
+          'write-concern-ack-loss-cup', ackLossAttempt, ackLossPhone, new Date().toISOString()
+        );
+        if (claimed) syntheticProviderPost();
+      }, (error) => error === lostAcknowledgment);
+    } finally {
+      repository.claimPublicJoinTransactionCreate = originalClaim;
+    }
+    const persistedAfterAckLoss = (await collection.findOne({ id: 'write-concern-ack-loss-cup' }))
+      ?.details?.booking?.pendingJoinPayments?.[0];
+    assert.equal(persistedAfterAckLoss?.transactionId, ackLossAttempt);
+    assert.equal(persistedAfterAckLoss?.state, 'PROVIDER_RESULT_UNKNOWN');
+    assert.ok(persistedAfterAckLoss?.providerCreateAttemptedAt);
+    const retryAfterAckLoss = await restartRepository().claimPublicJoinTransactionCreate(
+      'write-concern-ack-loss-cup', ackLossAttempt, ackLossPhone, new Date().toISOString()
+    );
+    if (retryAfterAckLoss) syntheticProviderPost();
+    assert.equal(retryAfterAckLoss, null, 'an ambiguous persisted claim cannot grant another POST');
+    assert.equal(await repository.reservePublicJoinPayment('write-concern-ack-loss-cup', {
+      ...ackLossPending,
+      transactionId: `tournament-payment:${randomUUID()}`
+    }), null, 'an unknown claim cannot be replaced with a new local attempt');
+    assert.equal(providerPostCount, postsBeforeAckLoss, 'no POST follows a failed or replayed claim acknowledgment');
 
     await insertPaymentTournament('crash-before-claim-cup');
     const beforeClaimAttempt = `tournament-payment:${randomUUID()}`;
@@ -859,6 +950,8 @@ async function main(): Promise<void> {
         status: 'REGISTERED'
       }
     ));
+    assertExplicitWireWriteConcern();
+    console.log(`Explicit majority+j wire concern verified for ${applicationWrites.length} tournament mutations`);
   } finally {
     await Promise.all(restartedRepositories.map((item) => item.onModuleDestroy()));
     await repository.onModuleDestroy();
