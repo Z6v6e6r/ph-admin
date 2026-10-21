@@ -680,6 +680,7 @@ async function verifyControllerAndFilter(): Promise<void> {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
     checked.service,
     {} as any
   );
