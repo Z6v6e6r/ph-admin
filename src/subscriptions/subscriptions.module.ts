@@ -23,6 +23,8 @@ import { SubscriptionActivationDeadlineWorker } from './subscription-activation-
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.service';
 import { SubscriptionSaleBindingService } from './subscription-sale-binding.service';
+import { CanonicalTargetIntakeController } from './canonical-target-intake.controller';
+import { CanonicalTargetIntakeService } from './canonical-target-intake.service';
 import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
 import {
   MongoLk2QuoteDecisionJournalStore,
@@ -38,7 +40,8 @@ import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluato
     SubscriptionsController,
     SubscriptionTestController,
     SubscriptionTrustedShadowController,
-    Lk2QuoteController
+    Lk2QuoteController,
+    CanonicalTargetIntakeController
   ],
   providers: [
     SubscriptionsService,
@@ -54,6 +57,7 @@ import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluato
     SubscriptionPublicationService,
     SubscriptionSaleReadinessService,
     SubscriptionSaleBindingService,
+    CanonicalTargetIntakeService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter,
