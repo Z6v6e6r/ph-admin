@@ -31,6 +31,7 @@
     "test:subscriptions-policy-registry": "ts-node test/subscriptions-policy-registry.test.ts",
     "test:lk2-quote-delegation": "ts-node test/lk2-quote-delegation.verifier.test.ts",
     "test:lk2-quote-receiver": "ts-node test/lk2-quote-receiver.test.ts",
+    "test:subscriptions-active-services-limit": "ts-node test/subscriptions-active-services-limit.test.ts",
     "subscriptions:backup:target-fingerprint": "node scripts/managed-subscriptions-backup.mjs --target-fingerprint",
     "subscriptions:backup:check": "node scripts/managed-subscriptions-backup.mjs --check",
     "subscriptions:backup:create": "node scripts/managed-subscriptions-backup.mjs --create",

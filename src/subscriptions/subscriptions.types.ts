@@ -202,6 +202,7 @@ export interface SubscriptionPolicyVersion {
     enabled: boolean;
     max: number | null;
     scope: ActiveServiceScope;
+    limitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
   };
   bookingWindow?: {
     enabled: boolean;
@@ -1030,6 +1031,7 @@ export interface SubscriptionShadowQuoteResult {
   } | null;
   dailyUsageApplies?: boolean | null;
   dailyLimitExceeded?: boolean | null;
+  activeServicesLimitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | null;
   benefit: SubscriptionShadowQuoteAppliedBenefit | null;
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }

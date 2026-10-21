@@ -55,6 +55,25 @@ export interface SubscriptionEntitlementTransitionResult {
   operationState: StoredSubscriptionRuntimeOperation['state'];
 }
 
+/**
+ * A paid fallback is allowed only when the product rule explicitly says so. The historical
+ * universal special case treated the sole active-services blocker as full price; that is now a
+ * per-policy decision (`activeServicesLimit.limitExceeded`), and a policy that omits it fails
+ * closed to `BLOCK`.
+ */
+export function reservationFallsBackToFullPrice(quote: {
+  readonly eligible: boolean;
+  readonly blockers: readonly { readonly code: string }[];
+  readonly aggregateRevision: number | null;
+  readonly activeServicesLimitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | null;
+}): boolean {
+  if (quote.eligible) return false;
+  if (quote.aggregateRevision === null) return false;
+  if (quote.blockers.length !== 1) return false;
+  if (quote.blockers[0]?.code !== 'ACTIVE_SERVICES_LIMIT_REACHED') return false;
+  return quote.activeServicesLimitExceeded === 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
+}
+
 @Injectable()
 export class SubscriptionEntitlementLifecycleService {
   constructor(
@@ -104,15 +123,14 @@ export class SubscriptionEntitlementLifecycleService {
       const quote = await this.shadowQuote.quote(request);
       const blockerCodes = quote.blockers.map((item) => item.code);
       if (!quote.eligible) {
-        if (blockerCodes.length === 1 && blockerCodes[0] === 'ACTIVE_SERVICES_LIMIT_REACHED'
-          && quote.aggregateRevision !== null) {
+        if (reservationFallsBackToFullPrice(quote)) {
           return {
             schemaVersion: 1,
             outcome: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
             replayed: false,
             operationId: null,
             subscriptionInstanceId: quote.subscriptionInstanceId,
-            aggregateRevision: quote.aggregateRevision,
+            aggregateRevision: quote.aggregateRevision as number,
             operationState: null,
             decision: null,
             blockers: quote.blockers
