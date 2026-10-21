@@ -412,6 +412,7 @@ export class Lk2QuoteReceiverService {
     try {
       await this.options.journal.append({
         decisionId: outcome.decisionId,
+        channel: 'LK2',
         tenantId: delegation.tenantId,
         correlationId,
         action: request.action,

@@ -296,6 +296,7 @@ async function testRegistryReadsPersistedFacts(): Promise<void> {
   assert.equal(item.lastDecision?.usageDelta, 1);
   assert.deepEqual(item.lastQuoteDecision, {
     at: '2026-10-02T10:00:00.000Z',
+    channel: 'LK2',
     outcome: 'RETRY_LATER',
     serviceAllowed: false,
     subscriptionBenefitAllowed: false,

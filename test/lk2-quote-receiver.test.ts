@@ -180,6 +180,7 @@ async function testUncertaintyIsNotAnAllow(): Promise<void> {
   assert.equal(entries.length, 1);
   assert.deepEqual(entries[0], {
     decisionId: outcome.decisionId,
+    channel: 'LK2',
     tenantId,
     correlationId,
     action: 'JOIN_GAME',

@@ -88,6 +88,7 @@ export interface SubscriptionPolicyRegistryItem {
   /** Newest persisted quote decision (evaluation journal), if any instance of this type was quoted. */
   lastQuoteDecision: {
     at: string;
+    channel: 'LK2' | 'LK1' | null;
     outcome: string;
     serviceAllowed: boolean;
     subscriptionBenefitAllowed: boolean;
@@ -272,6 +273,7 @@ export class SubscriptionPolicyRegistryService {
         lastQuoteDecision: context.lastQuoteDecision
           ? {
               at: context.lastQuoteDecision.evaluatedAt,
+              channel: context.lastQuoteDecision.channel ?? 'LK2',
               outcome: context.lastQuoteDecision.outcome,
               serviceAllowed: context.lastQuoteDecision.serviceAllowed,
               subscriptionBenefitAllowed: context.lastQuoteDecision.subscriptionBenefitAllowed,
