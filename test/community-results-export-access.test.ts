@@ -27,7 +27,7 @@ async function main() {
   assert.ok(headers.some((entry: any) => entry.name === 'Cache-Control' && entry.value.includes('no-store')));
   const actualMapper = new CommunitiesPersistenceService() as any;
   const mapped = actualMapper.toCommunity({id:'synthetic-community',name:'Тест',stationId:'station-a'});
-  assert.equal(mapped.stationId,undefined, 'exercise the existing mapper, not an invented station field');
+  assert.equal(mapped.stationId,'station-a', 'the normalized community now preserves its trusted station scope');
   persistence.findCommunityById = async () => mapped;
   const snapshot = buildCommunityRatingSnapshot({communityId:'synthetic-community',facts:[],members:[],period:'all'});
   let exportedCommunity = mapped;

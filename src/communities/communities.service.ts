@@ -1,3 +1,4 @@
+import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import {
   BadRequestException,
   ForbiddenException,
@@ -208,7 +209,21 @@ export class CommunitiesService {
     return buildCommunityResultsExport(id, source, window);
   }
 
-  async update(id: string, mutation: CommunitiesUpdateMutation): Promise<Community> {
+  async update(id: string, mutation: CommunitiesUpdateMutation, user?: RequestUser): Promise<Community> {
+    if (mutation.communityType !== undefined || mutation.typeSettings !== undefined) {
+      if (!user || !user.roles.some(role => role === Role.SUPER_ADMIN || role === Role.MANAGER) ||
+          (user.permissions !== undefined && !hasAdminPermission(user.permissions, 'settings:write'))) {
+        throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+      const current = await this.findById(id);
+      const stationId = current.stationId ?? (typeof current.details?.stationId === 'string' ? current.details.stationId : undefined);
+      const targetStation = mutation.typeSettings?.stationId ?? stationId;
+      const scope = getStationScopeForPermission(user, 'settings:write');
+      if (scope !== null && (!stationId || !scope.includes(stationId) ||
+          (targetStation && !scope.includes(targetStation)))) {
+        throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+    }
     if (!this.communitiesPersistence.isEnabled()) {
       throw new InternalServerErrorException(
         'Communities moderation requires MongoDB source configuration'
@@ -552,6 +567,7 @@ export class CommunitiesService {
   private toPublicCommunityCard(community: Community): CommunityPublicCard {
     return {
       id: community.id,
+      communityType: community.communityType ?? 'FRIENDS',
       slug: community.slug,
       name: community.name,
       description: community.description,
