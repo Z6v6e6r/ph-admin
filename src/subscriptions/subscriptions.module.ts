@@ -17,6 +17,7 @@ import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.se
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionEntitlementLifecycleService } from './subscription-entitlement-lifecycle.service';
 import { SubscriptionRuntimeContextService } from './subscription-runtime-context.service';
+import { SubscriptionPolicyRegistryService } from './subscription-policy-registry.service';
 import { SubscriptionActivationService } from './subscription-activation.service';
 import { SubscriptionActivationDeadlineWorker } from './subscription-activation-deadline.worker';
 import { SubscriptionPublicationService } from './subscription-publication.service';
@@ -38,6 +39,7 @@ import { SubscriptionSaleBindingService } from './subscription-sale-binding.serv
     SubscriptionTrustedShadowAdapterService,
     SubscriptionEntitlementLifecycleService,
     SubscriptionRuntimeContextService,
+    SubscriptionPolicyRegistryService,
     SubscriptionActivationService,
     SubscriptionActivationDeadlineWorker,
     SubscriptionPublicationService,

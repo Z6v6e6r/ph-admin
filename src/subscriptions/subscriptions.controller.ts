@@ -69,6 +69,10 @@ import {
   SubscriptionRuntimeContextResult,
   SubscriptionRuntimeContextService
 } from './subscription-runtime-context.service';
+import {
+  SubscriptionPolicyRegistryResult,
+  SubscriptionPolicyRegistryService
+} from './subscription-policy-registry.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 import {
@@ -306,6 +310,7 @@ export class SubscriptionTrustedShadowController {
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
     private readonly entitlements: SubscriptionEntitlementLifecycleService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
+    private readonly policyRegistry: SubscriptionPolicyRegistryService,
     private readonly activation: SubscriptionActivationService,
     private readonly saleReadinessService: SubscriptionSaleReadinessService,
     private readonly saleBindingService: SubscriptionSaleBindingService
@@ -376,6 +381,17 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
+  }
+
+  @Get('policy-registry')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  registry(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined
+  ): Promise<SubscriptionPolicyRegistryResult> {
+    return this.policyRegistry.read(integrationToken);
   }
 
   @Post('sale-readiness')

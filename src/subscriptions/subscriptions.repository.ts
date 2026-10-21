@@ -1416,6 +1416,59 @@ export class SubscriptionsRepository {
     return this.runtimeInstances().countDocuments({ subscriptionTypeId, policyVersion });
   }
 
+  /**
+   * Read-only aggregate for the operator policy registry. Every value comes from
+   * persisted publication/instance/operation/ledger facts; nothing is inferred
+   * from the caller.
+   */
+  async runtimePolicyRegistryContext(subscriptionTypeId: string): Promise<{
+    instances: {
+      total: number;
+      byPolicyVersion: Array<{ policyVersion: number; count: number }>;
+    };
+    lastLedgerEvent: StoredSubscriptionUsageLedgerEvent | null;
+    lastDecisionOperation: StoredSubscriptionRuntimeOperation | null;
+  }> {
+    this.assertRuntimeContractsEnabled();
+    const instances = await this.runtimeInstances().find(
+      { subscriptionTypeId },
+      { projection: { _id: 0, subscriptionInstanceId: 1, policyVersion: 1 } }
+    ).toArray();
+    const counts = new Map<number, number>();
+    for (const instance of instances) {
+      counts.set(instance.policyVersion, (counts.get(instance.policyVersion) ?? 0) + 1);
+    }
+    const byPolicyVersion = [...counts.entries()]
+      .map(([policyVersion, count]) => ({ policyVersion, count }))
+      .sort((left, right) => left.policyVersion - right.policyVersion);
+    const instanceIds = instances.map((instance) => instance.subscriptionInstanceId);
+    let lastLedgerEvent: StoredSubscriptionUsageLedgerEvent | null = null;
+    let lastDecisionOperation: StoredSubscriptionRuntimeOperation | null = null;
+    if (instanceIds.length > 0) {
+      const ledger = await this.runtimeLedger().find(
+        { subscriptionInstanceId: { $in: instanceIds } },
+        { projection: { _id: 0 } }
+      ).sort({ recordedAt: -1 }).limit(1).toArray();
+      if (ledger[0]) {
+        validateStoredSubscriptionUsageLedgerEvent(ledger[0]);
+        lastLedgerEvent = ledger[0];
+      }
+      const operation = await this.runtimeOperations().find(
+        { subscriptionInstanceId: { $in: instanceIds }, decision: { $ne: null } },
+        { projection: { _id: 0 } }
+      ).sort({ updatedAt: -1 }).limit(1).toArray();
+      if (operation[0]) {
+        validateStoredSubscriptionRuntimeOperation(operation[0]);
+        lastDecisionOperation = operation[0];
+      }
+    }
+    return {
+      instances: { total: instances.length, byPolicyVersion },
+      lastLedgerEvent,
+      lastDecisionOperation
+    };
+  }
+
   async insertRuntimePolicyPublication(
     document: StoredSubscriptionPolicyPublication
   ): Promise<void> {
