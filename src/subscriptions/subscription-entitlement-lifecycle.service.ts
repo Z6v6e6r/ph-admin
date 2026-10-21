@@ -18,6 +18,11 @@ import {
   validateStoredSubscriptionRuntimeOperation
 } from './subscription-runtime-contracts';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
+import {
+  loadOwnerEvidenceConfig,
+  OwnerEvidenceError,
+  verifyOwnerEvidence
+} from './owner-evidence.verifier';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
@@ -219,9 +224,11 @@ export class SubscriptionEntitlementLifecycleService {
   async confirm(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
-    dto: ConfirmSubscriptionEntitlementDto
+    dto: ConfirmSubscriptionEntitlementDto,
+    ownerEvidence?: string
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
+    this.requireOwnerEvidence(dto, ownerEvidence);
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -658,6 +665,43 @@ export class SubscriptionEntitlementLifecycleService {
       aggregateRevision: aggregate?.revision ?? -1,
       operationState: operation.state
     };
+  }
+
+  private requireOwnerEvidence(
+    dto: ConfirmSubscriptionEntitlementDto,
+    ownerEvidence: string | undefined
+  ): void {
+    if (!['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
+    )) {
+      return;
+    }
+    let config;
+    try {
+      config = loadOwnerEvidenceConfig();
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_CONFIG_INVALID',
+        message: 'Owner evidence is not configured'
+      });
+    }
+    try {
+      verifyOwnerEvidence({
+        evidence: ownerEvidence,
+        config,
+        operationId: dto.operationId,
+        providerBookingId: dto.providerBookingId,
+        now: this.now()
+      });
+    } catch (error) {
+      if (error instanceof OwnerEvidenceError) {
+        throw new ForbiddenException({
+          code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
+          message: 'Booking confirmation requires trusted owner evidence'
+        });
+      }
+      throw error;
+    }
   }
 
   private assertEnabled(): void {
