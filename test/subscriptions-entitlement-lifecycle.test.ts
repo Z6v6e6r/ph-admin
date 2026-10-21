@@ -417,6 +417,7 @@ async function testFullPriceFallbackAndGuards(): Promise<void> {
       message: 'limit',
       details: { activeServices: 4, maxActiveServices: 4 }
     }],
+    activeServicesLimitExceeded: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
     decision: null,
     benefit: null
   });
@@ -426,6 +427,23 @@ async function testFullPriceFallbackAndGuards(): Promise<void> {
   assert.equal(fallback.outcome, 'FULL_PRICE_WITHOUT_SUBSCRIPTION');
   assert.equal(fallback.operationId, null);
   assert.equal(repository.reserveCalls, 0);
+
+  // Without an explicit product rule the same blocker fails closed instead of granting a
+  // full-price fallback.
+  shadowQuote.quote = async () => quoteFixture(repository.aggregate, {
+    eligible: false,
+    blockers: [{
+      code: 'ACTIVE_SERVICES_LIMIT_REACHED',
+      message: 'limit',
+      details: { activeServices: 4, maxActiveServices: 4 }
+    }],
+    activeServicesLimitExceeded: 'BLOCK',
+    decision: null,
+    benefit: null
+  });
+  await assert.rejects(service.reserve('Bearer token', 'integration-token', reserveDto(), {
+    idempotencyKey: 'booking-blocked-no-rule-1'
+  }), (error) => error instanceof ConflictException);
 
   shadowQuote.quote = async () => quoteFixture(repository.aggregate, {
     eligible: false,
