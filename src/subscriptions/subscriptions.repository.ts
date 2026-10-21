@@ -1468,6 +1468,24 @@ export class SubscriptionsRepository {
    * persisted publication/instance/operation/ledger facts; nothing is inferred
    * from the caller.
    */
+  async runtimeInstancesByProviderMappingAndClient(input: {
+    tenantId: string;
+    mappingId: string;
+    providerClientId: string;
+  }): Promise<StoredSubscriptionInstance[]> {
+    this.assertRuntimeContractsEnabled();
+    const rows = await this.runtimeInstances().find(
+      {
+        tenantId: input.tenantId,
+        mappingId: input.mappingId,
+        providerClientId: input.providerClientId
+      },
+      { projection: { _id: 0 } }
+    ).sort({ purchasedAt: -1, subscriptionInstanceId: 1 }).toArray();
+    rows.forEach((row) => validateStoredSubscriptionInstance(row));
+    return rows;
+  }
+
   async runtimePolicyRegistryContext(subscriptionTypeId: string): Promise<{
     instances: {
       total: number;

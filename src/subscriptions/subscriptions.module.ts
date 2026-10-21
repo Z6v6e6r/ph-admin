@@ -25,12 +25,12 @@ import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.
 import { SubscriptionSaleBindingService } from './subscription-sale-binding.service';
 import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
 import {
-  Lk2QuoteEvaluationUnavailable,
   MongoLk2QuoteDecisionJournalStore,
   MongoLk2QuoteDelegationReplayStore,
   Lk2QuoteReceiverService
 } from './lk2-runtime/lk2-quote-receiver.service';
 import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation.verifier';
+import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluator';
 
 @Module({
   imports: [AuthModule, LkIdentityModule, VivaAdminModule],
@@ -59,8 +59,16 @@ import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation
     SubscriptionsExceptionFilter,
     {
       provide: Lk2QuoteReceiverService,
-      inject: [SubscriptionsRepository],
-      useFactory: (repository: SubscriptionsRepository) => {
+      inject: [
+        SubscriptionsRepository,
+        SubscriptionCanonicalTargetResolverService,
+        SubscriptionShadowQuoteService
+      ],
+      useFactory: (
+        repository: SubscriptionsRepository,
+        targets: SubscriptionCanonicalTargetResolverService,
+        shadowQuote: SubscriptionShadowQuoteService
+      ) => {
         const enabled = ['1', 'true', 'yes'].includes(
           String(process.env.SUBSCRIPTIONS_LK2_QUOTE_ENABLED ?? '').trim().toLowerCase()
         );
@@ -77,13 +85,7 @@ import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation
           delegationConfig,
           replayStore: new MongoLk2QuoteDelegationReplayStore(repository),
           journal: new MongoLk2QuoteDecisionJournalStore(repository),
-          // The real evaluator over persisted policy/usage is wired separately. Until then the
-          // boundary fails closed with a typed technical-uncertainty outcome, never an allow.
-          evaluator: {
-            evaluate: async () => {
-              throw new Lk2QuoteEvaluationUnavailable('POLICY_UNAVAILABLE');
-            }
-          }
+          evaluator: new Lk2ShadowQuoteEvaluator(repository, targets, shadowQuote)
         });
       }
     }
