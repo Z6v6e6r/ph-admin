@@ -7958,6 +7958,81 @@
     return { close: close };
   }
 
+  // Pure payload builder and DOM editor share the same explicit, additive contract.
+  function communityTypeSettingsPayload(community, type, settings) {
+    var currentType = community.communityType || 'FRIENDS';
+    if (type === currentType && JSON.stringify(settings) === JSON.stringify(community.typeSettings || {})) return {};
+    return { communityType: type, typeSettings: settings, expectedTypeSettingsRevision: community.typeSettingsRevision || 0 };
+  }
+
+  function createCommunityTypeEditor(community, editable) {
+    var root = document.createElement('fieldset');
+    root.className = 'phab-admin-community-form-field-wide';
+    root.disabled = !editable;
+    var legend = document.createElement('legend');
+    legend.textContent = 'Тип сообщества'; root.appendChild(legend);
+    var select = document.createElement('select');
+    select.className = 'phab-admin-input'; select.setAttribute('aria-label', 'Тип сообщества');
+    [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига']].forEach(function (pair) {
+      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
+    });
+    select.value = community.communityType || 'FRIENDS'; root.appendChild(select);
+    var fields = document.createElement('div'); root.appendChild(fields);
+    var hint = document.createElement('p'); hint.textContent = 'Смена типа сохраняет участников и историю. Старые события автоматически не переносятся. Для закрытого сообщества нового типа нужен вход в ЛК; проверьте привязку владельца и участников к аккаунтам Viva.'; root.appendChild(hint);
+    var controls = {}, divisionRows = [];
+    var drafts = {}; drafts[select.value] = community.typeSettings || {};
+    function input(label, value, kind, container) {
+      var wrap = document.createElement('label'); wrap.className = 'phab-admin-community-form-field';
+      var title = document.createElement('span'); title.textContent = label; wrap.appendChild(title);
+      var control = document.createElement('input'); control.className = 'phab-admin-input'; control.type = kind || 'text';
+      control.value = value === undefined ? '' : String(value); control.setAttribute('aria-label', label);
+      if (kind === 'number') { control.min = '0'; control.max = '10'; control.step = '0.01'; }
+      wrap.appendChild(control); (container || fields).appendChild(wrap); return control;
+    }
+    function read() {
+      if (select.value === 'STATION') return { stationId: controls.stationId.value.trim() };
+      function list(control) { return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean); }
+      if (select.value === 'CORPORATE') {
+        var settings = { directionIds: list(controls.directionIds), exerciseTypeIds: list(controls.exerciseTypeIds), categories: list(controls.categories) };
+        if (controls.subscription.value.trim()) settings.vivaSubscriptionId = controls.subscription.value.trim();
+        return settings;
+      }
+      if (select.value === 'LEAGUE') return { divisions: divisionRows.map(function (row) {
+        return { id: row.id, name: row.name.value.trim(), minLevel: row.min.value.trim() === '' ? NaN : Number(row.min.value), maxLevel: row.max.value.trim() === '' ? NaN : Number(row.max.value) };
+      }) };
+      return {};
+    }
+    function addDivision(value) {
+      var row = document.createElement('div'); row.className = 'phab-admin-community-form-grid'; fields.appendChild(row);
+      var entry = { id: value.id, name: input('Название дивизиона', value.name, 'text', row), min: input('Уровень от (включительно)', value.minLevel, 'number', row), max: input('Уровень до', value.maxLevel, 'number', row) };
+      divisionRows.push(entry);
+      var remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Удалить дивизион';
+      remove.className = 'phab-admin-btn-secondary'; remove.addEventListener('click', function () { divisionRows = divisionRows.filter(function (r) { return r !== entry; }); row.remove(); }); row.appendChild(remove);
+    }
+    function render() {
+      fields.textContent = ''; controls = {}; divisionRows = [];
+      var values = drafts[select.value] || {};
+      if (select.value === 'STATION') controls.stationId = input('ID станции Viva', values.stationId || community.stationId || '');
+      if (select.value === 'CORPORATE') {
+        controls.directionIds = input('ID направлений Viva через запятую', (values.directionIds || []).join(', '));
+        controls.exerciseTypeIds = input('ID типов событий Viva через запятую', (values.exerciseTypeIds || []).join(', '));
+        controls.categories = input('Категории: open_game, court_rental, group_training, tournament', (values.categories || []).join(', '));
+        controls.subscription = input('ID специальной подписки Viva (необязательно)', values.vivaSubscriptionId || '');
+        var note = document.createElement('p'); note.textContent = 'События включаются при совпадении любого выбранного направления, типа или категории. Подписка — дополнительная возможность, она не ограничивает членство.'; fields.appendChild(note);
+      }
+      if (select.value === 'LEAGUE') {
+        (values.divisions || [{ id: 'd-d-plus', name: 'D–D+', minLevel: 1.5, maxLevel: 2 }, { id: 'd-plus-c', name: 'D+–C', minLevel: 2, maxLevel: 3 }, { id: 'c-c-plus', name: 'C–C+', minLevel: 3, maxLevel: 3.5 }]).forEach(addDivision);
+        var add = document.createElement('button'); add.type = 'button'; add.className = 'phab-admin-btn-secondary'; add.textContent = 'Добавить дивизион';
+        add.addEventListener('click', function () { if (divisionRows.length < 12) addDivision({ id: 'division-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), name: '', minLevel: '', maxLevel: '' }); }); fields.appendChild(add);
+        var note = document.createElement('p'); note.textContent = 'Границы: D+ = 2, C = 3, C+ = 3.5. Верхняя граница относится к следующему дивизиону; у последнего включается. Прошлые результаты сохраняют свой дивизион.'; fields.appendChild(note);
+      }
+    }
+    var lastType = select.value;
+    select.addEventListener('change', function () { var selected = select.value; select.value = lastType; drafts[lastType] = read(); select.value = selected; lastType = selected; render(); });
+    render();
+    return { element: root, payload: function () { return editable ? communityTypeSettingsPayload(community, select.value, read()) : {}; } };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -32190,6 +32265,9 @@
       form.className = 'phab-admin-community-form-grid';
       settingsCard.body.appendChild(form);
 
+      var typeEditor = createCommunityTypeEditor(community, hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      form.appendChild(typeEditor.element);
+
       var nameInput = document.createElement('input');
       nameInput.className = 'phab-admin-input';
       nameInput.value = String(community.name || '');
@@ -32327,6 +32405,7 @@
           description: String(descriptionInput.value || '').trim(),
           rules: String(rulesInput.value || '').trim()
         });
+        Object.assign(payload, typeEditor.payload());
         if (!Object.keys(payload).length) {
           setStatus('Изменений нет', false);
           return;

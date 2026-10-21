@@ -4,12 +4,29 @@ import {
   IsBoolean,
   IsIn,
   IsOptional,
+  IsObject,
+  IsInt,
+  Min,
   IsString,
   MaxLength
 } from 'class-validator';
+import { COMMUNITY_TYPES, CommunityType, CommunityTypeSettings } from '../community-policy';
 import { CommunityJoinRule, CommunityVisibility } from '../communities.types';
 
 export class UpdateCommunityDto {
+  @IsOptional()
+  @IsIn(COMMUNITY_TYPES)
+  communityType?: CommunityType;
+
+  @IsOptional()
+  @IsObject()
+  typeSettings?: CommunityTypeSettings;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  expectedTypeSettingsRevision?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(160)
