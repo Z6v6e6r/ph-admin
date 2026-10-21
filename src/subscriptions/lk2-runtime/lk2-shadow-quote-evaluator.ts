@@ -104,6 +104,19 @@ function shortPrice(
   return null;
 }
 
+/** Denial outcomes must quote the price without the subscription benefit, never its final price. */
+function fullPrice(target: SubscriptionShadowQuoteResolvedTarget): Lk2QuoteEvaluation['price'] {
+  if (target.basePriceMinor === null) return null;
+  return {
+    priceRevision: target.snapshotRevision ?? 1,
+    basePriceMinor: target.basePriceMinor,
+    discountMinor: 0,
+    surchargeMinor: 0,
+    finalPriceMinor: target.basePriceMinor,
+    currency: 'RUB'
+  };
+}
+
 function limits(result: SubscriptionShadowQuoteResult): Lk2QuoteEvaluation['limits'] {
   return {
     activeServices: result.activeServices,
@@ -310,7 +323,7 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
       subscriptionBenefitAllowed: false,
       selectedSubscription,
       benefit: null,
-      price: shortPrice(result, target),
+      price: fullPrice(target),
       limits: limits(result),
       blockers: mappedBlockers,
       warnings: [],
