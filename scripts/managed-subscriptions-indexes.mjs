@@ -80,6 +80,9 @@ const plan = [
     ['subscription_outbox', { status: 1, nextAttemptAt: 1, createdAt: 1, outboxEventId: 1 }, { name: 'subscription_outbox_delivery' }],
     ['subscription_lk2_delegation_replays', { keyId: 1, jti: 1 }, { unique: true, name: 'subscription_lk2_replay_jti_unique' }],
     ['subscription_lk2_delegation_replays', { expiresAt: 1 }, { name: 'subscription_lk2_replay_expiry_ttl', expireAfterSeconds: 0 }],
+    ['subscription_lk2_quote_decisions', { decisionId: 1 }, { unique: true, name: 'subscription_lk2_decision_id_unique' }],
+    ['subscription_lk2_quote_decisions', { subscriptionInstanceId: 1, recordedAt: -1 }, { name: 'subscription_lk2_decision_instance_time' }],
+    ['subscription_lk2_quote_decisions', { tenantId: 1, recordedAt: -1 }, { name: 'subscription_lk2_decision_tenant_time' }],
     ...(includeInstanceProjectorContractIndexes ? [
       ['subscription_instance_projector_checkpoints', { checkpointId: 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_id_unique' }],
       ['subscription_instance_projector_checkpoints', { tenantId: 1, provider: 1, providerProductId: 1, 'providerScope.kind': 1, 'providerScope.scopeId': 1 }, { unique: true, name: 'subscription_instance_projector_checkpoint_provider_scope_unique' }]

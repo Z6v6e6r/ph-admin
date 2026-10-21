@@ -40,6 +40,7 @@ import {
   StoredSubscriptionTestOffer,
   StoredSubscriptionTestPurchase,
   StoredSubscriptionTestReservation,
+  StoredLk2QuoteDecisionJournalEntry,
   StoredLk2QuoteDelegationReplay,
   StoredSubscriptionType,
   StoredSubscriptionUsageLedgerEvent,
@@ -280,6 +281,23 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
     {
       name: 'subscription_usage_type_time',
       key: { eventType: 1, occurredAt: 1, eventId: 1 },
+      unique: false
+    }
+  ],
+  lk2QuoteDecisions: [
+    {
+      name: 'subscription_lk2_decision_id_unique',
+      key: { decisionId: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_lk2_decision_instance_time',
+      key: { subscriptionInstanceId: 1, recordedAt: -1 },
+      unique: false
+    },
+    {
+      name: 'subscription_lk2_decision_tenant_time',
+      key: { tenantId: 1, recordedAt: -1 },
       unique: false
     }
   ],
@@ -1457,6 +1475,7 @@ export class SubscriptionsRepository {
     };
     lastLedgerEvent: StoredSubscriptionUsageLedgerEvent | null;
     lastDecisionOperation: StoredSubscriptionRuntimeOperation | null;
+    lastQuoteDecision: StoredLk2QuoteDecisionJournalEntry | null;
   }> {
     this.assertRuntimeContractsEnabled();
     const instances = await this.runtimeInstances().find(
@@ -1473,6 +1492,7 @@ export class SubscriptionsRepository {
     const instanceIds = instances.map((instance) => instance.subscriptionInstanceId);
     let lastLedgerEvent: StoredSubscriptionUsageLedgerEvent | null = null;
     let lastDecisionOperation: StoredSubscriptionRuntimeOperation | null = null;
+    let lastQuoteDecision: StoredLk2QuoteDecisionJournalEntry | null = null;
     if (instanceIds.length > 0) {
       const ledger = await this.runtimeLedger().find(
         { subscriptionInstanceId: { $in: instanceIds } },
@@ -1490,11 +1510,17 @@ export class SubscriptionsRepository {
         validateStoredSubscriptionRuntimeOperation(operation[0]);
         lastDecisionOperation = operation[0];
       }
+      const journal = await this.lk2QuoteDecisions().find(
+        { subscriptionInstanceId: { $in: instanceIds } },
+        { projection: { _id: 0 } }
+      ).sort({ recordedAt: -1 }).limit(1).toArray();
+      if (journal[0]) lastQuoteDecision = journal[0];
     }
     return {
       instances: { total: instances.length, byPolicyVersion },
       lastLedgerEvent,
-      lastDecisionOperation
+      lastDecisionOperation,
+      lastQuoteDecision
     };
   }
 
@@ -1517,6 +1543,20 @@ export class SubscriptionsRepository {
       return true;
     } catch (error) {
       if (this.isDuplicateKey(error)) return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Append-only quote decision journal. Duplicate `decisionId` is an idempotent replay and does
+   * not create a second row; any other write failure is surfaced to the caller.
+   */
+  async appendLk2QuoteDecision(entry: StoredLk2QuoteDecisionJournalEntry): Promise<void> {
+    this.assertRuntimeContractsEnabled();
+    try {
+      await this.lk2QuoteDecisions().insertOne({ ...entry });
+    } catch (error) {
+      if (this.isDuplicateKey(error)) return;
       throw error;
     }
   }
@@ -2817,6 +2857,10 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionRuntimeOperation>('subscription_operations');
   }
 
+  private lk2QuoteDecisions(): Collection<StoredLk2QuoteDecisionJournalEntry> {
+    return this.requireDb().collection<StoredLk2QuoteDecisionJournalEntry>('subscription_lk2_quote_decisions');
+  }
+
   private lk2QuoteDelegationReplays(): Collection<StoredLk2QuoteDelegationReplay> {
     return this.requireDb().collection<StoredLk2QuoteDelegationReplay>('subscription_lk2_delegation_replays');
   }
@@ -3054,6 +3098,10 @@ export class SubscriptionsRepository {
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.ledger,
         actual: await this.runtimeLedger().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.lk2QuoteDecisions,
+        actual: await this.lk2QuoteDecisions().listIndexes().toArray()
       },
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.lk2QuoteDelegationReplays,

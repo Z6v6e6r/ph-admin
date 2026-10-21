@@ -83,6 +83,16 @@ export interface SubscriptionPolicyRegistryItem {
     byPolicyVersion: Array<{ policyVersion: number; count: number }>;
   };
   lastDecision: SubscriptionPolicyRegistryLastDecision | null;
+  /** Newest persisted quote decision (evaluation journal), if any instance of this type was quoted. */
+  lastQuoteDecision: {
+    at: string;
+    outcome: string;
+    serviceAllowed: boolean;
+    subscriptionBenefitAllowed: boolean;
+    blockers: string[];
+    policyVersion: number | null;
+    policyDigest: string | null;
+  } | null;
 }
 
 export interface SubscriptionPolicyRegistryResult {
@@ -255,7 +265,18 @@ export class SubscriptionPolicyRegistryService {
         surfaces: deriveSurfaces(publication?.runtimeProjection ?? null),
         versions: registryVersions,
         instances: context.instances,
-        lastDecision: newestDecision(ledger, operation)
+        lastDecision: newestDecision(ledger, operation),
+        lastQuoteDecision: context.lastQuoteDecision
+          ? {
+              at: context.lastQuoteDecision.evaluatedAt,
+              outcome: context.lastQuoteDecision.outcome,
+              serviceAllowed: context.lastQuoteDecision.serviceAllowed,
+              subscriptionBenefitAllowed: context.lastQuoteDecision.subscriptionBenefitAllowed,
+              blockers: [...context.lastQuoteDecision.blockers],
+              policyVersion: context.lastQuoteDecision.policyVersion,
+              policyDigest: context.lastQuoteDecision.policyDigest
+            }
+          : null
       });
     }
     return {

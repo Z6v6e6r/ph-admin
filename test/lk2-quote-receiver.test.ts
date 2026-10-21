@@ -4,10 +4,12 @@ import { Lk2QuoteController } from '../src/subscriptions/lk2-runtime/lk2-quote.c
 import {
   InMemoryLk2QuoteDelegationReplayStore,
   Lk2QuoteEvaluationUnavailable,
+  MongoLk2QuoteDecisionJournalStore,
   MongoLk2QuoteDelegationReplayStore,
   Lk2QuoteReceiverError,
   Lk2QuoteReceiverService,
   parseLk2QuoteRequest,
+  type Lk2QuoteDecisionJournal,
   type Lk2QuoteEvaluator,
 } from '../src/subscriptions/lk2-runtime/lk2-quote-receiver.service';
 import {
@@ -93,12 +95,21 @@ function evaluator(result?: Awaited<ReturnType<Lk2QuoteEvaluator['evaluate']>>):
   };
 }
 
+function journal(entries: Array<Record<string, unknown>> = []): Lk2QuoteDecisionJournal {
+  return {
+    append: async (entry) => {
+      entries.push(entry as unknown as Record<string, unknown>);
+    },
+  };
+}
+
 function receiver(
   overrides: Partial<{
     enabled: boolean;
     token: string;
     evaluator: Lk2QuoteEvaluator;
     replayStore: InMemoryLk2QuoteDelegationReplayStore;
+    journal: Lk2QuoteDecisionJournal;
   }> = {},
 ): Lk2QuoteReceiverService {
   return new Lk2QuoteReceiverService({
@@ -107,6 +118,7 @@ function receiver(
     delegationConfig: config,
     replayStore: overrides.replayStore ?? new InMemoryLk2QuoteDelegationReplayStore(),
     evaluator: overrides.evaluator ?? evaluator(),
+    journal: overrides.journal ?? journal(),
   });
 }
 
@@ -142,7 +154,8 @@ function envelope(values: Partial<{
 }
 
 async function testUncertaintyIsNotAnAllow(): Promise<void> {
-  const outcome = await receiver().receive(envelope());
+  const entries: Array<Record<string, unknown>> = [];
+  const outcome = await receiver({ journal: journal(entries) }).receive(envelope());
   assert.equal(outcome.contractVersion, 1);
   assert.equal(outcome.nonBinding, true);
   assert.equal(outcome.requiresReservationRecheck, true);
@@ -164,6 +177,23 @@ async function testUncertaintyIsNotAnAllow(): Promise<void> {
     'weeklyUsed',
   ]);
   assert.ok(Date.parse(outcome.expiresAt) > Date.parse(outcome.evaluatedAt));
+  assert.equal(entries.length, 1);
+  assert.deepEqual(entries[0], {
+    decisionId: outcome.decisionId,
+    tenantId,
+    correlationId,
+    action: 'JOIN_GAME',
+    targetId: request.target.id,
+    subscriptionInstanceId: null,
+    outcome: 'RETRY_LATER',
+    serviceAllowed: false,
+    subscriptionBenefitAllowed: false,
+    blockers: ['POLICY_UNAVAILABLE'],
+    policyVersion: null,
+    policyDigest: null,
+    evaluatedAt: outcome.evaluatedAt,
+    recordedAt: entries[0]?.recordedAt,
+  });
 }
 
 async function testEvaluationMapping(): Promise<void> {
@@ -333,9 +363,43 @@ async function testMongoReplayStore(): Promise<void> {
   assert.equal(claims[0]?.tenantId, tenantId);
 }
 
+async function testMongoDecisionJournal(): Promise<void> {
+  const appended: Array<Record<string, unknown>> = [];
+  let connects = 0;
+  const repository = {
+    connect: async () => {
+      connects += 1;
+    },
+    appendLk2QuoteDecision: async (entry: Record<string, unknown>) => {
+      appended.push(entry);
+    },
+  } as unknown as ConstructorParameters<typeof MongoLk2QuoteDecisionJournalStore>[0];
+  const store = new MongoLk2QuoteDecisionJournalStore(repository);
+  await store.append({
+    decisionId: 'decision:1',
+    tenantId,
+    correlationId,
+    action: 'JOIN_GAME',
+    targetId: request.target.id,
+    subscriptionInstanceId: null,
+    outcome: 'RETRY_LATER',
+    serviceAllowed: false,
+    subscriptionBenefitAllowed: false,
+    blockers: ['POLICY_UNAVAILABLE'],
+    policyVersion: null,
+    policyDigest: null,
+    evaluatedAt: '2026-10-21T08:00:00.000Z',
+    recordedAt: '2026-10-21T08:00:00.000Z',
+  });
+  assert.equal(connects, 1);
+  assert.equal(appended.length, 1);
+  assert.equal(appended[0]?.decisionId, 'decision:1');
+}
+
 async function run(): Promise<void> {
   testParseRequest();
   await testMongoReplayStore();
+  await testMongoDecisionJournal();
   await testUncertaintyIsNotAnAllow();
   await testEvaluationMapping();
   await testReplayAndAuth();

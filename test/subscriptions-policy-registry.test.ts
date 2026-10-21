@@ -163,7 +163,8 @@ function fakeRepository(input: {
       input.contexts?.[id] ?? {
         instances: { total: 0, byPolicyVersion: [] },
         lastLedgerEvent: null,
-        lastDecisionOperation: null
+        lastDecisionOperation: null,
+        lastQuoteDecision: null
       }
   } as unknown as SubscriptionsRepository;
 }
@@ -241,6 +242,22 @@ async function testRegistryReadsPersistedFacts(): Promise<void> {
             action: 'JOIN_GAME',
             usageUnits: 1
           }
+        },
+        lastQuoteDecision: {
+          decisionId: 'decision:quote-1',
+          tenantId: 'tenant:1',
+          correlationId: 'correlation:quote-1',
+          action: 'JOIN_GAME',
+          targetId: 'exercise:1',
+          subscriptionInstanceId: 'subscription_instance:1',
+          outcome: 'RETRY_LATER',
+          serviceAllowed: false,
+          subscriptionBenefitAllowed: false,
+          blockers: ['POLICY_UNAVAILABLE'],
+          policyVersion: null,
+          policyDigest: null,
+          evaluatedAt: '2026-10-02T10:00:00.000Z',
+          recordedAt: '2026-10-02T10:00:00.001Z'
         }
       }
     }
@@ -274,6 +291,15 @@ async function testRegistryReadsPersistedFacts(): Promise<void> {
   assert.equal(item.lastDecision?.source, 'LEDGER');
   assert.equal(item.lastDecision?.eventType, 'ENTITLEMENT_RESERVED');
   assert.equal(item.lastDecision?.usageDelta, 1);
+  assert.deepEqual(item.lastQuoteDecision, {
+    at: '2026-10-02T10:00:00.000Z',
+    outcome: 'RETRY_LATER',
+    serviceAllowed: false,
+    subscriptionBenefitAllowed: false,
+    blockers: ['POLICY_UNAVAILABLE'],
+    policyVersion: null,
+    policyDigest: null
+  });
   assert.deepEqual(result.totals, {
     subscriptionTypes: 1,
     publishedPolicies: 1,

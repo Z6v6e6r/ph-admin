@@ -926,6 +926,23 @@ export interface StoredSubscriptionEntitlementAggregate {
   updatedAt: string;
 }
 
+export interface StoredLk2QuoteDecisionJournalEntry {
+  decisionId: string;
+  tenantId: string;
+  correlationId: string | null;
+  action: SubscriptionAction;
+  targetId: string;
+  subscriptionInstanceId: string | null;
+  outcome: string;
+  serviceAllowed: boolean;
+  subscriptionBenefitAllowed: boolean;
+  blockers: string[];
+  policyVersion: number | null;
+  policyDigest: string | null;
+  evaluatedAt: string;
+  recordedAt: string;
+}
+
 export interface StoredLk2QuoteDelegationReplay {
   keyId: string;
   jti: string;

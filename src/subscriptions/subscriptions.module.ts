@@ -26,6 +26,7 @@ import { SubscriptionSaleBindingService } from './subscription-sale-binding.serv
 import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
 import {
   Lk2QuoteEvaluationUnavailable,
+  MongoLk2QuoteDecisionJournalStore,
   MongoLk2QuoteDelegationReplayStore,
   Lk2QuoteReceiverService
 } from './lk2-runtime/lk2-quote-receiver.service';
@@ -75,6 +76,7 @@ import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation
           integrationToken: process.env.SUBSCRIPTIONS_LK2_QUOTE_INTEGRATION_TOKEN,
           delegationConfig,
           replayStore: new MongoLk2QuoteDelegationReplayStore(repository),
+          journal: new MongoLk2QuoteDecisionJournalStore(repository),
           // The real evaluator over persisted policy/usage is wired separately. Until then the
           // boundary fails closed with a typed technical-uncertainty outcome, never an allow.
           evaluator: {

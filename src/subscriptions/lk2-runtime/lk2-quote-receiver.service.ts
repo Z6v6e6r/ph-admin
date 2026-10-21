@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import type { SubscriptionsRepository } from '../subscriptions.repository';
+import type { StoredLk2QuoteDecisionJournalEntry } from '../subscriptions.types';
 import {
   verifyLk2QuoteDelegation,
   type Lk2QuoteDelegationConfig,
@@ -120,6 +121,10 @@ export interface Lk2QuoteEvaluator {
   }): Promise<Lk2QuoteEvaluation>;
 }
 
+export interface Lk2QuoteDecisionJournal {
+  append(entry: StoredLk2QuoteDecisionJournalEntry): Promise<void>;
+}
+
 export interface Lk2QuoteDelegationReplayStore {
   /** Returns true when this `(kid, jti)` pair has not been consumed before. */
   claim(input: {
@@ -148,6 +153,21 @@ export class InMemoryLk2QuoteDelegationReplayStore implements Lk2QuoteDelegation
     if (this.seen.has(key)) return false;
     this.seen.set(key, Date.parse(input.expiresAt));
     return true;
+  }
+}
+
+/** Durable append-only decision journal used by the operator registry. */
+export class MongoLk2QuoteDecisionJournalStore implements Lk2QuoteDecisionJournal {
+  public constructor(
+    private readonly repository: Pick<
+      SubscriptionsRepository,
+      'connect' | 'appendLk2QuoteDecision'
+    >,
+  ) {}
+
+  public async append(entry: StoredLk2QuoteDecisionJournalEntry): Promise<void> {
+    await this.repository.connect();
+    await this.repository.appendLk2QuoteDecision(entry);
   }
 }
 
@@ -237,6 +257,7 @@ export interface Lk2QuoteReceiverOptions {
   readonly delegationConfig?: Lk2QuoteDelegationConfig;
   readonly replayStore?: Lk2QuoteDelegationReplayStore;
   readonly evaluator?: Lk2QuoteEvaluator;
+  readonly journal?: Lk2QuoteDecisionJournal;
   readonly now?: () => number;
   readonly onMetric?: (metric: {
     readonly outcome: 'success' | 'rejected' | 'uncertain';
@@ -320,16 +341,17 @@ export class Lk2QuoteReceiverService {
       });
     } catch (error) {
       if (!(error instanceof Lk2QuoteEvaluationUnavailable)) throw error;
-      this.emit('uncertain', startedAt);
-      return this.uncertain({
+      const uncertain = this.uncertain({
         paymentIntent: request.paymentIntent,
         reasonCode: error.reasonCode,
         evaluatedAt,
         expiresAt,
       });
+      await this.recordDecision(uncertain, delegation, request, input.correlationId);
+      this.emit('uncertain', startedAt);
+      return uncertain;
     }
-    this.emit('success', startedAt);
-    return {
+    const outcome: Lk2QuoteOutcomeBody = {
       contractVersion: 1,
       nonBinding: true,
       requiresReservationRecheck: true,
@@ -348,6 +370,9 @@ export class Lk2QuoteReceiverService {
       evaluatedAt,
       expiresAt,
     };
+    await this.recordDecision(outcome, delegation, request, input.correlationId);
+    this.emit('success', startedAt);
+    return outcome;
   }
 
   private uncertain(input: {
@@ -377,12 +402,42 @@ export class Lk2QuoteReceiverService {
     };
   }
 
+  private async recordDecision(
+    outcome: Lk2QuoteOutcomeBody,
+    delegation: VerifiedLk2QuoteDelegation,
+    request: Lk2QuoteRequest,
+    correlationId: string,
+  ): Promise<void> {
+    if (!this.options.journal) return;
+    try {
+      await this.options.journal.append({
+        decisionId: outcome.decisionId,
+        tenantId: delegation.tenantId,
+        correlationId,
+        action: request.action,
+        targetId: request.target.id,
+        subscriptionInstanceId: outcome.selectedSubscription?.subscriptionInstanceId ?? null,
+        outcome: outcome.outcome,
+        serviceAllowed: outcome.serviceAllowed,
+        subscriptionBenefitAllowed: outcome.subscriptionBenefitAllowed,
+        blockers: outcome.blockers.map((blocker) => blocker.code),
+        policyVersion: outcome.selectedSubscription?.policyVersion ?? null,
+        policyDigest: outcome.selectedSubscription?.policyDigest ?? null,
+        evaluatedAt: outcome.evaluatedAt,
+        recordedAt: new Date().toISOString(),
+      });
+    } catch {
+      throw new Lk2QuoteReceiverError(503, 'LK2_QUOTE_JOURNAL_UNAVAILABLE');
+    }
+  }
+
   private assertEnabledAndConfigured(): void {
     if (
       !this.options.enabled ||
       !this.options.delegationConfig ||
       !this.options.replayStore ||
-      !this.options.evaluator
+      !this.options.evaluator ||
+      !this.options.journal
     ) {
       throw new Lk2QuoteReceiverError(503, 'SUBSCRIPTION_RUNTIME_LK2_QUOTE_DISABLED');
     }
