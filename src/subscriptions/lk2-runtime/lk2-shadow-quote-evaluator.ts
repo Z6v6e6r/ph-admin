@@ -202,7 +202,22 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
         return selectionOutcome('SUBSCRIPTION_SELECTION_REQUIRED', 'SUBSCRIPTION_NOT_OWNED_BY_ACTOR');
       }
     } else if (instances.length === 0) {
-      return selectionOutcome('FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND');
+      // No subscription is not an uncertainty: the service is available at the ordinary price.
+      // Resolve the target so the caller receives the server-owned price whenever it exists; if the
+      // target is unavailable the outcome stays the same, but without a price.
+      try {
+        const target = await this.targets.resolveLatest({
+          tenantId: input.delegation.tenantId,
+          targetId: input.request.target.id,
+          action: input.request.action
+        });
+        return {
+          ...selectionOutcome('FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND'),
+          price: fullPrice(target)
+        };
+      } catch {
+        return selectionOutcome('FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND');
+      }
     } else if (instances.length > 1) {
       return selectionOutcome('SUBSCRIPTION_SELECTION_REQUIRED', 'SUBSCRIPTION_SELECTION_REQUIRED');
     } else {

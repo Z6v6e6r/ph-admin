@@ -269,13 +269,14 @@ class FixedResolver extends SubscriptionCanonicalTargetResolverService {
 function repository(input: {
   target?: StoredSubscriptionCanonicalTargetSnapshot | null;
   aggregate?: StoredSubscriptionEntitlementAggregate;
+  instances?: StoredSubscriptionInstance[];
 }) {
   const policy = publication();
   const instanceRow = instance();
   const aggregateRow = input.aggregate ?? aggregate();
   return {
     connectReadOnly: async () => undefined,
-    runtimeInstancesByProviderMappingAndClient: async () => [instanceRow],
+    runtimeInstancesByProviderMappingAndClient: async () => input.instances ?? [instanceRow],
     runtimeInstanceByTenantAndId: async () => instanceRow,
     runtimeProviderMappingById: async () => mapping(),
     runtimePolicyPublicationByVersion: async () => policy,
@@ -355,6 +356,20 @@ async function testRuleDrivenLimit(): Promise<void> {
   assert.equal(denied.price?.finalPriceMinor, 300_000);
 }
 
+async function testNoSubscriptionQuotesFullPrice(): Promise<void> {
+  const outcome = await evaluator(repository({ instances: [] })).evaluate({
+    delegation,
+    request,
+    correlationId: 'correlation-0001',
+  });
+  assert.equal(outcome.outcome, 'FULL_PRICE_ONLY');
+  assert.equal(outcome.serviceAllowed, true);
+  assert.equal(outcome.subscriptionBenefitAllowed, false);
+  assert.equal(outcome.price?.basePriceMinor, 300_000);
+  assert.equal(outcome.price?.finalPriceMinor, 300_000);
+  assert.deepEqual(outcome.blockers, [{ code: 'SUBSCRIPTION_NOT_FOUND' }]);
+}
+
 async function testMissingTargetIsUncertainty(): Promise<void> {
   await assert.rejects(
     evaluator(repository({ target: null })).evaluate({
@@ -370,6 +385,7 @@ async function testMissingTargetIsUncertainty(): Promise<void> {
 async function run(): Promise<void> {
   await testEntitlementApplied();
   await testRuleDrivenLimit();
+  await testNoSubscriptionQuotesFullPrice();
   await testMissingTargetIsUncertainty();
   console.log('lk2 quote pipeline tests: OK');
 }
