@@ -23,13 +23,21 @@ import { SubscriptionActivationDeadlineWorker } from './subscription-activation-
 import { SubscriptionPublicationService } from './subscription-publication.service';
 import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.service';
 import { SubscriptionSaleBindingService } from './subscription-sale-binding.service';
+import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
+import {
+  InMemoryLk2QuoteDelegationReplayStore,
+  Lk2QuoteEvaluationUnavailable,
+  Lk2QuoteReceiverService
+} from './lk2-runtime/lk2-quote-receiver.service';
+import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation.verifier';
 
 @Module({
   imports: [AuthModule, LkIdentityModule, VivaAdminModule],
   controllers: [
     SubscriptionsController,
     SubscriptionTestController,
-    SubscriptionTrustedShadowController
+    SubscriptionTrustedShadowController,
+    Lk2QuoteController
   ],
   providers: [
     SubscriptionsService,
@@ -47,7 +55,35 @@ import { SubscriptionSaleBindingService } from './subscription-sale-binding.serv
     SubscriptionSaleBindingService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
-    SubscriptionsExceptionFilter
+    SubscriptionsExceptionFilter,
+    {
+      provide: Lk2QuoteReceiverService,
+      useFactory: () => {
+        const enabled = ['1', 'true', 'yes'].includes(
+          String(process.env.SUBSCRIPTIONS_LK2_QUOTE_ENABLED ?? '').trim().toLowerCase()
+        );
+        if (!enabled) return new Lk2QuoteReceiverService({ enabled: false });
+        let delegationConfig;
+        try {
+          delegationConfig = loadLk2QuoteDelegationConfig();
+        } catch {
+          return new Lk2QuoteReceiverService({ enabled: false });
+        }
+        return new Lk2QuoteReceiverService({
+          enabled: true,
+          integrationToken: process.env.SUBSCRIPTIONS_LK2_QUOTE_INTEGRATION_TOKEN,
+          delegationConfig,
+          replayStore: new InMemoryLk2QuoteDelegationReplayStore(),
+          // The real evaluator over persisted policy/usage is wired separately. Until then the
+          // boundary fails closed with a typed technical-uncertainty outcome, never an allow.
+          evaluator: {
+            evaluate: async () => {
+              throw new Lk2QuoteEvaluationUnavailable('POLICY_UNAVAILABLE');
+            }
+          }
+        });
+      }
+    }
   ]
 })
 export class SubscriptionsModule {}
