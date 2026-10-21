@@ -40,6 +40,7 @@ import {
   StoredSubscriptionTestOffer,
   StoredSubscriptionTestPurchase,
   StoredSubscriptionTestReservation,
+  StoredLk2QuoteDelegationReplay,
   StoredSubscriptionType,
   StoredSubscriptionUsageLedgerEvent,
   SubscriptionTestPurchaseStatus
@@ -282,6 +283,19 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
       unique: false
     }
   ],
+  lk2QuoteDelegationReplays: [
+    {
+      name: 'subscription_lk2_replay_jti_unique',
+      key: { keyId: 1, jti: 1 },
+      unique: true
+    },
+    {
+      name: 'subscription_lk2_replay_expiry_ttl',
+      key: { expiresAt: 1 },
+      unique: false,
+      expireAfterSeconds: 0
+    }
+  ],
   outbox: [
     { name: 'subscription_outbox_event_id_unique', key: { outboxEventId: 1 }, unique: true },
     { name: 'subscription_outbox_ledger_event_unique', key: { ledgerEventId: 1 }, unique: true },
@@ -339,14 +353,29 @@ export const SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES = {
 } as const;
 
 export function subscriptionIndexMatches(
-  actual: { name?: string; key?: unknown; unique?: boolean; sparse?: boolean } | undefined,
-  expected: { name: string; key: unknown; unique: boolean; sparse?: boolean }
+  actual:
+    | {
+        name?: string;
+        key?: unknown;
+        unique?: boolean;
+        sparse?: boolean;
+        expireAfterSeconds?: number;
+      }
+    | undefined,
+  expected: {
+    name: string;
+    key: unknown;
+    unique: boolean;
+    sparse?: boolean;
+    expireAfterSeconds?: number;
+  }
 ): boolean {
   return Boolean(actual)
     && actual?.name === expected.name
     && JSON.stringify(actual.key) === JSON.stringify(expected.key)
     && Boolean(actual.unique) === expected.unique
-    && Boolean(actual.sparse) === Boolean(expected.sparse);
+    && Boolean(actual.sparse) === Boolean(expected.sparse)
+    && (actual.expireAfterSeconds ?? null) === (expected.expireAfterSeconds ?? null);
 }
 
 @Injectable()
@@ -1467,6 +1496,29 @@ export class SubscriptionsRepository {
       lastLedgerEvent,
       lastDecisionOperation
     };
+  }
+
+  /**
+   * Single-use claim for an LK2 quote delegation. A duplicate `(keyId, jti)` returns false; the
+   * collection is TTL-indexed on `expiresAt` so consumed tokens do not accumulate.
+   */
+  async claimLk2QuoteDelegationReplay(input: {
+    keyId: string;
+    jti: string;
+    tenantId: string;
+    expiresAt: Date;
+  }): Promise<boolean> {
+    this.assertRuntimeContractsEnabled();
+    try {
+      await this.lk2QuoteDelegationReplays().insertOne({
+        ...input,
+        claimedAt: new Date().toISOString()
+      });
+      return true;
+    } catch (error) {
+      if (this.isDuplicateKey(error)) return false;
+      throw error;
+    }
   }
 
   async insertRuntimePolicyPublication(
@@ -2765,6 +2817,10 @@ export class SubscriptionsRepository {
     return this.requireDb().collection<StoredSubscriptionRuntimeOperation>('subscription_operations');
   }
 
+  private lk2QuoteDelegationReplays(): Collection<StoredLk2QuoteDelegationReplay> {
+    return this.requireDb().collection<StoredLk2QuoteDelegationReplay>('subscription_lk2_delegation_replays');
+  }
+
   private runtimeLedger(): Collection<StoredSubscriptionUsageLedgerEvent> {
     return this.requireDb().collection<StoredSubscriptionUsageLedgerEvent>('subscription_usage_ledger');
   }
@@ -2998,6 +3054,10 @@ export class SubscriptionsRepository {
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.ledger,
         actual: await this.runtimeLedger().listIndexes().toArray()
+      },
+      {
+        required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.lk2QuoteDelegationReplays,
+        actual: await this.lk2QuoteDelegationReplays().listIndexes().toArray()
       },
       {
         required: SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES.outbox,

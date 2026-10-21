@@ -25,8 +25,8 @@ import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.
 import { SubscriptionSaleBindingService } from './subscription-sale-binding.service';
 import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
 import {
-  InMemoryLk2QuoteDelegationReplayStore,
   Lk2QuoteEvaluationUnavailable,
+  MongoLk2QuoteDelegationReplayStore,
   Lk2QuoteReceiverService
 } from './lk2-runtime/lk2-quote-receiver.service';
 import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation.verifier';
@@ -58,7 +58,8 @@ import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation
     SubscriptionsExceptionFilter,
     {
       provide: Lk2QuoteReceiverService,
-      useFactory: () => {
+      inject: [SubscriptionsRepository],
+      useFactory: (repository: SubscriptionsRepository) => {
         const enabled = ['1', 'true', 'yes'].includes(
           String(process.env.SUBSCRIPTIONS_LK2_QUOTE_ENABLED ?? '').trim().toLowerCase()
         );
@@ -73,7 +74,7 @@ import { loadLk2QuoteDelegationConfig } from './lk2-runtime/lk2-quote-delegation
           enabled: true,
           integrationToken: process.env.SUBSCRIPTIONS_LK2_QUOTE_INTEGRATION_TOKEN,
           delegationConfig,
-          replayStore: new InMemoryLk2QuoteDelegationReplayStore(),
+          replayStore: new MongoLk2QuoteDelegationReplayStore(repository),
           // The real evaluator over persisted policy/usage is wired separately. Until then the
           // boundary fails closed with a typed technical-uncertainty outcome, never an allow.
           evaluator: {

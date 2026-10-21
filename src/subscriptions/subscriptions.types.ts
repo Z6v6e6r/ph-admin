@@ -926,6 +926,14 @@ export interface StoredSubscriptionEntitlementAggregate {
   updatedAt: string;
 }
 
+export interface StoredLk2QuoteDelegationReplay {
+  keyId: string;
+  jti: string;
+  tenantId: string;
+  expiresAt: Date;
+  claimedAt: string;
+}
+
 export interface SubscriptionShadowQuoteIdentityContext {
   resolutionSource: 'LK_IDENTITY';
   tenantId: string;

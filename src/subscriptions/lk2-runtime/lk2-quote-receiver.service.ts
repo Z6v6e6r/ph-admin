@@ -1,4 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+
+import type { SubscriptionsRepository } from '../subscriptions.repository';
 import {
   verifyLk2QuoteDelegation,
   type Lk2QuoteDelegationConfig,
@@ -123,6 +125,7 @@ export interface Lk2QuoteDelegationReplayStore {
   claim(input: {
     readonly keyId: string;
     readonly jti: string;
+    readonly tenantId: string;
     readonly expiresAt: string;
   }): Promise<boolean>;
 }
@@ -134,6 +137,7 @@ export class InMemoryLk2QuoteDelegationReplayStore implements Lk2QuoteDelegation
   public async claim(input: {
     readonly keyId: string;
     readonly jti: string;
+    readonly tenantId: string;
     readonly expiresAt: string;
   }): Promise<boolean> {
     const now = Date.now();
@@ -144,6 +148,34 @@ export class InMemoryLk2QuoteDelegationReplayStore implements Lk2QuoteDelegation
     if (this.seen.has(key)) return false;
     this.seen.set(key, Date.parse(input.expiresAt));
     return true;
+  }
+}
+
+/**
+ * Durable single-use store. The replay collection is unique on `(keyId, jti)` and TTL-indexed on
+ * `expiresAt`; index provisioning stays with the guarded subscriptions index script.
+ */
+export class MongoLk2QuoteDelegationReplayStore implements Lk2QuoteDelegationReplayStore {
+  public constructor(
+    private readonly repository: Pick<
+      SubscriptionsRepository,
+      'connect' | 'claimLk2QuoteDelegationReplay'
+    >,
+  ) {}
+
+  public async claim(input: {
+    readonly keyId: string;
+    readonly jti: string;
+    readonly tenantId: string;
+    readonly expiresAt: string;
+  }): Promise<boolean> {
+    await this.repository.connect();
+    return this.repository.claimLk2QuoteDelegationReplay({
+      keyId: input.keyId,
+      jti: input.jti,
+      tenantId: input.tenantId,
+      expiresAt: new Date(input.expiresAt),
+    });
   }
 }
 
@@ -270,6 +302,7 @@ export class Lk2QuoteReceiverService {
     const claimed = await this.options.replayStore!.claim({
       keyId: delegation.keyId,
       jti: delegation.jti,
+      tenantId: delegation.tenantId,
       expiresAt: new Date(delegation.expiresAt * 1000).toISOString(),
     });
     if (!claimed) {

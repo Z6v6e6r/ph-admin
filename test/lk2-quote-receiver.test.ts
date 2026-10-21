@@ -4,6 +4,7 @@ import { Lk2QuoteController } from '../src/subscriptions/lk2-runtime/lk2-quote.c
 import {
   InMemoryLk2QuoteDelegationReplayStore,
   Lk2QuoteEvaluationUnavailable,
+  MongoLk2QuoteDelegationReplayStore,
   Lk2QuoteReceiverError,
   Lk2QuoteReceiverService,
   parseLk2QuoteRequest,
@@ -291,8 +292,50 @@ async function testControllerBoundary(): Promise<void> {
   );
 }
 
+async function testMongoReplayStore(): Promise<void> {
+  const claims: Array<{ keyId: string; jti: string; tenantId: string; expiresAt: Date }> = [];
+  let connects = 0;
+  const repository = {
+    connect: async () => {
+      connects += 1;
+    },
+    claimLk2QuoteDelegationReplay: async (input: {
+      keyId: string;
+      jti: string;
+      tenantId: string;
+      expiresAt: Date;
+    }) => {
+      claims.push(input);
+      return input.jti !== 'replayed';
+    },
+  } as unknown as ConstructorParameters<typeof MongoLk2QuoteDelegationReplayStore>[0];
+  const store = new MongoLk2QuoteDelegationReplayStore(repository);
+  assert.equal(
+    await store.claim({
+      keyId: 'kid',
+      jti: 'fresh',
+      tenantId,
+      expiresAt: '2026-10-21T12:00:00.000Z',
+    }),
+    true,
+  );
+  assert.equal(
+    await store.claim({
+      keyId: 'kid',
+      jti: 'replayed',
+      tenantId,
+      expiresAt: '2026-10-21T12:00:00.000Z',
+    }),
+    false,
+  );
+  assert.equal(connects, 2);
+  assert.ok(claims[0]?.expiresAt instanceof Date);
+  assert.equal(claims[0]?.tenantId, tenantId);
+}
+
 async function run(): Promise<void> {
   testParseRequest();
+  await testMongoReplayStore();
   await testUncertaintyIsNotAnAllow();
   await testEvaluationMapping();
   await testReplayAndAuth();
