@@ -445,6 +445,10 @@ export function evaluateSubscriptionShadowQuote(
     maxActiveServices,
     dailyUsed,
     dailyLimit,
+    weeklyUsed,
+    weeklyLimit,
+    monthlyUsed,
+    monthlyLimit,
     usageBucket: targetLocal ? {
       localDate: targetLocal.date,
       localWeek: targetLocal.week,

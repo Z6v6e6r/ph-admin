@@ -123,10 +123,10 @@ function limits(result: SubscriptionShadowQuoteResult): Lk2QuoteEvaluation['limi
     activeServicesLimit: result.maxActiveServices,
     dailyUsed: result.dailyUsed,
     dailyLimit: result.dailyLimit,
-    weeklyUsed: null,
-    weeklyLimit: null,
-    monthlyUsed: null,
-    monthlyLimit: null,
+    weeklyUsed: result.weeklyUsed ?? null,
+    weeklyLimit: result.weeklyLimit ?? null,
+    monthlyUsed: result.monthlyUsed ?? null,
+    monthlyLimit: result.monthlyLimit ?? null,
     remainingUnits: null
   };
 }

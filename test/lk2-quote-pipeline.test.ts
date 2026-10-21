@@ -87,7 +87,7 @@ function projection(): StoredSubscriptionPolicyPublication['runtimeProjection'] 
     ],
     lifecycle: { allowBookingsAfterExpiry: false },
     usage: {
-      weeklyUsageLimit: null,
+      weeklyUsageLimit: 2,
       monthlyUsageLimit: null,
       maxFutureBookings: null,
       minHoursBetweenUses: 0,
@@ -336,6 +336,10 @@ async function testEntitlementApplied(): Promise<void> {
   assert.equal(outcome.price?.priceRevision, 7);
   assert.equal(outcome.limits.dailyUsed, 0);
   assert.equal(outcome.limits.dailyLimit, 1);
+  assert.equal(outcome.limits.weeklyUsed, 0);
+  assert.equal(outcome.limits.weeklyLimit, 2);
+  assert.equal(outcome.limits.monthlyUsed, 0);
+  assert.equal(outcome.limits.monthlyLimit, null);
 }
 
 async function testRuleDrivenLimit(): Promise<void> {

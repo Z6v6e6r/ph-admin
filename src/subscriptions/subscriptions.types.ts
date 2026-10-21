@@ -1050,6 +1050,10 @@ export interface SubscriptionShadowQuoteResult {
   maxActiveServices: number | null;
   dailyUsed: number | null;
   dailyLimit: number | null;
+  weeklyUsed?: number | null;
+  weeklyLimit?: number | null;
+  monthlyUsed?: number | null;
+  monthlyLimit?: number | null;
   usageBucket?: {
     localDate: string;
     localWeek: string;
