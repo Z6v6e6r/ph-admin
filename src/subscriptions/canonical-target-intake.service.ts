@@ -165,7 +165,12 @@ export class CanonicalTargetIntakeService {
       expiresAt: target.expiresAt,
       createdAt
     };
-    validateStoredSubscriptionCanonicalTargetSnapshot(snapshot);
+    try {
+      validateStoredSubscriptionCanonicalTargetSnapshot(snapshot);
+    } catch {
+      // Contract-invalid facts are a caller error, not an internal failure and never a partial write.
+      throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID');
+    }
     await this.repository.connect();
     try {
       await this.repository.insertRuntimeCanonicalTargetSnapshot(snapshot);

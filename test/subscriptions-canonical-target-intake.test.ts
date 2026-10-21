@@ -136,6 +136,27 @@ async function testConflict(): Promise<void> {
   assert.equal(original?.basePriceMinor, 300_000);
 }
 
+async function testValidatorFailureIs400(): Promise<void> {
+  configure();
+  const intake = service(repository());
+  // Shape-valid but contract-invalid: observedAt is after the server's createdAt, so the stored
+  // snapshot time order fails and must surface as a caller error, not a 500.
+  await assert.rejects(
+    intake.ingest(
+      TOKEN,
+      body({
+        observedAt: '2026-10-21T10:00:00.000Z',
+        expiresAt: '2026-10-21T11:00:00.000Z',
+      }),
+      { now: () => new Date('2026-10-21T08:00:00.000Z') },
+    ),
+    (error) =>
+      error instanceof CanonicalTargetIntakeError &&
+      error.status === 400 &&
+      error.code === 'CANONICAL_TARGET_BODY_INVALID',
+  );
+}
+
 async function testInvalidBodies(): Promise<void> {
   configure();
   for (const invalid of [
@@ -233,6 +254,7 @@ async function run(): Promise<void> {
   try {
     await testValidAndReplay();
     await testConflict();
+    await testValidatorFailureIs400();
     await testInvalidBodies();
     await testGates();
     await testControllerBoundary();
