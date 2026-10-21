@@ -162,6 +162,7 @@ function fakeRepository(input: {
     runtimePolicyRegistryContext: async (id: string) =>
       input.contexts?.[id] ?? {
         instances: { total: 0, byPolicyVersion: [] },
+        providerProductIds: [],
         lastLedgerEvent: null,
         lastDecisionOperation: null,
         lastQuoteDecision: null
@@ -217,6 +218,7 @@ async function testRegistryReadsPersistedFacts(): Promise<void> {
     },
     contexts: {
       'subscription_type:alpha': {
+        providerProductIds: ['viva-product-alpha'],
         instances: {
           total: 3,
           byPolicyVersion: [
@@ -268,6 +270,7 @@ async function testRegistryReadsPersistedFacts(): Promise<void> {
   const item = result.items[0]!;
   assert.equal(item.subscriptionTypeId, 'subscription_type:alpha');
   assert.deepEqual(item.surfaces, ['CREATE_GAME', 'JOIN_GAME']);
+  assert.deepEqual(item.providerProductIds, ['viva-product-alpha']);
   assert.ok(item.rules);
   assert.equal(item.publication?.policyVersion, 3);
   assert.equal(item.publication?.applyTo, 'ACTIVE_AND_NEW');

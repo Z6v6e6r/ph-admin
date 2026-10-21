@@ -82,6 +82,8 @@ export interface SubscriptionPolicyRegistryItem {
     total: number;
     byPolicyVersion: Array<{ policyVersion: number; count: number }>;
   };
+  /** Verified provider product ids bound to this subscription type (for LK1 product coverage). */
+  providerProductIds: string[];
   lastDecision: SubscriptionPolicyRegistryLastDecision | null;
   /** Newest persisted quote decision (evaluation journal), if any instance of this type was quoted. */
   lastQuoteDecision: {
@@ -261,6 +263,7 @@ export class SubscriptionPolicyRegistryService {
         state: type.state,
         currentPolicyVersion: type.currentPolicyVersion,
         publication: publication ? publicationDto(publication, applyToByVersion) : null,
+        providerProductIds: context.providerProductIds,
         rules: publication?.runtimeProjection ?? null,
         surfaces: deriveSurfaces(publication?.runtimeProjection ?? null),
         versions: registryVersions,

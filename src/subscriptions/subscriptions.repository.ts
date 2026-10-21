@@ -1491,6 +1491,7 @@ export class SubscriptionsRepository {
       total: number;
       byPolicyVersion: Array<{ policyVersion: number; count: number }>;
     };
+    providerProductIds: string[];
     lastLedgerEvent: StoredSubscriptionUsageLedgerEvent | null;
     lastDecisionOperation: StoredSubscriptionRuntimeOperation | null;
     lastQuoteDecision: StoredLk2QuoteDecisionJournalEntry | null;
@@ -1534,8 +1535,16 @@ export class SubscriptionsRepository {
       ).sort({ recordedAt: -1 }).limit(1).toArray();
       if (journal[0]) lastQuoteDecision = journal[0];
     }
+    const mappings = await this.runtimeMappings().find(
+      { subscriptionTypeId, state: 'VERIFIED' },
+      { projection: { _id: 0, providerProductId: 1 } }
+    ).toArray();
+    const providerProductIds = [...new Set(
+      mappings.map((mapping) => mapping.providerProductId).filter((id): id is string => typeof id === 'string')
+    )].sort();
     return {
       instances: { total: instances.length, byPolicyVersion },
+      providerProductIds,
       lastLedgerEvent,
       lastDecisionOperation,
       lastQuoteDecision
