@@ -25,6 +25,7 @@ import { SubscriptionSaleReadinessService } from './subscription-sale-readiness.
 import { SubscriptionSaleBindingService } from './subscription-sale-binding.service';
 import { CanonicalTargetIntakeController } from './canonical-target-intake.controller';
 import { CanonicalTargetIntakeService } from './canonical-target-intake.service';
+import { SubscriptionShadowQuoteJournalService } from './subscription-shadow-quote-journal.service';
 import { Lk2QuoteController } from './lk2-runtime/lk2-quote.controller';
 import {
   MongoLk2QuoteDecisionJournalStore,
@@ -58,6 +59,7 @@ import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluato
     SubscriptionSaleReadinessService,
     SubscriptionSaleBindingService,
     CanonicalTargetIntakeService,
+    SubscriptionShadowQuoteJournalService,
     SubscriptionsTestRuntimeService,
     SubscriptionsRepository,
     SubscriptionsExceptionFilter,

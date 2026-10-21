@@ -41,6 +41,7 @@ import {
   SubscriptionSaleBindingResult,
   SubscriptionSaleBindingService
 } from './subscription-sale-binding.service';
+import { SubscriptionShadowQuoteJournalService } from './subscription-shadow-quote-journal.service';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
@@ -313,7 +314,8 @@ export class SubscriptionTrustedShadowController {
     private readonly policyRegistry: SubscriptionPolicyRegistryService,
     private readonly activation: SubscriptionActivationService,
     private readonly saleReadinessService: SubscriptionSaleReadinessService,
-    private readonly saleBindingService: SubscriptionSaleBindingService
+    private readonly saleBindingService: SubscriptionSaleBindingService,
+    private readonly quoteJournal: SubscriptionShadowQuoteJournalService
   ) {}
 
   @Post('shadow-quote')
@@ -321,12 +323,20 @@ export class SubscriptionTrustedShadowController {
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   @Header('Referrer-Policy', 'no-referrer')
-  quote(
+  async quote(
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
     @Body() dto: SubscriptionShadowQuoteAdapterDto
   ): Promise<SubscriptionShadowQuoteResult> {
-    return this.adapter.quote(authorization, integrationToken, dto);
+    const result = await this.adapter.quote(authorization, integrationToken, dto);
+    await this.quoteJournal.journalLk1Quote({
+      result,
+      action: dto.action,
+      targetId: dto.target.targetId,
+      correlationId: correlationId ?? null
+    });
+    return result;
   }
 
   @Post('entitlements/reserve')

@@ -160,7 +160,7 @@ export class SubscriptionShadowQuoteService {
         aggregate?.revision ?? null
       );
     }
-    return evaluateSubscriptionShadowQuote({
+    const result = evaluateSubscriptionShadowQuote({
       evaluatedAt: now.toISOString(),
       publication,
       instance,
@@ -168,6 +168,7 @@ export class SubscriptionShadowQuoteService {
       action: request.action,
       target: request.target
     });
+    return { ...result, tenantId: request.identity.tenantId };
   }
 
   protected now(): Date {

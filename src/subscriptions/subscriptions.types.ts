@@ -928,6 +928,8 @@ export interface StoredSubscriptionEntitlementAggregate {
 
 export interface StoredLk2QuoteDecisionJournalEntry {
   decisionId: string;
+  /** Originating quote channel; absent on legacy rows written before this field existed. */
+  channel?: 'LK2' | 'LK1';
   tenantId: string;
   correlationId: string | null;
   action: SubscriptionAction;
@@ -1045,6 +1047,8 @@ export interface SubscriptionShadowQuoteResult {
   policyDigest: string | null;
   aggregateRevision: number | null;
   evaluatedAt: string;
+  /** Tenant that owns the instance; set by CUP so audit consumers do not re-resolve identity. */
+  tenantId?: string;
   usageUnits: number | null;
   activeServices: number | null;
   maxActiveServices: number | null;
