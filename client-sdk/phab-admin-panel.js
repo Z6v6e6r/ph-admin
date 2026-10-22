@@ -8972,10 +8972,11 @@
       return payload;
     }
 
-    async function refreshSession() {
+    async function refreshSession(signal) {
       var idempotencyKey = operationId();
       var session = await request(userRoot + '/auth/session/refresh', {
         method: 'POST',
+        signal: signal,
         headers: requestHeaders({
           'Idempotency-Key': idempotencyKey,
           'X-Session-Intent': 'refresh'
@@ -8985,7 +8986,7 @@
       return session;
     }
 
-    async function adminRequest(path, method, body, idempotencyKey, allowRefresh) {
+    async function adminRequest(path, method, body, idempotencyKey, allowRefresh, signal) {
       var headers = requestHeaders(body ? { 'Content-Type': 'application/json' } : {});
       if (accessToken) {
         headers.Authorization = 'Bearer ' + accessToken;
@@ -8996,16 +8997,25 @@
       try {
         return await request(adminRoot + path, {
           method: method || 'GET',
+          signal: signal,
           headers: headers,
           body: body ? JSON.stringify(body) : undefined
         });
       } catch (error) {
         if (error && error.status === 401 && allowRefresh !== false) {
-          await refreshSession();
-          return adminRequest(path, method, body, idempotencyKey, false);
+          await refreshSession(signal);
+          if (signal && signal.aborted) throw new Error('SCENARIO_REQUEST_TIMED_OUT');
+          return adminRequest(path, method, body, idempotencyKey, false, signal);
         }
         throw error;
       }
+    }
+
+    async function scenarioRequest(path, method, body, key) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 30000);
+      try { return await adminRequest(path, method, body, key, true, controller.signal); }
+      finally { clearTimeout(timer); }
     }
 
     async function adminBinaryRequest(path, file, allowRefresh) {
@@ -9112,6 +9122,13 @@
           operationId(),
           true
         );
+      },
+      scenarioCommandKey: operationId,
+      listScenarios: function () { return scenarioRequest('/notifications/scenarios', 'GET', null, ''); },
+      listScenarioRuns: function () { return scenarioRequest('/notifications/scenarios/runs', 'GET', null, ''); },
+      saveScenario: function (id, expectedVersion, definition, key) {
+        return scenarioRequest('/notifications/scenarios' + (id ? '/' + encodeURIComponent(id) : ''),
+          id ? 'PUT' : 'POST', { expectedVersion: expectedVersion, definition: definition }, key);
       },
       listLocations: function () {
         return adminRequest('/locations', 'GET', null, '', true);
@@ -14914,6 +14931,282 @@
     }
   }
 
+  // Active CUP integration. All commands reuse the authenticated PadlHub client, never provider APIs.
+  function createNotificationScenariosPane(host, api, onUnauthorized) {
+    var triggers = {
+      BOOKING_CONFIRMED: 'Запись подтверждена', BOOKING_CHANGED: 'Запись изменена',
+      BOOKING_CANCELLED: 'Запись отменена', BOOKING_STARTS: 'Начало занятия',
+      FRIEND_GAME_PUBLISHED: 'Друг создал игру', SUBSCRIPTION_ENDS: 'Окончание подписки',
+      BIRTHDAY: 'День рождения', TRAINING_ATTENDED: 'Посещение тренировки',
+      FIRST_ATTENDANCE: 'Первое посещение', MATCHING_GAME: 'Подходящая игра'
+    };
+    var channels = { IN_APP: 'Центр уведомлений', WEB_PUSH: 'Web Push', ANDROID_PUSH: 'Android Push',
+      IOS_PUSH: 'iOS Push', EMAIL: 'Email', STAFF_TASK: 'Обращение в ЦУП',
+      SMS: 'SMS — заглушка', TELEGRAM: 'Telegram — заглушка' };
+    var states = { PENDING: 'Ожидает', EXTENDED_PENDING: 'Ожидает', QUEUED: 'Передано в доставку',
+      CANCELLED: 'Отменено', SUPPRESSED: 'Пропущено', EXPIRED: 'Срок истёк',
+      CREATED: 'Создано', SENT: 'Принято провайдером', DELIVERED: 'Доставлено',
+      SENDING: 'Отправляется', DEAD: 'Отправка прекращена', FAILED: 'Ошибка',
+      NONE: 'Без цели', WAITING: 'Ожидаем действие', ACHIEVED: 'Цель достигнута' };
+    var items = [], selected = null, pending = null, epoch = 0, busy = false, ready = false;
+    var active = false, order = [], controls = {};
+    host.className = 'phab-admin-notifications-card phab-admin-notifications-stack';
+    host.style.gridColumn = '1 / -1';
+    function node(tag, text, parent) {
+      var el = document.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      if (parent) parent.appendChild(el);
+      return el;
+    }
+    node('h3', 'Триггерные рассылки', host);
+    node('p', 'Событие → проверка настроек и актуальности → доставка → целевое действие.', host);
+    var message = node('p', 'Войдите в контур уведомлений.', host);
+    message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite');
+    var toolbar = node('div', undefined, host);
+    toolbar.className = 'phab-admin-notifications-actions';
+    var list = node('select', undefined, toolbar); list.className = 'phab-admin-input';
+    list.setAttribute('aria-label', 'Выбрать сценарий');
+    var fresh = node('button', 'Новый сценарий', toolbar); fresh.type = 'button';
+    var refresh = node('button', 'Обновить сценарии и журнал', toolbar); refresh.type = 'button';
+    var form = node('form', undefined, host);
+    var fields = node('fieldset', undefined, form);
+    fields.style.cssText = 'border:0;padding:0;margin:0;display:grid;gap:12px;min-width:0';
+    node('legend', 'Настройки сценария', fields);
+    function field(key, label, type, min, max) {
+      var row = node('label', undefined, fields); row.className = 'phab-admin-notifications-field';
+      node('span', label, row);
+      var el = node(type === 'textarea' || type === 'select' ? type : 'input', undefined, row);
+      el.className = 'phab-admin-input';
+      if (type !== 'textarea' && type !== 'select') el.type = type;
+      if (min !== undefined) el.min = String(min);
+      if (max !== undefined) el.max = String(max);
+      if (type === 'text' || type === 'textarea' || type === 'number' || type === 'select') el.required = true;
+      if (type === 'number') el.step = '1';
+      controls[key] = el; return el;
+    }
+    function option(select, value, title, disabled) {
+      var el = node('option', title, select); el.value = value; el.disabled = Boolean(disabled); return el;
+    }
+    field('name', 'Название', 'text').maxLength = 120;
+    field('trigger', 'Триггер', 'select');
+    field('delayMinutes', 'Сдвиг, минут: минус — до события, плюс — после', 'number', -43200, 43200);
+    field('ttlMinutes', 'Срок актуальности, минут', 'number', 1, 43200);
+    field('title', 'Заголовок', 'text').maxLength = 300;
+    field('body', 'Текст', 'textarea').maxLength = 8000;
+    node('small', 'Переменные: {{serviceTitle}}, {{startsAt}}, {{locationName}}, {{gameId}}.', fields);
+    var channelBox = node('fieldset', undefined, fields); node('legend', 'Каналы', channelBox);
+    var channelInputs = {};
+    Object.keys(channels).forEach(function (key) {
+      var label = node('label', undefined, channelBox); label.style.cssText = 'display:block;margin:6px 0';
+      var input = node('input', undefined, label); input.type = 'checkbox'; channelInputs[key] = input;
+      node('span', ' ' + channels[key], label);
+      input.addEventListener('change', function () {
+        order = order.filter(function (value) { return value !== key; });
+        if (input.checked) order.push(key);
+        if ((key === 'ANDROID_PUSH' || key === 'IOS_PUSH') && input.checked && order.indexOf('IN_APP') < 0)
+          order.unshift('IN_APP');
+        updateChannels();
+      });
+    });
+    var priority = node('small', '', fields);
+    field('quietHours', 'Тихие часы', 'select');
+    option(controls.quietHours, 'DEFER', 'Отложить до разрешённого времени');
+    option(controls.quietHours, 'SKIP', 'Пропустить внешнюю отправку');
+    field('dailyLimit', 'Лимит за 24 часа для рекомендаций и событий клиента', 'number', 1, 10);
+    field('goal', 'Целевое действие', 'select');
+    option(controls.goal, 'NONE', 'Без цели'); option(controls.goal, 'GAME_JOINED', 'Присоединился к игре');
+    field('goalWindowMinutes', 'Окно цели, минут', 'number', 1, 43200);
+    var activeLabel = node('label', undefined, fields);
+    controls.active = node('input', undefined, activeLabel); controls.active.type = 'checkbox';
+    node('span', ' Сценарий активен', activeLabel);
+    var preview = node('div', undefined, fields); preview.setAttribute('aria-label', 'Предварительный просмотр');
+    node('small', 'Пример с вымышленными данными, без отправки', preview);
+    var previewTitle = node('strong', '', preview), previewBody = node('p', '', preview);
+    previewTitle.style.display = 'block';
+    var save = node('button', 'Сохранить сценарий', form); save.type = 'submit'; save.className = 'phab-admin-btn';
+    node('h3', 'Журнал запусков', host);
+    node('p', 'Последние 100 запусков. Приём провайдером и достижение цели учитываются отдельно.', host);
+    var journal = node('div', undefined, host); journal.style.overflowX = 'auto';
+    journal.tabIndex = 0; journal.setAttribute('role', 'region'); journal.setAttribute('aria-label', 'Журнал запусков, горизонтальная прокрутка');
+    function status(text, error) {
+      message.textContent = text; message.setAttribute('role', error ? 'alert' : 'status');
+    }
+    function error(error) {
+      if (onUnauthorized && onUnauthorized(error)) return;
+      status(error && error.message ? error.message : 'Не удалось загрузить сценарии.', true);
+    }
+    function updateControls() {
+      fields.disabled = !active || !ready || busy || Boolean(pending);
+      list.disabled = fresh.disabled = refresh.disabled = !active || busy || Boolean(pending);
+      save.disabled = !active || !ready || busy;
+      save.textContent = pending ? 'Повторить ту же команду' : 'Сохранить сценарий';
+    }
+    function updateChannels() {
+      var inAppRequired = order.indexOf('ANDROID_PUSH') >= 0 || order.indexOf('IOS_PUSH') >= 0 || controls.goal.value !== 'NONE';
+      if (inAppRequired && order.indexOf('IN_APP') < 0) order.unshift('IN_APP');
+      Object.keys(channelInputs).forEach(function (key) {
+        channelInputs[key].checked = order.indexOf(key) >= 0;
+        channelInputs[key].disabled = key === 'IN_APP' && inAppRequired;
+      });
+      priority.textContent = 'Приоритет: ' + order.map(function (key) { return channels[key]; }).join(' → ') +
+        '. Выбирается один доступный внешний канал; обращение в ЦУП создаётся отдельно.';
+    }
+    function updateTrigger() {
+      var before = ['BOOKING_STARTS', 'SUBSCRIPTION_ENDS', 'BIRTHDAY'].indexOf(controls.trigger.value) >= 0;
+      controls.delayMinutes.min = before ? '-43200' : '0';
+      if (!before && Number(controls.delayMinutes.value) < 0) controls.delayMinutes.value = '0';
+      if (controls.trigger.value !== 'FRIEND_GAME_PUBLISHED') controls.goal.value = 'NONE';
+      controls.goal.disabled = controls.trigger.value !== 'FRIEND_GAME_PUBLISHED';
+      updateChannels();
+    }
+    function renderPreview() {
+      function replace(text) { return text.replace(/\{\{\s*(serviceTitle|startsAt|locationName|gameId)\s*\}\}/g, function (_all, key) {
+        return { serviceTitle: 'Групповая тренировка', startsAt: 'завтра в 19:00', locationName: 'Клуб', gameId: 'пример' }[key];
+      }); }
+      previewTitle.textContent = replace(controls.title.value); previewBody.textContent = replace(controls.body.value);
+    }
+    function blank() {
+      return { name: '', trigger: 'BOOKING_STARTS', delayMinutes: -120, ttlMinutes: 120,
+        title: 'Скоро тренировка', body: '{{serviceTitle}} начнётся {{startsAt}}, {{locationName}}',
+        channels: ['IN_APP'], quietHours: 'DEFER', dailyLimit: 1, goal: 'NONE', goalWindowMinutes: 1440, active: false };
+    }
+    function choose(item) {
+      if (pending || busy) return;
+      selected = item || null;
+      var value = selected ? selected.definition : blank();
+      Object.keys(controls).forEach(function (key) {
+        if (key === 'active') controls[key].checked = value[key] === true;
+        else controls[key].value = String(value[key]);
+      });
+      order = value.channels.slice(); list.value = selected ? selected.id : '';
+      updateTrigger(); renderPreview(); updateControls();
+    }
+    function renderList() {
+      list.textContent = ''; option(list, '', 'Новый сценарий');
+      items.forEach(function (item) {
+        option(list, item.id, item.definition.name + ' · v' + item.version + (item.definition.active ? ' · активен' : ' · приостановлен'));
+      });
+      list.value = selected ? selected.id : '';
+    }
+    function renderJournal(runs) {
+      journal.textContent = '';
+      if (!runs.length) { node('p', 'Запусков пока нет.', journal); return; }
+      var table = node('table', undefined, journal); table.style.cssText = 'width:100%;min-width:760px;border-collapse:collapse';
+      var head = node('tr', undefined, node('thead', undefined, table));
+      ['Сценарий', 'Получатель', 'Время', 'Решение', 'Доставка', 'Цель'].forEach(function (title) {
+        node('th', title, head).style.cssText = 'padding:8px;text-align:left';
+      });
+      var tbody = node('tbody', undefined, table);
+      runs.forEach(function (run) {
+        var row = node('tr', undefined, tbody);
+        var scenario = items.find(function (item) { return item.id === run.scenarioId; });
+        var date = new Date(run.dueAt);
+        var deliveries = (run.deliveryStates || []).map(function (delivery) {
+          var result = /_OUTCOME_UNKNOWN$/.test(delivery.errorCode || '')
+            ? 'Результат неизвестен, без автоматического повтора'
+            : (states[delivery.state] || delivery.state);
+          return (channels[delivery.channel] || delivery.channel) + ': ' + result + ' (' + delivery.count + ')';
+        }).join('; ');
+        [scenario ? scenario.definition.name : run.scenarioId, run.recipientUserId,
+          Number.isFinite(date.getTime()) ? date.toLocaleString('ru-RU') : '—',
+          (states[run.state] || run.state) + (run.reason ? ' · ' + run.reason : ''),
+          deliveries || '—', states[run.goalState] || run.goalState].forEach(function (value) {
+          var cell = node('td', value, row); cell.style.cssText = 'padding:8px;vertical-align:top;overflow-wrap:anywhere';
+        });
+      });
+    }
+    function validSaved(saved, command) {
+      if (!saved || typeof saved.id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.id) ||
+          saved.version !== command.expectedVersion + 1 ||
+          (command.id && saved.id !== command.id) || !saved.definition) return false;
+      return Object.keys(command.definition).every(function (key) {
+        var expected = command.definition[key], actual = saved.definition[key];
+        if (Array.isArray(expected)) return Array.isArray(actual) && expected.length === actual.length &&
+          expected.every(function (value, index) { return value === actual[index]; });
+        return actual === (typeof expected === 'string' ? expected.trim() : expected);
+      });
+    }
+    async function load() {
+      if (!active || busy || pending) return;
+      var generation = epoch; busy = true; updateControls(); status('Загружаем сценарии…');
+      try {
+        var responses = await Promise.all([api.listScenarios(), api.listScenarioRuns()]);
+        if (!active || generation !== epoch) return;
+        items = responses[0].items || [];
+        controls.trigger.textContent = '';
+        (responses[0].catalog || []).forEach(function (entry) {
+          option(controls.trigger, entry.type, (triggers[entry.type] || entry.type) + (entry.reason ? ' — ' + entry.reason : ''), !entry.available);
+        });
+        ready = true; renderList(); renderJournal(responses[1].items || []);
+        status(responses[0].runtimeEnabled ? 'Сценарии загружены.' : 'Автоматическая обработка выключена. Можно подготовить сценарии.');
+        var current = selected && items.find(function (item) { return item.id === selected.id; });
+        busy = false; choose(current || undefined);
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        ready = false; error(failure);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    }
+    form.addEventListener('input', renderPreview);
+    controls.trigger.addEventListener('change', updateTrigger);
+    controls.goal.addEventListener('change', updateChannels);
+    list.addEventListener('change', function () { choose(items.find(function (item) { return item.id === list.value; })); });
+    fresh.addEventListener('click', function () { choose(); });
+    refresh.addEventListener('click', function () { void load(); });
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      if (!active || !ready || busy) return;
+      if (!pending && !form.reportValidity()) return;
+      if (!pending) {
+        var definition = {};
+        Object.keys(controls).forEach(function (key) {
+          definition[key] = key === 'active' ? controls[key].checked
+            : ['delayMinutes', 'ttlMinutes', 'dailyLimit', 'goalWindowMinutes'].indexOf(key) >= 0
+              ? Number(controls[key].value) : controls[key].value;
+        });
+        definition.channels = order.slice();
+        if (!order.length) { status('Выберите хотя бы один канал.', true); return; }
+        pending = { id: selected ? selected.id : null, expectedVersion: selected ? selected.version : 0,
+          definition: definition, key: api.scenarioCommandKey() };
+      }
+      var command = pending, generation = epoch;
+      busy = true; updateControls(); status('Сохраняем сценарий…');
+      try {
+        var saved = await api.saveScenario(command.id, command.expectedVersion, command.definition, command.key);
+        if (!active || generation !== epoch) return;
+        if (!validSaved(saved, command)) throw new Error('SCENARIO_SAVE_RESPONSE_INVALID');
+        pending = null; selected = saved;
+        items = items.filter(function (item) { return item.id !== saved.id; }).concat([saved]);
+        busy = false; renderList(); choose(saved); status('Сохранена версия ' + saved.version + '.');
+        // Journal read failure must not turn an acknowledged save into an ambiguous command.
+        try {
+          var runs = await api.listScenarioRuns();
+          if (active && generation === epoch) renderJournal(runs.items || []);
+        } catch (journalError) {
+          if (active && generation === epoch) {
+            if (!onUnauthorized(journalError)) status('Сценарий сохранён. Журнал временно недоступен.', true);
+          }
+        }
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        var definitive = failure && failure.status >= 400 && failure.status < 500 && failure.status !== 408 && failure.status !== 429;
+        if (definitive) pending = null;
+        if (failure && failure.status === 409) ready = false;
+        error(failure);
+        if (pending) status('Результат сохранения неизвестен. Повторите ту же команду; редактирование заблокировано.', true);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    });
+    choose(); updateControls();
+    return {
+      activate: function () { if (!active) { active = true; epoch++; void load(); } },
+      suspend: function () {
+        active = false; epoch++; pending = null; selected = null; items = []; busy = false; ready = false;
+        list.textContent = ''; journal.textContent = ''; choose(); status('Войдите в контур уведомлений.'); updateControls();
+      },
+      reload: load
+    };
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -14923,6 +15216,9 @@
     var api = createApi(cfg);
     var trafficPane = createTrafficPane(dom.trafficSection, api, cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var scenarioHost = document.createElement('section');
+    dom.notificationWorkspace.appendChild(scenarioHost);
+    var scenarioPane = createNotificationScenariosPane(scenarioHost, notificationApi, notificationSessionExpired);
     var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
 
     function readStoredNotificationToken() {
@@ -37184,6 +37480,7 @@
     }
 
     function showNotificationAuth(message, isError) {
+      scenarioPane.suspend();
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
       dom.notificationWorkspace.classList.add('phab-admin-hidden');
@@ -37198,6 +37495,7 @@
     function showNotificationWorkspace() {
       dom.notificationAuth.classList.add('phab-admin-hidden');
       dom.notificationWorkspace.classList.remove('phab-admin-hidden');
+      scenarioPane.activate();
       updateNotificationControls();
     }
 
@@ -37269,7 +37567,6 @@
           return;
         }
         notificationState.session = session;
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         showNotificationAuth(
@@ -37309,7 +37606,6 @@
         );
         notificationState.challengeId = '';
         dom.notificationCodeInput.value = '';
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         setNotificationResult(
@@ -38955,6 +39251,7 @@
           throw error;
         }
       } finally {
+        scenarioPane.suspend();
         cfg.authToken = '';
         storeNotificationToken('');
         if (notificationApi) notificationApi.setAccessToken('');
