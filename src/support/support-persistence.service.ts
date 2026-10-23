@@ -1,3 +1,4 @@
+import { MaxOutboxStore, MaxReceipt, isMaxConnector, missingMaxStore } from './max-outbox-store';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
@@ -813,19 +814,52 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   persistOutboxCommand(command: SupportOutboxCommand): void {
     this.fireAndForget(async () => {
-      const target = this.resolveTargetBackendForConnector(command.connector);
+      const target = isMaxConnector(command.connector) ? this.maxBackend()
+        : this.resolveTargetBackendForConnector(command.connector);
       if (!target) {
         return;
       }
 
+      if (isMaxConnector(command.connector)) {
+        // Enqueue only. Stale process-local snapshots must never overwrite a lease/receipt.
+        await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
+          { id: command.id }, { $setOnInsert: command }, { upsert: true }
+        );
+        return;
+      }
       await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
-        { id: command.id },
-        { $set: command },
-        { upsert: true }
+        { id: command.id }, { $set: command }, { upsert: true }
       );
 
       await this.deleteFromOtherBackends(target.config.key, 'outbox', command.id);
     }, 'persistOutboxCommand');
+  }
+
+  private maxBackend(): SupportPersistenceBackendState {
+    const key = this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT);
+    const target = this.getBackendState(key);
+    // Never fall back to a different queue authority during a backend outage.
+    if (!target?.db) return missingMaxStore();
+    return target;
+  }
+
+  private maxStore(): MaxOutboxStore {
+    return new MaxOutboxStore(this.collection<SupportOutboxCommand>(this.maxBackend(), 'outbox'));
+  }
+
+  pullMaxOutbox(connector: SupportConnectorRoute, limit: number, leaseSec: number) {
+    return this.maxStore().pull(connector, limit, leaseSec);
+  }
+
+  async hasMaxOutbox(id: string): Promise<boolean> {
+    const target = this.maxBackend();
+    return !!await this.collection<SupportOutboxCommand>(target, 'outbox').findOne({ id,
+      connector: { $in: [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.MAX_ACADEMY_BOT] } },
+    { projection: { _id: 1 } });
+  }
+
+  acceptMaxReceipt(id: string, kind: 'ack' | 'fail', body: MaxReceipt) {
+    return this.maxStore().receipt(id, kind, body);
   }
 
   private buildBackendConfigs(): SupportPersistenceBackendConfig[] {
