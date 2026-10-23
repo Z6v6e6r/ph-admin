@@ -38,7 +38,10 @@ export function compileSubscriptionRuntimeProjection(
       durationsMinutes: [...policy.createGame.durationsMinutes]
     },
     joinGame: { ...policy.joinGame },
-    activeServicesLimit: { ...policy.activeServicesLimit },
+    activeServicesLimit: {
+      ...policy.activeServicesLimit,
+      limitExceeded: policy.activeServicesLimit.limitExceeded ?? 'BLOCK'
+    },
     bookingWindow: { ...policy.bookingWindow },
     dailyUsageLimit: policy.dailyUsageLimit,
     dailyUsagePolicy: policy.dailyUsagePolicy

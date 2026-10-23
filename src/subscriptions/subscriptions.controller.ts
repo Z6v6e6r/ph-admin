@@ -41,6 +41,7 @@ import {
   SubscriptionSaleBindingResult,
   SubscriptionSaleBindingService
 } from './subscription-sale-binding.service';
+import { SubscriptionShadowQuoteJournalService } from './subscription-shadow-quote-journal.service';
 import { ActivateSubscriptionTestOfferDto } from './dto/activate-subscription-test-offer.dto';
 import { ActivateSubscriptionFirstUseDto } from './dto/activate-subscription-first-use.dto';
 import { CreateSubscriptionTestReservationDto } from './dto/create-subscription-test-reservation.dto';
@@ -69,6 +70,10 @@ import {
   SubscriptionRuntimeContextResult,
   SubscriptionRuntimeContextService
 } from './subscription-runtime-context.service';
+import {
+  SubscriptionPolicyRegistryResult,
+  SubscriptionPolicyRegistryService
+} from './subscription-policy-registry.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 import {
@@ -306,9 +311,11 @@ export class SubscriptionTrustedShadowController {
     private readonly adapter: SubscriptionTrustedShadowAdapterService,
     private readonly entitlements: SubscriptionEntitlementLifecycleService,
     private readonly runtimeContext: SubscriptionRuntimeContextService,
+    private readonly policyRegistry: SubscriptionPolicyRegistryService,
     private readonly activation: SubscriptionActivationService,
     private readonly saleReadinessService: SubscriptionSaleReadinessService,
-    private readonly saleBindingService: SubscriptionSaleBindingService
+    private readonly saleBindingService: SubscriptionSaleBindingService,
+    private readonly quoteJournal: SubscriptionShadowQuoteJournalService
   ) {}
 
   @Post('shadow-quote')
@@ -316,12 +323,20 @@ export class SubscriptionTrustedShadowController {
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   @Header('Referrer-Policy', 'no-referrer')
-  quote(
+  async quote(
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
     @Body() dto: SubscriptionShadowQuoteAdapterDto
   ): Promise<SubscriptionShadowQuoteResult> {
-    return this.adapter.quote(authorization, integrationToken, dto);
+    const result = await this.adapter.quote(authorization, integrationToken, dto);
+    await this.quoteJournal.journalLk1Quote({
+      result,
+      action: dto.action,
+      targetId: dto.target.targetId,
+      correlationId: correlationId ?? null
+    });
+    return result;
   }
 
   @Post('entitlements/reserve')
@@ -348,9 +363,10 @@ export class SubscriptionTrustedShadowController {
   confirmEntitlement(
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-subscription-owner-evidence') ownerEvidence: string | undefined,
     @Body() dto: ConfirmSubscriptionEntitlementDto
   ): Promise<SubscriptionEntitlementTransitionResult> {
-    return this.entitlements.confirm(authorization, integrationToken, dto);
+    return this.entitlements.confirm(authorization, integrationToken, dto, ownerEvidence);
   }
 
   @Post('entitlements/release')
@@ -376,6 +392,17 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
+  }
+
+  @Get('policy-registry')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  registry(
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined
+  ): Promise<SubscriptionPolicyRegistryResult> {
+    return this.policyRegistry.read(integrationToken);
   }
 
   @Post('sale-readiness')

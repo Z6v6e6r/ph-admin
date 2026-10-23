@@ -1020,7 +1020,9 @@ async function run(): Promise<void> {
     aggregates: 'subscription_entitlement_aggregates',
     operations: 'subscription_operations',
     ledger: 'subscription_usage_ledger',
-    outbox: 'subscription_outbox'
+    outbox: 'subscription_outbox',
+    lk2QuoteDecisions: 'subscription_lk2_quote_decisions',
+    lk2QuoteDelegationReplays: 'subscription_lk2_delegation_replays'
   };
   for (const [groupName, indexes] of Object.entries(SUBSCRIPTION_RUNTIME_REQUIRED_INDEXES)) {
     for (const index of indexes) {
@@ -1029,7 +1031,11 @@ async function run(): Promise<void> {
         .join(', ');
       const unique = index.unique ? 'unique: true, ' : '';
       const sparse = 'sparse' in index && index.sparse ? 'sparse: true, ' : '';
-      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}${sparse}name: '${index.name}' }]`;
+      const ttl =
+        'expireAfterSeconds' in index
+          ? `, expireAfterSeconds: ${index.expireAfterSeconds}`
+          : '';
+      const exactSpec = `['${collectionByGroup[groupName]}', { ${key} }, { ${unique}${sparse}name: '${index.name}'${ttl} }]`;
       const position = indexScript.indexOf(exactSpec);
       assert.ok(
         position >= runtimeIndexBlockStart && position < runtimeIndexBlockEnd,

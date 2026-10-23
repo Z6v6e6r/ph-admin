@@ -202,6 +202,7 @@ export interface SubscriptionPolicyVersion {
     enabled: boolean;
     max: number | null;
     scope: ActiveServiceScope;
+    limitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
   };
   bookingWindow?: {
     enabled: boolean;
@@ -925,6 +926,33 @@ export interface StoredSubscriptionEntitlementAggregate {
   updatedAt: string;
 }
 
+export interface StoredLk2QuoteDecisionJournalEntry {
+  decisionId: string;
+  /** Originating quote channel; absent on legacy rows written before this field existed. */
+  channel?: 'LK2' | 'LK1';
+  tenantId: string;
+  correlationId: string | null;
+  action: SubscriptionAction;
+  targetId: string;
+  subscriptionInstanceId: string | null;
+  outcome: string;
+  serviceAllowed: boolean;
+  subscriptionBenefitAllowed: boolean;
+  blockers: string[];
+  policyVersion: number | null;
+  policyDigest: string | null;
+  evaluatedAt: string;
+  recordedAt: string;
+}
+
+export interface StoredLk2QuoteDelegationReplay {
+  keyId: string;
+  jti: string;
+  tenantId: string;
+  expiresAt: Date;
+  claimedAt: string;
+}
+
 export interface SubscriptionShadowQuoteIdentityContext {
   resolutionSource: 'LK_IDENTITY';
   tenantId: string;
@@ -948,6 +976,7 @@ export interface SubscriptionShadowQuoteResolvedTarget {
   evidenceRef: string;
   priceEvidenceRef: string | null;
   resolvedAt: string;
+  snapshotRevision?: number;
 }
 
 export type SubscriptionCanonicalTargetSnapshotState = 'ACTIVE' | 'REVOKED';
@@ -1018,11 +1047,17 @@ export interface SubscriptionShadowQuoteResult {
   policyDigest: string | null;
   aggregateRevision: number | null;
   evaluatedAt: string;
+  /** Tenant that owns the instance; set by CUP so audit consumers do not re-resolve identity. */
+  tenantId?: string;
   usageUnits: number | null;
   activeServices: number | null;
   maxActiveServices: number | null;
   dailyUsed: number | null;
   dailyLimit: number | null;
+  weeklyUsed?: number | null;
+  weeklyLimit?: number | null;
+  monthlyUsed?: number | null;
+  monthlyLimit?: number | null;
   usageBucket?: {
     localDate: string;
     localWeek: string;
@@ -1030,6 +1065,7 @@ export interface SubscriptionShadowQuoteResult {
   } | null;
   dailyUsageApplies?: boolean | null;
   dailyLimitExceeded?: boolean | null;
+  activeServicesLimitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | null;
   benefit: SubscriptionShadowQuoteAppliedBenefit | null;
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
 }

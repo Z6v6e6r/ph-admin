@@ -228,6 +228,7 @@ export function evaluateSubscriptionShadowQuote(
   const maxActiveServices = policy.activeServicesLimit.enabled
     ? nonNegativeInteger(policy.activeServicesLimit.max)
     : null;
+  let activeServicesLimitExceeded: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | null = null;
   if (policy.activeServicesLimit.enabled) {
     if (policy.activeServicesLimit.scope === 'ALL_BOOKINGS') {
       block(
@@ -241,6 +242,7 @@ export function evaluateSubscriptionShadowQuote(
     if (activeServices === null || maxActiveServices === null || maxActiveServices < 1) {
       block('ACTIVE_SERVICES_LIMIT_INVALID', 'Лимит активных услуг не настроен');
     } else if (activeServices >= maxActiveServices) {
+      activeServicesLimitExceeded = policy.activeServicesLimit.limitExceeded ?? 'BLOCK';
       block('ACTIVE_SERVICES_LIMIT_REACHED', 'Достигнут лимит активных услуг', {
         activeServices,
         maxActiveServices
@@ -443,6 +445,10 @@ export function evaluateSubscriptionShadowQuote(
     maxActiveServices,
     dailyUsed,
     dailyLimit,
+    weeklyUsed,
+    weeklyLimit,
+    monthlyUsed,
+    monthlyLimit,
     usageBucket: targetLocal ? {
       localDate: targetLocal.date,
       localWeek: targetLocal.week,
@@ -450,6 +456,7 @@ export function evaluateSubscriptionShadowQuote(
     } : null,
     dailyUsageApplies: dailyActionApplies,
     dailyLimitExceeded,
+    activeServicesLimitExceeded,
     benefit: appliedBenefit,
     decision
   };

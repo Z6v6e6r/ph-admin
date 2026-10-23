@@ -109,7 +109,8 @@ async function run(): Promise<void> {
     dictionaryRevision: 'dictionary:2026-08-19',
     evidenceRef: 'evidence:canonical-target-read',
     priceEvidenceRef: 'evidence:canonical-price-read',
-    resolvedAt: '2026-08-19T09:59:50.000Z'
+    resolvedAt: '2026-08-19T09:59:50.000Z',
+    snapshotRevision: 7
   });
   const resolvedLatest = await resolver.resolveLatest({
     tenantId: reference.tenantId,
