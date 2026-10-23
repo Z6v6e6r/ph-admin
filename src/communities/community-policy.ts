@@ -2,10 +2,11 @@
  * Community policy v1. Kept byte-identical in LK and CUP; no runtime/provider access.
  * Missing types are FRIENDS. Configuration never grants membership or payment rights.
  */
-export const COMMUNITY_TYPES = ["FRIENDS", "STATION", "CORPORATE", "LEAGUE"] as const;
+export const COMMUNITY_TYPES = ["FRIENDS", "STATION", "CORPORATE", "LEAGUE", "EVENT"] as const;
 export type CommunityType = typeof COMMUNITY_TYPES[number];
 export interface LeagueDivision { id: string; name: string; minLevel: number; maxLevel: number }
 export interface CommunityTypeSettings {
+  gameIds?: Array<"padel-jump" | "time-for-friends">;
   stationId?: string;
   directionIds?: string[];
   exerciseTypeIds?: string[];
@@ -44,10 +45,15 @@ export function parseCommunityTypeSettings(type: unknown, input: unknown): Commu
   const keys: Record<CommunityType, string[]> = {
     FRIENDS: [], STATION: ["stationId"],
     CORPORATE: ["directionIds", "exerciseTypeIds", "categories", "vivaSubscriptionId"],
-    LEAGUE: ["divisions"],
+    LEAGUE: ["divisions"], EVENT: ["gameIds"],
   };
   if (Object.keys(value).some(key => !keys[type as CommunityType].includes(key))) fail("UNKNOWN_SETTING");
   if (type === "FRIENDS") return {};
+  if (type === "EVENT") {
+    const gameIds = ids(value.gameIds);
+    if (!gameIds.length || gameIds.some(id => !["padel-jump", "time-for-friends"].includes(id))) fail("INVALID_GAMES");
+    return { gameIds: gameIds as Array<"padel-jump" | "time-for-friends"> };
+  }
   if (type === "STATION") {
     const stationId = text(value.stationId, 120);
     if (!/^[a-zA-Z0-9_-]+$/.test(stationId)) fail("INVALID_STATION");

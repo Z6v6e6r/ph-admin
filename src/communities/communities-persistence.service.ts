@@ -1212,7 +1212,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       members,
       pendingMembers,
       bannedMembers,
-      details: this.stripObjectId(document)
+      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'eventEntries')))
     };
   }
 
