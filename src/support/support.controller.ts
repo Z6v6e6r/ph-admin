@@ -1,3 +1,4 @@
+import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import {
   BadRequestException,
   Body,
@@ -11,6 +12,7 @@ import {
   Patch,
   Post,
   Query,
+  ServiceUnavailableException,
   UnauthorizedException
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -292,41 +294,44 @@ export class SupportController {
   }
 
   @Get('outbox/pull')
-  pullOutbox(
+  async pullOutbox(
     @Headers('x-integration-token') token: string | undefined,
     @Query('connector', new ParseEnumPipe(SupportConnectorRoute))
     connector: SupportConnectorRoute,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
-    @Query('leaseSec', new ParseIntPipe({ optional: true })) leaseSec?: number
-  ): { commands: SupportOutboxCommand[] } {
-    this.assertIntegrationToken(token);
+    @Query('leaseSec', new ParseIntPipe({ optional: true })) leaseSec?: number,
+    @Query('receiptProtocol') receiptProtocol?: string
+  ): Promise<{ commands: SupportOutboxCommand[] }> {
+    this.assertIntegrationToken(token, isMaxConnector(connector));
     return {
-      commands: this.supportService.pullOutbox(connector, limit ?? 20, leaseSec ?? 30)
+      commands: await this.supportService.pullOutbox(connector, limit ?? 20, leaseSec ?? 30, receiptProtocol)
     };
   }
 
   @Post('outbox/:id/ack')
   ackOutbox(
     @Headers('x-integration-token') token: string | undefined,
-    @Param('id') id: string
-  ): SupportOutboxCommand {
-    this.assertIntegrationToken(token);
-    return this.supportService.ackOutbox(id);
+    @Param('id') id: string,
+    @Body() body: MaxReceipt = {}
+  ): Promise<SupportOutboxCommand> {
+    this.assertIntegrationToken(token, body?.leaseToken !== undefined);
+    return this.supportService.ackOutbox(id, body);
   }
 
   @Post('outbox/:id/fail')
   failOutbox(
     @Headers('x-integration-token') token: string | undefined,
     @Param('id') id: string,
-    @Body() body: { error?: string; requeue?: boolean } = {}
-  ): SupportOutboxCommand {
-    this.assertIntegrationToken(token);
-    return this.supportService.failOutbox(id, body.error, body.requeue !== false);
+    @Body() body: MaxReceipt & { error?: string; requeue?: boolean } = {}
+  ): Promise<SupportOutboxCommand> {
+    this.assertIntegrationToken(token, body?.leaseToken !== undefined);
+    return this.supportService.failOutbox(id, body?.error, body?.requeue !== false, body);
   }
 
-  private assertIntegrationToken(token?: string): void {
+  private assertIntegrationToken(token?: string, requireConfigured = false): void {
     const expected = String(process.env.SUPPORT_INTEGRATION_TOKEN ?? '').trim();
     if (!expected) {
+      if (requireConfigured) throw new ServiceUnavailableException({ code: 'MAX_OUTBOX_INTEGRATION_UNCONFIGURED' });
       return;
     }
     if (token === expected) {
