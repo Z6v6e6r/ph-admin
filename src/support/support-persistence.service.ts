@@ -1,3 +1,4 @@
+import { supportDiagnostics } from './support-diagnostics';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient } from 'mongodb';
 import { DEFAULT_DIALOGS_MONGODB_DB } from '../common/constants/dialogs-mongo.constants';
@@ -812,19 +813,25 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   persistOutboxCommand(command: SupportOutboxCommand): void {
+    supportDiagnostics.observe(command, 'max_outbox', { code: 'OUTCOME_UNKNOWN', connector: command.connector,
+      outboxRef: supportDiagnostics.ref('outbox', command.id), leaseAttempt: command.attempts, outcome: 'outcome_unknown' });
     this.fireAndForget(async () => {
       const target = this.resolveTargetBackendForConnector(command.connector);
       if (!target) {
         return;
       }
 
-      await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
+      const diagnosticWriteResult = await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
         { id: command.id },
         { $set: command },
         { upsert: true }
       );
 
       await this.deleteFromOtherBackends(target.config.key, 'outbox', command.id);
+      supportDiagnostics.observe(command, 'max_outbox', { eventKind: 'operation_result', connector: command.connector,
+        code: diagnosticWriteResult.acknowledged === true ? 'DB_ACK' : 'DB_UNACKNOWLEDGED', acknowledged: diagnosticWriteResult.acknowledged === true,
+        matchedCount: diagnosticWriteResult.matchedCount, modifiedCount: diagnosticWriteResult.modifiedCount,
+        outboxRef: supportDiagnostics.ref('outbox', command.id), outcome: diagnosticWriteResult.acknowledged === true ? 'acknowledged' : 'outcome_unknown' });
     }, 'persistOutboxCommand');
   }
 
