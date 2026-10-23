@@ -133,6 +133,36 @@ async function main() {
     assert.equal((await store.pull(Route.MAX_BOT, 1, 60, now)).length, 0);
     assert.equal((await read('old-lease')).terminalReason, 'DELIVERY_UNKNOWN');
 
+    let majorityReads = 0;
+    let committed = false;
+    const pendingCommit = new MaxOutboxStore({
+      findOne: async (_filter: unknown, options: any) => {
+        // Only local/uncommitted state contains ACK. Majority view still contains lease.
+        if (options?.readConcern?.level === 'majority' && options?.readPreference === 'primary' && !committed) {
+          majorityReads++;
+          return seed('a', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken });
+        }
+        return seed('a', { status: Status.SENT, lastReceipt: { token: first.leaseToken!, kind: 'ack' } });
+      },
+      findOneAndUpdate: async () => { throw new Error('synthetic majority unavailable'); }
+    } as any);
+    await assert.rejects(() => pendingCommit.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 1), /majority unavailable/);
+    assert.equal(majorityReads, 1);
+    committed = true;
+    assert.equal((await pendingCommit.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 2)).status, Status.SENT);
+    let reads = 0;
+    const raced = new MaxOutboxStore({
+      findOne: async (_filter: unknown, options: any) => {
+        reads++;
+        if (reads === 1 || options?.readConcern?.level === 'majority') {
+          return seed('a', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken });
+        }
+        return seed('a', { status: Status.SENT, lastReceipt: { token: first.leaseToken!, kind: 'ack' } });
+      }, findOneAndUpdate: async () => null
+    } as any);
+    await assert.rejects(() => raced.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 1), (e: any) => e.getStatus() === 409);
+    assert.equal(reads, 2);
+
     const failing = new MaxOutboxStore({ findOne: async () => seed('a', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken }),
       findOneAndUpdate: async () => { throw new Error('synthetic storage unavailable'); } } as any);
     await assert.rejects(() => failing.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 1), /storage unavailable/);

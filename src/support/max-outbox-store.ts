@@ -49,8 +49,9 @@ export class MaxOutboxStore {
     if (typeof token !== 'string' || !/^[0-9a-f-]{36}$/.test(token)) {
       throw new ConflictException({ code: 'OUTBOX_LEASE_REQUIRED' });
     }
-    const command = await this.collection.findOne({ id });
+    const command = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary' });
     if (!command || !isMaxConnector(command.connector)) throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
+    // Majority readback prevents a duplicate reporting success from an applied but uncommitted receipt.
     // A repeated receipt is safe only until the next claim, which clears lastReceipt.
     if (command.lastReceipt?.token === token && command.lastReceipt.kind === kind) return command;
     const at = new Date(now).toISOString();
@@ -75,7 +76,7 @@ export class MaxOutboxStore {
       leaseToken: token, leasedUntil: { $gt: at }, attempts: command.attempts },
     { $set: set, $unset: unset }, { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' } });
     if (updated) return updated; // Mongo acknowledgement precedes API success.
-    const concurrent = await this.collection.findOne({ id });
+    const concurrent = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary' });
     if (concurrent?.lastReceipt?.token === token && concurrent.lastReceipt.kind === kind) return concurrent;
     throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
   }

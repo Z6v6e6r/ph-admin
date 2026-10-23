@@ -18,7 +18,8 @@ cleanup, migration or reset is part of this source change.
   modifying the command. Duplicate same-kind receipt returns the original result;
   it cannot shift retry due time. A new claim clears the previous receipt.
 - Claims/receipts use the configured MAX backend only, never runtime fallback to
-  another database. Acknowledged writes use majority; API success follows Mongo.
+  another database. Acknowledged writes use majority; API success follows Mongo. Duplicate receipt confirmation uses a primary majority
+  read, so locally applied but uncommitted state cannot produce premature success.
 - MAX enqueue is insert-only. Old process-local snapshots cannot overwrite a
   lease, terminal state or provider diagnosis. This intentionally freezes the
   original MAX command's delivery/association fields after enqueue, including on
@@ -83,5 +84,7 @@ The Mongo test accepts loopback only, creates and drops a random max_retry_test_
 database, and never loads app env files. It covers concurrent claims, stale and
 opposite receipts, duplicates/lost response, due time, exhaustion, old records,
 privacy, intended-backend failure and non-MAX isolation. The adapter companion
-uses mocked fetch only. CI runs Mongo7 on an isolated service. These checks do not
+uses mocked fetch only. CI runs Mongo7 on an isolated service. The local/majority split-view regression uses a controlled collection double; a
+physical paused-replication/rollback test is still a separate acceptance gap. An
+unsupported majority read must fail, never fall back to local. These checks do not
 prove provider delivery, production topology or real Node-RED installation.
