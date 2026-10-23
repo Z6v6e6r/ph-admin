@@ -7989,8 +7989,25 @@
       if (kind === 'number') { control.min = '0'; control.max = '10'; control.step = '0.01'; }
       wrap.appendChild(control); (container || fields).appendChild(wrap); return control;
     }
+    function eventTimeToUtc(control) {
+      if (!control.value) return '';
+      var date = new Date(control.value + '+03:00');
+      return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+    }
+    function eventTimeMoscow(value) {
+      var date = new Date(value);
+      return Number.isFinite(date.getTime()) ? new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, -1) : '';
+    }
     function read() {
-      if (select.value === 'EVENT') return { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
+      if (select.value === 'EVENT') {
+        var eventSettings = { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
+        if ([controls.responsibleName, controls.contactEmail, controls.startsAt, controls.endsAt].some(function (c) { return c.value.trim(); })) {
+          eventSettings.registrationPolicy = { version: 'event-registration-v1', retentionYears: 1,
+            responsibleName: controls.responsibleName.value.trim(), contactEmail: controls.contactEmail.value.trim(),
+            startsAt: eventTimeToUtc(controls.startsAt), endsAt: eventTimeToUtc(controls.endsAt) };
+        }
+        return eventSettings;
+      }
       if (select.value === 'STATION') return { stationId: controls.stationId.value.trim() };
       function list(control) { return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean); }
       if (select.value === 'CORPORATE') {
@@ -8014,11 +8031,17 @@
       fields.textContent = ''; controls = {}; divisionRows = [];
       var values = drafts[select.value] || {};
       if (select.value === 'EVENT') {
-        [['padel-jump', 'Падл Jump'], ['time-for-friends', 'Падел: Время на друзей']].forEach(function (pair) {
+        [['padel-jump', 'Падл Jump'], ['time-for-friends', 'Падел Микс']].forEach(function (pair) {
           var label = document.createElement('label'); label.className = 'phab-admin-community-form-field';
           var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = (values.gameIds || ['padel-jump', 'time-for-friends']).indexOf(pair[0]) >= 0;
           controls[pair[0]] = checkbox; label.appendChild(checkbox); label.appendChild(document.createTextNode(pair[1])); fields.appendChild(label);
         });
+        var policy = values.registrationPolicy || {};
+        controls.responsibleName = input('Ответственный за анкеты', policy.responsibleName || '');
+        controls.contactEmail = input('Email для обращений и удаления', policy.contactEmail || '', 'email');
+        controls.startsAt = input('Начало (МСК)', eventTimeMoscow(policy.startsAt), 'datetime-local'); controls.startsAt.step = '0.001';
+        controls.endsAt = input('Окончание (МСК)', eventTimeMoscow(policy.endsAt), 'datetime-local'); controls.endsAt.step = '0.001';
+        var privacyNote = document.createElement('p'); privacyNote.textContent = 'Хранение — один календарный год после окончания. Пока политика не заполнена, регистрация и игра закрыты. Изменение настроек требует повторной анкеты.'; fields.appendChild(privacyNote);
         var eventNote = document.createElement('p'); eventNote.textContent = 'При вступлении обязательны ФИО, компания и email. В рейтинге мероприятия — лучший результат Падл Jump. Анкета не публикуется.'; fields.appendChild(eventNote);
       }
       if (select.value === 'STATION') controls.stationId = input('ID станции Viva', values.stationId || community.stationId || '');

@@ -5,7 +5,16 @@
 export const COMMUNITY_TYPES = ["FRIENDS", "STATION", "CORPORATE", "LEAGUE", "EVENT"] as const;
 export type CommunityType = typeof COMMUNITY_TYPES[number];
 export interface LeagueDivision { id: string; name: string; minLevel: number; maxLevel: number }
+export interface EventRegistrationPolicy {
+  version: 'event-registration-v1';
+  responsibleName: string;
+  contactEmail: string;
+  startsAt: string;
+  endsAt: string;
+  retentionYears: 1;
+}
 export interface CommunityTypeSettings {
+  registrationPolicy?: EventRegistrationPolicy;
   gameIds?: Array<"padel-jump" | "time-for-friends">;
   stationId?: string;
   directionIds?: string[];
@@ -45,14 +54,15 @@ export function parseCommunityTypeSettings(type: unknown, input: unknown): Commu
   const keys: Record<CommunityType, string[]> = {
     FRIENDS: [], STATION: ["stationId"],
     CORPORATE: ["directionIds", "exerciseTypeIds", "categories", "vivaSubscriptionId"],
-    LEAGUE: ["divisions"], EVENT: ["gameIds"],
+    LEAGUE: ["divisions"], EVENT: ["gameIds", "registrationPolicy"],
   };
   if (Object.keys(value).some(key => !keys[type as CommunityType].includes(key))) fail("UNKNOWN_SETTING");
   if (type === "FRIENDS") return {};
   if (type === "EVENT") {
     const gameIds = ids(value.gameIds);
     if (!gameIds.length || gameIds.some(id => !["padel-jump", "time-for-friends"].includes(id))) fail("INVALID_GAMES");
-    return { gameIds: gameIds as Array<"padel-jump" | "time-for-friends"> };
+    return { gameIds: gameIds as Array<"padel-jump" | "time-for-friends">,
+      ...(value.registrationPolicy === undefined ? {} : { registrationPolicy: parseEventRegistrationPolicy(value.registrationPolicy) }) };
   }
   if (type === "STATION") {
     const stationId = text(value.stationId, 120);
@@ -90,4 +100,32 @@ export function resolveLeagueDivision(divisions: readonly LeagueDivision[], leve
   if (typeof level !== "number" || !Number.isFinite(level)) return null;
   return divisions.find((division, index) => level >= division.minLevel &&
     (level < division.maxLevel || (index === divisions.length - 1 && level === division.maxLevel))) ?? null;
+}
+
+/** Shared by the browser, CUP and generated Node-RED functions. */
+export function parseEventRegistrationPolicy(value: unknown): EventRegistrationPolicy {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('EVENT_POLICY_NOT_READY');
+  const p = value as Record<string, unknown>;
+  const fields = ['version', 'responsibleName', 'contactEmail', 'startsAt', 'endsAt', 'retentionYears'];
+  if (Object.keys(p).length !== fields.length || Object.keys(p).some(k => !fields.includes(k)) ||
+      p.version !== 'event-registration-v1' || p.retentionYears !== 1) throw new Error('EVENT_POLICY_NOT_READY');
+  for (const key of ['responsibleName', 'contactEmail', 'startsAt', 'endsAt']) {
+    if (typeof p[key] !== 'string' || !(p[key] as string).trim() || (p[key] as string).length > 254 ||
+        [...(p[key] as string)].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) throw new Error('EVENT_POLICY_NOT_READY');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.contactEmail as string)) throw new Error('EVENT_POLICY_NOT_READY');
+  for (const key of ['startsAt', 'endsAt']) {
+    const date = new Date(p[key] as string);
+    if (!Number.isFinite(date.getTime()) || date.toISOString() !== p[key]) throw new Error('EVENT_POLICY_NOT_READY');
+  }
+  if (Date.parse(p.endsAt as string) <= Date.parse(p.startsAt as string)) throw new Error('EVENT_POLICY_NOT_READY');
+  return { version: 'event-registration-v1', responsibleName: (p.responsibleName as string).trim(),
+    contactEmail: (p.contactEmail as string).trim().toLowerCase(), startsAt: p.startsAt as string,
+    endsAt: p.endsAt as string, retentionYears: 1 };
+}
+export function eventRetentionUntil(endsAt: string): string {
+  const date = new Date(endsAt), month = date.getUTCMonth();
+  date.setUTCFullYear(date.getUTCFullYear() + 1);
+  if (date.getUTCMonth() !== month) date.setUTCDate(0);
+  return date.toISOString();
 }
