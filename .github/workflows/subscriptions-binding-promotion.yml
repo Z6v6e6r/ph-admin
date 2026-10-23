@@ -49,6 +49,7 @@ jobs:
           npm run test:support-client-resolve
           npm run test:support-dialog-resolution
           npm run test:support-outbox-max-attempts
+          npm run test:support-diagnostics
       - name: Support contact identity Mongo process-restart regression
         env:
           SUPPORT_IDENTITY_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority

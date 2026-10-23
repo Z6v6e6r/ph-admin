@@ -64,6 +64,7 @@
     "test:support-station-mappings": "ts-node test/support-station-mappings.test.ts",
     "test:messenger-station-broadcast-settings": "ts-node test/messenger-station-broadcast-settings.test.ts",
     "test:support-dialog-resolution": "ts-node test/support-dialog-resolution.test.ts",
+    "test:support-diagnostics": "ts-node test/support-diagnostics.test.ts",
     "test:support-outbox-max-attempts": "ts-node test/support-outbox-max-attempts.test.ts",
     "test:auth-rbac": "ts-node test/auth-rbac.test.ts && ts-node test/admin-ui-auth-isolation.test.ts && ts-node test/auth-persistence-readiness.test.ts",
     "test:lk-identity": "ts-node test/lk-identity.service.test.ts",

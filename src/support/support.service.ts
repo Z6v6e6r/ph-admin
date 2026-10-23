@@ -1,3 +1,4 @@
+import { supportDiagnostics } from './support-diagnostics';
 import {
   BadRequestException,
   ForbiddenException,
@@ -519,6 +520,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    supportDiagnostics.observe(dto, 'max_ingress', { connector: normalizedDto.connector,
+      targetSource: 'inbound', targetPresent: Boolean(normalizedDto.externalChatId || normalizedDto.externalUserId),
+      targetType: normalizedDto.externalChatId ? 'chat' : normalizedDto.externalUserId ? 'user' : 'UNKNOWN',
+      bindingRef: supportDiagnostics.ref('binding', normalizedDto.externalChatId || normalizedDto.externalUserId) });
     const createdAt = this.resolveEventTimestamp(normalizedDto.timestamp);
     let normalizedPhone = this.normalizePhone(normalizedDto.phone);
     let normalizedEmail = this.normalizeEmail(normalizedDto.email);
@@ -526,6 +531,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (!identityOwner) {
       await this.ensureClientLoadedForIngestEvent(normalizedDto, normalizedPhone, normalizedEmail);
     }
+    supportDiagnostics.observe(dto, 'max_binding', { connector: normalizedDto.connector,
+      bindingPresent: Boolean(identityOwner), clientVerified: identityOwner?.authStatus === SupportClientAuthStatus.VERIFIED,
+      bindingEqual: Boolean(identityOwner?.identities.some(identity => identity.connector === normalizedDto.connector
+        && (!normalizedDto.externalUserId || identity.externalUserId === normalizedDto.externalUserId)
+        && (!normalizedDto.externalChatId || identity.externalChatId === normalizedDto.externalChatId))) });
     const incomingKind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
     const ownedContact =
       incomingKind === SupportMessageKind.CONTACT &&
@@ -556,6 +566,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedPhone &&
       !identityOwner.phones.includes(normalizedPhone)
     ) {
+      supportDiagnostics.observe(dto, 'max_binding', { code: 'UPSTREAM_REFUSED', bindingEqual: false, connector: normalizedDto.connector });
       throw new BadRequestException('Support identity conflicts with the verified client phone');
     }
     const client = this.resolveOrCreateClient(
@@ -619,6 +630,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           normalizedEmail
         })
       : undefined;
+
+    if (message && this.isMaxConnector(normalizedDto.connector)) supportDiagnostics.link(dto, message);
 
     const contactReminderStage = this.updateContactReminderStage(
       client,
@@ -1108,6 +1121,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       };
       this.outbox.set(updated.id, updated);
       this.persistence.persistOutboxCommand(updated);
+      supportDiagnostics.observe(updated, 'max_lease', { connector: updated.connector, leaseAttempt: updated.attempts, leaseAgeMs: 0,
+        leasePresent: true, executionObserved: false, outboxRef: supportDiagnostics.ref('outbox', updated.id) });
     }
 
     return commands.map((command) => this.outbox.get(command.id) ?? command);
@@ -1158,6 +1173,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
+    supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
+      outboxRef: supportDiagnostics.ref('outbox', updated.id), outcome: 'outcome_unknown' });
     return updated;
   }
 
@@ -2699,7 +2716,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const outboundPayload = this.buildOutboundClientPayload(message, connector);
 
-    return {
+    const diagnosticCommand: SupportOutboxCommand = {
       id: randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
@@ -2724,6 +2741,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         formattedText: outboundPayload.formattedText
       }
     };
+    if (this.isMaxConnector(connector)) supportDiagnostics.link(message, diagnosticCommand);
+    supportDiagnostics.observe(message, 'max_outbox', { connector, targetSource: 'identity', bindingPresent: Boolean(identity),
+      targetType: identity?.externalChatId ? 'chat' : identity?.externalUserId ? 'user' : 'UNKNOWN',
+      targetPresent: Boolean(identity?.externalChatId || identity?.externalUserId),
+      outboxRef: supportDiagnostics.ref('outbox', diagnosticCommand.id), bindingRef: supportDiagnostics.ref('binding', identity?.externalChatId || identity?.externalUserId) });
+    return diagnosticCommand;
   }
 
   private buildOutboundClientPayload(
