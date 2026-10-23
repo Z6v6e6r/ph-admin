@@ -9,6 +9,9 @@ async function main() {
   assert.equal(communityType(undefined), 'FRIENDS');
   assert.equal(communityType('unknown'), 'FRIENDS');
   assert.deepEqual(parseCommunityTypeSettings('FRIENDS', {}), {});
+  assert.equal(communityType('EVENT'), 'EVENT');
+  assert.deepEqual(parseCommunityTypeSettings('EVENT', {gameIds: ['padel-jump','time-for-friends']}), {gameIds:['padel-jump','time-for-friends']});
+  for (const input of [{}, {gameIds:[]}, {gameIds:['untrusted']}, {gameIds:['padel-jump'],email:'private'}]) assert.throws(() => parseCommunityTypeSettings('EVENT',input));
   assert.deepEqual(parseCommunityTypeSettings('STATION', { stationId: 'station-a' }), { stationId: 'station-a' });
   assert.deepEqual(parseCommunityTypeSettings('CORPORATE', { directionIds: ['6180', '6180'], vivaSubscriptionId: 'synthetic-subscription' }),
     { directionIds: ['6180'], exerciseTypeIds: [], categories: [], vivaSubscriptionId: 'synthetic-subscription' });
@@ -30,6 +33,7 @@ async function main() {
 
   const persistence = new CommunitiesPersistenceService() as any;
   let document: any = { id: 'community-a', name: 'Тест', stationId: 'station-a', members: [{ id: 'member-a', name: 'Участник' }], pendingMembers: [], bannedMembers: [] };
+  document.eventEntries = [{fullName: 'Synthetic Member', email: ['synthetic','example.invalid'].join('@'), company: 'Synthetic'}];
   let writes = 0; let conflict = false; const payloads: any[] = [];
   const collection = { async updateOne(filter: any, mutation: any) {
     writes++; payloads.push({ filter, mutation });
@@ -40,6 +44,7 @@ async function main() {
   persistence.findDocumentWithSourceById = async () => ({ document: structuredClone(document), collection });
   persistence.findCommunityById = async () => persistence.toCommunity(document);
   assert.equal((await persistence.findCommunityById('community-a')).communityType, 'FRIENDS');
+  assert.equal((await persistence.findCommunityById('community-a')).details.eventEntries, undefined, 'private registration is never in raw admin/community projections');
   assert.equal(document.communityType, undefined, 'legacy reads have no migration side effects');
   await assert.rejects(() => persistence.updateCommunity('community-a', { communityType: 'STATION', typeSettings: { stationId: 'station-a' } }), /REVISION_CONFLICT/);
   assert.equal(writes, 0);
@@ -73,6 +78,9 @@ async function main() {
   assert.equal(memberWrite.update.$set.leagueAssignmentOutbox, undefined);
   assert.ok(memberWrite.filter.$and[1].members);
   await assert.rejects(() => persistence.persistDocument(document, { async updateOne() { return { matchedCount: 0 }; } }, document), /MEMBERS_CHANGED/);
+  await persistence.updateCommunity('community-a', {communityType:'EVENT',typeSettings:{gameIds:['padel-jump','time-for-friends']},expectedTypeSettingsRevision:3});
+  assert.equal(document.communityType,'EVENT');
+  assert.equal(document.eventEntries.length,1,'config updates preserve private registrations');
   console.log('Community types: defaults, strict config, division boundaries, scoped authorization and CAS preservation passed');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -7973,7 +7973,7 @@
     legend.textContent = 'Тип сообщества'; root.appendChild(legend);
     var select = document.createElement('select');
     select.className = 'phab-admin-input'; select.setAttribute('aria-label', 'Тип сообщества');
-    [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига']].forEach(function (pair) {
+    [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига'], ['EVENT', 'Мероприятие']].forEach(function (pair) {
       var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
     });
     select.value = community.communityType || 'FRIENDS'; root.appendChild(select);
@@ -7990,6 +7990,7 @@
       wrap.appendChild(control); (container || fields).appendChild(wrap); return control;
     }
     function read() {
+      if (select.value === 'EVENT') return { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
       if (select.value === 'STATION') return { stationId: controls.stationId.value.trim() };
       function list(control) { return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean); }
       if (select.value === 'CORPORATE') {
@@ -8012,6 +8013,14 @@
     function render() {
       fields.textContent = ''; controls = {}; divisionRows = [];
       var values = drafts[select.value] || {};
+      if (select.value === 'EVENT') {
+        [['padel-jump', 'Падл Jump'], ['time-for-friends', 'Падел: Время на друзей']].forEach(function (pair) {
+          var label = document.createElement('label'); label.className = 'phab-admin-community-form-field';
+          var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = (values.gameIds || ['padel-jump', 'time-for-friends']).indexOf(pair[0]) >= 0;
+          controls[pair[0]] = checkbox; label.appendChild(checkbox); label.appendChild(document.createTextNode(pair[1])); fields.appendChild(label);
+        });
+        var eventNote = document.createElement('p'); eventNote.textContent = 'При вступлении обязательны ФИО, компания и email. В рейтинге мероприятия — лучший результат Падл Jump. Анкета не публикуется.'; fields.appendChild(eventNote);
+      }
       if (select.value === 'STATION') controls.stationId = input('ID станции Viva', values.stationId || community.stationId || '');
       if (select.value === 'CORPORATE') {
         controls.directionIds = input('ID направлений Viva через запятую', (values.directionIds || []).join(', '));
