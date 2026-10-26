@@ -431,6 +431,10 @@ export interface SupportOutboxCommand {
   attempts: number;
   lastError?: string;
   leaseToken?: string;
+  queueSequence?: number;
+  admissionKey?: string;
+  quarantinedAt?: string;
+  reconciliation?: { resolution: 'confirmed_sent' | 'confirmed_not_sent'; evidenceSha256: string; at: string };
   nextAttemptAt?: string;
   updatedAt?: string;
   terminalReason?: string;

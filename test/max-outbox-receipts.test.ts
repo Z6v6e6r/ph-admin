@@ -7,7 +7,7 @@ import { supportDiagnostics } from '../src/support/support-diagnostics';
 import { SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportController } from '../src/support/support.controller';
 import { SupportService } from '../src/support/support.service';
-import { MaxOutboxStore } from '../src/support/max-outbox-store';
+import { MaxOutboxStore, provisionMaxQueue } from './fixtures/max-outbox-fixture';
 import { maxFailure, maxRetryDelay } from '../src/support/max-outbox-policy';
 import { SupportConnectorRoute as Route, SupportOutboxCommand as Command, SupportOutboxStatus as Status } from '../src/support/support.types';
 
@@ -31,13 +31,14 @@ async function main() {
   await client.connect();
   const db = client.db('max_retry_test_' + randomUUID().replaceAll('-', ''));
   const collection = db.collection<Command>('outbox');
+  await provisionMaxQueue(db);
   await collection.createIndex({ id: 1 }, { unique: true });
   const store = new MaxOutboxStore(collection, 3);
   const now = Date.parse('2026-01-01T00:00:00Z');
   const seed = (id: string, extra: Partial<Command> = {}): Command => ({ id,
     connector: Route.MAX_BOT, dialogId: 'synthetic-dialog', clientId: 'synthetic-client',
     text: 'synthetic text', targetExternalChatId: 'synthetic-chat', createdAt: new Date(now).toISOString(),
-    status: Status.PENDING, attempts: 0, ...extra });
+    status: Status.PENDING, attempts: 0, queueSequence: 1, ...extra });
   const reset = async (...commands: Command[]) => { await collection.deleteMany({}); await collection.insertMany(commands); };
   const read = async (id = 'a') => (await collection.findOne({ id }))!;
   const conflict = async (fn: () => Promise<unknown>) => {
@@ -105,7 +106,7 @@ async function main() {
     try {
       const persistence = Object.create(SupportPersistenceService.prototype) as SupportPersistenceService;
       Object.assign(persistence, {
-        maxBackend: () => ({ config: { key: 'synthetic-max' }, db }),
+        maxBackend: () => ({ config: { key: 'synthetic-max' }, db, client }),
         collection: () => collection,
         fireAndForget: (task: () => Promise<void>) => queued.push(task()),
         deleteFromOtherBackends: () => assert.fail('MAX must never clean another backend')
@@ -115,8 +116,7 @@ async function main() {
       await Promise.all(queued.splice(0));
       assert.deepEqual(await read(), before, 'Stale enqueue cannot resurrect SENT');
       assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 0);
-      persistence.persistOutboxCommand(seed('new-enqueue'));
-      await Promise.all(queued.splice(0));
+      await persistence.enqueueMaxOutbox(seed('new-enqueue'));
       assert.equal((await read('new-enqueue')).status, Status.PENDING);
       assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 1);
     } finally { (supportDiagnostics as any).sink = savedSink; }
@@ -178,7 +178,7 @@ async function main() {
     assert.equal((await read()).terminalReason, 'DELIVERY_UNKNOWN', 'Expired/lost receipt must not replay a possibly delivered message');
     await conflict(() => store.receipt('a', 'ack', { leaseToken: expired.leaseToken }, now + 5002));
 
-    await reset(seed('old', { status: Status.FAILED, attempts: 100 }), seed('new'));
+    await reset(seed('old', { status: Status.FAILED, attempts: 100 }), seed('new', { targetExternalChatId: 'other-synthetic-chat' }));
     assert.equal((await store.pull(Route.MAX_BOT, 10, 60, now))[0].id, 'new');
     assert.equal((await read('old')).status, Status.FAILED);
     await reset(seed('old-lease', { status: Status.LEASED, attempts: 100, leasedUntil: new Date(now - 1).toISOString() }));
@@ -190,7 +190,7 @@ async function main() {
     const pendingCommit = new MaxOutboxStore({
       findOne: async (_filter: unknown, options: any) => {
         // Only local/uncommitted state contains ACK. Majority view still contains lease.
-        if (options?.readConcern?.level === 'majority' && options?.readPreference === 'primary' && !committed) {
+        if (options?.session && !committed) {
           majorityReads++;
           return seed('a', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken });
         }
@@ -206,7 +206,7 @@ async function main() {
     const raced = new MaxOutboxStore({
       findOne: async (_filter: unknown, options: any) => {
         reads++;
-        if (reads === 1 || options?.readConcern?.level === 'majority') {
+        if (reads === 1 || options?.session) {
           return seed('a', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken });
         }
         return seed('a', { status: Status.SENT, lastReceipt: { token: first.leaseToken!, kind: 'ack' } });
@@ -233,7 +233,7 @@ async function main() {
       let clockCalls = 0;
       const slowStore = new MaxOutboxStore(collection, 3, () => {
         clockCalls++;
-        return clockCalls <= (blocked === 'find' ? 1 : 2) ? 0 : 4950;
+        return clockCalls === 1 ? 0 : 4950;
       });
       await client.db('admin').command({ configureFailPoint: 'failCommand', mode: { times: 1 },
         data: { failCommands: [blocked], blockConnection: true, blockTimeMS: 500 } });

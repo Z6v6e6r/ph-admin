@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { maxOutboxMode } from '../common/release-capabilities';
 import { ConflictException } from '@nestjs/common';
-import { MAX_OUTBOX_TIMEOUT_MS, MaxOutboxStore, MaxReceipt, isMaxConnector, missingMaxStore } from './max-outbox-store';
+import { MAX_OUTBOX_TIMEOUT_MS, MAX_QUEUE_CONTROL_ID, maxQueueControlName, MaxOutboxStore, MaxReceipt, isMaxConnector, missingMaxStore } from './max-outbox-store';
 import { supportDiagnostics } from './support-diagnostics';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient, MongoOperationTimeoutError } from 'mongodb';
@@ -229,10 +229,13 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         if (maxOutboxMode() === 'legacy') {
           const fenced = await this.collection<SupportOutboxCommand>(state, 'outbox').findOne({
             connector: { $in: [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.MAX_ACADEMY_BOT] },
-            $or: [{ leaseToken: { $exists: true } }, { lastReceipt: { $exists: true } }, { terminalReason: { $exists: true } }]
+            $or: [{ leaseToken: { $exists: true } }, { lastReceipt: { $exists: true } }, { terminalReason: { $exists: true } }, { queueSequence: { $exists: true } }]
           }, { projection: { _id: 1 }, maxTimeMS: 5000, timeoutMS: 5000,
             readPreference: 'primary', readConcern: { level: 'majority' } });
-          if (fenced) throw new Error('MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1');
+          const control = config.key === this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT)
+            ? await state.db.collection(maxQueueControlName(config.collections.outbox)).findOne({ _id: MAX_QUEUE_CONTROL_ID as any },
+              { projection: { _id: 1 }, timeoutMS: 5000, readConcern: { level: 'majority' }, readPreference: 'primary' }) : null;
+          if (fenced || control) throw new Error('MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1');
         }
         this.logger.log(
           `MongoDB support persistence enabled. backend=${config.key} db=${config.dbName}`
@@ -910,7 +913,19 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }, 'persistResponseMetric');
   }
 
+  /** The receipt-mode admission boundary: API success must follow majority queue custody. */
+  async enqueueMaxOutbox(command: SupportOutboxCommand): Promise<void> {
+    const queued = await this.maxOperation(() => this.maxStore().enqueue(command));
+    const { _id: ignored, ...stored } = queued as SupportOutboxCommand & { _id?: unknown };
+    Object.assign(command, stored);
+    supportDiagnostics.observe(command, 'max_outbox', { eventKind: 'operation_result', connector: command.connector,
+      code: 'DB_ACK', acknowledged: true, outboxRef: supportDiagnostics.ref('outbox', command.id), outcome: 'acknowledged' });
+  }
+
   persistOutboxCommand(command: SupportOutboxCommand): void {
+    // Background snapshots/merge metadata cannot admit a new MAX command or alter delivery state.
+    // Every new receipt-mode command must use the awaited enqueue boundary above.
+    if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') return;
     supportDiagnostics.observe(command, 'max_outbox', { code: 'OUTCOME_UNKNOWN', connector: command.connector,
       outboxRef: supportDiagnostics.ref('outbox', command.id), leaseAttempt: command.attempts, outcome: 'outcome_unknown' });
     this.fireAndForget(async () => {
@@ -920,20 +935,6 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         return;
       }
 
-      if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
-        // Enqueue only. Stale process-local snapshots must never overwrite a lease/receipt.
-        const inserted = await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
-          { id: command.id }, { $setOnInsert: command }, { upsert: true, timeoutMS: MAX_OUTBOX_TIMEOUT_MS }
-        );
-        // A matched no-op cannot attest persistence of a stale process-local snapshot.
-        if (inserted.upsertedCount === 1) {
-          supportDiagnostics.observe(command, 'max_outbox', { eventKind: 'operation_result', connector: command.connector,
-            code: inserted.acknowledged === true ? 'DB_ACK' : 'DB_UNACKNOWLEDGED', acknowledged: inserted.acknowledged === true,
-            matchedCount: inserted.matchedCount, modifiedCount: inserted.modifiedCount,
-            outboxRef: supportDiagnostics.ref('outbox', command.id), outcome: inserted.acknowledged === true ? 'acknowledged' : 'outcome_unknown' });
-        }
-        return;
-      }
       const diagnosticWriteResult = await this.collection<SupportOutboxCommand>(target, 'outbox').updateOne(
         { id: command.id }, { $set: command }, { upsert: true }
       );
@@ -944,6 +945,14 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
         matchedCount: diagnosticWriteResult.matchedCount, modifiedCount: diagnosticWriteResult.modifiedCount,
         outboxRef: supportDiagnostics.ref('outbox', command.id), outcome: diagnosticWriteResult.acknowledged === true ? 'acknowledged' : 'outcome_unknown' });
     }, 'persistOutboxCommand');
+  }
+
+  /** Offline operator tooling only. No connection/startup/index mutation; never log/serve the URI. */
+  maxQueueOperatorTarget(): { uri: string; dbName: string; outbox: string } {
+    const key = this.resolveBackendKeyForConnector(SupportConnectorRoute.MAX_BOT);
+    const config = this.backendConfigs.find(candidate => candidate.key === key);
+    if (!config?.uri) return missingMaxStore();
+    return { uri: config.uri, dbName: config.dbName, outbox: config.collections.outbox };
   }
 
   private maxBackend(): SupportPersistenceBackendState {
@@ -958,7 +967,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   private maxStore(): MaxOutboxStore {
-    return new MaxOutboxStore(this.collection<SupportOutboxCommand>(this.maxBackend(), 'outbox'));
+    return new MaxOutboxStore(this.collection<SupportOutboxCommand>(this.maxBackend(), 'outbox'), undefined, undefined, event => {
+      this.logger.warn('MAX_QUEUE_TRANSACTION_UNCONFIRMED ' + JSON.stringify(event));
+    }, this.maxBackend().client);
   }
 
   pullMaxOutbox(connector: SupportConnectorRoute, limit: number, leaseSec: number) {
