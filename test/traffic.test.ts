@@ -33,17 +33,26 @@ async function main() {
     assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, TrafficController.prototype.overview), ['traffic:read']);
     assert.deepEqual(Reflect.getMetadata(PERMISSIONS_KEY, TrafficController.prototype.mutate), ['traffic:write']);
     assert.ok(!DEFAULT_ROLE_PERMISSIONS[Role.MANAGER].includes('traffic:write'));
+    const panel = await fs.readFile(join(__dirname, '../client-sdk/phab-admin-panel.js'), 'utf8');
+    assert.ok(panel.includes('Основной вход: правила применены.'), 'Local receipt must not claim both entries applied');
+    assert.ok(panel.includes('Резервный вход проверяется отдельно.'), 'Reserve admission needs its own receipt');
+    assert.ok(panel.includes('ленты и рейтинги сообществ'), 'Operator scope must include community reads');
     assert.equal(normalizeIp('::ffff:188.127.235.140'), '188.127.235.140');
     assert.equal(normalizeIp('2001:0DB8:0:0:0:0:0:1'), '2001:db8::1');
     assert.ok(isProtectedIp(normalizeIp('::ffff:188.127.235.140')));
+    for (const ip of ['147.45.103.3', '89.108.64.209', '::ffff:147.45.103.3', '::ffff:89.108.64.209']) {
+      assert.ok(isProtectedIp(normalizeIp(ip)), `Shared proxy must be protected: ${ip}`);
+    }
     for (const bad of ['1.2.3.4/24', 'example.com', '1.2.3.4; return 200', 'fe80::1%en0', '01.2.3.4']) assert.throws(() => normalizeIp(bad));
     await assert.rejects(service.overview('2026-02-30'));
     await assert.rejects(service.overview('../../secret'));
     await assert.rejects(service.overview('2026-09-24')); // Missing policy must not become an empty allow policy.
     await fs.writeFile(process.env.TRAFFIC_POLICY_FILE!, JSON.stringify(initial));
     const dto = { action: 'add', revision: 0, ip: '203.0.113.9', reason: 'Synthetic scan', expiresAt: new Date(Date.now() + 86400000).toISOString() };
-    for (const ip of ['188.127.235.140', '::ffff:188.127.235.140', '127.0.0.1', '10.0.0.1']) {
+    for (const ip of ['188.127.235.140', '::ffff:188.127.235.140', '127.0.0.1', '10.0.0.1',
+      '147.45.103.3', '89.108.64.209', '::ffff:147.45.103.3', '::ffff:89.108.64.209']) {
       await assert.rejects(service.mutate({ ...dto, ip }, 'operator'));
+      assert.deepEqual(JSON.parse(await fs.readFile(process.env.TRAFFIC_POLICY_FILE!, 'utf8')), initial);
     }
     await assert.rejects(service.mutate({ ...dto, reason: '' }, 'operator'));
     await assert.rejects(service.mutate({ ...dto, expiresAt: '2020-01-01' }, 'operator'));

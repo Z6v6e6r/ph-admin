@@ -1,9 +1,17 @@
 import {
   Injectable,
+  BadRequestException,
+  ConflictException,
   InternalServerErrorException,
   Logger,
-  OnModuleDestroy
+  OnModuleDestroy,
+  ServiceUnavailableException
 } from '@nestjs/common';
+import { CommunityType, CommunityTypeSettings, communityType, parseCommunityTypeSettings } from './community-policy';
+import { CommunityResultsExportSource } from './community-results-export';
+import { CommunityRatingSnapshot } from './canonical-rating/aggregates';
+import { CommunityRatingFact } from './canonical-rating/facts';
+import { COMMUNITY_RATING_CALCULATION_VERSION } from './canonical-rating/contract';
 import { Collection, Db, Document, Filter, MongoClient, ObjectId, OptionalId } from 'mongodb';
 import {
   Community,
@@ -33,6 +41,9 @@ type MongoCommunityFeedModerationDocument = Document & {
 };
 
 export interface CommunitiesUpdateMutation {
+  communityType?: CommunityType;
+  typeSettings?: CommunityTypeSettings;
+  expectedTypeSettingsRevision?: number;
   name?: string;
   status?: string;
   description?: string;
@@ -246,6 +257,26 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     return match ? this.toCommunity(match.document) : null;
   }
 
+  async readCommunityRatingExportSource(id: string): Promise<(CommunityResultsExportSource & {community: Community}) | null> {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match || match.document.archived === true) return null;
+    const community = this.toCommunity(match.document);
+    if (!community) return null;
+    // Pin every rating read to the same database as the selected community.
+    const db = await this.database(match.dbName);
+    const filter = {communityId: id, period: 'all', tab: 'overall', calculationVersion: COMMUNITY_RATING_CALCULATION_VERSION};
+    const snapshots = db.collection('community_rating_snapshots');
+    const snapshot = await snapshots.findOne(filter, {maxTimeMS: 5000});
+    if (!snapshot || typeof snapshot.updatedAt !== 'string') return null;
+    const facts = await db.collection('community_rating_facts').find({
+      communityId: id, calculationVersion: COMMUNITY_RATING_CALCULATION_VERSION, collectedAt: snapshot.updatedAt
+    }, {maxTimeMS: 5000}).limit(20001).toArray();
+    if (facts.length > 20000) throw new ServiceUnavailableException('RESULTS_EXPORT_TOO_LARGE');
+    const after = await snapshots.findOne(filter, {maxTimeMS: 5000, projection: {updatedAt: 1}});
+    if (after?.updatedAt !== snapshot.updatedAt) throw new ServiceUnavailableException('RESULTS_EXPORT_RATING_UPDATING');
+    return {community, snapshot: snapshot as unknown as CommunityRatingSnapshot, facts: facts as unknown as CommunityRatingFact[]};
+  }
+
   async updateCommunity(
     id: string,
     mutation: CommunitiesUpdateMutation
@@ -294,10 +325,41 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       updated.focusTags = this.dedupeStrings(mutation.focusTags);
     }
 
+    const policyChanged = mutation.communityType !== undefined || mutation.typeSettings !== undefined;
+    const revision = Number(match.document.typeSettingsRevision) || 0;
+    if (policyChanged) {
+      if (mutation.communityType === null || mutation.typeSettings === null) throw new BadRequestException('COMMUNITY_POLICY_INVALID_SETTINGS');
+      if (mutation.expectedTypeSettingsRevision !== revision) {
+        throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
+      }
+      const nextType = mutation.communityType ?? communityType(match.document.communityType);
+      let settings: CommunityTypeSettings;
+      try {
+        settings = parseCommunityTypeSettings(nextType, mutation.typeSettings ??
+          (nextType === communityType(match.document.communityType) ? match.document.typeSettings ?? {} : {}));
+      } catch (error) {
+        throw new BadRequestException((error as Error).message);
+      }
+      updated.communityType = nextType;
+      updated.typeSettings = settings;
+      updated.typeSettingsRevision = revision + 1;
+      updated.typeSettingsEffectiveAt = nextType !== communityType(match.document.communityType)
+        ? now : match.document.typeSettingsEffectiveAt ?? now;
+    }
     updated.updatedAt = now;
-
-    await this.persistDocument(updated, match.collection);
-    return this.toCommunity(updated);
+    // Update only settings touched by this request. Never write a stale member
+    // array or overwrite concurrent worker/join changes from the read preimage.
+    const fields: Record<string, unknown> = {};
+    for (const key of Object.keys(updated)) {
+      if (key !== '_id' && JSON.stringify(updated[key]) !== JSON.stringify(match.document[key])) fields[key] = updated[key];
+    }
+    const identity = match.document._id !== undefined ? { _id: match.document._id } : this.buildIdFilter(id);
+    const filter = policyChanged ? { $and: [identity, revision === 0
+      ? { $or: [{ typeSettingsRevision: { $exists: false } }, { typeSettingsRevision: 0 }] }
+      : { typeSettingsRevision: revision }] } : identity;
+    const result = await match.collection.updateOne(filter as Filter<MongoCommunityDocument>, { $set: fields });
+    if (result.matchedCount !== 1) throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
+    return this.findCommunityById(id);
   }
 
   async manageMember(
@@ -403,7 +465,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     updated.pendingCount = this.toObjectArray(updated.pendingMembers).length;
     updated.updatedAt = now;
 
-    await this.persistDocument(updated, match.collection);
+    await this.persistDocument(updated, match.collection, match.document);
     return this.toCommunity(updated);
   }
 
@@ -1024,17 +1086,31 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
 
   private async persistDocument(
     document: MongoCommunityDocument,
-    collection: Collection<MongoCommunityDocument>
+    collection: Collection<MongoCommunityDocument>,
+    preimage: MongoCommunityDocument
   ): Promise<void> {
+    const event = preimage.communityType === 'EVENT';
+    const revision = preimage.eventRosterRevision;
+    if (event && revision !== undefined && (!Number.isSafeInteger(revision) || Number(revision) < 0 || Number(revision) >= Number.MAX_SAFE_INTEGER)) throw new ConflictException('EVENT_ROSTER_REVISION_INVALID');
+    const rosterFence = event ? { communityType: 'EVENT', typeSettingsRevision: preimage.typeSettingsRevision,
+      eventRosterRevision: revision === undefined ? { $exists: false } : revision }
+      : { communityType: preimage.communityType === undefined ? { $exists: false } : preimage.communityType, typeSettingsRevision: preimage.typeSettingsRevision === undefined ? { $exists: false } : preimage.typeSettingsRevision, ...Object.fromEntries(['members', 'pendingMembers', 'bannedMembers'].map(key => [key, preimage[key] === undefined ? { $exists: false } : preimage[key]])) };
     const identifier = document._id ?? this.pickString(document.id) ?? this.pickString(document.communityId);
-    const payload = { ...document };
-    delete payload._id;
+    // Member moderation owns roster fields only. It must not roll back a newer
+    // policy revision or erase a worker's in-flight league assignment intent.
+    const payload: Record<string, unknown> = {};
+    for (const key of ['members', 'pendingMembers', 'bannedMembers', 'memberCount', 'membersCount', 'pendingCount', 'updatedAt']) {
+      if (document[key] !== undefined) payload[key] = document[key];
+    }
+
+    if (event) payload.eventRosterRevision = Number(revision ?? 0) + 1;
 
     if (document._id !== undefined) {
-      await collection.updateOne(
-        { _id: document._id } as Filter<MongoCommunityDocument>,
+      const result = await collection.updateOne(
+        { _id: document._id, ...rosterFence } as Filter<MongoCommunityDocument>,
         { $set: payload }
       );
+      if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
       return;
     }
 
@@ -1042,7 +1118,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       throw new InternalServerErrorException('Community document id is missing');
     }
 
-    await collection.updateOne(this.buildIdFilter(String(identifier)), { $set: payload });
+    const result = await collection.updateOne({ $and: [this.buildIdFilter(String(identifier)), rosterFence] } as Filter<MongoCommunityDocument>, { $set: payload });
+    if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
   }
 
   private toCommunity(document: MongoCommunityDocument): Community | null {
@@ -1084,6 +1161,11 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       id,
       source: 'MONGODB',
       name,
+      communityType: communityType(document.communityType),
+      typeSettings: document.typeSettings && typeof document.typeSettings === 'object' ? document.typeSettings as CommunityTypeSettings : {},
+      typeSettingsRevision: Number(document.typeSettingsRevision) || 0,
+      typeSettingsEffectiveAt: this.pickString(document.typeSettingsEffectiveAt) ?? undefined,
+      stationId: this.pickString(document.typeSettings?.stationId ?? document.stationId) ?? undefined,
       slug: this.pickString(document.slug) ?? undefined,
       isVerified: this.pickBoolean(
         document.isVerified
@@ -1137,7 +1219,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       members,
       pendingMembers,
       bannedMembers,
-      details: this.stripObjectId(document)
+      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'eventEntries')))
     };
   }
 

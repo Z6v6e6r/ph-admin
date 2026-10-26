@@ -1,9 +1,15 @@
+import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
-  NotFoundException
+  NotFoundException,
+  ServiceUnavailableException
 } from '@nestjs/common';
+import { RequestUser } from '../common/rbac/request-user.interface';
+import { Role } from '../common/rbac/role.enum';
+import { buildCommunityResultsExport, resolveCommunityResultsWindow } from './community-results-export';
 import {
   CommunitiesCreateFeedItemMutation,
   CommunitiesDeleteFeedItemResult,
@@ -179,7 +185,45 @@ export class CommunitiesService {
     return community;
   }
 
-  async update(id: string, mutation: CommunitiesUpdateMutation): Promise<Community> {
+  async getResultsExport(id: string, query: Record<string, unknown>, user: RequestUser) {
+    const window = resolveCommunityResultsWindow(query);
+    const allowed = [Role.SUPER_ADMIN, Role.SUPPORT, Role.MANAGER, Role.TOURNAMENT_MANAGER, Role.GAME_MANAGER];
+    const assertAccess = (community: Community) => {
+      // The existing Mongo mapper preserves stationId in trusted raw details,
+      // not on the normalized card. Keep this resolution local to export.
+      const stationId = community.stationId ?? (typeof community.details?.stationId === 'string'
+        ? community.details.stationId.trim() : undefined);
+      if (!user.roles.some(role => allowed.includes(role)) ||
+          (user.stationIds.length > 0 && (!stationId || !user.stationIds.includes(stationId)))) {
+        throw new ForbiddenException('RESULTS_EXPORT_ACCESS_DENIED');
+      }
+    };
+    if (!user.roles.some(role => allowed.includes(role))) throw new ForbiddenException('RESULTS_EXPORT_ACCESS_DENIED');
+    if (!this.communitiesPersistence.isEnabled()) throw new ServiceUnavailableException('RESULTS_EXPORT_SOURCE_UNAVAILABLE');
+    const community = await this.communitiesPersistence.findCommunityById(id);
+    if (!community) throw new NotFoundException('Community not found');
+    assertAccess(community);
+    const source = await this.communitiesPersistence.readCommunityRatingExportSource(id);
+    if (!source) throw new ServiceUnavailableException('RESULTS_EXPORT_RATING_NOT_READY');
+    assertAccess(source.community);
+    return buildCommunityResultsExport(id, source, window);
+  }
+
+  async update(id: string, mutation: CommunitiesUpdateMutation, user?: RequestUser): Promise<Community> {
+    if (mutation.communityType !== undefined || mutation.typeSettings !== undefined) {
+      if (!user || !user.roles.some(role => role === Role.SUPER_ADMIN || role === Role.MANAGER) ||
+          (user.permissions !== undefined && !hasAdminPermission(user.permissions, 'settings:write'))) {
+        throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+      const current = await this.findById(id);
+      const stationId = current.stationId ?? (typeof current.details?.stationId === 'string' ? current.details.stationId : undefined);
+      const targetStation = mutation.typeSettings?.stationId ?? stationId;
+      const scope = getStationScopeForPermission(user, 'settings:write');
+      if (scope !== null && (!stationId || !scope.includes(stationId) ||
+          (targetStation && !scope.includes(targetStation)))) {
+        throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+    }
     if (!this.communitiesPersistence.isEnabled()) {
       throw new InternalServerErrorException(
         'Communities moderation requires MongoDB source configuration'
@@ -523,6 +567,7 @@ export class CommunitiesService {
   private toPublicCommunityCard(community: Community): CommunityPublicCard {
     return {
       id: community.id,
+      communityType: community.communityType ?? 'FRIENDS',
       slug: community.slug,
       name: community.name,
       description: community.description,

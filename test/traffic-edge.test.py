@@ -20,7 +20,9 @@ class TrafficTest(unittest.TestCase):
 
     def test_normalization_and_protected_sources(self):
         self.assertEqual(traffic.normalize_ip('::ffff:188.127.235.140'), '188.127.235.140')
-        for ip in ['188.127.235.140', '::ffff:188.127.235.140', '127.0.0.1', '10.0.0.1', 'bad; return 200', '1.2.3.4/24', '2001:db8::1%zone;\n0.0.0.0']:
+        for ip in ['188.127.235.140', '::ffff:188.127.235.140', '127.0.0.1', '10.0.0.1',
+                   '147.45.103.3', '89.108.64.209', '::ffff:147.45.103.3', '::ffff:89.108.64.209',
+                   'bad; return 200', '1.2.3.4/24', '2001:db8::1%zone;\n0.0.0.0']:
             with self.assertRaises(ValueError): traffic.render_policy(self.policy(ip))
         p = self.policy(); p['rules'][0]['expiresAt'] = '2020-01-01T00:00:00Z'
         self.assertEqual(traffic.render_policy(p)[1], [])

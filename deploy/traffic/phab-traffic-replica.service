@@ -1,0 +1,14 @@
+[Unit]
+Description=Receive CUP quarantine and apply it locally on the reserve edge
+After=nginx.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/phab-traffic/traffic-replica.py sync
+User=root
+UMask=0027
+Nice=10
+# Includes bounded HTTPS fetch, validation, nginx reload/readback and rollback.
+TimeoutStartSec=200
+NoNewPrivileges=true
+PrivateTmp=true

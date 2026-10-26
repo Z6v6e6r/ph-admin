@@ -1,3 +1,4 @@
+import { CommunityType, CommunityTypeSettings } from './community-policy';
 export enum CommunityStatus {
   DRAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
@@ -104,6 +105,10 @@ export interface CommunityFeedTemplateSlotsResponse {
 }
 
 export interface Community {
+  communityType?: CommunityType;
+  typeSettings?: CommunityTypeSettings;
+  typeSettingsRevision?: number;
+  typeSettingsEffectiveAt?: string;
   id: string;
   source: CommunitySource;
   name: string;
@@ -144,6 +149,7 @@ export interface Community {
 }
 
 export interface CommunityPublicCard {
+  communityType?: CommunityType;
   id: string;
   slug?: string;
   name: string;

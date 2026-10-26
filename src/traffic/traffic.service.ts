@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { readHistoryProtectionReport } from './history-protection-report';
 
-export const PROTECTED_IPS = ['188.127.235.140'];
+export const PROTECTED_IPS = ['188.127.235.140', '147.45.103.3', '89.108.64.209'];
 export interface TrafficRule {
   id: string; ip: string; reason: string; expiresAt: string; createdAt: string; actorId: string;
 }

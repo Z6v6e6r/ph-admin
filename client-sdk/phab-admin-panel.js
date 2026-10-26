@@ -7664,6 +7664,448 @@
     document.head.appendChild(style);
   }
 
+  function communityResultsExportOptions(period, from, to, places) {
+    if (['month', 'week', 'all', 'custom'].indexOf(period) < 0) {
+      throw new Error('Выберите период.');
+    }
+    places = Number(places);
+    if (!Number.isInteger(places) || places < 1 || places > 50) {
+      throw new Error('Количество мест — целое число от 1 до 50.');
+    }
+    var options = { period: period, places: places };
+    if (period === 'custom') {
+      [from, to].forEach(function (value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+            !Number.isFinite(Date.parse(value + 'T00:00:00Z')) ||
+            new Date(value + 'T00:00:00Z').toISOString().slice(0, 10) !== value) {
+          throw new Error('Укажите корректные даты начала и окончания.');
+        }
+      });
+      if (from > to) throw new Error('Дата окончания не может быть раньше даты начала.');
+      options.from = from;
+      options.to = to;
+    }
+    return options;
+  }
+
+  function communityResultsExportRows(payload, communityId, options) {
+    if (!payload || String(payload.communityId) !== String(communityId) ||
+        payload.period !== options.period || payload.degraded === true ||
+        !Number.isFinite(Date.parse(payload.dataAsOf)) ||
+        (options.period === 'custom' && (payload.from !== options.from || payload.to !== options.to)) ||
+        !Array.isArray(payload.rows)) {
+      throw new Error('Сервер не вернул рейтинг за выбранный период. Выгрузка отменена.');
+    }
+    return payload.rows.slice(0, options.places).map(function (row) {
+      var score = row.score;
+      if (typeof row.name !== 'string' || !row.name.trim() || typeof score !== 'number' ||
+          !Number.isFinite(score) || !Number.isInteger(row.rank) || row.rank < 1) {
+        throw new Error('В рейтинге отсутствуют имя или очки. Выгрузка отменена.');
+      }
+      var result = { name: row.name, score: score, rank: row.rank };
+      if (options.details === 'templates-v1' && row.statistics) {
+        var played = row.statistics.tournamentsPlayed;
+        var won = row.statistics.tournamentsWon;
+        if ([played, won].some(function (value) {return value !== null && (!Number.isInteger(value) || value < 0);}) ||
+            (played !== null && won !== null && won > played)) throw new Error('Некорректная статистика турниров.');
+        result.statistics = {tournamentsPlayed: played, tournamentsWon: won};
+      }
+      return result;
+    });
+  }
+
+  var communityTemplateLoads = {};
+  function loadCommunityResultsTemplates(baseUrl) {
+    var base = String(baseUrl).replace(/\/+$/, '');
+    if (!communityTemplateLoads[base]) {
+      var ready = window.PHABCommunityResultsTemplates ? Promise.resolve() : new Promise(function (resolve, reject) {
+        var script = document.createElement('script');
+        var timer = setTimeout(function () {script.remove(); reject(new Error('Не удалось загрузить шаблоны.'));}, 15000);
+        script.src = base + '/client-script/community-results-templates.js';
+        script.onload = function () {clearTimeout(timer); script.remove(); resolve();};
+        script.onerror = function () {clearTimeout(timer); script.remove(); reject(new Error('Не удалось загрузить шаблоны.'));};
+        document.head.appendChild(script);
+      });
+      communityTemplateLoads[base] = ready.then(async function () {
+        var abort = new AbortController();
+        var timer = setTimeout(function () {abort.abort();}, 15000);
+        try {
+          var response = await fetch(base + '/client-script/community-results-assets.json', {credentials: 'omit', cache: 'no-store', signal: abort.signal});
+          if (!response.ok) throw new Error('Не удалось загрузить оформление шаблонов.');
+          var assets = await response.json();
+          var renderer = window.PHABCommunityResultsTemplates;
+          if (!renderer || typeof renderer.render !== 'function' || assets.version !== 'vnd-results-templates-v1') throw new Error('Версия шаблонов недоступна.');
+          return {renderer: renderer, assets: assets};
+        } finally {clearTimeout(timer);}
+      }).catch(function (error) {delete communityTemplateLoads[base]; throw error;});
+    }
+    return communityTemplateLoads[base];
+  }
+
+  function createCommunityResultsExportDialog(community, loadRanking, loadTemplates) {
+    var opener = document.activeElement;
+    var dialog = document.createElement('dialog');
+    dialog.className = 'phab-community-results-export';
+    dialog.setAttribute('aria-label', 'Выгрузить результаты сообщества');
+    dialog.innerHTML = '<style>' +
+      '.phab-community-results-export{box-sizing:border-box;width:min(720px,calc(100vw - 24px));max-height:90vh;overflow:auto;border:1px solid #eadce5;border-radius:20px;padding:24px;color:#330020;background:#fff;font-family:inherit}' +
+      '.phab-community-results-export::backdrop{background:#21001588}' +
+      '.phab-community-results-export header{display:flex;align-items:start;justify-content:space-between;gap:16px}' +
+      '.phab-community-results-export h2{margin:0;font-size:22px}' +
+      '.phab-community-results-export p{font-size:14px;line-height:1.5}' +
+      '.phab-community-results-export form{display:grid;gap:16px}' +
+      '.phab-community-results-export label{display:grid;gap:6px;font-size:14px;min-width:0}' +
+      '.phab-community-results-export input,.phab-community-results-export select{box-sizing:border-box;width:100%;min-width:0;padding:10px;border:1px solid #d8c6d0;border-radius:10px;background:#fff;color:#330020;font:inherit}' +
+      '.phab-community-results-export .phab-results-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}' +
+      '.phab-community-results-export [hidden]{display:none!important}' +
+      '.phab-community-results-export canvas{display:block;width:100%;height:auto;border-radius:12px}' +
+      '.phab-community-results-export footer{display:flex;flex-wrap:wrap;gap:10px}' +
+      '.phab-community-results-export button{cursor:pointer;min-width:44px;min-height:44px}' +
+      '.phab-community-results-export nav{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+      '.phab-community-results-export button:disabled{opacity:.5;cursor:default}' +
+      '@media(max-width:480px){.phab-community-results-export{padding:16px}.phab-community-results-export .phab-results-fields{grid-template-columns:1fr}}' +
+      '</style><header><h2>Выгрузить результаты</h2><button type="button" class="phab-admin-modal-close" aria-label="Закрыть выгрузку">×</button></header>' +
+      '<p data-community></p><form><label>Дизайн<select name="template"><option value="light">Светлый</option><option value="dark">Тёмный</option><option value="custom">Загрузить свой фон</option><option value="01_klassika">Классика · 1080×1350</option><option value="02_temnaya_arena">Тёмная арена · 1080×1350</option><option value="03_podium">Подиум · 1080×1350</option><option value="04_tablo">Табло · 1080×1350</option><option value="05_oblozhka">Обложка · 1080×1350</option></select></label>' +
+      '<label data-division hidden>Оформление дивизиона<select name="division"><option value="">Выберите дивизион</option><option value="start">Старт · D</option><option value="rokot">Рокот · D+/C</option><option value="smash">Смэш · C/C+</option></select><small>Подпись и цвет макета, не фильтр игроков. Выбирайте оформление своего сообщества.</small></label>' +
+      '<label data-upload hidden>Фон PNG, JPEG или WebP (до 10 МБ)<input name="background" type="file" accept="image/png,image/jpeg,image/webp"></label>' +
+      '<div class="phab-results-fields"><label>Количество мест<input name="places" type="number" min="1" max="50" step="1" value="10" required></label>' +
+      '<label>Период<select name="period"><option value="month">Текущий месяц</option><option value="week">Текущая неделя</option><option value="all">Всё время</option><option value="custom">Дата от — до</option></select></label></div>' +
+      '<div class="phab-results-fields" data-dates hidden><label>Дата от<input name="from" type="date"></label><label>Дата до<input name="to" type="date"></label></div>' +
+      '<p>Календарные периоды — по Москве, неделя с понедельника. Обе даты диапазона включаются. Фон остаётся в браузере.</p>' +
+      '<p role="status" aria-live="polite" data-status>Выберите параметры и сформируйте изображение.</p>' +
+      '<canvas hidden aria-label="Предпросмотр результатов"></canvas>' +
+      '<nav data-pages hidden aria-label="Страницы выгрузки"><button type="button" data-prev-page aria-label="Предыдущая страница">←</button> <span data-page-label aria-live="polite"></span> <button type="button" data-next-page aria-label="Следующая страница">→</button></nav>' +
+      '<small>Брендированные макеты: до 10 мест на изображение. PNG скачивается для выбранной страницы. Победы — первые места в турнирах по каноническому рейтингу. Недоступные сведения о турах и перемещениях не показываются.</small>' +
+      '<footer><button class="phab-admin-btn" type="submit">Сформировать</button><button class="phab-admin-btn-secondary" type="button" data-download disabled>Скачать PNG</button></footer></form>';
+    document.body.appendChild(dialog);
+    dialog.querySelector('[data-community]').textContent = String(community.name || 'Сообщество');
+    var form = dialog.querySelector('form');
+    var template = form.elements.template;
+    var period = form.elements.period;
+    var canvas = dialog.querySelector('canvas');
+    var status = dialog.querySelector('[data-status]');
+    var download = dialog.querySelector('[data-download]');
+    var submit = form.querySelector('[type="submit"]');
+    var revision = 0;
+    var closed = false;
+    var background = null;
+    var pendingImage = null;
+    var objectUrl = null;
+    var pageCanvases = [];
+    var pageIndex = 0;
+    var pagesNav = dialog.querySelector('[data-pages]');
+    function isPreset() {return /^(01_klassika|02_temnaya_arena|03_podium|04_tablo|05_oblozhka)$/.test(template.value);}
+    function showPage() {
+      var page = pageCanvases[pageIndex];
+      if (!page) return;
+      canvas.width = page.width; canvas.height = page.height;
+      canvas.getContext('2d').drawImage(page, 0, 0);
+      dialog.querySelector('[data-page-label]').textContent = 'Страница ' + (pageIndex + 1) + ' из ' + pageCanvases.length;
+      dialog.querySelector('[data-prev-page]').disabled = pageIndex === 0;
+      dialog.querySelector('[data-next-page]').disabled = pageIndex === pageCanvases.length - 1;
+    }
+    dialog.querySelector('[data-prev-page]').onclick = function () {if (pageIndex > 0) {pageIndex--; showPage();}};
+    dialog.querySelector('[data-next-page]').onclick = function () {if (pageIndex + 1 < pageCanvases.length) {pageIndex++; showPage();}};
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      revision++;
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      if (pendingImage) pendingImage.src = '';
+      pageCanvases = [];
+      dialog.close();
+      dialog.remove();
+      if (opener && opener.isConnected) opener.focus();
+    }
+    function invalidate() {
+      revision++;
+      download.disabled = true;
+      canvas.hidden = true;
+      pageCanvases = [];
+      pageIndex = 0;
+      pagesNav.hidden = true;
+      submit.disabled = false;
+      status.textContent = 'Параметры изменены. Сформируйте изображение.';
+      dialog.querySelector('[data-upload]').hidden = template.value !== 'custom';
+      dialog.querySelector('[data-division]').hidden = !isPreset();
+      form.elements.division.required = isPreset();
+      dialog.querySelector('[data-dates]').hidden = period.value !== 'custom';
+      form.elements.from.required = period.value === 'custom';
+      form.elements.to.required = period.value === 'custom';
+    }
+    form.addEventListener('input', invalidate);
+    form.addEventListener('change', invalidate);
+    form.elements.background.addEventListener('change', function () {
+      background = null;
+      if (pendingImage) pendingImage.src = '';
+      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      var file = form.elements.background.files[0];
+      if (!file) return;
+      if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 10 * 1024 * 1024) {
+        status.textContent = 'Выберите PNG, JPEG или WebP размером до 10 МБ.';
+        return;
+      }
+      var image = new Image();
+      pendingImage = image;
+      objectUrl = window.URL.createObjectURL(file);
+      image.onload = function () {
+        if (closed || pendingImage !== image) return;
+        if (image.naturalWidth * image.naturalHeight > 16000000) {
+          status.textContent = 'Фон слишком большой: максимум 16 мегапикселей.';
+          return;
+        }
+        background = image;
+        status.textContent = 'Фон загружен. Сформируйте изображение.';
+      };
+      image.onerror = function () {
+        if (!closed && pendingImage === image) status.textContent = 'Не удалось прочитать изображение фона.';
+      };
+      image.src = objectUrl;
+    });
+    function fitText(ctx, text, x, y, maxWidth, size) {
+      text = String(text);
+      ctx.font = '700 ' + size + 'px sans-serif';
+      while (ctx.measureText(text).width > maxWidth && text.length > 1) text = text.slice(0, -2) + '…';
+      ctx.fillText(text, x, y);
+    }
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var current = ++revision;
+      download.disabled = true;
+      canvas.hidden = true;
+      pagesNav.hidden = true;
+      pageCanvases = [];
+      try {
+        var options = communityResultsExportOptions(period.value, form.elements.from.value, form.elements.to.value, form.elements.places.value);
+        var preset = isPreset();
+        var chosenTemplate = template.value;
+        var division = form.elements.division.value;
+        if (preset && ['start', 'rokot', 'smash'].indexOf(division) < 0) throw new Error('Выберите оформление дивизиона.');
+        if (preset) options.details = 'templates-v1';
+        if (template.value === 'custom' && !background) throw new Error('Сначала загрузите фон.');
+        submit.disabled = true;
+        status.textContent = 'Загружаем результаты…';
+        var payload = await loadRanking(options);
+        if (closed || current !== revision) return;
+        var rows = communityResultsExportRows(payload, community.id, options);
+        if (!rows.length) throw new Error('За выбранный период результатов нет.');
+        if (preset) {
+          if (!loadTemplates) throw new Error('Шаблоны не подключены.');
+          status.textContent = 'Отрисовываем шаблон…';
+          var library = await loadTemplates();
+          if (closed || current !== revision) return;
+          var chunks = library.renderer.paginate(rows);
+          var rendered = [];
+          var presetPeriodLabel = options.period === 'all' ? 'Всё время' : options.period === 'month' && payload.rangeFrom
+            ? new Date(payload.rangeFrom).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow', month: 'long', year: 'numeric'})
+            : options.period === 'custom' ? options.from.split('-').reverse().join('.') + ' — ' + options.to.split('-').reverse().join('.')
+            : payload.rangeFrom && payload.rangeToExclusive
+              ? new Date(payload.rangeFrom).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow'}) + ' — ' + new Date(Date.parse(payload.rangeToExclusive) - 1).toLocaleDateString('ru-RU', {timeZone: 'Europe/Moscow'})
+              : 'Выбранный период';
+          for (var page = 0; page < chunks.length; page++) {
+            rendered.push(await library.renderer.render({design: chosenTemplate, division: division, rows: chunks[page],
+              communityName: String(community.name || 'Сообщество'), periodLabel: presetPeriodLabel, dataAsOf: payload.dataAsOf,
+              page: page, pageCount: chunks.length}, library.assets));
+            if (closed || current !== revision) return;
+          }
+          pageCanvases = rendered;
+          pageIndex = 0;
+          showPage();
+          pagesNav.hidden = chunks.length < 2;
+          canvas.hidden = false;
+          download.disabled = false;
+          status.textContent = 'Готово. Показано мест: ' + rows.length + '. Страниц PNG: ' + chunks.length + '.';
+          return;
+        }
+        canvas.width = 1080;
+        canvas.height = Math.max(1080, 430 + rows.length * 84);
+        var ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Браузер не поддерживает создание изображения.');
+        var dark = template.value === 'dark' || template.value === 'custom';
+        ctx.fillStyle = dark ? '#250019' : '#fff5fa';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (template.value === 'custom') {
+          var scale = Math.max(canvas.width / background.naturalWidth, canvas.height / background.naturalHeight);
+          var width = background.naturalWidth * scale;
+          var height = background.naturalHeight * scale;
+          ctx.drawImage(background, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+          ctx.fillStyle = '#16000fc9';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.fillStyle = dark ? '#83e5cb' : '#007f6a';
+        fitText(ctx, 'ПАДЛХАБ · РЕЗУЛЬТАТЫ', 64, 90, 950, 26);
+        ctx.fillStyle = dark ? '#ffffff' : '#330020';
+        fitText(ctx, community.name || 'Сообщество', 64, 160, 950, 42);
+        var labels = { month: 'Текущий месяц', week: 'Текущая неделя', all: 'Всё время' };
+        var periodLabel = options.period === 'custom' ? options.from + ' — ' + options.to : labels[options.period];
+        fitText(ctx, periodLabel + ' · Москва', 64, 215, 950, 26);
+        ctx.font = '22px sans-serif';
+        ctx.fillText('МЕСТО', 64, 288);
+        ctx.fillText('ИГРОК', 186, 288);
+        ctx.textAlign = 'right';
+        ctx.fillText('ОЧКИ', 1016, 288);
+        ctx.textAlign = 'left';
+        rows.forEach(function (row, index) {
+          var y = 310 + index * 84;
+          ctx.fillStyle = dark ? '#ffffff18' : '#3300200b';
+          ctx.fillRect(48, y, 984, 72);
+          ctx.fillStyle = dark ? '#ffffff' : '#330020';
+          fitText(ctx, row.rank, 72, y + 47, 94, 30);
+          fitText(ctx, row.name, 186, y + 47, 620, 30);
+          ctx.textAlign = 'right';
+          fitText(ctx, row.score.toLocaleString('ru-RU'), 1008, y + 47, 170, 30);
+          ctx.textAlign = 'left';
+        });
+        ctx.fillStyle = dark ? '#ffffffaa' : '#33002099';
+        var dataAsOf = new Date(payload.dataAsOf).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+        fitText(ctx, 'Данные на ' + dataAsOf + ' · Москва', 64, canvas.height - 38, 950, 20);
+        canvas.hidden = false;
+        download.disabled = false;
+        status.textContent = 'Готово. Показано мест: ' + rows.length + '. Данные на ' + dataAsOf + ' (Москва).';
+      } catch (error) {
+        if (!closed && current === revision) status.textContent = error.message || 'Не удалось сформировать результаты.';
+      } finally {
+        if (!closed && current === revision) submit.disabled = false;
+      }
+    });
+    download.addEventListener('click', function () {
+      var current = revision;
+      var fileName = 'community-results-' + period.value + (isPreset() ? '-' + template.value + '-' + form.elements.division.value + '-p' + String(pageIndex + 1).padStart(2, '0') : '') + '.png';
+      canvas.toBlob(function (blob) {
+        if (closed || current !== revision) return;
+        if (!blob) { status.textContent = 'Не удалось создать PNG. Повторите попытку.'; return; }
+        var url = window.URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 1000);
+      }, 'image/png');
+    });
+    dialog.querySelector('header button').addEventListener('click', close);
+    dialog.addEventListener('cancel', function (event) { event.preventDefault(); close(); });
+    dialog.addEventListener('keydown', function (event) { event.stopPropagation(); });
+    dialog.addEventListener('click', function (event) {
+      if (event.target !== dialog) return;
+      var rect = dialog.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+    });
+    dialog.showModal();
+    template.focus();
+    return { close: close };
+  }
+
+  // Pure payload builder and DOM editor share the same explicit, additive contract.
+  function communityTypeSettingsPayload(community, type, settings) {
+    var currentType = community.communityType || 'FRIENDS';
+    if (type === currentType && JSON.stringify(settings) === JSON.stringify(community.typeSettings || {})) return {};
+    return { communityType: type, typeSettings: settings, expectedTypeSettingsRevision: community.typeSettingsRevision || 0 };
+  }
+
+  function createCommunityTypeEditor(community, editable) {
+    var root = document.createElement('fieldset');
+    root.className = 'phab-admin-community-form-field-wide';
+    root.disabled = !editable;
+    var legend = document.createElement('legend');
+    legend.textContent = 'Тип сообщества'; root.appendChild(legend);
+    var select = document.createElement('select');
+    select.className = 'phab-admin-input'; select.setAttribute('aria-label', 'Тип сообщества');
+    [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига'], ['EVENT', 'Мероприятие']].forEach(function (pair) {
+      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
+    });
+    select.value = community.communityType || 'FRIENDS'; root.appendChild(select);
+    var fields = document.createElement('div'); root.appendChild(fields);
+    var hint = document.createElement('p'); hint.textContent = 'Смена типа сохраняет участников и историю. Старые события автоматически не переносятся. Для закрытого сообщества нового типа нужен вход в ЛК; проверьте привязку владельца и участников к аккаунтам Viva.'; root.appendChild(hint);
+    var controls = {}, divisionRows = [];
+    var drafts = {}; drafts[select.value] = community.typeSettings || {};
+    function input(label, value, kind, container) {
+      var wrap = document.createElement('label'); wrap.className = 'phab-admin-community-form-field';
+      var title = document.createElement('span'); title.textContent = label; wrap.appendChild(title);
+      var control = document.createElement('input'); control.className = 'phab-admin-input'; control.type = kind || 'text';
+      control.value = value === undefined ? '' : String(value); control.setAttribute('aria-label', label);
+      if (kind === 'number') { control.min = '0'; control.max = '10'; control.step = '0.01'; }
+      wrap.appendChild(control); (container || fields).appendChild(wrap); return control;
+    }
+    function eventTimeToUtc(control) {
+      if (!control.value) return '';
+      var date = new Date(control.value + '+03:00');
+      return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+    }
+    function eventTimeMoscow(value) {
+      var date = new Date(value);
+      return Number.isFinite(date.getTime()) ? new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, -1) : '';
+    }
+    function read() {
+      if (select.value === 'EVENT') {
+        var eventSettings = { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
+        if ([controls.responsibleName, controls.contactEmail, controls.startsAt, controls.endsAt].some(function (c) { return c.value.trim(); })) {
+          eventSettings.registrationPolicy = { version: 'event-registration-v1', retentionYears: 1,
+            responsibleName: controls.responsibleName.value.trim(), contactEmail: controls.contactEmail.value.trim(),
+            startsAt: eventTimeToUtc(controls.startsAt), endsAt: eventTimeToUtc(controls.endsAt) };
+        }
+        return eventSettings;
+      }
+      if (select.value === 'STATION') return { stationId: controls.stationId.value.trim() };
+      function list(control) { return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean); }
+      if (select.value === 'CORPORATE') {
+        var settings = { directionIds: list(controls.directionIds), exerciseTypeIds: list(controls.exerciseTypeIds), categories: list(controls.categories) };
+        if (controls.subscription.value.trim()) settings.vivaSubscriptionId = controls.subscription.value.trim();
+        return settings;
+      }
+      if (select.value === 'LEAGUE') return { divisions: divisionRows.map(function (row) {
+        return { id: row.id, name: row.name.value.trim(), minLevel: row.min.value.trim() === '' ? NaN : Number(row.min.value), maxLevel: row.max.value.trim() === '' ? NaN : Number(row.max.value) };
+      }) };
+      return {};
+    }
+    function addDivision(value) {
+      var row = document.createElement('div'); row.className = 'phab-admin-community-form-grid'; fields.appendChild(row);
+      var entry = { id: value.id, name: input('Название дивизиона', value.name, 'text', row), min: input('Уровень от (включительно)', value.minLevel, 'number', row), max: input('Уровень до', value.maxLevel, 'number', row) };
+      divisionRows.push(entry);
+      var remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Удалить дивизион';
+      remove.className = 'phab-admin-btn-secondary'; remove.addEventListener('click', function () { divisionRows = divisionRows.filter(function (r) { return r !== entry; }); row.remove(); }); row.appendChild(remove);
+    }
+    function render() {
+      fields.textContent = ''; controls = {}; divisionRows = [];
+      var values = drafts[select.value] || {};
+      if (select.value === 'EVENT') {
+        [['padel-jump', 'Падл Jump'], ['time-for-friends', 'Падел Микс']].forEach(function (pair) {
+          var label = document.createElement('label'); label.className = 'phab-admin-community-form-field';
+          var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = (values.gameIds || ['padel-jump', 'time-for-friends']).indexOf(pair[0]) >= 0;
+          controls[pair[0]] = checkbox; label.appendChild(checkbox); label.appendChild(document.createTextNode(pair[1])); fields.appendChild(label);
+        });
+        var policy = values.registrationPolicy || {};
+        controls.responsibleName = input('Ответственный за анкеты', policy.responsibleName || '');
+        controls.contactEmail = input('Email для обращений и удаления', policy.contactEmail || '', 'email');
+        controls.startsAt = input('Начало (МСК)', eventTimeMoscow(policy.startsAt), 'datetime-local'); controls.startsAt.step = '0.001';
+        controls.endsAt = input('Окончание (МСК)', eventTimeMoscow(policy.endsAt), 'datetime-local'); controls.endsAt.step = '0.001';
+        var privacyNote = document.createElement('p'); privacyNote.textContent = 'Хранение — один календарный год после окончания. Пока политика не заполнена, регистрация и игра закрыты. Изменение настроек требует повторной анкеты.'; fields.appendChild(privacyNote);
+        var eventNote = document.createElement('p'); eventNote.textContent = 'При вступлении обязательны ФИО, компания и email. В рейтинге мероприятия — лучший результат Падл Jump. Анкета не публикуется.'; fields.appendChild(eventNote);
+      }
+      if (select.value === 'STATION') controls.stationId = input('ID станции Viva', values.stationId || community.stationId || '');
+      if (select.value === 'CORPORATE') {
+        controls.directionIds = input('ID направлений Viva через запятую', (values.directionIds || []).join(', '));
+        controls.exerciseTypeIds = input('ID типов событий Viva через запятую', (values.exerciseTypeIds || []).join(', '));
+        controls.categories = input('Категории: open_game, court_rental, group_training, tournament', (values.categories || []).join(', '));
+        controls.subscription = input('ID специальной подписки Viva (необязательно)', values.vivaSubscriptionId || '');
+        var note = document.createElement('p'); note.textContent = 'События включаются при совпадении любого выбранного направления, типа или категории. Подписка — дополнительная возможность, она не ограничивает членство.'; fields.appendChild(note);
+      }
+      if (select.value === 'LEAGUE') {
+        (values.divisions || [{ id: 'd-d-plus', name: 'D–D+', minLevel: 1.5, maxLevel: 2 }, { id: 'd-plus-c', name: 'D+–C', minLevel: 2, maxLevel: 3 }, { id: 'c-c-plus', name: 'C–C+', minLevel: 3, maxLevel: 3.5 }]).forEach(addDivision);
+        var add = document.createElement('button'); add.type = 'button'; add.className = 'phab-admin-btn-secondary'; add.textContent = 'Добавить дивизион';
+        add.addEventListener('click', function () { if (divisionRows.length < 12) addDivision({ id: 'division-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), name: '', minLevel: '', maxLevel: '' }); }); fields.appendChild(add);
+        var note = document.createElement('p'); note.textContent = 'Границы: D+ = 2, C = 3, C+ = 3.5. Верхняя граница относится к следующему дивизиону; у последнего включается. Прошлые результаты сохраняют свой дивизион.'; fields.appendChild(note);
+      }
+    }
+    var lastType = select.value;
+    select.addEventListener('change', function () { var selected = select.value; select.value = lastType; drafts[lastType] = read(); select.value = selected; lastType = selected; render(); });
+    render();
+    return { element: root, payload: function () { return editable ? communityTypeSettingsPayload(community, select.value, read()) : {}; } };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -8335,6 +8777,15 @@
             params.toString()
         );
       },
+      exportCommunityResults: function (communityId, query) {
+        var params = new URLSearchParams();
+        params.set('period', String(query.period));
+        params.set('places', String(query.places));
+        if (query.from) params.set('from', String(query.from));
+        if (query.to) params.set('to', String(query.to));
+        if (query.details === 'templates-v1') params.set('details', query.details);
+        return request('/communities/' + encodeURIComponent(communityId) + '/results-export?' + params.toString(), 'GET');
+      },
       updateCommunity: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId), 'PATCH', payload);
       },
@@ -8594,10 +9045,11 @@
       return payload;
     }
 
-    async function refreshSession() {
+    async function refreshSession(signal) {
       var idempotencyKey = operationId();
       var session = await request(userRoot + '/auth/session/refresh', {
         method: 'POST',
+        signal: signal,
         headers: requestHeaders({
           'Idempotency-Key': idempotencyKey,
           'X-Session-Intent': 'refresh'
@@ -8607,7 +9059,7 @@
       return session;
     }
 
-    async function adminRequest(path, method, body, idempotencyKey, allowRefresh) {
+    async function adminRequest(path, method, body, idempotencyKey, allowRefresh, signal) {
       var headers = requestHeaders(body ? { 'Content-Type': 'application/json' } : {});
       if (accessToken) {
         headers.Authorization = 'Bearer ' + accessToken;
@@ -8618,16 +9070,25 @@
       try {
         return await request(adminRoot + path, {
           method: method || 'GET',
+          signal: signal,
           headers: headers,
           body: body ? JSON.stringify(body) : undefined
         });
       } catch (error) {
         if (error && error.status === 401 && allowRefresh !== false) {
-          await refreshSession();
-          return adminRequest(path, method, body, idempotencyKey, false);
+          await refreshSession(signal);
+          if (signal && signal.aborted) throw new Error('SCENARIO_REQUEST_TIMED_OUT');
+          return adminRequest(path, method, body, idempotencyKey, false, signal);
         }
         throw error;
       }
+    }
+
+    async function scenarioRequest(path, method, body, key) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 30000);
+      try { return await adminRequest(path, method, body, key, true, controller.signal); }
+      finally { clearTimeout(timer); }
     }
 
     async function adminBinaryRequest(path, file, allowRefresh, operationKey) {
@@ -8734,6 +9195,13 @@
           operationId(),
           true
         );
+      },
+      scenarioCommandKey: operationId,
+      listScenarios: function () { return scenarioRequest('/notifications/scenarios', 'GET', null, ''); },
+      listScenarioRuns: function () { return scenarioRequest('/notifications/scenarios/runs', 'GET', null, ''); },
+      saveScenario: function (id, expectedVersion, definition, key) {
+        return scenarioRequest('/notifications/scenarios' + (id ? '/' + encodeURIComponent(id) : ''),
+          id ? 'PUT' : 'POST', { expectedVersion: expectedVersion, definition: definition }, key);
       },
       listLocations: function () {
         return adminRequest('/locations', 'GET', null, '', true);
@@ -13944,7 +14412,7 @@
       '<h3>Защита истории турниров</h3><p>Оперативные сигналы за последние 10–11 минут, независимо от выбранной даты. Сигнал требует проверки и не добавляет IP в карантин автоматически.</p>' +
       '<p role="status" aria-live="polite" data-traffic-history-status></p><div style="overflow-x:auto" data-traffic-history-signals></div>' +
       '<div style="overflow-x:auto" data-traffic-top></div>' +
-      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников. Сохранённое правило начинает действовать после подтверждения сервером.</p>' +
+      '<h3>Карантин IP</h3><p>Отбрасываются публичные запросы расписания, турниров и состава участников, а также ленты и рейтинги сообществ. Статус ниже подтверждает основной вход. Резервный вход проверяется отдельно.</p>' +
       '<p data-traffic-protected></p><div data-traffic-rules></div>' +
       '<form data-traffic-form style="display:flex;gap:12px;flex-wrap:wrap;align-items:end">' +
       '<label class="phab-admin-settings-label">IP<input class="phab-admin-settings-input" required maxlength="45" autocomplete="off" data-traffic-ip></label>' +
@@ -13996,8 +14464,8 @@
         revision = data.policy.revision;
         q('save').disabled = !write || saving;
         q('protected').textContent = 'Разрешённые источники: ' + data.protectedIps.join(', ');
-        q('status').textContent = data.applied ? 'Правила применены. Проверено: ' + time(data.edge.checkedAt) :
-          'Применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
+        q('status').textContent = data.applied ? 'Основной вход: правила применены. Проверено: ' + time(data.edge.checkedAt) :
+          'Основной вход: применение правил пока не подтверждено. Последняя проверка: ' + time(data.edge && data.edge.checkedAt);
         var protection = data.historyProtection || { state: 'not_configured' };
         var modes = { off: 'Выключена', shadow: 'Наблюдение: запросы пропускаются', enforce: 'Ограничение частоты включено' };
         var states = { not_configured: 'Мониторинг истории ещё не подключён.', missing: 'Ожидаем первый отчёт защиты истории.',
@@ -14598,6 +15066,282 @@
     }
   }
 
+  // Active CUP integration. All commands reuse the authenticated PadlHub client, never provider APIs.
+  function createNotificationScenariosPane(host, api, onUnauthorized) {
+    var triggers = {
+      BOOKING_CONFIRMED: 'Запись подтверждена', BOOKING_CHANGED: 'Запись изменена',
+      BOOKING_CANCELLED: 'Запись отменена', BOOKING_STARTS: 'Начало занятия',
+      FRIEND_GAME_PUBLISHED: 'Друг создал игру', SUBSCRIPTION_ENDS: 'Окончание подписки',
+      BIRTHDAY: 'День рождения', TRAINING_ATTENDED: 'Посещение тренировки',
+      FIRST_ATTENDANCE: 'Первое посещение', MATCHING_GAME: 'Подходящая игра'
+    };
+    var channels = { IN_APP: 'Центр уведомлений', WEB_PUSH: 'Web Push', ANDROID_PUSH: 'Android Push',
+      IOS_PUSH: 'iOS Push', EMAIL: 'Email', STAFF_TASK: 'Обращение в ЦУП',
+      SMS: 'SMS — заглушка', TELEGRAM: 'Telegram — заглушка' };
+    var states = { PENDING: 'Ожидает', EXTENDED_PENDING: 'Ожидает', QUEUED: 'Передано в доставку',
+      CANCELLED: 'Отменено', SUPPRESSED: 'Пропущено', EXPIRED: 'Срок истёк',
+      CREATED: 'Создано', SENT: 'Принято провайдером', DELIVERED: 'Доставлено',
+      SENDING: 'Отправляется', DEAD: 'Отправка прекращена', FAILED: 'Ошибка',
+      NONE: 'Без цели', WAITING: 'Ожидаем действие', ACHIEVED: 'Цель достигнута' };
+    var items = [], selected = null, pending = null, epoch = 0, busy = false, ready = false;
+    var active = false, order = [], controls = {};
+    host.className = 'phab-admin-notifications-card phab-admin-notifications-stack';
+    host.style.gridColumn = '1 / -1';
+    function node(tag, text, parent) {
+      var el = document.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      if (parent) parent.appendChild(el);
+      return el;
+    }
+    node('h3', 'Триггерные рассылки', host);
+    node('p', 'Событие → проверка настроек и актуальности → доставка → целевое действие.', host);
+    var message = node('p', 'Войдите в контур уведомлений.', host);
+    message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite');
+    var toolbar = node('div', undefined, host);
+    toolbar.className = 'phab-admin-notifications-actions';
+    var list = node('select', undefined, toolbar); list.className = 'phab-admin-input';
+    list.setAttribute('aria-label', 'Выбрать сценарий');
+    var fresh = node('button', 'Новый сценарий', toolbar); fresh.type = 'button';
+    var refresh = node('button', 'Обновить сценарии и журнал', toolbar); refresh.type = 'button';
+    var form = node('form', undefined, host);
+    var fields = node('fieldset', undefined, form);
+    fields.style.cssText = 'border:0;padding:0;margin:0;display:grid;gap:12px;min-width:0';
+    node('legend', 'Настройки сценария', fields);
+    function field(key, label, type, min, max) {
+      var row = node('label', undefined, fields); row.className = 'phab-admin-notifications-field';
+      node('span', label, row);
+      var el = node(type === 'textarea' || type === 'select' ? type : 'input', undefined, row);
+      el.className = 'phab-admin-input';
+      if (type !== 'textarea' && type !== 'select') el.type = type;
+      if (min !== undefined) el.min = String(min);
+      if (max !== undefined) el.max = String(max);
+      if (type === 'text' || type === 'textarea' || type === 'number' || type === 'select') el.required = true;
+      if (type === 'number') el.step = '1';
+      controls[key] = el; return el;
+    }
+    function option(select, value, title, disabled) {
+      var el = node('option', title, select); el.value = value; el.disabled = Boolean(disabled); return el;
+    }
+    field('name', 'Название', 'text').maxLength = 120;
+    field('trigger', 'Триггер', 'select');
+    field('delayMinutes', 'Сдвиг, минут: минус — до события, плюс — после', 'number', -43200, 43200);
+    field('ttlMinutes', 'Срок актуальности, минут', 'number', 1, 43200);
+    field('title', 'Заголовок', 'text').maxLength = 300;
+    field('body', 'Текст', 'textarea').maxLength = 8000;
+    node('small', 'Переменные: {{serviceTitle}}, {{startsAt}}, {{locationName}}, {{gameId}}.', fields);
+    var channelBox = node('fieldset', undefined, fields); node('legend', 'Каналы', channelBox);
+    var channelInputs = {};
+    Object.keys(channels).forEach(function (key) {
+      var label = node('label', undefined, channelBox); label.style.cssText = 'display:block;margin:6px 0';
+      var input = node('input', undefined, label); input.type = 'checkbox'; channelInputs[key] = input;
+      node('span', ' ' + channels[key], label);
+      input.addEventListener('change', function () {
+        order = order.filter(function (value) { return value !== key; });
+        if (input.checked) order.push(key);
+        if ((key === 'ANDROID_PUSH' || key === 'IOS_PUSH') && input.checked && order.indexOf('IN_APP') < 0)
+          order.unshift('IN_APP');
+        updateChannels();
+      });
+    });
+    var priority = node('small', '', fields);
+    field('quietHours', 'Тихие часы', 'select');
+    option(controls.quietHours, 'DEFER', 'Отложить до разрешённого времени');
+    option(controls.quietHours, 'SKIP', 'Пропустить внешнюю отправку');
+    field('dailyLimit', 'Лимит за 24 часа для рекомендаций и событий клиента', 'number', 1, 10);
+    field('goal', 'Целевое действие', 'select');
+    option(controls.goal, 'NONE', 'Без цели'); option(controls.goal, 'GAME_JOINED', 'Присоединился к игре');
+    field('goalWindowMinutes', 'Окно цели, минут', 'number', 1, 43200);
+    var activeLabel = node('label', undefined, fields);
+    controls.active = node('input', undefined, activeLabel); controls.active.type = 'checkbox';
+    node('span', ' Сценарий активен', activeLabel);
+    var preview = node('div', undefined, fields); preview.setAttribute('aria-label', 'Предварительный просмотр');
+    node('small', 'Пример с вымышленными данными, без отправки', preview);
+    var previewTitle = node('strong', '', preview), previewBody = node('p', '', preview);
+    previewTitle.style.display = 'block';
+    var save = node('button', 'Сохранить сценарий', form); save.type = 'submit'; save.className = 'phab-admin-btn';
+    node('h3', 'Журнал запусков', host);
+    node('p', 'Последние 100 запусков. Приём провайдером и достижение цели учитываются отдельно.', host);
+    var journal = node('div', undefined, host); journal.style.overflowX = 'auto';
+    journal.tabIndex = 0; journal.setAttribute('role', 'region'); journal.setAttribute('aria-label', 'Журнал запусков, горизонтальная прокрутка');
+    function status(text, error) {
+      message.textContent = text; message.setAttribute('role', error ? 'alert' : 'status');
+    }
+    function error(error) {
+      if (onUnauthorized && onUnauthorized(error)) return;
+      status(error && error.message ? error.message : 'Не удалось загрузить сценарии.', true);
+    }
+    function updateControls() {
+      fields.disabled = !active || !ready || busy || Boolean(pending);
+      list.disabled = fresh.disabled = refresh.disabled = !active || busy || Boolean(pending);
+      save.disabled = !active || !ready || busy;
+      save.textContent = pending ? 'Повторить ту же команду' : 'Сохранить сценарий';
+    }
+    function updateChannels() {
+      var inAppRequired = order.indexOf('ANDROID_PUSH') >= 0 || order.indexOf('IOS_PUSH') >= 0 || controls.goal.value !== 'NONE';
+      if (inAppRequired && order.indexOf('IN_APP') < 0) order.unshift('IN_APP');
+      Object.keys(channelInputs).forEach(function (key) {
+        channelInputs[key].checked = order.indexOf(key) >= 0;
+        channelInputs[key].disabled = key === 'IN_APP' && inAppRequired;
+      });
+      priority.textContent = 'Приоритет: ' + order.map(function (key) { return channels[key]; }).join(' → ') +
+        '. Выбирается один доступный внешний канал; обращение в ЦУП создаётся отдельно.';
+    }
+    function updateTrigger() {
+      var before = ['BOOKING_STARTS', 'SUBSCRIPTION_ENDS', 'BIRTHDAY'].indexOf(controls.trigger.value) >= 0;
+      controls.delayMinutes.min = before ? '-43200' : '0';
+      if (!before && Number(controls.delayMinutes.value) < 0) controls.delayMinutes.value = '0';
+      if (controls.trigger.value !== 'FRIEND_GAME_PUBLISHED') controls.goal.value = 'NONE';
+      controls.goal.disabled = controls.trigger.value !== 'FRIEND_GAME_PUBLISHED';
+      updateChannels();
+    }
+    function renderPreview() {
+      function replace(text) { return text.replace(/\{\{\s*(serviceTitle|startsAt|locationName|gameId)\s*\}\}/g, function (_all, key) {
+        return { serviceTitle: 'Групповая тренировка', startsAt: 'завтра в 19:00', locationName: 'Клуб', gameId: 'пример' }[key];
+      }); }
+      previewTitle.textContent = replace(controls.title.value); previewBody.textContent = replace(controls.body.value);
+    }
+    function blank() {
+      return { name: '', trigger: 'BOOKING_STARTS', delayMinutes: -120, ttlMinutes: 120,
+        title: 'Скоро тренировка', body: '{{serviceTitle}} начнётся {{startsAt}}, {{locationName}}',
+        channels: ['IN_APP'], quietHours: 'DEFER', dailyLimit: 1, goal: 'NONE', goalWindowMinutes: 1440, active: false };
+    }
+    function choose(item) {
+      if (pending || busy) return;
+      selected = item || null;
+      var value = selected ? selected.definition : blank();
+      Object.keys(controls).forEach(function (key) {
+        if (key === 'active') controls[key].checked = value[key] === true;
+        else controls[key].value = String(value[key]);
+      });
+      order = value.channels.slice(); list.value = selected ? selected.id : '';
+      updateTrigger(); renderPreview(); updateControls();
+    }
+    function renderList() {
+      list.textContent = ''; option(list, '', 'Новый сценарий');
+      items.forEach(function (item) {
+        option(list, item.id, item.definition.name + ' · v' + item.version + (item.definition.active ? ' · активен' : ' · приостановлен'));
+      });
+      list.value = selected ? selected.id : '';
+    }
+    function renderJournal(runs) {
+      journal.textContent = '';
+      if (!runs.length) { node('p', 'Запусков пока нет.', journal); return; }
+      var table = node('table', undefined, journal); table.style.cssText = 'width:100%;min-width:760px;border-collapse:collapse';
+      var head = node('tr', undefined, node('thead', undefined, table));
+      ['Сценарий', 'Получатель', 'Время', 'Решение', 'Доставка', 'Цель'].forEach(function (title) {
+        node('th', title, head).style.cssText = 'padding:8px;text-align:left';
+      });
+      var tbody = node('tbody', undefined, table);
+      runs.forEach(function (run) {
+        var row = node('tr', undefined, tbody);
+        var scenario = items.find(function (item) { return item.id === run.scenarioId; });
+        var date = new Date(run.dueAt);
+        var deliveries = (run.deliveryStates || []).map(function (delivery) {
+          var result = /_OUTCOME_UNKNOWN$/.test(delivery.errorCode || '')
+            ? 'Результат неизвестен, без автоматического повтора'
+            : (states[delivery.state] || delivery.state);
+          return (channels[delivery.channel] || delivery.channel) + ': ' + result + ' (' + delivery.count + ')';
+        }).join('; ');
+        [scenario ? scenario.definition.name : run.scenarioId, run.recipientUserId,
+          Number.isFinite(date.getTime()) ? date.toLocaleString('ru-RU') : '—',
+          (states[run.state] || run.state) + (run.reason ? ' · ' + run.reason : ''),
+          deliveries || '—', states[run.goalState] || run.goalState].forEach(function (value) {
+          var cell = node('td', value, row); cell.style.cssText = 'padding:8px;vertical-align:top;overflow-wrap:anywhere';
+        });
+      });
+    }
+    function validSaved(saved, command) {
+      if (!saved || typeof saved.id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.id) ||
+          saved.version !== command.expectedVersion + 1 ||
+          (command.id && saved.id !== command.id) || !saved.definition) return false;
+      return Object.keys(command.definition).every(function (key) {
+        var expected = command.definition[key], actual = saved.definition[key];
+        if (Array.isArray(expected)) return Array.isArray(actual) && expected.length === actual.length &&
+          expected.every(function (value, index) { return value === actual[index]; });
+        return actual === (typeof expected === 'string' ? expected.trim() : expected);
+      });
+    }
+    async function load() {
+      if (!active || busy || pending) return;
+      var generation = epoch; busy = true; updateControls(); status('Загружаем сценарии…');
+      try {
+        var responses = await Promise.all([api.listScenarios(), api.listScenarioRuns()]);
+        if (!active || generation !== epoch) return;
+        items = responses[0].items || [];
+        controls.trigger.textContent = '';
+        (responses[0].catalog || []).forEach(function (entry) {
+          option(controls.trigger, entry.type, (triggers[entry.type] || entry.type) + (entry.reason ? ' — ' + entry.reason : ''), !entry.available);
+        });
+        ready = true; renderList(); renderJournal(responses[1].items || []);
+        status(responses[0].runtimeEnabled ? 'Сценарии загружены.' : 'Автоматическая обработка выключена. Можно подготовить сценарии.');
+        var current = selected && items.find(function (item) { return item.id === selected.id; });
+        busy = false; choose(current || undefined);
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        ready = false; error(failure);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    }
+    form.addEventListener('input', renderPreview);
+    controls.trigger.addEventListener('change', updateTrigger);
+    controls.goal.addEventListener('change', updateChannels);
+    list.addEventListener('change', function () { choose(items.find(function (item) { return item.id === list.value; })); });
+    fresh.addEventListener('click', function () { choose(); });
+    refresh.addEventListener('click', function () { void load(); });
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      if (!active || !ready || busy) return;
+      if (!pending && !form.reportValidity()) return;
+      if (!pending) {
+        var definition = {};
+        Object.keys(controls).forEach(function (key) {
+          definition[key] = key === 'active' ? controls[key].checked
+            : ['delayMinutes', 'ttlMinutes', 'dailyLimit', 'goalWindowMinutes'].indexOf(key) >= 0
+              ? Number(controls[key].value) : controls[key].value;
+        });
+        definition.channels = order.slice();
+        if (!order.length) { status('Выберите хотя бы один канал.', true); return; }
+        pending = { id: selected ? selected.id : null, expectedVersion: selected ? selected.version : 0,
+          definition: definition, key: api.scenarioCommandKey() };
+      }
+      var command = pending, generation = epoch;
+      busy = true; updateControls(); status('Сохраняем сценарий…');
+      try {
+        var saved = await api.saveScenario(command.id, command.expectedVersion, command.definition, command.key);
+        if (!active || generation !== epoch) return;
+        if (!validSaved(saved, command)) throw new Error('SCENARIO_SAVE_RESPONSE_INVALID');
+        pending = null; selected = saved;
+        items = items.filter(function (item) { return item.id !== saved.id; }).concat([saved]);
+        busy = false; renderList(); choose(saved); status('Сохранена версия ' + saved.version + '.');
+        // Journal read failure must not turn an acknowledged save into an ambiguous command.
+        try {
+          var runs = await api.listScenarioRuns();
+          if (active && generation === epoch) renderJournal(runs.items || []);
+        } catch (journalError) {
+          if (active && generation === epoch) {
+            if (!onUnauthorized(journalError)) status('Сценарий сохранён. Журнал временно недоступен.', true);
+          }
+        }
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        var definitive = failure && failure.status >= 400 && failure.status < 500 && failure.status !== 408 && failure.status !== 429;
+        if (definitive) pending = null;
+        if (failure && failure.status === 409) ready = false;
+        error(failure);
+        if (pending) status('Результат сохранения неизвестен. Повторите ту же команду; редактирование заблокировано.', true);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    });
+    choose(); updateControls();
+    return {
+      activate: function () { if (!active) { active = true; epoch++; void load(); } },
+      suspend: function () {
+        active = false; epoch++; pending = null; selected = null; items = []; busy = false; ready = false;
+        list.textContent = ''; journal.textContent = ''; choose(); status('Войдите в контур уведомлений.'); updateControls();
+      },
+      reload: load
+    };
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -14607,6 +15351,9 @@
     var api = createApi(cfg);
     var trafficPane = createTrafficPane(dom.trafficSection, api, cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var scenarioHost = document.createElement('section');
+    dom.notificationWorkspace.appendChild(scenarioHost);
+    var scenarioPane = createNotificationScenariosPane(scenarioHost, notificationApi, notificationSessionExpired);
     var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
 
     function readStoredNotificationToken() {
@@ -28103,6 +28850,14 @@
       });
     }
 
+    var communityResultsExportDialog = null;
+    function openCommunityResultsExport(community) {
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
+      communityResultsExportDialog = createCommunityResultsExportDialog(community, function (options) {
+        return api.exportCommunityResults(community.id, options);
+      }, function () {return loadCommunityResultsTemplates(cfg.apiBaseUrl);});
+    }
+
     function getSelectedCommunity() {
       if (!state.selectedCommunityId) {
         return null;
@@ -32191,6 +32946,9 @@
       form.className = 'phab-admin-community-form-grid';
       settingsCard.body.appendChild(form);
 
+      var typeEditor = createCommunityTypeEditor(community, hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      form.appendChild(typeEditor.element);
+
       var nameInput = document.createElement('input');
       nameInput.className = 'phab-admin-input';
       nameInput.value = String(community.name || '');
@@ -32328,6 +33086,7 @@
           description: String(descriptionInput.value || '').trim(),
           rules: String(rulesInput.value || '').trim()
         });
+        Object.assign(payload, typeEditor.payload());
         if (!Object.keys(payload).length) {
           setStatus('Изменений нет', false);
           return;
@@ -33173,6 +33932,13 @@
           function () {
             openCommunitySettingsFromModeration(community.id);
           }
+        )
+      );
+      dom.communityActions.appendChild(
+        createCommunityActionButton(
+          'Выгрузить результаты',
+          'phab-admin-community-main-action phab-admin-community-main-action-accent',
+          function () { openCommunityResultsExport(community); }
         )
       );
       dom.communityActions.appendChild(
@@ -37099,6 +37865,7 @@
     }
 
     function showNotificationAuth(message, isError) {
+      scenarioPane.suspend();
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
       dom.notificationWorkspace.classList.add('phab-admin-hidden');
@@ -37113,6 +37880,7 @@
     function showNotificationWorkspace() {
       dom.notificationAuth.classList.add('phab-admin-hidden');
       dom.notificationWorkspace.classList.remove('phab-admin-hidden');
+      scenarioPane.activate();
       updateNotificationControls();
     }
 
@@ -37184,7 +37952,6 @@
           return;
         }
         notificationState.session = session;
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         showNotificationAuth(
@@ -37224,7 +37991,6 @@
         );
         notificationState.challengeId = '';
         dom.notificationCodeInput.value = '';
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         setNotificationResult(
@@ -38870,6 +39636,7 @@
           throw error;
         }
       } finally {
+        scenarioPane.suspend();
         cfg.authToken = '';
         storeNotificationToken('');
         if (notificationApi) notificationApi.setAccessToken('');
@@ -40262,6 +41029,7 @@
 
     function destroy() {
       trafficPane.setActive(false);
+      if (communityResultsExportDialog) communityResultsExportDialog.close();
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }

@@ -25,7 +25,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 MSK = dt.timezone(dt.timedelta(hours=3))
-PROTECTED = {'188.127.235.140'}
+PROTECTED = {'188.127.235.140', '147.45.103.3', '89.108.64.209'}
 ROUTES = {'schedule', 'history', 'tournaments', 'participants', 'other'}
 
 

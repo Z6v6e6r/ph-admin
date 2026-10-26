@@ -1,3 +1,4 @@
+import { supportDiagnostics } from './support-diagnostics';
 import {
   BadRequestException,
   ForbiddenException,
@@ -6,7 +7,8 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
   OnModuleDestroy,
-  OnModuleInit
+  OnModuleInit,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { isProductionRuntime } from '../common/mongo-index.guard';
@@ -518,19 +520,61 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    supportDiagnostics.observe(dto, 'max_ingress', { connector: normalizedDto.connector,
+      targetSource: 'inbound', targetPresent: Boolean(normalizedDto.externalChatId || normalizedDto.externalUserId),
+      targetType: normalizedDto.externalChatId ? 'chat' : normalizedDto.externalUserId ? 'user' : 'UNKNOWN',
+      bindingRef: supportDiagnostics.ref('binding', normalizedDto.externalChatId || normalizedDto.externalUserId) });
     const createdAt = this.resolveEventTimestamp(normalizedDto.timestamp);
-    const normalizedPhone = this.normalizePhone(normalizedDto.phone);
-    const normalizedEmail = this.normalizeEmail(normalizedDto.email);
-    await this.ensureClientLoadedForIngestEvent(
-      normalizedDto,
-      normalizedPhone,
-      normalizedEmail
-    );
+    let normalizedPhone = this.normalizePhone(normalizedDto.phone);
+    let normalizedEmail = this.normalizeEmail(normalizedDto.email);
+    const identityOwner = await this.loadIngestIdentityOwner(normalizedDto);
+    if (!identityOwner) {
+      await this.ensureClientLoadedForIngestEvent(normalizedDto, normalizedPhone, normalizedEmail);
+    }
+    supportDiagnostics.observe(dto, 'max_binding', { connector: normalizedDto.connector,
+      bindingPresent: Boolean(identityOwner), clientVerified: identityOwner?.authStatus === SupportClientAuthStatus.VERIFIED,
+      bindingEqual: Boolean(identityOwner?.identities.some(identity => identity.connector === normalizedDto.connector
+        && (!normalizedDto.externalUserId || identity.externalUserId === normalizedDto.externalUserId)
+        && (!normalizedDto.externalChatId || identity.externalChatId === normalizedDto.externalChatId))) });
+    const incomingKind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
+    const ownedContact =
+      incomingKind === SupportMessageKind.CONTACT &&
+      this.resolveIncomingDirection(normalizedDto, incomingKind) === SupportMessageDirection.INBOUND &&
+      identityOwner?.authStatus === SupportClientAuthStatus.VERIFIED;
+
+    if (ownedContact) {
+      // A contact's phone describes its contents, not the verified sender's identity.
+      normalizedDto.meta = {
+        ...normalizedDto.meta,
+        sharedContact: { phone: normalizedPhone, email: normalizedEmail }
+      };
+      normalizedDto.kind = incomingKind;
+      normalizedDto.displayName = identityOwner.displayName;
+      const ownerIdentity = identityOwner.identities.find((identity) =>
+        identity.connector === normalizedDto.connector &&
+        (!normalizedDto.externalUserId || identity.externalUserId === normalizedDto.externalUserId) &&
+        (!normalizedDto.externalChatId || identity.externalChatId === normalizedDto.externalChatId)
+      );
+      normalizedDto.externalUserId = ownerIdentity?.externalUserId;
+      normalizedDto.externalChatId = ownerIdentity?.externalChatId;
+      normalizedDto.username = ownerIdentity?.username;
+      normalizedPhone = this.normalizePhone(identityOwner.primaryPhone);
+      normalizedEmail = undefined;
+    } else if (
+      (this.isLkConnector(normalizedDto.connector) || this.isMaxConnector(normalizedDto.connector)) &&
+      identityOwner?.authStatus === SupportClientAuthStatus.VERIFIED &&
+      normalizedPhone &&
+      !identityOwner.phones.includes(normalizedPhone)
+    ) {
+      supportDiagnostics.observe(dto, 'max_binding', { code: 'UPSTREAM_REFUSED', bindingEqual: false, connector: normalizedDto.connector });
+      throw new BadRequestException('Support identity conflicts with the verified client phone');
+    }
     const client = this.resolveOrCreateClient(
       normalizedDto,
       normalizedPhone,
       normalizedEmail,
-      createdAt
+      createdAt,
+      ownedContact ? identityOwner.id : undefined
     );
 
     const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
@@ -586,6 +630,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           normalizedEmail
         })
       : undefined;
+
+    if (message && this.isMaxConnector(normalizedDto.connector)) supportDiagnostics.link(dto, message);
 
     const contactReminderStage = this.updateContactReminderStage(
       client,
@@ -1075,6 +1121,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       };
       this.outbox.set(updated.id, updated);
       this.persistence.persistOutboxCommand(updated);
+      supportDiagnostics.observe(updated, 'max_lease', { connector: updated.connector, leaseAttempt: updated.attempts, leaseAgeMs: 0,
+        leasePresent: true, executionObserved: false, outboxRef: supportDiagnostics.ref('outbox', updated.id) });
     }
 
     return commands.map((command) => this.outbox.get(command.id) ?? command);
@@ -1125,6 +1173,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
+    supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
+      outboxRef: supportDiagnostics.ref('outbox', updated.id), outcome: 'outcome_unknown' });
     return updated;
   }
 
@@ -1677,6 +1727,92 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
   }
 
+  private async loadIngestIdentityOwner(
+    dto: NormalizedIngestSupportEventDto
+  ): Promise<SupportClientProfile | null> {
+    const fields = ['externalUserId', 'externalChatId'] as const;
+    const supplied = fields.filter((field) => Boolean(dto[field]));
+    if (!supplied.length) return null;
+
+    // A cached phone owner cannot prove that the sender identity is absent in Mongo.
+    const persistedCandidates: SupportClientProfile[] = [];
+    try {
+      for (const value of new Set(supplied.map((field) => dto[field]!))) {
+        const persisted = await this.persistence.findClients({
+          connector: dto.connector,
+          externalUserId: value,
+          externalChatId: value,
+          limit: 100,
+          requireAllBackends: true
+        });
+        if (persisted.length >= 100) {
+          throw new ServiceUnavailableException('Support identity lookup is ambiguous');
+        }
+        persistedCandidates.push(...persisted.map((client) => this.normalizeLoadedClient(client)));
+      }
+    } catch {
+      throw new ServiceUnavailableException('Support identity lookup is unavailable');
+    }
+
+    // Event timestamps are not versions. Validate every persisted candidate before
+    // replacing any cache entry; neither a newer cache nor a refresh may hide a conflict.
+    const candidates = [...this.clients.values(), ...persistedCandidates];
+    const owners: SupportClientProfile[] = [];
+    for (const field of supplied) {
+      const value = dto[field];
+      const otherField = field === 'externalUserId' ? 'externalChatId' : 'externalUserId';
+      const matches = candidates.filter((client) =>
+        client.identities.some((identity) => identity.connector === dto.connector && identity[field] === value)
+      );
+      const crossed = candidates.filter((client) =>
+        client.identities.some((identity) => identity.connector === dto.connector && identity[otherField] === value)
+      );
+      if (new Set(matches.map((client) => client.id)).size > 1 ||
+        crossed.some((client) => !matches.some((match) => match.id === client.id))) {
+        throw new BadRequestException('Support identity fields conflict');
+      }
+      owners.push(...matches);
+    }
+    if (!owners.length) return null;
+    if (owners.some((owner) => owner.id !== owners[0].id)) {
+      throw new BadRequestException('Support user and chat identities belong to different clients');
+    }
+    const ownerId = owners[0].id;
+    const hasPair = (client: SupportClientProfile) => client.identities.some((identity) =>
+      identity.connector === dto.connector && supplied.every((field) => identity[field] === dto[field]));
+    const owner = persistedCandidates.find((client) => client.id === ownerId && hasPair(client)) ??
+      candidates.find((client) => client.id === ownerId && hasPair(client));
+    const conflictingPair = supplied.length > 1 && candidates.some((client) =>
+      client.id === ownerId && client.identities.some((identity) =>
+        identity.connector === dto.connector &&
+        supplied.some((field) => identity[field] === dto[field]) &&
+        !supplied.every((field) => identity[field] === dto[field])));
+    if (!owner || conflictingPair) {
+      throw new BadRequestException('Support user and chat identity pair conflicts');
+    }
+    const identityBinding = (client: SupportClientProfile) => JSON.stringify({
+      authStatus: client.authStatus,
+      primaryPhone: client.primaryPhone ?? null,
+      phones: [...new Set(client.phones)].sort(),
+      emails: [...new Set(client.emails)].sort()
+    });
+    if (candidates.some((client) => client.id === ownerId &&
+      identityBinding(client) !== identityBinding(owner))) {
+      // Persistence is asynchronous and event timestamps are not versions. Do not
+      // downgrade, upgrade or combine conflicting identity bindings during ingest.
+      throw new ServiceUnavailableException('Support identity binding is inconsistent');
+    }
+    if (persistedCandidates.includes(owner)) {
+      try {
+        // Use one complete persisted profile, not a timestamp-ranked mix of identities.
+        return await this.cacheClientFromPersistence(owner);
+      } catch {
+        throw new ServiceUnavailableException('Support identity lookup is unavailable');
+      }
+    }
+    return owner;
+  }
+
   private findExistingClientForEvent(
     dto: NormalizedIngestSupportEventDto,
     normalizedPhone?: string,
@@ -1854,7 +1990,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dto: NormalizedIngestSupportEventDto,
     normalizedPhone: string | undefined,
     normalizedEmail: string | undefined,
-    createdAt: string
+    createdAt: string,
+    ownedContactClientId?: string
   ): SupportClientProfile {
     const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     const matchingIds = new Set<string>();
@@ -1896,6 +2033,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         }
       }
     );
+
+    if (ownedContactClientId) {
+      matchingIds.clear();
+      matchingIds.add(ownedContactClientId);
+    }
 
     let client: SupportClientProfile;
     if (matchingIds.size === 0) {
@@ -2112,7 +2254,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       currentPhone: client.primaryPhone,
       phones: [...client.phones],
       emails: [...client.emails],
-      connectors: [],
+      connectors: [connector],
       lastInboundConnector: undefined,
       lastReplyConnector: undefined,
       subject: normalizedSubject,
@@ -2574,7 +2716,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const outboundPayload = this.buildOutboundClientPayload(message, connector);
 
-    return {
+    const diagnosticCommand: SupportOutboxCommand = {
       id: randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
@@ -2599,6 +2741,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         formattedText: outboundPayload.formattedText
       }
     };
+    if (this.isMaxConnector(connector)) supportDiagnostics.link(message, diagnosticCommand);
+    supportDiagnostics.observe(message, 'max_outbox', { connector, targetSource: 'identity', bindingPresent: Boolean(identity),
+      targetType: identity?.externalChatId ? 'chat' : identity?.externalUserId ? 'user' : 'UNKNOWN',
+      targetPresent: Boolean(identity?.externalChatId || identity?.externalUserId),
+      outboxRef: supportDiagnostics.ref('outbox', diagnosticCommand.id), bindingRef: supportDiagnostics.ref('binding', identity?.externalChatId || identity?.externalUserId) });
+    return diagnosticCommand;
   }
 
   private buildOutboundClientPayload(
@@ -2698,11 +2846,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return false;
     }
 
-    const identityKeys = this.getIdentityKeys(identity);
-    if (externalUserId && identityKeys.includes(externalUserId)) {
+    if (externalUserId && identity.externalUserId === externalUserId) {
       return true;
     }
-    if (externalChatId && identityKeys.includes(externalChatId)) {
+    if (externalChatId && identity.externalChatId === externalChatId) {
       return true;
     }
     return false;
@@ -4843,7 +4990,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return text;
     }
     if (kind === SupportMessageKind.CONTACT && phone) {
-      return `Клиент поделился номером: ${phone}`;
+      const sharedContact = this.readRecord(dto.meta?.['sharedContact']);
+      const contactPhone = this.normalizePhone(this.readStringValue(sharedContact?.['phone']));
+      return `Клиент поделился номером: ${contactPhone ?? phone}`;
     }
     if (kind === SupportMessageKind.STATION_SELECTION && dto.selectedStationId) {
       return `Клиент выбрал станцию: ${dto.selectedStationName?.trim() || dto.selectedStationId}`;

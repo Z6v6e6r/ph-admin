@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { MongoWriteConcernError } from 'mongodb';
 import { TournamentsService } from '../src/tournaments/tournaments.service';
 import { CustomTournament, TournamentClientSubscription, TournamentStatus } from '../src/tournaments/tournaments.types';
 
@@ -115,6 +116,69 @@ function createService(
         ))) return null;
         booking.pendingJoinPayments = [...current, pending];
         tournament.details = { ...details, booking };
+        return tournament;
+      },
+      claimPublicJoinTransactionCreate: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        attemptedAt: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_CREATE_PENDING'
+          && !item.providerCreateAttemptedAt
+        ));
+        if (!pending) return null;
+        pending.state = 'PROVIDER_RESULT_UNKNOWN';
+        pending.providerCreateAttemptedAt = attemptedAt;
+        return tournament;
+      },
+      bindPublicJoinTransaction: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        providerTransactionId: string,
+        providerResult: Record<string, unknown>
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_RESULT_UNKNOWN'
+        ));
+        if (!pending) return null;
+        Object.assign(pending, providerResult, {
+          providerTransactionId,
+          state: 'PENDING_PAYMENT'
+        });
+        return tournament;
+      },
+      recordPublicJoinTransactionProviderIdentity: async (
+        _id: string,
+        attemptId: string,
+        phone: string,
+        providerTransactionId: string
+      ) => {
+        const booking = (tournament.details?.booking ?? {}) as Record<string, unknown>;
+        const current = Array.isArray(booking.pendingJoinPayments)
+          ? booking.pendingJoinPayments as Array<Record<string, unknown>>
+          : [];
+        const pending = current.find((item) => (
+          item.transactionId === attemptId
+          && item.phone === phone
+          && item.state === 'PROVIDER_RESULT_UNKNOWN'
+        ));
+        if (!pending) return null;
+        pending.providerTransactionId = providerTransactionId;
         return tournament;
       },
       claimPublicJoinSubscriptionBooking: async (
@@ -254,6 +318,92 @@ function buildSubscriptions(): TournamentClientSubscription[] {
   ];
 }
 
+async function verifyWriteConcernFailures(baseFetch: typeof fetch): Promise<void> {
+  const previousFetch = globalThis.fetch;
+  let verifiedCases = 0;
+  try {
+    for (const [method, afterWrite, expectedPosts, retryCode] of [
+      ['reservePublicJoinPayment', false, 0, 'PURCHASE_STARTED'],
+      ['reservePublicJoinPayment', true, 0, 'PURCHASE_STARTED'],
+      ['claimPublicJoinTransactionCreate', false, 0, 'PURCHASE_STARTED'],
+      ['claimPublicJoinTransactionCreate', true, 0, 'BOOKING_FAILED'],
+      ['recordPublicJoinTransactionProviderIdentity', false, 1, 'BOOKING_FAILED'],
+      ['bindPublicJoinTransaction', true, 1, 'PURCHASE_STARTED']
+    ] as const) {
+      const tournament = createTournament();
+      const service = createService(tournament);
+      const persistence = (service as unknown as {
+        tournamentsPersistence: Record<string, (...args: unknown[]) => Promise<unknown>>;
+      }).tournamentsPersistence;
+      const originalWrite = persistence[method];
+      const writeConcernError = new MongoWriteConcernError({
+        ok: 1,
+        writeConcernError: {
+          code: 64,
+          errmsg: 'Synthetic write-concern timeout',
+          errInfo: { wtimeout: true }
+        }
+      });
+      let providerPosts = 0;
+      globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).endsWith('/transactions')) {
+          assert.equal(init?.method, 'POST');
+          providerPosts += 1;
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            json: async () => ({
+              transactionId: 'write-concern-provider',
+              paymentUrl: 'https://pay.example/write-concern',
+              toPay: 250000,
+              paymentDueDate: new Date(Date.now() + 1_200_000).toISOString()
+            })
+          } as Response;
+        }
+        return baseFetch(url, init);
+      }) as typeof fetch;
+      persistence[method] = async (...args) => {
+        if (afterWrite) {
+          assert.ok(await originalWrite(...args), 'after-write injection requires an applied mutation');
+        }
+        throw writeConcernError;
+      };
+      const input = {
+        name: 'Synthetic acknowledgment test',
+        phone: '79990008701',
+        levelLabel: 'C',
+        selectedPurchaseOptionId: 'catalog-one-time',
+        subscriptions: [],
+        successUrl: 'https://padlhub.ru/padel_torneos?paymentsuccess=true',
+        failUrl: 'https://padlhub.ru/padel_torneos?paymentfailed=true'
+      };
+      await assert.rejects(
+        () => service.createPublicJoinPurchaseTransaction(tournament.slug, input),
+        (error) => error === writeConcernError,
+        `${method} acknowledgment failure must not become purchase success`
+      );
+      assert.equal(providerPosts, expectedPosts, `${method}: no POST after failed prerequisite acknowledgment`);
+      const pendingBeforeRetry = (tournament.details?.booking as Record<string, unknown>)
+        ?.pendingJoinPayments as Array<Record<string, unknown>> | undefined;
+      const attemptBeforeRetry = pendingBeforeRetry?.[0]?.transactionId;
+      persistence[method] = originalWrite;
+      const retried = await createService(tournament).createPublicJoinPurchaseTransaction(tournament.slug, input);
+      assert.equal(retried.code, retryCode, `${method}: preserve existing retry/recovery semantics`);
+      assert.equal(providerPosts, retryCode === 'PURCHASE_STARTED' ? 1 : expectedPosts);
+      if (attemptBeforeRetry) {
+        const pendingAfterRetry = (tournament.details?.booking as Record<string, unknown>)
+          ?.pendingJoinPayments as Array<Record<string, unknown>>;
+        assert.equal(pendingAfterRetry[0]?.transactionId, attemptBeforeRetry, 'retry must retain the same local attempt');
+      }
+      verifiedCases += 1;
+    }
+    console.log(`Write-concern timeout/retry characterization verified for ${verifiedCases} cases`);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+}
+
 async function main(): Promise<void> {
   const tournament = createTournament();
   let adminBookings: Record<string, unknown>[] = [];
@@ -318,6 +468,7 @@ async function main(): Promise<void> {
     throw new Error(`Unexpected fetch in test: ${value}`);
   }) as typeof fetch;
   globalThis.fetch = defaultVivaFetch;
+  await verifyWriteConcernFailures(defaultVivaFetch);
 
   const unauthorizedFlow = await service.getPublicJoinFlow(
     tournament.slug,

@@ -1,59 +1,7 @@
-import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
-import { json, urlencoded } from 'express';
-import { AppModule } from './app.module';
+import { createApplication } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
-  const requestBodyLimit = String(process.env.REQUEST_BODY_LIMIT ?? '20mb').trim() || '20mb';
-  app.use(json({ limit: requestBodyLimit }));
-  app.use(urlencoded({ extended: true, limit: requestBodyLimit }));
-  const trustProxy = String(process.env.TRUST_PROXY ?? '').toLowerCase();
-  if (trustProxy === '1' || trustProxy === 'true' || trustProxy === 'yes') {
-    const httpAdapter = app.getHttpAdapter();
-    if (httpAdapter.getType() === 'express') {
-      httpAdapter.getInstance().set('trust proxy', 1);
-    }
-  }
-  app.setGlobalPrefix('api');
-  app.enableCors({
-    origin: true,
-    credentials: true,
-    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Idempotency-Key',
-      'X-Correlation-Id',
-      'X-Subscription-Test-Token',
-      'x-user-id',
-      'x-user-login',
-      'x-user-name',
-      'x-user-title',
-      'x-user-role',
-      'x-user-roles',
-      'x-user-phone',
-      'x-user-primary-phone',
-      'x-user-level',
-      'x-user-level-label',
-      'x-user-subscriptions',
-      'x-user-max-public-url',
-      'x-padlhub-auth-source',
-      'x-padlhub-tenant-key',
-      'x-connector-route',
-      'x-connector-routes',
-      'x-station-id',
-      'x-station-ids'
-    ],
-    exposedHeaders: ['X-Correlation-Id', 'Idempotency-Replayed']
-  });
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true
-    })
-  );
+  const app = await createApplication();
 
   const rawPort = Number(process.env.PORT ?? 3000);
   const port = Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 3000;

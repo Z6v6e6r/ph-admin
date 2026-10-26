@@ -1,0 +1,11 @@
+[Unit]
+Description=Export the minimal CUP quarantine snapshot for the reserve edge
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/phab-traffic/traffic-replica.py export
+User=root
+UMask=0027
+TimeoutStartSec=20
+NoNewPrivileges=true
+PrivateTmp=true
