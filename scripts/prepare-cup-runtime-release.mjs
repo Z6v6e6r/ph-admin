@@ -58,9 +58,12 @@ try {
   const derivedSourceTree = execFileSync('git', ['write-tree'], { cwd: recovery, encoding: 'utf8' }).trim();
   run('npm', ['run', 'build'], recovery);
   const candidateCompiled = inventory(path.join(recovery, 'dist'));
-  const delta = candidateCompiled.filter(row => JSON.stringify(row) !== JSON.stringify(baselineCompiled.get(row.path)));
-  assert.ok(delta.length >= 2 && delta.length <= 6);
-  assert.ok(delta.every(row => /^tournaments\/tournaments(?:-persistence)?\.service\.(?:js|d\.ts|js\.map)$/.test(row.path)));
+  const compilerDelta = candidateCompiled.filter(row => JSON.stringify(row) !== JSON.stringify(baselineCompiled.get(row.path)));
+  assert.ok(compilerDelta.length >= 2 && compilerDelta.length <= 6);
+  assert.ok(compilerDelta.every(row => /^tournaments\/tournaments(?:-persistence)?\.service\.(?:js|d\.ts|js\.map)$/.test(row.path)));
+  // Recovery is an executable-only overlay: preserve the active release's declarations/maps.
+  const delta = compilerDelta.filter(row => row.path.endsWith('.js'));
+  assert.equal(delta.length, 2);
   const recoveryPayload = path.join(scratch, 'recovery-payload'); fs.mkdirSync(recoveryPayload);
   for (const row of delta) {
     const file = path.join(recoveryPayload, 'dist', row.path);
