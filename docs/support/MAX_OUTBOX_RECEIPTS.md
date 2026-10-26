@@ -7,30 +7,26 @@ cleanup, migration or reset is part of this source change.
 ## Operation budget and uncertain outcomes
 
 Each pull or receipt store call has one monotonic five-second budget shared by all
-of its Mongo operations, including majority reads/writes and duplicate readback.
+of its Mongo operations, including transaction statements and majority commit/duplicate readback; abort cleanup is bounded separately to at most100ms.
 The MongoDB 6.21 driver receives the remaining `timeoutMS` (CSOT), bounding socket,
 selection and server/majority waits. Presence lookup and insert-only enqueue each
 have a separate five-second bound. A driver timeout becomes HTTP 503 with fixed
-`MAX_OUTBOX_OPERATION_TIMEOUT`; no Mongo/provider retry is added by this boundary.
+`MAX_OUTBOX_OPERATION_TIMEOUT`; no provider retry or unknown-commit replay is added; proven-aborted DB transactions may retry within the shared budget.
 Timeout is not cancellation or rollback: keep an unknown result unknown.
 
-A batch may time out after some claims committed. The caller receives an error,
-not a partial successful batch; the server does not requeue or replay these leases.
-Those commands remain leased until the existing expiry/reconciliation path. Their
-service-level lease diagnostics are absent when the whole pull fails. This is an
-availability/observability admission gap, not proof of provider execution.
-
-Enqueue is still fire-and-forget. A successful application response is not durable
-enqueue custody. A source deployment cannot close that inherited crash/write-reject
-gap. Per-dialog order across 429 backoff is also not guaranteed. Durable enqueue,
-ordering acceptance and ambiguous-lease reconciliation remain rollout prerequisites.
+The 26 October readiness update supersedes the original fire-and-forget/partial-batch
+limitations: see [MAX queue readiness](MAX_QUEUE_READINESS_2026-10-26.md). Enqueue and
+all batch claims are now serialized Mongo transactions with majority commit and explicit
+control provisioning. Unknown commit returns no commands; expired new leases quarantine
+without replay. Old records remain untouched pending individual review. FIFO holds a
+recipient across429/unknown results; supported topology must provide transactions.
 
 ## API and stored shape
 
 - GET /api/support/outbox/pull requires receiptProtocol=max-lease-v1 for MAX;
   legacy/missing protocol returns409 OUTBOX_RECEIPT_PROTOCOL_REQUIRED before a claim.
   A configured, valid integration token is required; missing configuration returns503.
-- Every claim atomically increments attempts and creates a UUID leaseToken.
+- A transaction-bound claim atomically increments attempts and creates a UUID leaseToken.
 - POST /api/support/outbox/:id/ack body: {leaseToken}.
 - POST /api/support/outbox/:id/fail body:
   {leaseToken,failure:{status,code},retryAfterSeconds?}. Legacy error/requeue values
@@ -46,9 +42,9 @@ ordering acceptance and ambiguous-lease reconciliation remain rollout prerequisi
   original MAX command's delivery/association fields after enqueue, including on
   client/dialog merges; merge metadata must not be used to reconstruct delivery.
 
-Additive optional fields: leaseToken,nextAttemptAt,updatedAt,lastReceipt,
+Additive optional fields: queueSequence,admissionKey,quarantinedAt,reconciliation,leaseToken,nextAttemptAt,updatedAt,lastReceipt,
 lastProviderFailure,terminalReason. Existing id unique and connector/status indexes
-remain unchanged. No new indexes, backfill or startup migration. MAX store reads
+remain unchanged. Explicit companion control collection provisioning is required; only its built-in unique_id index is added. No outbox backfill or startup migration. MAX store reads
 Mongo directly, so another process's claim/receipt does not depend on stale Map
 hydration. Non-MAX known commands do not query MAX storage on ACK/fail.
 
@@ -60,7 +56,7 @@ hydration. Non-MAX known commands do not query MAX storage on ACK/fail.
 | Explicit429 | PENDING with persisted exponential backoff+jitter, bounded Retry-After(300s), max5 attempts |
 | Other4xx, including403 with unknown code | FAILED/PROVIDER_REFUSED; no assumption that the user blocked the bot |
 | Network/timeout/5xx/malformed success | FAILED/DELIVERY_UNKNOWN; never automatically replay an ambiguous send |
-| Expired or legacy LEASED without valid receipt | FAILED/DELIVERY_UNKNOWN, no reclaim/send |
+| Expired new-protocol LEASED without valid receipt | FAILED/DELIVERY_UNKNOWN, no reclaim/send |
 | Invalid input/unsupported attachments | FAILED/INVALID_INPUT |
 | Attempt cap | FAILED/ATTEMPTS_EXHAUSTED; provider failure preserved separately |
 
@@ -92,8 +88,7 @@ that same receipt/token safely, rather than sending a second message.
 Rollback must pause pollers first and preserve new terminal/uncertain states.
 Do not revert to the legacy lease-expiry replay loop or remove fencing fields to
 make old receipts pass. Source rollback alone is not permission to replay data.
-No automatic repair/backfill is supplied. Old LEASED records will be quarantined
-on the first protocol-v1 pull; retain them for explicit reconciliation.
+No automatic repair/backfill is supplied. Old records remain held and untouched; only new-protocol expired leases are quarantined. Retain all of them for explicit per-record reconciliation.
 
 ## Verification
 
@@ -108,7 +103,6 @@ privacy, intended-backend failure and non-MAX isolation. The adapter companion
 uses mocked fetch only. CI starts an owned loopback Mongo7 daemon with test commands
 enabled, checks readiness and removes it on completion. Physical failpoints block
 read/write commands to verify real CSOT expiry; wire checks verify finite server
-timeouts. The local/majority split-view regression uses a controlled collection double; a
-physical paused-replication/rollback test is still a separate acceptance gap. An
+timeouts. The local/majority split-view regression uses a controlled collection double; the readiness update adds a physical three-member paused-replication/SIGKILL/rollback test; production topology acceptance remains separate. An
 unsupported majority read must fail, never fall back to local. These checks do not
 prove provider delivery, production topology or real Node-RED installation.

@@ -1,7 +1,7 @@
 name: MAX outbox receipts
 on:
   pull_request:
-    paths: ['src/support/**', 'test/*outbox*', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
+    paths: ['src/support/**', 'test/*outbox*', 'test/fixtures/max-*', 'scripts/max-outbox-*', 'scripts/support-outbox-cleanup.mjs', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
   push:
     branches: ['codex/max-retry-receipts']
 permissions:
@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -18,7 +20,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Start isolated Mongo with physical timeout failpoints
         run: |
-          docker run --detach --name phab-max-receipts-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all --setParameter enableTestCommands=1
+          docker run --detach --name phab-max-receipts-mongo --publish 127.0.0.1:27017:27017 mongo:7.0.28 --bind_ip_all --replSet codexMaxQueueRS --setParameter enableTestCommands=1
           ready=false
           for attempt in $(seq 1 30); do
             if docker exec phab-max-receipts-mongo mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; then
@@ -28,11 +30,22 @@ jobs:
             sleep 1
           done
           test "$ready" = true
+          docker exec phab-max-receipts-mongo mongosh --quiet --eval 'rs.initiate({_id:"codexMaxQueueRS",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec phab-max-receipts-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
       - run: npm run build
       - name: Compatibility defaults and guarded feature UI
         run: |
           npx ts-node test/release-capabilities.test.ts
           npx ts-node test/community-policy-activation.test.ts
+          npx ts-node test/max-outbox-enqueue.test.ts
+          npx ts-node test/support-diagnostics.test.ts
+          npx ts-node test/max-outbox-queue.mongodb.test.ts mongodb://127.0.0.1:27017
+          npx ts-node test/max-outbox-operator.mongodb.test.ts mongodb://127.0.0.1:27017
           npx ts-node test/max-outbox-provider-refusal.test.ts
           npx ts-node test/support-cold-reply.test.ts
           npx ts-node test/support-cold-reply.mongodb.test.ts mongodb://127.0.0.1:27017
@@ -42,6 +55,66 @@ jobs:
           npx ts-node test/max-outbox-release-compat.mongodb.test.ts mongodb://127.0.0.1:27017
       - run: npm run test:support-outbox-max-attempts
       - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:27017
+      - uses: actions/checkout@v4
+        with:
+          repository: Z6v6e6r/lk
+          ref: e357e70f279813a5d77bec6a7afd85ffbff59b87
+          path: paired-lk-source
+          persist-credentials: false
+      - name: Install pinned isolated Node-RED test runtime
+        run: npm install --prefix "$RUNNER_TEMP/max-paired-runtime" --ignore-scripts --no-package-lock node-red@4.0.9
+      - name: Real Node-RED + Nest + Mongo with synthetic provider only
+        env:
+          LK_MAX_ADAPTER_SOURCE: ${{ github.workspace }}/paired-lk-source
+          NODE_RED_TEST_PACKAGE: ${{ runner.temp }}/max-paired-runtime/node_modules/node-red
+          MAX_PAIRED_REPORT: ${{ runner.temp }}/max-paired-result.json
+        run: node test/max-outbox-paired.cjs mongodb://127.0.0.1:27017
+      - uses: actions/upload-artifact@v4
+        with:
+          name: max-queue-paired-acceptance
+          path: ${{ runner.temp }}/max-paired-result.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Remove owned Mongo fixture
         if: always()
         run: docker rm --force --volumes phab-max-receipts-mongo
+
+  replica-recovery:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Start only owned three-member replica fixture
+        run: |
+          for entry in 1:27317 2:27318 3:27319; do
+            name="phab-max-recovery-${entry%%:*}"
+            port="${entry##*:}"
+            docker run --detach --name "$name" --label "codex.max-fixture=$GITHUB_RUN_ID" --network host mongo:7.0.28 --bind_ip 127.0.0.1 --port "$port" --replSet codexMaxQueueRS --setParameter enableTestCommands=1
+          done
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec phab-max-recovery-1 mongosh --port 27317 --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker exec phab-max-recovery-1 mongosh --port 27317 --quiet --eval 'rs.initiate({_id:"codexMaxQueueRS",members:[{_id:0,host:"127.0.0.1:27317"},{_id:1,host:"127.0.0.1:27318"},{_id:2,host:"127.0.0.1:27319"}]})'
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec phab-max-recovery-1 mongosh --port 27317 --quiet --eval '!!db.hello().primary' | grep -q true; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+      - name: Majority, forced process loss, rollback and restart
+        env:
+          MAX_OWNED_REPLICA_FIXTURE: codexMaxQueueRS
+        run: npx ts-node test/max-outbox-replica-recovery.test.ts mongodb://127.0.0.1:27317
+      - name: Remove only this job's three owned containers
+        if: always()
+        run: docker rm --force --volumes phab-max-recovery-1 phab-max-recovery-2 phab-max-recovery-3

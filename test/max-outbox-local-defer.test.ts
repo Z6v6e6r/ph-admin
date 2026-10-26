@@ -3,7 +3,7 @@ import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { MongoClient } from 'mongodb';
 import { maxFailure } from '../src/support/max-outbox-policy';
-import { MaxOutboxStore } from '../src/support/max-outbox-store';
+import { MaxOutboxStore, provisionMaxQueue } from './fixtures/max-outbox-fixture';
 import { SupportConnectorRoute as Route, SupportOutboxStatus as Status } from '../src/support/support.types';
 async function exercise(collection: any, read: () => Promise<any>, connector: Route, now: number) {
   const seeded = await read(), store = new MaxOutboxStore(collection);
@@ -25,11 +25,11 @@ async function main() {
   for (const status of [undefined, 400, 429, 503]) assert.notEqual(maxFailure({status,code:'local_deferred'},now).category,'LOCAL_DEFERRED');
   assert.equal(maxFailure({status:503,code:'unclassified'},now).category,'DELIVERY_UNKNOWN');
   const seed = (connector: Route) => ({ id:randomUUID(),connector,dialogId:'synthetic',clientId:'synthetic',text:'synthetic',createdAt:new Date(now).toISOString(),
-    status:Status.LEASED,attempts:5,leaseToken:randomUUID(),leasedUntil:new Date(now+60000).toISOString() });
+    status:Status.LEASED,attempts:5,queueSequence:1,leaseToken:randomUUID(),leasedUntil:new Date(now+60000).toISOString() });
   for (const connector of [Route.MAX_BOT,Route.MAX_ACADEMY_BOT]) {
     let row: any = seed(connector), writes = 0;
     const collection = { findOne:async()=>structuredClone(row),findOneAndUpdate:async(filter:any,update:any,options:any)=>{
-      assert.equal(options.writeConcern.w,'majority');assert.equal(filter.leaseToken,row.leaseToken);assert.equal(filter.attempts,5);
+      assert.ok(options.session);assert.equal(filter.leaseToken,row.leaseToken);assert.equal(filter.attempts,5);
       assert.equal(filter.status,Status.LEASED);assert.deepEqual(filter.leasedUntil,{$gt:new Date(now).toISOString()});writes++;
       Object.assign(row,update.$set);for(const key of Object.keys(update.$unset))delete row[key];return structuredClone(row);
     }};
@@ -43,7 +43,7 @@ async function main() {
   const target=new URL(uri);assert.equal(target.protocol,'mongodb:');assert.ok(['127.0.0.1','localhost'].includes(target.hostname),'Owned loopback Mongo required');
   const client=new MongoClient(uri,{serverSelectionTimeoutMS:5000});await client.connect();const db=client.db('cup_max_defer_'+randomUUID().replace(/-/g,''));
   try{
-    const collection=db.collection('outbox');await collection.createIndex({id:1},{unique:true});
+    const collection=db.collection('outbox');await provisionMaxQueue(db);await collection.createIndex({id:1},{unique:true});
     for(const connector of [Route.MAX_BOT,Route.MAX_ACADEMY_BOT]){
       const row=seed(connector);await collection.insertOne(row);await exercise(collection,()=>collection.findOne({id:row.id}),connector,now);
     }

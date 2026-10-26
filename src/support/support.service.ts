@@ -14,7 +14,7 @@ import {
   OnModuleInit,
   ServiceUnavailableException
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { isProductionRuntime } from '../common/mongo-index.guard';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role, STAFF_ROLES } from '../common/rbac/role.enum';
@@ -137,6 +137,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly messageObservers: SupportMessageObserver[] = [];
   private readonly noReplyQuickReplySignatures = new Set<string>();
+  private readonly noReplyQuickReplyAdmissionAttempts = new Map<string, number>();
   private readonly stationMappings = parseSupportStationMappings(
     process.env.TELEGRAM_STATION_MAPPINGS
   );
@@ -456,20 +457,33 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       if (this.noReplyQuickReplySignatures.has(signature)) {
         continue;
       }
+      if (!this.noReplyQuickReplyAdmissionAttempts.has(signature) && this.noReplyQuickReplyAdmissionAttempts.size >= 5000) {
+        this.logger.warn('SUPPORT_AUTO_REPLY_ADMISSION_CAPACITY_HOLD');
+        continue;
+      }
       this.noReplyQuickReplySignatures.add(signature);
+      this.noReplyQuickReplyAdmissionAttempts.set(signature, (this.noReplyQuickReplyAdmissionAttempts.get(signature) ?? 0) + 1);
       if (this.noReplyQuickReplySignatures.size > 5000) {
-        this.noReplyQuickReplySignatures.clear();
-        this.noReplyQuickReplySignatures.add(signature);
+        const completed = [...this.noReplyQuickReplySignatures].find(key => !this.noReplyQuickReplyAdmissionAttempts.has(key));
+        if (completed) this.noReplyQuickReplySignatures.delete(completed);
       }
 
-      this.sendQuickReplyAutoResponse(
+      void this.sendQuickReplyAutoResponse(
         dialog,
         this.getLatestClientMessage(dialog.id) ?? staffMessage,
         connector,
         rule,
-        context
-      );
-      this.persistDialog(dialog);
+        context,
+        staffMessage.id
+      ).then(() => {
+        this.persistDialog(dialog);
+        this.noReplyQuickReplyAdmissionAttempts.delete(signature);
+      }).catch(() => {
+        // Retry admission of the same deterministic intent, never a new provider command.
+        // Cap background admission attempts; exhausted intents need operator attention.
+        if ((this.noReplyQuickReplyAdmissionAttempts.get(signature) ?? 0) < 5) this.noReplyQuickReplySignatures.delete(signature);
+        this.logger.warn('SUPPORT_AUTO_REPLY_ENQUEUE_UNCONFIRMED');
+      });
     }
   }
 
@@ -664,12 +678,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const duplicateInboundMessage =
       message && direction === SupportMessageDirection.INBOUND
         ? this.findDuplicateInboundMessage(dialog.id, message)
-        : undefined;
+        : message && isMaxConnector(normalizedDto.connector) && maxOutboxMode() === 'receipt-v1'
+          ? (this.messages.get(dialog.id) ?? []).find(existing => existing.id === message.id) : undefined;
     if (duplicateInboundMessage) {
       emittedMessage = duplicateInboundMessage;
     }
 
     if (message && !duplicateInboundMessage) {
+      if (this.shouldDeliverIncomingEventToClient(normalizedDto, direction) && this.canReplyToDialog(dialog)) {
+        outbox = this.createOutboxCommand(dialog, message, normalizedDto.connector);
+        if (outbox && isMaxConnector(outbox.connector) && maxOutboxMode() === 'receipt-v1') {
+          await this.persistence.enqueueMaxOutbox(outbox);
+          message.createdAt = outbox.createdAt;
+        }
+      }
       this.appendMessage(dialog, message);
       if (direction === SupportMessageDirection.INBOUND) {
         dialog.unreadCount += 1;
@@ -695,7 +717,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.shouldDeliverIncomingEventToClient(normalizedDto, direction) &&
         this.canReplyToDialog(dialog)
       ) {
-        outbox = this.createOutboxCommand(dialog, message, normalizedDto.connector);
         if (outbox) {
           this.outbox.set(outbox.id, outbox);
           this.persistence.persistOutboxCommand(outbox);
@@ -708,7 +729,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.canReplyToDialog(dialog) &&
         this.isActionableClientMessage(message)
       ) {
-        const autoReplyOutbox = this.trySendQuickReplyAutoResponse(
+        const autoReplyOutbox = await this.trySendQuickReplyAutoResponse(
           dialog,
           message,
           normalizedDto.connector
@@ -717,6 +738,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           outbox = autoReplyOutbox;
         }
       }
+    }
+
+    if (duplicateInboundMessage && direction === SupportMessageDirection.INBOUND
+      && isMaxConnector(normalizedDto.connector) && maxOutboxMode() === 'receipt-v1'
+      && this.canReplyToDialog(dialog) && this.isActionableClientMessage(duplicateInboundMessage)) {
+      // The inbound may have persisted before a failed/unknown auto admission.
+      // Retry the same deterministic intent, without duplicating inbound/unread/SLA.
+      outbox = await this.trySendQuickReplyAutoResponse(dialog, duplicateInboundMessage, normalizedDto.connector);
     }
 
     this.persistDialog(dialog);
@@ -1017,11 +1046,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return this.replyToDialog(dialogId, dto, user);
   }
 
-  replyToDialog(
+  async replyToDialog(
     dialogId: string,
     dto: ReplySupportDialogDto,
     user: RequestUser
-  ): { dialog: SupportDialog; message: SupportMessage; outbox?: SupportOutboxCommand } {
+  ): Promise<{ dialog: SupportDialog; message: SupportMessage; outbox?: SupportOutboxCommand }> {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
     this.ensureStaff(user);
@@ -1059,12 +1088,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       meta: this.buildStaffMessageMeta(user)
     };
 
+    const outbox = this.createOutboxCommand(dialog, message, connector);
+    if (outbox && isMaxConnector(outbox.connector) && maxOutboxMode() === 'receipt-v1') await this.persistence.enqueueMaxOutbox(outbox);
     this.appendMessage(dialog, message);
     dialog.lastStaffMessageAt = createdAt;
     dialog.lastReplyConnector = connector;
     dialog.unreadCount = 0;
 
-    let outbox: SupportOutboxCommand | undefined;
     const responseMetric = this.createResponseMetric(dialog, user.id, connector, createdAt);
     if (responseMetric) {
       this.storeResponseMetric(responseMetric);
@@ -1080,7 +1110,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog.updatedAt = createdAt;
     this.persistDialog(dialog);
 
-    outbox = this.createOutboxCommand(dialog, message, connector);
     if (outbox) {
       this.outbox.set(outbox.id, outbox);
       this.persistence.persistOutboxCommand(outbox);
@@ -2391,7 +2420,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     const attachments = this.normalizeMessageAttachments(dto.attachments);
     return {
-      id: randomUUID(),
+      id: isMaxConnector(dto.connector) && maxOutboxMode() === 'receipt-v1' && dto.externalMessageId
+        ? 'max-event-' + createHash('sha256').update(JSON.stringify([dto.connector, context.dialog.id, dto.externalMessageId])).digest('hex') : randomUUID(),
       dialogId: context.dialog.id,
       clientId: context.client.id,
       connector: dto.connector,
@@ -2426,11 +2456,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
   }
 
-  private trySendQuickReplyAutoResponse(
+  private async trySendQuickReplyAutoResponse(
     dialog: SupportDialog,
     clientMessage: SupportMessage,
     connector: SupportConnectorRoute
-  ): SupportOutboxCommand | undefined {
+  ): Promise<SupportOutboxCommand | undefined> {
     const context = this.buildQuickReplyMatchContext(
       dialog,
       connector,
@@ -2454,7 +2484,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
   }
 
-  private sendQuickReplyAutoResponse(
+  private async sendQuickReplyAutoResponse(
     dialog: SupportDialog,
     clientMessage: SupportMessage,
     connector: SupportConnectorRoute,
@@ -2475,13 +2505,21 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       hasAttachment?: boolean;
       isFirstClientMessage?: boolean;
       noClientReplyMinutes?: number;
-    }
-  ): SupportOutboxCommand | undefined {
+    },
+    intentSourceMessageId = clientMessage.id
+  ): Promise<SupportOutboxCommand | undefined> {
 
+    if (isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1'
+      && intentSourceMessageId === clientMessage.id && clientMessage.direction === SupportMessageDirection.INBOUND
+      && !clientMessage.externalMessageId) {
+      this.logger.warn('MAX_AUTO_REPLY_STABLE_EVENT_ID_REQUIRED');
+      return undefined;
+    }
     const createdAt = new Date().toISOString();
     const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
     const serviceMessage: SupportMessage = {
-      id: randomUUID(),
+      id: isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1'
+        ? 'max-auto-' + createHash('sha256').update(JSON.stringify([connector, dialog.id, rule.id, intentSourceMessageId])).digest('hex') : randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
       connector,
@@ -2498,14 +2536,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       meta: {
         quickReplyRuleId: rule.id,
         quickReplyRuleTitle: rule.title,
-        quickReplyMode: rule.mode
+        quickReplyMode: rule.mode,
+        ...(isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1' ? { quickReplySourceMessageId: intentSourceMessageId } : {})
       }
     };
 
+    const outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
+    if (outbox && isMaxConnector(outbox.connector) && maxOutboxMode() === 'receipt-v1') await this.persistence.enqueueMaxOutbox(outbox);
+    if (outbox && isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1') {
+      serviceMessage.createdAt = outbox.createdAt;
+      if ((this.messages.get(dialog.id) ?? []).some(message => message.id === serviceMessage.id)) return outbox;
+    }
     this.appendMessage(dialog, serviceMessage);
     dialog.lastReplyConnector = connector;
     dialog.updatedAt = createdAt;
-    const outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
     if (outbox) {
       this.outbox.set(outbox.id, outbox);
       this.persistence.persistOutboxCommand(outbox);
@@ -2812,8 +2856,14 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const outboundPayload = this.buildOutboundClientPayload(message, connector);
 
+    const autoSource = message.meta?.quickReplyRuleId && message.meta?.quickReplySourceMessageId
+      ? ['auto', message.meta.quickReplyRuleId, message.meta.quickReplySourceMessageId]
+      : message.externalMessageId ? ['event', message.externalMessageId] : undefined;
+    const admissionKey = isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1' && autoSource
+      ? createHash('sha256').update(JSON.stringify([connector, dialog.id, ...autoSource])).digest('hex') : undefined;
     const diagnosticCommand: SupportOutboxCommand = {
-      id: randomUUID(),
+      id: admissionKey ? 'max-' + admissionKey : randomUUID(),
+      ...(admissionKey ? { admissionKey } : {}),
       dialogId: dialog.id,
       clientId: dialog.clientId,
       connector,

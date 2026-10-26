@@ -52,11 +52,27 @@ async function main(): Promise<void> {
     persistence.persistOutboxCommand(command);
     assert(events.every(e => e.code !== 'DB_ACK'));
     await Promise.all(tasks);
-    assert.equal(effects.filter(e => e === 'update').length, 1);
+    assert.equal(effects.filter(e => e === 'update').length, isMax ? 0 : 1, 'Background MAX snapshots must never admit or mutate a fenced command');
     assert.equal(effects.filter(e => e === 'cleanup').length, rejectWrite || isMax ? 0 : 1);
-    assert.equal(events.filter(e => e.code === 'DB_ACK').length, isMax && !rejectWrite && acknowledged && isNew ? 1 : 0);
+    assert.equal(events.filter(e => e.code === 'DB_ACK').length, 0, 'A background snapshot cannot attest new durable admission');
     assert(!JSON.stringify(events).includes('synthetic-outbox'));
     (supportDiagnostics as unknown as { sink: (e: Record<string, unknown>) => void }).sink = saved;
+  }
+  for (const reject of [false, true]) {
+    const events: Record<string, unknown>[] = [];
+    const saved = (supportDiagnostics as any).sink; (supportDiagnostics as any).sink = (event: Record<string, unknown>) => events.push(event);
+    try {
+      let release!: () => void;
+      const pending = new Promise<void>(resolve => { release = resolve; });
+      const command = { id: 'synthetic-awaited-enqueue', connector: SupportConnectorRoute.MAX_BOT, status: SupportOutboxStatus.PENDING, attempts: 0 } as SupportOutboxCommand;
+      const persistence = Object.create(SupportPersistenceService.prototype) as any;
+      persistence.maxStore = () => ({ enqueue: async () => { await pending; if (reject) throw Error('synthetic rejection'); return { ...command, queueSequence: 1 }; } });
+      const admission = persistence.enqueueMaxOutbox(command); assert.equal(events.length, 0);
+      release();
+      if (reject) await assert.rejects(() => admission); else await admission;
+      assert.equal(events.filter(e => e.code === 'DB_ACK').length, reject ? 0 : 1, 'Only awaited committed admission emits DB_ACK');
+      assert(!JSON.stringify(events).includes(command.id));
+    } finally { (supportDiagnostics as any).sink = saved; }
   }
   for (const connector of [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.MAX_ACADEMY_BOT]) {
     const events: Record<string, unknown>[] = [], calls: string[] = [];

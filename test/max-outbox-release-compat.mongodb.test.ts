@@ -54,7 +54,7 @@ async function main() {
       await persistence.onModuleDestroy();
       persistence = undefined;
     }
-    for (const marker of ['leaseToken', 'lastReceipt', 'terminalReason']) {
+    for (const marker of ['leaseToken', 'lastReceipt', 'terminalReason', 'queueSequence']) {
       await coll.deleteMany({});
       const id = randomUUID();
       await coll.insertOne({ id, connector: Route.MAX_BOT, status: Status.LEASED,
