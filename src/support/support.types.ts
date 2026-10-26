@@ -435,6 +435,8 @@ export interface SupportOutboxCommand {
   updatedAt?: string;
   terminalReason?: string;
   lastProviderFailure?: import('./max-outbox-policy').MaxFailure;
+  localDeferrals?: number;
+  lastLocalDeferral?: import('./max-outbox-policy').MaxFailure;
   lastReceipt?: { token: string; kind: 'ack' | 'fail' };
   meta?: Record<string, unknown>;
 }

@@ -70,16 +70,22 @@ export class MaxOutboxStore {
     if (command.lastReceipt?.token === token && command.lastReceipt.kind === kind) return command;
     const at = new Date(now).toISOString();
     const failure: MaxFailure | undefined = kind === 'fail' ? maxFailure(body.failure, now) : undefined;
-    const retry = failure?.category === 'RATE_LIMITED' && command.attempts < this.maxAttempts;
+    const localDeferred = failure?.category === 'LOCAL_DEFERRED';
+    const retry = localDeferred || (failure?.category === 'RATE_LIMITED' && command.attempts < this.maxAttempts);
     const set: Record<string, unknown> = { updatedAt: at, lastReceipt: { token, kind },
       status: kind === 'ack' ? SupportOutboxStatus.SENT : retry ? SupportOutboxStatus.PENDING : SupportOutboxStatus.FAILED };
     const unset: Record<string, ''> = { leaseToken: '', leasedUntil: '', nextAttemptAt: '', terminalReason: '' };
     if (failure) {
-      set.lastProviderFailure = failure;
+      if (localDeferred) {
+        set.localDeferrals = (command.localDeferrals ?? 0) + 1;
+        set.lastLocalDeferral = failure;
+        // A claim that never reached provider transport must not consume a delivery attempt.
+        set.attempts = Math.max(0, command.attempts - 1);
+      } else set.lastProviderFailure = failure;
       // Fixed category, never arbitrary legacy body.error or MaxError.message.
       set.lastError = failure.category;
       if (retry) {
-        set.nextAttemptAt = new Date(now + maxRetryDelay(command.attempts, body.retryAfterSeconds)).toISOString();
+        set.nextAttemptAt = new Date(now + maxRetryDelay(localDeferred ? (command.localDeferrals ?? 0) + 1 : command.attempts, localDeferred ? undefined : body.retryAfterSeconds)).toISOString();
         delete unset.nextAttemptAt;
       } else {
         set.terminalReason = failure.category === 'RATE_LIMITED' ? 'ATTEMPTS_EXHAUSTED' : failure.category;

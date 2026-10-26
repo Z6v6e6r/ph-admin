@@ -1,3 +1,5 @@
+import { COMMUNITY_TYPES, CommunityType } from '../communities/community-policy';
+
 export type MaxOutboxMode = 'legacy' | 'receipt-v1';
 
 export function maxOutboxMode(environment: NodeJS.ProcessEnv = process.env): MaxOutboxMode {
@@ -14,11 +16,22 @@ function enabled(name: string, environment: NodeJS.ProcessEnv): boolean {
   throw new Error(`${name}_INVALID`);
 }
 
+export function communityPolicyTypes(environment: NodeJS.ProcessEnv = process.env): CommunityType[] {
+  const raw = String(environment.PHAB_COMMUNITY_POLICY_TYPES_ENABLED ?? '').trim();
+  if (!raw) return [];
+  const values = raw.split(',').map(value => value.trim());
+  if (new Set(values).size !== values.length || values.some(value => value === 'FRIENDS' || !COMMUNITY_TYPES.includes(value as CommunityType))) {
+    throw new Error('PHAB_COMMUNITY_POLICY_TYPES_ENABLED_INVALID');
+  }
+  return values as CommunityType[];
+}
+
 export function releaseCapabilities(environment: NodeJS.ProcessEnv = process.env) {
   return {
     locationRecommendationPhotosEnabled: enabled('PHAB_LOCATION_PHOTOS_ENABLED', environment),
     notificationScenariosEnabled: enabled('PHAB_NOTIFICATION_SCENARIOS_ENABLED', environment),
-    communityPoliciesEnabled: enabled('PHAB_COMMUNITY_POLICIES_ENABLED', environment)
+    communityPoliciesEnabled: enabled('PHAB_COMMUNITY_POLICIES_ENABLED', environment),
+    communityPolicyTypesEnabled: communityPolicyTypes(environment)
   };
 }
 
