@@ -1,3 +1,5 @@
+// Policy activation is explicit; default-OFF behavior has separate release compatibility coverage.
+process.env.PHAB_COMMUNITY_POLICIES_ENABLED = 'true';
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { communityType, parseCommunityTypeSettings, DEFAULT_LEAGUE_DIVISIONS, resolveLeagueDivision, parseEventRegistrationPolicy, eventRetentionUntil } from '../src/communities/community-policy';

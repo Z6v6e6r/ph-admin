@@ -856,3 +856,28 @@ PadlHub Location Admin API. В редакторе станции фото рек
 - если включена auth-защита (`ADMIN_AUTH_ENABLED=true`): сначала `GET /api/ui/admin/login`
 
 Эта страница автоматически подключает `admin-panel.js` и монтирует интерфейс.
+# Coordinated-release compatibility
+
+Dependency-bound features stay disabled until their own runtime acceptance:
+
+- `SUPPORT_MAX_OUTBOX_MODE=legacy` (default) retains the existing poller/auth and
+  durable `$set` transitions. Explicit receipt protocol/receipt fields are rejected,
+  never downgraded. `receipt-v1` keeps strict token/protocol/Mongo fencing and
+  insert-only enqueue. Unknown values fail startup. Legacy startup refuses any
+  persisted MAX lease/receipt-v1 state; never switch back after v1 use. The configured
+  MAX authority must pass a bounded primary/majority marker read; an unavailable
+  authority or failed audit stops startup instead of selecting a fallback queue.
+- `PHAB_LOCATION_PHOTOS_ENABLED=false` hides upload/activation and omits the new
+  station-save field. A profile with existing photos cannot be silently saved
+  while disabled. Enable only after LK2 migration0102, exact ACL and API acceptance.
+- `PHAB_NOTIFICATION_SCENARIOS_ENABLED=false` makes no scenario calls while
+  preserving existing notification channels/campaigns.
+- `PHAB_COMMUNITY_POLICIES_ENABLED=false` hides the type editor and rejects policy
+  mutations server-side; ordinary edits remain available. Enable only after all
+  LK/worker/Node-RED consumers are compatible.
+
+The three booleans accept only true/false (absent means false), validated before
+startup. They do not grant permissions. Public UI config carries booleans only.
+These defaults permit the CUP service update without activating LK/LK2/Node-RED
+features, changing credentials, running migrations or sending real test messages.
+They do not claim that those dependent features have been published.

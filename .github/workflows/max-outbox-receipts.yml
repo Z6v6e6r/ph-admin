@@ -29,6 +29,11 @@ jobs:
           done
           test "$ready" = true
       - run: npm run build
+      - name: Compatibility defaults and guarded feature UI
+        run: |
+          npx ts-node test/release-capabilities.test.ts
+          node --test test/location-recommendation-photos-ui.test.mjs test/cup-notification-scenarios.test.mjs
+          npx ts-node test/max-outbox-release-compat.mongodb.test.ts mongodb://127.0.0.1:27017
       - run: npm run test:support-outbox-max-attempts
       - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:27017
       - name: Remove owned Mongo fixture

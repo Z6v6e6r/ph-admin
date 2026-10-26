@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { AuthService } from '../auth/auth.service';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
+import { releaseCapabilities } from '../common/release-capabilities';
 
 type AdminUiQuery = {
   apiBaseUrl?: string;
@@ -350,6 +351,7 @@ export class UiController {
 
     const authToken = String(query.authToken ?? '').trim();
     const config = {
+      ...releaseCapabilities(),
       mountSelector: '#phab-admin-root',
       apiBaseUrl: query.apiBaseUrl?.trim() || `${hostUrl}/api`,
       userId: authContext.user?.id || query.userId?.trim() || 'local-admin',

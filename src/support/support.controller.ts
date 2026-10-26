@@ -1,4 +1,5 @@
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
+import { maxOutboxMode } from '../common/release-capabilities';
 import {
   BadRequestException,
   Body,
@@ -302,7 +303,7 @@ export class SupportController {
     @Query('leaseSec', new ParseIntPipe({ optional: true })) leaseSec?: number,
     @Query('receiptProtocol') receiptProtocol?: string
   ): Promise<{ commands: SupportOutboxCommand[] }> {
-    this.assertIntegrationToken(token, isMaxConnector(connector));
+    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && isMaxConnector(connector));
     return {
       commands: await this.supportService.pullOutbox(connector, limit ?? 20, leaseSec ?? 30, receiptProtocol)
     };
@@ -314,7 +315,7 @@ export class SupportController {
     @Param('id') id: string,
     @Body() body: MaxReceipt = {}
   ): Promise<SupportOutboxCommand> {
-    this.assertIntegrationToken(token, body?.leaseToken !== undefined);
+    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
     return this.supportService.ackOutbox(id, body);
   }
 
@@ -324,7 +325,7 @@ export class SupportController {
     @Param('id') id: string,
     @Body() body: MaxReceipt & { error?: string; requeue?: boolean } = {}
   ): Promise<SupportOutboxCommand> {
-    this.assertIntegrationToken(token, body?.leaseToken !== undefined);
+    this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
     return this.supportService.failOutbox(id, body?.error, body?.requeue !== false, body);
   }
 

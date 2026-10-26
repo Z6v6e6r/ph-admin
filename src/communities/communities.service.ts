@@ -1,4 +1,5 @@
 import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
+import { releaseCapabilities } from '../common/release-capabilities';
 import {
   BadRequestException,
   ForbiddenException,
@@ -214,6 +215,9 @@ export class CommunitiesService {
       if (!user || !user.roles.some(role => role === Role.SUPER_ADMIN || role === Role.MANAGER) ||
           (user.permissions !== undefined && !hasAdminPermission(user.permissions, 'settings:write'))) {
         throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+      if (!releaseCapabilities().communityPoliciesEnabled) {
+        throw new ServiceUnavailableException({ code: 'COMMUNITY_POLICY_ACTIVATION_DISABLED' });
       }
       const current = await this.findById(id);
       const stationId = current.stationId ?? (typeof current.details?.stationId === 'string' ? current.details.stationId : undefined);

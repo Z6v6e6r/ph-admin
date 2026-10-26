@@ -4,8 +4,10 @@ import { json, urlencoded } from 'express';
 import { AuthPersistenceService } from './auth/auth-persistence.service';
 import { AuthService } from './auth/auth.service';
 import { releaseMaintenanceEnabled, releaseMaintenanceFence } from './common/release-maintenance';
+import { validateReleaseCapabilities } from './common/release-capabilities';
 
 export async function createApplication(): Promise<INestApplication> {
+  validateReleaseCapabilities();
   const maintenance = releaseMaintenanceEnabled();
   const root = maintenance
     ? (await import('./release-maintenance.module')).ReleaseMaintenanceModule
