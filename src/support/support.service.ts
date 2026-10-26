@@ -1,6 +1,8 @@
+import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { supportDiagnostics } from './support-diagnostics';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -1092,8 +1094,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   pullOutbox(
     connector: SupportConnectorRoute,
     limit = 20,
-    leaseSec = 30
-  ): SupportOutboxCommand[] {
+    leaseSec = 30,
+    receiptProtocol?: string
+  ): SupportOutboxCommand[] | Promise<SupportOutboxCommand[]> {
+    if (isMaxConnector(connector)) {
+      if (receiptProtocol !== 'max-lease-v1') throw new ConflictException({ code: 'OUTBOX_RECEIPT_PROTOCOL_REQUIRED' });
+      return this.persistence.pullMaxOutbox(connector, limit, leaseSec).then(commands => {
+        for (const command of commands) {
+          supportDiagnostics.observe(command, 'max_lease', { connector: command.connector, leaseAttempt: command.attempts,
+            leaseAgeMs: 0, leasePresent: true, executionObserved: false, outboxRef: supportDiagnostics.ref('outbox', command.id) });
+        }
+        return commands;
+      });
+    }
     const now = Date.now();
     this.sweepOutboxAttemptLimit(connector, now);
     const leasedUntil = new Date(now + Math.max(5, leaseSec) * 1000).toISOString();
@@ -1159,11 +1172,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.logger.warn(
         `Support outbox command ${command.id} marked FAILED: ${errorText}. connector=${command.connector} dialogId=${command.dialogId}`
       );
-      this.failOutbox(command.id, errorText, false);
+      const updated = { ...command, status: SupportOutboxStatus.FAILED,
+        leasedUntil: undefined, lastError: errorText };
+      this.outbox.set(command.id, updated);
+      this.persistence.persistOutboxCommand(updated);
     }
   }
 
-  ackOutbox(id: string): SupportOutboxCommand {
+  async ackOutbox(id: string, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+    const known = this.outbox.get(id);
+    if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
+      const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
+      this.observeMaxReceipt(command);
+      return command;
+    }
     const command = this.getOutboxOrThrow(id);
     const updated: SupportOutboxCommand = {
       ...command,
@@ -1178,7 +1200,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return updated;
   }
 
-  failOutbox(id: string, error?: string, requeue = true): SupportOutboxCommand {
+  async failOutbox(id: string, error?: string, requeue = true, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+    const known = this.outbox.get(id);
+    if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
+      const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
+      this.observeMaxReceipt(command);
+      return command;
+    }
     const command = this.getOutboxOrThrow(id);
     const updated: SupportOutboxCommand = {
       ...command,
@@ -1189,6 +1217,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
     return updated;
+  }
+
+  private observeMaxReceipt(command: SupportOutboxCommand): void {
+    // This confirms persistence of queue state, not provider delivery or reading.
+    supportDiagnostics.observe(command, 'max_ack', { eventKind: 'operation_result', connector: command.connector,
+      code: 'DB_ACK', acknowledged: true, outcome: 'acknowledged', outboxRef: supportDiagnostics.ref('outbox', command.id) });
   }
 
   getDailyAnalytics(date?: string, user?: RequestUser): SupportDailyAnalytics {

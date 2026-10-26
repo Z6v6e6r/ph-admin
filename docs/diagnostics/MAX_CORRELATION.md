@@ -27,7 +27,11 @@ as lease age. Origin is UNKNOWN unless already supplied as SYSTEM/VivaCRM, never
 connector/status. Bot identity/access evidence remains unknown.
 
 `persistOutboxCommand` reports persist-requested/outcome_unknown before the existing asynchronous
-write. DB_ACK appears only from the actual updateOne result after the existing cross-backend cleanup.
+write. MAX enqueue is insert-only: DB_ACK appears only for an acknowledged new insert, never
+for a matched no-op over a possibly stale snapshot. MAX does not run cross-backend cleanup.
+Lease observations follow the actual Mongo claim. Receipt DB_ACK follows the acknowledged
+majority receipt or majority duplicate readback; it confirms queue state for ACK or fail,
+not provider delivery. Other connector write/cleanup behavior remains unchanged.
 A requested ACK or in-memory SENT response is not Mongo ACK or delivery proof. No ACK is invented
 on a rejected/disabled/unavailable write. Observability errors do not change the persistence path.
 

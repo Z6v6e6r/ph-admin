@@ -98,7 +98,7 @@ function createOutboxCommand(
     id,
     dialogId: `dialog-${id}`,
     clientId: `client-${id}`,
-    connector: SupportConnectorRoute.MAX_BOT,
+    connector: SupportConnectorRoute.TG_BOT,
     text: `payload-${id}`,
     createdAt: '2026-06-04T10:00:00.000Z',
     status,
@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     const service = createService(persistence);
     await service.hydrateFromPersistence();
 
-    const leased = service.pullOutbox(SupportConnectorRoute.MAX_BOT, 10, 30);
+    const leased = await service.pullOutbox(SupportConnectorRoute.TG_BOT, 10, 30);
 
     assert.equal(leased.length, 1);
     assert.equal(leased[0].id, 'healthy');

@@ -115,7 +115,8 @@
     "test:subscriptions-runtime:mongo": "ts-node test/subscriptions-test-runtime.mongodb.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
     "start": "node dist/main.js",
-    "start:dev": "ts-node src/main.ts"
+    "start:dev": "ts-node src/main.ts",
+    "test:support-max-receipts": "ts-node test/max-outbox-operation-timeout.test.ts && ts-node test/max-outbox-receipts.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.2",
