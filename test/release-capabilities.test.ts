@@ -11,7 +11,7 @@ async function main() {
   assert.equal(maxOutboxMode({}), 'legacy');
   assert.equal(maxOutboxMode({ SUPPORT_MAX_OUTBOX_MODE: 'receipt-v1' }), 'receipt-v1');
   assert.throws(() => maxOutboxMode({ SUPPORT_MAX_OUTBOX_MODE: 'fallback' }), /INVALID/);
-  assert.deepEqual(Object.values(releaseCapabilities({})), [false, false, false]);
+  assert.deepEqual(releaseCapabilities({}), { locationRecommendationPhotosEnabled: false, notificationScenariosEnabled: false, communityPoliciesEnabled: false, communityPolicyTypesEnabled: [] });
   for (const key of ['PHAB_LOCATION_PHOTOS_ENABLED', 'PHAB_NOTIFICATION_SCENARIOS_ENABLED', 'PHAB_COMMUNITY_POLICIES_ENABLED']) {
     assert.throws(() => releaseCapabilities({ [key]: 'perhaps' }), /INVALID/);
   }

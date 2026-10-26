@@ -216,7 +216,8 @@ export class CommunitiesService {
           (user.permissions !== undefined && !hasAdminPermission(user.permissions, 'settings:write'))) {
         throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
       }
-      if (!releaseCapabilities().communityPoliciesEnabled) {
+      const capabilities = releaseCapabilities();
+      if (mutation.communityType !== undefined && mutation.communityType !== 'FRIENDS' && !capabilities.communityPoliciesEnabled) {
         throw new ServiceUnavailableException({ code: 'COMMUNITY_POLICY_ACTIVATION_DISABLED' });
       }
       const current = await this.findById(id);
@@ -226,6 +227,13 @@ export class CommunitiesService {
       if (scope !== null && (!stationId || !scope.includes(stationId) ||
           (targetStation && !scope.includes(targetStation)))) {
         throw new ForbiddenException('COMMUNITY_POLICY_ACCESS_DENIED');
+      }
+      const currentType = current.communityType ?? 'FRIENDS';
+      const targetType = mutation.communityType ?? currentType;
+      const allowed = capabilities.communityPolicyTypesEnabled;
+      if (targetType !== 'FRIENDS' && (!capabilities.communityPoliciesEnabled || !allowed.includes(targetType) ||
+          (currentType !== 'FRIENDS' && !allowed.includes(currentType)))) {
+        throw new ServiceUnavailableException({ code: 'COMMUNITY_POLICY_TYPE_DISABLED' });
       }
     }
     if (!this.communitiesPersistence.isEnabled()) {

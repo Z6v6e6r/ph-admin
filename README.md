@@ -881,3 +881,19 @@ startup. They do not grant permissions. Public UI config carries booleans only.
 These defaults permit the CUP service update without activating LK/LK2/Node-RED
 features, changing credentials, running migrations or sending real test messages.
 They do not claim that those dependent features have been published.
+
+Community policy activation is additionally default-deny per type through
+`PHAB_COMMUNITY_POLICY_TYPES_ENABLED=STATION,LEAGUE`. Unknown/duplicate/empty
+entries reject startup. The server enforces this allowlist; the UI shows only
+allowed choices and keeps an existing disabled type read-only. Returning to
+FRIENDS remains permitted under the existing role/station/CAS checks, even
+when typed activation is disabled. Switching directly from a disabled typed
+policy to another typed policy is rejected.
+
+MAX receipt-v1 senders may report `failure={status:null,code:"local_deferred"}`
+only when provider transport never started. The backend returns the command to
+PENDING with bounded exponential backoff, restores its consumed claim attempt,
+and records an independent admission-stage deferral. The same receipt remains
+idempotent. Provider timeout/error or unknown delivery can never use this path.
+Deploy this compatible backend before the matching rate-limited adapter; legacy
+mode still rejects receipt-v1 fields.

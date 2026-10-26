@@ -22,6 +22,7 @@
     locationRecommendationPhotosEnabled: false,
     notificationScenariosEnabled: false,
     communityPoliciesEnabled: false,
+    communityPolicyTypesEnabled: [],
     notificationApiBaseUrl: '',
     notificationTenantKey: 'local-padel',
     notificationAppVersion: 'phab-cup-local-0.1.0'
@@ -8009,7 +8010,10 @@
     return { communityType: type, typeSettings: settings, expectedTypeSettingsRevision: community.typeSettingsRevision || 0 };
   }
 
-  function createCommunityTypeEditor(community, editable) {
+  function createCommunityTypeEditor(community, editable, enabledTypes) {
+    var allowed = Array.isArray(enabledTypes) ? enabledTypes : [];
+    var currentType = community.communityType || 'FRIENDS';
+    function typeAllowed(type) { return type === 'FRIENDS' || allowed.indexOf(type) >= 0; }
     var root = document.createElement('fieldset');
     root.className = 'phab-admin-community-form-field-wide';
     root.disabled = !editable;
@@ -8018,7 +8022,8 @@
     var select = document.createElement('select');
     select.className = 'phab-admin-input'; select.setAttribute('aria-label', 'Тип сообщества');
     [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига'], ['EVENT', 'Мероприятие']].forEach(function (pair) {
-      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
+      if (!typeAllowed(pair[0]) && pair[0] !== currentType) return;
+      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; option.disabled = !typeAllowed(pair[0]); select.appendChild(option);
     });
     select.value = community.communityType || 'FRIENDS'; root.appendChild(select);
     var fields = document.createElement('div'); root.appendChild(fields);
@@ -8043,6 +8048,7 @@
       return Number.isFinite(date.getTime()) ? new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, -1) : '';
     }
     function read() {
+      if (!typeAllowed(select.value)) return community.typeSettings || {};
       if (select.value === 'EVENT') {
         var eventSettings = { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
         if ([controls.responsibleName, controls.contactEmail, controls.startsAt, controls.endsAt].some(function (c) { return c.value.trim(); })) {
@@ -8072,6 +8078,11 @@
       remove.className = 'phab-admin-btn-secondary'; remove.addEventListener('click', function () { divisionRows = divisionRows.filter(function (r) { return r !== entry; }); row.remove(); }); row.appendChild(remove);
     }
     function render() {
+      if (!typeAllowed(select.value)) {
+        clearNode(fields);
+        var unavailable = document.createElement('p'); unavailable.textContent = 'Настройки этого типа временно недоступны. Можно вернуть обычный тип.'; fields.appendChild(unavailable);
+        return;
+      }
       fields.textContent = ''; controls = {}; divisionRows = [];
       var values = drafts[select.value] || {};
       if (select.value === 'EVENT') {
@@ -8106,7 +8117,9 @@
     var lastType = select.value;
     select.addEventListener('change', function () { var selected = select.value; select.value = lastType; drafts[lastType] = read(); select.value = selected; lastType = selected; render(); });
     render();
-    return { element: root, payload: function () { return editable ? communityTypeSettingsPayload(community, select.value, read()) : {}; } };
+    return { element: root, payload: function () { if (!editable || (!typeAllowed(select.value) && select.value === currentType)) return {};
+      if (!typeAllowed(select.value)) throw new Error('Этот тип сообщества временно недоступен.');
+      return communityTypeSettingsPayload(community, select.value, read()); } };
   }
 
   function createApi(cfg) {
@@ -32967,7 +32980,7 @@
       form.className = 'phab-admin-community-form-grid';
       settingsCard.body.appendChild(form);
 
-      var typeEditor = createCommunityTypeEditor(community, cfg.communityPoliciesEnabled === true && hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      var typeEditor = createCommunityTypeEditor(community, cfg.communityPoliciesEnabled === true && hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'), cfg.communityPolicyTypesEnabled);
       typeEditor.element.hidden = cfg.communityPoliciesEnabled !== true;
       form.appendChild(typeEditor.element);
 
