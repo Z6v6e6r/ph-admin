@@ -215,7 +215,7 @@ export class SupportController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.supportService.replyToDialog(dialogId, dto, user);
+    return this.supportService.replyToDialogWithReadThrough(dialogId, dto, user);
   }
 
   @Patch('dialogs/:dialogId/resolution')

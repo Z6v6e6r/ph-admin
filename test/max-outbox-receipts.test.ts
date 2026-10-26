@@ -159,6 +159,18 @@ async function main() {
       assert.equal((await store.pull(Route.MAX_BOT, 1, 60, now + 99_000)).length, 0);
     }
 
+    for (const [status, code] of [[403, 'dialog.suspended'], [404, 'chat.not.found']] as const) {
+      await reset(seed('a'));
+      const leased = (await store.pull(Route.MAX_BOT, 1, 60, now))[0];
+      const failed = await store.receipt('a', 'fail', { leaseToken: leased.leaseToken,
+        failure: { status, code, message: 'private provider description' } }, now + 1);
+      assert.equal(failed.status, Status.FAILED);
+      assert.equal(failed.terminalReason, 'PROVIDER_REFUSED');
+      assert.equal(failed.lastProviderFailure?.code, code);
+      assert.ok(!JSON.stringify(failed).includes('private provider description'));
+      assert.equal((await store.pull(Route.MAX_BOT, 1, 60, now + 99_000)).length, 0);
+    }
+
     await reset(seed('a'));
     const expired = (await store.pull(Route.MAX_BOT, 1, 5, now))[0];
     await conflict(() => store.receipt('a', 'ack', { leaseToken: expired.leaseToken }, now + 5000));

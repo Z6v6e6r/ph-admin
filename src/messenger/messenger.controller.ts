@@ -601,7 +601,7 @@ export class MessengerController {
     @Param('threadId') threadId: string,
     @Body() dto: CreateMessageDto,
     @CurrentUser() user?: RequestUser
-  ): ChatMessage {
+  ): Promise<ChatMessage> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -614,7 +614,7 @@ export class MessengerController {
     @Param('dialogId') dialogId: string,
     @Body() dto: CreateMessageDto,
     @CurrentUser() user?: RequestUser
-  ): ChatMessage {
+  ): Promise<ChatMessage> {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
@@ -753,18 +753,18 @@ export class MessengerController {
     };
   }
 
-  private sendCompatibleMessage(
+  private async sendCompatibleMessage(
     threadId: string,
     dto: CreateMessageDto,
     user: RequestUser
-  ): ChatMessage {
+  ): Promise<ChatMessage> {
     try {
       return this.messengerService.sendMessage(threadId, dto, user);
     } catch (error) {
       if (!(error instanceof NotFoundException)) {
         throw error;
       }
-      const result = this.supportService.replyToDialog(
+      const result = await this.supportService.replyToDialogWithReadThrough(
         threadId,
         {
           text: dto.text,

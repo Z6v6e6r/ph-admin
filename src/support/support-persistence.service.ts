@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import { maxOutboxMode } from '../common/release-capabilities';
 import { ConflictException } from '@nestjs/common';
 import { MAX_OUTBOX_TIMEOUT_MS, MaxOutboxStore, MaxReceipt, isMaxConnector, missingMaxStore } from './max-outbox-store';
@@ -11,9 +13,32 @@ import {
   SupportConnectorRoute,
   SupportDialog,
   SupportMessage,
+  SupportMessageDirection,
   SupportOutboxCommand,
   SupportResponseMetric
 } from './support.types';
+
+/** Routing/auth binding: preserve recency/order used to select the actual recipient. */
+export function supportClientReplyBinding(client: SupportClientProfile): string {
+  return JSON.stringify({
+    authStatus: client.authStatus,
+    primaryPhone: client.primaryPhone ?? null,
+    phones: [...new Set(client.phones)].sort(),
+    emails: client.emails,
+    // Array order and lastSeenAt determine pickIdentityForConnector's selected target.
+    identities: client.identities.map(identity => [
+      identity.connector, identity.externalUserId ?? null, identity.externalChatId ?? null,
+      identity.externalThreadId ?? null, identity.lastSeenAt ?? null
+    ])
+  });
+}
+
+export interface SupportReplyContext {
+  dialog: SupportDialog;
+  client: SupportClientProfile;
+  latestInbound: SupportMessage | null;
+  firstInboundId?: string;
+}
 
 export interface SupportPersistedState {
   clients: SupportClientProfile[];
@@ -376,6 +401,56 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       responseMetrics: Array.from(metricsById.values()).map((item) => item.entity),
       outbox: Array.from(outboxById.values()).map((item) => item.entity)
     };
+  }
+
+  /** Exact-ID cold reply lookup: no full hydration, reconciliation or outbox scan. */
+  async loadReplyContext(dialogId: string): Promise<SupportReplyContext | null> {
+    const deadline = performance.now() + 5000;
+    const options = () => {
+      const timeoutMS = Math.ceil(deadline - performance.now());
+      if (timeoutMS <= 0) throw new Error('SUPPORT_REPLY_CONTEXT_TIMEOUT');
+      return { projection: { _id: 0 as const }, timeoutMS };
+    };
+    try {
+      const backends = this.getActiveBackends();
+      if (this.backendConfigs.some(config => config.uri && !backends.some(b => b.config.key === config.key))) {
+        throw new Error('SUPPORT_REPLY_BACKEND_UNAVAILABLE');
+      }
+      const copies: Array<{ backend: SupportPersistenceBackendState; dialog: SupportDialog }> = [];
+      for (const backend of backends) {
+        const dialog = await this.collection<SupportDialog>(backend, 'dialogs').findOne({ id: dialogId }, options());
+        if (dialog) copies.push({ backend, dialog });
+      }
+      if (copies.length === 0) return null;
+      // Divergent copies must not silently widen station/connector authority.
+      if (copies.some(copy => !isDeepStrictEqual(copy.dialog, copies[0].dialog))) {
+        throw new Error('SUPPORT_REPLY_DIALOG_CONFLICT');
+      }
+      const ownerKey = this.resolveBackendKeyForConnector(this.extractDialogPrimaryConnector(copies[0].dialog));
+      const owner = copies.find(copy => copy.backend.config.key === ownerKey);
+      if (!owner) throw new Error('SUPPORT_REPLY_OWNER_MISSING');
+      let client: SupportClientProfile | null = null;
+      let binding: string | undefined;
+      for (const backend of backends) {
+        const copy = await this.collection<SupportClientProfile>(backend, 'clients')
+          .findOne({ id: owner.dialog.clientId }, options());
+        if (!copy) continue;
+        if (copy.id !== owner.dialog.clientId) throw new Error('SUPPORT_REPLY_CLIENT_MISMATCH');
+        const candidateBinding = supportClientReplyBinding(copy);
+        if (binding !== undefined && candidateBinding !== binding) throw new Error('SUPPORT_REPLY_CLIENT_CONFLICT');
+        binding = candidateBinding;
+        if (backend.config.key === ownerKey) client = copy;
+      }
+      if (!client) throw new Error('SUPPORT_REPLY_CLIENT_MISSING');
+      const messages = this.collection<SupportMessage>(owner.backend, 'messages');
+      const query = { dialogId, direction: SupportMessageDirection.INBOUND };
+      const latestInbound = await messages.findOne(query, { ...options(), sort: { createdAt: -1, id: -1 } });
+      const firstInbound = await messages.findOne(query, { ...options(), projection: { _id: 0, id: 1 }, sort: { createdAt: 1, id: 1 } });
+      return { dialog: owner.dialog, client, latestInbound, firstInboundId: firstInbound?.id };
+    } catch {
+      // Never leak Mongo commands, contact fields, connection strings or provider payloads.
+      throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_CONTEXT_UNAVAILABLE' });
+    }
   }
 
   async findDialogIdsByPhone(
