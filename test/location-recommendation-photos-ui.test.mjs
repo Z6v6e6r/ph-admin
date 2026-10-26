@@ -70,7 +70,7 @@ function setup(overrides = {}) {
   const rendered = [];
   const context = vm.createContext({
     URL,
-    cfg: { notificationApiBaseUrl: 'https://api.example.invalid', notificationTenantKey: 'synthetic' },
+    cfg: { notificationApiBaseUrl: 'https://api.example.invalid', notificationTenantKey: 'synthetic', locationRecommendationPhotosEnabled: true },
     window: { location: { href: 'https://cup.example.invalid/' } },
     document: {
       createElement: (tag) => new Element(tag),
@@ -281,6 +281,26 @@ test('upload accepts only remaining slots and never exceeds 48 bindings', async 
   assert.equal(context.locationAdminState.profile.recommendationPhotos.length, 48);
   await assert.rejects(context.uploadLocationRecommendationPhotos('GAME', [file(49)], editorFor(context)));
   assert.equal(calls, 1);
+});
+
+test('disabled photo capability omits the new field from legacy saves and blocks hidden photo loss', async () => {
+  const updates = [];
+  let uploads = 0;
+  const { context } = setup({ cfg: { locationRecommendationPhotosEnabled: false }, notificationApi: {
+    updateLocation: async (...args) => { updates.push(plain(args)); return { id: stationId(1) }; },
+    uploadLocationMedia: async () => { uploads++; }
+  } });
+  const editor = editorFor(context);
+  context.renderLocationRecommendationPhotos(editor, context.locationAdminState.profile);
+  assert.equal(editor.querySelector('[data-location-recommendation-photos]').hidden, true);
+  await context.saveLocationAdmin('DRAFT', editorFor(context));
+  assert.equal(updates.length, 1);
+  assert.equal(Object.hasOwn(updates[0][2], 'recommendationPhotos'), false);
+  await assert.rejects(context.uploadLocationRecommendationPhotos('GAME', [file(1)], editorFor(context)));
+  assert.equal(uploads, 0);
+  context.locationAdminState.profile.recommendationPhotos = [binding(1, 'GAME', true)];
+  await assert.rejects(context.saveLocationAdmin('DRAFT', editorFor(context)));
+  assert.equal(updates.length, 1, 'hidden photos must never be silently discarded');
 });
 
 test('saving is blocked during upload; the normal save preserves canonical ID/version/photo activation', async () => {

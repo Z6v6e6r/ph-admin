@@ -19,6 +19,9 @@
     playerRatingAdminEnabled: false,
     subscriptionAdminEnabled: false,
     subscriptionTestRuntimeEnabled: false,
+    locationRecommendationPhotosEnabled: false,
+    notificationScenariosEnabled: false,
+    communityPoliciesEnabled: false,
     notificationApiBaseUrl: '',
     notificationTenantKey: 'local-padel',
     notificationAppVersion: 'phab-cup-local-0.1.0'
@@ -15342,6 +15345,11 @@
     };
   }
 
+  function createGatedNotificationScenariosPane(host, api, expired, enabled) {
+    if (enabled !== true) return { activate: function () {}, suspend: function () {} };
+    return createNotificationScenariosPane(host, api, expired);
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -15353,7 +15361,9 @@
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
     var scenarioHost = document.createElement('section');
     dom.notificationWorkspace.appendChild(scenarioHost);
-    var scenarioPane = createNotificationScenariosPane(scenarioHost, notificationApi, notificationSessionExpired);
+    var scenarioPane = createGatedNotificationScenariosPane(
+      scenarioHost, notificationApi, notificationSessionExpired, cfg.notificationScenariosEnabled
+    );
     var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
 
     function readStoredNotificationToken() {
@@ -16144,6 +16154,8 @@
       var root = editor.querySelector('[data-location-recommendation-photos]');
       if (!root) return;
       clearNode(root);
+      root.hidden = cfg.locationRecommendationPhotosEnabled !== true;
+      if (root.hidden) return;
       var photos = Array.isArray(profile.recommendationPhotos) ? profile.recommendationPhotos : [];
       var sectionTitle = document.createElement('h4');
       sectionTitle.textContent = 'Фото рекомендательных карточек';
@@ -16532,6 +16544,9 @@
     }
 
     async function uploadLocationRecommendationPhotos(eventType, files, editor) {
+      if (cfg.locationRecommendationPhotosEnabled !== true) {
+        throw new Error('Загрузка рекомендательных фото пока недоступна.');
+      }
       if (!notificationApi || locationAdminState.uploading || locationAdminState.saving) return;
       if (!LOCATION_RECOMMENDATION_EVENT_TYPES.some(function (item) { return item.eventType === eventType; })) {
         throw new Error('Укажите корректный тип рекомендательной карточки.');
@@ -16778,6 +16793,12 @@
     async function saveLocationAdmin(status, editor) {
       if (!notificationApi || locationAdminState.saving || locationAdminState.uploading) return;
       var profile = readLocationProfileFromEditor(editor, true);
+      if (cfg.locationRecommendationPhotosEnabled !== true) {
+        if (Array.isArray(profile.recommendationPhotos) && profile.recommendationPhotos.length > 0) {
+          throw new Error('Редактирование станции временно недоступно: в карточке уже добавлены фото рекомендаций.');
+        }
+        delete profile.recommendationPhotos;
+      }
       profile.publicationStatus = status;
       var completeness = locationCompleteness(profile);
       if (status === 'PUBLISHED' && !completeness.ready) {
@@ -32946,7 +32967,8 @@
       form.className = 'phab-admin-community-form-grid';
       settingsCard.body.appendChild(form);
 
-      var typeEditor = createCommunityTypeEditor(community, hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      var typeEditor = createCommunityTypeEditor(community, cfg.communityPoliciesEnabled === true && hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      typeEditor.element.hidden = cfg.communityPoliciesEnabled !== true;
       form.appendChild(typeEditor.element);
 
       var nameInput = document.createElement('input');

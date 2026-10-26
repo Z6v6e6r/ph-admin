@@ -1,0 +1,41 @@
+name: CUP immutable runtime and recovery
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'test/cup-recovery*', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Start owned disposable Mongo for recovery proof
+        run: |
+          docker run --detach --name cup-runtime-rehearsal-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec cup-runtime-rehearsal-mongo mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; then ready=true; break; fi
+            sleep 1
+          done
+          test "$ready" = true
+      - name: Build exact Linux runtime and state-safe recovery, test without provider calls
+        run: node scripts/prepare-cup-runtime-release.mjs "$RUNNER_TEMP/cup-runtime-release" mongodb://127.0.0.1:27017
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cup-runtime-release
+          path: ${{ runner.temp }}/cup-runtime-release
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove only owned Mongo
+        if: always()
+        run: docker rm --force --volumes cup-runtime-rehearsal-mongo

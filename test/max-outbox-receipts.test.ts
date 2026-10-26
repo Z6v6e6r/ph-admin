@@ -1,3 +1,5 @@
+// These suites exercise the explicitly enabled fenced protocol.
+process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'crypto';
 import { MongoClient, MongoOperationTimeoutError } from 'mongodb';

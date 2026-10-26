@@ -50,6 +50,23 @@ function fixture(overrides = {}) {
 }
 const settle = async () => { await new Promise(resolve => setImmediate(resolve)); };
 
+test('scenario activation disabled by default never constructs or requests the scenario API', () => {
+  let constructions = 0;
+  let activations = 0;
+  const create = vm.runInNewContext(extract('createGatedNotificationScenariosPane') + ';createGatedNotificationScenariosPane', {
+    createNotificationScenariosPane: () => { constructions++; return { activate() { activations++; }, suspend() {} }; }
+  });
+  for (const enabled of [undefined, false, 'true']) {
+    const pane = create({}, {}, () => false, enabled);
+    pane.activate(); pane.suspend();
+  }
+  assert.equal(constructions, 0);
+  assert.equal(activations, 0);
+  create({}, {}, () => false, true).activate();
+  assert.equal(constructions, 1);
+  assert.equal(activations, 1);
+});
+
 test('scenario commands reuse exact admin root, bearer and caller-owned key across refresh', async () => {
   const calls = []; let first = true;
   const fetch = async (url, options) => {

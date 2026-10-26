@@ -1,0 +1,134 @@
+diff --git a/src/tournaments/tournaments-persistence.service.ts b/src/tournaments/tournaments-persistence.service.ts
+index 557ba11..25572d0 100644
+--- a/src/tournaments/tournaments-persistence.service.ts
++++ b/src/tournaments/tournaments-persistence.service.ts
+@@ -478,6 +478,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
+                       state: {
+                         $in: [
+                           'PENDING_PAYMENT',
++                          'PROVIDER_CREATE_PENDING',
++                          'PROVIDER_RESULT_UNKNOWN',
+                           'BOOKING_CREATION_IN_PROGRESS',
+                           'PAID_PENDING_FINALIZATION'
+                         ]
+@@ -507,6 +509,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
+                               '$$payment.state',
+                               [
+                                 'PENDING_PAYMENT',
++                                'PROVIDER_CREATE_PENDING',
++                                'PROVIDER_RESULT_UNKNOWN',
+                                 'BOOKING_CREATION_IN_PROGRESS',
+                                 'PAID_PENDING_FINALIZATION'
+                               ]
+@@ -740,6 +744,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
+                   state: {
+                     $in: [
+                       'PENDING_PAYMENT',
++                      'PROVIDER_CREATE_PENDING',
++                      'PROVIDER_RESULT_UNKNOWN',
+                       'BOOKING_CREATION_IN_PROGRESS',
+                       'PAID_PENDING_FINALIZATION'
+                     ]
+@@ -767,6 +773,8 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
+                               '$$payment.state',
+                               [
+                                 'PENDING_PAYMENT',
++                                'PROVIDER_CREATE_PENDING',
++                                'PROVIDER_RESULT_UNKNOWN',
+                                 'BOOKING_CREATION_IN_PROGRESS',
+                                 'PAID_PENDING_FINALIZATION'
+                               ]
+diff --git a/src/tournaments/tournaments.service.ts b/src/tournaments/tournaments.service.ts
+index 8e2b9a9..8f37ad6 100644
+--- a/src/tournaments/tournaments.service.ts
++++ b/src/tournaments/tournaments.service.ts
+@@ -150,6 +150,8 @@ interface PendingJoinPayment {
+   transactionId: string;
+   state?:
+     | 'PENDING_PAYMENT'
++    | 'PROVIDER_CREATE_PENDING'
++    | 'PROVIDER_RESULT_UNKNOWN'
+     | 'BOOKING_CREATION_IN_PROGRESS'
+     | 'PAID_PENDING_FINALIZATION'
+     | 'EXPIRED';
+@@ -1339,6 +1341,9 @@ export class TournamentsService {
+     this.ensurePersistenceEnabled();
+     const tournament = await this.requireCustomBySlug(slug);
+     const normalizedPhone = this.normalizePhone(input.phone);
++    if (this.hasUncertainJoinPayment(tournament, normalizedPhone)) {
++      return this.buildUncertainJoinRecoveryRequired(tournament);
++    }
+     const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
+     if (!normalizedPhone) {
+       return {
+@@ -1780,6 +1785,9 @@ export class TournamentsService {
+     this.ensurePersistenceEnabled();
+     const tournament = await this.requireCustomBySlug(slug);
+     const normalizedPhone = this.normalizePhone(input.phone);
++    if (this.hasUncertainJoinPayment(tournament, normalizedPhone)) {
++      return this.buildUncertainJoinRecoveryRequired(tournament);
++    }
+     const normalizedLevel = this.normalizeLevel(input.levelLabel) ?? undefined;
+     if (!normalizedPhone) {
+       return {
+@@ -2081,6 +2089,9 @@ export class TournamentsService {
+     this.ensurePersistenceEnabled();
+     const tournament = await this.requireCustomBySlug(slug);
+     const normalizedPhone = this.normalizePhone(input.phone);
++    if (this.hasUncertainJoinPayment(tournament, normalizedPhone)) {
++      return this.buildUncertainJoinRecoveryRequired(tournament);
++    }
+     if (!normalizedPhone) {
+       return {
+         ok: false,
+@@ -5852,6 +5863,19 @@ export class TournamentsService {
+     }
+   }
+ 
++  private hasUncertainJoinPayment(tournament: CustomTournament, phone: string | null): boolean {
++    const normalizedPhone = this.normalizePhone(phone);
++    if (!normalizedPhone) return false;
++    const details = this.toRecord(tournament.details) ?? {};
++    const booking = this.toRecord(details.booking) ?? {};
++    const pending = Array.isArray(booking.pendingJoinPayments) ? booking.pendingJoinPayments : [];
++    return pending.some((item) => {
++      const record = this.toRecord(item);
++      return this.normalizePhone(record?.phone) === normalizedPhone &&
++        (record?.state === 'PROVIDER_CREATE_PENDING' || record?.state === 'PROVIDER_RESULT_UNKNOWN');
++    });
++  }
++
+   private findPendingJoinPayment(
+     tournament: CustomTournament,
+     phone: string
+@@ -5969,6 +5993,8 @@ export class TournamentsService {
+     return {
+       transactionId,
+       ...(state === 'PENDING_PAYMENT'
++        || state === 'PROVIDER_CREATE_PENDING'
++        || state === 'PROVIDER_RESULT_UNKNOWN'
+         || state === 'BOOKING_CREATION_IN_PROGRESS'
+         || state === 'PAID_PENDING_FINALIZATION'
+         || state === 'EXPIRED'
+@@ -6086,6 +6112,8 @@ export class TournamentsService {
+ 
+   private isCapacityHoldingPendingJoinPayment(pending: PendingJoinPayment): boolean {
+     return pending.state === undefined
++      || pending.state === 'PROVIDER_CREATE_PENDING'
++      || pending.state === 'PROVIDER_RESULT_UNKNOWN'
+       || pending.state === 'PENDING_PAYMENT'
+       || pending.state === 'BOOKING_CREATION_IN_PROGRESS'
+       || pending.state === 'PAID_PENDING_FINALIZATION';
+@@ -6416,6 +6444,12 @@ export class TournamentsService {
+     }
+   }
+ 
++  private buildUncertainJoinRecoveryRequired(tournament: CustomTournament): TournamentRegistrationResponse {
++    return { ok: false, code: 'BOOKING_FAILED',
++      message: 'Для этой записи требуется сверка платежа. Повторное создание оплаты недоступно.',
++      tournamentId: tournament.id, tournamentSlug: tournament.slug };
++  }
++
+   private buildPaidJoinRecoveryRequired(
+     tournament: CustomTournament
+   ): TournamentRegistrationResponse {

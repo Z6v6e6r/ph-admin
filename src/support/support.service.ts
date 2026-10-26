@@ -1,3 +1,4 @@
+import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { supportDiagnostics } from './support-diagnostics';
 import {
@@ -1097,7 +1098,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     leaseSec = 30,
     receiptProtocol?: string
   ): SupportOutboxCommand[] | Promise<SupportOutboxCommand[]> {
-    if (isMaxConnector(connector)) {
+    if (isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1') {
       if (receiptProtocol !== 'max-lease-v1') throw new ConflictException({ code: 'OUTBOX_RECEIPT_PROTOCOL_REQUIRED' });
       return this.persistence.pullMaxOutbox(connector, limit, leaseSec).then(commands => {
         for (const command of commands) {
@@ -1106,6 +1107,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         }
         return commands;
       });
+    }
+    if (isMaxConnector(connector) && receiptProtocol !== undefined) {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const now = Date.now();
     this.sweepOutboxAttemptLimit(connector, now);
@@ -1180,8 +1184,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   async ackOutbox(id: string, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+    if (maxOutboxMode() === 'legacy' && containsMaxReceiptFields(receipt)) {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+    }
     const known = this.outbox.get(id);
-    if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
+    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
       this.observeMaxReceipt(command);
       return command;
@@ -1201,8 +1208,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   async failOutbox(id: string, error?: string, requeue = true, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+    if (maxOutboxMode() === 'legacy' && containsMaxReceiptFields(receipt)) {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+    }
     const known = this.outbox.get(id);
-    if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
+    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
       this.observeMaxReceipt(command);
       return command;
