@@ -4,6 +4,27 @@ MAX_BOT and MAX_ACADEMY_BOT use acknowledged Mongo claims and receipts. Other
 connectors keep their existing queue implementation. No rollout, message replay,
 cleanup, migration or reset is part of this source change.
 
+## Operation budget and uncertain outcomes
+
+Each pull or receipt store call has one monotonic five-second budget shared by all
+of its Mongo operations, including majority reads/writes and duplicate readback.
+The MongoDB 6.21 driver receives the remaining `timeoutMS` (CSOT), bounding socket,
+selection and server/majority waits. Presence lookup and insert-only enqueue each
+have a separate five-second bound. A driver timeout becomes HTTP 503 with fixed
+`MAX_OUTBOX_OPERATION_TIMEOUT`; no Mongo/provider retry is added by this boundary.
+Timeout is not cancellation or rollback: keep an unknown result unknown.
+
+A batch may time out after some claims committed. The caller receives an error,
+not a partial successful batch; the server does not requeue or replay these leases.
+Those commands remain leased until the existing expiry/reconciliation path. Their
+service-level lease diagnostics are absent when the whole pull fails. This is an
+availability/observability admission gap, not proof of provider execution.
+
+Enqueue is still fire-and-forget. A successful application response is not durable
+enqueue custody. A source deployment cannot close that inherited crash/write-reject
+gap. Per-dialog order across 429 backoff is also not guaranteed. Durable enqueue,
+ordering acceptance and ambiguous-lease reconciliation remain rollout prerequisites.
+
 ## API and stored shape
 
 - GET /api/support/outbox/pull requires receiptProtocol=max-lease-v1 for MAX;
@@ -84,7 +105,10 @@ The Mongo test accepts loopback only, creates and drops a random max_retry_test_
 database, and never loads app env files. It covers concurrent claims, stale and
 opposite receipts, duplicates/lost response, due time, exhaustion, old records,
 privacy, intended-backend failure and non-MAX isolation. The adapter companion
-uses mocked fetch only. CI runs Mongo7 on an isolated service. The local/majority split-view regression uses a controlled collection double; a
+uses mocked fetch only. CI starts an owned loopback Mongo7 daemon with test commands
+enabled, checks readiness and removes it on completion. Physical failpoints block
+read/write commands to verify real CSOT expiry; wire checks verify finite server
+timeouts. The local/majority split-view regression uses a controlled collection double; a
 physical paused-replication/rollback test is still a separate acceptance gap. An
 unsupported majority read must fail, never fall back to local. These checks do not
 prove provider delivery, production topology or real Node-RED installation.

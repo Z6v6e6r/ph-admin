@@ -1,4 +1,5 @@
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
+import { supportDiagnostics } from './support-diagnostics';
 import {
   BadRequestException,
   ConflictException,
@@ -521,6 +522,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    supportDiagnostics.observe(dto, 'max_ingress', { connector: normalizedDto.connector,
+      targetSource: 'inbound', targetPresent: Boolean(normalizedDto.externalChatId || normalizedDto.externalUserId),
+      targetType: normalizedDto.externalChatId ? 'chat' : normalizedDto.externalUserId ? 'user' : 'UNKNOWN',
+      bindingRef: supportDiagnostics.ref('binding', normalizedDto.externalChatId || normalizedDto.externalUserId) });
     const createdAt = this.resolveEventTimestamp(normalizedDto.timestamp);
     let normalizedPhone = this.normalizePhone(normalizedDto.phone);
     let normalizedEmail = this.normalizeEmail(normalizedDto.email);
@@ -528,6 +533,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (!identityOwner) {
       await this.ensureClientLoadedForIngestEvent(normalizedDto, normalizedPhone, normalizedEmail);
     }
+    supportDiagnostics.observe(dto, 'max_binding', { connector: normalizedDto.connector,
+      bindingPresent: Boolean(identityOwner), clientVerified: identityOwner?.authStatus === SupportClientAuthStatus.VERIFIED,
+      bindingEqual: Boolean(identityOwner?.identities.some(identity => identity.connector === normalizedDto.connector
+        && (!normalizedDto.externalUserId || identity.externalUserId === normalizedDto.externalUserId)
+        && (!normalizedDto.externalChatId || identity.externalChatId === normalizedDto.externalChatId))) });
     const incomingKind = this.resolveMessageKind(normalizedDto, normalizedPhone, normalizedEmail);
     const ownedContact =
       incomingKind === SupportMessageKind.CONTACT &&
@@ -558,6 +568,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedPhone &&
       !identityOwner.phones.includes(normalizedPhone)
     ) {
+      supportDiagnostics.observe(dto, 'max_binding', { code: 'UPSTREAM_REFUSED', bindingEqual: false, connector: normalizedDto.connector });
       throw new BadRequestException('Support identity conflicts with the verified client phone');
     }
     const client = this.resolveOrCreateClient(
@@ -621,6 +632,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
           normalizedEmail
         })
       : undefined;
+
+    if (message && this.isMaxConnector(normalizedDto.connector)) supportDiagnostics.link(dto, message);
 
     const contactReminderStage = this.updateContactReminderStage(
       client,
@@ -1086,7 +1099,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   ): SupportOutboxCommand[] | Promise<SupportOutboxCommand[]> {
     if (isMaxConnector(connector)) {
       if (receiptProtocol !== 'max-lease-v1') throw new ConflictException({ code: 'OUTBOX_RECEIPT_PROTOCOL_REQUIRED' });
-      return this.persistence.pullMaxOutbox(connector, limit, leaseSec);
+      return this.persistence.pullMaxOutbox(connector, limit, leaseSec).then(commands => {
+        for (const command of commands) {
+          supportDiagnostics.observe(command, 'max_lease', { connector: command.connector, leaseAttempt: command.attempts,
+            leaseAgeMs: 0, leasePresent: true, executionObserved: false, outboxRef: supportDiagnostics.ref('outbox', command.id) });
+        }
+        return commands;
+      });
     }
     const now = Date.now();
     this.sweepOutboxAttemptLimit(connector, now);
@@ -1115,6 +1134,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       };
       this.outbox.set(updated.id, updated);
       this.persistence.persistOutboxCommand(updated);
+      supportDiagnostics.observe(updated, 'max_lease', { connector: updated.connector, leaseAttempt: updated.attempts, leaseAgeMs: 0,
+        leasePresent: true, executionObserved: false, outboxRef: supportDiagnostics.ref('outbox', updated.id) });
     }
 
     return commands.map((command) => this.outbox.get(command.id) ?? command);
@@ -1161,7 +1182,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   async ackOutbox(id: string, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
     const known = this.outbox.get(id);
     if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
-      return this.persistence.acceptMaxReceipt(id, 'ack', receipt);
+      const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
+      this.observeMaxReceipt(command);
+      return command;
     }
     const command = this.getOutboxOrThrow(id);
     const updated: SupportOutboxCommand = {
@@ -1172,13 +1195,17 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
+    supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
+      outboxRef: supportDiagnostics.ref('outbox', updated.id), outcome: 'outcome_unknown' });
     return updated;
   }
 
   async failOutbox(id: string, error?: string, requeue = true, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
     const known = this.outbox.get(id);
     if (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)) {
-      return this.persistence.acceptMaxReceipt(id, 'fail', receipt);
+      const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
+      this.observeMaxReceipt(command);
+      return command;
     }
     const command = this.getOutboxOrThrow(id);
     const updated: SupportOutboxCommand = {
@@ -1190,6 +1217,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
     return updated;
+  }
+
+  private observeMaxReceipt(command: SupportOutboxCommand): void {
+    // This confirms persistence of queue state, not provider delivery or reading.
+    supportDiagnostics.observe(command, 'max_ack', { eventKind: 'operation_result', connector: command.connector,
+      code: 'DB_ACK', acknowledged: true, outcome: 'acknowledged', outboxRef: supportDiagnostics.ref('outbox', command.id) });
   }
 
   getDailyAnalytics(date?: string, user?: RequestUser): SupportDailyAnalytics {
@@ -2717,7 +2750,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     const outboundPayload = this.buildOutboundClientPayload(message, connector);
 
-    return {
+    const diagnosticCommand: SupportOutboxCommand = {
       id: randomUUID(),
       dialogId: dialog.id,
       clientId: dialog.clientId,
@@ -2742,6 +2775,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         formattedText: outboundPayload.formattedText
       }
     };
+    if (this.isMaxConnector(connector)) supportDiagnostics.link(message, diagnosticCommand);
+    supportDiagnostics.observe(message, 'max_outbox', { connector, targetSource: 'identity', bindingPresent: Boolean(identity),
+      targetType: identity?.externalChatId ? 'chat' : identity?.externalUserId ? 'user' : 'UNKNOWN',
+      targetPresent: Boolean(identity?.externalChatId || identity?.externalUserId),
+      outboxRef: supportDiagnostics.ref('outbox', diagnosticCommand.id), bindingRef: supportDiagnostics.ref('binding', identity?.externalChatId || identity?.externalUserId) });
+    return diagnosticCommand;
   }
 
   private buildOutboundClientPayload(

@@ -16,8 +16,8 @@ export function maxFailure(value: unknown, now: number): MaxFailure {
     && raw.status >= 400 && raw.status <= 599 ? raw.status : null;
   const code = typeof raw.code === 'string' && codes.has(raw.code) ? raw.code : 'unclassified';
   return { status, code, category: status === 429 ? 'RATE_LIMITED'
-    : status !== null && status < 500 ? 'PROVIDER_REFUSED'
-    : code === 'invalid_input' ? 'INVALID_INPUT' : 'DELIVERY_UNKNOWN',
+    : code === 'invalid_input' ? 'INVALID_INPUT'
+    : status !== null && status < 500 ? 'PROVIDER_REFUSED' : 'DELIVERY_UNKNOWN',
   stage: 'send', observedAt: new Date(now).toISOString() };
 }
 

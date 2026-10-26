@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'crypto';
-import { MongoClient } from 'mongodb';
+import { MongoClient, MongoOperationTimeoutError } from 'mongodb';
+import { supportDiagnostics } from '../src/support/support-diagnostics';
 import { SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportController } from '../src/support/support.controller';
 import { SupportService } from '../src/support/support.service';
@@ -17,7 +18,14 @@ async function main() {
   assert.equal(parsed.hostname, '127.0.0.1');
   assert.equal(parsed.username + parsed.password + parsed.search, '');
   assert.ok(parsed.port);
-  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, monitorCommands: true });
+  let observeWire = false;
+  const wire: { command: string; maxTimeMS?: number; wtimeout?: number }[] = [];
+  client.on('commandStarted', event => {
+    if (observeWire && ['find', 'update', 'findAndModify'].includes(event.commandName)) {
+      wire.push({ command: event.commandName, maxTimeMS: event.command.maxTimeMS, wtimeout: event.command.writeConcern?.wtimeout });
+    }
+  });
   await client.connect();
   const db = client.db('max_retry_test_' + randomUUID().replaceAll('-', ''));
   const collection = db.collection<Command>('outbox');
@@ -66,7 +74,9 @@ async function main() {
     assert.equal((await legacy.ackOutbox('legacy')).status, Status.SENT);
     assert.equal(legacyWrites, 1);
     await reset(seed('a'));
+    observeWire = true;
     const [left, right] = await Promise.all([store.pull(Route.MAX_BOT, 1, 60, now), store.pull(Route.MAX_BOT, 1, 60, now)]);
+    observeWire = false;
     assert.equal(left.length + right.length, 1, 'Concurrent claims must not duplicate a command');
     const first = [...left, ...right][0];
     assert.ok(first.leaseToken);
@@ -74,12 +84,40 @@ async function main() {
     await conflict(() => store.receipt('a', 'ack', {}, now + 1));
     await conflict(() => store.receipt('a', 'ack', { leaseToken: 'invalid' }, now + 1));
     await conflict(() => store.receipt('a', 'ack', { leaseToken: randomUUID() }, now + 1));
+    observeWire = true;
     const ack = await store.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 1);
+    observeWire = false;
+    assert(wire.length >= 4);
+    assert(wire.every(item => (item.maxTimeMS ?? item.wtimeout ?? 0) > 0 && (item.maxTimeMS ?? item.wtimeout ?? Infinity) <= 5000), JSON.stringify(wire));
     assert.equal(ack.status, Status.SENT);
     assert.deepEqual(await store.receipt('a', 'ack', { leaseToken: first.leaseToken }, now + 2), ack);
     await conflict(() => store.receipt('a', 'fail', { leaseToken: first.leaseToken, failure: { status: 429 } }, now + 2));
     assert.equal((await new MaxOutboxStore(collection).pull(Route.MAX_BOT, 5, 60, now + 90_000)).length, 0);
     assert.equal((await read()).status, Status.SENT, 'Recreated store/restart must not resurrect SENT');
+
+    // Exercise the actual persistence enqueue against Mongo: a stale process snapshot cannot
+    // replace terminal state or emit a diagnostic ACK for a matched insert-only no-op.
+    const queued: Promise<void>[] = [], diagnostics: Record<string, unknown>[] = [];
+    const savedSink = (supportDiagnostics as any).sink;
+    (supportDiagnostics as any).sink = (event: Record<string, unknown>) => diagnostics.push(event);
+    try {
+      const persistence = Object.create(SupportPersistenceService.prototype) as SupportPersistenceService;
+      Object.assign(persistence, {
+        maxBackend: () => ({ config: { key: 'synthetic-max' }, db }),
+        collection: () => collection,
+        fireAndForget: (task: () => Promise<void>) => queued.push(task()),
+        deleteFromOtherBackends: () => assert.fail('MAX must never clean another backend')
+      });
+      const before = await read();
+      persistence.persistOutboxCommand(seed('a'));
+      await Promise.all(queued.splice(0));
+      assert.deepEqual(await read(), before, 'Stale enqueue cannot resurrect SENT');
+      assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 0);
+      persistence.persistOutboxCommand(seed('new-enqueue'));
+      await Promise.all(queued.splice(0));
+      assert.equal((await read('new-enqueue')).status, Status.PENDING);
+      assert.equal(diagnostics.filter(event => event.code === 'DB_ACK').length, 1);
+    } finally { (supportDiagnostics as any).sink = savedSink; }
 
     await reset(seed('a'));
     let command = (await store.pull(Route.MAX_BOT, 1, 60, now))[0];
@@ -169,8 +207,30 @@ async function main() {
     assert.equal(maxFailure({ status: 403, message: 'secret', code: 'unclassified' }, now).category, 'PROVIDER_REFUSED');
     assert.equal(maxFailure({ status: 503 }, now).category, 'DELIVERY_UNKNOWN');
     assert.equal(maxFailure({ code: 'invalid_input' }, now).category, 'INVALID_INPUT');
+    assert.equal(maxFailure({ status: 400, code: 'invalid_input' }, now).category, 'INVALID_INPUT');
+    assert.equal(maxFailure({ status: 429, code: 'invalid_input' }, now).category, 'RATE_LIMITED');
     assert.equal(maxRetryDelay(1, Number.NaN, () => 0), 5000);
     assert.equal(maxRetryDelay(5, -5, () => 0), 80_000);
+    // Owned local Mongo only: a blocked server command must really hit driver CSOT,
+    // not merely carry a timeout-looking option through a mock. Timeout is not rollback.
+    for (const blocked of ['find', 'findAndModify']) {
+      await reset(seed('slow', { status: Status.LEASED, attempts: 1, leaseToken: first.leaseToken,
+        leasedUntil: new Date(now + 60_000).toISOString() }));
+      let clockCalls = 0;
+      const slowStore = new MaxOutboxStore(collection, 3, () => {
+        clockCalls++;
+        return clockCalls <= (blocked === 'find' ? 1 : 2) ? 0 : 4950;
+      });
+      await client.db('admin').command({ configureFailPoint: 'failCommand', mode: { times: 1 },
+        data: { failCommands: [blocked], blockConnection: true, blockTimeMS: 500 } });
+      const started = Date.now();
+      try {
+        await assert.rejects(() => slowStore.receipt('slow', 'ack', { leaseToken: first.leaseToken }, now + 1), MongoOperationTimeoutError);
+        assert(Date.now() - started < 2000, 'Driver timeout must bound a blocked server operation');
+      } finally {
+        await client.db('admin').command({ configureFailPoint: 'failCommand', mode: 'off' });
+      }
+    }
     console.log('MAX outbox: real local Mongo concurrency, fencing, durability, retry, legacy and privacy checks PASS');
   } finally { await db.dropDatabase(); await client.close(); }
 }

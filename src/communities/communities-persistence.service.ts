@@ -1089,7 +1089,12 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     collection: Collection<MongoCommunityDocument>,
     preimage: MongoCommunityDocument
   ): Promise<void> {
-    const rosterFence = Object.fromEntries(['members', 'pendingMembers', 'bannedMembers'].map(key => [key, preimage[key] === undefined ? { $exists: false } : preimage[key]]));
+    const event = preimage.communityType === 'EVENT';
+    const revision = preimage.eventRosterRevision;
+    if (event && revision !== undefined && (!Number.isSafeInteger(revision) || Number(revision) < 0 || Number(revision) >= Number.MAX_SAFE_INTEGER)) throw new ConflictException('EVENT_ROSTER_REVISION_INVALID');
+    const rosterFence = event ? { communityType: 'EVENT', typeSettingsRevision: preimage.typeSettingsRevision,
+      eventRosterRevision: revision === undefined ? { $exists: false } : revision }
+      : { communityType: preimage.communityType === undefined ? { $exists: false } : preimage.communityType, typeSettingsRevision: preimage.typeSettingsRevision === undefined ? { $exists: false } : preimage.typeSettingsRevision, ...Object.fromEntries(['members', 'pendingMembers', 'bannedMembers'].map(key => [key, preimage[key] === undefined ? { $exists: false } : preimage[key]])) };
     const identifier = document._id ?? this.pickString(document.id) ?? this.pickString(document.communityId);
     // Member moderation owns roster fields only. It must not roll back a newer
     // policy revision or erase a worker's in-flight league assignment intent.
@@ -1098,12 +1103,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       if (document[key] !== undefined) payload[key] = document[key];
     }
 
+    if (event) payload.eventRosterRevision = Number(revision ?? 0) + 1;
+
     if (document._id !== undefined) {
       const result = await collection.updateOne(
         { _id: document._id, ...rosterFence } as Filter<MongoCommunityDocument>,
         { $set: payload }
       );
-      if (result.matchedCount !== 1) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
+      if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
       return;
     }
 
@@ -1112,7 +1119,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
 
     const result = await collection.updateOne({ $and: [this.buildIdFilter(String(identifier)), rosterFence] } as Filter<MongoCommunityDocument>, { $set: payload });
-    if (result.matchedCount !== 1) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
+    if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
   }
 
   private toCommunity(document: MongoCommunityDocument): Community | null {
@@ -1212,7 +1219,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       members,
       pendingMembers,
       bannedMembers,
-      details: this.stripObjectId(document)
+      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'eventEntries')))
     };
   }
 

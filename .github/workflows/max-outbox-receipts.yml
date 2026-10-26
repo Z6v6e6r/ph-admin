@@ -9,13 +9,6 @@ permissions:
 jobs:
   receipts:
     runs-on: ubuntu-22.04
-    services:
-      mongodb:
-        image: mongo:7.0
-        ports: ['27017/tcp']
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
-          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,6 +16,21 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Start isolated Mongo with physical timeout failpoints
+        run: |
+          docker run --detach --name phab-max-receipts-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all --setParameter enableTestCommands=1
+          ready=false
+          for attempt in $(seq 1 30); do
+            if docker exec phab-max-receipts-mongo mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' | grep -q 1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
       - run: npm run build
       - run: npm run test:support-outbox-max-attempts
-      - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:${{ job.services.mongodb.ports[27017] }}
+      - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:27017
+      - name: Remove owned Mongo fixture
+        if: always()
+        run: docker rm --force --volumes phab-max-receipts-mongo

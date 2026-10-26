@@ -1,10 +1,12 @@
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { Collection } from 'mongodb';
+import { Collection, MongoOperationTimeoutError } from 'mongodb';
+import { performance } from 'node:perf_hooks';
 import { MaxFailure, MAX_DELIVERY_ATTEMPTS, maxFailure, maxRetryDelay } from './max-outbox-policy';
 import { SupportConnectorRoute, SupportOutboxCommand, SupportOutboxStatus } from './support.types';
 
 export interface MaxReceipt { leaseToken?: unknown; failure?: unknown; retryAfterSeconds?: unknown }
+export const MAX_OUTBOX_TIMEOUT_MS = 5000;
 export function isMaxConnector(connector: SupportConnectorRoute): boolean {
   return connector === SupportConnectorRoute.MAX_BOT || connector === SupportConnectorRoute.MAX_ACADEMY_BOT;
 }
@@ -12,21 +14,32 @@ export function isMaxConnector(connector: SupportConnectorRoute): boolean {
 /** Atomic Mongo claims/receipts; no dependence on a process-local outbox snapshot. */
 export class MaxOutboxStore {
   constructor(private readonly collection: Collection<SupportOutboxCommand>,
-    private readonly maxAttempts = MAX_DELIVERY_ATTEMPTS) {}
+    private readonly maxAttempts = MAX_DELIVERY_ATTEMPTS,
+    private readonly clock: () => number = () => performance.now()) {}
+
+  private operationBudget(): () => number {
+    const deadline = this.clock() + MAX_OUTBOX_TIMEOUT_MS;
+    return () => {
+      const remaining = Math.ceil(deadline - this.clock());
+      if (remaining <= 0) throw new MongoOperationTimeoutError('MAX outbox operation budget exhausted');
+      return remaining;
+    };
+  }
 
   async pull(connector: SupportConnectorRoute, limit: number, leaseSec: number, now = Date.now()) {
+    const remaining = this.operationBudget();
     const at = new Date(now).toISOString();
     // An expired lease has an ambiguous provider outcome. Never automatically resend it.
     await this.collection.updateMany({ connector, status: SupportOutboxStatus.LEASED,
       $or: [{ leasedUntil: { $lte: at } }, { leasedUntil: { $exists: false } }] }, {
       $set: { status: SupportOutboxStatus.FAILED, terminalReason: 'DELIVERY_UNKNOWN', updatedAt: at },
       $unset: { leasedUntil: '', leaseToken: '' }
-    }, { writeConcern: { w: 'majority' } });
+    }, { writeConcern: { w: 'majority' }, timeoutMS: remaining() });
     await this.collection.updateMany({ connector, status: SupportOutboxStatus.PENDING,
       attempts: { $gte: this.maxAttempts } }, {
       $set: { status: SupportOutboxStatus.FAILED, terminalReason: 'ATTEMPTS_EXHAUSTED', updatedAt: at },
       $unset: { nextAttemptAt: '' }
-    }, { writeConcern: { w: 'majority' } });
+    }, { writeConcern: { w: 'majority' }, timeoutMS: remaining() });
     const commands: SupportOutboxCommand[] = [];
     for (let i = 0; i < Math.min(50, Math.max(1, limit)); i++) {
       const leaseToken = randomUUID();
@@ -37,7 +50,7 @@ export class MaxOutboxStore {
         $set: { status: SupportOutboxStatus.LEASED, leaseToken,
           leasedUntil: new Date(now + Math.min(300, Math.max(5, leaseSec)) * 1000).toISOString(), updatedAt: at },
         $inc: { attempts: 1 }, $unset: { lastReceipt: '', nextAttemptAt: '' }
-      }, { sort: { createdAt: 1, id: 1 }, returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' } });
+      }, { sort: { createdAt: 1, id: 1 }, returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' }, timeoutMS: remaining() });
       if (!command) break;
       commands.push(command);
     }
@@ -45,11 +58,12 @@ export class MaxOutboxStore {
   }
 
   async receipt(id: string, kind: 'ack' | 'fail', body: MaxReceipt, now = Date.now()) {
+    const remaining = this.operationBudget();
     const token = body?.leaseToken;
     if (typeof token !== 'string' || !/^[0-9a-f-]{36}$/.test(token)) {
       throw new ConflictException({ code: 'OUTBOX_LEASE_REQUIRED' });
     }
-    const command = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary' });
+    const command = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
     if (!command || !isMaxConnector(command.connector)) throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
     // Majority readback prevents a duplicate reporting success from an applied but uncommitted receipt.
     // A repeated receipt is safe only until the next claim, which clears lastReceipt.
@@ -74,9 +88,9 @@ export class MaxOutboxStore {
     }
     const updated = await this.collection.findOneAndUpdate({ id, status: SupportOutboxStatus.LEASED,
       leaseToken: token, leasedUntil: { $gt: at }, attempts: command.attempts },
-    { $set: set, $unset: unset }, { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' } });
+    { $set: set, $unset: unset }, { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority' }, timeoutMS: remaining() });
     if (updated) return updated; // Mongo acknowledgement precedes API success.
-    const concurrent = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary' });
+    const concurrent = await this.collection.findOne({ id }, { readConcern: { level: 'majority' }, readPreference: 'primary', timeoutMS: remaining() });
     if (concurrent?.lastReceipt?.token === token && concurrent.lastReceipt.kind === kind) return concurrent;
     throw new ConflictException({ code: 'OUTBOX_LEASE_STALE' });
   }
