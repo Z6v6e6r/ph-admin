@@ -91,7 +91,8 @@ export class SubscriptionCanonicalTargetResolverService {
       dictionaryRevision: snapshot.dictionaryRevision,
       evidenceRef: snapshot.evidenceRef,
       priceEvidenceRef: snapshot.priceEvidenceRef,
-      resolvedAt: snapshot.observedAt
+      resolvedAt: snapshot.observedAt,
+      snapshotRevision: snapshot.revision
     };
   }
 

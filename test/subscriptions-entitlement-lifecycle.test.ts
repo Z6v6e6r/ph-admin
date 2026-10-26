@@ -8,6 +8,7 @@ import {
 } from '../src/subscriptions/dto/subscription-entitlement-lifecycle.dto';
 import { SubscriptionEntitlementLifecycleService } from '../src/subscriptions/subscription-entitlement-lifecycle.service';
 import { SubscriptionRuntimeContractError } from '../src/subscriptions/subscription-runtime-contracts';
+import { createOwnerEvidence } from '../src/subscriptions/owner-evidence.verifier';
 import {
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionOutboxEvent,
@@ -417,6 +418,7 @@ async function testFullPriceFallbackAndGuards(): Promise<void> {
       message: 'limit',
       details: { activeServices: 4, maxActiveServices: 4 }
     }],
+    activeServicesLimitExceeded: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
     decision: null,
     benefit: null
   });
@@ -426,6 +428,23 @@ async function testFullPriceFallbackAndGuards(): Promise<void> {
   assert.equal(fallback.outcome, 'FULL_PRICE_WITHOUT_SUBSCRIPTION');
   assert.equal(fallback.operationId, null);
   assert.equal(repository.reserveCalls, 0);
+
+  // Without an explicit product rule the same blocker fails closed instead of granting a
+  // full-price fallback.
+  shadowQuote.quote = async () => quoteFixture(repository.aggregate, {
+    eligible: false,
+    blockers: [{
+      code: 'ACTIVE_SERVICES_LIMIT_REACHED',
+      message: 'limit',
+      details: { activeServices: 4, maxActiveServices: 4 }
+    }],
+    activeServicesLimitExceeded: 'BLOCK',
+    decision: null,
+    benefit: null
+  });
+  await assert.rejects(service.reserve('Bearer token', 'integration-token', reserveDto(), {
+    idempotencyKey: 'booking-blocked-no-rule-1'
+  }), (error) => error instanceof ConflictException);
 
   shadowQuote.quote = async () => quoteFixture(repository.aggregate, {
     eligible: false,
@@ -454,6 +473,59 @@ async function testFullPriceFallbackAndGuards(): Promise<void> {
     operationId: reserved.operationId!,
     providerBookingId: 'booking:viva-2'
   }), (error) => error instanceof ForbiddenException);
+}
+
+async function testStrictOwnerEvidence(): Promise<void> {
+  const { service } = serviceFixture();
+  process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = 'true';
+  const reserved = await service.reserve('Bearer token', 'integration-token', reserveDto(), {
+    idempotencyKey: 'strict-booking-1',
+    correlationId: 'corr:strict-1'
+  });
+  assert.equal(reserved.outcome, 'RESERVED');
+  const operationId = reserved.operationId!;
+
+  process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'true';
+  delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET;
+  await assert.rejects(
+    service.confirm('Bearer token', 'integration-token', {
+      operationId,
+      providerBookingId: 'booking:viva-strict'
+    }, 'v1.any.any'),
+    (error) => error instanceof ServiceUnavailableException
+  );
+
+  process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET = 's'.repeat(40);
+  process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS = '60';
+  await assert.rejects(
+    service.confirm('Bearer token', 'integration-token', {
+      operationId,
+      providerBookingId: 'booking:viva-strict'
+    }),
+    (error) =>
+      error instanceof ForbiddenException &&
+      (error.getResponse() as { code?: string }).code ===
+        'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_REQUIRED'
+  );
+  const evidence = createOwnerEvidence(
+    {
+      operationId,
+      providerBookingId: 'booking:viva-strict',
+      issuedAt: NOW
+    },
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET
+  );
+  const confirmed = await service.confirm(
+    'Bearer token',
+    'integration-token',
+    { operationId, providerBookingId: 'booking:viva-strict' },
+    evidence
+  );
+  assert.equal(confirmed.outcome, 'CONFIRMED');
+
+  delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT;
+  delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET;
+  delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS;
 }
 
 async function testMutationDtoTrustBoundary(): Promise<void> {
@@ -501,6 +573,7 @@ async function run(): Promise<void> {
     await testReserveConfirmRelease();
     await testDailyOverageAndProviderRejection();
     await testFullPriceFallbackAndGuards();
+    await testStrictOwnerEvidence();
     await testMutationDtoTrustBoundary();
   } finally {
     if (originalFlag === undefined) delete process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;

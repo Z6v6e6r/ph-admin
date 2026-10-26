@@ -18,6 +18,11 @@ import {
   validateStoredSubscriptionRuntimeOperation
 } from './subscription-runtime-contracts';
 import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.service';
+import {
+  loadOwnerEvidenceConfig,
+  OwnerEvidenceError,
+  verifyOwnerEvidence
+} from './owner-evidence.verifier';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
@@ -53,6 +58,25 @@ export interface SubscriptionEntitlementTransitionResult {
   subscriptionInstanceId: string;
   aggregateRevision: number;
   operationState: StoredSubscriptionRuntimeOperation['state'];
+}
+
+/**
+ * A paid fallback is allowed only when the product rule explicitly says so. The historical
+ * universal special case treated the sole active-services blocker as full price; that is now a
+ * per-policy decision (`activeServicesLimit.limitExceeded`), and a policy that omits it fails
+ * closed to `BLOCK`.
+ */
+export function reservationFallsBackToFullPrice(quote: {
+  readonly eligible: boolean;
+  readonly blockers: readonly { readonly code: string }[];
+  readonly aggregateRevision: number | null;
+  readonly activeServicesLimitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION' | null;
+}): boolean {
+  if (quote.eligible) return false;
+  if (quote.aggregateRevision === null) return false;
+  if (quote.blockers.length !== 1) return false;
+  if (quote.blockers[0]?.code !== 'ACTIVE_SERVICES_LIMIT_REACHED') return false;
+  return quote.activeServicesLimitExceeded === 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
 }
 
 @Injectable()
@@ -104,15 +128,14 @@ export class SubscriptionEntitlementLifecycleService {
       const quote = await this.shadowQuote.quote(request);
       const blockerCodes = quote.blockers.map((item) => item.code);
       if (!quote.eligible) {
-        if (blockerCodes.length === 1 && blockerCodes[0] === 'ACTIVE_SERVICES_LIMIT_REACHED'
-          && quote.aggregateRevision !== null) {
+        if (reservationFallsBackToFullPrice(quote)) {
           return {
             schemaVersion: 1,
             outcome: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
             replayed: false,
             operationId: null,
             subscriptionInstanceId: quote.subscriptionInstanceId,
-            aggregateRevision: quote.aggregateRevision,
+            aggregateRevision: quote.aggregateRevision as number,
             operationState: null,
             decision: null,
             blockers: quote.blockers
@@ -201,9 +224,11 @@ export class SubscriptionEntitlementLifecycleService {
   async confirm(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
-    dto: ConfirmSubscriptionEntitlementDto
+    dto: ConfirmSubscriptionEntitlementDto,
+    ownerEvidence?: string
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
+    this.requireOwnerEvidence(dto, ownerEvidence);
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -640,6 +665,43 @@ export class SubscriptionEntitlementLifecycleService {
       aggregateRevision: aggregate?.revision ?? -1,
       operationState: operation.state
     };
+  }
+
+  private requireOwnerEvidence(
+    dto: ConfirmSubscriptionEntitlementDto,
+    ownerEvidence: string | undefined
+  ): void {
+    if (!['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
+    )) {
+      return;
+    }
+    let config;
+    try {
+      config = loadOwnerEvidenceConfig();
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_CONFIG_INVALID',
+        message: 'Owner evidence is not configured'
+      });
+    }
+    try {
+      verifyOwnerEvidence({
+        evidence: ownerEvidence,
+        config,
+        operationId: dto.operationId,
+        providerBookingId: dto.providerBookingId,
+        now: this.now()
+      });
+    } catch (error) {
+      if (error instanceof OwnerEvidenceError) {
+        throw new ForbiddenException({
+          code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
+          message: 'Booking confirmation requires trusted owner evidence'
+        });
+      }
+      throw error;
+    }
   }
 
   private assertEnabled(): void {

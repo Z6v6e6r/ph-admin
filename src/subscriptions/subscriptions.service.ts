@@ -557,7 +557,10 @@ export class SubscriptionsService implements OnModuleDestroy {
         ? {
           enabled: dto.activeServicesLimit.enabled,
           max: dto.activeServicesLimit.enabled ? dto.activeServicesLimit.max ?? null : null,
-          scope: dto.activeServicesLimit.scope
+          scope: dto.activeServicesLimit.scope,
+          ...(dto.activeServicesLimit.limitExceeded === undefined
+            ? {}
+            : { limitExceeded: dto.activeServicesLimit.limitExceeded })
         }
         : {
           enabled: dto.maxActiveServices > 0,

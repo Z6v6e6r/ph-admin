@@ -69,3 +69,29 @@ test('partial apply rerun plans only the remaining index and then becomes a no-o
     []
   );
 });
+
+test('TTL definition drift is rejected for replay indexes', () => {
+  const ttlIndex = [
+    'subscription_lk2_delegation_replays',
+    { expiresAt: 1 },
+    { name: 'subscription_lk2_replay_expiry_ttl', expireAfterSeconds: 0 }
+  ];
+  const existing = new Map([
+    ['subscription_lk2_delegation_replays', [{
+      key: { expiresAt: 1 },
+      name: 'subscription_lk2_replay_expiry_ttl'
+    }]]
+  ]);
+  assert.throws(
+    () => classifyMissingSubscriptionIndexes([ttlIndex], existing),
+    /SUBSCRIPTIONS_INDEX_DRIFT:subscription_lk2_delegation_replays:subscription_lk2_replay_expiry_ttl/
+  );
+  const complete = new Map([
+    ['subscription_lk2_delegation_replays', [{
+      key: { expiresAt: 1 },
+      name: 'subscription_lk2_replay_expiry_ttl',
+      expireAfterSeconds: 0
+    }]]
+  ]);
+  assert.deepEqual(classifyMissingSubscriptionIndexes([ttlIndex], complete), []);
+});
