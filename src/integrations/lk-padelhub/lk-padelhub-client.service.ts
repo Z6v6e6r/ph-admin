@@ -1,3 +1,4 @@
+import { communityType } from '../../communities/community-policy';
 import {
   BadGatewayException,
   BadRequestException,
@@ -511,6 +512,7 @@ export class LkPadelHubClientService {
     return {
       id,
       source: 'LK_PADELHUB',
+      communityType: communityType(raw.communityType),
       name,
       slug: this.readString(raw.slug),
       isVerified:

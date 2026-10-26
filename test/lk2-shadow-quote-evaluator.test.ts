@@ -90,20 +90,23 @@ function evaluator(input: {
   instances?: StoredSubscriptionInstance[];
   instancesError?: Error;
   resolverError?: Error;
+  target?: SubscriptionShadowQuoteResolvedTarget;
   quote?: SubscriptionShadowQuoteResult;
   quoteError?: Error;
-  calls?: { quotes: number };
+  calls?: { quotes: number; instances?: number; targets?: number };
 }): Lk2ShadowQuoteEvaluator {
   const repository = {
     runtimeInstancesByProviderMappingAndClient: async () => {
+      if (input.calls) input.calls.instances = (input.calls.instances ?? 0) + 1;
       if (input.instancesError) throw input.instancesError;
       return input.instances ?? [instance()];
     }
   };
   const targets = {
     resolveLatest: async () => {
+      if (input.calls) input.calls.targets = (input.calls.targets ?? 0) + 1;
       if (input.resolverError) throw input.resolverError;
-      return target;
+      return input.target ?? target;
     }
   };
   const shadowQuote = {
@@ -173,7 +176,8 @@ async function testBenefitDenialStaysPaid(): Promise<void> {
           message: 'limit',
           details: { activeServices: 8, maxActiveServices: 8 }
         }
-      ] as never
+      ] as never,
+      activeServicesLimitExceeded: 'FULL_PRICE_WITHOUT_SUBSCRIPTION'
     })
   }).evaluate({ delegation, request, correlationId: 'correlation-0001' });
   assert.equal(outcome.outcome, 'FULL_PRICE_ONLY');
@@ -274,6 +278,7 @@ async function testTechnicalFailures(): Promise<void> {
 }
 
 async function run(): Promise<void> {
+  await testRevisionAndIntentContracts();
   await testEligibleBenefit();
   await testBenefitDenialStaysPaid();
   await testUnclassifiedBlockerIsUncertainty();
@@ -281,6 +286,82 @@ async function run(): Promise<void> {
   await testSelection();
   await testTechnicalFailures();
   console.log('lk2 shadow quote evaluator tests: OK');
+}
+
+async function testRevisionAndIntentContracts(): Promise<void> {
+  const eligible = quoteResult({ eligible: true, benefit: {
+    kind: 'FREE_ENTITLEMENT', ruleId: 'benefit:join', stationRuleId: 'station:home',
+    basePriceMinor: 300_000, discountMinor: 300_000, surchargeMinor: 0, finalPriceMinor: 0,
+    partialPriceCalculation: null, currency: 'RUB'
+  } });
+  for (const instances of [[], [instance()]]) {
+   for (const paymentIntent of ['PAY_FULL_PRICE', 'USE_SUBSCRIPTION', 'AUTO_BEST_PRICE'] as const) {
+    const calls = { quotes: 0, instances: 0, targets: 0 };
+    const stale = await evaluator({ instances, target: { ...target, snapshotRevision: 8 }, quote: eligible, calls })
+      .evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' });
+    assert.equal(stale.outcome, 'PRICE_CONFIRMATION_REQUIRED');
+    assert.equal(stale.serviceAllowed, false);
+    assert.equal(stale.subscriptionBenefitAllowed, false);
+    assert.equal(stale.benefit, null);
+    assert.equal(stale.price?.priceRevision, 8);
+    assert.equal(calls.quotes, 0);
+    assert.equal(calls.instances, 0);
+    assert.equal(calls.targets, 1);
+   }
+  }
+  for (const instances of [[], [instance()], [instance(), instance('99999999-9999-4999-8999-999999999999')]]) {
+    const calls = { quotes: 0, instances: 0, targets: 0 };
+    const paid = await evaluator({ instances, quote: eligible, calls }).evaluate({ delegation,
+      request: { ...request, paymentIntent: 'PAY_FULL_PRICE', preferredSubscriptionInstanceId: 'foreign:instance' }, correlationId: 'correlation-0001' });
+    assert.equal(paid.outcome, 'FULL_PRICE_ONLY');
+    assert.equal(paid.subscriptionBenefitAllowed, false);
+    assert.equal(paid.benefit, null);
+    assert.equal(paid.selectedSubscription, null);
+    assert.equal(paid.price?.finalPriceMinor, 300_000);
+    assert.equal(calls.instances, 0);
+    assert.equal(calls.quotes, 0);
+    assert.equal(calls.targets, 1);
+  }
+  for (const instances of [[], [instance()]]) {
+    const denied = await evaluator({ instances, quote: quoteResult({ blockers: [{
+      code: 'SUBSCRIPTION_EXPIRED', message: 'expired', details: null
+    }] as never }) }).evaluate({ delegation, request: { ...request, paymentIntent: 'USE_SUBSCRIPTION' }, correlationId: 'correlation-0001' });
+    assert.equal(denied.outcome, 'SERVICE_BLOCKED');
+    assert.equal(denied.serviceAllowed, false);
+    assert.equal(denied.subscriptionBenefitAllowed, false);
+    assert.equal(denied.price, null);
+    assert.deepEqual(denied.alternatives, [{ paymentIntent: 'PAY_FULL_PRICE', requiresExplicitUserConfirmation: true }]);
+  }
+  for (const mode of ['BLOCK', undefined, 'FULL_PRICE_WITHOUT_SUBSCRIPTION'] as const) {
+    const denied = await evaluator({ quote: quoteResult({ activeServicesLimitExceeded: mode,
+      blockers: [{ code: 'ACTIVE_SERVICES_LIMIT_REACHED', message: 'limit', details: null }] as never
+    }) }).evaluate({ delegation, request, correlationId: 'correlation-0001' });
+    assert.equal(denied.serviceAllowed, mode === 'FULL_PRICE_WITHOUT_SUBSCRIPTION');
+    assert.equal(denied.outcome, mode === 'FULL_PRICE_WITHOUT_SUBSCRIPTION' ? 'FULL_PRICE_ONLY' : 'SERVICE_BLOCKED');
+  }
+  for (const paymentIntent of ['PAY_FULL_PRICE', 'USE_SUBSCRIPTION', 'AUTO_BEST_PRICE'] as const) {
+    await expectUnavailable(evaluator({ instances: [], resolverError: new Error('unavailable') })
+      .evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' }), 'TARGET_STALE');
+  }
+  const noRevision = await evaluator({ quote: eligible }).evaluate({ delegation,
+    request: { ...request, target: { kind: 'GAME', id: target.targetId! } }, correlationId: 'correlation-0001' });
+  assert.equal(noRevision.outcome, 'ENTITLEMENT_APPLIED');
+  const strictEligible = await evaluator({ quote: eligible }).evaluate({ delegation,
+    request: { ...request, paymentIntent: 'USE_SUBSCRIPTION' }, correlationId: 'correlation-0001' });
+  assert.equal(strictEligible.outcome, 'ENTITLEMENT_APPLIED');
+  for (const paymentIntent of ['PAY_FULL_PRICE', 'USE_SUBSCRIPTION', 'AUTO_BEST_PRICE'] as const) {
+    const started = await evaluator({ instances: [], target: { ...target, startsAt: '2026-10-21T08:00:00.000Z' } })
+      .evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' });
+    assert.equal(started.serviceAllowed, false);
+    for (const badTarget of [{ ...target, basePriceMinor: null }, { ...target, currency: 'USD' }]) {
+      await expectUnavailable(evaluator({ instances: [], target: badTarget as SubscriptionShadowQuoteResolvedTarget })
+        .evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' }), 'PRICE_UNAVAILABLE');
+    }
+    const multiple = await evaluator({ instances: [instance(), instance('99999999-9999-4999-8999-999999999999')] })
+      .evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' });
+    assert.equal(multiple.outcome, paymentIntent === 'PAY_FULL_PRICE' ? 'FULL_PRICE_ONLY' : 'SUBSCRIPTION_SELECTION_REQUIRED');
+    assert.equal(multiple.serviceAllowed, paymentIntent === 'PAY_FULL_PRICE');
+  }
 }
 
 run().catch((error) => {

@@ -74,7 +74,7 @@ export class CommunitiesController {
     if (!user) {
       throw new UnauthorizedException('User context is missing');
     }
-    return this.communitiesService.update(id, dto);
+    return this.communitiesService.update(id, dto, user);
   }
 
   @Delete(':id')

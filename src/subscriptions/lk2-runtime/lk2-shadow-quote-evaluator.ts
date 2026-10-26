@@ -132,12 +132,12 @@ function limits(result: SubscriptionShadowQuoteResult): Lk2QuoteEvaluation['limi
 }
 
 function selectionOutcome(
-  outcome: 'FULL_PRICE_ONLY' | 'SUBSCRIPTION_SELECTION_REQUIRED',
+  outcome: 'FULL_PRICE_ONLY' | 'SUBSCRIPTION_SELECTION_REQUIRED' | 'SERVICE_BLOCKED' | 'PRICE_CONFIRMATION_REQUIRED',
   code: string
 ): Lk2QuoteEvaluation {
   return {
     outcome,
-    serviceAllowed: true,
+    serviceAllowed: outcome === 'FULL_PRICE_ONLY',
     subscriptionBenefitAllowed: false,
     selectedSubscription: null,
     benefit: null,
@@ -184,6 +184,38 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
     readonly request: Parameters<Lk2QuoteEvaluator['evaluate']>[0]['request'];
     readonly correlationId: string;
   }): Promise<Lk2QuoteEvaluation> {
+    // All intents use the same server-owned, fresh target. A missing subscription cannot
+    // turn an unavailable target or a changed price revision into an ordinary paid allow.
+    let target: SubscriptionShadowQuoteResolvedTarget;
+    try {
+      target = await this.targets.resolveLatest({
+        tenantId: input.delegation.tenantId,
+        targetId: input.request.target.id,
+        action: input.request.action
+      });
+    } catch (error) {
+      const response = (error as { getResponse?: () => unknown }).getResponse?.();
+      const code = response && typeof response === 'object' ? (response as { code?: unknown }).code : undefined;
+      throw new Lk2QuoteEvaluationUnavailable(
+        typeof code === 'string' && code.includes('NOT_FOUND') ? 'TARGET_NOT_FOUND' : 'TARGET_STALE'
+      );
+    }
+    if (!Number.isSafeInteger(target.snapshotRevision) || target.snapshotRevision! < 1) {
+      throw new Lk2QuoteEvaluationUnavailable('TARGET_STALE');
+    }
+    const now = this.now();
+    const startsAt = Date.parse(target.startsAt);
+    if (!Number.isFinite(startsAt)) throw new Lk2QuoteEvaluationUnavailable('TARGET_STALE');
+    if (startsAt <= now.getTime()) return selectionOutcome('SERVICE_BLOCKED', 'SERVICE_UNAVAILABLE');
+    if (target.currency !== 'RUB' || !Number.isSafeInteger(target.basePriceMinor) || target.basePriceMinor! < 0) {
+      throw new Lk2QuoteEvaluationUnavailable('PRICE_UNAVAILABLE');
+    }
+    if (input.request.target.expectedRevision !== undefined && input.request.target.expectedRevision !== target.snapshotRevision) {
+      return { ...selectionOutcome('PRICE_CONFIRMATION_REQUIRED', 'TARGET_REVISION_CHANGED'), price: fullPrice(target) };
+    }
+    if (input.request.paymentIntent === 'PAY_FULL_PRICE') {
+      return { ...selectionOutcome('FULL_PRICE_ONLY', 'FULL_PRICE_REQUESTED'), blockers: [], alternatives: [], price: fullPrice(target) };
+    }
     let instances: StoredSubscriptionInstance[];
     try {
       instances = await this.repository.runtimeInstancesByProviderMappingAndClient({
@@ -202,22 +234,9 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
         return selectionOutcome('SUBSCRIPTION_SELECTION_REQUIRED', 'SUBSCRIPTION_NOT_OWNED_BY_ACTOR');
       }
     } else if (instances.length === 0) {
-      // No subscription is not an uncertainty: the service is available at the ordinary price.
-      // Resolve the target so the caller receives the server-owned price whenever it exists; if the
-      // target is unavailable the outcome stays the same, but without a price.
-      try {
-        const target = await this.targets.resolveLatest({
-          tenantId: input.delegation.tenantId,
-          targetId: input.request.target.id,
-          action: input.request.action
-        });
-        return {
-          ...selectionOutcome('FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND'),
-          price: fullPrice(target)
-        };
-      } catch {
-        return selectionOutcome('FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND');
-      }
+      const outcome = selectionOutcome(input.request.paymentIntent === 'USE_SUBSCRIPTION' ? 'SERVICE_BLOCKED' : 'FULL_PRICE_ONLY', 'SUBSCRIPTION_NOT_FOUND');
+      return { ...outcome, price: input.request.paymentIntent === 'USE_SUBSCRIPTION' ? null : fullPrice(target),
+        alternatives: [{ paymentIntent: 'PAY_FULL_PRICE', requiresExplicitUserConfirmation: true }] };
     } else if (instances.length > 1) {
       return selectionOutcome('SUBSCRIPTION_SELECTION_REQUIRED', 'SUBSCRIPTION_SELECTION_REQUIRED');
     } else {
@@ -229,28 +248,6 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
     if (Buffer.byteLength(pepper, 'utf8') < 32) {
       throw new Lk2QuoteEvaluationUnavailable('POLICY_UNAVAILABLE');
     }
-    // The identity resolution source remains the server-verified LK2 delegation; the request
-    // cannot supply it.
-    let target: SubscriptionShadowQuoteResolvedTarget;
-    try {
-      target = await this.targets.resolveLatest({
-        tenantId: input.delegation.tenantId,
-        targetId: input.request.target.id,
-        action: input.request.action
-      });
-    } catch (error) {
-      const code = (error as { getResponse?: () => unknown }).getResponse?.();
-      const domainCode =
-        code && typeof code === 'object' ? (code as { code?: unknown }).code : undefined;
-      if (typeof domainCode === 'string' && domainCode.includes('NOT_FOUND')) {
-        throw new Lk2QuoteEvaluationUnavailable('TARGET_NOT_FOUND');
-      }
-      throw new Lk2QuoteEvaluationUnavailable('TARGET_STALE');
-    }
-    if (!target.snapshotRevision) {
-      throw new Lk2QuoteEvaluationUnavailable('TARGET_STALE');
-    }
-    const now = this.now();
     let result: SubscriptionShadowQuoteResult;
     try {
       result = await this.shadowQuote.quote({
@@ -300,7 +297,9 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
     const mappedBlockers = result.blockers.map((blocker) => ({
       code: contractBlocker(blocker.code)
     }));
-    if (blockers.some((code) => PARTICIPATION_BLOCKERS.has(code))) {
+    const activeLimitBlocks = blockers.includes('ACTIVE_SERVICES_LIMIT_REACHED')
+      && result.activeServicesLimitExceeded !== 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
+    if (activeLimitBlocks || blockers.some((code) => PARTICIPATION_BLOCKERS.has(code))) {
       return {
         outcome: 'SERVICE_BLOCKED',
         serviceAllowed: false,
@@ -333,12 +332,12 @@ export class Lk2ShadowQuoteEvaluator implements Lk2QuoteEvaluator {
       };
     }
     return {
-      outcome: 'FULL_PRICE_ONLY',
-      serviceAllowed: true,
+      outcome: input.request.paymentIntent === 'USE_SUBSCRIPTION' ? 'SERVICE_BLOCKED' : 'FULL_PRICE_ONLY',
+      serviceAllowed: input.request.paymentIntent !== 'USE_SUBSCRIPTION',
       subscriptionBenefitAllowed: false,
       selectedSubscription,
       benefit: null,
-      price: fullPrice(target),
+      price: input.request.paymentIntent === 'USE_SUBSCRIPTION' ? null : fullPrice(target),
       limits: limits(result),
       blockers: mappedBlockers,
       warnings: [],

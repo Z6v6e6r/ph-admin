@@ -270,9 +270,15 @@ function repository(input: {
   target?: StoredSubscriptionCanonicalTargetSnapshot | null;
   aggregate?: StoredSubscriptionEntitlementAggregate;
   instances?: StoredSubscriptionInstance[];
+  limitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
 }) {
   const policy = publication();
-  const instanceRow = instance();
+  if ('limitExceeded' in input) {
+    if (input.limitExceeded === undefined) delete policy.runtimeProjection.activeServicesLimit.limitExceeded;
+    else policy.runtimeProjection.activeServicesLimit.limitExceeded = input.limitExceeded;
+    policy.policyDigest = computeSubscriptionRuntimeProjectionDigest(policy.runtimeProjection);
+  }
+  const instanceRow = { ...instance(), policyDigest: policy.policyDigest };
   const aggregateRow = input.aggregate ?? aggregate();
   return {
     connectReadOnly: async () => undefined,
@@ -344,16 +350,16 @@ async function testEntitlementApplied(): Promise<void> {
 }
 
 async function testRuleDrivenLimit(): Promise<void> {
-  const denied = await evaluator(repository({ aggregate: aggregate(8) })).evaluate({
-    delegation,
-    request,
-    correlationId: 'correlation-0001',
+ for (const limitExceeded of ['BLOCK', undefined, 'FULL_PRICE_WITHOUT_SUBSCRIPTION'] as const) {
+  const configured = await evaluator(repository({ aggregate: aggregate(8), limitExceeded })).evaluate({
+    delegation, request, correlationId: 'correlation-0001'
   });
-  assert.equal(denied.outcome, 'FULL_PRICE_ONLY');
-  assert.equal(denied.serviceAllowed, true);
-  assert.equal(denied.subscriptionBenefitAllowed, false);
-  assert.ok(denied.blockers.some((blocker) => blocker.code === 'ACTIVE_SERVICES_LIMIT_REACHED'));
-  assert.equal(denied.price?.finalPriceMinor, 300_000);
+  assert.equal(configured.outcome, limitExceeded === 'FULL_PRICE_WITHOUT_SUBSCRIPTION' ? 'FULL_PRICE_ONLY' : 'SERVICE_BLOCKED');
+  assert.equal(configured.serviceAllowed, limitExceeded === 'FULL_PRICE_WITHOUT_SUBSCRIPTION');
+  assert.equal(configured.subscriptionBenefitAllowed, false);
+  assert.ok(configured.blockers.some((blocker) => blocker.code === 'ACTIVE_SERVICES_LIMIT_REACHED'));
+  assert.equal(configured.price?.finalPriceMinor ?? null, limitExceeded === 'FULL_PRICE_WITHOUT_SUBSCRIPTION' ? 300_000 : null);
+ }
 }
 
 async function testNoSubscriptionQuotesFullPrice(): Promise<void> {
@@ -387,6 +393,14 @@ async function run(): Promise<void> {
   await testRuleDrivenLimit();
   await testNoSubscriptionQuotesFullPrice();
   await testMissingTargetIsUncertainty();
+  for (const paymentIntent of ['PAY_FULL_PRICE', 'USE_SUBSCRIPTION'] as const) {
+    const outcome = await evaluator(repository({})).evaluate({ delegation, request: { ...request, paymentIntent }, correlationId: 'correlation-0001' });
+    assert.equal(outcome.outcome, paymentIntent === 'PAY_FULL_PRICE' ? 'FULL_PRICE_ONLY' : 'ENTITLEMENT_APPLIED');
+    assert.equal(outcome.price?.finalPriceMinor, paymentIntent === 'PAY_FULL_PRICE' ? 300_000 : 0);
+  }
+  const stale = await evaluator(repository({ target: { ...targetSnapshot(), revision: 8 } })).evaluate({ delegation, request, correlationId: 'correlation-0001' });
+  assert.equal(stale.outcome, 'PRICE_CONFIRMATION_REQUIRED');
+  assert.equal(stale.serviceAllowed, false);
   console.log('lk2 quote pipeline tests: OK');
 }
 

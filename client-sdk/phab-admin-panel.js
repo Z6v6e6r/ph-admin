@@ -4555,6 +4555,46 @@
       .phab-location-repeat.is-amenity{
         grid-template-columns:minmax(110px,.8fr) minmax(0,1.3fr) minmax(0,1.6fr) auto;
       }
+      .phab-location-recommendation-group{
+        display:grid;
+        gap:8px;
+        padding:10px;
+        border:1px solid rgba(51,0,32,.1);
+        border-radius:12px;
+        background:rgba(246,243,250,.5);
+      }
+      .phab-location-recommendation-group h5{margin:0;font-size:11px;}
+      .phab-location-recommendation-list{
+        display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(156px,1fr));
+        gap:8px;
+      }
+      .phab-location-recommendation-row{
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:7px;
+        align-items:center;
+        padding:7px;
+        border:1px solid rgba(51,0,32,.12);
+        border-radius:10px;
+        background:#fff;
+      }
+      .phab-location-recommendation-row img{
+        width:100%;
+        aspect-ratio:16/9;
+        grid-column:1/-1;
+        object-fit:cover;
+        border-radius:7px;
+        background:rgba(51,0,32,.07);
+      }
+      .phab-location-recommendation-empty{
+        margin:0;
+        padding:9px;
+        border:1px dashed rgba(51,0,32,.16);
+        border-radius:9px;
+        color:rgba(51,0,32,.58);
+        font-size:10px;
+      }
       .phab-location-schedule{display:grid;gap:6px;}
       .phab-location-day{
         display:grid;
@@ -4662,6 +4702,7 @@
         .phab-location-fields{grid-template-columns:1fr;}
         .phab-location-field.is-wide{grid-column:auto;}
         .phab-location-repeat,.phab-location-repeat.is-amenity{grid-template-columns:1fr;}
+        .phab-location-recommendation-list{grid-template-columns:1fr;}
         .phab-location-day{grid-template-columns:30px 78px minmax(0,1fr);}
       }
       .phab-admin-settings-quick-head{
@@ -7958,6 +7999,113 @@
     return { close: close };
   }
 
+  // Pure payload builder and DOM editor share the same explicit, additive contract.
+  function communityTypeSettingsPayload(community, type, settings) {
+    var currentType = community.communityType || 'FRIENDS';
+    if (type === currentType && JSON.stringify(settings) === JSON.stringify(community.typeSettings || {})) return {};
+    return { communityType: type, typeSettings: settings, expectedTypeSettingsRevision: community.typeSettingsRevision || 0 };
+  }
+
+  function createCommunityTypeEditor(community, editable) {
+    var root = document.createElement('fieldset');
+    root.className = 'phab-admin-community-form-field-wide';
+    root.disabled = !editable;
+    var legend = document.createElement('legend');
+    legend.textContent = 'Тип сообщества'; root.appendChild(legend);
+    var select = document.createElement('select');
+    select.className = 'phab-admin-input'; select.setAttribute('aria-label', 'Тип сообщества');
+    [['FRIENDS', 'Обычное / компания друзей'], ['STATION', 'Сообщество станции'], ['CORPORATE', 'Корпоративное'], ['LEAGUE', 'Лига'], ['EVENT', 'Мероприятие']].forEach(function (pair) {
+      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
+    });
+    select.value = community.communityType || 'FRIENDS'; root.appendChild(select);
+    var fields = document.createElement('div'); root.appendChild(fields);
+    var hint = document.createElement('p'); hint.textContent = 'Смена типа сохраняет участников и историю. Старые события автоматически не переносятся. Для закрытого сообщества нового типа нужен вход в ЛК; проверьте привязку владельца и участников к аккаунтам Viva.'; root.appendChild(hint);
+    var controls = {}, divisionRows = [];
+    var drafts = {}; drafts[select.value] = community.typeSettings || {};
+    function input(label, value, kind, container) {
+      var wrap = document.createElement('label'); wrap.className = 'phab-admin-community-form-field';
+      var title = document.createElement('span'); title.textContent = label; wrap.appendChild(title);
+      var control = document.createElement('input'); control.className = 'phab-admin-input'; control.type = kind || 'text';
+      control.value = value === undefined ? '' : String(value); control.setAttribute('aria-label', label);
+      if (kind === 'number') { control.min = '0'; control.max = '10'; control.step = '0.01'; }
+      wrap.appendChild(control); (container || fields).appendChild(wrap); return control;
+    }
+    function eventTimeToUtc(control) {
+      if (!control.value) return '';
+      var date = new Date(control.value + '+03:00');
+      return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+    }
+    function eventTimeMoscow(value) {
+      var date = new Date(value);
+      return Number.isFinite(date.getTime()) ? new Date(date.getTime() + 3 * 3600000).toISOString().slice(0, -1) : '';
+    }
+    function read() {
+      if (select.value === 'EVENT') {
+        var eventSettings = { gameIds: ['padel-jump', 'time-for-friends'].filter(function (id) { return controls[id].checked; }) };
+        if ([controls.responsibleName, controls.contactEmail, controls.startsAt, controls.endsAt].some(function (c) { return c.value.trim(); })) {
+          eventSettings.registrationPolicy = { version: 'event-registration-v1', retentionYears: 1,
+            responsibleName: controls.responsibleName.value.trim(), contactEmail: controls.contactEmail.value.trim(),
+            startsAt: eventTimeToUtc(controls.startsAt), endsAt: eventTimeToUtc(controls.endsAt) };
+        }
+        return eventSettings;
+      }
+      if (select.value === 'STATION') return { stationId: controls.stationId.value.trim() };
+      function list(control) { return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean); }
+      if (select.value === 'CORPORATE') {
+        var settings = { directionIds: list(controls.directionIds), exerciseTypeIds: list(controls.exerciseTypeIds), categories: list(controls.categories) };
+        if (controls.subscription.value.trim()) settings.vivaSubscriptionId = controls.subscription.value.trim();
+        return settings;
+      }
+      if (select.value === 'LEAGUE') return { divisions: divisionRows.map(function (row) {
+        return { id: row.id, name: row.name.value.trim(), minLevel: row.min.value.trim() === '' ? NaN : Number(row.min.value), maxLevel: row.max.value.trim() === '' ? NaN : Number(row.max.value) };
+      }) };
+      return {};
+    }
+    function addDivision(value) {
+      var row = document.createElement('div'); row.className = 'phab-admin-community-form-grid'; fields.appendChild(row);
+      var entry = { id: value.id, name: input('Название дивизиона', value.name, 'text', row), min: input('Уровень от (включительно)', value.minLevel, 'number', row), max: input('Уровень до', value.maxLevel, 'number', row) };
+      divisionRows.push(entry);
+      var remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Удалить дивизион';
+      remove.className = 'phab-admin-btn-secondary'; remove.addEventListener('click', function () { divisionRows = divisionRows.filter(function (r) { return r !== entry; }); row.remove(); }); row.appendChild(remove);
+    }
+    function render() {
+      fields.textContent = ''; controls = {}; divisionRows = [];
+      var values = drafts[select.value] || {};
+      if (select.value === 'EVENT') {
+        [['padel-jump', 'Падл Jump'], ['time-for-friends', 'Падел Микс']].forEach(function (pair) {
+          var label = document.createElement('label'); label.className = 'phab-admin-community-form-field';
+          var checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = (values.gameIds || ['padel-jump', 'time-for-friends']).indexOf(pair[0]) >= 0;
+          controls[pair[0]] = checkbox; label.appendChild(checkbox); label.appendChild(document.createTextNode(pair[1])); fields.appendChild(label);
+        });
+        var policy = values.registrationPolicy || {};
+        controls.responsibleName = input('Ответственный за анкеты', policy.responsibleName || '');
+        controls.contactEmail = input('Email для обращений и удаления', policy.contactEmail || '', 'email');
+        controls.startsAt = input('Начало (МСК)', eventTimeMoscow(policy.startsAt), 'datetime-local'); controls.startsAt.step = '0.001';
+        controls.endsAt = input('Окончание (МСК)', eventTimeMoscow(policy.endsAt), 'datetime-local'); controls.endsAt.step = '0.001';
+        var privacyNote = document.createElement('p'); privacyNote.textContent = 'Хранение — один календарный год после окончания. Пока политика не заполнена, регистрация и игра закрыты. Изменение настроек требует повторной анкеты.'; fields.appendChild(privacyNote);
+        var eventNote = document.createElement('p'); eventNote.textContent = 'При вступлении обязательны ФИО, компания и email. В рейтинге мероприятия — лучший результат Падл Jump. Анкета не публикуется.'; fields.appendChild(eventNote);
+      }
+      if (select.value === 'STATION') controls.stationId = input('ID станции Viva', values.stationId || community.stationId || '');
+      if (select.value === 'CORPORATE') {
+        controls.directionIds = input('ID направлений Viva через запятую', (values.directionIds || []).join(', '));
+        controls.exerciseTypeIds = input('ID типов событий Viva через запятую', (values.exerciseTypeIds || []).join(', '));
+        controls.categories = input('Категории: open_game, court_rental, group_training, tournament', (values.categories || []).join(', '));
+        controls.subscription = input('ID специальной подписки Viva (необязательно)', values.vivaSubscriptionId || '');
+        var note = document.createElement('p'); note.textContent = 'События включаются при совпадении любого выбранного направления, типа или категории. Подписка — дополнительная возможность, она не ограничивает членство.'; fields.appendChild(note);
+      }
+      if (select.value === 'LEAGUE') {
+        (values.divisions || [{ id: 'd-d-plus', name: 'D–D+', minLevel: 1.5, maxLevel: 2 }, { id: 'd-plus-c', name: 'D+–C', minLevel: 2, maxLevel: 3 }, { id: 'c-c-plus', name: 'C–C+', minLevel: 3, maxLevel: 3.5 }]).forEach(addDivision);
+        var add = document.createElement('button'); add.type = 'button'; add.className = 'phab-admin-btn-secondary'; add.textContent = 'Добавить дивизион';
+        add.addEventListener('click', function () { if (divisionRows.length < 12) addDivision({ id: 'division-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6), name: '', minLevel: '', maxLevel: '' }); }); fields.appendChild(add);
+        var note = document.createElement('p'); note.textContent = 'Границы: D+ = 2, C = 3, C+ = 3.5. Верхняя граница относится к следующему дивизиону; у последнего включается. Прошлые результаты сохраняют свой дивизион.'; fields.appendChild(note);
+      }
+    }
+    var lastType = select.value;
+    select.addEventListener('change', function () { var selected = select.value; select.value = lastType; drafts[lastType] = read(); select.value = selected; lastType = selected; render(); });
+    render();
+    return { element: root, payload: function () { return editable ? communityTypeSettingsPayload(community, select.value, read()) : {}; } };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -8897,10 +9045,11 @@
       return payload;
     }
 
-    async function refreshSession() {
+    async function refreshSession(signal) {
       var idempotencyKey = operationId();
       var session = await request(userRoot + '/auth/session/refresh', {
         method: 'POST',
+        signal: signal,
         headers: requestHeaders({
           'Idempotency-Key': idempotencyKey,
           'X-Session-Intent': 'refresh'
@@ -8910,7 +9059,7 @@
       return session;
     }
 
-    async function adminRequest(path, method, body, idempotencyKey, allowRefresh) {
+    async function adminRequest(path, method, body, idempotencyKey, allowRefresh, signal) {
       var headers = requestHeaders(body ? { 'Content-Type': 'application/json' } : {});
       if (accessToken) {
         headers.Authorization = 'Bearer ' + accessToken;
@@ -8921,20 +9070,29 @@
       try {
         return await request(adminRoot + path, {
           method: method || 'GET',
+          signal: signal,
           headers: headers,
           body: body ? JSON.stringify(body) : undefined
         });
       } catch (error) {
         if (error && error.status === 401 && allowRefresh !== false) {
-          await refreshSession();
-          return adminRequest(path, method, body, idempotencyKey, false);
+          await refreshSession(signal);
+          if (signal && signal.aborted) throw new Error('SCENARIO_REQUEST_TIMED_OUT');
+          return adminRequest(path, method, body, idempotencyKey, false, signal);
         }
         throw error;
       }
     }
 
-    async function adminBinaryRequest(path, file, allowRefresh) {
-      var idempotencyKey = operationId();
+    async function scenarioRequest(path, method, body, key) {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 30000);
+      try { return await adminRequest(path, method, body, key, true, controller.signal); }
+      finally { clearTimeout(timer); }
+    }
+
+    async function adminBinaryRequest(path, file, allowRefresh, operationKey) {
+      var idempotencyKey = operationKey || operationId();
       var headers = requestHeaders({
         'Content-Type': String(file.type || 'application/octet-stream'),
         'Idempotency-Key': idempotencyKey
@@ -8951,7 +9109,7 @@
       } catch (error) {
         if (error && error.status === 401 && allowRefresh !== false) {
           await refreshSession();
-          return adminBinaryRequest(path, file, false);
+          return adminBinaryRequest(path, file, false, idempotencyKey);
         }
         throw error;
       }
@@ -9038,6 +9196,13 @@
           true
         );
       },
+      scenarioCommandKey: operationId,
+      listScenarios: function () { return scenarioRequest('/notifications/scenarios', 'GET', null, ''); },
+      listScenarioRuns: function () { return scenarioRequest('/notifications/scenarios/runs', 'GET', null, ''); },
+      saveScenario: function (id, expectedVersion, definition, key) {
+        return scenarioRequest('/notifications/scenarios' + (id ? '/' + encodeURIComponent(id) : ''),
+          id ? 'PUT' : 'POST', { expectedVersion: expectedVersion, definition: definition }, key);
+      },
       listLocations: function () {
         return adminRequest('/locations', 'GET', null, '', true);
       },
@@ -9092,6 +9257,60 @@
     ['OTHER', 'Другое']
   ];
 
+  var LOCATION_RECOMMENDATION_EVENT_TYPES = [
+    { eventType: 'GAME', label: 'Игра' },
+    { eventType: 'COACH_GAME', label: 'Игра с тренером' },
+    { eventType: 'TRAINING', label: 'Тренировка' },
+    { eventType: 'TOURNAMENT', label: 'Турнир' }
+  ];
+
+  function locationRecommendationMediaUrl(assetId, apiBaseUrl, tenantKey) {
+    var normalizedAssetId = String(assetId || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalizedAssetId)) {
+      throw new Error('Некорректный идентификатор фото рекомендательной карточки.');
+    }
+    var base = String(apiBaseUrl || '').replace(/\/+$/, '');
+    var tenant = encodeURIComponent(String(tenantKey || 'local-padel'));
+    return base + '/public/api/v1/' + tenant + '/location-media/' + normalizedAssetId;
+  }
+
+  function validateLocationRecommendationPhotos(photos) {
+    if (!Array.isArray(photos)) {
+      throw new Error('Фото рекомендательных карточек должны быть списком.');
+    }
+    if (photos.length > 48) {
+      throw new Error('Для рекомендательных карточек можно добавить не больше 48 фотографий.');
+    }
+    var eventTypes = LOCATION_RECOMMENDATION_EVENT_TYPES.map(function (item) { return item.eventType; });
+    var bindings = new Set();
+    return photos.map(function (photo, index) {
+      if (!photo || typeof photo !== 'object') {
+        throw new Error('Фото рекомендательной карточки №' + (index + 1) + ' заполнено некорректно.');
+      }
+      var assetId = String(photo.assetId || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(assetId)) {
+        throw new Error('Укажите корректный идентификатор фото рекомендательной карточки.');
+      }
+      var eventType = String(photo.eventType || '');
+      if (eventTypes.indexOf(eventType) < 0) {
+        throw new Error('Укажите корректный тип рекомендательной карточки.');
+      }
+      if (typeof photo.isActive !== 'boolean') {
+        throw new Error('Укажите активность фото рекомендательной карточки.');
+      }
+      var sortOrder = Number(photo.sortOrder);
+      if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 99) {
+        throw new Error('Порядок фото рекомендательной карточки должен быть от 0 до 99.');
+      }
+      var binding = eventType + ':' + assetId;
+      if (bindings.has(binding)) {
+        throw new Error('Одно фото нельзя добавить дважды для одного типа карточки.');
+      }
+      bindings.add(binding);
+      return { assetId: assetId, eventType: eventType, isActive: photo.isActive, sortOrder: sortOrder };
+    });
+  }
+
   function createEmptyLocationProfile() {
     return {
       slug: '',
@@ -9115,6 +9334,7 @@
       }),
       amenities: [],
       gallery: [],
+      recommendationPhotos: [],
       publicationStatus: 'DRAFT',
       showOnHome: true,
       sortOrder: 100
@@ -9180,6 +9400,13 @@
           };
         })
       : [];
+    profile.recommendationPhotos = source.recommendationPhotos === undefined
+      ? []
+      : Array.isArray(source.recommendationPhotos)
+        ? source.recommendationPhotos.map(function (photo) {
+            return photo && typeof photo === 'object' ? Object.assign({}, photo) : photo;
+          })
+        : source.recommendationPhotos;
     profile.publicationStatus = ['DRAFT', 'PUBLISHED', 'ARCHIVED'].indexOf(source.publicationStatus) >= 0
       ? source.publicationStatus
       : 'DRAFT';
@@ -14839,6 +15066,282 @@
     }
   }
 
+  // Active CUP integration. All commands reuse the authenticated PadlHub client, never provider APIs.
+  function createNotificationScenariosPane(host, api, onUnauthorized) {
+    var triggers = {
+      BOOKING_CONFIRMED: 'Запись подтверждена', BOOKING_CHANGED: 'Запись изменена',
+      BOOKING_CANCELLED: 'Запись отменена', BOOKING_STARTS: 'Начало занятия',
+      FRIEND_GAME_PUBLISHED: 'Друг создал игру', SUBSCRIPTION_ENDS: 'Окончание подписки',
+      BIRTHDAY: 'День рождения', TRAINING_ATTENDED: 'Посещение тренировки',
+      FIRST_ATTENDANCE: 'Первое посещение', MATCHING_GAME: 'Подходящая игра'
+    };
+    var channels = { IN_APP: 'Центр уведомлений', WEB_PUSH: 'Web Push', ANDROID_PUSH: 'Android Push',
+      IOS_PUSH: 'iOS Push', EMAIL: 'Email', STAFF_TASK: 'Обращение в ЦУП',
+      SMS: 'SMS — заглушка', TELEGRAM: 'Telegram — заглушка' };
+    var states = { PENDING: 'Ожидает', EXTENDED_PENDING: 'Ожидает', QUEUED: 'Передано в доставку',
+      CANCELLED: 'Отменено', SUPPRESSED: 'Пропущено', EXPIRED: 'Срок истёк',
+      CREATED: 'Создано', SENT: 'Принято провайдером', DELIVERED: 'Доставлено',
+      SENDING: 'Отправляется', DEAD: 'Отправка прекращена', FAILED: 'Ошибка',
+      NONE: 'Без цели', WAITING: 'Ожидаем действие', ACHIEVED: 'Цель достигнута' };
+    var items = [], selected = null, pending = null, epoch = 0, busy = false, ready = false;
+    var active = false, order = [], controls = {};
+    host.className = 'phab-admin-notifications-card phab-admin-notifications-stack';
+    host.style.gridColumn = '1 / -1';
+    function node(tag, text, parent) {
+      var el = document.createElement(tag);
+      if (text !== undefined) el.textContent = text;
+      if (parent) parent.appendChild(el);
+      return el;
+    }
+    node('h3', 'Триггерные рассылки', host);
+    node('p', 'Событие → проверка настроек и актуальности → доставка → целевое действие.', host);
+    var message = node('p', 'Войдите в контур уведомлений.', host);
+    message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite');
+    var toolbar = node('div', undefined, host);
+    toolbar.className = 'phab-admin-notifications-actions';
+    var list = node('select', undefined, toolbar); list.className = 'phab-admin-input';
+    list.setAttribute('aria-label', 'Выбрать сценарий');
+    var fresh = node('button', 'Новый сценарий', toolbar); fresh.type = 'button';
+    var refresh = node('button', 'Обновить сценарии и журнал', toolbar); refresh.type = 'button';
+    var form = node('form', undefined, host);
+    var fields = node('fieldset', undefined, form);
+    fields.style.cssText = 'border:0;padding:0;margin:0;display:grid;gap:12px;min-width:0';
+    node('legend', 'Настройки сценария', fields);
+    function field(key, label, type, min, max) {
+      var row = node('label', undefined, fields); row.className = 'phab-admin-notifications-field';
+      node('span', label, row);
+      var el = node(type === 'textarea' || type === 'select' ? type : 'input', undefined, row);
+      el.className = 'phab-admin-input';
+      if (type !== 'textarea' && type !== 'select') el.type = type;
+      if (min !== undefined) el.min = String(min);
+      if (max !== undefined) el.max = String(max);
+      if (type === 'text' || type === 'textarea' || type === 'number' || type === 'select') el.required = true;
+      if (type === 'number') el.step = '1';
+      controls[key] = el; return el;
+    }
+    function option(select, value, title, disabled) {
+      var el = node('option', title, select); el.value = value; el.disabled = Boolean(disabled); return el;
+    }
+    field('name', 'Название', 'text').maxLength = 120;
+    field('trigger', 'Триггер', 'select');
+    field('delayMinutes', 'Сдвиг, минут: минус — до события, плюс — после', 'number', -43200, 43200);
+    field('ttlMinutes', 'Срок актуальности, минут', 'number', 1, 43200);
+    field('title', 'Заголовок', 'text').maxLength = 300;
+    field('body', 'Текст', 'textarea').maxLength = 8000;
+    node('small', 'Переменные: {{serviceTitle}}, {{startsAt}}, {{locationName}}, {{gameId}}.', fields);
+    var channelBox = node('fieldset', undefined, fields); node('legend', 'Каналы', channelBox);
+    var channelInputs = {};
+    Object.keys(channels).forEach(function (key) {
+      var label = node('label', undefined, channelBox); label.style.cssText = 'display:block;margin:6px 0';
+      var input = node('input', undefined, label); input.type = 'checkbox'; channelInputs[key] = input;
+      node('span', ' ' + channels[key], label);
+      input.addEventListener('change', function () {
+        order = order.filter(function (value) { return value !== key; });
+        if (input.checked) order.push(key);
+        if ((key === 'ANDROID_PUSH' || key === 'IOS_PUSH') && input.checked && order.indexOf('IN_APP') < 0)
+          order.unshift('IN_APP');
+        updateChannels();
+      });
+    });
+    var priority = node('small', '', fields);
+    field('quietHours', 'Тихие часы', 'select');
+    option(controls.quietHours, 'DEFER', 'Отложить до разрешённого времени');
+    option(controls.quietHours, 'SKIP', 'Пропустить внешнюю отправку');
+    field('dailyLimit', 'Лимит за 24 часа для рекомендаций и событий клиента', 'number', 1, 10);
+    field('goal', 'Целевое действие', 'select');
+    option(controls.goal, 'NONE', 'Без цели'); option(controls.goal, 'GAME_JOINED', 'Присоединился к игре');
+    field('goalWindowMinutes', 'Окно цели, минут', 'number', 1, 43200);
+    var activeLabel = node('label', undefined, fields);
+    controls.active = node('input', undefined, activeLabel); controls.active.type = 'checkbox';
+    node('span', ' Сценарий активен', activeLabel);
+    var preview = node('div', undefined, fields); preview.setAttribute('aria-label', 'Предварительный просмотр');
+    node('small', 'Пример с вымышленными данными, без отправки', preview);
+    var previewTitle = node('strong', '', preview), previewBody = node('p', '', preview);
+    previewTitle.style.display = 'block';
+    var save = node('button', 'Сохранить сценарий', form); save.type = 'submit'; save.className = 'phab-admin-btn';
+    node('h3', 'Журнал запусков', host);
+    node('p', 'Последние 100 запусков. Приём провайдером и достижение цели учитываются отдельно.', host);
+    var journal = node('div', undefined, host); journal.style.overflowX = 'auto';
+    journal.tabIndex = 0; journal.setAttribute('role', 'region'); journal.setAttribute('aria-label', 'Журнал запусков, горизонтальная прокрутка');
+    function status(text, error) {
+      message.textContent = text; message.setAttribute('role', error ? 'alert' : 'status');
+    }
+    function error(error) {
+      if (onUnauthorized && onUnauthorized(error)) return;
+      status(error && error.message ? error.message : 'Не удалось загрузить сценарии.', true);
+    }
+    function updateControls() {
+      fields.disabled = !active || !ready || busy || Boolean(pending);
+      list.disabled = fresh.disabled = refresh.disabled = !active || busy || Boolean(pending);
+      save.disabled = !active || !ready || busy;
+      save.textContent = pending ? 'Повторить ту же команду' : 'Сохранить сценарий';
+    }
+    function updateChannels() {
+      var inAppRequired = order.indexOf('ANDROID_PUSH') >= 0 || order.indexOf('IOS_PUSH') >= 0 || controls.goal.value !== 'NONE';
+      if (inAppRequired && order.indexOf('IN_APP') < 0) order.unshift('IN_APP');
+      Object.keys(channelInputs).forEach(function (key) {
+        channelInputs[key].checked = order.indexOf(key) >= 0;
+        channelInputs[key].disabled = key === 'IN_APP' && inAppRequired;
+      });
+      priority.textContent = 'Приоритет: ' + order.map(function (key) { return channels[key]; }).join(' → ') +
+        '. Выбирается один доступный внешний канал; обращение в ЦУП создаётся отдельно.';
+    }
+    function updateTrigger() {
+      var before = ['BOOKING_STARTS', 'SUBSCRIPTION_ENDS', 'BIRTHDAY'].indexOf(controls.trigger.value) >= 0;
+      controls.delayMinutes.min = before ? '-43200' : '0';
+      if (!before && Number(controls.delayMinutes.value) < 0) controls.delayMinutes.value = '0';
+      if (controls.trigger.value !== 'FRIEND_GAME_PUBLISHED') controls.goal.value = 'NONE';
+      controls.goal.disabled = controls.trigger.value !== 'FRIEND_GAME_PUBLISHED';
+      updateChannels();
+    }
+    function renderPreview() {
+      function replace(text) { return text.replace(/\{\{\s*(serviceTitle|startsAt|locationName|gameId)\s*\}\}/g, function (_all, key) {
+        return { serviceTitle: 'Групповая тренировка', startsAt: 'завтра в 19:00', locationName: 'Клуб', gameId: 'пример' }[key];
+      }); }
+      previewTitle.textContent = replace(controls.title.value); previewBody.textContent = replace(controls.body.value);
+    }
+    function blank() {
+      return { name: '', trigger: 'BOOKING_STARTS', delayMinutes: -120, ttlMinutes: 120,
+        title: 'Скоро тренировка', body: '{{serviceTitle}} начнётся {{startsAt}}, {{locationName}}',
+        channels: ['IN_APP'], quietHours: 'DEFER', dailyLimit: 1, goal: 'NONE', goalWindowMinutes: 1440, active: false };
+    }
+    function choose(item) {
+      if (pending || busy) return;
+      selected = item || null;
+      var value = selected ? selected.definition : blank();
+      Object.keys(controls).forEach(function (key) {
+        if (key === 'active') controls[key].checked = value[key] === true;
+        else controls[key].value = String(value[key]);
+      });
+      order = value.channels.slice(); list.value = selected ? selected.id : '';
+      updateTrigger(); renderPreview(); updateControls();
+    }
+    function renderList() {
+      list.textContent = ''; option(list, '', 'Новый сценарий');
+      items.forEach(function (item) {
+        option(list, item.id, item.definition.name + ' · v' + item.version + (item.definition.active ? ' · активен' : ' · приостановлен'));
+      });
+      list.value = selected ? selected.id : '';
+    }
+    function renderJournal(runs) {
+      journal.textContent = '';
+      if (!runs.length) { node('p', 'Запусков пока нет.', journal); return; }
+      var table = node('table', undefined, journal); table.style.cssText = 'width:100%;min-width:760px;border-collapse:collapse';
+      var head = node('tr', undefined, node('thead', undefined, table));
+      ['Сценарий', 'Получатель', 'Время', 'Решение', 'Доставка', 'Цель'].forEach(function (title) {
+        node('th', title, head).style.cssText = 'padding:8px;text-align:left';
+      });
+      var tbody = node('tbody', undefined, table);
+      runs.forEach(function (run) {
+        var row = node('tr', undefined, tbody);
+        var scenario = items.find(function (item) { return item.id === run.scenarioId; });
+        var date = new Date(run.dueAt);
+        var deliveries = (run.deliveryStates || []).map(function (delivery) {
+          var result = /_OUTCOME_UNKNOWN$/.test(delivery.errorCode || '')
+            ? 'Результат неизвестен, без автоматического повтора'
+            : (states[delivery.state] || delivery.state);
+          return (channels[delivery.channel] || delivery.channel) + ': ' + result + ' (' + delivery.count + ')';
+        }).join('; ');
+        [scenario ? scenario.definition.name : run.scenarioId, run.recipientUserId,
+          Number.isFinite(date.getTime()) ? date.toLocaleString('ru-RU') : '—',
+          (states[run.state] || run.state) + (run.reason ? ' · ' + run.reason : ''),
+          deliveries || '—', states[run.goalState] || run.goalState].forEach(function (value) {
+          var cell = node('td', value, row); cell.style.cssText = 'padding:8px;vertical-align:top;overflow-wrap:anywhere';
+        });
+      });
+    }
+    function validSaved(saved, command) {
+      if (!saved || typeof saved.id !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.id) ||
+          saved.version !== command.expectedVersion + 1 ||
+          (command.id && saved.id !== command.id) || !saved.definition) return false;
+      return Object.keys(command.definition).every(function (key) {
+        var expected = command.definition[key], actual = saved.definition[key];
+        if (Array.isArray(expected)) return Array.isArray(actual) && expected.length === actual.length &&
+          expected.every(function (value, index) { return value === actual[index]; });
+        return actual === (typeof expected === 'string' ? expected.trim() : expected);
+      });
+    }
+    async function load() {
+      if (!active || busy || pending) return;
+      var generation = epoch; busy = true; updateControls(); status('Загружаем сценарии…');
+      try {
+        var responses = await Promise.all([api.listScenarios(), api.listScenarioRuns()]);
+        if (!active || generation !== epoch) return;
+        items = responses[0].items || [];
+        controls.trigger.textContent = '';
+        (responses[0].catalog || []).forEach(function (entry) {
+          option(controls.trigger, entry.type, (triggers[entry.type] || entry.type) + (entry.reason ? ' — ' + entry.reason : ''), !entry.available);
+        });
+        ready = true; renderList(); renderJournal(responses[1].items || []);
+        status(responses[0].runtimeEnabled ? 'Сценарии загружены.' : 'Автоматическая обработка выключена. Можно подготовить сценарии.');
+        var current = selected && items.find(function (item) { return item.id === selected.id; });
+        busy = false; choose(current || undefined);
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        ready = false; error(failure);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    }
+    form.addEventListener('input', renderPreview);
+    controls.trigger.addEventListener('change', updateTrigger);
+    controls.goal.addEventListener('change', updateChannels);
+    list.addEventListener('change', function () { choose(items.find(function (item) { return item.id === list.value; })); });
+    fresh.addEventListener('click', function () { choose(); });
+    refresh.addEventListener('click', function () { void load(); });
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      if (!active || !ready || busy) return;
+      if (!pending && !form.reportValidity()) return;
+      if (!pending) {
+        var definition = {};
+        Object.keys(controls).forEach(function (key) {
+          definition[key] = key === 'active' ? controls[key].checked
+            : ['delayMinutes', 'ttlMinutes', 'dailyLimit', 'goalWindowMinutes'].indexOf(key) >= 0
+              ? Number(controls[key].value) : controls[key].value;
+        });
+        definition.channels = order.slice();
+        if (!order.length) { status('Выберите хотя бы один канал.', true); return; }
+        pending = { id: selected ? selected.id : null, expectedVersion: selected ? selected.version : 0,
+          definition: definition, key: api.scenarioCommandKey() };
+      }
+      var command = pending, generation = epoch;
+      busy = true; updateControls(); status('Сохраняем сценарий…');
+      try {
+        var saved = await api.saveScenario(command.id, command.expectedVersion, command.definition, command.key);
+        if (!active || generation !== epoch) return;
+        if (!validSaved(saved, command)) throw new Error('SCENARIO_SAVE_RESPONSE_INVALID');
+        pending = null; selected = saved;
+        items = items.filter(function (item) { return item.id !== saved.id; }).concat([saved]);
+        busy = false; renderList(); choose(saved); status('Сохранена версия ' + saved.version + '.');
+        // Journal read failure must not turn an acknowledged save into an ambiguous command.
+        try {
+          var runs = await api.listScenarioRuns();
+          if (active && generation === epoch) renderJournal(runs.items || []);
+        } catch (journalError) {
+          if (active && generation === epoch) {
+            if (!onUnauthorized(journalError)) status('Сценарий сохранён. Журнал временно недоступен.', true);
+          }
+        }
+      } catch (failure) {
+        if (!active || generation !== epoch) return;
+        var definitive = failure && failure.status >= 400 && failure.status < 500 && failure.status !== 408 && failure.status !== 429;
+        if (definitive) pending = null;
+        if (failure && failure.status === 409) ready = false;
+        error(failure);
+        if (pending) status('Результат сохранения неизвестен. Повторите ту же команду; редактирование заблокировано.', true);
+      } finally { if (generation === epoch) { busy = false; updateControls(); } }
+    });
+    choose(); updateControls();
+    return {
+      activate: function () { if (!active) { active = true; epoch++; void load(); } },
+      suspend: function () {
+        active = false; epoch++; pending = null; selected = null; items = []; busy = false; ready = false;
+        list.textContent = ''; journal.textContent = ''; choose(); status('Войдите в контур уведомлений.'); updateControls();
+      },
+      reload: load
+    };
+  }
+
   function panelInstance(rawConfig) {
     var cfg = normalizeConfig(rawConfig);
     ensureStyle();
@@ -14848,6 +15351,9 @@
     var api = createApi(cfg);
     var trafficPane = createTrafficPane(dom.trafficSection, api, cfg);
     var notificationApi = cfg.notificationApiBaseUrl ? createNotificationAdminApi(cfg) : null;
+    var scenarioHost = document.createElement('section');
+    dom.notificationWorkspace.appendChild(scenarioHost);
+    var scenarioPane = createNotificationScenariosPane(scenarioHost, notificationApi, notificationSessionExpired);
     var NOTIFICATION_TOKEN_STORAGE_KEY = 'phab_notification_admin_token';
 
     function readStoredNotificationToken() {
@@ -14888,6 +15394,9 @@
       profile: createEmptyLocationProfile(),
       loading: false,
       saving: false,
+      uploading: false,
+      selectionRevision: 0,
+      photoUploadOperation: '',
       loaded: false,
       error: '',
       query: ''
@@ -15438,6 +15947,12 @@
           };
         });
 
+      current.recommendationPhotos = Array.isArray(current.recommendationPhotos)
+        ? current.recommendationPhotos.map(function (photo) {
+            return photo && typeof photo === 'object' ? Object.assign({}, photo) : photo;
+          })
+        : current.recommendationPhotos;
+
       if (!current.slug && current.title) current.slug = slugifyLocationTitle(current.title);
       if (strict) {
         if (!current.title) throw new Error('Укажите название станции.');
@@ -15461,6 +15976,7 @@
         if (current.phoneE164 && !/^\+[1-9]\d{7,14}$/.test(current.phoneE164)) {
           throw new Error('Телефон укажите в международном формате, например +79990000000.');
         }
+        current.recommendationPhotos = validateLocationRecommendationPhotos(current.recommendationPhotos);
       }
       return current;
     }
@@ -15523,6 +16039,7 @@
         button.className =
           'phab-location-row' +
           (location.id === locationAdminState.selectedId ? ' is-active' : '');
+        button.disabled = locationAdminState.uploading || locationAdminState.saving;
         var cover = Array.isArray(location.gallery)
           ? location.gallery.find(function (image) { return image.isCover; })
           : null;
@@ -15547,6 +16064,8 @@
         copy.appendChild(status);
         button.appendChild(copy);
         button.addEventListener('click', function () {
+          if (locationAdminState.uploading || locationAdminState.saving) return;
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = location.id;
           locationAdminState.version = Number(location.version || 1);
           locationAdminState.profile = editableLocationProfile(location);
@@ -15618,6 +16137,112 @@
         });
         row.appendChild(remove);
         root.appendChild(row);
+      });
+    }
+
+    function renderLocationRecommendationPhotos(editor, profile) {
+      var root = editor.querySelector('[data-location-recommendation-photos]');
+      if (!root) return;
+      clearNode(root);
+      var photos = Array.isArray(profile.recommendationPhotos) ? profile.recommendationPhotos : [];
+      var sectionTitle = document.createElement('h4');
+      sectionTitle.textContent = 'Фото рекомендательных карточек';
+      root.appendChild(sectionTitle);
+      var sectionCopy = document.createElement('p');
+      sectionCopy.className = 'phab-admin-settings-row-meta';
+      sectionCopy.textContent = 'Активируйте нужные фото, затем сохраните черновик или опубликуйте станцию. Активированные фото появятся в карточках после публикации станции.';
+      root.appendChild(sectionCopy);
+      LOCATION_RECOMMENDATION_EVENT_TYPES.forEach(function (type) {
+        var group = document.createElement('section');
+        group.className = 'phab-location-recommendation-group';
+        var head = document.createElement('div');
+        head.className = 'phab-location-panel-head';
+        var title = document.createElement('h5');
+        title.textContent = type.label;
+        head.appendChild(title);
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/jpeg,image/png,image/webp';
+        input.multiple = true;
+        input.className = 'phab-admin-hidden';
+        input.setAttribute('data-location-recommendation-upload-input', type.eventType);
+        head.appendChild(input);
+        var upload = document.createElement('button');
+        upload.type = 'button';
+        upload.className = 'phab-admin-btn-secondary';
+        upload.textContent = locationAdminState.uploading ? 'Загружаем…' : '+ Загрузить фото';
+        upload.disabled = locationAdminState.uploading || locationAdminState.saving || photos.length >= 48;
+        upload.addEventListener('click', function () {
+          if (!upload.disabled) input.click();
+        });
+        input.addEventListener('change', function () {
+          var files = Array.prototype.slice.call(input.files || []);
+          input.value = '';
+          if (files.length > 0) uploadLocationRecommendationPhotos(type.eventType, files, editor).catch(handleError);
+        });
+        head.appendChild(upload);
+        group.appendChild(head);
+        var rows = document.createElement('div');
+        rows.className = 'phab-location-recommendation-list';
+        var typePhotos = photos.filter(function (photo) {
+          return photo && photo.eventType === type.eventType;
+        });
+        typePhotos.forEach(function (photo) {
+          var index = photos.indexOf(photo);
+          var row = document.createElement('article');
+          row.className = 'phab-location-recommendation-row';
+          row.setAttribute('data-location-recommendation-photo-index', String(index));
+          var preview = document.createElement('img');
+          preview.alt = 'Фото для карточки «' + type.label + '»';
+          try {
+            preview.src = locationRecommendationMediaUrl(
+              photo.assetId,
+              cfg.notificationApiBaseUrl,
+              cfg.notificationTenantKey
+            );
+          } catch (_error) {
+            preview.alt = 'Некорректное фото для карточки «' + type.label + '»';
+          }
+          row.appendChild(preview);
+          var activeLabel = document.createElement('label');
+          activeLabel.className = 'phab-location-inline-check';
+          var active = document.createElement('input');
+          active.type = 'checkbox';
+          active.checked = photo.isActive === true;
+          active.disabled = locationAdminState.uploading || locationAdminState.saving;
+          active.setAttribute('data-recommendation-active', '');
+          active.setAttribute('aria-label', 'Использовать фото ' + (typePhotos.indexOf(photo) + 1) + ' для карточки «' + type.label + '»');
+          active.addEventListener('change', function () {
+            locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+            locationAdminState.profile.recommendationPhotos[index].isActive = active.checked;
+          });
+          activeLabel.appendChild(active);
+          activeLabel.appendChild(document.createTextNode('Активно'));
+          row.appendChild(activeLabel);
+          var remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'phab-admin-btn-secondary';
+          remove.textContent = 'Удалить';
+          remove.disabled = locationAdminState.uploading || locationAdminState.saving;
+          remove.addEventListener('click', function () {
+            locationAdminState.profile = readLocationProfileFromEditor(editor, false);
+            locationAdminState.profile.recommendationPhotos.splice(index, 1);
+            locationAdminState.profile.recommendationPhotos.forEach(function (item, itemIndex) {
+              item.sortOrder = itemIndex;
+            });
+            renderLocationAdmin();
+          });
+          row.appendChild(remove);
+          rows.appendChild(row);
+        });
+        if (typePhotos.length === 0) {
+          var empty = document.createElement('p');
+          empty.className = 'phab-location-recommendation-empty';
+          empty.textContent = 'Фото для этого типа ещё не добавлены.';
+          rows.appendChild(empty);
+        }
+        group.appendChild(rows);
+        root.appendChild(group);
       });
     }
 
@@ -15722,6 +16347,7 @@
               '<label class="phab-location-field">Количество кортов<input type="number" min="0" max="999" data-location-field="courtCount"></label>' +
             '</div></section>' +
             '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Галерея</h4><input class="phab-admin-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-location-upload-input><button type="button" class="phab-admin-btn-secondary" data-location-upload>+ Загрузить фото</button><button type="button" class="phab-admin-btn-secondary" data-location-add-image>+ Ссылка</button></div><div class="phab-location-repeat-list" data-location-gallery></div></section>' +
+            '<section class="phab-location-section" data-location-recommendation-photos><h4>Фото рекомендательных карточек</h4><p class="phab-admin-settings-row-meta">Загрузите фото для типа карточки, активируйте нужные варианты, затем сохраните черновик или опубликуйте станцию.</p></section>' +
             '<section class="phab-location-section"><h4>Режим работы</h4><div class="phab-location-schedule" data-location-schedule></div><p class="phab-admin-settings-row-meta">Можно указать несколько интервалов через запятую, включая ночной график.</p></section>' +
             '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Преимущества</h4><button type="button" class="phab-admin-btn-secondary" data-location-add-amenity>+ Преимущество</button></div><div class="phab-location-repeat-list" data-location-amenities></div></section>' +
             '<section class="phab-location-section"><h4>Адрес и контакты</h4><div class="phab-location-fields">' +
@@ -15773,24 +16399,26 @@
       setField('showOnHome', profile.showOnHome);
       setField('sortOrder', profile.sortOrder);
       renderLocationGalleryRows(editor, profile);
+      renderLocationRecommendationPhotos(editor, profile);
       renderLocationAmenityRows(editor, profile);
       renderLocationSchedule(editor, profile);
 
       var uploadInput = editor.querySelector('[data-location-upload-input]');
       var uploadButton = editor.querySelector('[data-location-upload]');
-      uploadButton.disabled = locationAdminState.uploading === true;
+      uploadButton.disabled = locationAdminState.uploading === true || locationAdminState.saving === true;
       uploadButton.textContent = locationAdminState.uploading ? 'Загружаем…' : '+ Загрузить фото';
       uploadButton.addEventListener('click', function () {
-        if (!locationAdminState.uploading) uploadInput.click();
+        if (!locationAdminState.uploading && !locationAdminState.saving) uploadInput.click();
       });
       uploadInput.addEventListener('change', function () {
         var file = uploadInput.files && uploadInput.files[0];
         uploadInput.value = '';
-        if (!file || locationAdminState.uploading) return;
+        if (!file || locationAdminState.uploading || locationAdminState.saving) return;
         uploadLocationAdminPhoto(file, editor).catch(handleError);
       });
 
       editor.querySelector('[data-location-add-image]').addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
         locationAdminState.profile = readLocationProfileFromEditor(editor, false);
         if (locationAdminState.profile.gallery.length >= 12) {
           setStatus('В галерее может быть не больше 12 изображений', true);
@@ -15805,6 +16433,7 @@
         renderLocationAdmin();
       });
       editor.querySelector('[data-location-add-amenity]').addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
         locationAdminState.profile = readLocationProfileFromEditor(editor, false);
         if (locationAdminState.profile.amenities.length >= 16) {
           setStatus('Можно добавить не больше 16 преимуществ', true);
@@ -15830,27 +16459,43 @@
         syncLocationPreview(editor);
       });
       Array.prototype.slice.call(editor.querySelectorAll('[data-location-save]')).forEach(function (button) {
-        button.disabled = locationAdminState.saving;
+        button.disabled = locationAdminState.saving || locationAdminState.uploading;
         button.addEventListener('click', function () {
           saveLocationAdmin(String(button.getAttribute('data-location-save') || 'DRAFT'), editor).catch(handleError);
         });
       });
       if (!selected) editor.querySelector('[data-location-save="ARCHIVED"]').classList.add('phab-admin-hidden');
+      if (locationAdminState.uploading || locationAdminState.saving) {
+        Array.prototype.slice.call(editor.querySelectorAll('input, select, textarea, button')).forEach(function (control) {
+          control.disabled = true;
+        });
+      }
       syncLocationPreview(editor);
     }
 
     async function uploadLocationAdminPhoto(file, editor) {
-      if (!notificationApi || locationAdminState.uploading) return;
+      if (!notificationApi || locationAdminState.uploading || locationAdminState.saving) return;
       var profile = readLocationProfileFromEditor(editor, false);
       if (profile.gallery.length >= 12) {
         throw new Error('В галерее может быть не больше 12 изображений.');
       }
       locationAdminState.uploading = true;
+      var selectedId = locationAdminState.selectedId;
+      var selectionRevision = locationAdminState.selectionRevision;
+      var uploadOperation = 'gallery-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      locationAdminState.photoUploadOperation = uploadOperation;
       locationAdminState.profile = profile;
       locationAdminState.error = '';
       renderLocationAdmin();
       try {
         var asset = await notificationApi.uploadLocationMedia(file);
+        if (
+          locationAdminState.photoUploadOperation !== uploadOperation ||
+          locationAdminState.selectionRevision !== selectionRevision ||
+          locationAdminState.selectedId !== selectedId
+        ) {
+          return;
+        }
         if (!asset || !asset.mediaUrl) {
           throw new Error('PadlHub Admin API не вернул ссылку на загруженное изображение.');
         }
@@ -15863,6 +16508,13 @@
         locationAdminState.profile = profile;
         setStatus('Фотография загружена и сохранена как WebP.', false);
       } catch (error) {
+        if (
+          locationAdminState.photoUploadOperation !== uploadOperation ||
+          locationAdminState.selectionRevision !== selectionRevision ||
+          locationAdminState.selectedId !== selectedId
+        ) {
+          return;
+        }
         locationAdminState.error = error && error.message
           ? error.message
           : 'Не удалось загрузить фотографию.';
@@ -15871,8 +16523,101 @@
         }
         throw error;
       } finally {
-        locationAdminState.uploading = false;
-        renderLocationAdmin();
+        if (locationAdminState.photoUploadOperation === uploadOperation) {
+          locationAdminState.uploading = false;
+          locationAdminState.photoUploadOperation = '';
+          renderLocationAdmin();
+        }
+      }
+    }
+
+    async function uploadLocationRecommendationPhotos(eventType, files, editor) {
+      if (!notificationApi || locationAdminState.uploading || locationAdminState.saving) return;
+      if (!LOCATION_RECOMMENDATION_EVENT_TYPES.some(function (item) { return item.eventType === eventType; })) {
+        throw new Error('Укажите корректный тип рекомендательной карточки.');
+      }
+      var profile = readLocationProfileFromEditor(editor, false);
+      var existing = validateLocationRecommendationPhotos(profile.recommendationPhotos);
+      var available = 48 - existing.length;
+      if (available <= 0) {
+        throw new Error('Для рекомендательных карточек можно добавить не больше 48 фотографий.');
+      }
+      var batch = Array.prototype.slice.call(files || [], 0, available);
+      var selectedId = locationAdminState.selectedId;
+      var selectionRevision = locationAdminState.selectionRevision;
+      var uploadOperation = 'recommendation-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      var bindings = new Set(existing.map(function (photo) { return photo.eventType + ':' + photo.assetId; }));
+      var added = 0;
+      var skipped = 0;
+      var failed = 0;
+      function ownsUpload() {
+        return (
+          locationAdminState.photoUploadOperation === uploadOperation &&
+          locationAdminState.selectionRevision === selectionRevision &&
+          locationAdminState.selectedId === selectedId
+        );
+      }
+      locationAdminState.uploading = true;
+      locationAdminState.photoUploadOperation = uploadOperation;
+      locationAdminState.profile = profile;
+      locationAdminState.error = '';
+      renderLocationAdmin();
+      try {
+        for (var index = 0; index < batch.length; index += 1) {
+          if (!ownsUpload()) return;
+          var asset;
+          try {
+            asset = await notificationApi.uploadLocationMedia(batch[index]);
+          } catch (error) {
+            if (!ownsUpload()) return;
+            if (error && (error.status === 401 || error.status === 403)) {
+              notificationState.session = null;
+              throw error;
+            }
+            failed += 1;
+            continue;
+          }
+          if (!ownsUpload()) return;
+          var assetId = asset && asset.id ? String(asset.id).trim().toLowerCase() : '';
+          var binding = eventType + ':' + assetId;
+          if (bindings.has(binding)) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            locationRecommendationMediaUrl(assetId, cfg.notificationApiBaseUrl, cfg.notificationTenantKey);
+          } catch (_invalidAsset) {
+            failed += 1;
+            continue;
+          }
+          bindings.add(binding);
+          profile.recommendationPhotos.push({
+            assetId: assetId,
+            eventType: eventType,
+            isActive: false,
+            sortOrder: profile.recommendationPhotos.length
+          });
+          added += 1;
+          locationAdminState.profile = profile;
+        }
+        if (!ownsUpload()) return;
+        if (added === 0 && skipped > 0 && failed === 0) {
+          setStatus('Все выбранные фото уже добавлены для этого типа карточки.', false);
+        } else {
+          setStatus(
+            'Добавлено фото: ' + added +
+              (skipped ? ', уже было добавлено: ' + skipped : '') +
+              (failed ? ', не удалось загрузить: ' + failed : '') +
+              '. Активируйте нужные варианты и сохраните станцию.',
+            failed > 0 && added === 0
+          );
+        }
+      } finally {
+        if (locationAdminState.photoUploadOperation === uploadOperation) {
+          locationAdminState.uploading = false;
+          locationAdminState.photoUploadOperation = '';
+          renderLocationAdmin();
+        }
       }
     }
 
@@ -15961,7 +16706,11 @@
         locationAdminState.query = String(search.value || '');
         renderLocationAdminList(listPanel.querySelector('[data-location-list]'));
       });
-      listPanel.querySelector('[data-location-create]').addEventListener('click', function () {
+      var createLocationButton = listPanel.querySelector('[data-location-create]');
+      createLocationButton.disabled = locationAdminState.uploading || locationAdminState.saving;
+      createLocationButton.addEventListener('click', function () {
+        if (locationAdminState.uploading || locationAdminState.saving) return;
+        locationAdminState.selectionRevision += 1;
         locationAdminState.selectedId = '';
         locationAdminState.version = null;
         locationAdminState.profile = createEmptyLocationProfile();
@@ -15976,8 +16725,13 @@
       renderLocationEditor(editor);
     }
 
-    async function loadLocationAdmin(preferredId) {
-      if (!notificationApi || locationAdminState.loading) return;
+    async function loadLocationAdmin(preferredId, allowDuringSave) {
+      if (
+        !notificationApi ||
+        locationAdminState.loading ||
+        locationAdminState.uploading ||
+        (locationAdminState.saving && allowDuringSave !== true)
+      ) return;
       locationAdminState.loading = true;
       locationAdminState.error = '';
       renderLocationAdmin();
@@ -15995,10 +16749,12 @@
           return item.id === (preferredId || locationAdminState.selectedId);
         }) || locationAdminState.items[0] || null;
         if (selected) {
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = selected.id;
           locationAdminState.version = Number(selected.version || 1);
           locationAdminState.profile = editableLocationProfile(selected);
         } else {
+          locationAdminState.selectionRevision += 1;
           locationAdminState.selectedId = '';
           locationAdminState.version = null;
           locationAdminState.profile = createEmptyLocationProfile();
@@ -16020,7 +16776,7 @@
     }
 
     async function saveLocationAdmin(status, editor) {
-      if (!notificationApi || locationAdminState.saving) return;
+      if (!notificationApi || locationAdminState.saving || locationAdminState.uploading) return;
       var profile = readLocationProfileFromEditor(editor, true);
       profile.publicationStatus = status;
       var completeness = locationCompleteness(profile);
@@ -16042,7 +16798,7 @@
         } else {
           result = await notificationApi.createLocation(profile);
         }
-        await loadLocationAdmin(result && result.id ? result.id : locationAdminState.selectedId);
+        await loadLocationAdmin(result && result.id ? result.id : locationAdminState.selectedId, true);
         setStatus(
           status === 'PUBLISHED'
             ? 'Карточка станции опубликована'
@@ -32190,6 +32946,9 @@
       form.className = 'phab-admin-community-form-grid';
       settingsCard.body.appendChild(form);
 
+      var typeEditor = createCommunityTypeEditor(community, hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER']) && hasPermission(cfg, 'settings:write'));
+      form.appendChild(typeEditor.element);
+
       var nameInput = document.createElement('input');
       nameInput.className = 'phab-admin-input';
       nameInput.value = String(community.name || '');
@@ -32327,6 +33086,7 @@
           description: String(descriptionInput.value || '').trim(),
           rules: String(rulesInput.value || '').trim()
         });
+        Object.assign(payload, typeEditor.payload());
         if (!Object.keys(payload).length) {
           setStatus('Изменений нет', false);
           return;
@@ -37105,6 +37865,7 @@
     }
 
     function showNotificationAuth(message, isError) {
+      scenarioPane.suspend();
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
       dom.notificationWorkspace.classList.add('phab-admin-hidden');
@@ -37119,6 +37880,7 @@
     function showNotificationWorkspace() {
       dom.notificationAuth.classList.add('phab-admin-hidden');
       dom.notificationWorkspace.classList.remove('phab-admin-hidden');
+      scenarioPane.activate();
       updateNotificationControls();
     }
 
@@ -37190,7 +37952,6 @@
           return;
         }
         notificationState.session = session;
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         showNotificationAuth(
@@ -37230,7 +37991,6 @@
         );
         notificationState.challengeId = '';
         dom.notificationCodeInput.value = '';
-        showNotificationWorkspace();
         await loadNotificationCapabilities();
       } catch (error) {
         setNotificationResult(
@@ -38876,6 +39636,7 @@
           throw error;
         }
       } finally {
+        scenarioPane.suspend();
         cfg.authToken = '';
         storeNotificationToken('');
         if (notificationApi) notificationApi.setAccessToken('');
