@@ -123,6 +123,9 @@ async function main(): Promise<void> {
     await assert.rejects(async () => { app = await createApplication(); }, /RELEASE_MAINTENANCE_AUTH_NOT_READY/);
     process.env.ADMIN_AUTH_SECRET = syntheticSecret;
     process.env.PHAB_RELEASE_MAINTENANCE_ENABLED = 'false';
+    // This route/CORS fixture has no Mongo authority; exercise the explicit receipt mode.
+    // Legacy production startup correctly requires its durable MAX authority.
+    process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
     app = await createApplication();
     assert.ok([...app.get(ModulesContainer).values()].some((module) => module.metatype.name === 'TournamentsModule'));
     await app.listen(0, '127.0.0.1');
