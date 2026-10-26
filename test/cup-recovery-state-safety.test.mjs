@@ -13,7 +13,7 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = deny;
 try {
   for (const state of ['PROVIDER_CREATE_PENDING', 'PROVIDER_RESULT_UNKNOWN']) {
-    for (const olderState of [null, 'PENDING_PAYMENT', 'PAID_PENDING_JOIN']) {
+    for (const olderState of [null, 'PENDING_PAYMENT', 'PAID_PENDING_FINALIZATION']) {
     for (const method of ['createPublicJoinPurchaseTransaction', 'registerPublicParticipant', 'confirmPublicJoinAfterPayment']) {
       const pending = { transactionId: 'synthetic-local-attempt', phone: '79990000000', state, operationType: 'TRANSACTION' };
       const tournament = { id: 'synthetic-cup', slug: 'synthetic-cup', participants: [], waitlist: [],

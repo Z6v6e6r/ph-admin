@@ -1,3 +1,4 @@
+process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
 import * as assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { SupportDiagnostics, supportDiagnostics } from '../src/support/support-diagnostics';
