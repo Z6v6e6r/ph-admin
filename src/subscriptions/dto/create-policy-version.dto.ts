@@ -206,6 +206,15 @@ export class ActiveServicesLimitDto {
 
   @IsIn(['SUBSCRIPTION_BENEFIT_ONLY', 'ALL_BOOKINGS'])
   scope!: 'SUBSCRIPTION_BENEFIT_ONLY' | 'ALL_BOOKINGS';
+
+  /**
+   * Explicit outcome when the active-services limit is reached. Omitted or `BLOCK` keeps the
+   * benefit unavailable; `FULL_PRICE_WITHOUT_SUBSCRIPTION` is a product decision to offer an
+   * ordinary paid booking instead of the benefit.
+   */
+  @IsOptional()
+  @IsIn(['BLOCK', 'FULL_PRICE_WITHOUT_SUBSCRIPTION'])
+  limitExceeded?: 'BLOCK' | 'FULL_PRICE_WITHOUT_SUBSCRIPTION';
 }
 
 export class BookingWindowDto {

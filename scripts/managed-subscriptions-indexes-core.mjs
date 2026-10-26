@@ -1,7 +1,8 @@
 function sameIndexDefinition(actual, keys, options) {
   return JSON.stringify(actual?.key) === JSON.stringify(keys)
     && Boolean(actual?.unique) === Boolean(options.unique)
-    && Boolean(actual?.sparse) === Boolean(options.sparse);
+    && Boolean(actual?.sparse) === Boolean(options.sparse)
+    && (actual?.expireAfterSeconds ?? null) === (options.expireAfterSeconds ?? null);
 }
 
 export function classifyMissingSubscriptionIndexes(plan, existingByCollection) {
