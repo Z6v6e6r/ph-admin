@@ -1,3 +1,4 @@
+import { supportClientReplyBinding } from './support-persistence.service';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { supportDiagnostics } from './support-diagnostics';
@@ -132,6 +133,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private readonly messages = new Map<string, SupportMessage[]>();
   private readonly responseMetrics = new Map<string, SupportResponseMetric[]>();
   private readonly outbox = new Map<string, SupportOutboxCommand>();
+  private readonly coldReplyContext = new Map<string, { latestInbound: SupportMessage | null; firstInboundId?: string }>();
   private readonly dialogsNeedingUnreadRebuild = new Set<string>();
   private readonly messageObservers: SupportMessageObserver[] = [];
   private readonly noReplyQuickReplySignatures = new Set<string>();
@@ -196,6 +198,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.messages.clear();
     this.responseMetrics.clear();
     this.outbox.clear();
+    this.coldReplyContext.clear();
     this.dialogsNeedingUnreadRebuild.clear();
 
     for (const client of state.clients) {
@@ -978,6 +981,42 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     });
   }
 
+  async replyToDialogWithReadThrough(
+    dialogId: string,
+    dto: ReplySupportDialogDto,
+    user: RequestUser
+  ): Promise<{ dialog: SupportDialog; message: SupportMessage; outbox?: SupportOutboxCommand }> {
+    this.ensureStaff(user);
+    const cached = this.dialogs.get(dialogId);
+    if ((!cached || !this.clients.has(cached.clientId)) && this.persistence.isEnabled()) {
+      const context = await this.persistence.loadReplyContext(dialogId);
+      if (!context) throw new NotFoundException(`Support dialog ${dialogId} not found`);
+      // An inbound event or another reply may have warmed the cache while Mongo was read.
+      // No await is allowed between choosing current objects and the existing synchronous send.
+      const dialog = this.dialogs.get(dialogId) ?? this.normalizeLoadedDialog(context.dialog);
+      if (dialog.clientId !== context.client.id) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_CONTEXT_CONFLICT' });
+      }
+      this.ensureDialogAccess(dialog, user);
+      if (!this.isDialogActiveForUser(dialog, user) || dialog.status === SupportDialogStatus.CLOSED) {
+        throw new ForbiddenException('Dialog is closed or inactive for your station');
+      }
+      const connector = this.resolveAllowedReplyConnector(dialog, user, dto.connector);
+      const client = this.clients.get(dialog.clientId);
+      // A concurrently changed identity must never be replaced by the older lookup.
+      if (client && supportClientReplyBinding(client) !== supportClientReplyBinding(context.client)) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_CONTEXT_CONFLICT' });
+      }
+      this.ensureReplyRecipient(client ?? context.client, connector);
+      if (!this.clients.has(dialog.clientId)) this.clients.set(dialog.clientId, this.normalizeLoadedClient(context.client));
+      if (!this.dialogs.has(dialogId)) {
+        this.dialogs.set(dialogId, dialog);
+        this.coldReplyContext.set(dialogId, { latestInbound: context.latestInbound, firstInboundId: context.firstInboundId });
+      }
+    }
+    return this.replyToDialog(dialogId, dto, user);
+  }
+
   replyToDialog(
     dialogId: string,
     dto: ReplySupportDialogDto,
@@ -997,6 +1036,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const connector = dto.connector
       ? this.resolveAllowedReplyConnector(dialog, user, dto.connector)
       : this.resolveAllowedReplyConnector(dialog, user);
+    this.ensureReplyRecipient(this.clients.get(dialog.clientId), connector);
     const createdAt = new Date().toISOString();
     const senderRole = this.resolveSenderRole(user.roles);
     const attachments = this.normalizeMessageAttachments(dto.attachments);
@@ -2506,7 +2546,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         return candidate;
       }
     }
-    return null;
+    return this.coldReplyContext.get(dialogId)?.latestInbound ?? null;
   }
 
   private getLatestAwaitingClientStaffMessage(dialogId: string): SupportMessage | null {
@@ -2527,6 +2567,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (!messageId) {
       return false;
     }
+    const coldContext = this.coldReplyContext.get(dialogId);
+    if (coldContext) return coldContext.firstInboundId === messageId;
     const dialogMessages = this.messages.get(dialogId) ?? [];
     for (const message of dialogMessages) {
       if (message.direction !== SupportMessageDirection.INBOUND) {
@@ -2733,6 +2775,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
     this.responseMetrics.set(metric.dialogId, existing);
     this.persistence.persistResponseMetric(metric);
+  }
+
+  private ensureReplyRecipient(client: SupportClientProfile | undefined, connector: SupportConnectorRoute): void {
+    if (this.isLkConnector(connector)) return;
+    if (connector !== SupportConnectorRoute.EMAIL && connector !== SupportConnectorRoute.TG_BOT && !this.isMaxConnector(connector)) return;
+    const identity = client && this.pickIdentityForConnector(client, connector);
+    const hasTarget = connector === SupportConnectorRoute.EMAIL
+      ? Boolean(String(client?.emails[0] ?? '').trim())
+      : Boolean(identity && (String(identity.externalChatId ?? '').trim() || String(identity.externalUserId ?? '').trim()));
+    if (!hasTarget) throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_TARGET_UNAVAILABLE' });
   }
 
   private createOutboxCommand(

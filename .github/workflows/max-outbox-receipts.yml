@@ -33,6 +33,10 @@ jobs:
         run: |
           npx ts-node test/release-capabilities.test.ts
           npx ts-node test/community-policy-activation.test.ts
+          npx ts-node test/max-outbox-provider-refusal.test.ts
+          npx ts-node test/support-cold-reply.test.ts
+          npx ts-node test/support-cold-reply.mongodb.test.ts mongodb://127.0.0.1:27017
+          npx ts-node test/messenger-dialog-resolution.test.ts
           npx ts-node test/max-outbox-local-defer.test.ts mongodb://127.0.0.1:27017
           node --test test/location-recommendation-photos-ui.test.mjs test/cup-notification-scenarios.test.mjs test/community-policy-editor.test.mjs
           npx ts-node test/max-outbox-release-compat.mongodb.test.ts mongodb://127.0.0.1:27017
