@@ -15087,6 +15087,7 @@
     var triggers = {
       BOOKING_CONFIRMED: 'Запись подтверждена', BOOKING_CHANGED: 'Запись изменена',
       BOOKING_CANCELLED: 'Запись отменена', BOOKING_STARTS: 'Начало занятия',
+      GAME_STARTS: 'Начало игры',
       FRIEND_GAME_PUBLISHED: 'Друг создал игру', SUBSCRIPTION_ENDS: 'Окончание подписки',
       BIRTHDAY: 'День рождения', TRAINING_ATTENDED: 'Посещение тренировки',
       FIRST_ATTENDANCE: 'Первое посещение', MATCHING_GAME: 'Подходящая игра'
@@ -15099,7 +15100,7 @@
       CREATED: 'Создано', SENT: 'Принято провайдером', DELIVERED: 'Доставлено',
       SENDING: 'Отправляется', DEAD: 'Отправка прекращена', FAILED: 'Ошибка',
       NONE: 'Без цели', WAITING: 'Ожидаем действие', ACHIEVED: 'Цель достигнута' };
-    var items = [], selected = null, pending = null, epoch = 0, busy = false, ready = false;
+    var items = [], catalog = [], selected = null, pending = null, epoch = 0, busy = false, ready = false;
     var active = false, order = [], controls = {};
     host.className = 'phab-admin-notifications-card phab-admin-notifications-stack';
     host.style.gridColumn = '1 / -1';
@@ -15203,7 +15204,7 @@
         '. Выбирается один доступный внешний канал; обращение в ЦУП создаётся отдельно.';
     }
     function updateTrigger() {
-      var before = ['BOOKING_STARTS', 'SUBSCRIPTION_ENDS', 'BIRTHDAY'].indexOf(controls.trigger.value) >= 0;
+      var before = ['BOOKING_STARTS', 'GAME_STARTS', 'SUBSCRIPTION_ENDS', 'BIRTHDAY'].indexOf(controls.trigger.value) >= 0;
       controls.delayMinutes.min = before ? '-43200' : '0';
       if (!before && Number(controls.delayMinutes.value) < 0) controls.delayMinutes.value = '0';
       if (controls.trigger.value !== 'FRIEND_GAME_PUBLISHED') controls.goal.value = 'NONE';
@@ -15217,6 +15218,10 @@
       previewTitle.textContent = replace(controls.title.value); previewBody.textContent = replace(controls.body.value);
     }
     function blank() {
+      var gameStart = catalog.some(function (entry) { return entry.type === 'GAME_STARTS' && entry.available; });
+      if (gameStart) return { name: 'Напоминание участнику о предстоящей игре', trigger: 'GAME_STARTS', delayMinutes: -60, ttlMinutes: 60,
+        title: 'Скоро игра', body: '{{serviceTitle}} начнётся {{startsAt}}, {{locationName}}',
+        channels: ['IN_APP'], quietHours: 'DEFER', dailyLimit: 10, goal: 'NONE', goalWindowMinutes: 1440, active: false };
       return { name: '', trigger: 'BOOKING_STARTS', delayMinutes: -120, ttlMinutes: 120,
         title: 'Скоро тренировка', body: '{{serviceTitle}} начнётся {{startsAt}}, {{locationName}}',
         channels: ['IN_APP'], quietHours: 'DEFER', dailyLimit: 1, goal: 'NONE', goalWindowMinutes: 1440, active: false };
@@ -15284,9 +15289,9 @@
       try {
         var responses = await Promise.all([api.listScenarios(), api.listScenarioRuns()]);
         if (!active || generation !== epoch) return;
-        items = responses[0].items || [];
+        items = responses[0].items || []; catalog = responses[0].catalog || [];
         controls.trigger.textContent = '';
-        (responses[0].catalog || []).forEach(function (entry) {
+        catalog.forEach(function (entry) {
           option(controls.trigger, entry.type, (triggers[entry.type] || entry.type) + (entry.reason ? ' — ' + entry.reason : ''), !entry.available);
         });
         ready = true; renderList(); renderJournal(responses[1].items || []);
@@ -15351,7 +15356,7 @@
     return {
       activate: function () { if (!active) { active = true; epoch++; void load(); } },
       suspend: function () {
-        active = false; epoch++; pending = null; selected = null; items = []; busy = false; ready = false;
+        active = false; epoch++; pending = null; selected = null; items = []; catalog = []; busy = false; ready = false;
         list.textContent = ''; journal.textContent = ''; choose(); status('Войдите в контур уведомлений.'); updateControls();
       },
       reload: load
