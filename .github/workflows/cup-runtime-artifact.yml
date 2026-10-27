@@ -2,7 +2,10 @@ name: CUP immutable runtime and recovery
 on:
   pull_request:
     branches: [main]
-    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'test/cup-recovery*', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
+  push:
+    branches: [main]
+    paths: ['src/**', 'client-sdk/**', 'deploy/recovery/**', 'scripts/prepare-cup-runtime-release.mjs', 'test/cup-recovery*', 'test/cup-runtime-artifact-workflow.test.mjs', 'test/cup-notification-scenarios.test.mjs', 'package*.json', '.github/workflows/cup-runtime-artifact.yml']
 permissions:
   contents: read
 jobs:
@@ -12,12 +15,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+      - name: Verify exact PR or main source
+        env:
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) test "$GITHUB_BASE_REF" = main ;;
+            push) test "$GITHUB_REF" = refs/heads/main ;;
+            *) exit 1 ;;
+          esac
+          test "${#EXPECTED_SHA}" -eq 40
+          case "$EXPECTED_SHA" in *[!0-9a-f]*) exit 1 ;; esac
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.1
           cache: npm
+      - name: Verify runtime workflow identity regressions
+        run: node --test test/cup-runtime-artifact-workflow.test.mjs
+      - name: Verify admin notification scenario compatibility
+        run: node --test test/cup-notification-scenarios.test.mjs
       - run: npm ci --ignore-scripts
       - name: Start owned disposable Mongo for recovery proof
         run: |
