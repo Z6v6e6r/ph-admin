@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -621,6 +622,7 @@ async function testMutationDtoTrustBoundary(): Promise<void> {
 async function run(): Promise<void> {
   const originalFlag = process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
   try {
+    await runEntitlementReadbackTests();
     await testReserveConfirmRelease();
     await testDailyOverageAndProviderRejection();
     await testFullPriceFallbackAndGuards();

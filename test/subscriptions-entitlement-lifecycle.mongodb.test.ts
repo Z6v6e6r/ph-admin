@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
@@ -29,7 +30,8 @@ function requireTestUri(): string {
 }
 
 class FixedClockService extends SubscriptionEntitlementLifecycleService {
-  protected override now(): Date { return new Date(NOW); }
+  protected override now(): Date { return new Date(this.clock); }
+  clock = NOW;
 }
 
 function configureFixture(uri: string, dbName: string): () => void {
@@ -218,6 +220,7 @@ async function run(): Promise<void> {
     await childReplay(uri, process.argv[3], process.argv[4]);
     return;
   }
+  await runEntitlementReadbackTests();
   const dbName = `phab_entitlement_ci_${process.pid}_${randomUUID().replace(/-/g, '')}`;
   const restore = configureFixture(uri, dbName);
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
@@ -349,6 +352,30 @@ async function run(): Promise<void> {
     assert.match(child.stdout, /ENTITLEMENT_CHILD_REPLAY_PASSED/);
     assert.deepEqual(await snapshot(db), afterLostResponse, 'process retry must not duplicate committed compensation');
     console.log('PASS physical commit/response-loss recovery in a separate Node process');
+    const rejected = await services[0].reserve('Bearer fixture', 'fixture-integration', dto,
+      { idempotencyKey: 'mongo-readback-expired-proof' });
+    assert.ok(rejected.operationId);
+    const rejection = { operationId: rejected.operationId, reason: 'PROVIDER_REJECTED' as const };
+    const rejectionProof = createOwnerReleaseEvidence({ ...rejection, providerBookingId: null, issuedAt: NOW }, SECRET);
+    repositories[0].transitionRuntimeEntitlement = async (input) => {
+      await transition(input);
+      throw new Error('synthetic provider-rejection response lost after physical commit');
+    };
+    await assert.rejects(services[0].release('Bearer fixture', 'fixture-integration', rejection, rejectionProof),
+      /synthetic provider-rejection response lost after physical commit/);
+    repositories[0].transitionRuntimeEntitlement = transition;
+    services[0].clock = '2026-08-31T10:02:00.000Z';
+    const beforeReadback = await snapshot(db);
+    await assert.rejects(services[0].release('Bearer fixture', 'fixture-integration', rejection, rejectionProof), ForbiddenException);
+    const readback = await services[0].readback('Bearer fixture', 'fixture-integration', {
+      operationId: rejected.operationId, subscriptionInstanceId: INSTANCE
+    });
+    assert.deepEqual(readback, { schemaVersion: 1, operationId: rejected.operationId, subscriptionInstanceId: INSTANCE,
+      operationState: 'FAILED', compensationState: 'APPLIED', releaseReason: 'PROVIDER_REJECTED', providerBookingId: null });
+    assert.deepEqual(await snapshot(db), beforeReadback, 'expired-proof readback must not write any business collection');
+    await assertReturned(repositories[1]);
+    await assertOneLedgerChain(db, rejected.operationId, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
+    console.log('PASS physical provider-rejection commit/lost response then read-only recovery beyond proof TTL');
     console.log('Canonical entitlement Mongo tests: PASS; policy/identity synthetic; provider writes=0; skipped=0');
   } finally {
     try {

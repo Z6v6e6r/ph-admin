@@ -8,6 +8,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ConfirmSubscriptionEntitlementDto,
+  ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
 } from './dto/subscription-entitlement-lifecycle.dto';
@@ -61,6 +62,16 @@ export interface SubscriptionEntitlementTransitionResult {
   operationState: StoredSubscriptionRuntimeOperation['state'];
 }
 
+export interface SubscriptionEntitlementReadbackResult {
+  schemaVersion: 1;
+  operationId: string;
+  subscriptionInstanceId: string;
+  operationState: StoredSubscriptionRuntimeOperation['state'];
+  compensationState: StoredSubscriptionRuntimeOperation['compensationState'];
+  releaseReason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | null;
+  providerBookingId: string | null;
+}
+
 /**
  * A paid fallback is allowed only when the product rule explicitly says so. The historical
  * universal special case treated the sole active-services blocker as full price; that is now a
@@ -87,6 +98,40 @@ export class SubscriptionEntitlementLifecycleService {
     private readonly shadowQuote: SubscriptionShadowQuoteService,
     private readonly repository: SubscriptionsRepository
   ) {}
+
+  async readback(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: ReadbackSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReadbackResult> {
+    this.assertEnabled();
+    const identity = await this.adapter.resolveEntitlementIdentity(authorizationHeader, integrationToken);
+    let operation: StoredSubscriptionRuntimeOperation | null;
+    try {
+      operation = await this.repository.runtimeEntitlementOperationReadback({
+        operationId: dto.operationId,
+        subscriptionInstanceId: dto.subscriptionInstanceId,
+        tenantId: identity.tenantId,
+        actorId: identity.clientRefHash
+      });
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_READBACK_UNAVAILABLE',
+        message: 'Subscription entitlement readback is unavailable'
+      });
+    }
+    if (!operation) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Entitlement operation not found' });
+    const reason = operation.lastReconciliationResult;
+    return {
+      schemaVersion: 1,
+      operationId: operation.operationId,
+      subscriptionInstanceId: dto.subscriptionInstanceId,
+      operationState: operation.state,
+      compensationState: operation.compensationState,
+      releaseReason: reason === 'PROVIDER_REJECTED' || reason === 'BOOKING_CANCELLED' ? reason : null,
+      providerBookingId: operation.providerCorrelationId
+    };
+  }
 
   async reserve(
     authorizationHeader: string | undefined,

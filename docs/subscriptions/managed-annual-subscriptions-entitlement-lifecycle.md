@@ -127,3 +127,46 @@ are real. No provider is called.
 A passing execution is **CI** evidence for this persistence boundary, not HTTP E2E, provider,
 STAGING or PRODUCTION acceptance. Adding the test alone is not a claim of physical execution;
 attach the successful CI run to the release evidence before closing the persistence gate.
+
+## Read-only release recovery after an acknowledgement is lost
+
+`POST /api/internal/subscriptions/entitlements/readback` accepts exactly
+`{ operationId, subscriptionInstanceId }` using the existing identifier rules. The request requires
+the existing verified LK Bearer and dedicated `X-Subscriptions-Integration-Token`;
+`X-Correlation-ID` is optional. The entitlement reservation, trusted adapter and runtime contract
+flags must still be enabled. No owner proof or idempotency key is consumed or issued.
+
+The HTTP 200 response contains only:
+
+```json
+{
+  "schemaVersion": 1,
+  "operationId": "booking:example",
+  "subscriptionInstanceId": "subscription:example",
+  "operationState": "FAILED",
+  "compensationState": "APPLIED",
+  "releaseReason": "PROVIDER_REJECTED",
+  "providerBookingId": null
+}
+```
+
+`releaseReason` is `PROVIDER_REJECTED`, `BOOKING_CANCELLED`, or `null`; it never exposes arbitrary
+reconciliation text. The route skips mutation audit, sends `no-store`/`no-referrer`, opens the
+repository in verify-only mode, and reads one operation on the primary with majority read concern.
+The lookup binds operation, subscription instance, tenant, CLIENT actor/hash and BOOKING kind.
+Missing or foreign matches return the same 404. Malformed stored operations fail closed with 503.
+The current error envelope is unchanged, including anonymous entitlement-token rejection mapping
+to HTTP 401 `AUTH_REQUIRED`.
+
+This read does not refresh the 60-second owner proof, retry release, call a provider, or change an
+operation, aggregate, ledger, outbox or index. A confirmed provider rejection whose release
+committed but lost its response can therefore be observed after proof expiry. The LK consumer
+may finalize only its exact pinned operation/instance marker after the exact
+`FAILED / APPLIED / PROVIDER_REJECTED / null` response; every other state remains pending.
+No new signer or write authorization is implied by a readback.
+
+The physical Mongo suite adds a committed provider-rejection release with a lost response, moves
+the synthetic clock beyond proof TTL, confirms the old proof is rejected, and checks that readback
+returns the minimal state while all four business collections stay identical. This new scenario
+requires its own successful CI run; prior lifecycle CI results do not prove the added readback.
+Identity and quote policy remain synthetic, and provider/STAGING/PRODUCTION acceptance is separate.

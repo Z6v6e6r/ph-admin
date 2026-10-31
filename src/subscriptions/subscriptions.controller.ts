@@ -28,6 +28,7 @@ import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quo
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
 import {
   ConfirmSubscriptionEntitlementDto,
+  ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
 } from './dto/subscription-entitlement-lifecycle.dto';
@@ -59,6 +60,7 @@ import { SubscriptionPublicationService } from './subscription-publication.servi
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import {
   SubscriptionEntitlementLifecycleService,
+  SubscriptionEntitlementReadbackResult,
   SubscriptionEntitlementReserveResult,
   SubscriptionEntitlementTransitionResult
 } from './subscription-entitlement-lifecycle.service';
@@ -337,6 +339,20 @@ export class SubscriptionTrustedShadowController {
       correlationId: correlationId ?? null
     });
     return result;
+  }
+
+  @Post('entitlements/readback')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  readbackEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') _correlationId: string | undefined,
+    @Body() dto: ReadbackSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReadbackResult> {
+    return this.entitlements.readback(authorization, integrationToken, dto);
   }
 
   @Post('entitlements/reserve')
