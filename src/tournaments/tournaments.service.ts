@@ -1,3 +1,4 @@
+import { TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule } from './tournaments.types';
 import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
 import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
@@ -83,6 +84,7 @@ import {
 } from './tournaments.types';
 
 interface RegistrationInput {
+  trustedIdentity?: object;
   clientId?: string;
   name: string;
   phone: string;
@@ -190,6 +192,7 @@ interface PendingJoinPayment {
   checkoutUrl?: string;
   paymentExpiresAt?: string;
   eligibilitySnapshot?: {
+    genderDecision?: TournamentGenderDecision;
     decisionId: string;
     playerId: string;
     activityId: string;
@@ -556,6 +559,51 @@ export class TournamentsService {
     return { ...common, status: 'RESOLVED', owner, binding: { ...binding, mappingSha256 }, reason: null };
   }
 
+  private readonly trustedRegistrationIdentities = new WeakMap<object, { clientId?: string; phone: string }>();
+
+  private rememberRegistrationIdentity<T extends { clientId?: string; phone: string }>(client: T): T {
+    this.trustedRegistrationIdentities.set(client, { clientId: client.clientId, phone: client.phone });
+    return client;
+  }
+
+  private async checkGenderAdmission(tournament: CustomTournament, input: {
+    phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
+  }): Promise<{ ok: true; decision: TournamentGenderDecision } | {
+    ok: false; code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string;
+  }> {
+    const changed = { ok: false as const, code: 'TOURNAMENT_RULE_CHANGED' as const,
+      message: 'Правила турнира изменились или не подтверждены. Обновите страницу.' };
+    let rule: TournamentAdmissionRule | null;
+    try { rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id); }
+    catch { return changed; }
+    if (!rule || rule.updatedAt !== tournament.updatedAt || rule.gender !== tournament.gender) return changed;
+    if (rule.gender === 'MIXED') return { ok: true, decision: { ...rule,
+      playerGender: null, evaluatedAt: new Date().toISOString() } };
+    const unknown = { ok: false as const, code: 'PLAYER_GENDER_REQUIRED' as const,
+      message: 'Не удалось подтвердить пол в профиле. Укажите его в личном кабинете и повторите запись.' };
+    try {
+      let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
+      if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
+        const verified = await this.lkIdentityService.verifyTrustedBearer(input.vivaAuthorizationHeader);
+        identity = { clientId: verified.actor.clientId, phone: verified.actor.phoneNorm };
+      }
+      if (!identity?.clientId || this.normalizePhone(input.phone) !== identity.phone
+        || (input.clientId !== undefined && input.clientId !== identity.clientId)
+        || !this.vivaAdminService) return unknown;
+      const gender = await this.vivaAdminService.readTournamentProfileSex({
+        clientId: identity.clientId, phone: identity.phone
+      });
+      if (!gender) return unknown;
+      if (gender !== rule.gender) return { ok: false, code: 'GENDER_NOT_ALLOWED',
+        message: rule.gender === 'MALE' ? 'Этот турнир предназначен для мужчин.' : 'Этот турнир предназначен для женщин.' };
+      return { ok: true, decision: { ...rule, playerGender: gender, evaluatedAt: new Date().toISOString() } };
+    } catch { return unknown; }
+  }
+
+  private genderRefusal(tournament: CustomTournament, result: { code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string }): TournamentRegistrationResponse {
+    return { ok: false, ...result, tournamentId: tournament.id, tournamentSlug: tournament.slug };
+  }
+
   async resolveTrustedLkRegistrationClient(
     authorizationHeader?: string
   ): Promise<{ clientId?: string; name: string; phone: string; levelLabel?: string }> {
@@ -571,12 +619,12 @@ export class TournamentsService {
       clientId: actor.clientId,
       phone: actor.phoneNorm
     });
-    return {
+    return this.rememberRegistrationIdentity({
       clientId: actor.clientId,
       name: actor.name || actor.phoneNorm,
       phone: actor.phoneNorm,
       ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
-    };
+    });
   }
 
   async resolveCanonicalLkRegistrationClientByVerifiedPhone(input: {
@@ -599,12 +647,12 @@ export class TournamentsService {
     const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
       phone
     });
-    return {
+    return this.rememberRegistrationIdentity({
       ...(canonicalLevel?.clientId ? { clientId: canonicalLevel.clientId } : {}),
       name: this.pickString(input.name) ?? phone,
       phone,
       ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
-    };
+    });
   }
 
   async generateSchedule(
@@ -1436,6 +1484,25 @@ export class TournamentsService {
       }
     }
 
+    if (!this.findPendingJoinPayment(tournament, normalizedPhone ?? '')) {
+      const gender = await this.checkGenderAdmission(tournament, {
+        phone: normalizedPhone, clientId: normalizedClient.clientId,
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT]
+      });
+      if (!gender.ok) return { ok: false, code: gender.code, message: gender.message,
+        tournament: publicTournament, client: normalizedClient, access,
+        missingFields: [], waitlistAllowed: false, payment };
+      const occupied = tournament.participants.length + this.getPendingJoinPayments(tournament)
+        .filter(item => this.isCapacityHoldingPendingJoinPayment(item)).length;
+      if (gender.decision.gender !== 'MIXED' && !payment.required
+        && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA'
+        && occupied < Math.max(2, Number(tournament.maxPlayers || 0) || 8)) {
+        return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
+          message: 'Бесплатная внешняя запись для этого турнира пока недоступна. Нужен защищённый способ участия.',
+          tournament: publicTournament, client: normalizedClient, access, missingFields: [], waitlistAllowed: false, payment };
+      }
+    }
+
     if (missingFields.includes('phone')) {
       return {
         ok: false,
@@ -1597,22 +1664,6 @@ export class TournamentsService {
       };
     }
 
-    const participant = await this.enrichTournamentParticipantWithViva({
-      name: String(input.name || '').trim() || normalizedPhone,
-      phone: normalizedPhone,
-      levelLabel: normalizedLevel,
-      gender: input.gender ?? 'MIXED',
-      paymentStatus: payment.required ? 'PAID' : 'UNPAID',
-      status: 'REGISTERED' as const,
-      registeredAt: new Date().toISOString(),
-      paidAt: payment.required ? new Date().toISOString() : undefined,
-      notes: this.composeRegistrationNotes(
-        this.pickString(input.notes) ?? undefined,
-        payment,
-        input.selectedPurchaseOptionId
-      )
-    });
-
     const existingParticipant = tournament.participants.find(
       (item) => this.normalizePhone(item.phone) === normalizedPhone
     );
@@ -1643,6 +1694,29 @@ export class TournamentsService {
       };
     }
 
+    if (this.findPendingJoinPayment(tournament, normalizedPhone)) return {
+      ok: false, code: 'BOOKING_FAILED', message: 'Существующая оплата требует продолжения исходной операции.',
+      tournamentId: tournament.id, tournamentSlug: tournament.slug
+    };
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
+    const participant = await this.enrichTournamentParticipantWithViva({
+      name: String(input.name || '').trim() || normalizedPhone,
+      phone: normalizedPhone,
+      levelLabel: normalizedLevel,
+      gender: gender.decision.playerGender ?? 'MIXED',
+      paymentStatus: payment.required ? 'PAID' : 'UNPAID',
+      status: 'REGISTERED' as const,
+      registeredAt: new Date().toISOString(),
+      paidAt: payment.required ? new Date().toISOString() : undefined,
+      notes: this.composeRegistrationNotes(
+        this.pickString(input.notes) ?? undefined,
+        payment,
+        input.selectedPurchaseOptionId
+      )
+    });
+
     const maxPlayers = Math.max(2, Number(tournament.maxPlayers || 0) || 8);
     const reservedPaymentSeats = this.getPendingJoinPayments(tournament).filter(
       (item) => this.isCapacityHoldingPendingJoinPayment(item)
@@ -1656,9 +1730,12 @@ export class TournamentsService {
           waitlistReason: 'FULL'
         }
       ];
-      await this.updateCustom(tournament.id, {
-        waitlist: nextWaitlist
-      });
+      const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
+        tournament.id, normalizedPhone, nextWaitlist[nextWaitlist.length - 1], gender.decision
+      );
+      if (!appended) return this.genderRefusal(tournament, { code: 'TOURNAMENT_RULE_CHANGED', message: 'Состав или правила турнира изменились. Обновите страницу.' });
+      this.invalidatePublicDirectoryCache();
+      await this.publishTournamentToSelectedCommunities(await this.hydrateCustomTournament(appended));
       return {
         ok: true,
         code: 'WAITLISTED',
@@ -1670,6 +1747,11 @@ export class TournamentsService {
       };
     }
 
+    if (gender.decision.gender !== 'MIXED' && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA') {
+      return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        message: 'Для этого турнира нужна защищённая запись. Бесплатная внешняя запись пока недоступна; выберите защищённый способ участия, если он предложен.' };
+    }
     const vivaBookingCreated = await this.createSourceTournamentBooking(tournament, {
       name: participant.name,
       phone: normalizedPhone,
@@ -1690,7 +1772,7 @@ export class TournamentsService {
     const appended = await this.tournamentsPersistence.appendPublicParticipantIfCapacity(
       tournament.id,
       normalizedPhone,
-      participant
+      participant, gender.decision
     );
     if (!appended) {
       const current = await this.requireCustomBySlug(tournament.slug);
@@ -1914,6 +1996,15 @@ export class TournamentsService {
       routeExerciseId,
       tournamentPayload
     );
+    const rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
+    if (!rule || rule.gender !== 'MIXED' || rule.updatedAt !== tournament.updatedAt) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
+        message: 'Используйте защищённую запись на странице турнира. Этот способ оплаты недоступен для ограниченного турнира.' });
+    }
+    const suppliedClientId = this.pickString(clientRecord.id);
+    if (!authProfile.clientId || (suppliedClientId && suppliedClientId !== authProfile.clientId)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH', message: 'Не удалось подтвердить игрока.' });
+    }
     const booking = this.resolveBookingConfig(tournament);
     const bookingExerciseId =
       this.pickString(booking.vivaExerciseId)
@@ -1953,9 +2044,13 @@ export class TournamentsService {
     }
 
     const returnUrls = this.toRecord(body.returnUrls) ?? {};
+    const latestRule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
+    if (!latestRule || latestRule.gender !== rule.gender || latestRule.updatedAt !== rule.updatedAt) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', message: 'Правила изменились. Используйте защищённую запись на странице турнира.' });
+    }
     const vivaCheckout = await this.vivaAdminService.createTournamentEnergyCheckout({
       clientPhone,
-      clientId: this.pickString(clientRecord.id) ?? authProfile.clientId,
+      clientId: authProfile.clientId,
       studioId,
       paymentMethod: 'SMS',
       baseAmountMinor: pricing.baseAmountMinor,
@@ -2167,6 +2262,9 @@ export class TournamentsService {
       };
     }
 
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
     if (selectedClientSubscription) {
       return this.startPublicJoinSubscriptionBooking(
         tournament,
@@ -2174,7 +2272,8 @@ export class TournamentsService {
         selectedClientSubscription,
         normalizedPhone,
         normalizedLevel,
-        input
+        input,
+        gender.decision
       );
     }
 
@@ -2202,11 +2301,11 @@ export class TournamentsService {
       eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
         tournament,
         normalizedPhone,
-        normalizedLevel
+        normalizedLevel, gender.decision
       ),
       createdAt: new Date().toISOString()
     };
-    const reserved = await this.savePendingJoinPayment(tournament, pending);
+    const reserved = await this.savePendingJoinPayment(tournament, pending, gender.decision);
     if (!reserved) {
       return {
         ok: false,
@@ -2372,11 +2471,14 @@ export class TournamentsService {
       };
     }
 
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
     const participant = await this.enrichTournamentParticipantWithViva({
       name: String(input.name || '').trim() || normalizedPhone,
       phone: normalizedPhone,
       levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
-      gender: input.gender ?? 'MIXED',
+      gender: gender.decision.playerGender ?? 'MIXED',
       paymentStatus: 'UNPAID',
       status: 'WAITLIST' as const,
       waitlistReason: 'LEVEL_MISMATCH',
@@ -2385,9 +2487,12 @@ export class TournamentsService {
     });
 
     const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
-    await this.updateCustom(tournament.id, {
-      waitlist: nextWaitlist
-    });
+    const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
+      tournament.id, normalizedPhone, participant, gender.decision
+    );
+    if (!appended) return this.genderRefusal(tournament, { code: 'TOURNAMENT_RULE_CHANGED', message: 'Состав или правила турнира изменились. Обновите страницу.' });
+    this.invalidatePublicDirectoryCache();
+    await this.publishTournamentToSelectedCommunities(await this.hydrateCustomTournament(appended));
 
     return {
       ok: true,
@@ -2461,10 +2566,20 @@ export class TournamentsService {
     const userInfo = verifiedClaims
       ? await this.fetchLkUserInfoSafe(token)
       : await this.fetchLkUserInfo(token);
-    const merged = {
-      ...(claims ?? {}),
-      ...(userInfo ?? {})
-    };
+    // Decoded fallback claims may deny an expired token, but never grant identity.
+    // Successful authenticated userinfo is the sole authority when signature verification failed.
+    if (verifiedClaims && userInfo) {
+      for (const extract of [this.extractLkAuthPhone, this.extractLkAuthClientId, this.extractLkAuthTenantKey]) {
+        const signed = extract.call(this, verifiedClaims);
+        const observed = extract.call(this, userInfo);
+        if (signed && observed && signed !== observed) {
+          throw new ForbiddenException('Verified checkout identity sources disagree');
+        }
+      }
+    }
+    const merged = verifiedClaims
+      ? { ...verifiedClaims, ...(userInfo ?? {}) }
+      : (userInfo ?? {});
     const phone = this.extractLkAuthPhone(merged);
     if (!phone) {
       throw new UnauthorizedException('LK auth token does not contain a phone');
@@ -6204,6 +6319,14 @@ export class TournamentsService {
     const snapshotResult = this.pickString(rawSnapshot?.result);
     const snapshotActivityType = this.pickString(rawSnapshot?.activityType);
     const snapshotReasonCode = this.pickString(rawSnapshot?.reasonCode);
+    const rawGender = this.toRecord(rawSnapshot?.genderDecision);
+    const genderDecision: TournamentGenderDecision | undefined = rawGender
+      && ['MALE', 'FEMALE', 'MIXED'].includes(String(rawGender.gender))
+      && (rawGender.gender === 'MIXED' ? rawGender.playerGender === null : rawGender.playerGender === rawGender.gender)
+      && typeof rawGender.updatedAt === 'string' && Number.isFinite(Date.parse(rawGender.updatedAt))
+      && typeof rawGender.evaluatedAt === 'string' && Number.isFinite(Date.parse(rawGender.evaluatedAt))
+      ? { gender: rawGender.gender as TournamentGender, playerGender: rawGender.playerGender as 'MALE' | 'FEMALE' | null,
+        updatedAt: rawGender.updatedAt, evaluatedAt: rawGender.evaluatedAt } : undefined;
     const eligibilitySnapshot = rawSnapshot
       && this.pickString(rawSnapshot.decisionId)
       && this.pickString(rawSnapshot.playerId)
@@ -6212,6 +6335,7 @@ export class TournamentsService {
       && (snapshotResult === 'ALLOWED' || snapshotResult === 'WARNING')
       && (snapshotReasonCode === 'LEVEL_ALLOWED' || snapshotReasonCode === 'LEVEL_NOT_RESTRICTED')
       ? {
+          ...(genderDecision ? { genderDecision } : {}),
           decisionId: this.pickString(rawSnapshot.decisionId) as string,
           playerId: this.pickString(rawSnapshot.playerId) as string,
           activityId: this.pickString(rawSnapshot.activityId) as string,
@@ -6339,7 +6463,8 @@ export class TournamentsService {
   private buildTournamentEligibilitySnapshot(
     tournament: CustomTournament,
     playerId: string,
-    levelLabel?: string
+    levelLabel?: string,
+    genderDecision?: TournamentGenderDecision
   ): NonNullable<PendingJoinPayment['eligibilitySnapshot']> {
     const evaluatedAt = new Date().toISOString();
     const playerLevel = this.parseLevelDescriptor(levelLabel);
@@ -6353,6 +6478,7 @@ export class TournamentsService {
       ? Math.max(...activityLevels.map((value) => value.maxScore))
       : undefined;
     return {
+      ...(genderDecision ? { genderDecision } : {}),
       decisionId: randomUUID(),
       playerId,
       activityId: tournament.id,
@@ -6528,7 +6654,8 @@ export class TournamentsService {
     subscription: TournamentClientSubscription,
     normalizedPhone: string,
     normalizedLevel: string | undefined,
-    input: JoinPurchaseTransactionInput
+    input: JoinPurchaseTransactionInput,
+    genderDecision: TournamentGenderDecision
   ): Promise<TournamentRegistrationResponse> {
     const clientId = this.pickString(input.clientId);
     const exerciseId = this.pickString(booking.vivaExerciseId);
@@ -6563,11 +6690,11 @@ export class TournamentsService {
       eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
         tournament,
         normalizedPhone,
-        normalizedLevel
+        normalizedLevel, genderDecision
       ),
       createdAt: new Date().toISOString()
     };
-    if (!await this.savePendingJoinPayment(tournament, pending)) {
+    if (!await this.savePendingJoinPayment(tournament, pending, genderDecision)) {
       return {
         ok: false,
         code: 'BOOKING_FAILED',
@@ -6828,7 +6955,7 @@ export class TournamentsService {
       name: pending.name ?? fallback.fallbackName ?? pending.phone,
       phone: pending.phone,
       levelLabel: pending.levelLabel ?? fallback.fallbackLevelLabel,
-      gender: 'MIXED',
+      gender: pending.eligibilitySnapshot?.genderDecision?.playerGender ?? 'MIXED',
       paymentStatus: 'PAID',
       status: 'REGISTERED',
       registeredAt: paidAt,
@@ -6875,12 +7002,13 @@ export class TournamentsService {
 
   private async savePendingJoinPayment(
     tournament: CustomTournament,
-    pending: PendingJoinPayment
+    pending: PendingJoinPayment,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<boolean> {
     const enrichedPending = await this.enrichPendingJoinPaymentWithViva(pending);
     const reserved = await this.tournamentsPersistence.reservePublicJoinPayment(
       tournament.id,
-      enrichedPending as unknown as Record<string, unknown>
+      enrichedPending as unknown as Record<string, unknown>, admissionRule
     );
     if (reserved) {
       this.invalidatePublicDirectoryCache();

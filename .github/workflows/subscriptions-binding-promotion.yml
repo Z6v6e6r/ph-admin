@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031]
   push:
     branches: [main]
 
@@ -60,6 +60,8 @@ jobs:
           npx ts-node test/tournament-public-payment-binding.test.ts
           npx ts-node test/tournament-public-join-flow.test.ts
           npx ts-node test/tournament-public-payment-attempt-persistence.test.ts
+          npx ts-node test/tournament-gender-admission.test.ts
+          npx ts-node test/tournaments-custom-energy-checkout.test.ts
           node --test test/tournament-public-pending-reconciliation.test.mjs
           node --test test/tournament-reconciliation-target.test.mjs test/tournament-reconciliation-report.test.mjs
           npx ts-node test/viva-admin-payment-log-redaction.test.ts

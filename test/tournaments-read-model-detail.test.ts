@@ -53,6 +53,7 @@ function createCustomTournament(source: Tournament): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['D+', 'C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 12,
     participants: [
       {
@@ -408,6 +409,7 @@ async function main(): Promise<void> {
     details: {}
   };
   let unavailableLiveDetailCalls = 0;
+  let unavailableRuleReads = 0;
   let unavailableBookingCalls = 0;
   let unavailableUpdateCalls = 0;
   const unavailableService = new TournamentsService(
@@ -426,6 +428,11 @@ async function main(): Promise<void> {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      readPublicAdmissionRule: async (id: string) => {
+        assert.equal(id, unavailableCustom.id);
+        unavailableRuleReads += 1;
+        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z' };
+      },
       findCustomTournamentById: async (id: string) =>
         id === unavailableCustom.id ? unavailableCustom : null,
       findCustomTournamentBySourceTournamentId: async (id: string) =>
@@ -472,6 +479,7 @@ async function main(): Promise<void> {
     globalThis.fetch = originalFetch;
   }
   assert.equal(unavailableLiveDetailCalls, 2);
+  assert.equal(unavailableRuleReads, 1, "Valid raw rule must reach the unknown-owner guard");
   assert.equal(unavailableBookingCalls, 0);
   assert.equal(unavailableUpdateCalls, 0);
 
@@ -494,6 +502,7 @@ async function main(): Promise<void> {
       }
     }
   };
+  let nonVivaRuleReads = 0;
   let nonVivaBookingCalls = 0;
   let nonVivaUpdateCalls = 0;
   const nonVivaService = new TournamentsService(
@@ -509,6 +518,11 @@ async function main(): Promise<void> {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      readPublicAdmissionRule: async (id: string) => {
+        assert.equal(id, nonVivaCustom.id);
+        nonVivaRuleReads += 1;
+        return { gender: 'MIXED', updatedAt: '2026-10-31T10:00:00.000Z' };
+      },
       findCustomTournamentById: async (id: string) => id === nonVivaCustom.id ? nonVivaCustom : null,
       findCustomTournamentBySourceTournamentId: async (id: string) =>
         id === nonVivaCustom.sourceTournamentId ? nonVivaCustom : null,
@@ -516,9 +530,14 @@ async function main(): Promise<void> {
         id === nonVivaCustom.exerciseId ? nonVivaCustom : null,
       findCustomTournamentBySlug: async (slug: string) =>
         slug === nonVivaCustom.slug ? nonVivaCustom : null,
-      appendPublicParticipantIfCapacity: async (id: string, phone: string, participant: { phone?: string }) => {
+      appendPublicParticipantIfCapacity: async (
+        id: string, phone: string, participant: { phone?: string },
+        admissionRule: { gender: string; updatedAt: string }
+      ) => {
         assert.equal(id, nonVivaCustom.id);
         assert.equal(phone, participant.phone);
+        assert.equal(admissionRule.gender, 'MIXED');
+        assert.equal(admissionRule.updatedAt, nonVivaCustom.updatedAt);
         nonVivaUpdateCalls += 1;
         return nonVivaCustom;
       },
@@ -554,6 +573,7 @@ async function main(): Promise<void> {
   } finally {
     globalThis.fetch = originalFetch;
   }
+  assert.equal(nonVivaRuleReads, 1);
   assert.equal(nonVivaBookingCalls, 0);
   assert.equal(nonVivaUpdateCalls, 1);
 
