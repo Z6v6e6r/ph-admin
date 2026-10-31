@@ -148,3 +148,86 @@ export function verifyOwnerEvidence(input: {
     issuedAt: row.issuedAt,
   };
 }
+
+/** Release has its own signature domain: proof of booking creation is not proof of cancellation. */
+export const OWNER_RELEASE_EVIDENCE_PREFIX = 'release-v1';
+const RELEASE_HMAC_CONTEXT = 'owner-evidence:release:v1\0';
+
+export interface OwnerReleaseEvidenceClaims {
+  readonly operationId: string;
+  readonly reason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED';
+  readonly providerBookingId: string | null;
+  readonly issuedAt: string;
+}
+
+function releaseClaims(value: unknown): OwnerReleaseEvidenceClaims {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('OWNER_EVIDENCE_MALFORMED');
+  const row = value as Record<string, unknown>;
+  if (Object.keys(row).sort().join(',') !== 'issuedAt,operationId,providerBookingId,reason'
+    || typeof row.operationId !== 'string' || !ID_PATTERN.test(row.operationId)
+    || !['PROVIDER_REJECTED', 'BOOKING_CANCELLED'].includes(String(row.reason))
+    || (row.reason === 'PROVIDER_REJECTED'
+      ? row.providerBookingId !== null
+      : typeof row.providerBookingId !== 'string' || !ID_PATTERN.test(row.providerBookingId))
+    || typeof row.issuedAt !== 'string' || !Number.isFinite(Date.parse(row.issuedAt))
+    || new Date(row.issuedAt).toISOString() !== row.issuedAt) {
+    fail('OWNER_EVIDENCE_MALFORMED');
+  }
+  return {
+    operationId: row.operationId,
+    reason: row.reason as OwnerReleaseEvidenceClaims['reason'],
+    providerBookingId: row.providerBookingId as string | null,
+    issuedAt: row.issuedAt,
+  };
+}
+
+function releaseSignature(secret: string, encoded: string): string {
+  return createHmac('sha256', secret).update(`${RELEASE_HMAC_CONTEXT}${encoded}`).digest('hex');
+}
+
+export function createOwnerReleaseEvidence(input: OwnerReleaseEvidenceClaims, secret: string): string {
+  if (Buffer.byteLength(secret, 'utf8') < 32) fail('OWNER_EVIDENCE_CONFIGURATION_INVALID');
+  const claims = releaseClaims(input);
+  const encoded = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
+  return `${OWNER_RELEASE_EVIDENCE_PREFIX}.${encoded}.${releaseSignature(secret, encoded)}`;
+}
+
+export function verifyOwnerReleaseEvidence(input: {
+  readonly evidence: string | undefined;
+  readonly config: OwnerEvidenceConfig;
+  readonly operationId: string;
+  readonly reason: OwnerReleaseEvidenceClaims['reason'];
+  readonly providerBookingId: string | null;
+  readonly now: Date;
+}): OwnerReleaseEvidenceClaims {
+  if (!Number.isFinite(input.now.getTime()) || Buffer.byteLength(input.config.secret, 'utf8') < 32
+    || !Number.isInteger(input.config.maxAgeSeconds)
+    || input.config.maxAgeSeconds < 10 || input.config.maxAgeSeconds > 300) {
+    fail('OWNER_EVIDENCE_CONFIGURATION_INVALID');
+  }
+  if (!input.evidence) fail('OWNER_EVIDENCE_REQUIRED');
+  if (input.evidence.length > 2048) fail('OWNER_EVIDENCE_MALFORMED');
+  const parts = input.evidence.split('.');
+  if (parts.length !== 3 || parts[0] !== OWNER_RELEASE_EVIDENCE_PREFIX
+    || !/^[A-Za-z0-9_-]+$/.test(parts[1]) || !HMAC_PATTERN.test(parts[2])) {
+    fail('OWNER_EVIDENCE_MALFORMED');
+  }
+  const encoded = parts[1];
+  if (!timingSafeEqual(Buffer.from(parts[2], 'hex'), Buffer.from(releaseSignature(input.config.secret, encoded), 'hex'))) {
+    fail('OWNER_EVIDENCE_SIGNATURE_INVALID');
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch {
+    fail('OWNER_EVIDENCE_MALFORMED');
+  }
+  const claims = releaseClaims(value);
+  // Exact canonical encoding rejects duplicate JSON keys, aliases, extra claims and alternate spellings.
+  if (Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url') !== encoded) fail('OWNER_EVIDENCE_MALFORMED');
+  if (claims.operationId !== input.operationId || claims.reason !== input.reason
+    || claims.providerBookingId !== input.providerBookingId) fail('OWNER_EVIDENCE_BINDING_MISMATCH');
+  const ageMs = input.now.getTime() - Date.parse(claims.issuedAt);
+  if (ageMs < -60_000 || ageMs > input.config.maxAgeSeconds * 1000) fail('OWNER_EVIDENCE_EXPIRED');
+  return claims;
+}

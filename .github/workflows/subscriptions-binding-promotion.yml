@@ -100,6 +100,10 @@ jobs:
       - run: npm run test:subscriptions-synthetic-projection:mongo
         env:
           SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - name: Canonical entitlement Mongo concurrency and recovery
+        run: npm run test:subscriptions-entitlement-lifecycle:mongo
+        env:
+          SUBSCRIPTIONS_ENTITLEMENT_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:subscriptions-runtime:mongo
         env:
           SUBSCRIPTIONS_TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0

@@ -8,6 +8,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ConfirmSubscriptionEntitlementDto,
+  ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
 } from './dto/subscription-entitlement-lifecycle.dto';
@@ -21,7 +22,8 @@ import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.serv
 import {
   loadOwnerEvidenceConfig,
   OwnerEvidenceError,
-  verifyOwnerEvidence
+  verifyOwnerEvidence,
+  verifyOwnerReleaseEvidence
 } from './owner-evidence.verifier';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
@@ -60,6 +62,16 @@ export interface SubscriptionEntitlementTransitionResult {
   operationState: StoredSubscriptionRuntimeOperation['state'];
 }
 
+export interface SubscriptionEntitlementReadbackResult {
+  schemaVersion: 1;
+  operationId: string;
+  subscriptionInstanceId: string;
+  operationState: StoredSubscriptionRuntimeOperation['state'];
+  compensationState: StoredSubscriptionRuntimeOperation['compensationState'];
+  releaseReason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | null;
+  providerBookingId: string | null;
+}
+
 /**
  * A paid fallback is allowed only when the product rule explicitly says so. The historical
  * universal special case treated the sole active-services blocker as full price; that is now a
@@ -86,6 +98,40 @@ export class SubscriptionEntitlementLifecycleService {
     private readonly shadowQuote: SubscriptionShadowQuoteService,
     private readonly repository: SubscriptionsRepository
   ) {}
+
+  async readback(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: ReadbackSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReadbackResult> {
+    this.assertEnabled();
+    const identity = await this.adapter.resolveEntitlementIdentity(authorizationHeader, integrationToken);
+    let operation: StoredSubscriptionRuntimeOperation | null;
+    try {
+      operation = await this.repository.runtimeEntitlementOperationReadback({
+        operationId: dto.operationId,
+        subscriptionInstanceId: dto.subscriptionInstanceId,
+        tenantId: identity.tenantId,
+        actorId: identity.clientRefHash
+      });
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_READBACK_UNAVAILABLE',
+        message: 'Subscription entitlement readback is unavailable'
+      });
+    }
+    if (!operation) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Entitlement operation not found' });
+    const reason = operation.lastReconciliationResult;
+    return {
+      schemaVersion: 1,
+      operationId: operation.operationId,
+      subscriptionInstanceId: dto.subscriptionInstanceId,
+      operationState: operation.state,
+      compensationState: operation.compensationState,
+      releaseReason: reason === 'PROVIDER_REJECTED' || reason === 'BOOKING_CANCELLED' ? reason : null,
+      providerBookingId: operation.providerCorrelationId
+    };
+  }
 
   async reserve(
     authorizationHeader: string | undefined,
@@ -315,9 +361,11 @@ export class SubscriptionEntitlementLifecycleService {
   async release(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
-    dto: ReleaseSubscriptionEntitlementDto
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence?: string
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
+    this.requireOwnerReleaseEvidence(dto, ownerEvidence);
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -326,6 +374,14 @@ export class SubscriptionEntitlementLifecycleService {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const operation = await this.ownedOperation(identity, dto.operationId);
       if (['FAILED', 'COMPENSATED'].includes(operation.state)) {
+        if (operation.compensationState !== 'APPLIED'
+          || operation.lastReconciliationResult !== dto.reason
+          || operation.providerCorrelationId !== (dto.providerBookingId ?? null)) {
+          throw new ConflictException({
+            code: 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH',
+            message: 'Release replay does not match the completed release'
+          });
+        }
         return this.transitionResult(
           'RELEASED',
           true,
@@ -698,6 +754,42 @@ export class SubscriptionEntitlementLifecycleService {
         throw new ForbiddenException({
           code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
           message: 'Booking confirmation requires trusted owner evidence'
+        });
+      }
+      throw error;
+    }
+  }
+
+  private requireOwnerReleaseEvidence(
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence: string | undefined
+  ): void {
+    if (!['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
+    )) return;
+    let config;
+    try {
+      config = loadOwnerEvidenceConfig();
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_CONFIG_INVALID',
+        message: 'Owner evidence is not configured'
+      });
+    }
+    try {
+      verifyOwnerReleaseEvidence({
+        evidence: ownerEvidence,
+        config,
+        operationId: dto.operationId,
+        reason: dto.reason,
+        providerBookingId: dto.providerBookingId ?? null,
+        now: this.now()
+      });
+    } catch (error) {
+      if (error instanceof OwnerEvidenceError) {
+        throw new ForbiddenException({
+          code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
+          message: 'Entitlement release requires trusted owner evidence'
         });
       }
       throw error;

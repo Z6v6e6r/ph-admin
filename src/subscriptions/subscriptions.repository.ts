@@ -2230,6 +2230,31 @@ export class SubscriptionsRepository {
     }
   }
 
+  async runtimeEntitlementOperationReadback(input: {
+    operationId: string;
+    subscriptionInstanceId: string;
+    tenantId: string;
+    actorId: string;
+  }): Promise<StoredSubscriptionRuntimeOperation | null> {
+    this.assertRuntimeContractsEnabled();
+    await this.connectReadOnly();
+    const operation = await this.runtimeOperations().findOne({
+      operationId: input.operationId,
+      subscriptionInstanceId: input.subscriptionInstanceId,
+      tenantId: input.tenantId,
+      'actor.type': 'CLIENT',
+      'actor.actorId': input.actorId,
+      kind: 'BOOKING'
+    }, { projection: { _id: 0 }, readPreference: 'primary', readConcern: { level: 'majority' } });
+    if (operation) {
+      validateStoredSubscriptionRuntimeOperation(operation);
+      if (operation.decision?.decisionKind !== 'ENTITLEMENT') {
+        throw new SubscriptionRuntimeContractError('SUBSCRIPTION_OPERATION_ENTITLEMENT_DECISION_REQUIRED');
+      }
+    }
+    return operation;
+  }
+
   async runtimeOperationById(operationId: string): Promise<StoredSubscriptionRuntimeOperation | null> {
     this.assertRuntimeContractsEnabled();
     const row = await this.runtimeOperations().findOne(

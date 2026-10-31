@@ -65,3 +65,13 @@ export class ReleaseSubscriptionEntitlementDto {
   @Matches(ID_PATTERN)
   providerBookingId?: string;
 }
+
+export class ReadbackSubscriptionEntitlementDto {
+  @IsString()
+  @Matches(ID_PATTERN)
+  operationId!: string;
+
+  @IsString()
+  @Matches(ID_PATTERN)
+  subscriptionInstanceId!: string;
+}
