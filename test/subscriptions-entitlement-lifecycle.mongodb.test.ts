@@ -517,6 +517,7 @@ async function run(): Promise<void> {
       actorData.mapping.subscriptionTypeId += ':actor3';
       actorData.mapping.providerScope = { kind: 'TENANT', scopeId: 'iSkq6G' };
       actorData.publication.publicationId += ':actor3';
+      actorData.publication.idempotency = { ...actorData.publication.idempotency!, key: 'quarter-actor-v3-publication-key' };
       actorData.publication.mappingId = actorData.mapping.mappingId;
       actorData.publication.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
       actorData.publication.runtimeProjection.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
