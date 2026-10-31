@@ -1,11 +1,14 @@
 import { assertQuarterCorrespondence, parseQuarterIntake, quarterBinding, quarterTargetEvidence, quarterPriceEvidence, QUARTER_EVENT, CreateQuarterProvenance } from './subscription-create-quarter-contract';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { validateStoredSubscriptionCanonicalTargetSnapshot } from './subscription-runtime-contracts';
+import { Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { validateStoredSubscriptionCanonicalTargetSnapshot, validateStoredSubscriptionInstance, validateStoredSubscriptionProviderMapping } from './subscription-runtime-contracts';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionCanonicalTargetSnapshot,
+  StoredSubscriptionInstance,
   SubscriptionAction
 } from './subscriptions.types';
 
@@ -130,15 +133,21 @@ export function parseCanonicalTargetIntakeBody(value: unknown): CanonicalTargetI
  */
 @Injectable()
 export class CanonicalTargetIntakeService {
-  public constructor(private readonly repository: SubscriptionsRepository) {}
+  public constructor(
+    private readonly repository: SubscriptionsRepository,
+    @Optional() private readonly trustedIdentity?: SubscriptionTrustedShadowAdapterService
+  ) {}
 
   public async ingest(
     integrationToken: string | undefined,
     body: unknown,
-    options: { readonly now?: () => Date } = {}
+    options: { readonly now?: () => Date; readonly authorizationHeader?: string } = {}
   ): Promise<CanonicalTargetIntakeResult> {
     this.assertEnabledAndConfigured();
     this.assertIntegrationToken(integrationToken);
+    if (record(body) && body.contractVersion === 3) {
+      return this.ingestActorQuarter(integrationToken, options.authorizationHeader, body, options.now?.() ?? new Date());
+    }
     const tenantId = this.runtimeTenantId();
     if (record(body) && Object.prototype.hasOwnProperty.call(body, 'contractVersion')) {
       return this.ingestQuarter(tenantId, body, options.now?.() ?? new Date());
@@ -199,7 +208,34 @@ export class CanonicalTargetIntakeService {
     return { ...identity(target), snapshotId: existing.snapshotId, replay: true };
   }
 
-  private async ingestQuarter(tenantId: string, body: unknown, now: Date): Promise<CanonicalTargetIntakeResult> {
+  private async ingestActorQuarter(
+    token: string | undefined, authorization: string | undefined, body: Record<string, unknown>, now: Date
+  ): Promise<CanonicalTargetIntakeResult> {
+    // Authenticate before any database read. Public LK2 tenant UUIDs are not CUP tenant keys.
+    if (!this.trustedIdentity) throw new CanonicalTargetIntakeError(503, 'CANONICAL_TARGET_ACTOR_UNAVAILABLE');
+    const actor = await this.trustedIdentity.resolveTargetIntakeIdentity(authorization, token);
+    if (Object.prototype.hasOwnProperty.call(body, 'clientRefHash')
+      || body.state !== 'ACTIVE' || typeof body.subscriptionInstanceId !== 'string'
+      || !ID_PATTERN.test(body.subscriptionInstanceId) || /[\r\n]/.test(body.subscriptionInstanceId)) {
+      throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID');
+    }
+    const { subscriptionInstanceId, ...facts } = body;
+    let input: ReturnType<typeof parseQuarterIntake>;
+    try { input = parseQuarterIntake({ ...facts, contractVersion: 2, clientRefHash: actor.clientRefHash }); }
+    catch { throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID'); }
+    await this.repository.connectReadOnly();
+    const instance = await this.repository.runtimeInstanceByTenantAndId(actor.tenantId, subscriptionInstanceId);
+    try { if (!instance) throw new Error(); validateStoredSubscriptionInstance(instance); }
+    catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH'); }
+    if (!instance || instance.tenantId !== actor.tenantId || instance.clientRefHash !== actor.clientRefHash
+      || instance.subscriptionInstanceId !== subscriptionInstanceId || instance.provider !== 'VIVA' || instance.state !== 'ACTIVE'
+      || instance.subscriptionTypeId !== input.subscriptionTypeId || instance.policyVersion !== input.policyVersion) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+    }
+    return this.ingestQuarter(actor.tenantId, input, now, instance);
+  }
+
+  private async ingestQuarter(tenantId: string, body: unknown, now: Date, ownedInstance?: StoredSubscriptionInstance): Promise<CanonicalTargetIntakeResult> {
     let input: ReturnType<typeof parseQuarterIntake>;
     try { input = parseQuarterIntake(body); } catch { throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID'); }
     const staleness = Number(process.env.SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS);
@@ -214,9 +250,29 @@ export class CanonicalTargetIntakeService {
     await this.repository.connectReadOnly();
     const publication = await this.repository.runtimePolicyPublicationByVersion(input.subscriptionTypeId, input.policyVersion);
     if (!publication) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    if (ownedInstance && (publication.policyDigest !== ownedInstance.policyDigest
+      || publication.mappingId !== ownedInstance.mappingId || publication.publicationId !== input.publicationId)) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+    }
     const mapping = await this.repository.runtimeProviderMappingById(publication.mappingId);
     if (!mapping || mapping.tenantId !== tenantId || mapping.state !== 'VERIFIED' || mapping.provider !== 'VIVA'
       || mapping.subscriptionTypeId !== input.subscriptionTypeId) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    if (ownedInstance) {
+      try { validateStoredSubscriptionProviderMapping(mapping); }
+      catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH'); }
+      const fresh = (value: string | null) => Boolean(value && Number.isFinite(Date.parse(value))
+        && Date.parse(value) <= now.getTime() && now.getTime() - Date.parse(value) <= staleness * 1000);
+      if (mapping.mappingId !== ownedInstance.mappingId || mapping.providerProductId !== ownedInstance.providerProductId
+        || (mapping.providerScope.kind === 'TENANT' && mapping.providerScope.scopeId !== tenantId)
+        || (mapping.providerScope.kind === 'STATION' && mapping.providerScope.scopeId !== ownedInstance.homeStationId)
+        || mapping.providerScope.kind === 'STUDIO'
+        || (mapping.providerScope.kind === 'STATION_SET'
+          && !subscriptionProviderScopeMatchesProjection(mapping.providerScope, publication.runtimeProjection, tenantId))
+        || publication.state === 'DISABLED_FOR_NEW_OPERATIONS' || !fresh(mapping.verifiedAt)
+        || ownedInstance.reconciliation.state !== 'CURRENT' || !fresh(ownedInstance.reconciliation.asOf)) {
+        throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+      }
+    }
     let descriptor: ReturnType<typeof assertQuarterCorrespondence>;
     try { descriptor = assertQuarterCorrespondence(input, publication); }
     catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_MISMATCH'); }

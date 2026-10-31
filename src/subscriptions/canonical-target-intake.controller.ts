@@ -20,8 +20,9 @@ import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
 /**
  * Server-to-server registration of authoritative canonical activity targets for LK2.
  *
- * The endpoint accepts only the internal integration token and already-resolved facts. It never
- * accepts actor identity, performs no evaluation and mutates no booking or entitlement state.
+ * Legacy inputs retain token-only resolved-fact authority. Version 3 additionally verifies the
+ * original actor Bearer and derives private identity inside CUP. Neither path evaluates eligibility
+ * or mutates booking/entitlement state.
  */
 @Controller('internal/subscriptions')
 @Roles()
@@ -35,10 +36,11 @@ export class CanonicalTargetIntakeController {
   @Header('Referrer-Policy', 'no-referrer')
   public async ingest(
     @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
-    @Body() body: unknown
+    @Body() body: unknown,
+    @Headers('authorization') authorizationHeader?: string
   ): Promise<CanonicalTargetIntakeResult> {
     try {
-      return await this.intake.ingest(integrationToken, body);
+      return await this.intake.ingest(integrationToken, body, { authorizationHeader });
     } catch (error) {
       if (error instanceof CanonicalTargetIntakeError) {
         throw new HttpException(

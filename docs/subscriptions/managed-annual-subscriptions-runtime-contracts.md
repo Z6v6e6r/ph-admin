@@ -327,4 +327,44 @@ stores schema-4 publication/schema-2 target through the real repository, checks 
 duplicate/conflict behavior, and reserves/replays after lost ACK with real Mongo transactions.
 It reuses the existing unique owned DB, replica-set URI guard, index fixture and cleanup; it is
 not run or provisioned locally. Its physical result remains pending until automatic CI runs.
-Full automatic CI, normal instance adoption and the separate LK producer remain dependencies.
+At the schema-4 target packet boundary, full automatic CI, normal instance adoption
+and the separate LK producer were dependencies. The subsequent FULL_RECONCILIATION
+source packet supplies opt-in instance adoption; actor-bound intake and its paired
+LK owner are described below. None of these source packets proves runtime activation.
+
+### Actor-bound CREATE target intake, version 3
+
+The same `POST /internal/subscriptions/canonical-targets` accepts `contractVersion: 3`
+for the private LK CREATE owner. It requires the existing target-ingest integration token
+and the original actor Bearer. The target-ingest and trusted-shadow-adapter flags must both
+be enabled; this source change creates/enables no credential or flag.
+
+The exact body is version-2 quarter input minus `clientRefHash`, plus
+`subscriptionInstanceId`, with `contractVersion: 3` and `state: ACTIVE`. Extra properties,
+caller tenant fields/hash and revocation are rejected. CUP verifies the Bearer's canonical
+tenant key against configured runtime tenant, derives the existing private client HMAC
+inside CUP, and reads the exact owned instance. Instance policy/digest, mapping/product/scope,
+ACTIVE state, current reconciliation, mapping freshness and the approved schema-4 descriptor must match
+before the existing schema-2 target insert. Public PadlHub tenant UUIDs never substitute for
+the canonical CUP tenant key. The previous UUID-only token-authorized v1/v2 paths are unchanged.
+
+The response retains only `targetId`, `action`, `revision`, `snapshotId`, `replay`; it exposes
+no identity HMAC, provider client identity or token. Existing authenticated CREATE preflight
+returns the existing immutable expectations. Intake does not grant eligibility, reserve
+usage, charge, book, publish a policy or create indexes. Freshness and exact-revision conflict
+checks remain active on intake replay. LK must durably retain its original target/instance/
+expectations before reserve, never use intake to refresh evidence after an ambiguous write.
+
+The paired LK owner is the concrete consumer: verified original draft and server catalogue/
+whole-court price observations produce this input; provider CREATE remains a separate,
+once-dispatched canonical owner operation. Activation requires that matched owner, approved
+publication/instance-adoption evidence, existing purpose-bound credentials, physical CI and
+separate runtime/provider acceptance. Disabling intake blocks new snapshots and never releases
+or repeats an already attempted booking. No production settings are changed by this packet.
+
+The identical synthetic `quarter-create-owner-v1.json` fixture is consumed by actual
+LK producer/owner tests and CUP intake/resolver/evaluator/reserve tests. The existing
+CI-only entitlement Mongo harness additionally exercises actor-bound v3, canonical
+non-UUID tenant and server-derived hash, cross-connection target reads and transactional
+reserve/lost-ACK replay. Its identity verifier/provider facts are synthetic; it does
+not call a provider. The harness reuses its existing guarded rs0 service and owned DB.

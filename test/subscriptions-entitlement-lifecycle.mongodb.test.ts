@@ -1,6 +1,8 @@
 import { quarterFixture, quarterIntakeBody, QUARTER_NOW, QUARTER_TENANT, QUARTER_TOKEN,
   QuarterResolver, QuarterQuote, QuarterLifecycle } from './subscriptions-create-quarter.test';
 import { CanonicalTargetIntakeService } from '../src/subscriptions/canonical-target-intake.service';
+import { SubscriptionTrustedShadowAdapterService, computeSubscriptionClientRefHash } from '../src/subscriptions/subscription-trusted-shadow-adapter.service';
+import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
 import * as assert from 'node:assert/strict';
 import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { createHash, randomUUID } from 'node:crypto';
@@ -446,7 +448,9 @@ async function run(): Promise<void> {
     // Same already-owned isolated replica-set DB/index plan; no ambient DB or extra service.
     const quarterSettings = { SUBSCRIPTIONS_TARGET_INGEST_ENABLED: 'true', SUBSCRIPTIONS_TARGET_INGEST_INTEGRATION_TOKEN: QUARTER_TOKEN,
       SUBSCRIPTIONS_RUNTIME_TENANT_ID: QUARTER_TENANT, SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED: 'true',
-      SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED: 'true', SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS: '60' };
+      SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED: 'true', SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS: '60',
+      SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED: 'true', SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN: QUARTER_TOKEN,
+      SUBSCRIPTIONS_RUNTIME_HASH_PEPPER: 'physical-synthetic-quarter-pepper-32' };
     const quarterPrevious = Object.fromEntries(Object.keys(quarterSettings).map(key => [key, process.env[key]]));
     Object.assign(process.env, quarterSettings);
     try {
@@ -504,6 +508,71 @@ async function run(): Promise<void> {
       const after = await repositories[1].runtimeEntitlementAggregateByInstance(data.instance.subscriptionInstanceId);
       assert.equal(after!.remainingUnits, data.aggregate.remainingUnits! - 1); assert.equal(after!.activeServiceCount, 1);
       console.log('PASS physical schema4 approved descriptor/schema2 quarter target roundtrip, immutable duplicate conflict, reserve commit/lost ACK and exact replay');
+      // Same existing physical fixture, now the real actor-bound v3 producer path.
+      // Identity verification is synthetic; identity hashing, intake, target storage,
+      // quote, preflight, reserve transaction and cross-connection replay are real.
+      process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = 'iSkq6G';
+      const actorData = quarterFixture().state;
+      actorData.mapping.tenantId = 'iSkq6G'; actorData.mapping.mappingId += ':actor3';
+      actorData.mapping.subscriptionTypeId += ':actor3';
+      actorData.mapping.providerScope = { kind: 'TENANT', scopeId: 'iSkq6G' };
+      actorData.publication.publicationId += ':actor3';
+      actorData.publication.mappingId = actorData.mapping.mappingId;
+      actorData.publication.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.publication.runtimeProjection.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(actorData.publication.runtimeProjection);
+      actorData.instance.tenantId = 'iSkq6G'; actorData.instance.subscriptionInstanceId += ':actor3';
+      actorData.instance.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.instance.policyDigest = actorData.publication.policyDigest;
+      actorData.instance.mappingId = actorData.mapping.mappingId;
+      actorData.instance.providerClientId = 'physical-actor-three';
+      actorData.instance.clientSubscriptionId = 'physical-actor-three-subscription';
+      actorData.instance.clientRefHash = computeSubscriptionClientRefHash({ pepper: quarterSettings.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER,
+        tenantId: 'iSkq6G', providerClientId: actorData.instance.providerClientId });
+      actorData.aggregate.subscriptionInstanceId = actorData.instance.subscriptionInstanceId;
+      await quarterRepository.insertRuntimeProviderMapping(structuredClone(actorData.mapping));
+      await quarterRepository.insertRuntimePolicyPublication(structuredClone(actorData.publication));
+      await quarterRepository.insertRuntimeInstance(structuredClone(actorData.instance));
+      await quarterRepository.insertRuntimeEntitlementAggregate(structuredClone(actorData.aggregate));
+      class PhysicalActor extends SubscriptionTrustedShadowAdapterService { protected now(): Date { return new Date(QUARTER_NOW); } }
+      const authenticated = { tenantKey: 'iSkq6G', clientId: actorData.instance.providerClientId, issuer: 'synthetic', subject: 'synthetic' };
+      const verified = { verifyTrustedBearer: async (header: string) => {
+        assert.equal(header, 'Bearer physical-synthetic-actor'); return { actor: authenticated };
+      } };
+      const trusted = new PhysicalActor(verified as any, realQuote, resolver);
+      const actorIntake = new CanonicalTargetIntakeService(quarterRepository, trusted);
+      const { clientRefHash: _privateHash, ...targetInput } = quarterIntakeBody();
+      const actorInput = { ...targetInput, contractVersion: 3, subscriptionInstanceId: actorData.instance.subscriptionInstanceId,
+        subscriptionTypeId: actorData.publication.subscriptionTypeId, publicationId: actorData.publication.publicationId };
+      const actorIngest = () => actorIntake.ingest(QUARTER_TOKEN, actorInput,
+        { authorizationHeader: 'Bearer physical-synthetic-actor', now: () => new Date(QUARTER_NOW) });
+      const actorTarget = await actorIngest(); assert.equal(actorTarget.replay, false);
+      assert.equal((await actorIngest()).replay, true);
+      const persistedActorTarget = await repositories[2].runtimeCanonicalTargetSnapshot({ ...targetQuery, tenantId: 'iSkq6G' });
+      assert.equal(persistedActorTarget!.createQuarter!.binding.clientRefHash, actorData.instance.clientRefHash);
+      assert.doesNotMatch(JSON.stringify(actorTarget), /clientRefHash|tenantId|providerClientId|pepper/);
+      const actorService = new QuarterLifecycle(trusted, realQuote, quarterRepository);
+      const actorRequest = { ...request, subscriptionInstanceId: actorData.instance.subscriptionInstanceId };
+      const actorPreflight = await actorService.preflight('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorRequest);
+      const actorBound = { subscriptionInstanceId: actorRequest.subscriptionInstanceId, action: actorRequest.action,
+        target: actorRequest.target, expectations: actorPreflight.expectations };
+      quarterRepository.reserveRuntimeEntitlement = async input => { await write(input); throw Error('actor-v3 committed ACK lost'); };
+      await assert.rejects(actorService.reserve('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorBound,
+        { idempotencyKey: 'physical-actor-original-operation' }), /actor-v3 committed ACK lost/);
+      quarterRepository.reserveRuntimeEntitlement = write;
+      const replayTrusted = new PhysicalActor(verified as any, new QuarterQuote(repositories[2]), new QuarterResolver(repositories[2]));
+      const actorReplay = await new QuarterLifecycle(replayTrusted, new QuarterQuote(repositories[2]), repositories[2])
+        .reserve('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorBound, { idempotencyKey: 'physical-actor-original-operation' });
+      assert.equal(actorReplay.replayed, true); assert.equal(actorReplay.decision!.usageUnits, 1);
+      assert.equal(actorReplay.decision!.money.basePriceMinor! * 4, targetInput.price.amountMinor);
+      assert.equal(actorReplay.decision!.money.finalPriceMinor, 0);
+      authenticated.clientId = 'foreign-physical-actor';
+      await assert.rejects(actorIngest());
+      assert.equal(await db.collection('subscription_canonical_target_snapshots').countDocuments({ ...targetQuery, tenantId: 'iSkq6G' }), 1);
+      assert.equal(await db.collection('subscription_operations').countDocuments({ subscriptionInstanceId: actorData.instance.subscriptionInstanceId }), 1);
+      assert.equal(await db.collection('subscription_usage_ledger').countDocuments({ operationId: actorReplay.operationId }), 1);
+      assert.deepEqual(await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray(), indexBefore);
+      console.log('PASS physical actor-bound v3 canonical tenant/hash/owned instance, target/preflight/reserve/lost-ACK replay; no identity export or duplicate usage');
     } finally { for (const [key, value] of Object.entries(quarterPrevious)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
     console.log('Canonical entitlement Mongo tests: PASS; policy/identity synthetic; provider writes=0; skipped=0');
   } finally {
