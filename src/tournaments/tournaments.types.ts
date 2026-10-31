@@ -498,3 +498,36 @@ export interface TournamentJoinFlowResponse {
   cabinetUrl?: string;
   vivaAuthorizationHeader?: string;
 }
+
+/** Read-only observation, never an admission receipt, ownership lease or eligibility proof. */
+export type TournamentOwnerPreparationReason =
+  | 'SNAPSHOT_UNAVAILABLE' | 'SNAPSHOT_STALE' | 'TARGET_NOT_FOUND'
+  | 'MAPPING_AMBIGUOUS' | 'SOURCE_UNAVAILABLE' | 'DATA_INVALID'
+  | 'READ_LIMIT_EXCEEDED' | 'READ_UNAVAILABLE';
+export interface TournamentOwnerPreparationBinding {
+  feedId: string;
+  exerciseId: string | null;
+  customTournamentId: string | null;
+  customUpdatedAt: string | null;
+  sourceUpdatedAt: string | null;
+  snapshotGeneratedAt: string;
+  snapshotLastSuccessfulAt: string;
+  mappingSha256: string;
+}
+export type TournamentOwnerPreparation = {
+  schemaVersion: 1;
+  nonBinding: true;
+  tournamentId: string;
+  date: string;
+  observedAt: string;
+} & ({
+  status: 'RESOLVED';
+  owner: 'CUP_CUSTOM' | 'VIVA_SOURCE';
+  binding: TournamentOwnerPreparationBinding;
+  reason: null;
+} | {
+  status: 'UNKNOWN';
+  owner: null;
+  binding: null;
+  reason: TournamentOwnerPreparationReason;
+});

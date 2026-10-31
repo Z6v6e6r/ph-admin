@@ -516,9 +516,14 @@ async function main(): Promise<void> {
         id === nonVivaCustom.exerciseId ? nonVivaCustom : null,
       findCustomTournamentBySlug: async (slug: string) =>
         slug === nonVivaCustom.slug ? nonVivaCustom : null,
-      updateCustomTournament: async () => {
+      appendPublicParticipantIfCapacity: async (id: string, phone: string, participant: { phone?: string }) => {
+        assert.equal(id, nonVivaCustom.id);
+        assert.equal(phone, participant.phone);
         nonVivaUpdateCalls += 1;
         return nonVivaCustom;
+      },
+      updateCustomTournament: async () => {
+        throw new Error('Registration must use the capacity-guarded append');
       }
     } as never,
     { generateSchedule: () => { throw new Error('Not used in test'); } } as never,

@@ -11,6 +11,8 @@ import { RequestMetricsService } from './request-metrics.service';
 @Injectable()
 export class RequestMetricsInterceptor implements NestInterceptor {
   private readonly subscriptionRoutes = new Set([
+    '/api/internal/tournaments/owner-preparations',
+    '/internal/tournaments/owner-preparations',
     '/api/internal/subscriptions/shadow-quote',
     '/api/internal/subscriptions/entitlements/reserve',
     '/api/internal/subscriptions/entitlements/confirm',

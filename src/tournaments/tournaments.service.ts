@@ -1,3 +1,5 @@
+import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
+import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
   BadRequestException,
   ForbiddenException,
@@ -369,6 +371,190 @@ export class TournamentsService {
     @Optional() private readonly lkIdentityService?: LkIdentityService,
     @Optional() private readonly playerRatingsService?: PlayerRatingsService
   ) {}
+
+  /** Nonbinding, integration-only mapping observation. Never calls an admission or provider API. */
+  async prepareTournamentOwner(
+    authorization: string | undefined,
+    integrationToken: string | undefined,
+    input: PrepareTournamentOwnerDto
+  ): Promise<TournamentOwnerPreparation> {
+    if (!this.lkIdentityService) throw new ServiceUnavailableException('LK identity is unavailable');
+    // Existing verifier fixes the configured tenant; no client-selected tenant or header identity.
+    const { actor } = await this.lkIdentityService.verify(authorization, integrationToken);
+    const record = (value: unknown): Record<string, unknown> | null =>
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown> : null;
+    const dateKey = (value: unknown): value is string => typeof value === 'string'
+      && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && Number.isFinite(Date.parse(value + 'T00:00:00.000Z'))
+      && new Date(value + 'T00:00:00.000Z').toISOString().slice(0, 10) === value;
+    const body = record(input);
+    if (!body || Object.keys(body).sort().join(',') !== 'date,tournamentId'
+      || typeof body.tournamentId !== 'string' || /[\r\n]/.test(body.tournamentId)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.tournamentId)
+      || !dateKey(body.date)) {
+      throw new BadRequestException({ code: 'TOURNAMENT_OWNER_PREPARATION_INVALID', message: 'Invalid owner preparation input' });
+    }
+    const now = Date.now();
+    const common = { schemaVersion: 1 as const, nonBinding: true as const,
+      tournamentId: input.tournamentId, date: input.date, observedAt: new Date(now).toISOString() };
+    const unknown = (reason: TournamentOwnerPreparationReason): TournamentOwnerPreparation =>
+      ({ ...common, status: 'UNKNOWN', owner: null, binding: null, reason });
+    const identifier = (value: unknown): value is string => typeof value === 'string'
+      && !/[\r\n]/.test(value) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+    const timestamp = (value: unknown): value is string => typeof value === 'string'
+      && dateKey(value.slice(0, 10))
+      && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value)
+      && Number.isFinite(Date.parse(value)) && Date.parse(value) <= now;
+    const publicId = (id: string): string => {
+      const bytes = createHash('sha256').update(`phub-public-tournament-v1:${id}`).digest().subarray(0, 16);
+      bytes[6] = (bytes[6]! & 15) | 64; bytes[8] = (bytes[8]! & 63) | 128;
+      const hex = bytes.toString('hex');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    };
+    let observed: Awaited<ReturnType<VivaTournamentSnapshotService['readOwnerPreparationSnapshot']>>;
+    let customs: Record<string, unknown>[];
+    try {
+      observed = await this.vivaTournamentSnapshotService?.readOwnerPreparationSnapshot() ?? null;
+      if (!observed) return unknown('SNAPSHOT_UNAVAILABLE');
+      customs = await this.tournamentsPersistence.readOwnerPreparationCustomRecords();
+    } catch {
+      return unknown('READ_UNAVAILABLE');
+    }
+    const snapshot = record(observed.document);
+    const dateFreshness = record(snapshot?.dateLastSuccessfulAt);
+    const dayObservedAt = dateFreshness?.[input.date];
+    if (!snapshot || !dateKey(snapshot.windowFrom) || !dateKey(snapshot.windowTo)
+      || snapshot.windowFrom > input.date || snapshot.windowTo < input.date
+      || !timestamp(snapshot.generatedAt) || !timestamp(snapshot.lastSuccessfulAt)
+      || !timestamp(dayObservedAt) || Date.parse(dayObservedAt) > Date.parse(snapshot.generatedAt)
+      || Date.parse(snapshot.lastSuccessfulAt) > Date.parse(snapshot.generatedAt)
+      || !Number.isFinite(observed.freshnessIntervalMs)
+      || observed.freshnessIntervalMs < 1000 || observed.freshnessIntervalMs > 300_000) {
+      return unknown('DATA_INVALID');
+    }
+    // Full-window refresh can be partial. Only the explicit successful dated observation counts.
+    if (now - Date.parse(dayObservedAt) > observed.freshnessIntervalMs) return unknown('SNAPSHOT_STALE');
+    if (!Array.isArray(snapshot.tournaments) || !Array.isArray(customs)
+      || snapshot.tournamentsCount !== snapshot.tournaments.length) return unknown('DATA_INVALID');
+    if (snapshot.tournaments.length > 10_000 || customs.length > 500) return unknown('READ_LIMIT_EXCEEDED');
+    const sources = snapshot.tournaments.map(record);
+    if (sources.some((row) => !row || !identifier(row.id))) return unknown('DATA_INVALID');
+    const sourceRows = sources as Record<string, unknown>[];
+    const validOptionalId = (row: Record<string, unknown>, key: string) =>
+      row[key] === undefined || row[key] === null || identifier(row[key]);
+    const mappingParentsValid = (row: Record<string, unknown>): boolean => {
+      const types = record(row.ownerPreparationMappingTypes);
+      return Boolean(types && Object.keys(types).sort().join(',') === 'booking,bookingViva,details,joinFlow,joinFlowViva'
+        && ['missing', 'null', 'object'].includes(String(types.details))
+        && ['booking', 'bookingViva', 'joinFlow', 'joinFlowViva']
+          .every((key) => ['missing', 'object'].includes(String(types[key]))));
+    };
+    if (sourceRows.some((row) => !validOptionalId(row, 'exerciseId'))
+      || sourceRows.some((row) => row.source !== 'VIVA')
+      || customs.some((row) => !record(row) || !identifier(row.id) || !mappingParentsValid(row)
+        || !validOptionalId(row, 'sourceTournamentId') || !validOptionalId(row, 'exerciseId')
+        || typeof row.name !== 'string' || !row.name.trim() || !timestamp(row.updatedAt)
+        || !Object.values(TournamentStatus).includes(row.status as TournamentStatus)
+        || (row.archived !== undefined && typeof row.archived !== 'boolean')
+        || (row.isPublic !== undefined && typeof row.isPublic !== 'boolean')
+        || !Array.isArray(row.accessLevels) || row.accessLevels.some((value) => typeof value !== 'string')
+        || !['MALE', 'FEMALE', 'MIXED'].includes(String(row.gender))
+        || (row.details !== undefined && row.details !== null && !record(row.details)))) return unknown('DATA_INVALID');
+    if (new Set(sourceRows.map((row) => row.id)).size !== sourceRows.length
+      || new Set(customs.map((row) => row.id)).size !== customs.length) return unknown('MAPPING_AMBIGUOUS');
+    const sourceDay = sourceRows.filter((row) => typeof row.startsAt === 'string' && row.startsAt.slice(0, 10) === input.date);
+    if (sourceDay.length > 500) return unknown('READ_LIMIT_EXCEEDED');
+    const dated = (row: Record<string, unknown>) => this.matchesTournamentListFilters(
+      row as unknown as Tournament, { date: input.date, now: new Date(now) });
+    const sourceIds = new Set(sourceDay.map((row) => row.id));
+    const candidates = [
+      ...sourceDay.map((row) => ({ row, source: row })),
+      ...customs.filter((row) => row.archived !== true && dated(row)
+        && (!row.sourceTournamentId || !sourceIds.has(row.sourceTournamentId)))
+        .map((row) => ({ row, source: null as Record<string, unknown> | null }))
+    ].filter(({ row }) => publicId(row.id as string) === input.tournamentId);
+    if (candidates.length !== 1) return unknown(candidates.length ? 'MAPPING_AMBIGUOUS' : 'TARGET_NOT_FOUND');
+    const candidate = candidates[0]!;
+    let source = candidate.source;
+    const bookingRefs = (row: Record<string, unknown>): unknown[] => {
+      const details = record(row.details);
+      const values: unknown[] = [];
+      for (const container of ['booking', 'joinFlow']) {
+        const booking = record(details?.[container]);
+        if (details?.[container] !== undefined && !booking) values.push(false);
+        const viva = record(booking?.viva);
+        if (booking?.viva !== undefined && !viva) values.push(false);
+        for (const value of [booking?.vivaExerciseId, booking?.exerciseId, viva?.exerciseId]) {
+          if (value !== undefined && value !== null) values.push(value);
+        }
+      }
+      return values;
+    };
+    if (customs.some((row) => bookingRefs(row).some((value) => !identifier(value)))) return unknown('DATA_INVALID');
+    if (!source) {
+      const refs = [candidate.row.sourceTournamentId, candidate.row.exerciseId, ...bookingRefs(candidate.row)].filter(identifier);
+      const matches = sourceDay.filter((row) => refs.includes(row.id as string) || refs.includes(row.exerciseId as string));
+      if (matches.length > 1) return unknown('MAPPING_AMBIGUOUS');
+      if (refs.length && matches.length === 0) return unknown('SOURCE_UNAVAILABLE');
+      source = matches[0] ?? null;
+    }
+    if (source && (!identifier(source.exerciseId)
+      || sourceRows.filter((row) => row.exerciseId === source!.exerciseId).length !== 1)) {
+      return unknown(identifier(source.exerciseId) ? 'MAPPING_AMBIGUOUS' : 'DATA_INVALID');
+    }
+    const refs = new Set([candidate.row.id, source?.id, source?.exerciseId].filter(identifier));
+    const matches = customs.filter((row) => [row.id, row.sourceTournamentId, row.exerciseId, ...bookingRefs(row)]
+      .some((value) => identifier(value) && refs.has(value)));
+    if (matches.length > 1) return unknown('MAPPING_AMBIGUOUS');
+    const custom = matches[0] ?? null;
+    if (!source && !custom) return unknown('DATA_INVALID');
+    if (custom?.archived === true) return unknown('DATA_INVALID');
+    if (custom && source) {
+      if (![custom.sourceTournamentId, custom.exerciseId, ...bookingRefs(custom)]
+        .some((value) => value === source!.id || value === source!.exerciseId)) return unknown('MAPPING_AMBIGUOUS');
+      if ((custom.sourceTournamentId && ![source.id, source.exerciseId].includes(custom.sourceTournamentId))
+        || (custom.exerciseId && custom.exerciseId !== source.exerciseId)
+        || bookingRefs(custom).some((value) => value !== source!.exerciseId)) return unknown('MAPPING_AMBIGUOUS');
+    }
+    const visible = (row: Record<string, unknown>) => row.isPublic !== false
+      && (row.isPublic === undefined || typeof row.isPublic === 'boolean')
+      && (row.rawStatus ?? row.status) === 'REGISTRATION'
+      && typeof row.name === 'string' && row.name.trim().length > 0
+      && typeof row.maxPlayers === 'number' && Number.isInteger(row.maxPlayers) && row.maxPlayers > 0
+      && typeof row.startsAt === 'string' && typeof row.endsAt === 'string'
+      && Number.isFinite(Date.parse(row.startsAt)) && Number.isFinite(Date.parse(row.endsAt))
+      && Date.parse(row.endsAt) > Date.parse(row.startsAt) && dated(row);
+    if ((source && (!visible(source) || typeof source.participantsCount !== 'number'
+      || !Number.isFinite(source.participantsCount) || source.participantsCount < 0)) || (custom && !visible(custom))) return unknown('TARGET_NOT_FOUND');
+    if (custom && (!timestamp(custom.updatedAt) || !Array.isArray(custom.accessLevels)
+      || custom.accessLevels.some((value) => typeof value !== 'string')
+      || !['MALE', 'FEMALE', 'MIXED'].includes(String(custom.gender)))) return unknown('DATA_INVALID');
+    if (source?.updatedAt !== undefined && !timestamp(source.updatedAt)) return unknown('DATA_INVALID');
+    const owner = custom ? 'CUP_CUSTOM' as const : 'VIVA_SOURCE' as const;
+    const binding = {
+      feedId: candidate.row.id as string,
+      exerciseId: source ? source.exerciseId as string : null,
+      customTournamentId: custom ? custom.id as string : null,
+      customUpdatedAt: custom ? custom.updatedAt as string : null,
+      sourceUpdatedAt: source?.updatedAt as string | undefined ?? null,
+      snapshotGeneratedAt: snapshot.generatedAt,
+      snapshotLastSuccessfulAt: dayObservedAt
+    };
+    const facts = (row: Record<string, unknown> | null) => row ? [
+      row.id, row.sourceTournamentId ?? null, row.exerciseId ?? null,
+      row.updatedAt ?? null, row.rawStatus ?? row.status, row.startsAt, row.endsAt,
+      row.isPublic ?? null, row.accessLevels ?? null, row.gender ?? null,
+      row.maxPlayers, row.tournamentType ?? null, row.exerciseTypeId ?? null,
+      bookingRefs(row).sort()
+    ] : null;
+    const mappingSha256 = 'sha256:' + createHash('sha256')
+      .update('tournament-owner-preparation:v1\0')
+      .update(JSON.stringify([actor.tenantKey, input.tournamentId, input.date, owner,
+        Object.values(binding), facts(source), facts(custom)]))
+      .digest('hex');
+    return { ...common, status: 'RESOLVED', owner, binding: { ...binding, mappingSha256 }, reason: null };
+  }
 
   async resolveTrustedLkRegistrationClient(
     authorizationHeader?: string

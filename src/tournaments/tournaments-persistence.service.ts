@@ -164,6 +164,36 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     this.indexesEnsured = false;
   }
 
+  /** Complete bounded raw mapping/rule read; no normalization may hide a corrupt row. */
+  async readOwnerPreparationCustomRecords(): Promise<Record<string, unknown>[]> {
+    const collection = await this.collection(false);
+    const rows = await collection.find({}, {
+      readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 2000,
+      projection: {
+        _id: 1, id: 1, sourceTournamentId: 1, exerciseId: 1, archived: 1,
+        name: 1, status: 1, startsAt: 1, endsAt: 1, updatedAt: 1,
+        isPublic: 1, accessLevels: 1, gender: 1, maxPlayers: 1,
+        tournamentType: 1, exerciseTypeId: 1,
+        'details.booking.vivaExerciseId': 1, 'details.booking.exerciseId': 1,
+        'details.booking.viva.exerciseId': 1,
+        'details.joinFlow.vivaExerciseId': 1, 'details.joinFlow.exerciseId': 1,
+        'details.joinFlow.viva.exerciseId': 1,
+        // Dotted inclusion can erase a corrupt scalar parent. Read its type without its payload.
+        ownerPreparationMappingTypes: {
+          details: { $type: '$details' },
+          booking: { $type: '$details.booking' },
+          bookingViva: { $type: '$details.booking.viva' },
+          joinFlow: { $type: '$details.joinFlow' },
+          joinFlowViva: { $type: '$details.joinFlow.viva' }
+        }
+      }
+    }).limit(501).toArray();
+    return rows.map((row) => ({
+      ...row,
+      id: row.id ?? (row._id instanceof ObjectId ? row._id.toHexString() : undefined)
+    }));
+  }
+
   async listCustomTournaments(): Promise<CustomTournament[]> {
     const collection = await this.collection();
     const documents = (await collection
@@ -959,7 +989,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return document ? this.toCustomTournament(document) : null;
   }
 
-  private async collection(): Promise<Collection<MongoCustomTournamentDocument>> {
+  private async collection(ensureIndexes = true): Promise<Collection<MongoCustomTournamentDocument>> {
     if (!this.mongoUri) {
       throw new InternalServerErrorException(
         'Custom tournaments MongoDB requires TOURNAMENTS_MONGODB_URI or MONGODB_URI'
@@ -993,7 +1023,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }
 
     const collection = this.requireDb().collection<MongoCustomTournamentDocument>(this.collectionName);
-    if (!this.indexesEnsured) {
+    if (ensureIndexes && !this.indexesEnsured) {
       try {
         await ensureMongoIndex(collection, { id: 1 }, { unique: true });
         await ensureMongoIndex(collection, { slug: 1 }, { unique: true });
