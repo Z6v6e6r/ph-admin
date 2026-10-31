@@ -25,6 +25,15 @@ test('physical CUP writer fences competing LK epoch, preserves permanent admin t
     const restored = { ...current, members: [{ id: 'player-a' }], stationMembershipLifetime: stationModerationTransition(current, 'UNBAN', { id: 'player-a' }) };
     await service.persistDocument(restored, other, current);
     assert.equal((await collection.findOne({ id: 'station-a' }))!.stationMembershipLifetime.players[0].epoch, 2);
+    process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='false';
+    await collection.insertOne({id:'race-delete',communityType:'STATION',members:[],pendingMembers:[],bannedMembers:[]});
+    const staleDelete=await collection.findOne({id:'race-delete'});
+    await other.updateOne({id:'race-delete'},{$set:{stationMembershipLifetime:{version:1,revision:0,players:[]}}});
+    service.findDocumentWithSourceById=async()=>({document:staleDelete,collection});
+    assert.equal(await service.deleteCommunity('race-delete'),false);
+    assert.ok(await other.findOne({id:'race-delete'}));
+    service.findDocumentWithSourceById=async()=>({document:await collection.findOne({id:'race-delete'}),collection});
+    await assert.rejects(()=>service.deleteCommunity('race-delete'),/STATION_LIFETIME_REQUIRES_ARCHIVE/);
   } finally {
     if (beforeFlag === undefined) delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED; else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED = beforeFlag;
     try { await clients[0].db(name).dropDatabase(); } finally { await Promise.all(clients.map(c => c.close())); }

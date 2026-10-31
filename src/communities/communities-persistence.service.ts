@@ -478,9 +478,14 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return false;
     }
 
+    if (match.document.stationMembershipLifetime !== undefined || stationLifetimeEnabled(match.document)) {
+      throw new ConflictException('STATION_LIFETIME_REQUIRES_ARCHIVE');
+    }
+    const deleteFence = { stationMembershipLifetime: { $exists: false }, communityType: match.document.communityType === undefined ? { $exists: false } : match.document.communityType };
+
     const deleteResult = match.document._id !== undefined
-      ? await match.collection.deleteOne({ _id: match.document._id } as Filter<MongoCommunityDocument>)
-      : await match.collection.deleteOne(this.buildIdFilter(id));
+      ? await match.collection.deleteOne({ _id: match.document._id, ...deleteFence } as Filter<MongoCommunityDocument>)
+      : await match.collection.deleteOne({ $and: [this.buildIdFilter(id), deleteFence] } as Filter<MongoCommunityDocument>);
     const deleted = (deleteResult.deletedCount ?? 0) > 0;
 
     if (!deleted) {

@@ -42,3 +42,20 @@ test('default off and non-STATION unchanged; adopted history stays fenced after 
     assert.equal(stationModerationTransition({ ...community(), communityType: 'FRIENDS' }, 'REMOVE', { id: 'player-a' }), undefined);
   } finally { if (before !== undefined) process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED = before; }
 });
+test('actual delete writer retains adopted identity across flag disable and type change', async () => {
+  const prior=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;
+  const service:any=Object.create(CommunitiesPersistenceService.prototype);
+  let document:any=community(), writes=0, filter:any;
+  service.findDocumentWithSourceById=async()=>({document,collection:{async deleteOne(query:any){writes++;filter=query;return {deletedCount:0};}}});
+  try {
+    process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='true';
+    await assert.rejects(()=>service.deleteCommunity(document.id),/STATION_LIFETIME_REQUIRES_ARCHIVE/);
+    process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='false';
+    document={...document,communityType:'FRIENDS',stationMembershipLifetime:null};
+    await assert.rejects(()=>service.deleteCommunity(document.id),/STATION_LIFETIME_REQUIRES_ARCHIVE/);
+    assert.equal(writes,0);
+    document=community();
+    assert.equal(await service.deleteCommunity(document.id),false);
+    assert.deepEqual(filter.$and[1],{stationMembershipLifetime:{$exists:false},communityType:'STATION'});
+  } finally {if(prior===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=prior;}
+});

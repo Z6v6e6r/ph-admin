@@ -13,6 +13,12 @@ ACTIVE. WARN/PROMOTE/DEMOTE preserve history. Each writer fences old lifetime re
 roster/type/policy and commits lifetime+roster in one Mongo update. No public DTO exposes this
 field. Ordinary/non-STATION behavior remains unchanged.
 
+Hard delete rejects any row retaining lifetime (even after a type change/flag disable),
+and rejects STATION while enabled. Archival requires a separately approved existing
+operational procedure; no archive UI/route is added. An otherwise permitted legacy
+delete atomically requires absent lifetime and the exact preimage type, so concurrent
+adoption cannot lose the identity/tombstone. No identity recreation/backfill is provided.
+
 Do not activate until every LK/CUP writer preserves this contract, producer stores immutable
 original-operation admissions before booking dispatch, private signed delivery is provisioned,
 exactly one official STATION selector is proven, and physical CI races pass. Booking cancellation
