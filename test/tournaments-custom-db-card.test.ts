@@ -37,6 +37,7 @@ function createHydrationCustomTournament(): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['D', 'C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 12,
     participants: [
       {
@@ -141,6 +142,7 @@ function createWaitlistTournament(): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 2,
     participants: [
       {
@@ -219,6 +221,13 @@ function createService(options: {
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      readPublicAdmissionRule: async () => ({ gender: (customBySlug ?? customById)?.gender, updatedAt: (customBySlug ?? customById)?.updatedAt }),
+      appendPublicWaitlistWithAdmission: async (_id: string, _phone: string, participant: never) => {
+        if (!customBySlug) return null;
+        customBySlug.waitlist.push(participant);
+        customBySlug.waitlistCount = customBySlug.waitlist.length;
+        return customBySlug;
+      },
       findCustomTournamentById: async (id: string) =>
         customById && customById.id === id
           ? customById

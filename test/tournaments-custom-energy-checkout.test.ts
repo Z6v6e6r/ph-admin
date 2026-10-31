@@ -15,6 +15,7 @@ function createTournament(): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 16,
     participants: [],
     participantsCount: 0,
@@ -154,6 +155,7 @@ function createService(tournament: CustomTournament, vivaAdmin: Record<string, u
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+      readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
       listCustomTournaments: async () => [tournament],
       findCustomTournamentById: async (id: string) => id === tournament.id ? tournament : null,
       findCustomTournamentBySlug: async (slug: string) => slug === tournament.slug ? tournament : null,
@@ -227,6 +229,23 @@ async function main(): Promise<void> {
   assert.equal(vivaInput?.discountAmountMinor, 1750000);
   assert.equal(vivaInput?.discountReason, 'Участие в турнире «Название турнира» 09.05.2026');
   assert.equal(vivaInput?.successUrl, 'https://padlhub.ru/tournaments?paymentsuccess=true');
+
+  for (const gender of ['MALE', 'FEMALE', undefined, 'INVALID']) {
+    const restricted = createTournament();
+    restricted.gender = gender as never;
+    const restrictedService = createService(restricted, {
+      createTournamentEnergyCheckout: async () => { throw new Error('provider must not be called'); }
+    });
+    await assert.rejects(() => restrictedService.createCustomEnergyCheckout('exercise-energy-1', {
+      body: createPayload(), authorizationHeader: `Bearer ${token}`, authSourceHeader: 'lk-keycloak', tenantKeyHeader: 'iSkq6G'
+    }), (error: any) => error.getResponse().code === 'TOURNAMENT_SECURE_JOIN_REQUIRED');
+  }
+  vivaInput = undefined;
+  await assert.rejects(() => service.createCustomEnergyCheckout('exercise-energy-1', {
+    body: createPayload({ client: { id: 'another-client', phone: '79123456789' } }),
+    authorizationHeader: `Bearer ${token}`, authSourceHeader: 'lk-keycloak', tenantKeyHeader: 'iSkq6G'
+  }), (error: any) => error.getResponse().code === 'TOURNAMENT_IDENTITY_MISMATCH');
+  assert.equal(vivaInput, undefined);
 
   vivaInput = undefined;
   const responseWithPayloadTitle = await service.createCustomEnergyCheckout('exercise-energy-1', {
@@ -348,6 +367,26 @@ async function main(): Promise<void> {
   assert.equal(userInfoRejected, true);
 
   globalThis.fetch = originalFetch;
+  // Unsigned fallback claims cannot override successful authenticated userinfo.
+  const authService: any = createService(createTournament(), {});
+  authService.verifyLkJwtToken = async () => null;
+  authService.fetchLkUserInfo = async () => ({ sub: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', name: 'Trusted' });
+  const forgedToken = buildJwt({ exp: Math.floor(Date.now() / 1000) + 300,
+    clientId: 'forged-client', phone_number: '79000009999', tenantKey: 'foreign', name: 'Forged' });
+  const verifiedFallback = await authService.verifyLkCheckoutAuth({ authorizationHeader: `Bearer ${forgedToken}`, expectedPhone: '79123456789', tenantKey: 'iSkq6G' });
+  assert.equal(verifiedFallback.clientId, 'client-1'); assert.equal(verifiedFallback.phone, '79123456789');
+  assert.equal(verifiedFallback.tenantKey, 'iSkq6G'); assert.equal(verifiedFallback.name, 'Trusted');
+  authService.fetchLkUserInfo = async () => ({ phone_number: '79123456789', tenantKey: 'iSkq6G' });
+  assert.equal((await authService.verifyLkCheckoutAuth({ authorizationHeader: `Bearer ${forgedToken}`, expectedPhone: '79123456789', tenantKey: 'iSkq6G' })).clientId, undefined);
+  const signedClaims = { sub: 'client-1', phone_number: '79123456789', tenantKey: 'iSkq6G', exp: Math.floor(Date.now() / 1000) + 300 };
+  authService.verifyLkJwtToken = async () => signedClaims;
+  for (const contradiction of [{ sub: 'other' }, { phone_number: '79000009999' }, { tenantKey: 'other' }]) {
+    authService.fetchLkUserInfoSafe = async () => ({ ...signedClaims, ...contradiction });
+    await assert.rejects(authService.verifyLkCheckoutAuth({ authorizationHeader: 'Bearer signed', expectedPhone: '79123456789', tenantKey: 'iSkq6G' }), /sources disagree/);
+  }
+  authService.fetchLkUserInfoSafe = async () => ({ ...signedClaims });
+  assert.equal((await authService.verifyLkCheckoutAuth({ authorizationHeader: 'Bearer signed', expectedPhone: '79123456789', tenantKey: 'iSkq6G' })).clientId, 'client-1');
+
   console.log('Tournament custom energy checkout test passed');
 }
 

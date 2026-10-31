@@ -1,3 +1,4 @@
+import { TournamentAdmissionRule } from './tournaments.types';
 import {
   Injectable,
   InternalServerErrorException,
@@ -479,9 +480,39 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     return this.toCustomTournament(nextDocument);
   }
 
+  /** Raw admission rule: no presentation fallback and no index creation. */
+  async readPublicAdmissionRule(id: string): Promise<TournamentAdmissionRule | null> {
+    const collection = await this.collection(false);
+    const row = await collection.findOne(this.buildIdFilter(id), {
+      projection: { _id: 0, gender: 1, updatedAt: 1 }, readPreference: 'primary',
+      readConcern: { level: 'majority' }, maxTimeMS: 5000
+    });
+    if (!row || !['MALE', 'FEMALE', 'MIXED'].includes(String(row.gender))
+      || typeof row.gender !== 'string' || typeof row.updatedAt !== 'string'
+      || !Number.isFinite(Date.parse(row.updatedAt))) return null;
+    return { gender: row.gender as TournamentAdmissionRule['gender'], updatedAt: row.updatedAt };
+  }
+
+  async appendPublicWaitlistWithAdmission(
+    id: string, phone: string, participant: TournamentParticipant, rule: TournamentAdmissionRule
+  ): Promise<CustomTournament | null> {
+    const collection = await this.collection();
+    const row = await collection.findOneAndUpdate({
+      ...this.buildIdFilter(id), gender: rule.gender, updatedAt: rule.updatedAt,
+      status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
+      participants: { $not: { $elemMatch: { phone } } },
+      waitlist: { $not: { $elemMatch: { phone } } },
+      'details.booking.pendingJoinPayments': { $not: { $elemMatch: { phone } } }
+    }, [{ $set: { waitlist: { $concatArrays: [{ $ifNull: ['$waitlist', []] }, { $literal: [participant] }] },
+      updatedAt: new Date().toISOString() } }],
+    { returnDocument: 'after' });
+    return row ? this.toCustomTournament(row) : null;
+  }
+
   async reservePublicJoinPayment(
     id: string,
-    pending: Record<string, unknown>
+    pending: Record<string, unknown>,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const phone = this.pickString(pending.phone);
@@ -493,6 +524,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },
@@ -876,13 +908,15 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   async appendPublicParticipantIfCapacity(
     id: string,
     phone: string,
-    participant: TournamentParticipant
+    participant: TournamentParticipant,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
         ...this.buildIdFilter(id),
+        ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         waitlist: { $not: { $elemMatch: { phone } } },

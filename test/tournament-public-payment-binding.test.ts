@@ -14,6 +14,7 @@ function tournamentFixture(): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 8,
     participants: [],
     participantsCount: 0,
@@ -43,6 +44,7 @@ function serviceFixture(tournament: CustomTournament) {
   let failProviderClaim = false;
   const persistence = {
     isEnabled: () => true,
+    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
     findCustomTournamentById: async (id: string) => id === tournament.id ? tournament : null,
     findCustomTournamentBySlug: async (slug: string) => slug === tournament.slug ? tournament : null,
     findCustomTournamentBySourceTournamentId: async () => null,

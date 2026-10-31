@@ -1,3 +1,5 @@
+import { TournamentsController } from '../src/tournaments/tournaments.controller';
+import { TRUSTED_TOURNAMENT_CLIENT } from '../src/tournaments/tournaments.types';
 import * as assert from 'node:assert/strict';
 import { TournamentsPublicController } from '../src/tournaments/tournaments-public.controller';
 
@@ -82,6 +84,7 @@ async function main(): Promise<void> {
     'cup',
     { headers: { authorization: 'Bearer trusted-token' } } as never,
     {
+      gender: 'FEMALE',
       name: 'Forged Player',
       phone: '+7 999 999-99-99',
       levelLabel: 'A',
@@ -91,7 +94,9 @@ async function main(): Promise<void> {
       subscriptions: [{ id: 'forged-subscription', label: 'Forged' }]
     }
   );
-  assert.deepEqual(registered[0], {
+  assert.deepEqual(registered[0]?.trustedIdentity, { clientId: 'viva-client-trusted', name: 'Trusted Player', phone: '79000000001', levelLabel: 'C' });
+  const { trustedIdentity: _trustedIdentity, ...publicRegistrationInput } = registered[0];
+  assert.deepEqual(publicRegistrationInput, {
     clientId: 'viva-client-trusted',
     name: 'Trusted Player',
     phone: '79000000001',
@@ -178,6 +183,23 @@ async function main(): Promise<void> {
   assert.equal(purchaseInputs.length, 1);
   assert.equal(purchaseInputs[0]?.clientId, 'viva-client-trusted');
   assert.equal(purchaseInputs[0]?.selectedSubscriptionId, 'subscription-second');
+
+  assert.deepEqual(purchaseInputs[0]?.trustedIdentity, { clientId: 'viva-client-trusted', name: 'Trusted Player', phone: '79000000001', levelLabel: 'C' });
+  assert.ok((flowClients.at(-1) as any)[TRUSTED_TOURNAMENT_CLIENT]);
+  assert.doesNotMatch(JSON.stringify(flowClients.at(-1)), /trusted-tournament-client|trustedIdentity/);
+  let widgetInput: any;
+  const widget = new TournamentsController({
+    ...service,
+    registerPublicParticipantByTournamentRef: async (_id: string, input: any) => {
+      widgetInput = input; return { ok: true, code: 'REGISTERED', message: 'registered' };
+    }
+  } as never, {} as never, {} as never);
+  await widget.registerFromLkWidget('cup', { headers: { authorization: 'Bearer trusted-token' } } as never,
+    { phone: '79000009999', clientId: 'forged', gender: 'FEMALE', levelLabel: 'A' });
+  assert.equal(widgetInput.phone, '79000000001');
+  assert.equal(widgetInput.gender, undefined);
+  assert.equal(widgetInput.trustedIdentity.clientId, 'viva-client-trusted');
+  assert.equal(widgetInput.trustedIdentity.phone, '79000000001');
 
   console.log('Tournament public registration identity test passed');
 }

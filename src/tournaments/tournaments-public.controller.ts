@@ -1,3 +1,4 @@
+import { TRUSTED_TOURNAMENT_CLIENT } from './tournaments.types';
 import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -374,6 +375,8 @@ export class TournamentsPublicController {
 
     if (submission.waitlist && flow.code === 'LEVEL_NOT_ALLOWED') {
       const outcome = await this.tournamentsService.addPublicParticipantToWaitlist(slug, {
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT],
+        clientId: client.clientId,
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
@@ -412,6 +415,7 @@ export class TournamentsPublicController {
         return;
       }
       const outcome = await this.tournamentsService.createPublicJoinPurchaseTransaction(slug, {
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT],
         clientId: client.clientId,
         name: client.name ?? '',
         phone: client.phone ?? '',
@@ -442,6 +446,8 @@ export class TournamentsPublicController {
 
     if (flow.code === 'READY_TO_JOIN') {
       const outcome = await this.tournamentsService.registerPublicParticipant(slug, {
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT],
+        clientId: client.clientId,
         name: client.name ?? '',
         phone: client.phone ?? '',
         levelLabel: client.levelLabel,
@@ -523,6 +529,7 @@ export class TournamentsPublicController {
       this.pickString(request.headers.authorization) ?? undefined
     );
     return this.tournamentsService.registerPublicParticipant(slug, {
+      trustedIdentity: client,
       clientId: client.clientId,
       name: client.name,
       phone: client.phone,
@@ -1910,6 +1917,7 @@ export class TournamentsPublicController {
       );
       return {
         ...client,
+        [TRUSTED_TOURNAMENT_CLIENT]: canonical,
         clientId: canonical.clientId,
         authorized: true,
         phoneVerified: true,
@@ -1927,6 +1935,7 @@ export class TournamentsPublicController {
         });
       return {
         ...client,
+        [TRUSTED_TOURNAMENT_CLIENT]: canonical,
         clientId: canonical.clientId,
         authorized: true,
         phoneVerified: true,
@@ -1938,6 +1947,7 @@ export class TournamentsPublicController {
     }
     return {
       ...client,
+      [TRUSTED_TOURNAMENT_CLIENT]: undefined,
       clientId: undefined,
       authorized: false,
       phoneVerified: false,

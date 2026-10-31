@@ -14,6 +14,7 @@ function createTournament(): CustomTournament {
     tournamentType: 'Американо',
     accessLevels: ['D+', 'C'],
     gender: 'MIXED',
+    updatedAt: '2026-10-31T10:00:00.000Z',
     maxPlayers: 16,
     participants: [],
     participantsCount: 0,
@@ -98,6 +99,7 @@ function createService(
     { getTournamentResults: async () => { throw new Error('Not used in test'); } } as never,
     {
       isEnabled: () => true,
+    readPublicAdmissionRule: async () => ({ gender: tournament.gender, updatedAt: tournament.updatedAt }),
       findCustomTournamentById: async (id: string) =>
         id === tournament.id ? tournament : null,
       findCustomTournamentBySlug: async (slug: string) =>
@@ -280,6 +282,11 @@ function createService(
         tournament.paidParticipantsCount = tournament.participants.filter(
           (item) => item.paymentStatus === 'PAID'
         ).length;
+        return tournament;
+      },
+      appendPublicWaitlistWithAdmission: async (_id: string, _phone: string, participant: typeof tournament.waitlist[number]) => {
+        tournament.waitlist.push(participant);
+        tournament.waitlistCount = tournament.waitlist.length;
         return tournament;
       },
       updateCustomTournament: async (_id: string, mutation: { participants?: unknown; waitlist?: unknown }) => {
