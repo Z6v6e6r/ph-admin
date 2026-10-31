@@ -42,6 +42,66 @@ Each active reservation stores its exact local day/week/month keys and deltas so
 recomputes historical policy. Legacy reservations without this evidence fail closed to manual
 reconciliation.
 
+## Optional reserve expectations (schema version 1)
+
+An internal caller may add `expectations` to the existing reserve body:
+
+```json
+{
+  "subscriptionInstanceId": "subscription:annual-1",
+  "action": "CREATE_GAME",
+  "target": { "targetId": "exercise:game-1" },
+  "expectations": {
+    "schemaVersion": 1,
+    "policyVersion": 3,
+    "policyDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "targetSnapshot": {
+      "snapshotId": "snapshot:target-1",
+      "revision": 1,
+      "evidenceRef": "evidence:target-1"
+    }
+  }
+}
+```
+
+This is a precondition, not client authority. The verified actor and tenant still come from
+existing authentication. The outer instance/action/target and all expectation fields enter a
+separate domain/version fingerprint. Unknown fields, null, noninteger or unsafe versions and
+malformed identifiers/digests are rejected, including at the service boundary. Missing
+`expectations` preserves the original request hash, resolution order and legacy behavior.
+The reserve response is unchanged; this does not introduce a v2 owner receipt or activate a consumer.
+
+After authentication, a tenant/actor-scoped existing BOOKING with the identical fingerprint
+replays its stored decision before consulting the current target or policy. Every bound replay,
+including a concurrent replay returned by the transaction, must also match stored CLIENT actor,
+tenant, instance, key hash and immutable decision policy/action/target. Invalid stored bindings
+cannot return a successful replay even with a matching fingerprint. Changed expectations
+under that key return `SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT`. Existing terminal-state
+replay restrictions still apply. An unchanged active replay therefore survives later policy
+republishing or target supersession without reserving again.
+
+For a new operation, the resolver supplies the stored canonical snapshot ID, revision and evidence;
+request fields are never echoed as evidence. The quote resolves the actor-owned instance's
+published policy version/digest. All must match before reservation persistence or a full-price
+fallback, otherwise the service raises `SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH` (409).
+The existing HTTP filter preserves this under `error.details.domainCode`, with top-level
+`error.code=POLICY_VERSION_CONFLICT`; the same envelope applies to idempotency/state conflicts.
+Invalid HTTP DTO shape uses `VALIDATION_ERROR`; direct service calls raise
+`SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID` (400). Comparisons rerun after aggregate CAS
+contention. Effective policy means the instance-pinned publication: publishing an unrelated newer
+version does not invalidate an instance still validly pinned to the earlier version.
+
+This comparison guarantees matching authoritative inputs **at resolution**, not latest-at-commit
+policy/target atomicity. Existing Mongo transactions fence aggregate revision and idempotency and
+atomically persist operation/usage/outbox; they do not reread or lock policy or target publications.
+No new schema, ledger or cross-provider transaction is introduced. The stable `booking:<hash>`
+operation remains the canonical reference; no pre-issued usage reference or expiry is added.
+Deployment of the receiver must precede any opt-in caller: an older receiver rejects the new field.
+Rollback requires stopping such callers first; never strip expectations and silently retry an
+expected request through the legacy path. Existing reservations still use normal confirm/release.
+Runtime station/target mapping, owner-v2 receipt adoption and provider acceptance remain separate
+release gates. No flags, credentials or provider writes are changed here.
+
 ## Owner evidence for release (R1)
 
 `SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT=true` now applies to both confirmation and release,

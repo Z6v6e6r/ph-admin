@@ -7,7 +7,7 @@ import { Db, MongoClient, MongoServerError } from 'mongodb';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { SubscriptionEntitlementLifecycleService } from '../src/subscriptions/subscription-entitlement-lifecycle.service';
 import { createOwnerEvidence, createOwnerReleaseEvidence } from '../src/subscriptions/owner-evidence.verifier';
-import { aggregateFixture, quoteFixture, NOW, CLIENT_HASH } from './helpers/subscription-entitlement-fixtures';
+import { aggregateFixture, quoteFixture, NOW, CLIENT_HASH, POLICY_DIGEST } from './helpers/subscription-entitlement-fixtures';
 
 // This harness owns only a unique synthetic DB on the explicitly supplied CI replica set.
 // No ambient application URI, database name, provider or optional-skip fallback is accepted.
@@ -125,7 +125,9 @@ function firstTransitionBarrier(
 function serviceFixture(
   repository: SubscriptionsRepository,
   barrier: () => Promise<void> = async () => undefined,
-  identityOverride: { tenantId?: string; clientRefHash?: string } = {}
+  identityOverride: { tenantId?: string; clientRefHash?: string } = {},
+  canonical = { policyVersion: 3, policyDigest: POLICY_DIGEST, snapshotRevision: 1,
+    snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' }
 ): FixedClockService {
   const identity = { resolutionSource: 'LK_IDENTITY' as const, tenantId: 'tenant:piter',
     clientRefHash: CLIENT_HASH, evidenceRef: 'evidence:identity-1', verifiedAt: NOW, ...identityOverride };
@@ -136,14 +138,19 @@ function serviceFixture(
       currency: 'RUB' as const, dictionaryRevision: 'dictionary:1', evidenceRef: 'evidence:target-1',
       priceEvidenceRef: 'evidence:price-1', resolvedAt: NOW } };
   const adapter = { resolveEntitlementIdentity: async () => identity,
-    resolveEntitlementRequest: async () => request };
+    resolveEntitlementRequest: async () => ({ ...request, target: { ...request.target,
+      snapshotId: canonical.snapshotId, snapshotRevision: canonical.snapshotRevision,
+      evidenceRef: canonical.evidenceRef } }) };
   // Only policy/identity are synthetic; all usage snapshots and business writes use actual Mongo.
   const quote = { quote: async () => {
     const aggregate = await repository.runtimeEntitlementAggregateByInstance(INSTANCE);
     assert.ok(aggregate);
     await barrier();
     const eligible = aggregate.remainingUnits === 1 && aggregate.activeServiceCount === 0;
+    const decision = quoteFixture(aggregate).decision!;
     return quoteFixture(aggregate, { eligible, maxActiveServices: 1,
+      policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest,
+      decision: { ...decision, policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest },
       blockers: eligible ? [] : [{ code: 'ACTIVE_SERVICES_LIMIT_REACHED', message: 'fixture limit',
         details: { activeServices: aggregate.activeServiceCount, maxActiveServices: 1 } }] });
   } };
@@ -376,6 +383,48 @@ async function run(): Promise<void> {
     await assertReturned(repositories[1]);
     await assertOneLedgerChain(db, rejected.operationId, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
     console.log('PASS physical provider-rejection commit/lost response then read-only recovery beyond proof TTL');
+    const canonical = { policyVersion: 3, policyDigest: POLICY_DIGEST, snapshotRevision: 1,
+      snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' };
+    const expectedDto = { ...dto, expectations: { schemaVersion: 1 as const,
+      policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest,
+      targetSnapshot: { snapshotId: canonical.snapshotId, revision: canonical.snapshotRevision,
+        evidenceRef: canonical.evidenceRef } } };
+    const expectedServices = repositories.map((repository) => serviceFixture(repository, undefined, {}, canonical));
+    const beforeMismatch = await snapshot(db);
+    canonical.policyVersion = 4;
+    await assert.rejects(expectedServices[0].reserve('Bearer fixture', 'fixture-integration', expectedDto,
+      { idempotencyKey: 'mongo-expected-reserve' }),
+    (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH');
+    assert.deepEqual(await snapshot(db), beforeMismatch, 'policy mismatch must not persist any reservation fragment');
+    canonical.policyVersion = 3;
+    canonical.snapshotRevision = 2;
+    await assert.rejects(expectedServices[0].reserve('Bearer fixture', 'fixture-integration', expectedDto,
+      { idempotencyKey: 'mongo-expected-reserve' }),
+    (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH');
+    assert.deepEqual(await snapshot(db), beforeMismatch, 'target mismatch must not persist any reservation fragment');
+    canonical.snapshotRevision = 1;
+    const reserveWrite = repositories[0].reserveRuntimeEntitlement.bind(repositories[0]);
+    repositories[0].reserveRuntimeEntitlement = async (input) => {
+      await reserveWrite(input);
+      throw new Error('expected-reserve response lost after commit');
+    };
+    await assert.rejects(expectedServices[0].reserve('Bearer fixture', 'fixture-integration', expectedDto,
+      { idempotencyKey: 'mongo-expected-reserve' }), /expected-reserve response lost after commit/);
+    repositories[0].reserveRuntimeEntitlement = reserveWrite;
+    const afterExpectedCommit = await snapshot(db);
+    canonical.policyVersion = 4;
+    canonical.snapshotRevision = 2;
+    const expectedReplay = await expectedServices[1].reserve('Bearer fixture', 'fixture-integration', expectedDto,
+      { idempotencyKey: 'mongo-expected-reserve' });
+    assert.equal(expectedReplay.replayed, true);
+    assert.equal(expectedReplay.decision!.policyVersion, 3);
+    await assert.rejects(expectedServices[2].reserve('Bearer fixture', 'fixture-integration', {
+      ...expectedDto, expectations: { ...expectedDto.expectations, policyVersion: 4 }
+    }, { idempotencyKey: 'mongo-expected-reserve' }),
+    (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT');
+    assert.deepEqual(await snapshot(db), afterExpectedCommit, 'replay/conflict must not add ledger, outbox or counter changes');
+    await assertOneLedgerChain(db, expectedReplay.operationId!, ['ENTITLEMENT_RESERVED']);
+    console.log('PASS physical reserve expectations refuse stale refs before persistence and replay committed original decision after response loss');
     console.log('Canonical entitlement Mongo tests: PASS; policy/identity synthetic; provider writes=0; skipped=0');
   } finally {
     try {

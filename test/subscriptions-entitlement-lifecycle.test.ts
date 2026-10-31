@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
@@ -10,7 +11,7 @@ import {
 import { SubscriptionTrustedShadowController } from '../src/subscriptions/subscriptions.controller';
 import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { SubscriptionEntitlementLifecycleService } from '../src/subscriptions/subscription-entitlement-lifecycle.service';
-import { SubscriptionRuntimeContractError } from '../src/subscriptions/subscription-runtime-contracts';
+import { SubscriptionRuntimeContractError, validateStoredSubscriptionRuntimeOperation } from '../src/subscriptions/subscription-runtime-contracts';
 import { createOwnerEvidence, createOwnerReleaseEvidence } from '../src/subscriptions/owner-evidence.verifier';
 import {
   StoredSubscriptionEntitlementAggregate,
@@ -36,6 +37,7 @@ class FakeRepository {
   transitionCalls = 0;
 
   async connect(): Promise<void> {}
+  async connectReadOnly(): Promise<void> {}
 
   async runtimeOperationByIdempotency(input: {
     tenantId: string;
@@ -161,7 +163,9 @@ const serviceFixture = () => {
         dictionaryRevision: 'dictionary:1',
         evidenceRef: 'evidence:target-1',
         priceEvidenceRef: 'evidence:price-1',
-        resolvedAt: NOW
+        resolvedAt: NOW,
+        snapshotId: 'snapshot:target-1',
+        snapshotRevision: 1
       }
     }),
     resolveEntitlementRequest: async () => ({
@@ -182,7 +186,9 @@ const serviceFixture = () => {
         dictionaryRevision: 'dictionary:1',
         evidenceRef: 'evidence:target-1',
         priceEvidenceRef: 'evidence:price-1',
-        resolvedAt: NOW
+        resolvedAt: NOW,
+        snapshotId: 'snapshot:target-1',
+        snapshotRevision: 1
       }
     })
   };
@@ -198,6 +204,196 @@ const reserveDto = () => ({
   action: 'CREATE_GAME' as const,
   target: { targetId: 'exercise:game-1' }
 });
+
+const expectedReserveDto = () => ({
+  ...reserveDto(),
+  expectations: { schemaVersion: 1 as const, policyVersion: 3, policyDigest: POLICY_DIGEST,
+    targetSnapshot: { snapshotId: 'snapshot:target-1', revision: 1, evidenceRef: 'evidence:target-1' } }
+});
+
+async function testReserveExpectations(): Promise<void> {
+  process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = 'true';
+  const code = (wanted: string) => (error: any) => error.getResponse?.().code === wanted;
+  const mismatch = code('SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH');
+  const fresh = serviceFixture();
+  const original = expectedReserveDto();
+  const result = await fresh.service.reserve('Bearer token', 'integration-token', original, { idempotencyKey: 'expected-request-1' });
+  assert.equal(result.replayed, false);
+  assert.equal(fresh.repository.reserveCalls, 1);
+  // Later policy publication / target supersession cannot alter an already accepted decision.
+  fresh.adapter.resolveEntitlementRequest = async () => { throw new Error('must not resolve current target during replay'); };
+  fresh.shadowQuote.quote = async () => { throw new Error('must not re-quote during replay'); };
+  assert.equal((await fresh.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'expected-request-1' })).replayed, true);
+  for (const change of [
+    { ...original, subscriptionInstanceId: 'subscription:other' },
+    { ...original, action: 'JOIN_GAME' as const },
+    { ...original, target: { targetId: 'exercise:other' } },
+    ...['policyVersion', 'policyDigest', 'snapshotId', 'revision', 'evidenceRef'].map((field) => {
+      const changed = structuredClone(original);
+      if (field === 'policyVersion') changed.expectations.policyVersion += 1;
+      else if (field === 'policyDigest') changed.expectations.policyDigest = `sha256:${'c'.repeat(64)}`;
+      else if (field === 'revision') changed.expectations.targetSnapshot.revision += 1;
+      else (changed.expectations.targetSnapshot as any)[field] += ':changed';
+      return changed;
+    })
+  ]) await assert.rejects(fresh.service.reserve('Bearer token', 'integration-token', change,
+    { idempotencyKey: 'expected-request-1' }), code('SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT'));
+  assert.equal(fresh.repository.reserveCalls, 1);
+
+  const corruptBindings = [
+    (operation: any) => { operation.actor.type = 'ADMIN'; },
+    (operation: any) => { operation.actor.type = 'SYSTEM'; },
+    (operation: any) => { operation.subscriptionInstanceId = 'subscription:foreign'; },
+    (operation: any) => { operation.decision.policyVersion = 4; },
+    (operation: any) => { operation.decision.policyDigest = `sha256:${'d'.repeat(64)}`; },
+    (operation: any) => { operation.decision.action = 'JOIN_GAME'; },
+    (operation: any) => { operation.decision.target.targetId = 'exercise:foreign'; }
+  ];
+  for (const corrupt of corruptBindings) {
+    const fixture = serviceFixture();
+    const accepted = await fixture.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'corrupt-bound-replay' });
+    corrupt(fixture.repository.operations.get(accepted.operationId!)!);
+    validateStoredSubscriptionRuntimeOperation(fixture.repository.operations.get(accepted.operationId!)!);
+    const before = JSON.stringify(fixture.repository.aggregate);
+    fixture.repository.runtimeEntitlementAggregateByInstance = async () => { throw new Error('invalid replay must not read aggregate'); };
+    fixture.adapter.resolveEntitlementRequest = async () => { throw new Error('invalid replay must not resolve target'); };
+    fixture.shadowQuote.quote = async () => { throw new Error('invalid replay must not quote'); };
+    await assert.rejects(fixture.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'corrupt-bound-replay' }), mismatch);
+    assert.equal(fixture.repository.reserveCalls, 1);
+    assert.equal(JSON.stringify(fixture.repository.aggregate), before);
+    assert.equal(fixture.repository.ledgers.length, 1);
+    assert.equal(fixture.repository.outboxes.length, 1);
+  }
+  // The transaction may discover a competing stored row after all preflight reads missed.
+  const transactionReplay = serviceFixture();
+  transactionReplay.repository.reserveRuntimeEntitlement = async (input) => ({
+    aggregate: input.aggregate,
+    operation: { ...input.operation, actor: { ...input.operation.actor, type: 'ADMIN' } },
+    replayed: true
+  });
+  await assert.rejects(transactionReplay.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'transaction-bound-replay' }), mismatch);
+  assert.equal(transactionReplay.repository.operations.size, 0);
+  transactionReplay.repository.reserveRuntimeEntitlement = async (input) => ({
+    aggregate: input.aggregate,
+    operation: { ...input.operation, state: 'FAILED', terminalAt: NOW },
+    replayed: true
+  });
+  await assert.rejects(transactionReplay.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'transaction-terminal-replay' }), code('SUBSCRIPTION_ENTITLEMENT_STATE_CONFLICT'));
+
+  for (const field of ['policyVersion', 'policyDigest', 'snapshotId', 'snapshotRevision', 'evidenceRef']) {
+    const fixture = serviceFixture();
+    const before = JSON.stringify(fixture.repository.aggregate);
+    if (field.startsWith('policy')) {
+      // Effective instance-pinned policy changed after a prior quote, before reserve.
+      fixture.shadowQuote.quote = async () => quoteFixture(fixture.repository.aggregate, {
+        policyVersion: field === 'policyVersion' ? 4 : 3,
+        policyDigest: field === 'policyDigest' ? `sha256:${'c'.repeat(64)}` : POLICY_DIGEST
+      });
+    } else {
+      const resolve = fixture.adapter.resolveEntitlementRequest;
+      fixture.adapter.resolveEntitlementRequest = async () => {
+        const request = await resolve();
+        (request.target as any)[field] = field === 'snapshotRevision' ? 2 : 'evidence:changed';
+        return request;
+      };
+    }
+    await assert.rejects(fixture.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'mismatched-request' }), mismatch);
+    assert.equal(fixture.repository.reserveCalls, 0);
+    assert.equal(fixture.repository.operations.size + fixture.repository.ledgers.length + fixture.repository.outboxes.length, 0);
+    assert.equal(JSON.stringify(fixture.repository.aggregate), before);
+  }
+  const fallback = serviceFixture();
+  fallback.shadowQuote.quote = async () => quoteFixture(fallback.repository.aggregate, {
+    eligible: false, policyVersion: 4, decision: null,
+    blockers: [{ code: 'ACTIVE_SERVICES_LIMIT_REACHED', message: 'limit', details: {} }],
+    activeServicesLimitExceeded: 'FULL_PRICE_WITHOUT_SUBSCRIPTION'
+  });
+  await assert.rejects(fallback.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'fallback-mismatch' }), mismatch);
+  assert.equal(fallback.repository.reserveCalls, 0);
+
+  for (const race of ['target', 'policy']) {
+    const fixture = serviceFixture();
+    let resolves = 0;
+    const resolve = fixture.adapter.resolveEntitlementRequest;
+    fixture.adapter.resolveEntitlementRequest = async () => {
+      const request = await resolve();
+      resolves += 1;
+      if (resolves > 1 && race === 'target') request.target.snapshotRevision = 2;
+      return request;
+    };
+    fixture.shadowQuote.quote = async () => quoteFixture(fixture.repository.aggregate,
+      resolves > 1 && race === 'policy' ? { policyVersion: 4 } : {});
+    fixture.repository.reserveRuntimeEntitlement = async () => {
+      fixture.repository.reserveCalls += 1;
+      throw new SubscriptionRuntimeContractError('SUBSCRIPTION_ENTITLEMENT_CAS_CONFLICT');
+    };
+    await assert.rejects(fixture.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'cas-race-request' }), mismatch);
+    assert.equal(resolves, 2);
+    assert.equal(fixture.repository.reserveCalls, 1);
+    assert.equal(fixture.repository.operations.size, 0);
+  }
+
+  const invalids: any[] = [null, [], {}, { ...original.expectations, schemaVersion: 2 },
+    { ...original.expectations, policyVersion: 0 }, { ...original.expectations, policyVersion: '3' },
+    { ...original.expectations, policyVersion: Number.MAX_SAFE_INTEGER + 1 },
+    { ...original.expectations, policyDigest: 'untrusted' },
+    { ...original.expectations, policyDigest: POLICY_DIGEST + '\n' },
+    { ...original.expectations, targetSnapshot: { ...original.expectations.targetSnapshot, snapshotId: 'snapshot:1\n' } },
+    { ...original.expectations, bypass: true }, { ...original.expectations, targetSnapshot: [] },
+    { ...original.expectations, targetSnapshot: { ...original.expectations.targetSnapshot, revision: 0 } },
+    { ...original.expectations, targetSnapshot: { ...original.expectations.targetSnapshot, owner: 'client' } }];
+  for (const expectations of invalids) {
+    const fixture = serviceFixture();
+    const dto = { ...reserveDto(), expectations };
+    assert.ok((await validate(plainToInstance(ReserveSubscriptionEntitlementDto, dto),
+      { whitelist: true, forbidNonWhitelisted: true })).length > 0);
+    await assert.rejects(fixture.service.reserve('Bearer token', 'integration-token', dto,
+      { idempotencyKey: 'invalid-request' }), code('SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID'));
+    assert.equal(fixture.repository.reserveCalls, 0);
+  }
+  for (const malformed of [
+    { ...original, target: [] },
+    { ...original, actorId: 'client:forged' },
+    { ...original, target: { ...original.target, revision: 1 } }
+  ]) {
+    const fixture = serviceFixture();
+    await assert.rejects(fixture.service.reserve('Bearer token', 'integration-token', malformed as any,
+      { idempotencyKey: 'invalid-outer-request' }), code('SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID'));
+    assert.equal(fixture.repository.reserveCalls, 0);
+  }
+  for (const identityChange of [{ tenantId: 'tenant:other' }, { clientRefHash: 'd'.repeat(64) }]) {
+    const scoped = serviceFixture();
+    await scoped.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'scoped-expected-request' });
+    const verified = await scoped.adapter.resolveEntitlementIdentity();
+    scoped.adapter.resolveEntitlementIdentity = async () => ({ ...verified, ...identityChange });
+    // A scoped lookup must not return the first actor's stored operation.
+    scoped.adapter.resolveEntitlementRequest = async () => { throw new Error('foreign lookup did not replay'); };
+    await assert.rejects(scoped.service.reserve('Bearer token', 'integration-token', original,
+      { idempotencyKey: 'scoped-expected-request' }), /foreign lookup did not replay/);
+    assert.equal(scoped.repository.reserveCalls, 1);
+  }
+  const legacy = serviceFixture();
+  const legacyResult = await legacy.service.reserve('Bearer token', 'integration-token', reserveDto(), { idempotencyKey: 'legacy-fingerprint' });
+  const legacyHash = createHash('sha256').update(JSON.stringify({ subscriptionInstanceId: 'subscription:annual-1',
+    action: 'CREATE_GAME', targetId: 'exercise:game-1', targetSnapshotEvidenceRef: 'evidence:target-1' })).digest('hex');
+  assert.equal(legacy.repository.operations.get(legacyResult.operationId!)!.idempotency.requestHash, legacyHash);
+  await assert.rejects(legacy.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'legacy-fingerprint' }), code('SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT'));
+  const expectedThenLegacy = serviceFixture();
+  await expectedThenLegacy.service.reserve('Bearer token', 'integration-token', original,
+    { idempotencyKey: 'no-silent-downgrade' });
+  await assert.rejects(expectedThenLegacy.service.reserve('Bearer token', 'integration-token', reserveDto(),
+    { idempotencyKey: 'no-silent-downgrade' }), code('SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT'));
+}
 
 async function testReserveConfirmRelease(): Promise<void> {
   const { service, repository } = serviceFixture();
@@ -623,6 +819,7 @@ async function run(): Promise<void> {
   const originalFlag = process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
   try {
     await runEntitlementReadbackTests();
+    await testReserveExpectations();
     await testReserveConfirmRelease();
     await testDailyOverageAndProviderRejection();
     await testFullPriceFallbackAndGuards();

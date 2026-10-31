@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,6 +7,8 @@ import {
   ServiceUnavailableException
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import {
   ConfirmSubscriptionEntitlementDto,
   ReadbackSubscriptionEntitlementDto,
@@ -141,14 +144,50 @@ export class SubscriptionEntitlementLifecycleService {
   ): Promise<SubscriptionEntitlementReserveResult> {
     this.assertEnabled();
     const idempotencyKey = this.requireIdempotencyKey(headers.idempotencyKey);
-    const request = await this.adapter.resolveEntitlementRequest(
+    const keyHash = this.sha256(idempotencyKey);
+    // Versioned requests replay their original decision without resolving today's policy/target.
+    // Keep the legacy request and fingerprint path byte-for-byte compatible when omitted.
+    const expected = dto.expectations === undefined ? undefined : this.validateExpectedReserve(dto);
+    const expectedHash = expected ? this.sha256(JSON.stringify({
+      domain: 'subscription-entitlement-reserve-expectations',
+      schemaVersion: 1,
+      subscriptionInstanceId: expected.subscriptionInstanceId,
+      action: expected.action,
+      targetId: expected.target.targetId,
+      expectations: {
+        schemaVersion: expected.expectations!.schemaVersion,
+        policyVersion: expected.expectations!.policyVersion,
+        policyDigest: expected.expectations!.policyDigest,
+        targetSnapshot: {
+          snapshotId: expected.expectations!.targetSnapshot.snapshotId,
+          revision: expected.expectations!.targetSnapshot.revision,
+          evidenceRef: expected.expectations!.targetSnapshot.evidenceRef
+        }
+      }
+    })) : undefined;
+    const replayIdentity = expected
+      ? await this.adapter.resolveEntitlementIdentity(authorizationHeader, integrationToken)
+      : undefined;
+    if (replayIdentity) {
+      await this.repository.connectReadOnly();
+      const replay = await this.repository.runtimeOperationByIdempotency({
+        tenantId: replayIdentity.tenantId, actorId: replayIdentity.clientRefHash,
+        kind: 'BOOKING', keyHash
+      });
+      if (replay) {
+        this.assertExpectedReplay(replay, expected!, replayIdentity, keyHash, expectedHash!);
+        return this.reserveReplay(replay, expectedHash!);
+      }
+    }
+    let request = await this.adapter.resolveEntitlementRequest(
       authorizationHeader,
       integrationToken,
-      dto
+      expected ?? dto
     );
-    await this.repository.connect();
-    const keyHash = this.sha256(idempotencyKey);
-    const requestHash = this.sha256(JSON.stringify({
+    if (replayIdentity && (request.identity.tenantId !== replayIdentity.tenantId
+      || request.identity.clientRefHash !== replayIdentity.clientRefHash)) this.expectationMismatch();
+    if (!expected) await this.repository.connect();
+    const requestHash = expectedHash ?? this.sha256(JSON.stringify({
       subscriptionInstanceId: request.subscriptionInstanceId,
       action: request.action,
       targetId: request.target.targetId,
@@ -167,11 +206,41 @@ export class SubscriptionEntitlementLifecycleService {
       keyHash
     });
     if (existing) {
+      if (expected) this.assertExpectedReplay(existing, expected, replayIdentity!, keyHash, requestHash);
       return this.reserveReplay(existing, requestHash);
     }
 
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      if (expected) {
+        if (attempt > 0) {
+          const replay = await this.repository.runtimeOperationByIdempotency({
+            tenantId: replayIdentity!.tenantId, actorId: replayIdentity!.clientRefHash,
+            kind: 'BOOKING', keyHash
+          });
+          if (replay) {
+            this.assertExpectedReplay(replay, expected, replayIdentity!, keyHash, requestHash);
+            return this.reserveReplay(replay, requestHash);
+          }
+          request = await this.adapter.resolveEntitlementRequest(authorizationHeader, integrationToken, expected);
+        }
+        const snapshot = expected.expectations!.targetSnapshot;
+        if (request.identity.tenantId !== replayIdentity!.tenantId
+          || request.identity.clientRefHash !== replayIdentity!.clientRefHash
+          || request.subscriptionInstanceId !== expected.subscriptionInstanceId
+          || request.action !== expected.action || request.target.targetId !== expected.target.targetId
+          || request.target.resolutionSource !== 'SERVER'
+          || request.target.snapshotId !== snapshot.snapshotId
+          || request.target.snapshotRevision !== snapshot.revision
+          || request.target.evidenceRef !== snapshot.evidenceRef) this.expectationMismatch();
+      }
       const quote = await this.shadowQuote.quote(request);
+      if (expected && (quote.subscriptionInstanceId !== expected.subscriptionInstanceId
+        || quote.policyVersion !== expected.expectations!.policyVersion
+        || quote.policyDigest !== expected.expectations!.policyDigest
+        || (quote.decision && (quote.decision.policyVersion !== expected.expectations!.policyVersion
+          || quote.decision.policyDigest !== expected.expectations!.policyDigest)))) {
+        this.expectationMismatch();
+      }
       const blockerCodes = quote.blockers.map((item) => item.code);
       if (!quote.eligible) {
         if (reservationFallsBackToFullPrice(quote)) {
@@ -236,6 +305,7 @@ export class SubscriptionEntitlementLifecycleService {
       const ledger = this.ledger(operation, eventId, 'ENTITLEMENT_RESERVED', quote.usageUnits, null);
       const outbox = this.outbox(operation, ledger, recordedAt);
       try {
+        if (expected) await this.repository.connect();
         const persisted = await this.repository.reserveRuntimeEntitlement({
           expectedAggregateRevision: aggregate.revision,
           aggregate: nextAggregate,
@@ -243,6 +313,9 @@ export class SubscriptionEntitlementLifecycleService {
           ledger,
           outbox
         });
+        if (expected && persisted.replayed) {
+          this.assertExpectedReplay(persisted.operation, expected, replayIdentity!, keyHash, requestHash);
+        }
         return {
           schemaVersion: 1,
           outcome: 'RESERVED',
@@ -264,6 +337,57 @@ export class SubscriptionEntitlementLifecycleService {
     throw new ConflictException({
       code: 'SUBSCRIPTION_ENTITLEMENT_REVISION_CONFLICT',
       message: 'Subscription usage changed concurrently; retry with the same idempotency key'
+    });
+  }
+
+  private assertExpectedReplay(
+    operation: StoredSubscriptionRuntimeOperation,
+    dto: ReserveSubscriptionEntitlementDto,
+    identity: SubscriptionShadowQuoteIdentityContext,
+    keyHash: string,
+    requestHash: string
+  ): void {
+    if (operation.idempotency.requestHash !== requestHash) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT',
+        message: 'Idempotency key was already used for another request'
+      });
+    }
+    if (!['RESERVED', 'CONFIRMED'].includes(operation.state)) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_STATE_CONFLICT',
+        message: 'Idempotent entitlement operation is no longer active'
+      });
+    }
+    const decision = operation.decision;
+    if (operation.actor.type !== 'CLIENT' || operation.actor.actorId !== identity.clientRefHash
+      || operation.tenantId !== identity.tenantId || operation.kind !== 'BOOKING'
+      || operation.subscriptionInstanceId !== dto.subscriptionInstanceId
+      || operation.idempotency.keyHash !== keyHash
+      || decision?.decisionKind !== 'ENTITLEMENT'
+      || decision.policyVersion !== dto.expectations!.policyVersion
+      || decision.policyDigest !== dto.expectations!.policyDigest
+      || decision.action !== dto.action || decision.target.targetId !== dto.target.targetId) {
+      this.expectationMismatch();
+    }
+  }
+
+  private validateExpectedReserve(dto: ReserveSubscriptionEntitlementDto): ReserveSubscriptionEntitlementDto {
+    const value = plainToInstance(ReserveSubscriptionEntitlementDto, dto);
+    if (Array.isArray(value.target)
+      || validateSync(value, { whitelist: true, forbidNonWhitelisted: true }).length > 0) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID',
+        message: 'Subscription reserve expectations are invalid'
+      });
+    }
+    return value;
+  }
+
+  private expectationMismatch(): never {
+    throw new ConflictException({
+      code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH',
+      message: 'Subscription policy or canonical target differs from reserve expectations'
     });
   }
 
