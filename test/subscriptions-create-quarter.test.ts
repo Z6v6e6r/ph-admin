@@ -4,6 +4,7 @@ import { runInNewContext } from 'node:vm';
 import { transpileModule, ModuleKind } from 'typescript';
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
+import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { CanonicalTargetIntakeService } from '../src/subscriptions/canonical-target-intake.service';
 import { SubscriptionCanonicalTargetResolverService } from '../src/subscriptions/subscription-canonical-target-resolver.service';
 import { SubscriptionShadowQuoteService } from '../src/subscriptions/subscription-shadow-quote.service';
@@ -284,6 +285,23 @@ async function main() {
     await assert.rejects(f.ingest(intakeBody(), 'invalid')); assert.equal(f.state.connections, 0); assert.equal(f.state.snapshots.length, 0);
     const first = await f.ingest(); assert.equal(first.replay, false); assert.equal(f.state.snapshots[0].basePriceMinor, 150000);
     assert.equal((await f.ingest()).replay, true); assert.equal(f.state.snapshots.length, 1);
+    // Model the Mongo driver adding _id even before a duplicate-key rejection.
+    const legacyTarget = structuredClone(f.state.snapshots[0]);
+    delete legacyTarget.createQuarter; legacyTarget.schemaVersion = 1;
+    for (const targetBeforeInsert of [f.state.snapshots[0], legacyTarget]) {
+      const targetForInsert = structuredClone(targetBeforeInsert);
+      const realRepository = new SubscriptionsRepository();
+      let insertAttempts = 0;
+      (realRepository as any).runtimeCanonicalTargets = () => ({ insertOne: async (document: Record<string, unknown>) => {
+        document._id = 'synthetic-driver-owned-id';
+        if (++insertAttempts > 1) throw Object.assign(new Error('duplicate'), { code: 11000 });
+      } });
+      await realRepository.insertRuntimeCanonicalTargetSnapshot(targetForInsert);
+      assert.deepEqual(targetForInsert, targetBeforeInsert, 'successful insert must preserve canonical replay input');
+      await assert.rejects(realRepository.insertRuntimeCanonicalTargetSnapshot(targetForInsert),
+        (error: any) => error.code === 11000);
+      assert.deepEqual(targetForInsert, targetBeforeInsert, 'duplicate insert must preserve canonical replay input');
+    }
     assert.deepEqual(quarterSnapshotInput(JSON.parse(JSON.stringify(f.state.snapshots[0]))), parseQuarterIntake(intakeBody()));
     const preflight = await f.preflight(); assert.equal(preflight.nonBinding, true); assert.equal(f.state.writes, 0);
     assert.deepEqual(preflight.expectations.createQuarter, f.state.snapshots[0].createQuarter!.binding);

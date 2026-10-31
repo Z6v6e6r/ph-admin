@@ -693,7 +693,8 @@ export class SubscriptionsRepository {
   ): Promise<void> {
     this.assertRuntimeContractsEnabled();
     validateStoredSubscriptionCanonicalTargetSnapshot(document);
-    await this.runtimeCanonicalTargets().insertOne(document);
+    // The Mongo driver adds _id even on duplicate failure; preserve the caller's canonical replay input.
+    await this.runtimeCanonicalTargets().insertOne({ ...document });
   }
 
   async runtimeProviderMappingByProviderIdentity(input: {
