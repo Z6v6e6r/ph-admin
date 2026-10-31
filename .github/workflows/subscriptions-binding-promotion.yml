@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031, codex/r1-tournament-gender-admission-20261031]
   push:
     branches: [main]
 
@@ -105,6 +105,8 @@ jobs:
           SUBSCRIPTIONS_INSTANCE_DEV_CANARY_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
       - run: npm run test:subscriptions-sale-readiness
       - run: npm run test:subscriptions-shadow-quote
+      - name: Organizer quarter CREATE target provenance and legacy compatibility
+        run: npx ts-node test/subscriptions-create-quarter.test.ts
       - run: npm run test:subscriptions-canonical-target-resolver
       - run: npm run test:subscriptions-synthetic-projection
       - run: npm run test:subscriptions-provider-projection

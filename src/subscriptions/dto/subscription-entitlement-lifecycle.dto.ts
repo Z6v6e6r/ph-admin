@@ -1,3 +1,4 @@
+import type { CreateQuarterBinding } from '../subscription-create-quarter-contract';
 import { Type } from 'class-transformer';
 import {
   IsDefined,
@@ -53,6 +54,11 @@ export class ReserveSubscriptionEntitlementSnapshotExpectationDto {
 }
 
 export class ReserveSubscriptionEntitlementExpectationsDto {
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDefined()
+  @IsObject()
+  createQuarter?: CreateQuarterBinding;
+
   @IsIn([1])
   schemaVersion!: 1;
 
@@ -106,14 +112,19 @@ export class PreflightSubscriptionEntitlementTargetDto {
 }
 
 export class PreflightSubscriptionEntitlementDto {
+  @ValidateIf((object, value) => object.action === 'CREATE_GAME' || value !== undefined)
+  @IsDefined()
+  @IsIn([2])
+  contractVersion?: 2;
+
   @IsString()
   @Matches(ID_PATTERN)
   @NotContains('\n')
   @NotContains('\r')
   subscriptionInstanceId!: string;
 
-  @IsIn(['JOIN_GAME'])
-  action!: 'JOIN_GAME';
+  @IsIn(['JOIN_GAME', 'CREATE_GAME'])
+  action!: 'JOIN_GAME' | 'CREATE_GAME';
 
   @IsDefined()
   @IsObject()

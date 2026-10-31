@@ -1612,7 +1612,7 @@ export class SubscriptionsRepository {
     validateStoredSubscriptionPolicyPublication(input.publication);
     if (input.mapping.state !== 'VERIFIED'
       || input.publication.state !== 'PUBLISHED'
-      || input.publication.schemaVersion !== 3
+      || ![3, 4].includes(input.publication.schemaVersion)
       || !input.publication.runtimeCompatibility
       || input.mapping.mappingId !== input.publication.mappingId
       || input.mapping.subscriptionTypeId !== input.publication.subscriptionTypeId) {

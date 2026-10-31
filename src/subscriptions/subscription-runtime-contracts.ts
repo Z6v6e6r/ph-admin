@@ -1,3 +1,4 @@
+import { assertQuarterPublication, quarterSnapshotInput } from './subscription-create-quarter-contract';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -677,10 +678,13 @@ export function validateStoredSubscriptionProviderMapping(
 export function validateStoredSubscriptionCanonicalTargetSnapshot(
   value: StoredSubscriptionCanonicalTargetSnapshot
 ): void {
-  if (value.schemaVersion !== 1
+  if (![1, 2].includes(value.schemaVersion)
     || value.sourceKind !== 'CANONICAL_TARGET_PROJECTION') {
     fail('SUBSCRIPTION_CANONICAL_TARGET_SCHEMA_INVALID');
   }
+  if (value.schemaVersion === 2) {
+    try { quarterSnapshotInput(value); } catch { fail('SUBSCRIPTION_CREATE_QUARTER_INVALID'); }
+  } else if (Object.prototype.hasOwnProperty.call(value, 'createQuarter')) fail('SUBSCRIPTION_CREATE_QUARTER_INVALID');
   requiredId(value.snapshotId, 'snapshotId');
   requiredId(value.tenantId, 'tenantId');
   requiredId(value.targetId, 'targetId');
@@ -744,7 +748,14 @@ export function validateStoredSubscriptionCanonicalTargetSnapshot(
 export function validateStoredSubscriptionPolicyPublication(
   value: StoredSubscriptionPolicyPublication
 ): void {
-  if (![1, 2, 3].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  if (![1, 2, 3, 4].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  if (value.schemaVersion === 4 && (!value.createQuarterDescriptor || !value.createQuarterDescriptorDigest)) {
+    fail('SUBSCRIPTION_CREATE_QUARTER_INVALID');
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'createQuarterDescriptor')
+    || Object.prototype.hasOwnProperty.call(value, 'createQuarterDescriptorDigest')) {
+    try { assertQuarterPublication({ ...value, state: 'PUBLISHED' }); } catch { fail('SUBSCRIPTION_CREATE_QUARTER_INVALID'); }
+  }
   requiredId(value.publicationId, 'publicationId');
   requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
   positiveInteger(value.policyVersion, 'policyVersion');
@@ -762,7 +773,7 @@ export function validateStoredSubscriptionPolicyPublication(
   if ((value.schemaVersion === 1 || value.schemaVersion === 2) && value.runtimeCompatibility !== undefined) {
     fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_UNATTESTED');
   }
-  if (value.schemaVersion === 3) {
+  if (value.schemaVersion === 3 || value.schemaVersion === 4) {
     if (!value.idempotency) fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
     validateRuntimeCompatibility(value.runtimeCompatibility);
   }

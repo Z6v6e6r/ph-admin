@@ -1,3 +1,4 @@
+import { parseQuarterBinding, quarterHash } from './subscription-create-quarter-contract';
 import {
   BadRequestException,
   ConflictException,
@@ -61,7 +62,7 @@ export interface SubscriptionEntitlementPreflightResult {
   schemaVersion: 1;
   nonBinding: true;
   subscriptionInstanceId: string;
-  action: 'JOIN_GAME';
+  action: 'JOIN_GAME' | 'CREATE_GAME';
   target: { targetId: string };
   expectations: ReserveSubscriptionEntitlementExpectationsDto;
 }
@@ -121,6 +122,7 @@ export class SubscriptionEntitlementLifecycleService {
     this.assertEnabled();
     const input = plainToInstance(PreflightSubscriptionEntitlementDto, dto);
     if (!input || Array.isArray(input) || typeof input !== 'object'
+      || (input.action === 'JOIN_GAME' && input.contractVersion !== undefined)
       || validateSync(input, { whitelist: true, forbidNonWhitelisted: true }).length > 0) {
       throw new BadRequestException({
         code: 'SUBSCRIPTION_ENTITLEMENT_PREFLIGHT_INVALID',
@@ -129,16 +131,19 @@ export class SubscriptionEntitlementLifecycleService {
     }
     // Existing adapter authenticates before resolving the target through read-only storage.
     const request = await this.adapter.resolveEntitlementRequest(authorizationHeader, integrationToken, input);
+    if (input.action === 'CREATE_GAME' && (!request.target.createQuarter
+      || request.target.createQuarter.binding.clientRefHash !== request.identity.clientRefHash)) this.expectationMismatch();
     await this.repository.connectReadOnly();
     // Do not route through the HTTP shadow-quote controller: that path writes its quote journal.
     const quote = await this.shadowQuote.quote(request);
-    if (!quote.eligible && !reservationFallsBackToFullPrice(quote)) {
+    if (!quote.eligible && (input.action === 'CREATE_GAME' || !reservationFallsBackToFullPrice(quote))) {
       throw new ConflictException({
         code: 'SUBSCRIPTION_ENTITLEMENT_BLOCKED',
         message: 'Subscription benefit is not available for this booking'
       });
     }
     const expectations = {
+      ...(input.action === 'CREATE_GAME' ? { createQuarter: parseQuarterBinding(request.target.createQuarter!.binding) } : {}),
       schemaVersion: 1 as const,
       policyVersion: quote.policyVersion!,
       policyDigest: quote.policyDigest!,
@@ -219,6 +224,7 @@ export class SubscriptionEntitlementLifecycleService {
       action: expected.action,
       targetId: expected.target.targetId,
       expectations: {
+        ...(expected.expectations!.createQuarter ? { createQuarter: parseQuarterBinding(expected.expectations!.createQuarter) } : {}),
         schemaVersion: expected.expectations!.schemaVersion,
         policyVersion: expected.expectations!.policyVersion,
         policyDigest: expected.expectations!.policyDigest,
@@ -250,6 +256,7 @@ export class SubscriptionEntitlementLifecycleService {
     );
     if (replayIdentity && (request.identity.tenantId !== replayIdentity.tenantId
       || request.identity.clientRefHash !== replayIdentity.clientRefHash)) this.expectationMismatch();
+    if (request.target.createQuarter !== undefined && !expected?.expectations?.createQuarter) this.expectationMismatch();
     if (!expected) await this.repository.connect();
     const requestHash = expectedHash ?? this.sha256(JSON.stringify({
       subscriptionInstanceId: request.subscriptionInstanceId,
@@ -297,6 +304,12 @@ export class SubscriptionEntitlementLifecycleService {
           || request.target.snapshotRevision !== snapshot.revision
           || request.target.evidenceRef !== snapshot.evidenceRef) this.expectationMismatch();
       }
+      if (request.target.createQuarter !== undefined || expected?.expectations?.createQuarter !== undefined) {
+        if (!expected?.expectations?.createQuarter || !request.target.createQuarter || request.action !== 'CREATE_GAME'
+          || request.target.createQuarter.binding.clientRefHash !== request.identity.clientRefHash
+          || quarterHash('quarter-binding:v1', parseQuarterBinding(request.target.createQuarter.binding))
+            !== quarterHash('quarter-binding:v1', parseQuarterBinding(expected.expectations.createQuarter))) this.expectationMismatch();
+      }
       const quote = await this.shadowQuote.quote(request);
       if (expected && (quote.subscriptionInstanceId !== expected.subscriptionInstanceId
         || quote.policyVersion !== expected.expectations!.policyVersion
@@ -307,7 +320,7 @@ export class SubscriptionEntitlementLifecycleService {
       }
       const blockerCodes = quote.blockers.map((item) => item.code);
       if (!quote.eligible) {
-        if (reservationFallsBackToFullPrice(quote)) {
+        if (!request.target.createQuarter && reservationFallsBackToFullPrice(quote)) {
           return {
             schemaVersion: 1,
             outcome: 'FULL_PRICE_WITHOUT_SUBSCRIPTION',
@@ -369,7 +382,10 @@ export class SubscriptionEntitlementLifecycleService {
       const ledger = this.ledger(operation, eventId, 'ENTITLEMENT_RESERVED', quote.usageUnits, null);
       const outbox = this.outbox(operation, ledger, recordedAt);
       try {
-        if (expected) await this.repository.connect();
+        if (expected) {
+          if (expected.expectations!.createQuarter) await this.repository.connectReadOnly();
+          else await this.repository.connect();
+        }
         const persisted = await this.repository.reserveRuntimeEntitlement({
           expectedAggregateRevision: aggregate.revision,
           aggregate: nextAggregate,
@@ -423,6 +439,8 @@ export class SubscriptionEntitlementLifecycleService {
         message: 'Idempotent entitlement operation is no longer active'
       });
     }
+    if (dto.expectations!.createQuarter?.clientRefHash !== undefined
+      && dto.expectations!.createQuarter.clientRefHash !== identity.clientRefHash) this.expectationMismatch();
     const decision = operation.decision;
     if (operation.actor.type !== 'CLIENT' || operation.actor.actorId !== identity.clientRefHash
       || operation.tenantId !== identity.tenantId || operation.kind !== 'BOOKING'
@@ -444,6 +462,13 @@ export class SubscriptionEntitlementLifecycleService {
         code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID',
         message: 'Subscription reserve expectations are invalid'
       });
+    }
+    if (Object.prototype.hasOwnProperty.call(value.expectations!, 'createQuarter')) {
+      try {
+        const binding = parseQuarterBinding(value.expectations!.createQuarter);
+        if (value.action !== 'CREATE_GAME' || value.target.targetId !== `create-draft:${binding.draftId}`) throw new Error();
+        value.expectations!.createQuarter = binding;
+      } catch { throw new BadRequestException({ code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID', message: 'Quarter binding is invalid' }); }
     }
     return value;
   }

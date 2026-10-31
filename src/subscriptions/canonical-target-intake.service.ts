@@ -1,3 +1,4 @@
+import { assertQuarterCorrespondence, parseQuarterIntake, quarterBinding, quarterTargetEvidence, quarterPriceEvidence, QUARTER_EVENT, CreateQuarterProvenance } from './subscription-create-quarter-contract';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
@@ -139,6 +140,9 @@ export class CanonicalTargetIntakeService {
     this.assertEnabledAndConfigured();
     this.assertIntegrationToken(integrationToken);
     const tenantId = this.runtimeTenantId();
+    if (record(body) && Object.prototype.hasOwnProperty.call(body, 'contractVersion')) {
+      return this.ingestQuarter(tenantId, body, options.now?.() ?? new Date());
+    }
     const target = parseCanonicalTargetIntakeBody(body);
     const createdAt = (options.now?.() ?? new Date()).toISOString();
     const snapshot: StoredSubscriptionCanonicalTargetSnapshot = {
@@ -195,6 +199,48 @@ export class CanonicalTargetIntakeService {
     return { ...identity(target), snapshotId: existing.snapshotId, replay: true };
   }
 
+  private async ingestQuarter(tenantId: string, body: unknown, now: Date): Promise<CanonicalTargetIntakeResult> {
+    let input: ReturnType<typeof parseQuarterIntake>;
+    try { input = parseQuarterIntake(body); } catch { throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID'); }
+    const staleness = Number(process.env.SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS);
+    if (!Number.isSafeInteger(staleness) || staleness < 30 || staleness > 3600) {
+      throw new CanonicalTargetIntakeError(503, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    }
+    if (Date.parse(input.observedAt) > now.getTime() || now.getTime() - Date.parse(input.observedAt) > staleness * 1000
+      || Date.parse(input.expiresAt) <= now.getTime() || Date.parse(input.startsAt) <= now.getTime()) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_STALE');
+    }
+    // VERIFY_ONLY never creates indexes. The authenticated intake may insert only into the existing target store.
+    await this.repository.connectReadOnly();
+    const publication = await this.repository.runtimePolicyPublicationByVersion(input.subscriptionTypeId, input.policyVersion);
+    if (!publication) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    const mapping = await this.repository.runtimeProviderMappingById(publication.mappingId);
+    if (!mapping || mapping.tenantId !== tenantId || mapping.state !== 'VERIFIED' || mapping.provider !== 'VIVA'
+      || mapping.subscriptionTypeId !== input.subscriptionTypeId) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    let descriptor: ReturnType<typeof assertQuarterCorrespondence>;
+    try { descriptor = assertQuarterCorrespondence(input, publication); }
+    catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_MISMATCH'); }
+    const proof: CreateQuarterProvenance = { schemaVersion: 1, binding: quarterBinding(input, descriptor),
+      subscriptionTypeId: publication.subscriptionTypeId, policyVersion: publication.policyVersion,
+      policyDigest: publication.policyDigest, approvalAuditRef: publication.approvalAuditRef, roomId: input.roomId,
+      catalogue: input.catalogue, price: input.price };
+    const target = { targetId: input.targetId, action: 'CREATE_GAME' as const, revision: input.revision };
+    const snapshot: StoredSubscriptionCanonicalTargetSnapshot = { schemaVersion: 2, snapshotId: snapshotIdFor(tenantId, target),
+      tenantId, ...target, state: input.state, stationId: input.stationId, category: 'GAME', externalEventTypeId: QUARTER_EVENT,
+      productTypeId: null, durationMinutes: 60, startsAt: input.startsAt, basePriceMinor: input.price.amountMinor / 4,
+      currency: 'RUB', dictionaryRevision: publication.dictionaryRevision, evidenceRef: quarterTargetEvidence(tenantId, input, proof),
+      priceEvidenceRef: quarterPriceEvidence(input), sourceKind: 'CANONICAL_TARGET_PROJECTION', observedAt: input.observedAt,
+      expiresAt: input.expiresAt, createdAt: now.toISOString(), createQuarter: proof };
+    validateStoredSubscriptionCanonicalTargetSnapshot(snapshot);
+    try { await this.repository.insertRuntimeCanonicalTargetSnapshot(snapshot); return { ...target, snapshotId: snapshot.snapshotId, replay: false }; }
+    catch (error) { if (!this.repository.isDuplicateKey(error)) throw error; }
+    const existing = await this.repository.runtimeCanonicalTargetSnapshot({ tenantId, ...target });
+    if (!existing || !isDeepStrictEqual({ ...existing, createdAt: snapshot.createdAt }, snapshot)) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_INTAKE_CONFLICT');
+    }
+    return { ...target, snapshotId: existing.snapshotId, replay: true };
+  }
+
   private runtimeTenantId(): string {
     const tenantId = String(process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID ?? '').trim();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(tenantId)) {
@@ -246,7 +292,7 @@ function identity(target: CanonicalTargetIntakeBody) {
   };
 }
 
-function snapshotIdFor(tenantId: string, target: CanonicalTargetIntakeBody): string {
+function snapshotIdFor(tenantId: string, target: Pick<CanonicalTargetIntakeBody, 'targetId' | 'action' | 'revision'>): string {
   const digest = createHash('sha256')
     .update(`canonical-target:v1\0${tenantId}\0${target.targetId}\0${target.action}\0${target.revision}`)
     .digest('hex')

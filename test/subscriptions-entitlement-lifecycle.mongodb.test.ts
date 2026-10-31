@@ -1,3 +1,6 @@
+import { quarterFixture, quarterIntakeBody, QUARTER_NOW, QUARTER_TENANT, QUARTER_TOKEN,
+  QuarterResolver, QuarterQuote, QuarterLifecycle } from './subscriptions-create-quarter.test';
+import { CanonicalTargetIntakeService } from '../src/subscriptions/canonical-target-intake.service';
 import * as assert from 'node:assert/strict';
 import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { createHash, randomUUID } from 'node:crypto';
@@ -440,6 +443,68 @@ async function run(): Promise<void> {
     assert.deepEqual(await snapshot(db), afterExpectedCommit, 'replay/conflict must not add ledger, outbox or counter changes');
     await assertOneLedgerChain(db, expectedReplay.operationId!, ['ENTITLEMENT_RESERVED']);
     console.log('PASS physical reserve expectations refuse stale refs before persistence and replay committed original decision after response loss');
+    // Same already-owned isolated replica-set DB/index plan; no ambient DB or extra service.
+    const quarterSettings = { SUBSCRIPTIONS_TARGET_INGEST_ENABLED: 'true', SUBSCRIPTIONS_TARGET_INGEST_INTEGRATION_TOKEN: QUARTER_TOKEN,
+      SUBSCRIPTIONS_RUNTIME_TENANT_ID: QUARTER_TENANT, SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED: 'true',
+      SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED: 'true', SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS: '60' };
+    const quarterPrevious = Object.fromEntries(Object.keys(quarterSettings).map(key => [key, process.env[key]]));
+    Object.assign(process.env, quarterSettings);
+    try {
+      const data = quarterFixture().state; // Pure synthetic catalogue/policy/identity facts only.
+      const quarterRepository = new SubscriptionsRepository(); repositories.push(quarterRepository);
+      await quarterRepository.connectReadOnly();
+      await quarterRepository.insertRuntimeProviderMapping(data.mapping);
+      await quarterRepository.insertRuntimePolicyPublication(data.publication);
+      await quarterRepository.insertRuntimeInstance(data.instance);
+      await quarterRepository.insertRuntimeEntitlementAggregate(data.aggregate);
+      const observedPublication = await repositories[1].runtimePolicyPublicationByVersion(data.publication.subscriptionTypeId, data.publication.policyVersion);
+      assert.deepEqual(observedPublication, data.publication);
+      assert.equal(observedPublication!.schemaVersion, 4);
+      const indexBefore = await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray();
+      const intake = new CanonicalTargetIntakeService(quarterRepository);
+      const ingest = (body: unknown) => intake.ingest(QUARTER_TOKEN, body, { now: () => new Date(QUARTER_NOW) });
+      assert.equal((await ingest(quarterIntakeBody())).replay, false);
+      assert.equal((await ingest(quarterIntakeBody())).replay, true);
+      const changed = quarterIntakeBody(); changed.price.amountMinor = 800000;
+      await assert.rejects(ingest(changed), (error: any) => error.code === 'CANONICAL_TARGET_INTAKE_CONFLICT');
+      const targetQuery = { tenantId: QUARTER_TENANT, targetId: quarterIntakeBody().targetId, action: 'CREATE_GAME' as const, revision: 1 };
+      const storedTarget = await repositories[1].runtimeCanonicalTargetSnapshot(targetQuery);
+      assert.equal(storedTarget!.schemaVersion, 2); assert.equal(storedTarget!.basePriceMinor, 150000);
+      assert.equal(storedTarget!.createQuarter!.price.amountMinor, 600000);
+      assert.equal(storedTarget!.createQuarter!.binding.createOperationId, quarterIntakeBody().createOperationId);
+      assert.equal(await db.collection('subscription_canonical_target_snapshots').countDocuments(targetQuery), 1);
+      assert.deepEqual(await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray(), indexBefore);
+      const resolver = new QuarterResolver(quarterRepository), realQuote = new QuarterQuote(quarterRepository);
+      const identity = { resolutionSource: 'LK_IDENTITY' as const, tenantId: QUARTER_TENANT, clientRefHash: data.instance.clientRefHash,
+        evidenceRef: 'evidence:quarter-physical-actor', verifiedAt: QUARTER_NOW };
+      const adapter = { resolveEntitlementIdentity: async () => identity,
+        resolveEntitlementRequest: async (_a: unknown, _b: unknown, input: any) => ({ identity, subscriptionInstanceId: input.subscriptionInstanceId,
+          action: input.action, target: await resolver.resolveLatest({ tenantId: QUARTER_TENANT, targetId: input.target.targetId, action: input.action }) }) };
+      const quarterService = new QuarterLifecycle(adapter as any, realQuote, quarterRepository);
+      const request = { contractVersion: 2 as const, subscriptionInstanceId: data.instance.subscriptionInstanceId, action: 'CREATE_GAME' as const,
+        target: { targetId: quarterIntakeBody().targetId } };
+      const receipt = await quarterService.preflight('Bearer synthetic', 'synthetic', request);
+      const boundRequest = { subscriptionInstanceId: request.subscriptionInstanceId, action: request.action, target: request.target, expectations: receipt.expectations };
+      const write = quarterRepository.reserveRuntimeEntitlement.bind(quarterRepository);
+      quarterRepository.reserveRuntimeEntitlement = async input => { await write(input); throw new Error('quarter response lost after commit'); };
+      await assert.rejects(quarterService.reserve('Bearer synthetic', 'synthetic', boundRequest, { idempotencyKey: 'quarter-physical-original-key' }), /quarter response lost after commit/);
+      quarterRepository.reserveRuntimeEntitlement = write;
+      const replayAdapter = { resolveEntitlementIdentity: async () => identity,
+        resolveEntitlementRequest: async () => { throw new Error('committed replay must not resolve current target'); } };
+      const replayService = new QuarterLifecycle(replayAdapter as any, new QuarterQuote(repositories[1]), repositories[1]);
+      const replay = await replayService.reserve('Bearer synthetic', 'synthetic', boundRequest, { idempotencyKey: 'quarter-physical-original-key' });
+      assert.equal(replay.replayed, true); assert.equal(replay.decision!.money.basePriceMinor, 150000);
+      assert.equal(replay.decision!.money.finalPriceMinor, 0); assert.equal(replay.decision!.usageUnits, 1);
+      await assert.rejects(replayService.reserve('Bearer synthetic', 'synthetic', { ...boundRequest, expectations: { ...boundRequest.expectations,
+        createQuarter: { ...boundRequest.expectations.createQuarter!, createOperationId: '33333333-3333-4333-8333-333333333333' } } },
+      { idempotencyKey: 'quarter-physical-original-key' }), (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT');
+      assert.equal(await db.collection('subscription_operations').countDocuments({ subscriptionInstanceId: data.instance.subscriptionInstanceId }), 1);
+      assert.equal(await db.collection('subscription_usage_ledger').countDocuments({ operationId: replay.operationId }), 1);
+      assert.equal(await db.collection('subscription_outbox').countDocuments({ subscriptionInstanceId: data.instance.subscriptionInstanceId }), 1);
+      const after = await repositories[1].runtimeEntitlementAggregateByInstance(data.instance.subscriptionInstanceId);
+      assert.equal(after!.remainingUnits, data.aggregate.remainingUnits! - 1); assert.equal(after!.activeServiceCount, 1);
+      console.log('PASS physical schema4 approved descriptor/schema2 quarter target roundtrip, immutable duplicate conflict, reserve commit/lost ACK and exact replay');
+    } finally { for (const [key, value] of Object.entries(quarterPrevious)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
     console.log('Canonical entitlement Mongo tests: PASS; policy/identity synthetic; provider writes=0; skipped=0');
   } finally {
     try {
