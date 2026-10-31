@@ -35,11 +35,48 @@ aggregate evidence fails closed.
 - `POST /api/internal/subscriptions/entitlements/release`
   reverses the exact stored counter deltas. A confirmed reservation can be released only with the
   matching provider booking id and `BOOKING_CANCELLED` reason. A provider rejection before booking
-  confirmation can release without provider evidence.
+  confirmation can release without a booking id. In strict mode it still requires signed owner
+  evidence of a definite provider rejection; a timeout is not a rejection.
 
 Each active reservation stores its exact local day/week/month keys and deltas so rollback never
 recomputes historical policy. Legacy reservations without this evidence fail closed to manual
 reconciliation.
+
+## Owner evidence for release (R1)
+
+`SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT=true` now applies to both confirmation and release,
+including successful replays. The existing confirmation `v1` wire bytes are unchanged.
+Release uses the same backend-only configured secret and age limit, but a separate HMAC domain:
+
+- Header: `x-subscription-owner-evidence`.
+- Token: `release-v1.<base64url(payload)>.<lowercase-hex-HMAC-SHA256>`.
+- HMAC input: `owner-evidence:release:v1` + one NUL byte + the encoded payload.
+- Exact compact JSON fields, in order: `operationId`, `reason`, `providerBookingId`, `issuedAt`.
+- `reason` is `BOOKING_CANCELLED` (requires the exact nonempty booking id) or
+  `PROVIDER_REJECTED` (requires explicit JSON `null` for the booking id).
+- IDs follow `[A-Za-z0-9][A-Za-z0-9._:-]{2,199}`; `issuedAt` is canonical ISO UTC with
+  milliseconds. Extra/duplicate keys or noncanonical payload encodings are rejected.
+- The configured max age defaults to 60 seconds (allowed 10–300); future skew is limited to
+  60 seconds. Missing key configuration returns 503; absent/invalid proof returns 403 before
+  mutation. A replay requires a fresh proof for the same completed release.
+
+The `createOwnerReleaseEvidence` helper is an internal producer primitive, not a public
+signing endpoint. Only the canonical booking owner may issue the proof, after exact provider
+cancellation readback or a definite rejection establishing that no booking was created. This
+change does not add an LK signer or assert provider readback. Owner integration and sandbox
+acceptance remain required before enabling strict mode for real traffic. No secret is created
+or changed by this source change.
+
+Strict-off preserves unsigned legacy requests. In both modes, terminal release replay must
+match the stored reason and provider booking id and a completed compensation; mismatch returns
+`SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH` without touching counters, ledger or outbox.
+The existing aggregate/operation CAS and transaction remain the only write path. A valid repeat
+returns the original terminal state without a second counter restoration or ledger event.
+
+No migration or new collection is needed: the completed reason and booking already exist in
+`lastReconciliationResult` and `providerCorrelationId`. Historical terminal rows with mismatched release evidence or incomplete compensation
+fail closed and need owner reconciliation, not automatic repair. Rollback is a reviewed code
+rollback; do not disable strict proof validation merely to clear a denied compensation.
 
 ## Full-price fallback
 

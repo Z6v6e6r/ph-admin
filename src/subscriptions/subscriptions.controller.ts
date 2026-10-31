@@ -376,9 +376,10 @@ export class SubscriptionTrustedShadowController {
   releaseEntitlement(
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-subscription-owner-evidence') ownerEvidence: string | undefined,
     @Body() dto: ReleaseSubscriptionEntitlementDto
   ): Promise<SubscriptionEntitlementTransitionResult> {
-    return this.entitlements.release(authorization, integrationToken, dto);
+    return this.entitlements.release(authorization, integrationToken, dto, ownerEvidence);
   }
 
   @Post('runtime-context')

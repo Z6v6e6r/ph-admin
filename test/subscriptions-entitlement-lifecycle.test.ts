@@ -6,9 +6,11 @@ import {
   ReserveSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto
 } from '../src/subscriptions/dto/subscription-entitlement-lifecycle.dto';
+import { SubscriptionTrustedShadowController } from '../src/subscriptions/subscriptions.controller';
+import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { SubscriptionEntitlementLifecycleService } from '../src/subscriptions/subscription-entitlement-lifecycle.service';
 import { SubscriptionRuntimeContractError } from '../src/subscriptions/subscription-runtime-contracts';
-import { createOwnerEvidence } from '../src/subscriptions/owner-evidence.verifier';
+import { createOwnerEvidence, createOwnerReleaseEvidence } from '../src/subscriptions/owner-evidence.verifier';
 import {
   StoredSubscriptionEntitlementAggregate,
   StoredSubscriptionOutboxEvent,
@@ -523,9 +525,145 @@ async function testStrictOwnerEvidence(): Promise<void> {
   );
   assert.equal(confirmed.outcome, 'CONFIRMED');
 
+  await assert.rejects(
+    service.release('Bearer token', 'integration-token', {
+      operationId,
+      reason: 'BOOKING_CANCELLED',
+      providerBookingId: 'booking:viva-strict'
+    }),
+    (error) => error instanceof ForbiddenException &&
+      (error.getResponse() as { code?: string }).code ===
+        'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_REQUIRED'
+  );
+
   delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT;
   delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET;
   delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS;
+}
+
+async function testStrictReleaseEvidenceAndRecovery(): Promise<void> {
+  const envNames = ['SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT', 'SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET', 'SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS'] as const;
+  const before = envNames.map((key) => process.env[key]);
+  const secret = 'r'.repeat(40);
+  try {
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'true';
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET = secret;
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS = '60';
+    process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = 'true';
+    const { service, repository } = serviceFixture();
+    const reserved = await service.reserve('Bearer token', 'integration-token', reserveDto(), { idempotencyKey: 'strict-release-1' });
+    const operationId = reserved.operationId!;
+    const providerBookingId = 'booking:strict-release';
+    const confirmProof = createOwnerEvidence({ operationId, providerBookingId, issuedAt: NOW }, secret);
+    await service.confirm('Bearer token', 'integration-token', { operationId, providerBookingId }, confirmProof);
+    const dto = { operationId, reason: 'BOOKING_CANCELLED' as const, providerBookingId };
+    const proof = createOwnerReleaseEvidence({ ...dto, issuedAt: NOW }, secret);
+    const state = () => JSON.stringify({ aggregate: repository.aggregate, operations: [...repository.operations], ledgers: repository.ledgers, outboxes: repository.outboxes });
+    const unchanged = state();
+    const calls = repository.transitionCalls;
+    for (const candidate of [
+      undefined,
+      confirmProof,
+      createOwnerReleaseEvidence({ ...dto, issuedAt: NOW }, 'wrong'.repeat(10)),
+      createOwnerReleaseEvidence({ ...dto, operationId: 'booking:other', issuedAt: NOW }, secret),
+      createOwnerReleaseEvidence({ ...dto, providerBookingId: 'booking:other', issuedAt: NOW }, secret),
+      createOwnerReleaseEvidence({ ...dto, reason: 'PROVIDER_REJECTED', providerBookingId: null, issuedAt: NOW }, secret),
+      createOwnerReleaseEvidence({ ...dto, issuedAt: new Date(Date.parse(NOW) - 61_000).toISOString() }, secret)
+    ]) {
+      await assert.rejects(service.release('Bearer token', 'integration-token', dto, candidate), (error) => error instanceof ForbiddenException);
+      assert.equal(state(), unchanged);
+      assert.equal(repository.transitionCalls, calls);
+    }
+    delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET;
+    await assert.rejects(service.release('Bearer token', 'integration-token', dto, proof), (error) => error instanceof ServiceUnavailableException);
+    assert.equal(state(), unchanged);
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET = secret;
+    const operation = repository.operations.get(operationId)!;
+    repository.operations.set(operationId, { ...operation, tenantId: 'tenant:other' });
+    await assert.rejects(service.release('Bearer token', 'integration-token', dto, proof), (error) => error instanceof ForbiddenException);
+    repository.operations.set(operationId, operation);
+    repository.operations.set(operationId, { ...operation, actor: { type: 'CLIENT', actorId: 'c'.repeat(64) } });
+    await assert.rejects(service.release('Bearer token', 'integration-token', dto, proof), (error) => error instanceof ForbiddenException);
+    repository.operations.set(operationId, operation);
+    assert.equal(state(), unchanged);
+    const releases = await Promise.all([
+      service.release('Bearer token', 'integration-token', dto, proof),
+      service.release('Bearer token', 'integration-token', dto, proof)
+    ]);
+    assert.deepEqual(releases.map((result) => result.replayed).sort(), [false, true]);
+    assert.equal(repository.aggregate.remainingUnits, 10);
+    assert.equal(repository.aggregate.activeServiceCount, 0);
+    assert.equal(repository.ledgers.filter((entry) => entry.eventType === 'ENTITLEMENT_RELEASED').length, 1);
+    assert.equal(repository.outboxes.length, 3);
+    const terminal = state();
+    const completedOperation = repository.operations.get(operationId)!;
+    repository.operations.set(operationId, { ...completedOperation, compensationState: 'NONE' });
+    const incompleteCompensation = state();
+    await assert.rejects(service.release('Bearer token', 'integration-token', dto, proof),
+      (error) => error instanceof ConflictException &&
+        (error.getResponse() as { code?: string }).code === 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH');
+    assert.equal(state(), incompleteCompensation);
+    repository.operations.set(operationId, completedOperation);
+    await assert.rejects(service.release('Bearer token', 'integration-token', dto), (error) => error instanceof ForbiddenException);
+    for (const contradictory of [
+      { ...dto, providerBookingId: 'booking:other' },
+      { operationId, reason: 'PROVIDER_REJECTED' as const, providerBookingId: undefined }
+    ]) {
+      const signed = createOwnerReleaseEvidence({ ...contradictory, providerBookingId: contradictory.providerBookingId ?? null, issuedAt: NOW }, secret);
+      await assert.rejects(service.release('Bearer token', 'integration-token', contradictory, signed), (error) => error instanceof ConflictException);
+    }
+    assert.equal(state(), terminal);
+    // Strict-off retains unsigned compatibility but never accepts a contradictory replay.
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'false';
+    assert.equal((await service.release('Bearer token', 'integration-token', dto)).replayed, true);
+    await assert.rejects(service.release('Bearer token', 'integration-token', { ...dto, providerBookingId: 'booking:other' }), (error) => error instanceof ConflictException);
+    assert.equal(state(), terminal);
+
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'true';
+    const rejected = serviceFixture();
+    const held = await rejected.service.reserve('Bearer token', 'integration-token', reserveDto(), { idempotencyKey: 'strict-rejected-1' });
+    const rejection = { operationId: held.operationId!, reason: 'PROVIDER_REJECTED' as const };
+    const rejectionProof = createOwnerReleaseEvidence({ ...rejection, providerBookingId: null, issuedAt: NOW }, secret);
+    assert.equal((await rejected.service.release('Bearer token', 'integration-token', rejection, rejectionProof)).operationState, 'FAILED');
+    assert.equal((await rejected.service.release('Bearer token', 'integration-token', rejection, rejectionProof)).replayed, true);
+    assert.equal(rejected.repository.aggregate.remainingUnits, 10);
+    assert.equal(rejected.repository.ledgers.length, 2);
+    assert.equal(rejected.repository.outboxes.length, 2);
+
+    // Simulate the durable write succeeding before its response is lost. Retry with fresh evidence.
+    const lostReply = serviceFixture();
+    const lostReserve = await lostReply.service.reserve('Bearer token', 'integration-token', reserveDto(), { idempotencyKey: 'strict-lost-reply-1' });
+    const lostDto = { operationId: lostReserve.operationId!, reason: 'PROVIDER_REJECTED' as const };
+    const lostProof = createOwnerReleaseEvidence({ ...lostDto, providerBookingId: null, issuedAt: NOW }, secret);
+    const persist = lostReply.repository.transitionRuntimeEntitlement.bind(lostReply.repository);
+    lostReply.repository.transitionRuntimeEntitlement = async (input) => {
+      await persist(input);
+      throw new Error('synthetic response lost after commit');
+    };
+    await assert.rejects(lostReply.service.release('Bearer token', 'integration-token', lostDto, lostProof), /synthetic response lost after commit/);
+    const persistedAfterLoss = JSON.stringify({ aggregate: lostReply.repository.aggregate, operations: [...lostReply.repository.operations], ledgers: lostReply.repository.ledgers, outboxes: lostReply.repository.outboxes });
+    const freshProof = createOwnerReleaseEvidence({ ...lostDto, providerBookingId: null, issuedAt: new Date(Date.parse(NOW) + 1000).toISOString() }, secret);
+    assert.notEqual(freshProof, lostProof);
+    assert.equal((await lostReply.service.release('Bearer token', 'integration-token', lostDto, freshProof)).replayed, true);
+    assert.equal(lostReply.repository.transitionCalls, 1);
+    assert.equal(lostReply.repository.aggregate.remainingUnits, 10);
+    assert.equal(lostReply.repository.ledgers.length, 2);
+    assert.equal(lostReply.repository.outboxes.length, 2);
+    assert.equal(JSON.stringify({ aggregate: lostReply.repository.aggregate, operations: [...lostReply.repository.operations], ledgers: lostReply.repository.ledgers, outboxes: lostReply.repository.outboxes }), persistedAfterLoss);
+  } finally {
+    envNames.forEach((key, index) => { if (before[index] === undefined) delete process.env[key]; else process.env[key] = before[index]; });
+  }
+}
+
+async function testReleaseControllerHeader(): Promise<void> {
+  const argumentsMetadata = Reflect.getMetadata(ROUTE_ARGS_METADATA, SubscriptionTrustedShadowController, 'releaseEntitlement') as Record<string, { index: number; data?: string }>;
+  assert.ok(Object.values(argumentsMetadata).some((argument) => argument.index === 2 && argument.data === 'x-subscription-owner-evidence'));
+  const calls: unknown[][] = [];
+  const entitlements = { release: async (...args: unknown[]) => { calls.push(args); return { outcome: 'RELEASED' }; } };
+  const controller = new SubscriptionTrustedShadowController({} as never, entitlements as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+  const dto = { operationId: 'booking:controller', reason: 'PROVIDER_REJECTED' as const };
+  await controller.releaseEntitlement('actor-fixture', 'integration-fixture', 'proof-fixture', dto);
+  assert.deepEqual(calls, [['actor-fixture', 'integration-fixture', dto, 'proof-fixture']]);
 }
 
 async function testMutationDtoTrustBoundary(): Promise<void> {
@@ -574,6 +712,8 @@ async function run(): Promise<void> {
     await testDailyOverageAndProviderRejection();
     await testFullPriceFallbackAndGuards();
     await testStrictOwnerEvidence();
+    await testStrictReleaseEvidenceAndRecovery();
+    await testReleaseControllerHeader();
     await testMutationDtoTrustBoundary();
   } finally {
     if (originalFlag === undefined) delete process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
