@@ -162,3 +162,14 @@ test('owner preparation tracks only the exact private route and never query/body
   assert.ok(!JSON.stringify(rows).includes('private-'));
   assert.ok(!JSON.stringify(rows).includes('secret'));
 });
+
+test('local tournament command/read metrics never include actor, command or receipt payloads', async () => {
+ const rows:Recorded[]=[];const interceptor=new RequestMetricsInterceptor({record:(route:string,_d:number,status:number,sample:Record<string,unknown>)=>rows.push({route,status,sample})} as any);
+ for(const prefix of ['/api/internal/tournaments','/internal/tournaments'])for(const suffix of ['/local-operations','/local-operations/read'])for(const status of [200,409]) {
+   const result=lastValueFrom(interceptor.intercept(context(suffix,status,prefix+suffix+'?key=private-key',prefix),{handle:()=>status===200?of({operation:{phone:'private-phone',generation:'private-generation'},token:'secret'}):throwError(()=>new HttpException({phone:'private-phone'},status))}));
+   if(status===200)await result;else await assert.rejects(result);
+   assert.equal(rows.at(-1)?.route,'POST '+prefix+suffix);
+ }
+ assert.equal(rows.length,8);assert.doesNotMatch(JSON.stringify(rows),/private|secret|phone|generation|token|operationId/);
+ await lastValueFrom(interceptor.intercept(context('/local-operations/private-id',200,'/internal/tournaments/local-operations/private-id','/internal/tournaments'),{handle:()=>of({})}));assert.equal(rows.length,8);
+});

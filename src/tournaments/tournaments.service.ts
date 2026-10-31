@@ -1,8 +1,10 @@
+import { LocalOperation, commandInput, commandIdentity, digest, object, uuid, assertLocalOnly, operations, operationView, LOCAL_OPERATION_LIMIT } from './tournament-local-operation.contract';
 import { TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule } from './tournaments.types';
 import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
 import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -376,6 +378,114 @@ export class TournamentsService {
   ) {}
 
   /** Nonbinding, integration-only mapping observation. Never calls an admission or provider API. */
+  private async localOperationActor(authorization?: string, token?: string) {
+    // Default off. A switch does not disable the persistent legacy-writer adoption barriers.
+    if (process.env.TOURNAMENT_LOCAL_OPERATIONS_ENABLED !== 'true') throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_DISABLED' });
+    if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_AUTH_UNAVAILABLE' });
+    const { actor } = await this.lkIdentityService.verify(authorization, token);
+    if (!actor.clientId || !actor.verified || !actor.tenantKey || !/^\d{10,15}$/.test(actor.phoneNorm)) throw new ForbiddenException({ code: 'TOURNAMENT_LOCAL_ACTOR_INVALID' });
+    return actor;
+  }
+
+  async readLocalTournamentOperation(authorization: string | undefined, token: string | undefined, input: unknown) {
+    const actor = await this.localOperationActor(authorization, token);
+    if (!object(input) || Object.keys(input).sort().join(',') !== 'operationId,schemaVersion,tournamentId'
+      || input.schemaVersion !== 1 || !uuid(input.tournamentId) || !uuid(input.operationId)) throw new BadRequestException({ code: 'TOURNAMENT_LOCAL_INPUT_INVALID' });
+    const row = await this.tournamentsPersistence.readLocalParticipationTarget(input.tournamentId);
+    if (!row) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_OPERATION_NOT_FOUND' });
+    const actorHash = digest('tournament-local-actor:v1', [actor.tenantKey, actor.clientId]);
+    const op = operations(row, actor.tenantKey).find(x => x.operationId === input.operationId && x.actorHash === actorHash);
+    if (!op) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_OPERATION_NOT_FOUND' });
+    return operationView(row, op);
+  }
+
+  async executeLocalTournamentOperation(authorization: string | undefined, token: string | undefined, key: unknown, input: unknown) {
+    const actor = await this.localOperationActor(authorization, token);
+    const command = commandInput(input);
+    const identity = commandIdentity(actor.tenantKey, actor.clientId!, key, command);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await this.tournamentsPersistence.readLocalParticipationTarget(command.tournamentId);
+      if (!row) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_TARGET_NOT_FOUND' });
+      const journal = operations(row, actor.tenantKey);
+      const previous = journal.find(x => x.keyHash === identity.keyHash);
+      if (previous) {
+        if (previous.requestHash !== identity.requestHash || previous.operationId !== identity.operationId
+          || previous.actorHash !== identity.actorHash) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_KEY_CONFLICT' });
+        return operationView(row, previous);
+      }
+      const activeActorJoins = journal.filter(x => x.outcome === 'REGISTERED' && x.actorHash === identity.actorHash
+        && !journal.some(left => left.outcome === 'LEFT' && left.generation === x.generation));
+      if (command.action === 'JOIN' && activeActorJoins.some(x => x.phone !== actor.phoneNorm)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_ACTOR_BINDING_CHANGED' });
+      assertLocalOnly(row);
+      let receiptPhone = actor.phoneNorm;
+      let mappingHash: string; let eligibility: LocalOperation['eligibility'];
+      let outcome: LocalOperation['outcome']; let reason: LocalOperation['reason']; let generation: string | null = null;
+      let participants = row.participants;
+      if (command.action === 'JOIN') {
+        if (!['PLANNED','REGISTRATION','RUNNING'].includes(row.status)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_CLOSED' });
+        const prepared = await this.prepareTournamentOwner(authorization, token, { tournamentId: command.tournamentId, date: command.date });
+        if (prepared.status !== 'RESOLVED' || prepared.owner !== 'CUP_CUSTOM' || prepared.binding.exerciseId !== null
+          || prepared.binding.customTournamentId !== row.id || prepared.binding.customUpdatedAt !== row.updatedAt) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_MAPPING_UNAVAILABLE' });
+        mappingHash = prepared.binding.mappingSha256.slice(7);
+        if (!/^[a-f0-9]{64}$/.test(mappingHash)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_MAPPING_UNAVAILABLE' });
+        if (!this.playerRatingsService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_ELIGIBILITY_UNAVAILABLE' });
+        const level = await this.playerRatingsService.resolveCanonicalLevelByIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
+        const access = this.evaluateAccess(row as CustomTournament, level?.levelLabel);
+        if (!access.ok) throw new ForbiddenException({ code: access.code });
+        const trusted = this.rememberRegistrationIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
+        const gender = await this.checkGenderAdmission(row as CustomTournament, { ...trusted, trustedIdentity: trusted });
+        if (!gender.ok) throw new ForbiddenException({ code: gender.code });
+        eligibility = { gender: gender.decision.gender, playerGender: gender.decision.playerGender, levelLabel: level?.levelLabel ?? null, accessLevels: [...row.accessLevels], ruleUpdatedAt: gender.decision.updatedAt };
+        if (activeActorJoins.length > 0 || [...row.participants, ...row.waitlist].some((p: any) => p.phone === actor.phoneNorm)) {
+          outcome = 'REJECTED'; reason = 'MEMBERSHIP_EXISTS';
+        } else if (row.participants.length >= row.maxPlayers) {
+          // WAITLIST creation and promotion are deliberately outside this owner subset.
+          outcome = 'REJECTED'; reason = 'FULL';
+        } else {
+          outcome = 'REGISTERED'; reason = 'REGISTERED'; generation = identity.operationId;
+          participants = [...row.participants, { id: generation, name: actor.name || 'Player', phone: actor.phoneNorm,
+            ...(level?.levelLabel ? { levelLabel: level.levelLabel } : {}), gender: gender.decision.playerGender ?? 'MIXED',
+            paymentStatus: 'UNPAID', status: 'REGISTERED', registeredAt: new Date().toISOString() }];
+        }
+      } else {
+        const original = journal.find(x => x.operationId === command.originalJoinOperationId && x.actorHash === identity.actorHash
+          && x.command.action === 'JOIN' && x.command.date === command.date && x.outcome === 'REGISTERED');
+        if (!original) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_ORIGINAL_REQUIRED' });
+        mappingHash = original.mappingHash; eligibility = original.eligibility; receiptPhone = original.phone;
+        const current = row.participants.filter((p: any) => p.id === original.generation || p.phone === original.phone);
+        if (current.length !== 1 || current[0].id !== original.generation || current[0].phone !== original.phone
+          || current[0].status !== 'REGISTERED' || current[0].paymentStatus !== 'UNPAID'
+          || journal.some(x => x.outcome === 'LEFT' && x.generation === original.generation)) {
+          outcome = 'REJECTED'; reason = 'GENERATION_NOT_CURRENT';
+        } else {
+          outcome = 'LEFT'; reason = 'LEFT'; generation = original.generation;
+          participants = row.participants.filter((p: any) => p.id !== original.generation);
+        }
+      }
+      // Reserve one future LEAVE entry for every original JOIN not yet durably left.
+      const activeGenerations = journal.filter(x => x.outcome === 'REGISTERED'
+        && !journal.some(left => left.outcome === 'LEFT' && left.generation === x.generation)).length;
+      const nextActive = activeGenerations + (outcome === 'REGISTERED' ? 1 : outcome === 'LEFT' ? -1 : 0);
+      if (journal.length + 1 + nextActive > LOCAL_OPERATION_LIMIT) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_JOURNAL_FULL' });
+      const operation: LocalOperation = { schemaVersion: 1, tenantKey: actor.tenantKey, phone: receiptPhone, ...identity,
+        command, outcome, reason, generation, mappingHash, eligibility, committedAt: new Date().toISOString(), audit: 'TOURNAMENT_LOCAL_OPERATION_V1' };
+      try {
+        const changed = await this.tournamentsPersistence.commitLocalParticipation(row, operation, participants);
+        if (!changed) continue;
+        this.invalidatePublicDirectoryCache();
+        return operationView(changed, operation);
+      } catch {
+        // A lost Mongo ACK is not permission to replace an operation. Only exact primary-majority readback counts.
+        const found = await this.tournamentsPersistence.readLocalParticipationTarget(command.tournamentId);
+        const committed = found && operations(found, actor.tenantKey).find(x => x.operationId === identity.operationId
+          && x.actorHash === identity.actorHash && x.requestHash === identity.requestHash);
+        if (found && committed) return operationView(found, committed);
+        throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_RESULT_UNKNOWN' });
+      }
+    }
+    throw new ConflictException({ code: 'TOURNAMENT_LOCAL_CONCURRENT_CHANGE' });
+  }
+
   async prepareTournamentOwner(
     authorization: string | undefined,
     integrationToken: string | undefined,
