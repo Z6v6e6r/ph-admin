@@ -21,7 +21,8 @@ import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.serv
 import {
   loadOwnerEvidenceConfig,
   OwnerEvidenceError,
-  verifyOwnerEvidence
+  verifyOwnerEvidence,
+  verifyOwnerReleaseEvidence
 } from './owner-evidence.verifier';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
@@ -315,9 +316,11 @@ export class SubscriptionEntitlementLifecycleService {
   async release(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
-    dto: ReleaseSubscriptionEntitlementDto
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence?: string
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
+    this.requireOwnerReleaseEvidence(dto, ownerEvidence);
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -326,6 +329,14 @@ export class SubscriptionEntitlementLifecycleService {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const operation = await this.ownedOperation(identity, dto.operationId);
       if (['FAILED', 'COMPENSATED'].includes(operation.state)) {
+        if (operation.compensationState !== 'APPLIED'
+          || operation.lastReconciliationResult !== dto.reason
+          || operation.providerCorrelationId !== (dto.providerBookingId ?? null)) {
+          throw new ConflictException({
+            code: 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH',
+            message: 'Release replay does not match the completed release'
+          });
+        }
         return this.transitionResult(
           'RELEASED',
           true,
@@ -698,6 +709,42 @@ export class SubscriptionEntitlementLifecycleService {
         throw new ForbiddenException({
           code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
           message: 'Booking confirmation requires trusted owner evidence'
+        });
+      }
+      throw error;
+    }
+  }
+
+  private requireOwnerReleaseEvidence(
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence: string | undefined
+  ): void {
+    if (!['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
+    )) return;
+    let config;
+    try {
+      config = loadOwnerEvidenceConfig();
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_CONFIG_INVALID',
+        message: 'Owner evidence is not configured'
+      });
+    }
+    try {
+      verifyOwnerReleaseEvidence({
+        evidence: ownerEvidence,
+        config,
+        operationId: dto.operationId,
+        reason: dto.reason,
+        providerBookingId: dto.providerBookingId ?? null,
+        now: this.now()
+      });
+    } catch (error) {
+      if (error instanceof OwnerEvidenceError) {
+        throw new ForbiddenException({
+          code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
+          message: 'Entitlement release requires trusted owner evidence'
         });
       }
       throw error;
