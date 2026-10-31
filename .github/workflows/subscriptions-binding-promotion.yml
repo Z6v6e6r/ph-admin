@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031, codex/r1-tournament-gender-admission-20261031]
   push:
     branches: [main]
 
@@ -78,6 +78,14 @@ jobs:
         env:
           TOURNAMENT_OWNER_PREPARATION_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
         run: npx ts-node test/tournament-owner-preparation.mongodb.test.ts
+      - name: Local tournament owner identity, generation and legacy-writer fences
+        run: |
+          npx ts-node test/tournament-local-owner.test.ts
+          npx ts-node test/tournament-local-owner-persistence.test.ts
+      - name: Local tournament owner physical Mongo concurrency and recovery
+        env:
+          TOURNAMENT_LOCAL_OWNER_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+        run: npx ts-node test/tournament-local-owner.mongodb.test.ts
       - name: Tournament payment physical Mongo persistence regression
         env:
           TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority
