@@ -146,3 +146,19 @@ test('preflight success/failure use bounded labels without identity, proof, body
   }));
   assert.equal(rows.length, 6, 'unlisted operation-specific paths never create metric labels');
 });
+
+test('owner preparation tracks only the exact private route and never query/body identity', async () => {
+  const rows: Recorded[] = [];
+  const interceptor = new RequestMetricsInterceptor({
+    record: (route: string, _duration: number, status: number, sample: Record<string, unknown>) => {
+      rows.push({ route, status, sample });
+    }
+  } as any);
+  await lastValueFrom(interceptor.intercept(context('/owner-preparations', 200,
+    '/api/internal/tournaments/owner-preparations?actor=private-actor', '/api/internal/tournaments'), {
+    handle: () => of({ status: 'RESOLVED', binding: { feedId: 'private-feed' } })
+  }));
+  assert.equal(rows[0]?.route, 'POST /api/internal/tournaments/owner-preparations');
+  assert.ok(!JSON.stringify(rows).includes('private-'));
+  assert.ok(!JSON.stringify(rows).includes('secret'));
+});

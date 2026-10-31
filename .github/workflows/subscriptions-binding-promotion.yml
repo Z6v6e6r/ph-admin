@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031]
   push:
     branches: [main]
 
@@ -65,6 +65,17 @@ jobs:
           npx ts-node test/viva-admin-payment-log-redaction.test.ts
           npx ts-node test/viva-admin-custom-energy-checkout.test.ts
           npx ts-node test/viva-admin-tournament-checkout-reuse.test.ts
+      - name: Tournament owner preparation identity and read-only regressions
+        run: |
+          npx ts-node test/tournament-owner-preparation.test.ts
+          npx ts-node test/tournament-owner-preparation-readonly.test.ts
+          npx ts-node test/request-metrics-subscriptions.test.ts
+          npx ts-node test/tournaments-public-registration-identity.test.ts
+          npx ts-node test/tournaments-read-model-detail.test.ts
+      - name: Tournament owner preparation physical Mongo projection regression
+        env:
+          TOURNAMENT_OWNER_PREPARATION_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+        run: npx ts-node test/tournament-owner-preparation.mongodb.test.ts
       - name: Tournament payment physical Mongo persistence regression
         env:
           TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority
