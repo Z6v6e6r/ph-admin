@@ -99,11 +99,20 @@ interface ParsedManifest {
     resultEvidenceRef: string;
   };
   records: JsonObject[];
+  reconciliation?: SubscriptionFullReconciliation;
 }
 
 export type SubscriptionInstanceProjectionSourceContract =
   | 'PRODUCTION_COMPLETE'
   | 'DEV_EXACT_ALLOWLIST';
+
+export interface SubscriptionFullReconciliation {
+  mode: 'FULL_RECONCILIATION';
+  previousCheckpointSha256: `sha256:${string}`;
+  previousCheckpointRevision: number;
+  previousCheckpointCreatedAt: string;
+  existingInstances: Array<{ subscriptionInstanceId: string; sha256: `sha256:${string}` }>;
+}
 
 export interface SubscriptionInstanceProjectionPlan {
   inputSha256: `sha256:${string}`;
@@ -111,6 +120,7 @@ export interface SubscriptionInstanceProjectionPlan {
   approvalRef: string;
   instances: StoredSubscriptionInstance[];
   checkpoint: StoredSubscriptionInstanceProjectorCheckpoint;
+  reconciliation?: SubscriptionFullReconciliation;
 }
 
 export interface SubscriptionInstanceProjectionResult {
@@ -193,12 +203,51 @@ const parseCompatibility = (value: unknown): SubscriptionRuntimeCompatibility =>
   return compatibility;
 };
 
+function parseFullReconciliation(raw: unknown): SubscriptionFullReconciliation {
+  const code = 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECONCILIATION_INVALID';
+  const value = exactObject(raw, ['mode', 'previousCheckpointSha256', 'previousCheckpointRevision',
+    'previousCheckpointCreatedAt', 'existingInstances'], code);
+  if (value.mode !== 'FULL_RECONCILIATION'
+    || !Number.isSafeInteger(value.previousCheckpointRevision) || Number(value.previousCheckpointRevision) < 1
+    || !Array.isArray(value.existingInstances) || value.existingInstances.length < 1
+    || value.existingInstances.length > MAX_RECORDS) fail(code);
+  const digestValue = (raw: unknown): `sha256:${string}` => {
+    if (typeof raw !== 'string' || raw.length !== 71 || !DIGEST_PATTERN.test(raw)) fail(code);
+    return raw as `sha256:${string}`;
+  };
+  const createdAt = requiredInstant(value.previousCheckpointCreatedAt, code);
+  if (new Date(createdAt).toISOString() !== createdAt) fail(code);
+  const existingInstances = (value.existingInstances as unknown[]).map(rawPin => {
+    const pin = exactObject(rawPin, ['subscriptionInstanceId', 'sha256'], code);
+    const subscriptionInstanceId = requiredPattern(pin.subscriptionInstanceId, ID_PATTERN, code);
+    if (/[\r\n]/.test(subscriptionInstanceId)) fail(code);
+    return { subscriptionInstanceId, sha256: digestValue(pin.sha256) };
+  });
+  if (existingInstances.some((pin, i) => i > 0
+    && existingInstances[i - 1].subscriptionInstanceId >= pin.subscriptionInstanceId)) fail(code);
+  return { mode: 'FULL_RECONCILIATION',
+    previousCheckpointSha256: digestValue(value.previousCheckpointSha256),
+    previousCheckpointRevision: value.previousCheckpointRevision as number,
+    previousCheckpointCreatedAt: createdAt, existingInstances };
+}
+
+// Observation metadata may be newer in the provider snapshot. It never updates the stored row.
+function purchaseAndState(instance: StoredSubscriptionInstance): unknown {
+  const { revision, createdAt, updatedAt, reconciliation, evidence, ...facts } = instance;
+  return { ...facts, paymentEvidenceRef: evidence.paymentEvidenceRef,
+    providerInstanceEvidenceRef: evidence.providerInstanceEvidenceRef };
+}
+
 const parseManifest = (
   input: unknown,
   sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE'
 ): ParsedManifest => {
-  const value = exactObject(input, TOP_LEVEL_KEYS, 'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHAPE_INVALID');
-  const expectedSchemaVersion = sourceContract === 'PRODUCTION_COMPLETE' ? 2 : 3;
+  const full = sourceContract === 'PRODUCTION_COMPLETE'
+    && !!input && typeof input === 'object' && (input as JsonObject).schemaVersion === 4;
+  const value = exactObject(input, full ? [...TOP_LEVEL_KEYS, 'reconciliation'] : TOP_LEVEL_KEYS,
+    'SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHAPE_INVALID');
+  const reconciliation = full ? parseFullReconciliation(value.reconciliation) : undefined;
+  const expectedSchemaVersion = full ? 4 : sourceContract === 'PRODUCTION_COMPLETE' ? 2 : 3;
   const expectedSourceMode = sourceContract === 'PRODUCTION_COMPLETE'
     ? 'VIVA_AUTHORITATIVE_COMPLETE_SUBSCRIPTION_INSTANCE_SNAPSHOT'
     : 'DEV_VIVA_EXACT_CLIENT_SUBSCRIPTION_ALLOWLIST';
@@ -338,7 +387,8 @@ const parseManifest = (
     producer,
     authorityDigest,
     snapshot,
-    records
+    records,
+    ...(reconciliation ? { reconciliation } : {})
   };
 };
 
@@ -377,7 +427,8 @@ export function buildSubscriptionInstanceProjectionPlan(
   input: unknown,
   pepperValue: unknown,
   publicationHistory: readonly StoredSubscriptionPolicyPublication[],
-  sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE'
+  sourceContract: SubscriptionInstanceProjectionSourceContract = 'PRODUCTION_COMPLETE',
+  existingRows: readonly StoredSubscriptionInstance[] = []
 ): SubscriptionInstanceProjectionPlan {
   const parsed = parseManifest(input, sourceContract);
   const pepper = String(pepperValue ?? '');
@@ -409,6 +460,9 @@ export function buildSubscriptionInstanceProjectionPlan(
     || currentPublication.policyDigest !== parsed.binding.policyDigest
     || currentPublication.mappingId !== parsed.binding.mappingId) {
     fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PUBLICATION_NOT_CURRENT');
+  }
+  if ((currentPublication.schemaVersion === 4) !== !!parsed.reconciliation) {
+    fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECONCILIATION_REQUIRED');
   }
   const identities = new Set<string>();
   const resolvedInstances = sortedRecords.map((record): {
@@ -536,7 +590,26 @@ export function buildSubscriptionInstanceProjectionPlan(
     left.instance.subscriptionInstanceId,
     right.instance.subscriptionInstanceId
   ));
-  const instances = resolvedInstances.map(({ instance }) => instance);
+  let instances = resolvedInstances.map(({ instance }) => instance);
+  if (parsed.reconciliation) {
+    const pins = parsed.reconciliation.existingInstances;
+    const pinIds = new Set(pins.map(pin => pin.subscriptionInstanceId));
+    for (const pin of pins) {
+      const stored = existingRows.find(row => row.subscriptionInstanceId === pin.subscriptionInstanceId);
+      const observed = instances.find(row => row.subscriptionInstanceId === pin.subscriptionInstanceId);
+      if (!stored || !observed || sha256(stored) !== pin.sha256
+        || sha256(purchaseAndState(stored)) !== sha256(purchaseAndState(observed))) {
+        fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRESERVED_INSTANCE_CONFLICT');
+      }
+      validateStoredSubscriptionInstance(stored);
+    }
+    if (instances.some(row => !pinIds.has(row.subscriptionInstanceId)
+      && Date.parse(row.purchasedAt) < Date.parse(currentPublication.effectiveAt))) {
+      fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_UNKNOWN_PRE_CUTOFF_PURCHASE');
+    }
+    instances = instances.map(row => pinIds.has(row.subscriptionInstanceId)
+      ? structuredClone(existingRows.find(old => old.subscriptionInstanceId === row.subscriptionInstanceId)!) : row);
+  }
   const selections = resolvedInstances.map(({ selection }) => selection);
   const checkpointId = `subscription_instance_projector_checkpoint:${createHash('sha256')
     .update(JSON.stringify(stableValue({
@@ -549,7 +622,8 @@ export function buildSubscriptionInstanceProjectionPlan(
   const reconciliationDigest = sha256({
     inputSha256: parsed.inputSha256,
     snapshotDigest: parsed.snapshot.snapshotDigest,
-    instanceDigests: instances.map((instance) => sha256(instance))
+    instanceDigests: instances.map((instance) => sha256(instance)),
+    ...(parsed.reconciliation ? { reconciliation: parsed.reconciliation } : {})
   });
   const checkpoint: StoredSubscriptionInstanceProjectorCheckpoint = {
     schemaVersion: 3,
@@ -581,13 +655,13 @@ export function buildSubscriptionInstanceProjectionPlan(
       },
     reconciliation: {
       runId: `subscription_instance_projector_run:${parsed.inputSha256.slice(7)}`,
-      mode: 'INITIAL_FULL',
+      mode: parsed.reconciliation ? 'FULL_RECONCILIATION' : 'INITIAL_FULL',
       startedAt: parsed.snapshot.startedAt,
       completedAt: parsed.snapshot.coverageThrough,
       sourceItemCount: instances.length,
-      insertedCount: instances.length,
+      insertedCount: instances.length - (parsed.reconciliation?.existingInstances.length ?? 0),
       updatedCount: 0,
-      replayedCount: 0,
+      replayedCount: parsed.reconciliation?.existingInstances.length ?? 0,
       terminalCount: 0,
       failureCount: 0,
       sourceEvidenceRef: parsed.snapshot.sourceEvidenceRef,
@@ -596,8 +670,8 @@ export function buildSubscriptionInstanceProjectionPlan(
     },
     failure: null,
     lease: null,
-    revision: 1,
-    createdAt: parsed.snapshot.coverageThrough,
+    revision: parsed.reconciliation ? parsed.reconciliation.previousCheckpointRevision + 1 : 1,
+    createdAt: parsed.reconciliation?.previousCheckpointCreatedAt ?? parsed.snapshot.coverageThrough,
     updatedAt: parsed.snapshot.coverageThrough
   };
   validateStoredSubscriptionInstanceProjectorCheckpoint(checkpoint);
@@ -606,7 +680,8 @@ export function buildSubscriptionInstanceProjectionPlan(
     planSha256: sha256({ instances, checkpoint }),
     approvalRef: parsed.approvalRef,
     instances,
-    checkpoint
+    checkpoint,
+    ...(parsed.reconciliation ? { reconciliation: parsed.reconciliation } : {})
   };
 }
 
@@ -711,7 +786,7 @@ export class SubscriptionProviderInstanceProjectorService {
     const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
       parsed.binding.subscriptionTypeId
     );
-    const plan = this.plan(input, publicationHistory);
+    const plan = await this.plan(input, publicationHistory);
     const fence = await this.assertPersistedBinding(plan, publicationHistory);
     await this.assertFenceUnchanged(fence, plan.checkpoint.binding.subscriptionTypeId);
     await this.assertPublicationHistoryUnchanged(plan);
@@ -731,7 +806,7 @@ export class SubscriptionProviderInstanceProjectorService {
     const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
       parsed.binding.subscriptionTypeId
     );
-    const plan = this.plan(input, publicationHistory);
+    const plan = await this.plan(input, publicationHistory);
     assertSubscriptionInstanceProjectionCheckBoundary(plan);
     const fence = await this.assertPersistedBinding(plan, publicationHistory);
     const status = await this.repository.preflightInitialRuntimeInstanceProjection(plan);
@@ -746,7 +821,7 @@ export class SubscriptionProviderInstanceProjectorService {
     const publicationHistory = await this.repository.runtimePolicyPublicationHistoryByType(
       parsed.binding.subscriptionTypeId
     );
-    const plan = this.plan(input, publicationHistory);
+    const plan = await this.plan(input, publicationHistory);
     assertSubscriptionInstanceProjectionApplyBoundary(plan);
     await this.assertPersistedBinding(plan, publicationHistory);
     const status = await this.repository.applyInitialRuntimeInstanceProjection(plan);
@@ -768,14 +843,21 @@ export class SubscriptionProviderInstanceProjectorService {
     return parsed;
   }
 
-  private plan(
+  private async plan(
     input: unknown,
     publicationHistory: readonly StoredSubscriptionPolicyPublication[]
-  ): SubscriptionInstanceProjectionPlan {
+  ): Promise<SubscriptionInstanceProjectionPlan> {
+    const parsed = parseManifest(input);
+    const rows = parsed.reconciliation ? await this.repository.runtimeProjectionInstances({
+      tenantId: parsed.tenantId, providerProductId: parsed.providerProductId,
+      subscriptionTypeId: parsed.binding.subscriptionTypeId
+    }) : [];
     return buildSubscriptionInstanceProjectionPlan(
       input,
       process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER,
-      publicationHistory
+      publicationHistory,
+      'PRODUCTION_COMPLETE',
+      rows
     );
   }
 
@@ -824,7 +906,7 @@ export class SubscriptionProviderInstanceProjectorService {
       || checkpoint.binding.fenceDigest !== subscriptionProjectionFenceBindingDigest(
         expectedFenceBinding
       )
-      || (!fence && checkpoint.binding.fenceRevision !== 1)) {
+      || (!fence && (!!plan.reconciliation || checkpoint.binding.fenceRevision !== 1))) {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_FENCE_NOT_CURRENT');
     }
     if (fence) {
@@ -855,7 +937,7 @@ export class SubscriptionProviderInstanceProjectorService {
       fail('SUBSCRIPTIONS_INSTANCE_PROJECTOR_MAPPING_NOT_CURRENT');
     }
     const compatibility = publication.runtimeCompatibility;
-    if (publication.schemaVersion !== 3
+    if ((publication.schemaVersion !== 3 && !(publication.schemaVersion === 4 && plan.reconciliation))
       || publication.state !== 'PUBLISHED'
       || publication.publicationId !== checkpoint.binding.publicationId
       || publication.mappingId !== mapping.mappingId

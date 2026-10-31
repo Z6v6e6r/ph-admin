@@ -10,6 +10,7 @@ import {
 } from '../src/subscriptions/subscription-provider-instance-projector.service';
 import {
   computeSubscriptionRuntimeProjectionDigest,
+  computeSubscriptionUsageLedgerEventHash,
   SubscriptionRuntimeContractError
 } from '../src/subscriptions/subscription-runtime-contracts';
 import {
@@ -17,6 +18,7 @@ import {
   StoredSubscriptionPolicyPublication,
   StoredSubscriptionProviderMapping
 } from '../src/subscriptions/subscriptions.types';
+import { parseQuarterDescriptor, quarterDescriptorDigest, quarterDictionaryRevision } from '../src/subscriptions/subscription-create-quarter-contract';
 import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repository';
 import { buildSubscriptionProjectionFence } from '../src/subscriptions/subscription-projection-fence';
 import {
@@ -163,6 +165,27 @@ const publication = (): StoredSubscriptionPolicyPublication => {
   value.policyDigest = computeSubscriptionRuntimeProjectionDigest(value.runtimeProjection);
   return value;
 };
+
+export function quarterPublication(value = publication(), effectiveAt = '2026-08-27T00:00:00.000Z'): StoredSubscriptionPolicyPublication {
+  value.schemaVersion = 4;
+  value.policyVersion = 2;
+  value.publicationId = 'publication:annual-piter-v2';
+  value.effectiveAt = value.publishedAt = effectiveAt;
+  value.runtimeProjection.policyVersion = 2;
+  value.runtimeProjection.effectiveAt = value.effectiveAt;
+  value.runtimeProjection.benefitRules[0].actions = ['CREATE_GAME'];
+  value.runtimeProjection.benefitRules[0].durationMinutes = [60];
+  const descriptor = parseQuarterDescriptor({ schemaVersion: 1, kind: 'ORGANIZER_QUARTER_CREATE',
+    directionId: '4588', typeId: '1613', selectorRevision: 'selector:quarter-v1', durationMinutes: 60,
+    participantCount: 4, spot: 1, currency: 'RUB', priceBasis: 'ORGANIZER_QUARTER',
+    benefitKind: 'FREE_ENTITLEMENT', usageUnits: 1, dailyUsageLimit: 1,
+    stations: [{ stationId: value.runtimeProjection.stationAccessRules[0].selector.stationIds[0], providerStudioId: 'studio:piter', masterServiceId: 'service:master', subServiceId: 'service:sub' }] });
+  value.createQuarterDescriptor = descriptor;
+  value.createQuarterDescriptorDigest = quarterDescriptorDigest(descriptor);
+  value.dictionaryRevision = quarterDictionaryRevision(descriptor);
+  value.policyDigest = computeSubscriptionRuntimeProjectionDigest(value.runtimeProjection);
+  return value;
+}
 
 const buildSubscriptionInstanceProjectionPlan = (
   input: unknown,
@@ -403,11 +426,15 @@ async function verifyRealMongoPostcommitReadback(
     postcommit: `${dbPrefix}_postcommit`,
     concurrent: `${dbPrefix}_concurrent`,
     bootstrapConcurrent: `${dbPrefix}_bootstrap_concurrent`,
+    fullReplay: `${dbPrefix}_full_replay`,
+    fullRollback: `${dbPrefix}_full_rollback`,
+    saleFirst: `${dbPrefix}_sale_first`,
+    projectionFirst: `${dbPrefix}_projection_first`,
     checkpointFailure: `${dbPrefix}_checkpoint_failure`,
     bootstrapCheckpointFailure: `${dbPrefix}_bootstrap_checkpoint_failure`,
     instanceFailure: `${dbPrefix}_instance_failure`
   };
-  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 });
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000, directConnection: true });
   const inputSnapshot = structuredClone(input);
   const planSnapshot = structuredClone(plan);
   const countMongoIds = (value: unknown): number => {
@@ -626,6 +653,7 @@ async function verifyRealMongoPostcommitReadback(
       0
     );
     await assertFenceUnchanged(dbNames.instanceFailure);
+    await verifyFullMongoReconciliation(uri, client, dbNames);
     console.log('subscriptions instance projector MongoDB postcommit test: OK');
   } catch (error) {
     testError = error;
@@ -655,6 +683,9 @@ const nested = (value: any, path: string): unknown =>
 
 class MemoryMongo {
   forceFenceCasConflict = false;
+  operations: any[] = [];
+  ledger: any[] = [];
+  outbox: any[] = [];
   instances: any[] = [];
   checkpoints: any[] = [];
   mappings: any[] = [mapping()];
@@ -668,7 +699,10 @@ class MemoryMongo {
   }];
 
   collection(name: string) {
-    const rows = name === 'subscription_instances' ? this.instances
+    const rows = name === 'subscription_operations' ? this.operations
+      : name === 'subscription_usage_ledger' ? this.ledger
+        : name === 'subscription_outbox' ? this.outbox
+          : name === 'subscription_instances' ? this.instances
       : name === 'subscription_instance_projector_checkpoints' ? this.checkpoints
         : name === 'subscription_projection_fences' ? this.fences
         : name === 'subscription_provider_mappings' ? this.mappings
@@ -770,6 +804,276 @@ const enable = (input: unknown): void => {
     );
   process.env.SUBSCRIPTIONS_AUTO_CREATE_INDEXES = 'false';
 };
+
+function fullFixture() {
+  const previousInput: any = manifest();
+  previousInput.snapshot.startedAt = '2026-08-26T08:59:40.000Z';
+  previousInput.snapshot.coverageThrough = '2026-08-26T08:59:50.000Z';
+  const previous = buildSubscriptionInstanceProjectionPlan(previousInput, PEPPER);
+  const current = quarterPublication();
+  const old = publication(); old.state = 'SUPERSEDED'; old.supersededAt = current.publishedAt; old.supersededBy = current.publicationId;
+  const history = [old, current];
+  const fence = buildSubscriptionProjectionFence({ mapping: mapping(), publication: current, previous: projectionFence() });
+  const input: any = manifest();
+  input.schemaVersion = 4;
+  input.binding = { ...input.binding, publicationId: current.publicationId, policyVersion: current.policyVersion,
+    policyDigest: current.policyDigest, fenceId: fence.fenceId, fenceRevision: fence.bindingRevision, fenceDigest: fence.bindingDigest };
+  input.reconciliation = { mode: 'FULL_RECONCILIATION', previousCheckpointSha256: digest(previous.checkpoint),
+    previousCheckpointRevision: previous.checkpoint.revision, previousCheckpointCreatedAt: previous.checkpoint.createdAt,
+    existingInstances: previous.instances.map(row => ({ subscriptionInstanceId: row.subscriptionInstanceId, sha256: digest(row) })) };
+  const next = { ...record(), providerClientId: 'provider-client-002', clientSubscriptionId: 'client-subscription-002',
+    purchasedAt: '2026-08-27T10:00:00.000Z', activeFrom: '2026-08-27T10:00:00.000Z' };
+  input.records = [record(), next];
+  input.authority.sourceItemCount = 2;
+  input.snapshot.snapshotDigest = digest(input.records);
+  const plan = buildSubscriptionInstanceProjectionPlanWithHistory(input, PEPPER, history, 'PRODUCTION_COMPLETE', previous.instances);
+  const mongo = new MemoryMongo();
+  mongo.instances = structuredClone(previous.instances);
+  mongo.checkpoints = [structuredClone(previous.checkpoint)];
+  mongo.publications = history; mongo.fences = [fence]; mongo.types[0].currentPolicyVersion = 2;
+  return { input, plan, previous, history, mongo, fence };
+}
+
+function saleBundle(data: ReturnType<typeof fullFixture>) {
+  const template = data.plan.instances.find(row => row.policyVersion === 2)!;
+  const instance = { ...structuredClone(template), subscriptionInstanceId: 'subscription_instance:sale-race',
+    providerClientId: 'provider-client-sale-race', clientSubscriptionId: 'client-subscription-sale-race' };
+  const actor = { type: 'SYSTEM' as const, actorId: 'system:lk-managed-sale' };
+  const operation = { schemaVersion: 1 as const, operationId: 'operation:sale-race', revision: 1,
+    tenantId: instance.tenantId, subscriptionInstanceId: instance.subscriptionInstanceId,
+    kind: 'PURCHASE' as const, state: 'CONFIRMED' as const, actor,
+    idempotency: { keyHash: HASH, requestHash: HASH }, correlationId: 'correlation:sale-race',
+    decision: { decisionKind: 'PURCHASE' as const, policyVersion: instance.policyVersion,
+      policyDigest: instance.policyDigest, mappingId: instance.mappingId, providerProductId: instance.providerProductId,
+      releaseProgramId: instance.releaseProgramId, releasePhaseId: instance.releasePhaseId,
+      stationId: instance.homeStationId, quantity: 1 as const, price: instance.purchasePrice },
+    providerCorrelationId: 'transaction:sale-race', providerEvidenceRefs: Object.values(instance.evidence),
+    attempts: 1, nextAttemptAt: null, compensationState: 'NONE' as const, lastReconciledAt: COVERAGE,
+    lastReconciliationResult: 'PROVIDER_PAID_INSTANCE_READBACK_CONFIRMED', createdAt: COVERAGE,
+    updatedAt: COVERAGE, terminalAt: COVERAGE };
+  const ledgerWithoutHash = { schemaVersion: 1 as const, eventId: 'event:sale-race', eventType: 'PURCHASE_PAID' as const,
+    tenantId: instance.tenantId, subscriptionInstanceId: instance.subscriptionInstanceId, operationId: operation.operationId,
+    correlationId: operation.correlationId, policyVersion: instance.policyVersion, policyDigest: instance.policyDigest,
+    stationId: instance.homeStationId, eventTypeId: null, productTypeId: instance.providerProductId,
+    moneyDeltaMinor: instance.purchasePrice.amountMinor, currency: 'RUB' as const, usageDelta: 0,
+    providerEvidenceRef: instance.evidence.paymentEvidenceRef, actor, occurredAt: instance.purchasedAt, recordedAt: COVERAGE };
+  const ledger = { ...ledgerWithoutHash, eventHash: computeSubscriptionUsageLedgerEventHash(ledgerWithoutHash) };
+  const outbox = { schemaVersion: 1 as const, outboxEventId: 'outbox:sale-race', ledgerEventId: ledger.eventId,
+    subscriptionInstanceId: instance.subscriptionInstanceId, topic: 'SUBSCRIPTION_LEDGER_EVENT' as const,
+    status: 'PENDING' as const, attempts: 0, nextAttemptAt: COVERAGE, deliveredAt: null, lastErrorCode: null,
+    createdAt: COVERAGE, updatedAt: COVERAGE };
+  return { instance, operation, ledger, outbox, mappingSnapshot: mapping(), checkpointSnapshot: data.plan.checkpoint,
+    fenceSnapshot: structuredClone(data.mongo.fences[0]), publicationHistorySnapshot: data.history,
+    releaseProgramSnapshot: releaseProgram() };
+}
+
+async function verifyFullMongoReconciliation(uri: string, client: MongoClient, names: {
+  fullReplay: string; fullRollback: string; saleFirst: string; projectionFirst: string;
+}): Promise<void> {
+  // Called only after the existing loopback/no-credentials/unique-owned-DB guard.
+  const second = new MongoClient(uri, { directConnection: true, serverSelectionTimeoutMS: 10000 });
+  await second.connect();
+  const repo = (connection: MongoClient, dbName: string) => {
+    const result = new SubscriptionsRepository() as any;
+    result.client = connection; result.db = connection.db(dbName); return result as SubscriptionsRepository;
+  };
+  const seed = async (dbName: string) => {
+    const data = fullFixture(); const db = client.db(dbName);
+    await db.collection('subscription_policy_publications').deleteMany({});
+    await db.collection('subscription_policy_publications').insertMany(structuredClone(data.history));
+    await db.collection('subscription_types').updateOne({}, { $set: { currentPolicyVersion: 2 } });
+    await db.collection('subscription_projection_fences').insertOne(structuredClone(data.fence));
+    await db.collection('subscription_instances').insertMany(structuredClone(data.previous.instances));
+    await db.collection('subscription_instance_projector_checkpoints').insertOne(structuredClone(data.previous.checkpoint));
+    return data;
+  };
+  const snapshot = async (dbName: string) => {
+    const db = client.db(dbName);
+    return Promise.all(['subscription_instances','subscription_instance_projector_checkpoints',
+      'subscription_projection_fences','subscription_operations','subscription_usage_ledger','subscription_outbox']
+      .map(name => db.collection(name).find({}, { projection: { _id: 0 } }).sort({ _id: 1 }).toArray()));
+  };
+  try {
+    const data = await seed(names.fullReplay);
+    const firstRepo = repo(client, names.fullReplay) as any;
+    const originalReadback = firstRepo.preflightInitialRuntimeInstanceProjection.bind(firstRepo);
+    firstRepo.preflightInitialRuntimeInstanceProjection = async () => { throw new Error('simulated postcommit ACK loss'); };
+    await assert.rejects(firstRepo.applyInitialRuntimeInstanceProjection(data.plan), /ACK loss/);
+    firstRepo.preflightInitialRuntimeInstanceProjection = originalReadback;
+    const beforeReplay = await snapshot(names.fullReplay);
+    assert.equal(await repo(second, names.fullReplay).applyInitialRuntimeInstanceProjection(data.plan), 'EXACT_REPLAY');
+    assert.deepEqual(await snapshot(names.fullReplay), beforeReplay);
+    assert.deepEqual(beforeReplay[0].filter(row => row.policyVersion === 1), data.previous.instances);
+    const currentFence = await client.db(names.fullReplay).collection('subscription_projection_fences')
+      .findOne({}, { projection: { _id: 0 } });
+    assert.ok(currentFence); data.mongo.fences = [currentFence];
+    await repo(client, names.fullReplay).applyConfirmedRuntimeSaleBinding(saleBundle(data));
+    const afterLaterSale = await snapshot(names.fullReplay);
+    await assert.rejects(repo(second, names.fullReplay).applyInitialRuntimeInstanceProjection(data.plan),
+      hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PREVIOUS_CHECKPOINT_CONFLICT'));
+    assert.deepEqual(await snapshot(names.fullReplay), afterLaterSale,
+      'a later sale makes projector replay conservative; it must never rewrite the committed checkpoint or rows');
+
+    const rollback = await seed(names.fullRollback);
+    const beforeRollback = await snapshot(names.fullRollback);
+    await client.db(names.fullRollback).command({ collMod: 'subscription_instance_projector_checkpoints',
+      validator: { revision: { $eq: 1 } }, validationLevel: 'strict', validationAction: 'error' });
+    await assert.rejects(repo(client, names.fullRollback).applyInitialRuntimeInstanceProjection(rollback.plan));
+    assert.deepEqual(await snapshot(names.fullRollback), beforeRollback, 'new instance and fence roll back with rejected checkpoint CAS');
+
+    for (const order of ['saleFirst', 'projectionFirst'] as const) {
+      const dbName = names[order]; const base = await seed(dbName);
+      await repo(client, dbName).applyInitialRuntimeInstanceProjection(base.plan);
+      const db = client.db(dbName);
+      base.mongo.fences = [await db.collection('subscription_projection_fences').findOne({}, { projection: { _id: 0 } })];
+      const sale = saleBundle(base);
+      const nextInput: any = structuredClone(base.input);
+      nextInput.reconciliation = { mode: 'FULL_RECONCILIATION', previousCheckpointSha256: digest(base.plan.checkpoint),
+        previousCheckpointRevision: base.plan.checkpoint.revision, previousCheckpointCreatedAt: base.plan.checkpoint.createdAt,
+        existingInstances: base.plan.instances.map(row => ({ subscriptionInstanceId: row.subscriptionInstanceId, sha256: digest(row) })) };
+      nextInput.records.push({ ...nextInput.records[1], providerClientId: 'provider-client-004', clientSubscriptionId: 'client-subscription-004' });
+      nextInput.authority.sourceItemCount = 3; nextInput.snapshot.snapshotDigest = digest(nextInput.records);
+      const next = buildSubscriptionInstanceProjectionPlanWithHistory(nextInput, PEPPER, base.history, 'PRODUCTION_COMPLETE', base.plan.instances);
+      const losing = repo(second, dbName) as any;
+      let release!: () => void; let reached!: () => void;
+      const parked = new Promise<void>(resolve => { reached = resolve; });
+      const resume = new Promise<void>(resolve => { release = resolve; });
+      const collection = losing.runtimeProjectionFences.bind(losing);
+      let once = true;
+      losing.runtimeProjectionFences = () => {
+        const value = collection(); const update = value.updateOne.bind(value);
+        value.updateOne = async (...args: any[]) => {
+          if (once) { once = false; reached(); await resume; }
+          return update(...args);
+        }; return value;
+      };
+      const loser = (order === 'saleFirst' ? losing.applyInitialRuntimeInstanceProjection(next)
+        : losing.applyConfirmedRuntimeSaleBinding(sale)).then(() => null, (error: unknown) => error);
+      let barrierTimeout: ReturnType<typeof setTimeout> | undefined;
+      const timeout = setTimeout(() => { release(); }, 15000);
+      let winnerError: unknown;
+      try {
+        await Promise.race([parked, new Promise((_, reject) => {
+          barrierTimeout = setTimeout(() => reject(new Error('barrier not reached')), 10000);
+        })]);
+        if (order === 'saleFirst') await repo(client, dbName).applyConfirmedRuntimeSaleBinding(sale);
+        else await repo(client, dbName).applyInitialRuntimeInstanceProjection(next);
+      } catch (error) { winnerError = error; }
+      finally { release(); clearTimeout(timeout); clearTimeout(barrierTimeout); }
+      const loserError = await loser;
+      if (winnerError) throw winnerError;
+      assert.ok(loserError, 'stale snapshot loser must reject after transaction retry');
+      const final = await snapshot(dbName);
+      assert.equal(final[0].length, 3);
+      assert.equal(final[0].some(row => row.clientSubscriptionId === 'client-subscription-sale-race'), order === 'saleFirst');
+      assert.equal(final[0].some(row => row.clientSubscriptionId === 'client-subscription-004'), order === 'projectionFirst');
+      assert.equal(final[3].length, order === 'saleFirst' ? 1 : 0);
+      assert.equal(final[4].length, final[3].length); assert.equal(final[5].length, final[3].length);
+      assert.deepEqual(final[0].filter(row => row.policyVersion === 1), base.previous.instances);
+    }
+    console.log('schema4 Mongo reconciliation: lost ACK, rollback and independent-connection race both orders OK');
+  } finally { await second.close(); }
+}
+
+async function verifyFullReconciliation(): Promise<void> {
+  const data = fullFixture();
+  const repo = repositoryWithMemoryMongo(data.mongo);
+  const oldBytes = JSON.stringify(data.previous.instances);
+  assert.equal(data.plan.checkpoint.reconciliation.mode, 'FULL_RECONCILIATION');
+  assert.equal(data.plan.checkpoint.reconciliation.insertedCount, 1);
+  assert.equal(data.plan.checkpoint.reconciliation.replayedCount, 1);
+  assert.equal(await repo.preflightInitialRuntimeInstanceProjection(data.plan), 'READY_TO_INSERT');
+  assert.equal(await repo.applyInitialRuntimeInstanceProjection(data.plan), 'INSERTED');
+  assert.equal(JSON.stringify(data.mongo.instances.filter(row => row.policyVersion === 1)), oldBytes);
+  const rebuilt = buildSubscriptionInstanceProjectionPlanWithHistory(data.input, PEPPER, data.history,
+    'PRODUCTION_COMPLETE', data.mongo.instances);
+  assert.deepEqual(rebuilt, data.plan, 'lost response reconstruction retains original preimage, hash and all bytes');
+  assert.equal(await repo.applyInitialRuntimeInstanceProjection(rebuilt), 'EXACT_REPLAY');
+  assert.equal(data.mongo.instances.length, 2);
+  const unsigned = structuredClone(data.input); delete unsigned.reconciliation; unsigned.schemaVersion = 2;
+  assert.throws(() => buildSubscriptionInstanceProjectionPlanWithHistory(unsigned, PEPPER, data.history),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_RECONCILIATION_REQUIRED'));
+  for (const alter of [
+    (x: any) => { x.records[1].purchasedAt = '2026-08-26T10:00:00.000Z'; },
+    (x: any) => { x.records[0].state = 'FROZEN'; x.records[0].frozenUntil = '2026-09-01T00:00:00.000Z'; },
+    (x: any) => { x.records[0].purchasePrice.amountMinor += 1; },
+    (x: any) => { x.records.shift(); x.authority.sourceItemCount = 1; },
+    (x: any) => { x.reconciliation.existingInstances[0].sha256 = `sha256:${'f'.repeat(64)}`; }
+  ]) {
+    const bad = structuredClone(data.input); alter(bad); bad.snapshot.snapshotDigest = digest(bad.records);
+    assert.throws(() => buildSubscriptionInstanceProjectionPlanWithHistory(bad, PEPPER, data.history,
+      'PRODUCTION_COMPLETE', data.previous.instances));
+  }
+  for (const alter of [
+    (input: any) => { input.reconciliation.previousCheckpointSha256 += '\n'; },
+    (input: any) => { input.reconciliation.existingInstances[0].sha256 += '\n'; },
+    (input: any) => { input.reconciliation.existingInstances.push(input.reconciliation.existingInstances[0]); },
+    (input: any) => { input.reconciliation.other = true; },
+    (input: any) => { input.reconciliation = null; }
+  ]) {
+    const malformed = structuredClone(data.input); alter(malformed);
+    assert.throws(() => buildSubscriptionInstanceProjectionPlanWithHistory(malformed, PEPPER, data.history,
+      'PRODUCTION_COMPLETE', data.previous.instances));
+  }
+  const corruptPlan = structuredClone(data.plan);
+  corruptPlan.reconciliation!.previousCheckpointSha256 = `sha256:${'f'.repeat(64)}`;
+  await assert.rejects(repositoryWithMemoryMongo(fullFixture().mongo).applyInitialRuntimeInstanceProjection(corruptPlan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_INVALID'));
+  for (const alter of [
+    (m: MemoryMongo) => { m.checkpoints[0].revision += 1; },
+    (m: MemoryMongo) => { m.instances[0].revision += 1; },
+    (m: MemoryMongo) => { m.instances.push({ ...m.instances[0], subscriptionInstanceId: 'subscription_instance:extra' }); },
+    (m: MemoryMongo) => { m.publications[1].createQuarterDescriptorDigest = `sha256:${'b'.repeat(64)}`; },
+    (m: MemoryMongo) => { m.fences[0].bindingRevision += 1; },
+    (m: MemoryMongo) => { m.fences = []; },
+    (m: MemoryMongo) => { m.fences[0].lastProjectorReconciliationDigest = `sha256:${'f'.repeat(64)}`; }
+  ]) {
+    const candidate = fullFixture(); alter(candidate.mongo); const before = JSON.stringify(candidate.mongo);
+    await assert.rejects(repositoryWithMemoryMongo(candidate.mongo).applyInitialRuntimeInstanceProjection(candidate.plan));
+    assert.equal(JSON.stringify(candidate.mongo), before, 'bad preimage must not write any collection');
+  }
+  const serviceData = fullFixture();
+  const serviceRepo = repositoryWithMemoryMongo(serviceData.mongo) as any;
+  serviceRepo.connectReadOnly = async () => {};
+  serviceRepo.connect = async () => {};
+  enable(manifest());
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_INPUT_SHA256 = serviceData.plan.inputSha256;
+  process.env.SUBSCRIPTIONS_INSTANCE_PROJECTOR_PLAN_SHA256 = serviceData.plan.planSha256;
+  const service = new FixedClockService(serviceRepo);
+  assert.equal((await service.check(serviceData.input)).status, 'READY_TO_INSERT');
+  assert.equal((await service.apply(serviceData.input)).status, 'INSERTED');
+  assert.equal((await service.apply(serviceData.input)).status, 'EXACT_REPLAY');
+  serviceData.mongo.instances[0].revision += 1; // A later lifecycle/readback revision, not a projector update.
+  const afterLaterRevision = JSON.stringify(serviceData.mongo);
+  await assert.rejects(service.apply(serviceData.input),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PRESERVED_INSTANCE_CONFLICT'));
+  assert.equal(JSON.stringify(serviceData.mongo), afterLaterRevision, 'later mutable-row drift must not trigger another apply');
+  const saleData = fullFixture();
+  const saleRepo = repositoryWithMemoryMongo(saleData.mongo);
+  await saleRepo.applyInitialRuntimeInstanceProjection(saleData.plan);
+  const sale = saleBundle(saleData);
+  const revision = saleData.mongo.fences[0].coordinationRevision;
+  assert.equal(await saleRepo.applyConfirmedRuntimeSaleBinding(sale), 'INSERTED');
+  assert.equal(saleData.mongo.fences[0].coordinationRevision, revision + 1);
+  saleData.mongo.fences[0].coordinationRevision += 1;
+  assert.equal(await saleRepo.applyConfirmedRuntimeSaleBinding(sale), 'EXACT_REPLAY', 'lost ACK ignores later fence revision');
+  assert.equal(saleData.mongo.operations.length, 1);
+  assert.equal(saleData.mongo.ledger.length, 1);
+  assert.equal(saleData.mongo.outbox.length, 1);
+  const afterLaterSale = JSON.stringify(saleData.mongo);
+  await assert.rejects(saleRepo.applyInitialRuntimeInstanceProjection(saleData.plan),
+    hasCode('SUBSCRIPTIONS_INSTANCE_PROJECTOR_PREVIOUS_CHECKPOINT_CONFLICT'));
+  assert.equal(JSON.stringify(saleData.mongo), afterLaterSale, 'later sales forbid claiming exact projector replay or writing');
+  const failedData = fullFixture();
+  const failedRepo = repositoryWithMemoryMongo(failedData.mongo);
+  await failedRepo.applyInitialRuntimeInstanceProjection(failedData.plan);
+  const failedSale = saleBundle(failedData);
+  failedData.mongo.forceFenceCasConflict = true;
+  await assert.rejects(failedRepo.applyConfirmedRuntimeSaleBinding(failedSale), hasCode('SUBSCRIPTIONS_SALE_BINDING_SOURCE_CHANGED'));
+  assert.equal(failedData.mongo.instances.length, 2);
+  assert.equal(failedData.mongo.operations.length + failedData.mongo.ledger.length + failedData.mongo.outbox.length, 0);
+  console.log('schema4 full reconciliation synthetic cases: OK');
+}
 
 async function run(): Promise<void> {
   const input = manifest();
@@ -1469,6 +1773,7 @@ async function run(): Promise<void> {
     realMongoManifestSnapshot,
     'building the canonical projection plan must not mutate the input manifest'
   );
+  await verifyFullReconciliation();
   await verifyRealMongoPostcommitReadback(realMongoManifest, realMongoPlan);
 
   console.log('subscriptions provider instance projector tests: OK');

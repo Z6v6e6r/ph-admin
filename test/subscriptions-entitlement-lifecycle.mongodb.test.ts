@@ -453,10 +453,10 @@ async function run(): Promise<void> {
       const data = quarterFixture().state; // Pure synthetic catalogue/policy/identity facts only.
       const quarterRepository = new SubscriptionsRepository(); repositories.push(quarterRepository);
       await quarterRepository.connectReadOnly();
-      await quarterRepository.insertRuntimeProviderMapping(data.mapping);
-      await quarterRepository.insertRuntimePolicyPublication(data.publication);
-      await quarterRepository.insertRuntimeInstance(data.instance);
-      await quarterRepository.insertRuntimeEntitlementAggregate(data.aggregate);
+      await quarterRepository.insertRuntimeProviderMapping(structuredClone(data.mapping));
+      await quarterRepository.insertRuntimePolicyPublication(structuredClone(data.publication));
+      await quarterRepository.insertRuntimeInstance(structuredClone(data.instance));
+      await quarterRepository.insertRuntimeEntitlementAggregate(structuredClone(data.aggregate));
       const observedPublication = await repositories[1].runtimePolicyPublicationByVersion(data.publication.subscriptionTypeId, data.publication.policyVersion);
       assert.deepEqual(observedPublication, data.publication);
       assert.equal(observedPublication!.schemaVersion, 4);
