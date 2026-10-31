@@ -127,11 +127,12 @@ function serviceFixture(
   barrier: () => Promise<void> = async () => undefined,
   identityOverride: { tenantId?: string; clientRefHash?: string } = {},
   canonical = { policyVersion: 3, policyDigest: POLICY_DIGEST, snapshotRevision: 1,
-    snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' }
+    snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' },
+  action: 'CREATE_GAME' | 'JOIN_GAME' = 'CREATE_GAME'
 ): FixedClockService {
   const identity = { resolutionSource: 'LK_IDENTITY' as const, tenantId: 'tenant:piter',
     clientRefHash: CLIENT_HASH, evidenceRef: 'evidence:identity-1', verifiedAt: NOW, ...identityOverride };
-  const request = { identity, subscriptionInstanceId: INSTANCE, action: 'CREATE_GAME' as const,
+  const request = { identity, subscriptionInstanceId: INSTANCE, action,
     target: { resolutionSource: 'SERVER' as const, targetId: 'exercise:game-1', stationId: 'station:piter',
       category: 'GAME' as const, externalEventTypeId: 'event:open-game', productTypeId: null,
       durationMinutes: 60, startsAt: '2026-09-01T09:00:00.000Z', basePriceMinor: 150000,
@@ -150,7 +151,7 @@ function serviceFixture(
     const decision = quoteFixture(aggregate).decision!;
     return quoteFixture(aggregate, { eligible, maxActiveServices: 1,
       policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest,
-      decision: { ...decision, policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest },
+      decision: { ...decision, action, policyVersion: canonical.policyVersion, policyDigest: canonical.policyDigest },
       blockers: eligible ? [] : [{ code: 'ACTIVE_SERVICES_LIMIT_REACHED', message: 'fixture limit',
         details: { activeServices: aggregate.activeServiceCount, maxActiveServices: 1 } }] });
   } };
@@ -390,6 +391,20 @@ async function run(): Promise<void> {
       targetSnapshot: { snapshotId: canonical.snapshotId, revision: canonical.snapshotRevision,
         evidenceRef: canonical.evidenceRef } } };
     const expectedServices = repositories.map((repository) => serviceFixture(repository, undefined, {}, canonical));
+    // Read-only preflight uses a physical aggregate but synthetic policy/identity/target, like reserve.
+    const allCollections = async () => {
+      const names = (await db.listCollections({}, { nameOnly: true }).toArray()).map(row => row.name).sort();
+      return Promise.all(names.map(async name => [name,
+        await db.collection(name).find({}, { projection: { _id: 0 } }).sort({ _id: 1 }).toArray()]));
+    };
+    const beforePreflight = await allCollections();
+    const preflight = await serviceFixture(repositories[1], undefined, {}, canonical, 'JOIN_GAME')
+      .preflight('Bearer fixture', 'fixture-integration', { ...dto, action: 'JOIN_GAME' });
+    assert.deepEqual(preflight, { schemaVersion: 1, nonBinding: true, ...dto, action: 'JOIN_GAME',
+      expectations: expectedDto.expectations });
+    assert.deepEqual(await allCollections(), beforePreflight,
+      'preflight must not alter any collection, create journal/audit rows or persist a reservation');
+    console.log('PASS physical read-only preflight leaves every existing collection unchanged');
     const beforeMismatch = await snapshot(db);
     canonical.policyVersion = 4;
     await assert.rejects(expectedServices[0].reserve('Bearer fixture', 'fixture-integration', expectedDto,

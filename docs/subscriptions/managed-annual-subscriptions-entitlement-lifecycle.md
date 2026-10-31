@@ -42,6 +42,50 @@ Each active reservation stores its exact local day/week/month keys and deltas so
 recomputes historical policy. Legacy reservations without this evidence fail closed to manual
 reconciliation.
 
+## Read-only JOIN preflight
+
+`POST /api/internal/subscriptions/entitlements/preflight` accepts exactly:
+
+```json
+{
+  "subscriptionInstanceId": "subscription:annual-1",
+  "action": "JOIN_GAME",
+  "target": { "targetId": "exercise:game-1" }
+}
+```
+
+It uses the existing entitlement integration token, verified actor Bearer and closed runtime,
+trusted-adapter, canonical-target, shadow-quote and reservation flags. No new flag or credential
+is introduced. `CREATE_GAME`, caller policy/snapshot/usage claims, extra fields and malformed IDs
+are rejected. Direct service calls enforce the same shape as the HTTP DTO.
+
+The exact success body is `{schemaVersion: 1, nonBinding: true, subscriptionInstanceId, action,
+target: {targetId}, expectations}`; `expectations` has the schema-version-1 shape below. Every
+reference comes from the current server-resolved canonical target and actor-owned instance's
+effective published policy. It is returned only for an eligible quote or the existing explicit
+full-price fallback rule. Missing/stale/foreign/malformed inputs fail closed. The response does
+not add identity hashes, provider client/subscription identity fields, monetary fields, usage
+references, or a new expiry. The internal target reference must remain backend-only; the planned
+LK consumer binds it to the owner-resolved provider exercise.
+
+The service resolves authenticated context and calls `connectReadOnly` and the quote evaluator
+directly. It never calls the HTTP shadow-quote handler, whose journal would write. It performs
+no reservation, operation/ledger/outbox change, index creation, quote journal, admin mutation audit
+or provider business API/write request. Existing Bearer verification may refresh its configured
+JWKS over a read-only HTTP request on a cache miss. The endpoint carries `no-store` and
+`no-referrer`; metrics use only the two fixed route templates, without request/response bodies or query values. Existing HTTP exception
+envelopes apply: validation is `VALIDATION_ERROR`, blocked policy is `POLICY_VERSION_CONFLICT`,
+unavailable authoritative input is `UPSTREAM_UNAVAILABLE`; domain codes remain in
+`error.details.domainCode`. Anonymous invalid credentials retain the existing `AUTH_REQUIRED` mapping.
+
+Preflight is not authorization, a reservation or a v2 owner receipt. Policy/target may change after
+it returns; reserve must submit these expectations and pass the version checks below. Do not retry
+without expectations to bypass a mismatch. The intended consumer is the separate LK managed JOIN
+flow using its already server-owned exercise mapping; provider identifiers must not be forwarded
+directly to a public client. Runtime station/target mapping facts remain unverified, provider
+acceptance is absent, and this source addition authorizes no activation. Deploy the receiver before
+an opt-in consumer; stop that consumer before rolling back this endpoint.
+
 ## Optional reserve expectations (schema version 1)
 
 An internal caller may add `expectations` to the existing reserve body:

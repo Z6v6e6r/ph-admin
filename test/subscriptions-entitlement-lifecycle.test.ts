@@ -1,5 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { runEntitlementPreflightTests } from './subscriptions-entitlement-preflight.test';
 import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
@@ -819,6 +820,7 @@ async function run(): Promise<void> {
   const originalFlag = process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
   try {
     await runEntitlementReadbackTests();
+    await runEntitlementPreflightTests();
     await testReserveExpectations();
     await testReserveConfirmRelease();
     await testDailyOverageAndProviderRejection();

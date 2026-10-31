@@ -28,6 +28,7 @@ import { SubscriptionShadowQuoteAdapterDto } from './dto/subscription-shadow-quo
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
 import {
   ConfirmSubscriptionEntitlementDto,
+  PreflightSubscriptionEntitlementDto,
   ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
@@ -61,6 +62,7 @@ import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-
 import {
   SubscriptionEntitlementLifecycleService,
   SubscriptionEntitlementReadbackResult,
+  SubscriptionEntitlementPreflightResult,
   SubscriptionEntitlementReserveResult,
   SubscriptionEntitlementTransitionResult
 } from './subscription-entitlement-lifecycle.service';
@@ -339,6 +341,20 @@ export class SubscriptionTrustedShadowController {
       correlationId: correlationId ?? null
     });
     return result;
+  }
+
+  @Post('entitlements/preflight')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  preflightEntitlement(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') _correlationId: string | undefined,
+    @Body() dto: PreflightSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementPreflightResult> {
+    return this.entitlements.preflight(authorization, integrationToken, dto);
   }
 
   @Post('entitlements/readback')

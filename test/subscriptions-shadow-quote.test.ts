@@ -590,6 +590,33 @@ async function run(): Promise<void> {
         { idempotencyKey: 'republished-policy-before-reserve' }),
       (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH');
       assert.equal(writeCalls, 0);
+      // Preflight reads the same actual ownership/publication/aggregate evaluator without journal writes.
+      const joinRequest = { ...trustedRequest, action: 'JOIN_GAME' as const };
+      documents.publication.runtimeProjection.benefitRules[0].actions = ['CREATE_GAME', 'JOIN_GAME'];
+      documents.publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(documents.publication.runtimeProjection);
+      documents.instance.policyDigest = documents.publication.policyDigest;
+      const preflightService = new SubscriptionEntitlementLifecycleService({
+        resolveEntitlementRequest: async () => joinRequest
+      } as any, service, reserveRepository);
+      const preflightDto = { subscriptionInstanceId: joinRequest.subscriptionInstanceId,
+        action: 'JOIN_GAME' as const, target: { targetId: joinRequest.target.targetId } };
+      const preflight = await preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto);
+      assert.deepEqual(preflight, { schemaVersion: 1, nonBinding: true, ...preflightDto,
+        expectations: { schemaVersion: 1, policyVersion: 4, policyDigest: documents.publication.policyDigest,
+          targetSnapshot: expectedDto.expectations.targetSnapshot } });
+      documents.instance.clientRefHash = 'b'.repeat(64);
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.instance.clientRefHash = instanceFixture().clientRefHash;
+      documents.publication.state = 'DISABLED_FOR_NEW_OPERATIONS';
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.publication.state = 'PUBLISHED';
+      documents.aggregate.reconciliation.asOf = '2026-08-16T09:00:00.000Z';
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.aggregate = aggregateFixture();
+      assert.equal(writeCalls, 0);
     } finally {
       documents.instance = instanceFixture();
       documents.publication = publicationFixture();

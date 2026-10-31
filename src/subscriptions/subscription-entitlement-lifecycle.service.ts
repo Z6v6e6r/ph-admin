@@ -11,6 +11,8 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
   ConfirmSubscriptionEntitlementDto,
+  PreflightSubscriptionEntitlementDto,
+  ReserveSubscriptionEntitlementExpectationsDto,
   ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
@@ -53,6 +55,15 @@ export interface SubscriptionEntitlementReserveResult {
   operationState: StoredSubscriptionRuntimeOperation['state'] | null;
   decision: SubscriptionRuntimeEntitlementDecisionSnapshot | null;
   blockers: SubscriptionShadowQuoteBlocker[];
+}
+
+export interface SubscriptionEntitlementPreflightResult {
+  schemaVersion: 1;
+  nonBinding: true;
+  subscriptionInstanceId: string;
+  action: 'JOIN_GAME';
+  target: { targetId: string };
+  expectations: ReserveSubscriptionEntitlementExpectationsDto;
 }
 
 export interface SubscriptionEntitlementTransitionResult {
@@ -101,6 +112,59 @@ export class SubscriptionEntitlementLifecycleService {
     private readonly shadowQuote: SubscriptionShadowQuoteService,
     private readonly repository: SubscriptionsRepository
   ) {}
+
+  async preflight(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: PreflightSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementPreflightResult> {
+    this.assertEnabled();
+    const input = plainToInstance(PreflightSubscriptionEntitlementDto, dto);
+    if (!input || Array.isArray(input) || typeof input !== 'object'
+      || validateSync(input, { whitelist: true, forbidNonWhitelisted: true }).length > 0) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_PREFLIGHT_INVALID',
+        message: 'Subscription entitlement preflight request is invalid'
+      });
+    }
+    // Existing adapter authenticates before resolving the target through read-only storage.
+    const request = await this.adapter.resolveEntitlementRequest(authorizationHeader, integrationToken, input);
+    await this.repository.connectReadOnly();
+    // Do not route through the HTTP shadow-quote controller: that path writes its quote journal.
+    const quote = await this.shadowQuote.quote(request);
+    if (!quote.eligible && !reservationFallsBackToFullPrice(quote)) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_BLOCKED',
+        message: 'Subscription benefit is not available for this booking'
+      });
+    }
+    const expectations = {
+      schemaVersion: 1 as const,
+      policyVersion: quote.policyVersion!,
+      policyDigest: quote.policyDigest!,
+      targetSnapshot: {
+        snapshotId: request.target.snapshotId!,
+        revision: request.target.snapshotRevision!,
+        evidenceRef: request.target.evidenceRef
+      }
+    };
+    if (request.subscriptionInstanceId !== input.subscriptionInstanceId || request.action !== input.action
+      || request.target.resolutionSource !== 'SERVER' || request.target.targetId !== input.target.targetId
+      || quote.subscriptionInstanceId !== input.subscriptionInstanceId
+      || validateSync(plainToInstance(ReserveSubscriptionEntitlementExpectationsDto, expectations),
+        { whitelist: true, forbidNonWhitelisted: true }).length > 0
+      || (quote.eligible && !quote.decision)
+      || (quote.decision && (quote.decision.decisionKind !== 'ENTITLEMENT'
+        || quote.decision.policyVersion !== quote.policyVersion || quote.decision.policyDigest !== quote.policyDigest
+        || quote.decision.action !== input.action || quote.decision.target.targetId !== input.target.targetId))) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_PREFLIGHT_INCOMPLETE',
+        message: 'Authoritative subscription entitlement preflight is incomplete'
+      });
+    }
+    return { schemaVersion: 1, nonBinding: true, subscriptionInstanceId: input.subscriptionInstanceId,
+      action: input.action, target: { targetId: input.target.targetId }, expectations };
+  }
 
   async readback(
     authorizationHeader: string | undefined,

@@ -97,6 +97,31 @@ export class ReserveSubscriptionEntitlementDto {
   expectations?: ReserveSubscriptionEntitlementExpectationsDto;
 }
 
+export class PreflightSubscriptionEntitlementTargetDto {
+  @IsString()
+  @Matches(ID_PATTERN)
+  @NotContains('\n')
+  @NotContains('\r')
+  targetId!: string;
+}
+
+export class PreflightSubscriptionEntitlementDto {
+  @IsString()
+  @Matches(ID_PATTERN)
+  @NotContains('\n')
+  @NotContains('\r')
+  subscriptionInstanceId!: string;
+
+  @IsIn(['JOIN_GAME'])
+  action!: 'JOIN_GAME';
+
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PreflightSubscriptionEntitlementTargetDto)
+  target!: PreflightSubscriptionEntitlementTargetDto;
+}
+
 export class ConfirmSubscriptionEntitlementDto {
   @IsString()
   @Matches(ID_PATTERN)
