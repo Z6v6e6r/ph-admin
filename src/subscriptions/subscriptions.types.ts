@@ -977,6 +977,7 @@ export interface SubscriptionShadowQuoteResolvedTarget {
   priceEvidenceRef: string | null;
   resolvedAt: string;
   snapshotRevision?: number;
+  snapshotId?: string;
 }
 
 export type SubscriptionCanonicalTargetSnapshotState = 'ACTIVE' | 'REVOKED';

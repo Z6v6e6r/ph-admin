@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -6,8 +7,13 @@ import {
   ServiceUnavailableException
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 import {
   ConfirmSubscriptionEntitlementDto,
+  PreflightSubscriptionEntitlementDto,
+  ReserveSubscriptionEntitlementExpectationsDto,
+  ReadbackSubscriptionEntitlementDto,
   ReleaseSubscriptionEntitlementDto,
   ReserveSubscriptionEntitlementDto
 } from './dto/subscription-entitlement-lifecycle.dto';
@@ -21,7 +27,8 @@ import { SubscriptionShadowQuoteService } from './subscription-shadow-quote.serv
 import {
   loadOwnerEvidenceConfig,
   OwnerEvidenceError,
-  verifyOwnerEvidence
+  verifyOwnerEvidence,
+  verifyOwnerReleaseEvidence
 } from './owner-evidence.verifier';
 import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
@@ -50,6 +57,15 @@ export interface SubscriptionEntitlementReserveResult {
   blockers: SubscriptionShadowQuoteBlocker[];
 }
 
+export interface SubscriptionEntitlementPreflightResult {
+  schemaVersion: 1;
+  nonBinding: true;
+  subscriptionInstanceId: string;
+  action: 'JOIN_GAME';
+  target: { targetId: string };
+  expectations: ReserveSubscriptionEntitlementExpectationsDto;
+}
+
 export interface SubscriptionEntitlementTransitionResult {
   schemaVersion: 1;
   outcome: 'CONFIRMED' | 'RELEASED';
@@ -58,6 +74,16 @@ export interface SubscriptionEntitlementTransitionResult {
   subscriptionInstanceId: string;
   aggregateRevision: number;
   operationState: StoredSubscriptionRuntimeOperation['state'];
+}
+
+export interface SubscriptionEntitlementReadbackResult {
+  schemaVersion: 1;
+  operationId: string;
+  subscriptionInstanceId: string;
+  operationState: StoredSubscriptionRuntimeOperation['state'];
+  compensationState: StoredSubscriptionRuntimeOperation['compensationState'];
+  releaseReason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | null;
+  providerBookingId: string | null;
 }
 
 /**
@@ -87,6 +113,93 @@ export class SubscriptionEntitlementLifecycleService {
     private readonly repository: SubscriptionsRepository
   ) {}
 
+  async preflight(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: PreflightSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementPreflightResult> {
+    this.assertEnabled();
+    const input = plainToInstance(PreflightSubscriptionEntitlementDto, dto);
+    if (!input || Array.isArray(input) || typeof input !== 'object'
+      || validateSync(input, { whitelist: true, forbidNonWhitelisted: true }).length > 0) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_PREFLIGHT_INVALID',
+        message: 'Subscription entitlement preflight request is invalid'
+      });
+    }
+    // Existing adapter authenticates before resolving the target through read-only storage.
+    const request = await this.adapter.resolveEntitlementRequest(authorizationHeader, integrationToken, input);
+    await this.repository.connectReadOnly();
+    // Do not route through the HTTP shadow-quote controller: that path writes its quote journal.
+    const quote = await this.shadowQuote.quote(request);
+    if (!quote.eligible && !reservationFallsBackToFullPrice(quote)) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_BLOCKED',
+        message: 'Subscription benefit is not available for this booking'
+      });
+    }
+    const expectations = {
+      schemaVersion: 1 as const,
+      policyVersion: quote.policyVersion!,
+      policyDigest: quote.policyDigest!,
+      targetSnapshot: {
+        snapshotId: request.target.snapshotId!,
+        revision: request.target.snapshotRevision!,
+        evidenceRef: request.target.evidenceRef
+      }
+    };
+    if (request.subscriptionInstanceId !== input.subscriptionInstanceId || request.action !== input.action
+      || request.target.resolutionSource !== 'SERVER' || request.target.targetId !== input.target.targetId
+      || quote.subscriptionInstanceId !== input.subscriptionInstanceId
+      || validateSync(plainToInstance(ReserveSubscriptionEntitlementExpectationsDto, expectations),
+        { whitelist: true, forbidNonWhitelisted: true }).length > 0
+      || (quote.eligible && !quote.decision)
+      || (quote.decision && (quote.decision.decisionKind !== 'ENTITLEMENT'
+        || quote.decision.policyVersion !== quote.policyVersion || quote.decision.policyDigest !== quote.policyDigest
+        || quote.decision.action !== input.action || quote.decision.target.targetId !== input.target.targetId))) {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_PREFLIGHT_INCOMPLETE',
+        message: 'Authoritative subscription entitlement preflight is incomplete'
+      });
+    }
+    return { schemaVersion: 1, nonBinding: true, subscriptionInstanceId: input.subscriptionInstanceId,
+      action: input.action, target: { targetId: input.target.targetId }, expectations };
+  }
+
+  async readback(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    dto: ReadbackSubscriptionEntitlementDto
+  ): Promise<SubscriptionEntitlementReadbackResult> {
+    this.assertEnabled();
+    const identity = await this.adapter.resolveEntitlementIdentity(authorizationHeader, integrationToken);
+    let operation: StoredSubscriptionRuntimeOperation | null;
+    try {
+      operation = await this.repository.runtimeEntitlementOperationReadback({
+        operationId: dto.operationId,
+        subscriptionInstanceId: dto.subscriptionInstanceId,
+        tenantId: identity.tenantId,
+        actorId: identity.clientRefHash
+      });
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_READBACK_UNAVAILABLE',
+        message: 'Subscription entitlement readback is unavailable'
+      });
+    }
+    if (!operation) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Entitlement operation not found' });
+    const reason = operation.lastReconciliationResult;
+    return {
+      schemaVersion: 1,
+      operationId: operation.operationId,
+      subscriptionInstanceId: dto.subscriptionInstanceId,
+      operationState: operation.state,
+      compensationState: operation.compensationState,
+      releaseReason: reason === 'PROVIDER_REJECTED' || reason === 'BOOKING_CANCELLED' ? reason : null,
+      providerBookingId: operation.providerCorrelationId
+    };
+  }
+
   async reserve(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
@@ -95,14 +208,50 @@ export class SubscriptionEntitlementLifecycleService {
   ): Promise<SubscriptionEntitlementReserveResult> {
     this.assertEnabled();
     const idempotencyKey = this.requireIdempotencyKey(headers.idempotencyKey);
-    const request = await this.adapter.resolveEntitlementRequest(
+    const keyHash = this.sha256(idempotencyKey);
+    // Versioned requests replay their original decision without resolving today's policy/target.
+    // Keep the legacy request and fingerprint path byte-for-byte compatible when omitted.
+    const expected = dto.expectations === undefined ? undefined : this.validateExpectedReserve(dto);
+    const expectedHash = expected ? this.sha256(JSON.stringify({
+      domain: 'subscription-entitlement-reserve-expectations',
+      schemaVersion: 1,
+      subscriptionInstanceId: expected.subscriptionInstanceId,
+      action: expected.action,
+      targetId: expected.target.targetId,
+      expectations: {
+        schemaVersion: expected.expectations!.schemaVersion,
+        policyVersion: expected.expectations!.policyVersion,
+        policyDigest: expected.expectations!.policyDigest,
+        targetSnapshot: {
+          snapshotId: expected.expectations!.targetSnapshot.snapshotId,
+          revision: expected.expectations!.targetSnapshot.revision,
+          evidenceRef: expected.expectations!.targetSnapshot.evidenceRef
+        }
+      }
+    })) : undefined;
+    const replayIdentity = expected
+      ? await this.adapter.resolveEntitlementIdentity(authorizationHeader, integrationToken)
+      : undefined;
+    if (replayIdentity) {
+      await this.repository.connectReadOnly();
+      const replay = await this.repository.runtimeOperationByIdempotency({
+        tenantId: replayIdentity.tenantId, actorId: replayIdentity.clientRefHash,
+        kind: 'BOOKING', keyHash
+      });
+      if (replay) {
+        this.assertExpectedReplay(replay, expected!, replayIdentity, keyHash, expectedHash!);
+        return this.reserveReplay(replay, expectedHash!);
+      }
+    }
+    let request = await this.adapter.resolveEntitlementRequest(
       authorizationHeader,
       integrationToken,
-      dto
+      expected ?? dto
     );
-    await this.repository.connect();
-    const keyHash = this.sha256(idempotencyKey);
-    const requestHash = this.sha256(JSON.stringify({
+    if (replayIdentity && (request.identity.tenantId !== replayIdentity.tenantId
+      || request.identity.clientRefHash !== replayIdentity.clientRefHash)) this.expectationMismatch();
+    if (!expected) await this.repository.connect();
+    const requestHash = expectedHash ?? this.sha256(JSON.stringify({
       subscriptionInstanceId: request.subscriptionInstanceId,
       action: request.action,
       targetId: request.target.targetId,
@@ -121,11 +270,41 @@ export class SubscriptionEntitlementLifecycleService {
       keyHash
     });
     if (existing) {
+      if (expected) this.assertExpectedReplay(existing, expected, replayIdentity!, keyHash, requestHash);
       return this.reserveReplay(existing, requestHash);
     }
 
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      if (expected) {
+        if (attempt > 0) {
+          const replay = await this.repository.runtimeOperationByIdempotency({
+            tenantId: replayIdentity!.tenantId, actorId: replayIdentity!.clientRefHash,
+            kind: 'BOOKING', keyHash
+          });
+          if (replay) {
+            this.assertExpectedReplay(replay, expected, replayIdentity!, keyHash, requestHash);
+            return this.reserveReplay(replay, requestHash);
+          }
+          request = await this.adapter.resolveEntitlementRequest(authorizationHeader, integrationToken, expected);
+        }
+        const snapshot = expected.expectations!.targetSnapshot;
+        if (request.identity.tenantId !== replayIdentity!.tenantId
+          || request.identity.clientRefHash !== replayIdentity!.clientRefHash
+          || request.subscriptionInstanceId !== expected.subscriptionInstanceId
+          || request.action !== expected.action || request.target.targetId !== expected.target.targetId
+          || request.target.resolutionSource !== 'SERVER'
+          || request.target.snapshotId !== snapshot.snapshotId
+          || request.target.snapshotRevision !== snapshot.revision
+          || request.target.evidenceRef !== snapshot.evidenceRef) this.expectationMismatch();
+      }
       const quote = await this.shadowQuote.quote(request);
+      if (expected && (quote.subscriptionInstanceId !== expected.subscriptionInstanceId
+        || quote.policyVersion !== expected.expectations!.policyVersion
+        || quote.policyDigest !== expected.expectations!.policyDigest
+        || (quote.decision && (quote.decision.policyVersion !== expected.expectations!.policyVersion
+          || quote.decision.policyDigest !== expected.expectations!.policyDigest)))) {
+        this.expectationMismatch();
+      }
       const blockerCodes = quote.blockers.map((item) => item.code);
       if (!quote.eligible) {
         if (reservationFallsBackToFullPrice(quote)) {
@@ -190,6 +369,7 @@ export class SubscriptionEntitlementLifecycleService {
       const ledger = this.ledger(operation, eventId, 'ENTITLEMENT_RESERVED', quote.usageUnits, null);
       const outbox = this.outbox(operation, ledger, recordedAt);
       try {
+        if (expected) await this.repository.connect();
         const persisted = await this.repository.reserveRuntimeEntitlement({
           expectedAggregateRevision: aggregate.revision,
           aggregate: nextAggregate,
@@ -197,6 +377,9 @@ export class SubscriptionEntitlementLifecycleService {
           ledger,
           outbox
         });
+        if (expected && persisted.replayed) {
+          this.assertExpectedReplay(persisted.operation, expected, replayIdentity!, keyHash, requestHash);
+        }
         return {
           schemaVersion: 1,
           outcome: 'RESERVED',
@@ -218,6 +401,57 @@ export class SubscriptionEntitlementLifecycleService {
     throw new ConflictException({
       code: 'SUBSCRIPTION_ENTITLEMENT_REVISION_CONFLICT',
       message: 'Subscription usage changed concurrently; retry with the same idempotency key'
+    });
+  }
+
+  private assertExpectedReplay(
+    operation: StoredSubscriptionRuntimeOperation,
+    dto: ReserveSubscriptionEntitlementDto,
+    identity: SubscriptionShadowQuoteIdentityContext,
+    keyHash: string,
+    requestHash: string
+  ): void {
+    if (operation.idempotency.requestHash !== requestHash) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT',
+        message: 'Idempotency key was already used for another request'
+      });
+    }
+    if (!['RESERVED', 'CONFIRMED'].includes(operation.state)) {
+      throw new ConflictException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_STATE_CONFLICT',
+        message: 'Idempotent entitlement operation is no longer active'
+      });
+    }
+    const decision = operation.decision;
+    if (operation.actor.type !== 'CLIENT' || operation.actor.actorId !== identity.clientRefHash
+      || operation.tenantId !== identity.tenantId || operation.kind !== 'BOOKING'
+      || operation.subscriptionInstanceId !== dto.subscriptionInstanceId
+      || operation.idempotency.keyHash !== keyHash
+      || decision?.decisionKind !== 'ENTITLEMENT'
+      || decision.policyVersion !== dto.expectations!.policyVersion
+      || decision.policyDigest !== dto.expectations!.policyDigest
+      || decision.action !== dto.action || decision.target.targetId !== dto.target.targetId) {
+      this.expectationMismatch();
+    }
+  }
+
+  private validateExpectedReserve(dto: ReserveSubscriptionEntitlementDto): ReserveSubscriptionEntitlementDto {
+    const value = plainToInstance(ReserveSubscriptionEntitlementDto, dto);
+    if (Array.isArray(value.target)
+      || validateSync(value, { whitelist: true, forbidNonWhitelisted: true }).length > 0) {
+      throw new BadRequestException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATIONS_INVALID',
+        message: 'Subscription reserve expectations are invalid'
+      });
+    }
+    return value;
+  }
+
+  private expectationMismatch(): never {
+    throw new ConflictException({
+      code: 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH',
+      message: 'Subscription policy or canonical target differs from reserve expectations'
     });
   }
 
@@ -315,9 +549,11 @@ export class SubscriptionEntitlementLifecycleService {
   async release(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
-    dto: ReleaseSubscriptionEntitlementDto
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence?: string
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
+    this.requireOwnerReleaseEvidence(dto, ownerEvidence);
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -326,6 +562,14 @@ export class SubscriptionEntitlementLifecycleService {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const operation = await this.ownedOperation(identity, dto.operationId);
       if (['FAILED', 'COMPENSATED'].includes(operation.state)) {
+        if (operation.compensationState !== 'APPLIED'
+          || operation.lastReconciliationResult !== dto.reason
+          || operation.providerCorrelationId !== (dto.providerBookingId ?? null)) {
+          throw new ConflictException({
+            code: 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH',
+            message: 'Release replay does not match the completed release'
+          });
+        }
         return this.transitionResult(
           'RELEASED',
           true,
@@ -698,6 +942,42 @@ export class SubscriptionEntitlementLifecycleService {
         throw new ForbiddenException({
           code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
           message: 'Booking confirmation requires trusted owner evidence'
+        });
+      }
+      throw error;
+    }
+  }
+
+  private requireOwnerReleaseEvidence(
+    dto: ReleaseSubscriptionEntitlementDto,
+    ownerEvidence: string | undefined
+  ): void {
+    if (!['1', 'true', 'yes'].includes(
+      String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
+    )) return;
+    let config;
+    try {
+      config = loadOwnerEvidenceConfig();
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'SUBSCRIPTION_ENTITLEMENT_OWNER_EVIDENCE_CONFIG_INVALID',
+        message: 'Owner evidence is not configured'
+      });
+    }
+    try {
+      verifyOwnerReleaseEvidence({
+        evidence: ownerEvidence,
+        config,
+        operationId: dto.operationId,
+        reason: dto.reason,
+        providerBookingId: dto.providerBookingId ?? null,
+        now: this.now()
+      });
+    } catch (error) {
+      if (error instanceof OwnerEvidenceError) {
+        throw new ForbiddenException({
+          code: `SUBSCRIPTION_ENTITLEMENT_${error.code}`,
+          message: 'Entitlement release requires trusted owner evidence'
         });
       }
       throw error;
