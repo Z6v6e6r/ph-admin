@@ -98,3 +98,29 @@ still be reconciled before disabling the confirmer/releaser in an activated envi
 The remaining activation gate is the exact Viva provider contract for mixed pricing, including
 the 60-minute subscription benefit plus a discounted 30/60-minute overage. Until that contract is
 captured and tested, the LK production adapter must not route discounted payment writes here.
+
+## Physical Mongo regression evidence (R1)
+
+`npm run test:subscriptions-entitlement-lifecycle:mongo` runs the canonical lifecycle service
+against independent `SubscriptionsRepository` Mongo clients. The suite requires the explicit
+`SUBSCRIPTIONS_ENTITLEMENT_MONGODB_TEST_URI=mongodb://127.0.0.1:27017/?replicaSet=rs0`
+(or another loopback port); missing, credential-bearing, non-loopback or database-qualified URIs
+fail before connection. Every client URI is normalized to `directConnection=true`, including
+repository and child-process connections, so replica-set discovery cannot follow a remotely
+advertised primary. Conflicting or additional URI options are rejected. It creates and removes only its own uniquely named
+`phab_entitlement_ci_<pid>_<uuid>` synthetic database. The existing binding-promotion CI job supplies
+its disposable replica set; the suite does not provision infrastructure.
+
+The scenarios synchronize four last-unit/max-one reservations at the same stored aggregate
+revision, check same-key replay and unchanged persistence on invalid owner/tenant/actor evidence,
+and align confirmation/release contenders at the repository entry before the first write. They
+verify one ledger/outbox event per transition with exact counter restoration. A duplicate outbox key forces the final insert to fail after operation, aggregate
+and ledger writes, checking whole-transaction rollback. After removing only that fault fixture,
+a response is deliberately lost after a real committed release; a separate Node process retries
+and verifies the persisted ledger, outbox and counters remain unchanged. Identity, policy quote,
+clock and lost response are synthetic; persistence, sessions, transactions and unique indexes
+are real. No provider is called.
+
+A passing execution is **CI** evidence for this persistence boundary, not HTTP E2E, provider,
+STAGING or PRODUCTION acceptance. Adding the test alone is not a claim of physical execution;
+attach the successful CI run to the release evidence before closing the persistence gate.

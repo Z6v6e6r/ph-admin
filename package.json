@@ -111,6 +111,7 @@
     "test:subscriptions-runtime-context": "ts-node test/subscriptions-runtime-context.test.ts",
     "test:subscriptions-sale-period-resolver": "ts-node test/subscriptions-sale-period-resolver.test.ts",
     "test:subscriptions-entitlement-lifecycle": "ts-node test/subscriptions-entitlement-lifecycle.test.ts",
+    "test:subscriptions-entitlement-lifecycle:mongo": "ts-node test/subscriptions-entitlement-lifecycle.mongodb.test.ts",
     "test:subscriptions-runtime": "ts-node test/subscriptions-test-runtime.service.test.ts && ts-node test/subscriptions-test-runtime-ui.test.ts && npm run test:subscriptions-runtime:mongo",
     "test:subscriptions-runtime:mongo": "ts-node test/subscriptions-test-runtime.mongodb.test.ts",
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
