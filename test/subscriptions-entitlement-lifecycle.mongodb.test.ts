@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { Db, MongoClient, MongoServerError } from 'mongodb';
@@ -42,7 +42,7 @@ function configureFixture(uri: string, dbName: string): () => void {
     SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT: 'true',
     SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET: SECRET,
     SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS: '60',
-    SUBSCRIPTIONS_AUTO_CREATE_INDEXES: 'true',
+    SUBSCRIPTIONS_AUTO_CREATE_INDEXES: 'false',
     SUBSCRIPTIONS_TEST_RUNTIME_ENABLED: 'false',
     SUBSCRIPTIONS_INSTANCE_PROJECTOR_CONTRACTS_ENABLED: 'false',
     SUBSCRIPTIONS_BINDING_PROMOTION_CONTRACTS_ENABLED: 'false',
@@ -56,6 +56,28 @@ function configureFixture(uri: string, dbName: string): () => void {
       else process.env[key] = value;
     }
   };
+}
+
+function initializeFixtureIndexes(uri: string, dbName: string): void {
+  assert.match(dbName, DB_PATTERN);
+  assert.equal(uri, requireTestUri());
+  const target = new URL(uri);
+  const fingerprint = createHash('sha256').update(JSON.stringify({
+    scheme: target.protocol.slice(0, -1), hosts: target.host,
+    database: dbName, connectionSuffix: `${target.pathname}${target.search}`
+  })).digest('hex');
+  // Runtime indexes are deliberately verify-only in repository.connect(). Use the existing
+  // guarded installer, with its duplicate preflight, only for this already-owned empty fixture DB.
+  const setup = spawnSync(process.execPath, ['scripts/managed-subscriptions-indexes.mjs', '--apply'], {
+    cwd: process.cwd(),
+    env: { ...process.env, SUBSCRIPTIONS_MONGODB_URI: uri, SUBSCRIPTIONS_MONGODB_DB: dbName,
+      SUBSCRIPTIONS_INDEX_APPLY: 'CONFIRM', SUBSCRIPTIONS_INDEX_EXPECTED_DB: dbName,
+      SUBSCRIPTIONS_INDEX_TARGET_SHA256: fingerprint },
+    encoding: 'utf8', timeout: 60_000
+  });
+  assert.equal(setup.error, undefined, setup.error?.message);
+  assert.equal(setup.status, 0, `fixture index setup failed: ${setup.stderr || setup.stdout}`);
+  assert.match(setup.stdout, /managed subscription indexes: apply OK/);
 }
 
 function firstWaveBarrier(size: number): () => Promise<void> {
@@ -209,6 +231,7 @@ async function run(): Promise<void> {
     const db = client.db(dbName);
     assert.deepEqual(await db.listCollections({}, { nameOnly: true }).toArray(), [], 'fixture database must be unused');
     owned = true;
+    initializeFixtureIndexes(uri, dbName);
     // Each repository constructs its own independent MongoClient/session pool.
     for (let index = 0; index < 4; index += 1) {
       const repository = new SubscriptionsRepository();

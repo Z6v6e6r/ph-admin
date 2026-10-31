@@ -109,7 +109,10 @@ fail before connection. Every client URI is normalized to `directConnection=true
 repository and child-process connections, so replica-set discovery cannot follow a remotely
 advertised primary. Conflicting or additional URI options are rejected. It creates and removes only its own uniquely named
 `phab_entitlement_ci_<pid>_<uuid>` synthetic database. The existing binding-promotion CI job supplies
-its disposable replica set; the suite does not provision infrastructure.
+its disposable replica set; the suite does not provision infrastructure. Before repository
+connections, the existing guarded index installer initializes this empty fixture database with
+its exact URI/database fingerprint. Repository startup remains verify-only for runtime indexes;
+`SUBSCRIPTIONS_AUTO_CREATE_INDEXES` does not create those runtime prerequisites.
 
 The scenarios synchronize four last-unit/max-one reservations at the same stored aggregate
 revision, check same-key replay and unchanged persistence on invalid owner/tenant/actor evidence,
