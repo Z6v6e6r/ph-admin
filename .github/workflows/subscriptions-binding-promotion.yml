@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031, codex/r1-station-membership-lifetime-20261031]
   push:
     branches: [main]
 
@@ -75,6 +75,7 @@ jobs:
       - name: Station membership moderation and lifecycle regressions
         run: |
           npx ts-node test/station-membership-lifetime.test.ts
+          npx ts-node test/station-message-custody.test.ts
           npx ts-node test/community-types.test.ts
       - name: Station membership physical Mongo epoch and lifecycle races
         env:

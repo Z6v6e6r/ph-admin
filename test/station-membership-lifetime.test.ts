@@ -56,6 +56,6 @@ test('actual delete writer retains adopted identity across flag disable and type
     assert.equal(writes,0);
     document=community();
     assert.equal(await service.deleteCommunity(document.id),false);
-    assert.deepEqual(filter.$and[1],{stationMembershipLifetime:{$exists:false},communityType:'STATION'});
+    assert.deepEqual(filter.$and[1],{$or:[{communityMessageOutbox:{$exists:false}},{communityMessageOutbox:{$size:0}}],stationMembershipLifetime:{$exists:false},communityType:'STATION'});
   } finally {if(prior===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=prior;}
 });

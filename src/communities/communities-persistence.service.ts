@@ -481,7 +481,11 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     if (match.document.stationMembershipLifetime !== undefined || stationLifetimeEnabled(match.document)) {
       throw new ConflictException('STATION_LIFETIME_REQUIRES_ARCHIVE');
     }
-    const deleteFence = { stationMembershipLifetime: { $exists: false }, communityType: match.document.communityType === undefined ? { $exists: false } : match.document.communityType };
+    const outbox = match.document.communityMessageOutbox;
+    if (outbox !== undefined && (!Array.isArray(outbox) || outbox.length !== 0)) {
+      throw new ConflictException('COMMUNITY_MESSAGE_CUSTODY_PENDING');
+    }
+    const deleteFence = { $or: [{ communityMessageOutbox: { $exists: false } }, { communityMessageOutbox: { $size: 0 } }], stationMembershipLifetime: { $exists: false }, communityType: match.document.communityType === undefined ? { $exists: false } : match.document.communityType };
 
     const deleteResult = match.document._id !== undefined
       ? await match.collection.deleteOne({ _id: match.document._id, ...deleteFence } as Filter<MongoCommunityDocument>)
@@ -1231,7 +1235,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       members,
       pendingMembers,
       bannedMembers,
-      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => !['eventEntries', 'stationMembershipLifetime', 'stationMembershipAdmission', 'admissionBindingSha256'].includes(key))))
+      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => !['eventEntries', 'stationMembershipLifetime', 'stationMembershipAdmission', 'admissionBindingSha256', 'communityMessageOutbox', 'stationMessageEvent', 'stationMessageOwner'].includes(key))))
     };
   }
 

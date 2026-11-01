@@ -39,3 +39,43 @@ test('physical CUP writer fences competing LK epoch, preserves permanent admin t
     try { await clients[0].db(name).dropDatabase(); } finally { await Promise.all(clients.map(c => c.close())); }
   }
 });
+test('physical actual CUP delete/update retains accepted message intent across stale preimage', async () => {
+ const clients=[new MongoClient(uri+'&directConnection=true'),new MongoClient(uri+'&directConnection=true')],name='phab_message_custody_ci_'+randomUUID().replaceAll('-','');
+ await Promise.all(clients.map(c=>c.connect()));
+ try {
+  const collection=clients[0].db(name).collection('lk_communities'),other=clients[1].db(name).collection('lk_communities');
+  await collection.insertOne({id:'message-race',name:'Synthetic',communityType:'FRIENDS',members:[],pendingMembers:[],bannedMembers:[],communityMessageOutbox:[]});
+  const preimage:any=await collection.findOne({id:'message-race'}),intent={id:'synthetic-accepted',message:{text:'Synthetic'}};
+  const service:any=Object.create(CommunitiesPersistenceService.prototype);service.deleteCommunityFeedArtifacts=async()=>{};
+  service.findDocumentWithSourceById=async()=>({document:preimage,collection});
+  await other.updateOne({_id:preimage._id},{$set:{communityMessageOutbox:[intent]}});
+  assert.equal(await service.deleteCommunity('message-race'),false);
+  await service.persistDocument({...preimage,members:[{id:'synthetic-member'}]},collection,preimage);
+  assert.deepEqual((await other.findOne({_id:preimage._id}))!.communityMessageOutbox,[intent]);
+  service.findDocumentWithSourceById=async()=>({document:await collection.findOne({_id:preimage._id}),collection});
+  await assert.rejects(()=>service.deleteCommunity('message-race'),/COMMUNITY_MESSAGE_CUSTODY_PENDING/);
+  await other.updateOne({_id:preimage._id},{$set:{communityMessageOutbox:null}});
+  await assert.rejects(()=>service.deleteCommunity('message-race'),/COMMUNITY_MESSAGE_CUSTODY_PENDING/);
+  await other.updateOne({_id:preimage._id},{$set:{communityMessageOutbox:[]}});
+  assert.equal(await service.deleteCommunity('message-race'),true);
+  // Same full-preimage predicate emitted by LK's transformed legacy send barrier.
+  await collection.insertOne({id:'legacy-transition',name:'Synthetic',communityType:'FRIENDS',typeSettingsRevision:1,members:[{id:'player-a'}],pendingMembers:[],bannedMembers:[]});
+  const original:any=await collection.findOne({id:'legacy-transition'});
+  const acceptance=(row:any)=>[{_id:row._id,$expr:{$eq:['$$ROOT',{$literal:row}]}},{$set:{id:row.id}}] as const;
+  service.findDocumentWithSourceById=async()=>({document:await collection.findOne({id:'legacy-transition'}),collection});
+  service.findCommunityById=async()=>collection.findOne({id:'legacy-transition'});
+  await service.updateCommunity('legacy-transition',{communityType:'STATION',typeSettings:{stationId:'station-a'},expectedTypeSettingsRevision:1});
+  assert.equal((await other.updateOne(...acceptance(original))).matchedCount,0);
+  await service.updateCommunity('legacy-transition',{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:2});
+  const acceptedBefore:any=await collection.findOne({id:'legacy-transition'});
+  const accepted=await other.updateOne(...acceptance(acceptedBefore));assert.equal(accepted.acknowledged,true);assert.equal(accepted.matchedCount,1);assert.equal(accepted.modifiedCount,0);
+  await service.manageMember('legacy-transition',{action:'BAN',member:{id:'player-a'},actor:{id:'admin'}});
+  assert.equal((await other.updateOne(...acceptance(acceptedBefore))).matchedCount,0);
+  await service.updateCommunity('legacy-transition',{communityType:'STATION',typeSettings:{stationId:'station-a'},expectedTypeSettingsRevision:3});
+  assert.equal((await collection.findOne({id:'legacy-transition'}))!.communityType,'STATION');
+  const absent:any=await collection.findOne({id:'legacy-transition'});
+  await other.updateOne({_id:absent._id},{$set:{visibility:null}});
+  assert.equal((await other.updateOne(...acceptance(absent))).matchedCount,0);
+
+ }finally{try{await clients[0].db(name).dropDatabase();}finally{await Promise.all(clients.map(c=>c.close()));}}
+});
