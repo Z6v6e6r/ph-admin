@@ -28,3 +28,30 @@ There is no arbitrary player cap or evictable history. Existing Mongo community-
 limits remain an activation capacity evidence gap: measure target size and growth. A real store
 failure cannot be reported as successful moderation. Test only the existing CI-owned Mongo7
 fixture; no local/shared database provisioning or migration is part of this source change.
+
+## Stream-adopted lifetime v2 (source-only)
+
+Paired LK station stream adoption atomically creates lifetime
+`{version:2,streamId,revision,players}` and outbox
+`{version:2,streamId,revision,acceptedSequence,publishedSequence,intents}` from an exact
+whole community preimage after legacy outbox drain. CUP does not expose adoption,
+create indexes or execute migration. Ordinary lifetime v1 remains unchanged.
+
+Every ACTIVE v2 player requires
+`readPosition:{streamId,baselineSequence,readThroughSequence}`, matching the envelope
+and `0<=baseline<=readThrough<=publishedSequence`. All counters are safe integers
+below Number.MAX_SAFE_INTEGER. Missing/mixed state is rejected, never inferred zero.
+CUP APPROVE/UNBAN creates a new epoch with baseline/readThrough equal to the observed
+contiguous published frontier. The actual member persistence CAS additionally pins
+the entire outbox and lifetime revision, so concurrent publication or read-through
+cannot produce a stale baseline. WARN/PROMOTE/DEMOTE preserve same-epoch positions.
+REMOVE/BAN keeps a tombstone and does not erase stream custody. Public DTOs still
+exclude the entire private lifetime/outbox.
+
+The exact old CUP validator is retained as a synthetic rollback fixture and rejects
+v2. An old writer cannot silently replace the new ACTIVE row with a baseline-less v1
+row. No rollback may downconvert lifetime/outbox, replace the community without its
+full current preimage, or discard pending intents. Paired compatible LK/CUP writers,
+LK2 consumer, old-executor drain, production Mongo durability/retention evidence and
+separately authorized adoption are required before activation. LOCAL/CI tests do not
+prove deployment, failover durability or runtime acceptance.

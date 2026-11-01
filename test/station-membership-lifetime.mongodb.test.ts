@@ -79,3 +79,23 @@ test('physical actual CUP delete/update retains accepted message intent across s
 
  }finally{try{await clients[0].db(name).dropDatabase();}finally{await Promise.all(clients.map(c=>c.close()));}}
 });
+
+test('physical stream baseline races publication/read cursor and preserves outbox on admin restore', async () => {
+ const clients=[new MongoClient(uri+'&directConnection=true'),new MongoClient(uri+'&directConnection=true')];
+ const name='phab_station_stream_ci_'+randomUUID().replaceAll('-','');await Promise.all(clients.map(c=>c.connect()));
+ try{
+  const collection=clients[0].db(name).collection('lk_communities'),other=clients[1].db(name).collection('lk_communities'),streamId=randomUUID();
+  await collection.insertOne({id:'station-stream',communityType:'STATION',typeSettingsRevision:1,members:[],pendingMembers:[],bannedMembers:[],communityMessageOutbox:{version:2,streamId,revision:1,acceptedSequence:2,publishedSequence:2,intents:[]},stationMembershipLifetime:{version:2,streamId,revision:1,players:[{playerId:'player-a',epoch:1,state:'REMOVED'}]}});
+  const service:any=Object.create(CommunitiesPersistenceService.prototype),before:any=await collection.findOne({id:'station-stream'});
+  const stale={...before,members:[{id:'player-a'}],stationMembershipLifetime:stationModerationTransition(before,'APPROVE',{id:'player-a'})};
+  await other.updateOne({_id:before._id},{$set:{'communityMessageOutbox.revision':2,'communityMessageOutbox.acceptedSequence':3,'communityMessageOutbox.publishedSequence':3}});
+  await assert.rejects(()=>service.persistDocument(stale,collection,before),/COMMUNITY_MEMBERS_CHANGED/);
+  const fresh:any=await collection.findOne({_id:before._id});await service.persistDocument({...fresh,members:[{id:'player-a'}],stationMembershipLifetime:stationModerationTransition(fresh,'APPROVE',{id:'player-a'})},collection,fresh);
+  const active:any=await other.findOne({_id:before._id});assert.deepEqual(active.stationMembershipLifetime.players[0].readPosition,{streamId,baselineSequence:3,readThroughSequence:3});assert.deepEqual(active.communityMessageOutbox,fresh.communityMessageOutbox);
+  const staleWarn={...active,members:[{id:'player-a',warningsCount:1}]};
+  await other.updateOne({_id:before._id},{$inc:{'stationMembershipLifetime.revision':1},$set:{'stationMembershipLifetime.players.0.readPosition.readThroughSequence':3}});
+  await assert.rejects(()=>service.persistDocument(staleWarn,collection,active),/COMMUNITY_MEMBERS_CHANGED/);
+  // Old v1 writer predicate cannot match the adopted v2 row.
+  assert.equal((await other.updateOne({_id:before._id,'stationMembershipLifetime.version':1,'stationMembershipLifetime.revision':1},{$set:{members:[]}})).matchedCount,0);
+ }finally{try{await clients[0].db(name).dropDatabase();}finally{await Promise.all(clients.map(c=>c.close()));}}
+});

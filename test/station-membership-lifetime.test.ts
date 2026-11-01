@@ -59,3 +59,25 @@ test('actual delete writer retains adopted identity across flag disable and type
     assert.deepEqual(filter.$and[1],{$or:[{communityMessageOutbox:{$exists:false}},{communityMessageOutbox:{$size:0}}],stationMembershipLifetime:{$exists:false},communityType:'STATION'});
   } finally {if(prior===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=prior;}
 });
+
+test('stream-adopted moderation binds current frontier and preserves same-epoch read cursor', async () => {
+ const service:any=Object.create(CommunitiesPersistenceService.prototype);
+ let document:any={...community(),communityMessageOutbox:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:7,acceptedSequence:12,publishedSequence:10,intents:[]},stationMembershipLifetime:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:4,players:[{playerId:'player-a',epoch:2,state:'ACTIVE',readPosition:{streamId:'00000000-0000-4000-8000-000000000090',baselineSequence:3,readThroughSequence:6}}]}};
+ let filter:any,set:any;
+ const collection={async updateOne(f:any,u:any){filter=f;set=u.$set;document={...document,...set};return {acknowledged:true,matchedCount:1,modifiedCount:1};}};
+ service.findDocumentWithSourceById=async()=>({document,collection});service.toCommunity=(row:any)=>row;
+ await service.manageMember('station-a',{action:'WARN',member:{id:'player-a'},actor:{id:'admin'}});
+ assert.equal(document.stationMembershipLifetime.players[0].readPosition.readThroughSequence,6);assert.equal(document.stationMembershipLifetime.players[0].epoch,2);
+ assert.equal(filter.$and[1]['stationMembershipLifetime.version'],2);assert.deepEqual(filter.$and[1].communityMessageOutbox,document.communityMessageOutbox);assert.equal('communityMessageOutbox' in set,false);
+ await service.manageMember('station-a',{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});
+ document.communityMessageOutbox.publishedSequence=12;
+ await service.manageMember('station-a',{action:'APPROVE',member:{id:'player-a'},actor:{id:'admin'}});
+ assert.deepEqual(document.stationMembershipLifetime.players[0].readPosition,{streamId:document.communityMessageOutbox.streamId,baselineSequence:12,readThroughSequence:12});
+ for(const mutate of [(c:any)=>delete c.stationMembershipLifetime.players[0].readPosition,(c:any)=>c.stationMembershipLifetime.version=1,(c:any)=>c.communityMessageOutbox=[]]){const c=structuredClone(document);mutate(c);assert.throws(()=>stationLifetimeFence(c));}
+});
+
+test('actual old CUP validator rejects stream lifetime floor instead of silently dropping read authority', async () => {
+ const old = await import('./fixtures/station-stream/old-lifetime');
+ const c:any={...community(),communityMessageOutbox:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:0,acceptedSequence:0,publishedSequence:0,intents:[]},stationMembershipLifetime:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:1,players:[{playerId:'player-a',epoch:0,state:'ACTIVE',readPosition:{streamId:'00000000-0000-4000-8000-000000000090',baselineSequence:0,readThroughSequence:0}}]}};
+ assert.throws(()=>old.stationLifetime(c),/STATION_LIFETIME_INVALID/);assert.throws(()=>old.stationModerationTransition(c,'APPROVE',{id:'player-a'}),/STATION_LIFETIME_INVALID/);
+});
