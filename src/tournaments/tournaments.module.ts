@@ -1,3 +1,6 @@
+import { TournamentOrganizerController } from './tournament-organizer.controller';
+import { TournamentOrganizerService } from './tournament-organizer.service';
+import { TournamentOrganizerLookupClient } from './tournament-organizer-lookup.client';
 import { TournamentsLocalOwnerController } from './tournaments-local-owner.controller';
 import { TournamentsOwnerPreparationController } from './tournaments-owner-preparation.controller';
 import { Module } from '@nestjs/common';
@@ -24,8 +27,9 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
 
 @Module({
   imports: [LkPadelHubModule, GamesModule, CommunitiesModule, LkIdentityModule, PlayerRatingsModule],
-  controllers: [TournamentsLocalOwnerController, TournamentsController, TournamentsPublicController, TournamentsOwnerPreparationController],
+  controllers: [TournamentOrganizerController, TournamentsLocalOwnerController, TournamentsController, TournamentsPublicController, TournamentsOwnerPreparationController],
   providers: [
+    TournamentOrganizerService, TournamentOrganizerLookupClient,
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
     TournamentsService,

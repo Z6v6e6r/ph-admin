@@ -1180,6 +1180,21 @@ export class TournamentsService {
     return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
   }
 
+  /** Applies the existing per-permission station scope to the exact raw CAS preimage. */
+  assertOrganizerTargetAccess(row: Record<string, unknown>, user?: RequestUser): void {
+    if (!user || user.authSource !== 'token' || !user.id || user.id.length > 200
+      || !hasAdminPermission(user.permissions, 'tournaments:write')) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_ORGANIZER_FORBIDDEN' });
+    }
+    const scope = getStationScopeForPermission(user, 'tournaments:write');
+    if (scope === null) return;
+    const candidates = [row.studioId, row.studioName, row.locationName, row.courtName]
+      .filter((v): v is string => typeof v === 'string').map(v => this.normalizeFilterValue(v)).filter(Boolean);
+    if (!scope.some(v => candidates.includes(this.normalizeFilterValue(v)))) {
+      throw new NotFoundException({ code: 'TOURNAMENT_ORGANIZER_NOT_FOUND' });
+    }
+  }
+
   async updateCustom(
     id: string,
     mutation: UpdateCustomTournamentMutation,
