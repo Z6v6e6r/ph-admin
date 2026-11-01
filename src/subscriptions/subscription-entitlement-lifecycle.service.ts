@@ -83,7 +83,7 @@ export interface SubscriptionEntitlementReadbackResult {
   subscriptionInstanceId: string;
   operationState: StoredSubscriptionRuntimeOperation['state'];
   compensationState: StoredSubscriptionRuntimeOperation['compensationState'];
-  releaseReason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | null;
+  releaseReason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | 'PRECREATE_EXPIRED_NOT_DISPATCHED' | null;
   providerBookingId: string | null;
 }
 
@@ -200,7 +200,8 @@ export class SubscriptionEntitlementLifecycleService {
       subscriptionInstanceId: dto.subscriptionInstanceId,
       operationState: operation.state,
       compensationState: operation.compensationState,
-      releaseReason: reason === 'PROVIDER_REJECTED' || reason === 'BOOKING_CANCELLED' ? reason : null,
+      releaseReason: reason === 'PROVIDER_REJECTED' || reason === 'BOOKING_CANCELLED'
+        || reason === 'PRECREATE_EXPIRED_NOT_DISPATCHED' ? reason : null,
       providerBookingId: operation.providerCorrelationId
     };
   }
@@ -579,6 +580,7 @@ export class SubscriptionEntitlementLifecycleService {
   ): Promise<SubscriptionEntitlementTransitionResult> {
     this.assertEnabled();
     this.requireOwnerReleaseEvidence(dto, ownerEvidence);
+    const unusedCreate = dto.reason === 'PRECREATE_EXPIRED_NOT_DISPATCHED';
     const identity = await this.adapter.resolveEntitlementIdentity(
       authorizationHeader,
       integrationToken
@@ -586,6 +588,16 @@ export class SubscriptionEntitlementLifecycleService {
     await this.repository.connect();
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const operation = await this.ownedOperation(identity, dto.operationId);
+      // This reason is an authenticated original-owner no-dispatch assertion, never an
+      // inference from missing provider evidence. Only the original held CREATE is reversible.
+      if (unusedCreate && (operation.kind !== 'BOOKING' || operation.decision?.decisionKind !== 'ENTITLEMENT'
+        || operation.decision.action !== 'CREATE_GAME' || operation.decision.usageUnits !== 1
+        || operation.decision.money.finalPriceMinor !== 0 || operation.providerCorrelationId !== null
+        || operation.providerEvidenceRefs.length !== 0 || dto.providerBookingId != null
+        || !['RESERVED', 'FAILED'].includes(operation.state))) {
+        throw new ConflictException({ code: 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH',
+          message: 'Unused CREATE release does not match the original reservation' });
+      }
       if (['FAILED', 'COMPENSATED'].includes(operation.state)) {
         if (operation.compensationState !== 'APPLIED'
           || operation.lastReconciliationResult !== dto.reason
@@ -638,6 +650,15 @@ export class SubscriptionEntitlementLifecycleService {
           message: 'Entitlement reservation cannot be reversed automatically'
         });
       }
+      if (unusedCreate && (operation.decision?.decisionKind !== 'ENTITLEMENT' || reservation.state !== 'RESERVED'
+        || aggregate.activeServices.filter(item => item.operationId === operation.operationId).length !== 1
+        || reservation.targetId !== operation.decision!.target.targetId
+        || reservation.startsAt !== operation.decision!.target.startsAt
+        || reservation.usageUnits !== operation.decision!.usageUnits
+        || operation.compensationState !== 'NONE')) {
+        throw new ConflictException({ code: 'SUBSCRIPTION_ENTITLEMENT_RELEASE_EVIDENCE_MISMATCH',
+          message: 'Unused CREATE release requires its exact held reservation' });
+      }
       const recordedAt = this.now().toISOString();
       const evidenceRef = dto.providerBookingId ? `viva:booking:${dto.providerBookingId}` : null;
       const eventId = `event:entitlement-released:${operation.operationId.slice('booking:'.length)}`;
@@ -677,7 +698,7 @@ export class SubscriptionEntitlementLifecycleService {
         const persisted = await this.repository.transitionRuntimeEntitlement({
           expectedAggregateRevision: aggregate.revision,
           expectedOperationRevision: operation.revision,
-          expectedOperationStates: ['RESERVED', 'CONFIRMED'],
+          expectedOperationStates: unusedCreate ? ['RESERVED'] : ['RESERVED', 'CONFIRMED'],
           aggregate: nextAggregate,
           operation: nextOperation,
           ledger,
@@ -977,7 +998,7 @@ export class SubscriptionEntitlementLifecycleService {
     dto: ReleaseSubscriptionEntitlementDto,
     ownerEvidence: string | undefined
   ): void {
-    if (!['1', 'true', 'yes'].includes(
+    if (dto.reason !== 'PRECREATE_EXPIRED_NOT_DISPATCHED' && !['1', 'true', 'yes'].includes(
       String(process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT ?? '').trim().toLowerCase()
     )) return;
     let config;

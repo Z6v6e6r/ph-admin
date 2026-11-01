@@ -389,6 +389,91 @@ async function run(): Promise<void> {
     await assertReturned(repositories[1]);
     await assertOneLedgerChain(db, rejected.operationId, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
     console.log('PASS physical provider-rejection commit/lost response then read-only recovery beyond proof TTL');
+    for (const service of services) service.clock = NOW;
+    const unused = await services[0].reserve('Bearer fixture', 'fixture-integration', dto, { idempotencyKey: 'mongo-unused-quarter' });
+    const unusedDto = { operationId: unused.operationId!, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+    const unusedProof = createOwnerReleaseEvidence({ ...unusedDto, providerBookingId: null, issuedAt: NOW }, SECRET);
+    const strictBefore = process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT;
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'false';
+    try {
+      const beforeUnsigned = await snapshot(db);
+      await assert.rejects(services[1].release('Bearer fixture', 'fixture-integration', unusedDto), ForbiddenException);
+      assert.deepEqual(await snapshot(db), beforeUnsigned);
+      repositories[0].transitionRuntimeEntitlement = async input => { await transition(input); throw new Error('unused-release-ACK-lost'); };
+      await assert.rejects(services[0].release('Bearer fixture', 'fixture-integration', unusedDto, unusedProof), /unused-release-ACK-lost/);
+      repositories[0].transitionRuntimeEntitlement = transition;
+      await assert.rejects(services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: unused.operationId!, providerBookingId: 'booking:too-late' }));
+      services[1].clock = '2026-08-31T10:02:00.000Z';
+      const frozen = await snapshot(db);
+      const seen = await services[1].readback('Bearer fixture', 'fixture-integration', { operationId: unused.operationId!, subscriptionInstanceId: INSTANCE });
+      assert.equal(seen.operationState, 'FAILED'); assert.equal(seen.compensationState, 'APPLIED'); assert.equal(seen.releaseReason, unusedDto.reason); assert.equal(seen.providerBookingId, null);
+      assert.deepEqual(await snapshot(db), frozen);
+      const freshProof = createOwnerReleaseEvidence({ ...unusedDto, providerBookingId: null, issuedAt: services[1].clock }, SECRET);
+      assert.equal((await services[1].release('Bearer fixture', 'fixture-integration', unusedDto, freshProof)).replayed, true);
+      await assertReturned(repositories[2]);
+      await assertOneLedgerChain(db, unused.operationId!, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
+    } finally { repositories[0].transitionRuntimeEntitlement = transition;
+      if (strictBefore === undefined) delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT; else process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = strictBefore;
+      services[1].clock = NOW; }
+    const confirmFirst = await services[0].reserve('Bearer fixture', 'fixture-integration', dto, { idempotencyKey: 'mongo-created-before-abort' });
+    const confirmedId = confirmFirst.operationId!, confirmedBooking = 'booking:confirmed-before-abort';
+    await services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: confirmedId, providerBookingId: confirmedBooking }, confirmProof(confirmedId, confirmedBooking));
+    const noAbort = { operationId: confirmedId, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+    const beforeAbort = await snapshot(db);
+    await assert.rejects(services[2].release('Bearer fixture', 'fixture-integration', noAbort,
+      createOwnerReleaseEvidence({ ...noAbort, providerBookingId: null, issuedAt: NOW }, SECRET)), ConflictException);
+    assert.deepEqual(await snapshot(db), beforeAbort);
+    await services[0].release('Bearer fixture', 'fixture-integration', releaseDto(confirmedId, confirmedBooking), releaseProof(confirmedId, confirmedBooking));
+    await assertReturned(repositories[3]);
+    console.log('PASS physical unused CREATE signed release despite strict-off, lost ACK/post-TTL read, confirm-versus-release both orders and exact one compensation');
+
+    for (const winner of ['confirm', 'release'] as const) {
+      const held = await services[0].reserve('Bearer fixture', 'fixture-integration', dto,
+        { idempotencyKey: `mongo-unused-race-${winner}` });
+      const id = held.operationId!, booking = `booking:unused-race-${winner}`;
+      const abort = { operationId: id, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+      const originals = [repositories[1], repositories[2]].map(r => r.transitionRuntimeEntitlement.bind(r));
+      const both = firstWaveBarrier(2); let releaseLoser!: () => void;
+      const committed = new Promise<void>(resolve => { releaseLoser = resolve; });
+      let winnerSnapshot: unknown[] | undefined;
+      const revisions: number[][] = [];
+      [repositories[1], repositories[2]].forEach((r, i) => {
+        r.transitionRuntimeEntitlement = async input => {
+          revisions.push([input.expectedAggregateRevision, input.expectedOperationRevision]);
+          await both();
+          const isWinner = i === (winner === 'confirm' ? 0 : 1);
+          if (!isWinner) await committed;
+          try {
+            const result = await originals[i](input);
+            if (isWinner) winnerSnapshot = await snapshot(db);
+            return result;
+          } finally { if (isWinner) releaseLoser(); }
+        };
+      });
+      try {
+        const results = await Promise.allSettled([
+          services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: id, providerBookingId: booking }, confirmProof(id, booking)),
+          services[2].release('Bearer fixture', 'fixture-integration', abort,
+            createOwnerReleaseEvidence({ ...abort, providerBookingId: null, issuedAt: NOW }, SECRET))
+        ]);
+        {
+          assert.equal(results[winner === 'confirm' ? 0 : 1].status, 'fulfilled');
+          assert.equal(results[winner === 'confirm' ? 1 : 0].status, 'rejected');
+          assert.equal(revisions.length, 2); assert.deepEqual(revisions[0], revisions[1]);
+          assert.deepEqual(await snapshot(db), winnerSnapshot, 'loser may not change aggregate, operation, ledger or outbox');
+        }
+        await assertOneLedgerChain(db, id, ['ENTITLEMENT_RESERVED', winner === 'confirm' ? 'BOOKING_CONFIRMED' : 'ENTITLEMENT_RELEASED']);
+        if (winner === 'release') await assertReturned(repositories[3]);
+        else {
+          const aggregate = await repositories[3].runtimeEntitlementAggregateByInstance(INSTANCE);
+          assert.equal(aggregate!.remainingUnits, 0); assert.equal(aggregate!.activeServiceCount, 1);
+        }
+      } finally { repositories[1].transitionRuntimeEntitlement = originals[0]; repositories[2].transitionRuntimeEntitlement = originals[1]; releaseLoser(); }
+      if (winner === 'confirm') await services[0].release('Bearer fixture', 'fixture-integration', releaseDto(id, booking), releaseProof(id, booking));
+      await assertReturned(repositories[3]);
+    }
+    console.log('PASS physical concurrent confirm vs signed unused-expiry release from identical snapshots, both controlled winners, loser zero mutation');
+
     const canonical = { policyVersion: 3, policyDigest: POLICY_DIGEST, snapshotRevision: 1,
       snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' };
     const expectedDto = { ...dto, expectations: { schemaVersion: 1 as const,

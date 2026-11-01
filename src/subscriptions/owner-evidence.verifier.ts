@@ -155,7 +155,7 @@ const RELEASE_HMAC_CONTEXT = 'owner-evidence:release:v1\0';
 
 export interface OwnerReleaseEvidenceClaims {
   readonly operationId: string;
-  readonly reason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED';
+  readonly reason: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | 'PRECREATE_EXPIRED_NOT_DISPATCHED';
   readonly providerBookingId: string | null;
   readonly issuedAt: string;
 }
@@ -165,8 +165,8 @@ function releaseClaims(value: unknown): OwnerReleaseEvidenceClaims {
   const row = value as Record<string, unknown>;
   if (Object.keys(row).sort().join(',') !== 'issuedAt,operationId,providerBookingId,reason'
     || typeof row.operationId !== 'string' || !ID_PATTERN.test(row.operationId)
-    || !['PROVIDER_REJECTED', 'BOOKING_CANCELLED'].includes(String(row.reason))
-    || (row.reason === 'PROVIDER_REJECTED'
+    || !['PROVIDER_REJECTED', 'BOOKING_CANCELLED', 'PRECREATE_EXPIRED_NOT_DISPATCHED'].includes(row.reason as string)
+    || (row.reason !== 'BOOKING_CANCELLED'
       ? row.providerBookingId !== null
       : typeof row.providerBookingId !== 'string' || !ID_PATTERN.test(row.providerBookingId))
     || typeof row.issuedAt !== 'string' || !Number.isFinite(Date.parse(row.issuedAt))

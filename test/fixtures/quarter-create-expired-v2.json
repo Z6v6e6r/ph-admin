@@ -1,0 +1,33 @@
+{
+  "receipt": {
+    "schemaVersion": 2,
+    "outcome": "REJECTED",
+    "operationId": "abf4b2e0-82dd-89be-962e-6ddb55694b22",
+    "admissionRequestSha256": "sha256:6e4e4d156a57995a61649a156afae3789c0bea580acd08f47cd278bb7e8306fa",
+    "actor": {
+      "tenantId": "11111111-1111-4111-8111-000000000008",
+      "userId": "11111111-1111-4111-8111-000000000005"
+    },
+    "target": {
+      "draftId": "11111111-1111-4111-8111-000000000002",
+      "expectedRevision": 1,
+      "stationId": "11111111-1111-4111-8111-000000000003",
+      "courtId": "11111111-1111-4111-8111-000000000004",
+      "startsAt": "2035-04-02T09:00:00.000Z",
+      "durationMinutes": 60
+    },
+    "reason": "PRECREATE_EXPIRED_NOT_DISPATCHED",
+    "abortId": "11111111-1111-4111-8111-000000000080",
+    "capsuleExpiresAt": "2035-04-01T09:01:00.000Z",
+    "abortedAt": "2035-04-01T09:01:01.000Z",
+    "rejectedAt": "2035-04-01T09:01:01.000Z",
+    "entitlement": {
+      "subscriptionInstanceId": "instance:synthetic-create",
+      "usageOperationId": "usage:synthetic-create",
+      "operationState": "FAILED",
+      "compensationState": "APPLIED",
+      "releaseReason": "PRECREATE_EXPIRED_NOT_DISPATCHED",
+      "providerBookingId": null
+    }
+  }
+}

@@ -148,8 +148,8 @@ export class ReleaseSubscriptionEntitlementDto {
   @Matches(ID_PATTERN)
   operationId!: string;
 
-  @IsIn(['PROVIDER_REJECTED', 'BOOKING_CANCELLED'])
-  reason!: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED';
+  @IsIn(['PROVIDER_REJECTED', 'BOOKING_CANCELLED', 'PRECREATE_EXPIRED_NOT_DISPATCHED'])
+  reason!: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | 'PRECREATE_EXPIRED_NOT_DISPATCHED';
 
   @IsOptional()
   @IsString()
