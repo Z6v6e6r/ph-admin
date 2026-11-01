@@ -45,3 +45,18 @@ test('config defaults disabled and never adopts organizer/user/subscription cred
  const c=chatProofConfig({TOURNAMENT_ORGANIZER_LOOKUP_ENABLED:'true',ADMIN_AUTH_SECRET:'synthetic-unused',JWT_ACCESS_SECRET:'synthetic-unused',SUBSCRIPTIONS_LK2_DELEGATION_PUBLIC_KEYS:'synthetic-unused'});
  assert.equal(c.enabled,false);assert.equal(c.publicKey,undefined);assert.throws(()=>chatProofConfig({TOURNAMENT_CHAT_ENABLED:'true'}));
 });
+test('READ controller binds new exact paths/body/key and readonly operations cannot mark',async()=>{
+ let writes=0,reads=0;
+ const service={advanceRead:async()=>{writes++;},position:async()=>{reads++;},readStatus:async()=>{reads++;}} as unknown as TournamentChatService;
+ const c=new TournamentChatController(proof(),service);
+ const x={contractVersion:1,tournamentId:input.tournamentId,requestId:input.requestId,streamId:randomUUID(),witnessHash:'a'.repeat(64),throughSequence:1};
+ const signed=(suffix:string,body:unknown)=>token({path:CHAT_PATH+suffix,request_sha256:createHash('sha256').update(JSON.stringify(body)).digest('hex')});
+ assert.throws(()=>c.advanceRead(token(),correlationId,x.requestId,x));
+ assert.throws(()=>c.advanceRead(signed('/read-requests',x),correlationId,randomUUID(),x));
+ assert.throws(()=>c.advanceRead(signed('/read-requests',x),correlationId,x.requestId,{...x,actorUserId:userId}));assert.equal(writes,0);
+ await c.advanceRead(signed('/read-requests',x),correlationId,x.requestId,x);assert.equal(writes,1);
+ const position={contractVersion:1,tournamentId:x.tournamentId};await c.position(signed('/read-position',position),correlationId,position);
+ const status={contractVersion:1,tournamentId:x.tournamentId,requestId:x.requestId};await c.readStatus(signed('/read-requests/read',status),correlationId,status);
+ assert.equal(reads,2);assert.equal(writes,1);
+ assert.throws(()=>c.position(signed('/read-position',position).replace('Bearer ','Bearer synthetic-user-'),correlationId,position));
+});

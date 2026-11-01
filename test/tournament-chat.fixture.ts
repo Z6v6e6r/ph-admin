@@ -1,3 +1,4 @@
+import { ReadCandidate, ReadState, ReadResult, adoptReadState, parseReadCandidate } from '../src/tournaments/tournament-chat-read.contract';
 import { randomUUID } from 'node:crypto';
 import { ChatActor, Candidate, ChatState, ChatSend, Pending, requestId, parseCandidate } from '../src/tournaments/tournament-chat.contract';
 import { commandIdentity, digest, LocalOperation, publicTournamentId } from '../src/tournaments/tournament-local-operation.contract';
@@ -52,12 +53,26 @@ export class MemoryStore {
   async cas(before: Record<string, any>, s: ChatState, expiry?: number) {
     this.beforeCas?.(s);
     if (JSON.stringify(before) !== JSON.stringify(this.row) || (expiry !== undefined && expiry - 5000 <= Date.now())) return null;
+    if (!Object.prototype.hasOwnProperty.call(before, 'tournamentChatV1')) this.row.tournamentChatReadV1 = adoptReadState(before, s);
     this.row.tournamentChatV1 = copy(s); this.writes++; if (this.lostCasAck) throw Error('synthetic-lost-ack'); return copy(this.row);
   }
   async publish(c: Candidate, p: Pending) { this.beforePublish?.(); if (this.failPublish) throw Error('synthetic-publish-failure');
     const doc = this.docs.get(c._id)!; if (doc.publication && JSON.stringify(doc.publication) !== JSON.stringify(p)) throw Error('synthetic-conflict');
     if (!doc.publication) { doc.publication = copy(p); this.writes++; } if (this.lostPublishAck) throw Error('synthetic-publish-lost-ack'); return copy(doc); }
   async history(s: ChatState, through: number, before: number, limit: number) { const result = [...this.docs.values()].filter(c => c.streamId === s.streamId && c.publication && c.publication.sequence <= through && c.publication.sequence < before).sort((a,b) => b.publication!.sequence - a.publication!.sequence).slice(0,limit+1).map(copy); this.afterHistory?.(); return result; }
+  readDocs = new Map<string, ReadCandidate>(); failReadFinish = false; beforeReadCas?: () => void; afterReadInsert?: () => void;
+  async readyReads() { await this.ready(); }
+  async readReadRequest(id: string) { const d = this.readDocs.get(id); return d ? parseReadCandidate(copy(d)) : null; }
+  async insertReadCandidate(c: ReadCandidate) { if (!this.readDocs.has(c._id)) { this.readDocs.set(c._id, copy(c)); this.writes++; } this.afterReadInsert?.(); return (await this.readReadRequest(c._id))!; }
+  async casRead(before: Record<string, any>, s: ReadState, expiry?: number) {
+    this.beforeReadCas?.();
+    if (JSON.stringify(before) !== JSON.stringify(this.row) || (expiry !== undefined && expiry - 5000 <= Date.now())) return null;
+    this.row.tournamentChatReadV1 = copy(s); this.writes++; return copy(this.row);
+  }
+  async finishRead(c: ReadCandidate, p: ReadResult) { if (this.failReadFinish) throw Error('synthetic-read-failure');
+    const d = this.readDocs.get(c._id)!; if (d.result && JSON.stringify(d.result) !== JSON.stringify(p)) throw Error('synthetic-conflict');
+    if (!d.result) { d.result = copy(p); this.writes++; } return copy(d); }
+  async pendingReadTargets() { return this.row.tournamentChatReadV1?.pendingCount ? [copy(this.row)] : []; }
   async pendingTargets() { return this.row.tournamentChatV1?.pendingCount ? [copy(this.row)] : []; }
 }
 export function fixture() { const a = actor(), store = new MemoryStore(raw(a)), service = new TournamentChatService(store as unknown as TournamentChatPersistence);

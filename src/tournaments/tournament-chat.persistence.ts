@@ -1,3 +1,4 @@
+import { ReadCandidate, ReadResult, ReadState, adoptReadState, parseReadCandidate } from './tournament-chat-read.contract';
 import { Injectable } from '@nestjs/common';
 import { Document } from 'mongodb';
 import { TournamentsPersistenceService } from './tournaments-persistence.service';
@@ -13,6 +14,7 @@ export const CHAT_INDEXES = {
     { name: 'tournament_chat_pending_v1', key: { 'tournamentChatV1.pendingCount': 1, _id: 1 }, collation: { locale: 'simple' } }
   ]
 } as const;
+export const READ_INDEX = { name: 'tournament_chat_read_pending_v1', key: { 'tournamentChatReadV1.pendingCount': 1, _id: 1 }, collation: { locale: 'simple' } };
 const read = { readPreference: 'primary' as const, readConcern: { level: 'majority' as const }, maxTimeMS: 2000 };
 const write = { writeConcern: { w: 'majority' as const, j: true, wtimeoutMS: CHAT_CAS_MS }, maxTimeMS: CHAT_CAS_MS };
 function matchesIndex(actual: any, wanted: any): boolean {
@@ -51,7 +53,7 @@ export class TournamentChatPersistence {
     return tournaments.findOneAndUpdate({ _id: row._id, $expr: { $and: [
       { $eq: ['$$ROOT', { $literal: row }] },
       ...(expiresAt === undefined ? [] : [{ $lt: ['$$NOW', new Date(expiresAt - CHAT_CAS_MS)] }])
-    ] } }, { $set: { tournamentChatV1: state } }, { ...write, returnDocument: 'after' });
+    ] } }, { $set: { tournamentChatV1: state, ...(!Object.prototype.hasOwnProperty.call(row, 'tournamentChatV1') ? { tournamentChatReadV1: adoptReadState(row, state) } : {}) } }, { ...write, returnDocument: 'after' });
   }
   async publish(c: Candidate, p: Pending): Promise<Candidate> {
     if (c.publication) {
@@ -80,4 +82,43 @@ export class TournamentChatPersistence {
       .hint('tournament_chat_pending_v1').collation({ locale: 'simple' })
       .sort({ 'tournamentChatV1.pendingCount': 1, _id: 1 }).limit(4).toArray();
   }
+  async readyReads() {
+    await this.ready();
+    const { tournaments } = await this.tournaments.tournamentChatCollections();
+    const indexes = await tournaments.listIndexes({ maxTimeMS: 2000 }).toArray();
+    if (!indexes.some(i => matchesIndex(i, READ_INDEX))) throw unavailable();
+  }
+  async readReadRequest(id: string): Promise<ReadCandidate | null> {
+    const { requests } = await this.tournaments.tournamentChatCollections();
+    const doc = await requests.findOne({ _id: id } as Document, read);
+    return doc ? parseReadCandidate(doc) : null;
+  }
+  async insertReadCandidate(c: ReadCandidate): Promise<ReadCandidate> {
+    const { requests } = await this.tournaments.tournamentChatCollections();
+    try { await requests.insertOne(c as unknown as Document, write); } catch { /* Exact original after duplicate/ambiguous ACK. */ }
+    const stored = await this.readReadRequest(c._id); if (!stored) throw unavailable(); return stored;
+  }
+  async casRead(row: Record<string, any>, state: ReadState, expiresAt?: number): Promise<Record<string, any> | null> {
+    const { tournaments } = await this.tournaments.tournamentChatCollections();
+    return tournaments.findOneAndUpdate({ _id: row._id, $expr: { $and: [
+      { $eq: ['$$ROOT', { $literal: row }] },
+      ...(expiresAt === undefined ? [] : [{ $lt: ['$$NOW', new Date(expiresAt - CHAT_CAS_MS)] }])
+    ] } }, { $set: { tournamentChatReadV1: state } }, { ...write, returnDocument: 'after' });
+  }
+  async finishRead(c: ReadCandidate, result: ReadResult): Promise<ReadCandidate> {
+    if (c.result) { if (JSON.stringify(c.result) !== JSON.stringify(result)) throw unavailable(); return c; }
+    const { requests } = await this.tournaments.tournamentChatCollections();
+    try { await requests.updateOne({ _id: c._id, $expr: { $eq: ['$$ROOT', { $literal: c }] } } as Document,
+      { $set: { result } }, write); } catch { /* Receipt must be proven, not inferred from attempted write. */ }
+    const after = await this.readReadRequest(c._id);
+    if (!after || after.coreHash !== c.coreHash || JSON.stringify(after.result) !== JSON.stringify(result)) throw unavailable();
+    return after;
+  }
+  async pendingReadTargets(): Promise<Record<string, any>[]> {
+    const { tournaments } = await this.tournaments.tournamentChatCollections();
+    return tournaments.find({ 'tournamentChatReadV1.pendingCount': { $gt: 0 } }, read)
+      .hint(READ_INDEX.name).collation({ locale: 'simple' })
+      .sort({ 'tournamentChatReadV1.pendingCount': 1, _id: 1 }).limit(4).toArray();
+  }
+
 }

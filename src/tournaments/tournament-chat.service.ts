@@ -1,3 +1,4 @@
+import { READ_PENDING_LIMIT, READ_VERSION, ReadCandidate, ReadCommand, ReadResult, assertReadWitness, exactPosition, readCandidate, readRequestHash, readRequestId, readState } from './tournament-chat-read.contract';
 import { Injectable } from '@nestjs/common';
 import { TournamentChatPersistence } from './tournament-chat.persistence';
 import { bindState, candidate, Candidate, CHAT_CAS_MS, CHAT_PENDING_LIMIT, CHAT_VERSION, ChatActor, ChatHistory, ChatRead, ChatSend,
@@ -133,6 +134,93 @@ export class TournamentChatService {
     if (!final || final.streamId !== state.streamId || final.incarnation !== state.incarnation || final.publishedSequence < p.sequence) return false;
     this.metrics.published++; return true;
   }
+  private async readTarget(a: ChatActor, tournamentId: string) {
+    const t = await this.target(a, tournamentId), reads = readState(t.row);
+    if (!reads || !t.state) throw unavailable();
+    return { ...t, state: t.state, reads, position: exactPosition(reads, t.witness) };
+  }
+  private readOriginal(c: ReadCandidate, a: ChatActor, x: ChatRead, t: Awaited<ReturnType<TournamentChatService['readTarget']>>) {
+    if (c._id !== readRequestId(a, x) || c.actorUserId !== a.userId || c.tenantId !== a.tenantId || c.tenantKey !== a.tenantKey
+      || c.ownerTenantKey !== a.ownerTenantKey || c.tournamentId !== x.tournamentId || c.request.requestId !== x.requestId
+      || c.incarnation !== incarnation(t.row) || c.streamId !== t.reads.streamId
+      || c.providerActorHash !== digest('tournament-local-actor:v1', [a.ownerTenantKey, a.providerClientId])) throw conflict();
+    assertReadWitness(t.row, a, x.tournamentId, c.witness);
+    if (exactPosition(t.reads, c.witness).baselineSequence !== c.baselineSequence) throw unavailable();
+  }
+  async position(a: ChatActor, tournamentId: string) {
+    await this.store.readyReads();
+    const before = await this.readTarget(a, tournamentId), after = await this.readTarget(a, tournamentId);
+    if (before.reads.streamId !== after.reads.streamId || before.reads.incarnation !== after.reads.incarnation
+      || witnessHash(before.witness) !== witnessHash(after.witness)) throw denied();
+    return { contractVersion: READ_VERSION, tournamentId, streamId: after.reads.streamId, witness: after.witness,
+      witnessHash: witnessHash(after.witness), baselineSequence: after.position.baselineSequence,
+      readThroughSequence: after.position.readThroughSequence, publishedSequence: after.state.publishedSequence };
+  }
+  async advanceRead(a: ChatActor, x: ReadCommand) {
+    await this.store.readyReads();
+    let c = await this.store.readReadRequest(readRequestId(a, x));
+    let t = await this.readTarget(a, x.tournamentId);
+    if (c) {
+      this.readOriginal(c, a, x, t); if (c.requestHash !== readRequestHash(x)) throw conflict();
+    } else {
+      if (x.streamId !== t.reads.streamId || x.witnessHash !== witnessHash(t.witness)) throw conflict();
+      if (x.throughSequence < t.position.baselineSequence || x.throughSequence > t.state.publishedSequence || t.reads.pendingCount >= READ_PENDING_LIMIT) throw unavailable();
+      this.fresh(a, CHAT_CAS_MS);
+      c = await this.store.insertReadCandidate(readCandidate(t.row, t.reads, a, x, t.position));
+      this.readOriginal(c, a, x, t); if (c.requestHash !== readRequestHash(x)) throw conflict();
+    }
+    // Capture the raw acceptance preimage BEFORE fresh receipt read. Cleanup writes receipt first.
+    t = await this.readTarget(a, x.tournamentId);
+    const fresh = await this.store.readReadRequest(c._id);
+    if (!fresh || fresh.coreHash !== c.coreHash) throw unavailable(); c = fresh;
+    this.readOriginal(c, a, x, t);
+    const pending = t.reads.pending.find(p => p.requestDocId === c!._id);
+    if (pending && pending.coreHash !== c.coreHash) throw unavailable();
+    if (!pending && !c.result) {
+      const p = exactPosition(t.reads, c.witness);
+      if (x.throughSequence < p.baselineSequence || x.throughSequence > t.state.publishedSequence || t.reads.pendingCount >= READ_PENDING_LIMIT) throw unavailable();
+      const result: ReadResult = { requestDocId: c._id, coreHash: c.coreHash, actorUserId: a.userId,
+        correlationId: a.correlationId, throughSequence: x.throughSequence, readThroughSequence: Math.max(p.readThroughSequence, x.throughSequence),
+        acceptedAt: new Date().toISOString(), audit: 'TOURNAMENT_CHAT_READ_ACCEPTED_V1' };
+      const next = { ...t.reads, positions: t.reads.positions.map(v => witnessHash(v.witness) === witnessHash(c!.witness)
+        ? { ...v, readThroughSequence: result.readThroughSequence } : v), pendingCount: t.reads.pendingCount + 1, pending: [...t.reads.pending, result] };
+      readState({ ...t.row, tournamentChatReadV1: next }); this.fresh(a, CHAT_CAS_MS);
+      try { await this.store.casRead(t.row, next, a.expiresAt); } catch { /* UNKNOWN until exact immutable receipt proof. */ }
+    }
+    try { await this.recoverReadOne(x.tournamentId); } catch { this.metrics.recoveryFailed++; }
+    return this.readStatus(a, x);
+  }
+  async readStatus(a: ChatActor, x: ChatRead) {
+    await this.store.readyReads();
+    const before = await this.readTarget(a, x.tournamentId);
+    const c = await this.store.readReadRequest(readRequestId(a, x));
+    const after = await this.readTarget(a, x.tournamentId);
+    if (before.reads.streamId !== after.reads.streamId || before.reads.incarnation !== after.reads.incarnation
+      || witnessHash(before.witness) !== witnessHash(after.witness)) throw denied();
+    if (!c) return { contractVersion: READ_VERSION, tournamentId: x.tournamentId, requestId: x.requestId, status: 'UNKNOWN' as const };
+    this.readOriginal(c, a, x, after);
+    if (!c.result) return { contractVersion: READ_VERSION, tournamentId: x.tournamentId, requestId: x.requestId, status: 'UNKNOWN' as const };
+    const p = exactPosition(after.reads, c.witness);
+    if (p.readThroughSequence < c.result.readThroughSequence) throw unavailable();
+    return { contractVersion: READ_VERSION, tournamentId: x.tournamentId, requestId: x.requestId, status: 'CONFIRMED' as const,
+      requestHash: c.requestHash, streamId: c.streamId, witness: c.witness, witnessHash: witnessHash(c.witness), baselineSequence: c.baselineSequence,
+      throughSequence: c.result.throughSequence, readThroughSequence: c.result.readThroughSequence };
+  }
+  async recoverReadOne(tournamentId: string): Promise<boolean> {
+    await this.store.readyReads();
+    const row = await this.store.readTarget(tournamentId); if (!row) throw unavailable();
+    const s = readState(row); if (!s || !s.pending.length) return false;
+    const p = s.pending[0], c = await this.store.readReadRequest(p.requestDocId);
+    if (!c || c.coreHash !== p.coreHash || c.actorUserId !== p.actorUserId || c.streamId !== s.streamId || c.incarnation !== s.incarnation
+      || c.tenantId !== s.tenantId || c.tenantKey !== s.tenantKey || c.ownerTenantKey !== s.ownerTenantKey || c.tournamentId !== s.tournamentId
+      || c.request.throughSequence !== p.throughSequence || exactPosition(s, c.witness).baselineSequence !== c.baselineSequence || exactPosition(s, c.witness).readThroughSequence < p.readThroughSequence) throw unavailable();
+    // Copy the acceptance-CAS result exactly. A newer READ never rewrites an older receipt.
+    await this.store.finishRead(c, p);
+    const next = { ...s, pendingCount: s.pendingCount - 1, pending: s.pending.slice(1) };
+    try { await this.store.casRead(row, next); } catch { /* Receipt precedes cleanup; retry is safe. */ }
+    const after = await this.store.readTarget(tournamentId), final = after && readState(after);
+    return !!final && final.streamId === s.streamId && final.incarnation === s.incarnation && !final.pending.some(v => v.requestDocId === p.requestDocId);
+  }
   async recoveryTick(): Promise<{ recovered: number; failed: number }> {
     await this.store.ready();
     const rows = await this.store.pendingTargets(); let recovered = 0, failed = 0;
@@ -140,6 +228,14 @@ export class TournamentChatService {
       try { const s = chatState(row); if (!s) throw unavailable(); if (await this.recoverOne(s.tournamentId)) recovered++; }
       catch { failed++; this.metrics.recoveryFailed++; }
     }
+    // Independent bounded READ queue. A missing new readiness index leaves legacy message recovery intact.
+    try {
+      await this.store.readyReads();
+      for (const row of await this.store.pendingReadTargets()) {
+        try { const s = readState(row); if (!s) throw unavailable(); if (await this.recoverReadOne(s.tournamentId)) recovered++; }
+        catch { failed++; this.metrics.recoveryFailed++; }
+      }
+    } catch { failed++; this.metrics.recoveryFailed++; }
     return { recovered, failed };
   }
 }
