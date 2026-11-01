@@ -55,3 +55,42 @@ full current preimage, or discard pending intents. Paired compatible LK/CUP writ
 LK2 consumer, old-executor drain, production Mongo durability/retention evidence and
 separately authorized adoption are required before activation. LOCAL/CI tests do not
 prove deployment, failover durability or runtime acceptance.
+
+## Permanent type fence (source follow-up to CUP72)
+
+An existing lifetime marker is now authoritative independently of the mutable
+communityType and the enable flag. Presence includes null/undefined/malformed data:
+validation fails closed, never converts it into an empty lifetime. A v2 stream
+without valid lifetime is likewise unavailable. Already inconsistent adopted
+non-STATION rows refuse edits and moderation, including an apparent type repair;
+there is no automatic rewrite, epoch restoration or backfill.
+
+An adopted STATION v1/v2 cannot change type (`STATION_LIFETIME_TYPE_LOCKED`). This is
+a deliberate compatibility restriction: unrelated valid metadata/settings edits
+remain available, while old type-flip/remove/approve/type-flip paths cannot revive
+the original ACTIVE epoch. Current REMOVE/BAN and APPROVE/UNBAN still advance epoch;
+ACTIVE restoration captures current published frontier. No public DTO changes.
+
+Unadopted communities retain supported type changes. The actual type-changing
+update atomically requires absent lifetime, exact previous raw type (missing and
+null remain distinct) and the existing typeSettings revision; it requires an
+acknowledged match. Adoption winning first makes stale type-update fail, and type
+change winning first invalidates LK's complete raw preimage adoption CAS. A stale
+flag-off moderation read also requires lifetime absence at its final roster write,
+so adoption cannot be followed by a roster change that omitted epoch handling.
+
+LOCAL service tests cover v1/v2, flag disable, malformed/inconsistent rows, ordinary
+compatibility and original queued-epoch non-revival. Three additional existing-guard
+Mongo CI cases execute actual service queries using independent clients, both
+adoption/type-change orders, adoption-versus-moderation, and first-v1 moderation
+versus the actual type editor in both orders. The pre-existing exact prior-type
+predicate on roster persistence is retained; no redundant runtime predicate is added. They do not exercise a
+provider or claim a notification was dispatched; epoch/baseline evidence is an input
+to the separately reviewed LK feed. No local database provision is required.
+
+Rollback must not reinstall the prior type-agnostic writer against adopted rows.
+Drain old in-flight CUP mutations and install compatible writers coherently before
+enabling the dependent feed. Source tests cannot fence an already running old
+binary. Existing inconsistent rows require a separately authorized owner recovery;
+this packet does not discover or repair live data. No schema, index, credentials,
+configuration, deployment or shared-state operation is performed here.

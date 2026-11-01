@@ -99,3 +99,75 @@ test('physical stream baseline races publication/read cursor and preserves outbo
   assert.equal((await other.updateOne({_id:before._id,'stationMembershipLifetime.version':1,'stationMembershipLifetime.revision':1},{$set:{members:[]}})).matchedCount,0);
  }finally{try{await clients[0].db(name).dropDatabase();}finally{await Promise.all(clients.map(c=>c.close()));}}
 });
+
+async function withTypeFenceFixture(run: (collection: any, other: any) => Promise<void>) {
+ const clients=[new MongoClient(uri+'&directConnection=true'),new MongoClient(uri+'&directConnection=true')],name='phab_station_type_ci_'+randomUUID().replaceAll('-','');
+ let connected=false;
+ try{await Promise.all(clients.map(c=>c.connect()));connected=true;await run(clients[0].db(name).collection('lk_communities'),clients[1].db(name).collection('lk_communities'));}
+ finally{try{if(connected)await clients[0].db(name).dropDatabase();}finally{await Promise.all(clients.map(c=>c.close()));}}
+}
+const typeFenceRow=(id:string)=>({id,name:'Synthetic',communityType:'STATION',typeSettings:{stationId:'station-a'},typeSettingsRevision:1,members:[{id:'player-a'}],pendingMembers:[],bannedMembers:[]});
+function adoptionFields(){
+ const streamId=randomUUID();return {
+  communityMessageOutbox:{version:2,streamId,revision:0,acceptedSequence:0,publishedSequence:0,intents:[]},
+  stationMembershipLifetime:{version:2,streamId,revision:1,players:[{playerId:'player-a',epoch:0,state:'ACTIVE',readPosition:{streamId,baselineSequence:0,readThroughSequence:0}}]}
+ };
+}
+// Exact complete raw BSON preimage CAS used by LK285 stationStreamAdoptionPlan;
+// no adoption route or production setup is introduced by this fixture.
+const adoptFixture=(other:any,before:any)=>other.updateOne({_id:before._id,$expr:{$eq:['$$ROOT',{$literal:before}]}},{$set:adoptionFields()});
+test('physical actual type update versus adoption in both orders preserves permanent type/identity',async()=>{
+ await withTypeFenceFixture(async(collection,other)=>{
+  const service:any=Object.create(CommunitiesPersistenceService.prototype);
+  await collection.insertOne(typeFenceRow('adoption-first'));const before=await collection.findOne({id:'adoption-first'});let injected=false;
+  const racingCollection={async updateOne(filter:any,update:any){if(!injected){injected=true;assert.equal((await adoptFixture(other,before)).matchedCount,1);}return collection.updateOne(filter,update);}};
+  service.findDocumentWithSourceById=async()=>({document:before,collection:racingCollection});service.findCommunityById=async(id:string)=>collection.findOne({id});
+  await assert.rejects(()=>service.updateCommunity(before.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/COMMUNITY_POLICY_REVISION_CONFLICT/);
+  const after=await other.findOne({_id:before._id});assert.equal(after.communityType,'STATION');assert.equal(after.stationMembershipLifetime.version,2);assert.equal(after.typeSettingsRevision,1);
+  await collection.insertOne(typeFenceRow('type-first'));const first=await collection.findOne({id:'type-first'});service.findDocumentWithSourceById=async()=>({document:first,collection});
+  await service.updateCommunity(first.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1});assert.equal((await adoptFixture(other,first)).matchedCount,0);
+  const final=await other.findOne({_id:first._id});assert.equal(final.communityType,'FRIENDS');assert.equal(final.stationMembershipLifetime,undefined);assert.equal(final.typeSettingsRevision,2);
+ });
+});
+test('physical pre-adoption flag-off moderation loses to adoption; current remove/restore cannot revive old epoch',async()=>{
+ const previous=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='false';
+ try{await withTypeFenceFixture(async(collection,other)=>{
+  await collection.insertOne(typeFenceRow('roster-race'));const before=await collection.findOne({id:'roster-race'}),service:any=Object.create(CommunitiesPersistenceService.prototype);let injected=false;
+  const racingCollection={async updateOne(filter:any,update:any){if(!injected){injected=true;assert.equal((await adoptFixture(other,before)).matchedCount,1);}return collection.updateOne(filter,update);}};
+  service.findDocumentWithSourceById=async()=>({document:before,collection:racingCollection});service.toCommunity=(row:any)=>row;
+  await assert.rejects(()=>service.manageMember(before.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}}),/COMMUNITY_MEMBERS_CHANGED/);
+  let current=await other.findOne({_id:before._id});assert.equal(current.members.length,1);assert.equal(current.stationMembershipLifetime.players[0].epoch,0);
+  // Fixture represents a subsequently published prefix, while the original queue witness stays immutable.
+  await other.updateOne({_id:before._id},{$set:{'communityMessageOutbox.acceptedSequence':5,'communityMessageOutbox.publishedSequence':5}});
+  const original={epoch:0,baseline:0,sequence:1};service.findDocumentWithSourceById=async()=>({document:await collection.findOne({_id:before._id}),collection});
+  await assert.rejects(()=>service.updateCommunity(before.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/STATION_LIFETIME_TYPE_LOCKED/);
+  await service.manageMember(before.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});await service.manageMember(before.id,{action:'APPROVE',member:{id:'player-a'},actor:{id:'admin'}});
+  current=await other.findOne({_id:before._id});const player=current.stationMembershipLifetime.players[0];assert.equal(player.epoch,2);assert.equal(player.readPosition.baselineSequence,5);
+  assert.equal(player.epoch===original.epoch&&player.readPosition.baselineSequence===original.baseline&&original.sequence>player.readPosition.readThroughSequence,false);
+  // A historical inconsistent row is not silently repaired by current service actions.
+  await other.updateOne({_id:before._id},{$set:{communityType:'FRIENDS'}});const inconsistent=await other.findOne({_id:before._id});
+  await assert.rejects(()=>service.updateCommunity(before.id,{communityType:'STATION',typeSettings:{stationId:'station-a'},expectedTypeSettingsRevision:1}),/STATION_LIFETIME_TYPE_INVALID/);
+  await assert.rejects(()=>service.manageMember(before.id,{action:'APPROVE',member:{id:'player-a'},actor:{id:'admin'}}),/STATION_LIFETIME_TYPE_INVALID/);assert.deepEqual(await other.findOne({_id:before._id}),inconsistent);
+  await collection.insertOne(typeFenceRow('moderation-first'));const rosterFirst=await collection.findOne({id:'moderation-first'});
+  service.findDocumentWithSourceById=async()=>({document:rosterFirst,collection});
+  await service.manageMember(rosterFirst.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});
+  assert.equal((await adoptFixture(other,rosterFirst)).matchedCount,0);assert.equal((await other.findOne({_id:rosterFirst._id})).stationMembershipLifetime,undefined);
+ });}finally{if(previous===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=previous;}
+});
+
+test('physical first-v1 moderation versus actual type editor in both orders cannot create lifetime on FRIENDS',async()=>{
+ const previous=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='true';
+ try{await withTypeFenceFixture(async(collection,other)=>{
+  const moderator:any=Object.create(CommunitiesPersistenceService.prototype),editor:any=Object.create(CommunitiesPersistenceService.prototype);
+  await collection.insertOne(typeFenceRow('type-before-v1'));const original=await collection.findOne({id:'type-before-v1'});let raced=false;
+  editor.findDocumentWithSourceById=async()=>({document:await other.findOne({_id:original._id}),collection:other});editor.findCommunityById=async()=>other.findOne({_id:original._id});
+  moderator.findDocumentWithSourceById=async()=>({document:original,collection:{async updateOne(filter:any,update:any){if(!raced){raced=true;await editor.updateCommunity(original.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1});}return collection.updateOne(filter,update);}}});
+  await assert.rejects(()=>moderator.manageMember(original.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}}),/COMMUNITY_MEMBERS_CHANGED/);
+  const after=await other.findOne({_id:original._id});assert.equal(after.communityType,'FRIENDS');assert.equal(after.stationMembershipLifetime,undefined);assert.equal(after.members.length,1);
+  await collection.insertOne(typeFenceRow('v1-before-type'));const first=await collection.findOne({id:'v1-before-type'});let secondRace=false;
+  moderator.findDocumentWithSourceById=async()=>({document:await collection.findOne({_id:first._id}),collection});moderator.toCommunity=(row:any)=>row;
+  editor.findDocumentWithSourceById=async()=>({document:first,collection:{async updateOne(filter:any,update:any){if(!secondRace){secondRace=true;await moderator.manageMember(first.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});}return other.updateOne(filter,update);}}});
+  await assert.rejects(()=>editor.updateCommunity(first.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/COMMUNITY_POLICY_REVISION_CONFLICT/);
+  const final=await collection.findOne({_id:first._id});assert.equal(final.communityType,'STATION');assert.equal(final.stationMembershipLifetime.version,1);assert.equal(final.stationMembershipLifetime.players[0].state,'REMOVED');assert.equal(final.stationMembershipLifetime.players[0].epoch,1);
+ });}finally{if(previous===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=previous;}
+});

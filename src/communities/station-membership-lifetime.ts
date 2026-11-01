@@ -10,8 +10,11 @@ export interface StationLifetime {
 export const stationPlayerId = (row: Row | null | undefined): string | null =>
   [row?.id, row?.clientId, row?.userId, row?.uuid].find(value =>
     typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)) ?? null;
-export const stationLifetimeEnabled = (community: Row): boolean => community.communityType === 'STATION' &&
-  (process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED === 'true' || community.stationMembershipLifetime !== undefined);
+// Stored custody is permanent; mutable type/flag can never turn its validator off.
+export const stationLifetimePresent = (community: Row): boolean => Object.prototype.hasOwnProperty.call(community, 'stationMembershipLifetime');
+export const stationLifetimeEnabled = (community: Row): boolean => stationLifetimePresent(community) ||
+  (community.communityMessageOutbox !== undefined && !Array.isArray(community.communityMessageOutbox)) ||
+  (community.communityType === 'STATION' && process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED === 'true');
 const sequence = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) < Number.MAX_SAFE_INTEGER;
 const uuid = (value: unknown): value is string => typeof value === 'string' && value.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 function stationStream(community: Row): Row | null {
@@ -23,9 +26,10 @@ function stationStream(community: Row): Row | null {
   return stream;
 }
 export function stationLifetime(community: Row): StationLifetime {
+  if (stationLifetimeEnabled(community) && community.communityType !== 'STATION') throw Error('STATION_LIFETIME_TYPE_INVALID');
   const value = community.stationMembershipLifetime;
   const stream = stationStream(community);
-  if (value === undefined && !stream) return { version: 1, revision: 0, players: [] };
+  if (!stationLifetimePresent(community) && !stream) return { version: 1, revision: 0, players: [] };
   if (!value || Object.keys(value).sort().join(',') !== (stream ? 'players,revision,streamId,version' : 'players,revision,version') || value.version !== (stream ? 2 : 1) || (stream && value.streamId !== stream.streamId) ||
     !Number.isSafeInteger(value.revision) || value.revision < 0 || value.revision >= Number.MAX_SAFE_INTEGER || !Array.isArray(value.players)) throw Error('STATION_LIFETIME_INVALID');
   const seen = new Set<string>();

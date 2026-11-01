@@ -81,3 +81,76 @@ test('actual old CUP validator rejects stream lifetime floor instead of silently
  const c:any={...community(),communityMessageOutbox:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:0,acceptedSequence:0,publishedSequence:0,intents:[]},stationMembershipLifetime:{version:2,streamId:'00000000-0000-4000-8000-000000000090',revision:1,players:[{playerId:'player-a',epoch:0,state:'ACTIVE',readPosition:{streamId:'00000000-0000-4000-8000-000000000090',baselineSequence:0,readThroughSequence:0}}]}};
  assert.throws(()=>old.stationLifetime(c),/STATION_LIFETIME_INVALID/);assert.throws(()=>old.stationModerationTransition(c,'APPROVE',{id:'player-a'}),/STATION_LIFETIME_INVALID/);
 });
+
+const streamCommunity = () => ({ ...community(),
+  communityMessageOutbox: { version: 2, streamId: '00000000-0000-4000-8000-000000000090', revision: 1, acceptedSequence: 5, publishedSequence: 5, intents: [] },
+  stationMembershipLifetime: { version: 2, streamId: '00000000-0000-4000-8000-000000000090', revision: 1, players: [{ playerId: 'player-a', epoch: 2, state: 'ACTIVE', readPosition: { streamId: '00000000-0000-4000-8000-000000000090', baselineSequence: 0, readThroughSequence: 1 } }] }
+});
+function actualWriter(initial: any) {
+  let document: any = structuredClone(initial), writes = 0, last: any;
+  const service: any = Object.create(CommunitiesPersistenceService.prototype);
+  const collection = { async updateOne(filter: any, update: any) { writes++; last = { filter, update }; document = { ...document, ...update.$set }; return { acknowledged: true, matchedCount: 1, modifiedCount: 1 }; } };
+  service.findDocumentWithSourceById = async () => ({ document, collection });
+  service.findCommunityById = async () => document; service.toCommunity = (row: any) => row;
+  return { service, collection, current: () => document, writes: () => writes, last: () => last };
+}
+test('actual type edit refuses lifetime v1/v2 despite disabled flag; unrelated metadata remains editable', async () => {
+ const before=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='false';
+ try{
+  for(const c of [{...community(),stationMembershipLifetime:{version:1,revision:0,players:[]}},streamCommunity()]){
+   const f=actualWriter(c),original=structuredClone(c);
+   await assert.rejects(()=>f.service.updateCommunity(c.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/STATION_LIFETIME_TYPE_LOCKED/);assert.equal(f.writes(),0);
+   await f.service.updateCommunity(c.id,{description:'Safe metadata'});assert.deepEqual(f.current().stationMembershipLifetime,original.stationMembershipLifetime);assert.equal(f.current().communityType,'STATION');
+  }
+ }finally{if(before===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=before;}
+});
+test('inconsistent adopted non-STATION rows and malformed markers refuse all edits/moderation, including apparent repair',async()=>{
+ for(const marker of [null,undefined,{},streamCommunity().stationMembershipLifetime]){
+  for(const type of ['STATION','FRIENDS']){
+   if(type==='STATION'&&marker&&'version' in marker&&marker.version===2)continue;
+   const c:any={...streamCommunity(),communityType:type,stationMembershipLifetime:marker},f=actualWriter(c),original=structuredClone(c);
+   for(const mutation of [{name:'Safe?'},{communityType:'STATION',typeSettings:{stationId:'station-a'},expectedTypeSettingsRevision:1}])await assert.rejects(()=>f.service.updateCommunity(c.id,mutation),/STATION_(LIFETIME|STREAM)/);
+   for(const action of ['REMOVE','APPROVE','BAN','UNBAN','WARN'])await assert.rejects(()=>f.service.manageMember(c.id,{action,member:{id:'player-a'},actor:{id:'admin'}}),/STATION_(LIFETIME|STREAM)/);
+   assert.equal(f.writes(),0);assert.deepEqual(f.current(),original);
+  }
+ }
+ const orphan:any={...streamCommunity()};delete orphan.stationMembershipLifetime;const f=actualWriter(orphan);await assert.rejects(()=>f.service.updateCommunity(orphan.id,{name:'Repair?'}),/STATION_LIFETIME_INVALID/);assert.equal(f.writes(),0);
+});
+test('ordinary unadopted type changes retain revision CAS plus exact raw type and lifetime absence',async()=>{
+ for(const rawType of ['STATION','FRIENDS',null,undefined]){
+  const c:any={...community(),communityType:rawType};if(rawType===undefined)delete c.communityType;
+  const f=actualWriter(c),next=rawType==='STATION'?'FRIENDS':'STATION';await f.service.updateCommunity(c.id,{communityType:next,typeSettings:next==='STATION'?{stationId:'station-a'}:{},expectedTypeSettingsRevision:1});
+  assert.deepEqual(f.last().filter.$and[2],{stationMembershipLifetime:{$exists:false},communityType:rawType===undefined?{$exists:false}:{$eq:rawType,$exists:true}});assert.equal(f.current().communityType,next);assert.equal(f.current().typeSettingsRevision,2);
+ }
+});
+test('actual stale type and flag-off moderation writers fail on adoption or unacknowledged mutation',async()=>{
+ const before=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='false';
+ try{
+  const original:any=community(),service:any=Object.create(CommunitiesPersistenceService.prototype);let seen:any;
+  const collection={async updateOne(filter:any){seen=filter;return {acknowledged:true,matchedCount:0,modifiedCount:0};}};
+  service.findDocumentWithSourceById=async()=>({document:original,collection});
+  await assert.rejects(()=>service.updateCommunity(original.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/COMMUNITY_POLICY_REVISION_CONFLICT/);assert.deepEqual(seen.$and[2].stationMembershipLifetime,{$exists:false});
+  await assert.rejects(()=>service.manageMember(original.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}}),/COMMUNITY_MEMBERS_CHANGED/);assert.deepEqual(seen.$and[1].stationMembershipLifetime,{$exists:false});
+  collection.updateOne=async()=>({acknowledged:false,matchedCount:1,modifiedCount:1});await assert.rejects(()=>service.updateCommunity(original.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/COMMUNITY_POLICY_REVISION_CONFLICT/);
+ }finally{if(before===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=before;}
+});
+test('actual REMOVE/APPROVE cannot cross mutable-type detour and revive original queued epoch',async()=>{
+ const f=actualWriter(streamCommunity()),original=f.current().stationMembershipLifetime.players[0];
+ await assert.rejects(()=>f.service.updateCommunity('station-a',{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/STATION_LIFETIME_TYPE_LOCKED/);
+ await f.service.manageMember('station-a',{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});await f.service.manageMember('station-a',{action:'APPROVE',member:{id:'player-a'},actor:{id:'admin'}});
+ const current=f.current().stationMembershipLifetime.players[0];assert.equal(current.epoch,original.epoch+2);assert.equal(current.readPosition.baselineSequence,5);assert.notEqual(current.epoch,original.epoch);assert.equal(current.readPosition.baselineSequence>original.readPosition.baselineSequence,true);
+});
+
+test('actual first lifetime moderation and type edit retain complementary type/absence CAS predicates',async()=>{
+ const previous=process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED='true';
+ try{
+  const c=community(),f=actualWriter(c);await f.service.manageMember(c.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});
+  const filter=f.last().filter.$and[1];assert.equal(filter.communityType,'STATION');assert.deepEqual(filter.stationMembershipLifetime,{$exists:false});assert.equal(f.current().stationMembershipLifetime.version,1);
+  const stale:any=Object.create(CommunitiesPersistenceService.prototype);let seen:any;
+  stale.findDocumentWithSourceById=async()=>({document:c,collection:{async updateOne(q:any){seen=q;return {acknowledged:true,matchedCount:0};}}});
+  await assert.rejects(()=>stale.updateCommunity(c.id,{communityType:'FRIENDS',typeSettings:{},expectedTypeSettingsRevision:1}),/COMMUNITY_POLICY_REVISION_CONFLICT/);assert.deepEqual(seen.$and[2].stationMembershipLifetime,{$exists:false});
+  // In the opposite ordering, current type no longer matches the actual moderator's pinned STATION filter.
+  const changed=actualWriter({...community(),communityType:'FRIENDS',typeSettings:{},typeSettingsRevision:2});assert.equal(filter.communityType===changed.current().communityType,false);
+  await changed.service.manageMember(c.id,{action:'REMOVE',member:{id:'player-a'},actor:{id:'admin'}});assert.equal(changed.current().stationMembershipLifetime,undefined);
+ }finally{if(previous===undefined)delete process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED;else process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED=previous;}
+});

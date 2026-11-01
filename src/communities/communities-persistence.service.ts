@@ -8,7 +8,7 @@ import {
   ServiceUnavailableException
 } from '@nestjs/common';
 import { CommunityType, CommunityTypeSettings, communityType, parseCommunityTypeSettings } from './community-policy';
-import { stationLifetimeEnabled, stationLifetimeFence, stationModerationTransition } from './station-membership-lifetime';
+import { stationLifetime, stationLifetimePresent, stationLifetimeEnabled, stationLifetimeFence, stationModerationTransition } from './station-membership-lifetime';
 import { CommunityResultsExportSource } from './community-results-export';
 import { CommunityRatingSnapshot } from './canonical-rating/aggregates';
 import { CommunityRatingFact } from './canonical-rating/facts';
@@ -287,6 +287,11 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    // Existing adopted/type-inconsistent state is never auto-repaired by an edit.
+    if (stationLifetimeEnabled(match.document)) {
+      try { stationLifetime(match.document); }
+      catch (error) { throw new ConflictException((error as Error).message); }
+    }
     const updated: MongoCommunityDocument = { ...match.document };
     const now = new Date().toISOString();
 
@@ -334,6 +339,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
       }
       const nextType = mutation.communityType ?? communityType(match.document.communityType);
+      if (stationLifetimePresent(match.document) && nextType !== match.document.communityType) {
+        throw new ConflictException('STATION_LIFETIME_TYPE_LOCKED');
+      }
       let settings: CommunityTypeSettings;
       try {
         settings = parseCommunityTypeSettings(nextType, mutation.typeSettings ??
@@ -355,11 +363,16 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       if (key !== '_id' && JSON.stringify(updated[key]) !== JSON.stringify(match.document[key])) fields[key] = updated[key];
     }
     const identity = match.document._id !== undefined ? { _id: match.document._id } : this.buildIdFilter(id);
+    const typeChanging = policyChanged && updated.communityType !== match.document.communityType;
+    const typeFence = typeChanging ? [{
+      stationMembershipLifetime: { $exists: false },
+      communityType: Object.prototype.hasOwnProperty.call(match.document, 'communityType') ? { $eq: match.document.communityType, $exists: true } : { $exists: false }
+    }] : [];
     const filter = policyChanged ? { $and: [identity, revision === 0
       ? { $or: [{ typeSettingsRevision: { $exists: false } }, { typeSettingsRevision: 0 }] }
-      : { typeSettingsRevision: revision }] } : identity;
+      : { typeSettingsRevision: revision }, ...typeFence] } : identity;
     const result = await match.collection.updateOne(filter as Filter<MongoCommunityDocument>, { $set: fields });
-    if (result.matchedCount !== 1) throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
+    if (result.matchedCount !== 1 || (typeChanging && result.acknowledged !== true)) throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
     return this.findCommunityById(id);
   }
 
@@ -478,7 +491,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return false;
     }
 
-    if (match.document.stationMembershipLifetime !== undefined || stationLifetimeEnabled(match.document)) {
+    if (stationLifetimePresent(match.document) || (match.document.communityType === 'STATION' && process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED === 'true')) {
       throw new ConflictException('STATION_LIFETIME_REQUIRES_ARCHIVE');
     }
     const outbox = match.document.communityMessageOutbox;
@@ -1119,6 +1132,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     if (stationLifetimeEnabled(preimage)) {
       Object.assign(rosterFence, stationLifetimeFence(preimage));
       if (document.stationMembershipLifetime !== undefined) payload.stationMembershipLifetime = document.stationMembershipLifetime;
+    } else {
+      // A stale flag-off/unadopted read must lose if the owner adopted before this write.
+      Object.assign(rosterFence, { stationMembershipLifetime: { $exists: false } });
     }
 
     if (document._id !== undefined) {
