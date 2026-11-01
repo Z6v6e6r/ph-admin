@@ -480,10 +480,11 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       }
     }
 
-    const organizerAdopted = Object.prototype.hasOwnProperty.call(existing, 'tournamentOrganizerV1');
+    const organizerAdopted = Object.prototype.hasOwnProperty.call(existing, 'tournamentOrganizerV1')
+      || Object.prototype.hasOwnProperty.call(existing, 'tournamentChatV1');
     const changed = await collection.updateOne({ ...this.buildIdFilter(id), localParticipationOperations: { $exists: false },
       ...(organizerAdopted ? { $expr: { $eq: ['$$ROOT', { $literal: existing }] } }
-        : { tournamentOrganizerV1: { $exists: false } })
+        : { tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false } })
     }, { $set: setPayload });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });
     return this.toCustomTournament(nextDocument);
@@ -508,6 +509,12 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     }, { $set: { tournamentOrganizerV1: state } }, {
       returnDocument: 'after', maxTimeMS: ORGANIZER_CAS_BUDGET_MS, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }
     });
+  }
+
+  /** Chat reuses the established Mongo client. This path NEVER calls index provisioning. */
+  async tournamentChatCollections() {
+    const tournaments = await this.collection(false);
+    return { tournaments, requests: this.requireDb().collection('tournament_chat_requests_v1'), db: this.requireDb() };
   }
 
   /** No index creation: bounded raw identity lookup also works after discovery snapshot expiry. */
@@ -553,7 +560,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
   ): Promise<CustomTournament | null> {
     const collection = await this.collection();
     const row = await collection.findOneAndUpdate({
-      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt,
+      ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false }, gender: rule.gender, updatedAt: rule.updatedAt,
       status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
       participants: { $not: { $elemMatch: { phone } } },
       waitlist: { $not: { $elemMatch: { phone } } },
@@ -578,7 +585,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
@@ -663,7 +670,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const collection = await this.collection();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: attemptId,
@@ -711,7 +718,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: attemptId,
@@ -766,7 +773,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: attemptId,
@@ -818,7 +825,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId,
@@ -869,7 +876,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const collection = await this.collection();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: operationId,
@@ -914,7 +921,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         'details.booking.pendingJoinPayments': {
           $elemMatch: {
             transactionId: operationId,
@@ -970,7 +977,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         ...(admissionRule ? { gender: admissionRule.gender, updatedAt: admissionRule.updatedAt } : {}),
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
@@ -1051,7 +1058,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
     const updatedAt = new Date().toISOString();
     const document = await collection.findOneAndUpdate(
       {
-        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false },
+        ...this.buildIdFilter(id), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false },
         status: { $nin: [TournamentStatus.FINISHED, TournamentStatus.CANCELED, 'CANCELLED'] },
         participants: { $not: { $elemMatch: { phone } } },
         'details.booking.pendingJoinPayments': {
@@ -1339,7 +1346,7 @@ export class TournamentsPersistenceService implements OnModuleDestroy {
       createdAt: this.pickString(existing.createdAt)
     });
 
-    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false } }, {
+    const changed = await collection.updateOne({ ...this.buildDocumentFilter(existing), localParticipationOperations: { $exists: false }, tournamentOrganizerV1: { $exists: false }, tournamentChatV1: { $exists: false } }, {
       $set: payload
     });
     if (changed.matchedCount !== 1) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_OWNER_REQUIRED' });

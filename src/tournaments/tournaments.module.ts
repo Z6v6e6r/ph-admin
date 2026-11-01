@@ -1,3 +1,8 @@
+import { TournamentChatActorProof } from './tournament-chat.actor-proof';
+import { TournamentChatPersistence } from './tournament-chat.persistence';
+import { TournamentChatService } from './tournament-chat.service';
+import { TournamentChatRecovery } from './tournament-chat.recovery';
+import { TournamentChatController } from './tournament-chat.controller';
 import { TournamentOrganizerController } from './tournament-organizer.controller';
 import { TournamentOrganizerService } from './tournament-organizer.service';
 import { TournamentOrganizerLookupClient } from './tournament-organizer-lookup.client';
@@ -27,8 +32,9 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
 
 @Module({
   imports: [LkPadelHubModule, GamesModule, CommunitiesModule, LkIdentityModule, PlayerRatingsModule],
-  controllers: [TournamentOrganizerController, TournamentsLocalOwnerController, TournamentsController, TournamentsPublicController, TournamentsOwnerPreparationController],
+  controllers: [TournamentChatController, TournamentOrganizerController, TournamentsLocalOwnerController, TournamentsController, TournamentsPublicController, TournamentsOwnerPreparationController],
   providers: [
+    TournamentChatActorProof, TournamentChatPersistence, TournamentChatService, TournamentChatRecovery,
     TournamentOrganizerService, TournamentOrganizerLookupClient,
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
