@@ -2,7 +2,7 @@ name: subscriptions-binding-promotion
 
 on:
   pull_request:
-    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031, codex/r1-tournament-gender-admission-20261031, codex/r1-tournament-local-owner-20261101, codex/r1-tournament-organizer-assignment-20261101, codex/r1-tournament-chat-owner-20261101]
+    branches: [main, codex/cup-traffic-quarantine-20260924, codex/r1-reserve-expectations-20261031, codex/r1-tournament-owner-preparation-20261031, codex/r1-tournament-gender-admission-20261031, codex/r1-tournament-local-owner-20261101, codex/r1-tournament-organizer-assignment-20261101, codex/r1-tournament-chat-owner-20261101, codex/r1-tournament-read-positions-20261101]
   push:
     branches: [main]
 
@@ -102,12 +102,15 @@ jobs:
           npx ts-node test/tournament-chat.persistence.test.ts
           npx ts-node test/tournament-chat-read.test.ts
           npx ts-node test/tournament-chat-read.persistence.test.ts
+          npx ts-node test/tournament-chat-notification.test.ts
+          npx ts-node test/tournament-chat-notification.proof.test.ts
       - name: Tournament chat physical Mongo acceptance and recovery races
         env:
           TOURNAMENT_LOCAL_OWNER_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
         run: |
           npx ts-node test/tournament-chat.mongodb.test.ts
           npx ts-node test/tournament-chat-read.mongodb.test.ts
+          npx ts-node test/tournament-chat-notification.mongodb.test.ts
       - name: Tournament payment physical Mongo persistence regression
         env:
           TEST_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&retryWrites=true&w=majority

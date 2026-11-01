@@ -76,6 +76,14 @@ export class TournamentChatPersistence {
       .hint('tournament_chat_sequence_v1').collation({ locale: 'simple' }).sort({ 'publication.sequence': -1 }).limit(limit + 1).toArray();
     return docs.map(parseCandidate);
   }
+  /** Bounded readonly ascending traversal; existing unique sequence index supports reverse scan. */
+  async notificationPublications(s: ChatState, after: number, through: number, limit: number): Promise<Candidate[]> {
+    const { requests } = await this.tournaments.tournamentChatCollections();
+    const docs = await requests.find({ tenantId: s.tenantId, tournamentId: s.tournamentId, streamId: s.streamId,
+      'publication.sequence': { $type: 'number', $gt: after, $lte: through } }, read)
+      .hint('tournament_chat_sequence_v1').collation({ locale: 'simple' }).sort({ 'publication.sequence': 1 }).limit(limit + 1).toArray();
+    return docs.map(parseCandidate);
+  }
   async pendingTargets(): Promise<Record<string, any>[]> {
     const { tournaments } = await this.tournaments.tournamentChatCollections();
     return tournaments.find({ 'tournamentChatV1.pendingCount': { $gt: 0 } }, read)

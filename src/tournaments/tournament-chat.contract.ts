@@ -49,7 +49,7 @@ export function incarnation(row: Record<string, any>): string {
   if (!typed || typeof row.id !== 'string' || row.id.length > 200) throw unavailable();
   return digest('tournament-chat-incarnation:v1', [typed, row.id]);
 }
-export function currentWitness(row: Record<string, any>, a: ChatActor, tournamentId: string, chosenKind?: Witness['kind']): Witness {
+export function currentWitness(row: Record<string, any>, a: Pick<ChatActor, 'tenantId' | 'tenantKey' | 'ownerTenantKey' | 'providerClientId' | 'userId'>, tournamentId: string, chosenKind?: Witness['kind']): Witness {
   assertLocalOnly(row);
   if (row.status === 'CANCELED' || publicTournamentId(row.id) !== tournamentId) throw denied();
   const list = operations(row, a.ownerTenantKey);
