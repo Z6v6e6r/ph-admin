@@ -25,7 +25,7 @@ function service(load: () => Promise<any>) {
   const persistence: any = { isEnabled: () => true, loadReplyContext: load,
     loadState: () => assert.fail('No full hydration'),
     persistMessage: () => writes.push('message'), persistDialog: () => writes.push('dialog'),
-    persistOutboxCommand: () => writes.push('outbox'), persistResponseMetric: () => writes.push('metric') };
+    persistOutboxCommand: (command: any, operation?: string) => { writes.push('outbox'); return operation ? command : undefined; }, persistResponseMetric: () => writes.push('metric') };
   const value = new SupportService(persistence, { resolveRoute: (route: any) => route } as any, { registerUsage: (_id: string, ctx: any) => usage.push(ctx) } as any);
   return { value, writes, usage, state: value as any };
 }
