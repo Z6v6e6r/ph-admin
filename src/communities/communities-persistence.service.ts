@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException
 } from '@nestjs/common';
 import { CommunityType, CommunityTypeSettings, communityType, parseCommunityTypeSettings } from './community-policy';
+import { stationLifetime, stationLifetimePresent, stationLifetimeEnabled, stationLifetimeFence, stationModerationTransition } from './station-membership-lifetime';
 import { CommunityResultsExportSource } from './community-results-export';
 import { CommunityRatingSnapshot } from './canonical-rating/aggregates';
 import { CommunityRatingFact } from './canonical-rating/facts';
@@ -286,6 +287,11 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return null;
     }
 
+    // Existing adopted/type-inconsistent state is never auto-repaired by an edit.
+    if (stationLifetimeEnabled(match.document)) {
+      try { stationLifetime(match.document); }
+      catch (error) { throw new ConflictException((error as Error).message); }
+    }
     const updated: MongoCommunityDocument = { ...match.document };
     const now = new Date().toISOString();
 
@@ -333,6 +339,9 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
         throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
       }
       const nextType = mutation.communityType ?? communityType(match.document.communityType);
+      if (stationLifetimePresent(match.document) && nextType !== match.document.communityType) {
+        throw new ConflictException('STATION_LIFETIME_TYPE_LOCKED');
+      }
       let settings: CommunityTypeSettings;
       try {
         settings = parseCommunityTypeSettings(nextType, mutation.typeSettings ??
@@ -354,11 +363,16 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       if (key !== '_id' && JSON.stringify(updated[key]) !== JSON.stringify(match.document[key])) fields[key] = updated[key];
     }
     const identity = match.document._id !== undefined ? { _id: match.document._id } : this.buildIdFilter(id);
+    const typeChanging = policyChanged && updated.communityType !== match.document.communityType;
+    const typeFence = typeChanging ? [{
+      stationMembershipLifetime: { $exists: false },
+      communityType: Object.prototype.hasOwnProperty.call(match.document, 'communityType') ? { $eq: match.document.communityType, $exists: true } : { $exists: false }
+    }] : [];
     const filter = policyChanged ? { $and: [identity, revision === 0
       ? { $or: [{ typeSettingsRevision: { $exists: false } }, { typeSettingsRevision: 0 }] }
-      : { typeSettingsRevision: revision }] } : identity;
+      : { typeSettingsRevision: revision }, ...typeFence] } : identity;
     const result = await match.collection.updateOne(filter as Filter<MongoCommunityDocument>, { $set: fields });
-    if (result.matchedCount !== 1) throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
+    if (result.matchedCount !== 1 || (typeChanging && result.acknowledged !== true)) throw new ConflictException('COMMUNITY_POLICY_REVISION_CONFLICT');
     return this.findCommunityById(id);
   }
 
@@ -465,6 +479,8 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     updated.pendingCount = this.toObjectArray(updated.pendingMembers).length;
     updated.updatedAt = now;
 
+    const lifetime = stationModerationTransition(match.document, mutation.action, existingMember ?? mutation.member);
+    if (lifetime !== undefined) updated.stationMembershipLifetime = lifetime;
     await this.persistDocument(updated, match.collection, match.document);
     return this.toCommunity(updated);
   }
@@ -475,9 +491,18 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       return false;
     }
 
+    if (stationLifetimePresent(match.document) || (match.document.communityType === 'STATION' && process.env.LK_STATION_MEMBERSHIP_LIFETIME_ENABLED === 'true')) {
+      throw new ConflictException('STATION_LIFETIME_REQUIRES_ARCHIVE');
+    }
+    const outbox = match.document.communityMessageOutbox;
+    if (outbox !== undefined && (!Array.isArray(outbox) || outbox.length !== 0)) {
+      throw new ConflictException('COMMUNITY_MESSAGE_CUSTODY_PENDING');
+    }
+    const deleteFence = { $or: [{ communityMessageOutbox: { $exists: false } }, { communityMessageOutbox: { $size: 0 } }], stationMembershipLifetime: { $exists: false }, communityType: match.document.communityType === undefined ? { $exists: false } : match.document.communityType };
+
     const deleteResult = match.document._id !== undefined
-      ? await match.collection.deleteOne({ _id: match.document._id } as Filter<MongoCommunityDocument>)
-      : await match.collection.deleteOne(this.buildIdFilter(id));
+      ? await match.collection.deleteOne({ _id: match.document._id, ...deleteFence } as Filter<MongoCommunityDocument>)
+      : await match.collection.deleteOne({ $and: [this.buildIdFilter(id), deleteFence] } as Filter<MongoCommunityDocument>);
     const deleted = (deleteResult.deletedCount ?? 0) > 0;
 
     if (!deleted) {
@@ -1104,13 +1129,20 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
 
     if (event) payload.eventRosterRevision = Number(revision ?? 0) + 1;
+    if (stationLifetimeEnabled(preimage)) {
+      Object.assign(rosterFence, stationLifetimeFence(preimage));
+      if (document.stationMembershipLifetime !== undefined) payload.stationMembershipLifetime = document.stationMembershipLifetime;
+    } else {
+      // A stale flag-off/unadopted read must lose if the owner adopted before this write.
+      Object.assign(rosterFence, { stationMembershipLifetime: { $exists: false } });
+    }
 
     if (document._id !== undefined) {
       const result = await collection.updateOne(
         { _id: document._id, ...rosterFence } as Filter<MongoCommunityDocument>,
         { $set: payload }
       );
-      if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
+      if (result.matchedCount !== 1 || (stationLifetimeEnabled(preimage) && result.acknowledged !== true) || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
       return;
     }
 
@@ -1119,7 +1151,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
     }
 
     const result = await collection.updateOne({ $and: [this.buildIdFilter(String(identifier)), rosterFence] } as Filter<MongoCommunityDocument>, { $set: payload });
-    if (result.matchedCount !== 1 || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
+    if (result.matchedCount !== 1 || (stationLifetimeEnabled(preimage) && result.acknowledged !== true) || (event && (result.acknowledged !== true || result.modifiedCount !== 1))) throw new ConflictException('COMMUNITY_MEMBERS_CHANGED');
   }
 
   private toCommunity(document: MongoCommunityDocument): Community | null {
@@ -1219,7 +1251,7 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
       members,
       pendingMembers,
       bannedMembers,
-      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => key !== 'eventEntries')))
+      details: this.stripObjectId(Object.fromEntries(Object.entries(document).filter(([key]) => !['eventEntries', 'stationMembershipLifetime', 'stationMembershipAdmission', 'admissionBindingSha256', 'communityMessageOutbox', 'stationMessageEvent', 'stationMessageOwner'].includes(key))))
     };
   }
 

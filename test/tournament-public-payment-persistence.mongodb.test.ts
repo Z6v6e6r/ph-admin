@@ -950,6 +950,36 @@ async function main(): Promise<void> {
         status: 'REGISTERED'
       }
     ));
+    // Actual Mongo CAS: a rule edit after the profile observation invalidates every fresh write.
+    // Existing owned disposable DB/replica-set fixture only; never run against a shared database.
+    for (const mode of ['reserve', 'append', 'waitlist'] as const) {
+      const id = `gender-cas-${mode}`;
+      await insertPaymentTournament(id);
+      await collection.updateOne({ id }, { $set: { gender: 'MALE', updatedAt: '2026-10-31T10:00:00.000Z' } });
+      const observed = await repository.readPublicAdmissionRule(id);
+      assert.ok(observed);
+      const participant = { name: 'Synthetic player', phone: '79000009001', status: 'WAITLIST' as const, paymentStatus: 'UNPAID' as const };
+      const writer = restartRepository();
+      const apply = (rule: NonNullable<typeof observed>) => mode === 'reserve'
+        ? writer.reservePublicJoinPayment(id, pending(`gender-${mode}`, participant.phone), rule)
+        : mode === 'append'
+          ? writer.appendPublicParticipantIfCapacity(id, participant.phone, { ...participant, status: 'REGISTERED' }, rule)
+          : writer.appendPublicWaitlistWithAdmission(id, participant.phone, participant, rule);
+      // Same timestamp deliberately: the raw rule must be compared, not timestamp alone.
+      await collection.updateOne({ id }, { $set: { gender: 'FEMALE' } });
+      assert.equal(await apply(observed), null);
+      await collection.updateOne({ id }, { $set: { gender: 'MALE', updatedAt: '2026-10-31T10:00:01.000Z' } });
+      assert.equal(await apply(observed), null);
+      const unchanged = await collection.findOne({ id });
+      assert.equal(unchanged?.participants.length, 0);
+      assert.equal(unchanged?.waitlist.length, 0);
+      assert.equal(unchanged?.details.booking.pendingJoinPayments.length, 0);
+      const current = await repository.readPublicAdmissionRule(id);
+      assert.ok(current);
+      assert.ok(await apply(current), `current exact ${mode} accepts once`);
+      assert.equal(await apply(current), null, 'stale/duplicate attempt cannot write again');
+    }
+    console.log('Physical gender raw-rule/generation CAS verified for reserve, participant and waitlist');
     assertExplicitWireWriteConcern();
     console.log(`Explicit majority+j wire concern verified for ${applicationWrites.length} tournament mutations`);
   } finally {

@@ -1,3 +1,4 @@
+import { quarterPublication } from './subscriptions-provider-instance-projector.test';
 import * as assert from 'node:assert/strict';
 import {
   ForbiddenException,
@@ -605,6 +606,30 @@ async function verifyFailClosedAndDrift(): Promise<void> {
     status: 'CURRENT',
     checkpointAsOf: '2026-08-24T09:59:30.000Z'
   });
+
+  const quarter = service();
+  const quarterPub = quarterPublication(publication(), publication().effectiveAt);
+  quarter.repository.currentPublication = quarterPub;
+  const quarterCheckpoint: any = checkpoint();
+  quarterCheckpoint.reconciliation.mode = 'FULL_RECONCILIATION';
+  quarterCheckpoint.binding.publicationId = quarterPub.publicationId;
+  quarterCheckpoint.binding.policyDigest = quarterPub.policyDigest;
+  const quarterFence = projectionFence();
+  quarterFence.binding.publicationId = quarterPub.publicationId;
+  quarterFence.binding.policyDigest = quarterPub.policyDigest as `sha256:${string}`;
+  quarterFence.bindingDigest = subscriptionProjectionFenceBindingDigest(quarterFence.binding);
+  quarterCheckpoint.binding.fenceDigest = quarterFence.bindingDigest;
+  quarterCheckpoint.policyResolution = buildSubscriptionInstancePolicyResolution([quarterPub],
+    quarterCheckpoint.policyResolution.selections.map((selection: any) => ({ ...selection,
+      publicationId: quarterPub.publicationId, policyDigest: quarterPub.policyDigest })));
+  quarter.repository.firstFence = quarter.repository.secondFence = quarterFence;
+  quarter.repository.currentCheckpoint = quarterCheckpoint;
+  assert.equal((await quarter.service.check(TOKEN, dto())).ready, true, 'validated quarter publication plus full adoption is ready');
+  quarterCheckpoint.reconciliation.mode = 'INITIAL_FULL';
+  assert.equal((await quarter.service.check(TOKEN, dto())).ready, false, 'schema4 may not use initial legacy adoption');
+  quarterCheckpoint.reconciliation.mode = 'FULL_RECONCILIATION';
+  quarterPub.createQuarterDescriptorDigest = `sha256:${'f'.repeat(64)}`;
+  assert.equal((await quarter.service.check(TOKEN, dto())).ready, false, 'corrupt descriptor cannot pass readiness');
 
   const historyDrift = service();
   historyDrift.repository.currentCheckpoint = checkpoint();

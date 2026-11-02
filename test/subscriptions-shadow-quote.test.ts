@@ -1,5 +1,6 @@
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import { SubscriptionEntitlementLifecycleService } from '../src/subscriptions/subscription-entitlement-lifecycle.service';
 import {
   computeSubscriptionRuntimeProjectionDigest,
   SubscriptionRuntimeContractError
@@ -555,6 +556,73 @@ async function run(): Promise<void> {
     assert.equal(writeCalls, 0);
     const serialized = JSON.stringify(serviceHappy);
     assert.doesNotMatch(serialized, /providerClientId|clientSubscriptionId|clientRefHash|evidenceRef/i);
+
+    // Reserve expectations compare the newly resolved effective publication, not caller claims.
+    const previousReserveFlag = process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
+    process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = 'true';
+    try {
+      const trustedRequest = requestFixture();
+      trustedRequest.target.snapshotId = 'snapshot:canonical-target-1';
+      trustedRequest.target.snapshotRevision = 1;
+      const expectedDto = {
+        subscriptionInstanceId: trustedRequest.subscriptionInstanceId, action: trustedRequest.action,
+        target: { targetId: trustedRequest.target.targetId },
+        expectations: { schemaVersion: 1 as const, policyVersion: serviceHappy.policyVersion!,
+          policyDigest: serviceHappy.policyDigest!, targetSnapshot: {
+            snapshotId: trustedRequest.target.snapshotId, revision: 1,
+            evidenceRef: trustedRequest.target.evidenceRef
+          } }
+      };
+      const reserveRepository = { ...repository, runtimeOperationByIdempotency: async () => null,
+        connect: async () => { writeCalls += 1; throw new Error('write connection forbidden'); },
+        reserveRuntimeEntitlement: async () => { writeCalls += 1; throw new Error('reservation forbidden'); } };
+      const lifecycle = new SubscriptionEntitlementLifecycleService({
+        resolveEntitlementIdentity: async () => trustedRequest.identity,
+        resolveEntitlementRequest: async () => trustedRequest
+      } as any, service, reserveRepository);
+      documents.publication = publicationFixture();
+      documents.publication.policyVersion = 4;
+      documents.publication.runtimeProjection.policyVersion = 4;
+      documents.publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(documents.publication.runtimeProjection);
+      documents.instance = { ...instanceFixture(), policyVersion: 4, policyDigest: documents.publication.policyDigest };
+      assert.equal((await service.quote(trustedRequest)).eligible, true);
+      await assert.rejects(lifecycle.reserve('Bearer fixture', 'integration-fixture', expectedDto,
+        { idempotencyKey: 'republished-policy-before-reserve' }),
+      (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_EXPECTATION_MISMATCH');
+      assert.equal(writeCalls, 0);
+      // Preflight reads the same actual ownership/publication/aggregate evaluator without journal writes.
+      const joinRequest = { ...trustedRequest, action: 'JOIN_GAME' as const };
+      documents.publication.runtimeProjection.benefitRules[0].actions = ['CREATE_GAME', 'JOIN_GAME'];
+      documents.publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(documents.publication.runtimeProjection);
+      documents.instance.policyDigest = documents.publication.policyDigest;
+      const preflightService = new SubscriptionEntitlementLifecycleService({
+        resolveEntitlementRequest: async () => joinRequest
+      } as any, service, reserveRepository);
+      const preflightDto = { subscriptionInstanceId: joinRequest.subscriptionInstanceId,
+        action: 'JOIN_GAME' as const, target: { targetId: joinRequest.target.targetId } };
+      const preflight = await preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto);
+      assert.deepEqual(preflight, { schemaVersion: 1, nonBinding: true, ...preflightDto,
+        expectations: { schemaVersion: 1, policyVersion: 4, policyDigest: documents.publication.policyDigest,
+          targetSnapshot: expectedDto.expectations.targetSnapshot } });
+      documents.instance.clientRefHash = 'b'.repeat(64);
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.instance.clientRefHash = instanceFixture().clientRefHash;
+      documents.publication.state = 'DISABLED_FOR_NEW_OPERATIONS';
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.publication.state = 'PUBLISHED';
+      documents.aggregate.reconciliation.asOf = '2026-08-16T09:00:00.000Z';
+      await assert.rejects(preflightService.preflight('Bearer fixture', 'integration-fixture', preflightDto),
+        (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_BLOCKED');
+      documents.aggregate = aggregateFixture();
+      assert.equal(writeCalls, 0);
+    } finally {
+      documents.instance = instanceFixture();
+      documents.publication = publicationFixture();
+      if (previousReserveFlag === undefined) delete process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
+      else process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = previousReserveFlag;
+    }
 
     const disabledGamePublication = publicationFixture();
     disabledGamePublication.runtimeProjection.benefitRules[0].enabled = false;

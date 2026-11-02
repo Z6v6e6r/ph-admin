@@ -390,6 +390,33 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return Array.from(clientsById.values());
   }
 
+  /** Exact actor profile only. No cache, phone search, identity fallback or profile mutation. */
+  async readTournamentProfileSex(identity: { clientId: string; phone: string }): Promise<'MALE' | 'FEMALE' | null> {
+    const clientId = this.normalizeOptional(identity.clientId);
+    const phone = this.normalizePhone(identity.phone);
+    if (!clientId || !phone) throw new BadRequestException('Tournament profile identity is required');
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const baseUrl = this.normalizeBaseUrl(this.envEndUserBaseUrlRaw)
+      || this.normalizeBaseUrl(this.envBaseUrlRaw) || resolved.config.baseUrl;
+    const widgetId = this.normalizeString(this.envEndUserWidgetId) || 'iSkq6G';
+    const url = new URL(`/end-user/api/v1/${encodeURIComponent(widgetId)}/profile`, `${baseUrl}/`).toString();
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}`,
+        'x-user-id': clientId, 'x-user-phone': phone },
+      redirect: 'error', signal: this.buildAbortSignal()
+    });
+    if (response.status !== 200 || response.redirected || response.url !== url) {
+      throw new ServiceUnavailableException('Tournament profile unavailable');
+    }
+    const profile: unknown = await response.json().catch(() => null);
+    if (!this.isRecord(profile) || profile.id !== clientId
+      || this.normalizePhone(typeof profile.phone === 'string' ? profile.phone : undefined) !== phone) {
+      throw new ServiceUnavailableException('Tournament profile identity mismatch');
+    }
+    return profile.sex === 'M' ? 'MALE' : profile.sex === 'F' ? 'FEMALE' : null;
+  }
+
   async getClientRating(clientId?: string): Promise<VivaAdminClientRatingSnapshot> {
     const normalizedClientId = this.normalizeOptional(clientId);
     if (!normalizedClientId) {

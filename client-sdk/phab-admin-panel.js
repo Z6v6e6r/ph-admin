@@ -8122,6 +8122,132 @@
       return communityTypeSettingsPayload(community, select.value, read()); } };
   }
 
+  // TOURNAMENT_ORGANIZER_CUSTODY_START
+  function createTournamentOrganizerCustody(options) {
+    var current = null, pending = null, pendingTarget = null, preview = null, busy = false, closed = false, message = '';
+    var storageKey = 'phab-tournament-organizer-v1';
+    var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    function isUuid(value) { return typeof value === 'string' && uuid.test(value); }
+    function active() { return !closed && typeof options.isCurrent === 'function' && options.isCurrent(); }
+    function commandValid(c) {
+      return c && Object.keys(c).sort().join(',') === 'action,contractVersion,expectedRevision,operationId,selectedUserId'
+        && c.contractVersion === 1 && isUuid(c.operationId) && Number.isSafeInteger(c.expectedRevision) && c.expectedRevision >= 0
+        && (c.action === 'ASSIGN' ? isUuid(c.selectedUserId) : c.action === 'REVOKE' && c.selectedUserId === null);
+    }
+    function all() {
+      var raw = options.storage.getItem(storageKey), items = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(items) || items.length > 16 || items.some(function (x) {
+        return !x || Object.keys(x).sort().join(',') !== 'command,key,tenantId,tournamentId' || !isUuid(x.tenantId) || !isUuid(x.tournamentId) || typeof x.key !== 'string' || x.key.length > 1000 || !commandValid(x.command);
+      }) || new Set(items.map(function (x) { return x.key; })).size !== items.length) throw new Error('custody');
+      return items;
+    }
+    function save(command) {
+      var items = all().filter(function (x) { return x.key !== options.key; });
+      if (command) { if (items.length >= 16 || !current) throw new Error('capacity'); items.push({ key: options.key, command: command, tenantId: current.tenantId, tournamentId: current.tournamentId }); }
+      options.storage.setItem(storageKey, JSON.stringify(items));
+      pending = command; pendingTarget = command ? { tenantId: current.tenantId, tournamentId: current.tournamentId } : null;
+    }
+    function changed() { if (active()) options.changed({ current: current, pending: pending, preview: preview, busy: busy, message: message }); }
+    function validState(r) {
+      if (!r || r.contractVersion !== 1 || !isUuid(r.tenantId) || !isUuid(r.tournamentId) || !r.current || !Number.isSafeInteger(r.current.revision) || r.current.revision < 0
+        || (r.current.selectedUserId !== null && !isUuid(r.current.selectedUserId))
+        || (current && (current.tournamentId !== r.tournamentId || current.tenantId !== r.tenantId))
+        || (pendingTarget && (pendingTarget.tournamentId !== r.tournamentId || pendingTarget.tenantId !== r.tenantId))) throw new Error('response');
+      return { tournamentId: r.tournamentId, tenantId: r.tenantId, revision: r.current.revision, selectedUserId: r.current.selectedUserId };
+    }
+    function accept(r, original) {
+      var state = validState(r);
+      if (r.status === 'CONFIRMED') {
+        var op = r.operation;
+        if (!op || op.operationId !== original.operationId || op.action !== original.action
+          || op.expectedRevision !== original.expectedRevision || op.requestedSelectedUserId !== original.selectedUserId || !Number.isSafeInteger(op.resultingRevision)
+          || op.resultingRevision < 0 || op.resultingRevision > state.revision
+          || (op.resultingSelectedUserId !== null && !isUuid(op.resultingSelectedUserId))
+          || (op.outcome === 'REJECTED' ? op.resultingRevision === original.expectedRevision : op.resultingRevision !== original.expectedRevision + 1)
+          || (op.resultingRevision === state.revision && op.resultingSelectedUserId !== state.selectedUserId)
+          || (op.outcome === 'ASSIGNED' ? original.action !== 'ASSIGN' || op.reason !== 'ASSIGNED' || op.resultingSelectedUserId !== original.selectedUserId
+            : op.outcome === 'REVOKED' ? original.action !== 'REVOKE' || op.reason !== 'REVOKED' || op.resultingSelectedUserId !== null
+              : op.outcome !== 'REJECTED' || op.reason !== 'REVISION_CONFLICT')) throw new Error('response');
+        save(null);
+        message = op.outcome === 'REJECTED' ? 'Назначение изменилось. Обновите профиль и повторите действие.'
+          : op.resultingRevision !== state.revision ? 'Исходная операция подтверждена. Ниже показано текущее назначение.' : 'Изменение подтверждено.';
+      } else {
+        if (r.status !== 'UNKNOWN' || r.operation !== undefined) throw new Error('response');
+        message = 'Не удалось подтвердить изменение. Проверьте исходную операцию; новая не отправляется.';
+      }
+      current = state;
+    }
+    async function run(task) {
+      if (!active() || busy) return;
+      busy = true; changed();
+      try { await task(); } catch (error) {
+        if (!active()) return;
+        if (error && (error.status === 401 || error.status === 403 || error.status === 404)) { current = null; preview = null; message = 'Нет доступа к назначению. Исходная операция сохранена.'; }
+        else message = pending ? 'Не удалось подтвердить изменение. Проверьте статус исходной операции.' : 'Не удалось проверить профиль или назначение.';
+      } finally { busy = false; changed(); }
+    }
+    return {
+      load: function () { return run(async function () {
+        var item = all().find(function (x) { return x.key === options.key; }); pending = item ? item.command : null; pendingTarget = item ? { tenantId: item.tenantId, tournamentId: item.tournamentId } : null;
+        if (pending) { var result = await options.api.status(pending.operationId); if (active()) accept(result, pending); }
+        else { var value = await options.api.read(); if (active()) { current = validState(value); message = 'Организатор назначается по UUID профиля PadlHub.'; } }
+      }); },
+      preview: function (selectedUserId) { return run(async function () {
+        if (!current || pending || !isUuid(selectedUserId)) throw new Error('input');
+        preview = null;
+        var original = { contractVersion: 1, operationId: options.uuid(), action: 'ASSIGN', selectedUserId: selectedUserId, expectedRevision: current.revision };
+        var value = await options.api.preview(original);
+        if (!active()) return;
+        if (!value || value.contractVersion !== 1 || value.tournamentId !== current.tournamentId || value.revision !== current.revision
+          || !value.profile || value.profile.userId !== selectedUserId || typeof value.profile.displayName !== 'string' || value.profile.displayName.length > 200) throw new Error('response');
+        preview = { command: original, displayName: value.profile.displayName }; message = 'Проверьте профиль и подтвердите назначение.';
+      }); },
+      edit: function () { if (!active()) return; preview = null; changed(); },
+      assign: function () { return run(async function () {
+        if (!preview || pending || !current) throw new Error('input');
+        var original = preview.command; save(original); preview = null; changed();
+        var result = await options.api.command(original); if (active()) accept(result, original);
+      }); },
+      revoke: function () { return run(async function () {
+        if (!current || !current.selectedUserId || pending) throw new Error('input');
+        var original = { contractVersion: 1, operationId: options.uuid(), action: 'REVOKE', selectedUserId: null, expectedRevision: current.revision };
+        save(original); preview = null; changed(); var result = await options.api.command(original); if (active()) accept(result, original);
+      }); },
+      restore: function () { return run(async function () {
+        if (!pending) return; var original = pending; var result = await options.api.status(original.operationId); if (active()) accept(result, original);
+      }); },
+      destroy: function () { closed = true; current = null; preview = null; }
+    };
+  }
+  // TOURNAMENT_ORGANIZER_CUSTODY_END
+
+  function createTournamentOrganizerEditor(options) {
+    var root = document.createElement('section'); root.className = 'phab-admin-form-field phab-admin-form-field--full';
+    var title = document.createElement('h3'); title.textContent = 'Организатор турнира'; root.appendChild(title);
+    var current = document.createElement('p'); root.appendChild(current);
+    var label = document.createElement('label'); label.textContent = 'UUID профиля PadlHub';
+    var input = document.createElement('input'); input.className = 'phab-admin-input'; input.autocomplete = 'off'; input.maxLength = 36; label.appendChild(input); root.appendChild(label);
+    var card = document.createElement('p'); root.appendChild(card);
+    var status = document.createElement('p'); status.setAttribute('role', 'status'); root.appendChild(status);
+    var actions = document.createElement('div'); actions.style.display = 'flex'; actions.style.flexWrap = 'wrap'; actions.style.gap = '8px'; root.appendChild(actions);
+    function button(text) { var b = document.createElement('button'); b.type = 'button'; b.className = 'phab-admin-btn'; b.textContent = text; actions.appendChild(b); return b; }
+    var check = button('Проверить профиль'), assign = button('Назначить'), revoke = button('Отозвать'), restore = button('Проверить статус');
+    var model = createTournamentOrganizerCustody(Object.assign({}, options, { changed: function (s) {
+      current.textContent = s.current ? s.current.selectedUserId ? 'Назначен профиль: ' + s.current.selectedUserId : 'Организатор не назначен.' : 'Назначение недоступно.';
+      card.textContent = s.preview ? s.preview.displayName + ' · ' + s.preview.command.selectedUserId : '';
+      if (!s.current) input.value = '';
+      status.textContent = s.message;
+      input.disabled = s.busy || !!s.pending || !s.current; check.disabled = s.busy || !!s.pending || !s.current;
+      assign.disabled = s.busy || !!s.pending || !s.preview; revoke.disabled = s.busy || !!s.pending || !s.current || !s.current.selectedUserId;
+      restore.disabled = s.busy || !s.pending;
+    } }));
+    input.addEventListener('input', function () { model.edit(); });
+    check.addEventListener('click', function () { void model.preview(input.value.trim()); });
+    assign.addEventListener('click', function () { void model.assign(); }); revoke.addEventListener('click', function () { void model.revoke(); });
+    restore.addEventListener('click', function () { void model.restore(); });
+    void model.load(); return { root: root, destroy: model.destroy };
+  }
+
   function createApi(cfg) {
     var roleHeader = cfg.roles.join(',');
     var stationHeader = cfg.stationIds.join(',');
@@ -8693,6 +8819,14 @@
       },
       updateCustomTournament: function (tournamentId, payload) {
         return request('/tournaments/custom/' + encodeURIComponent(tournamentId), 'PATCH', payload);
+      },
+      organizerRequest: function (tournamentId, action, value) {
+        var base = '/tournaments/custom/' + encodeURIComponent(tournamentId) + '/organizer';
+        var path = action === 'status' ? base + '/operations/' + encodeURIComponent(value) : action === 'read' ? base : base + '/' + (action === 'command' ? 'operations' : 'preview');
+        var headers = { 'X-Correlation-ID': window.crypto.randomUUID() };
+        if (action === 'command') headers['Idempotency-Key'] = value.operationId;
+        return request(path, action === 'read' || action === 'status' ? 'GET' : 'POST', action === 'read' || action === 'status' ? undefined : value,
+          { headers: headers, signal: AbortSignal.timeout(10000) });
       },
       getCommunities: function () {
         return request('/communities', 'GET');
@@ -27793,6 +27927,9 @@
     }
 
     function closeTournamentEditorModal() {
+      state.tournamentEditorEpoch = (state.tournamentEditorEpoch || 0) + 1;
+      if (state.tournamentOrganizerPanel) state.tournamentOrganizerPanel.destroy();
+      state.tournamentOrganizerPanel = null;
       state.tournamentEditor = null;
       dom.tournamentEditorSaveBtn.disabled = false;
       dom.tournamentEditorSaveBtn.textContent = 'Сохранить';
@@ -27802,9 +27939,17 @@
     }
 
     async function openTournamentEditor(tournament, options) {
-      if (!tournament || !tournament.id) {
+      if (!tournament || !tournament.id || state.tournamentEditorLoggingOut) {
         return;
       }
+      var organizerEditorEpoch = state.tournamentEditorEpoch = (state.tournamentEditorEpoch || 0) + 1;
+      var organizerEditorUser = cfg.userId, organizerEditorToken = cfg.authToken;
+      function isCurrentOrganizerEditor() {
+        return !state.tournamentEditorLoggingOut && state.tournamentEditorEpoch === organizerEditorEpoch
+          && cfg.userId === organizerEditorUser && cfg.authToken === organizerEditorToken;
+      }
+      if (state.tournamentOrganizerPanel) state.tournamentOrganizerPanel.destroy();
+      state.tournamentOrganizerPanel = null;
       var viewOptions = normalizeObject(options);
 
       var customTournament = null;
@@ -27814,6 +27959,7 @@
         customTournament = await api.getCustomTournament(tournament.linkedCustomTournamentId);
       }
 
+      if (!isCurrentOrganizerEditor()) return;
       var sourceTournamentId =
         String(tournament.source || '') === 'CUSTOM'
           ? String((customTournament && customTournament.sourceTournamentId) || '')
@@ -27826,6 +27972,7 @@
           liveSourceTournament = tournament;
         }
       }
+      if (!isCurrentOrganizerEditor()) return;
       var model = customTournament
         ? mergeTournamentEditorModelWithLiveSource(customTournament, liveSourceTournament)
         : tournament;
@@ -27863,7 +28010,10 @@
           ''
       );
       var publicationCommunities = await loadTournamentPublicationCommunities();
+      if (!isCurrentOrganizerEditor()) return;
 
+      if (state.tournamentOrganizerPanel) state.tournamentOrganizerPanel.destroy();
+      state.tournamentOrganizerPanel = null;
       clearNode(dom.tournamentEditorBody);
       dom.tournamentEditorTitle.textContent = 'Настройка турнира';
       dom.tournamentEditorSaveBtn.textContent = customTournament ? 'Сохранить' : 'Создать';
@@ -27988,6 +28138,27 @@
       slugInput.value = String(model && model.slug || '');
       slugInput.placeholder = 'slug-ссылки, можно оставить пустым';
       appendCommunityFormField(form, 'Slug', slugInput);
+
+      if (isCurrentOrganizerEditor() && customTournament && hasPermission(cfg, 'tournaments:write') && cfg.userId) {
+        try {
+          var organizerId = String(customTournament.id);
+          var organizerApi = {};
+          ['read', 'preview', 'command', 'status'].forEach(function (action) {
+            organizerApi[action] = function (value) {
+              if (!isCurrentOrganizerEditor()) return Promise.reject(new Error('TOURNAMENT_ORGANIZER_EDITOR_CLOSED'));
+              return api.organizerRequest(organizerId, action, value);
+            };
+          });
+          state.tournamentOrganizerPanel = createTournamentOrganizerEditor({ api: organizerApi, isCurrent: isCurrentOrganizerEditor,
+            key: JSON.stringify([cfg.apiBaseUrl, cfg.userId, organizerId]), storage: window.sessionStorage,
+            uuid: function () { return window.crypto.randomUUID(); } });
+          form.appendChild(state.tournamentOrganizerPanel.root);
+        } catch (_organizerError) {
+          var organizerUnavailable = document.createElement('p');
+          organizerUnavailable.textContent = 'Назначение организатора недоступно: не удалось сохранить исходную операцию.';
+          form.appendChild(organizerUnavailable);
+        }
+      }
 
       var allowedPhonesInput = document.createElement('textarea');
       allowedPhonesInput.className = 'phab-admin-input';
@@ -39667,6 +39838,8 @@
     }
 
     async function logout() {
+      state.tournamentEditorLoggingOut = true;
+      closeTournamentEditorModal();
       dom.logoutBtn.disabled = true;
       dom.refreshBtn.disabled = true;
       setStatus('Выходим...', false);

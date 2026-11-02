@@ -1,6 +1,10 @@
 import * as assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import {
   createOwnerEvidence,
+  createOwnerReleaseEvidence,
+  verifyOwnerReleaseEvidence,
+  type OwnerReleaseEvidenceClaims,
   loadOwnerEvidenceConfig,
   OwnerEvidenceError,
   verifyOwnerEvidence,
@@ -188,12 +192,61 @@ function testConfiguration(): void {
   );
 }
 
+function testReleaseEvidence(): void {
+  const claims: OwnerReleaseEvidenceClaims = {
+    operationId: OPERATION,
+    reason: 'BOOKING_CANCELLED',
+    providerBookingId: BOOKING,
+    issuedAt: NOW,
+  };
+  const token = createOwnerReleaseEvidence(claims, SECRET);
+  const verify = (proof: string | undefined, overrides: Partial<Parameters<typeof verifyOwnerReleaseEvidence>[0]> = {}) =>
+    verifyOwnerReleaseEvidence({ evidence: proof, config, ...claims, now, ...overrides });
+  assert.deepEqual(verify(token), claims);
+  const rejected = { ...claims, reason: 'PROVIDER_REJECTED' as const, providerBookingId: null };
+  assert.deepEqual(verify(createOwnerReleaseEvidence(rejected, SECRET), rejected), rejected);
+  // Signature domains are intentionally incompatible in both directions.
+  expectCode(() => verify(evidence()), 'OWNER_EVIDENCE_MALFORMED');
+  expectCode(() => verifyOwnerEvidence({ evidence: token, config, operationId: OPERATION, providerBookingId: BOOKING, now }), 'OWNER_EVIDENCE_MALFORMED');
+  expectCode(() => verify(undefined), 'OWNER_EVIDENCE_REQUIRED');
+  expectCode(() => verify(token, { operationId: 'booking:other' }), 'OWNER_EVIDENCE_BINDING_MISMATCH');
+  expectCode(() => verify(token, { reason: 'PROVIDER_REJECTED' }), 'OWNER_EVIDENCE_BINDING_MISMATCH');
+  expectCode(() => verify(token, { providerBookingId: 'booking:other' }), 'OWNER_EVIDENCE_BINDING_MISMATCH');
+  expectCode(() => verify(token, { config: { ...config, secret: 'x'.repeat(40) } }), 'OWNER_EVIDENCE_SIGNATURE_INVALID');
+  expectCode(() => verify(token, { now: new Date(Date.parse(NOW) + 60_001) }), 'OWNER_EVIDENCE_EXPIRED');
+  expectCode(() => verify(token, { now: new Date(Date.parse(NOW) - 60_001) }), 'OWNER_EVIDENCE_EXPIRED');
+  assert.deepEqual(verify(token, { now: new Date(Date.parse(NOW) + 60_000) }), claims);
+  expectCode(() => verify(token, { now: new Date(NaN) }), 'OWNER_EVIDENCE_CONFIGURATION_INVALID');
+  for (const malformed of ['release-v1..abc', 'release-v1.a.' + '0'.repeat(64), 'x'.repeat(2049)]) {
+    expectCode(() => verify(malformed), malformed.startsWith('release-v1.a.') ? 'OWNER_EVIDENCE_SIGNATURE_INVALID' : 'OWNER_EVIDENCE_MALFORMED');
+  }
+  const rawProof = (json: string) => {
+    const encoded = Buffer.from(json).toString('base64url');
+    const mac = createHmac('sha256', SECRET).update(`owner-evidence:release:v1\0${encoded}`).digest('hex');
+    return `release-v1.${encoded}.${mac}`;
+  };
+  for (const row of [
+    { ...claims, reason: 'CONFIRMED' },
+    { ...claims, providerBookingId: null },
+    { ...claims, reason: 'PROVIDER_REJECTED' },
+    { ...claims, tenantId: 'extra:claim' },
+    { ...claims, operationId: 'bad id' },
+    { ...claims, issuedAt: '2026-09-01' },
+  ]) expectCode(() => verify(rawProof(JSON.stringify(row))), 'OWNER_EVIDENCE_MALFORMED');
+  expectCode(() => verify(rawProof('not-json')), 'OWNER_EVIDENCE_MALFORMED');
+  expectCode(() => verify(rawProof(JSON.stringify(claims).replace('{', '{"reason":"PROVIDER_REJECTED",'))), 'OWNER_EVIDENCE_MALFORMED');
+  expectCode(() => verify(rawProof(' ' + JSON.stringify(claims))), 'OWNER_EVIDENCE_MALFORMED');
+  const payload = Buffer.from(JSON.stringify({ ...claims, providerBookingId: 'booking:other' })).toString('base64url');
+  expectCode(() => verify(`release-v1.${payload}.${token.split('.')[2]}`), 'OWNER_EVIDENCE_SIGNATURE_INVALID');
+}
+
 function run(): void {
   testCreateAndVerify();
   testBindingAndSignature();
   testFreshness();
   testMalformed();
   testConfiguration();
+  testReleaseEvidence();
   console.log('subscriptions owner evidence tests: OK');
 }
 
