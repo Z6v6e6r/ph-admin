@@ -1,7 +1,7 @@
 name: MAX outbox receipts
 on:
   pull_request:
-    paths: ['src/support/**', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
+    paths: ['src/support/**', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
   push:
     branches: ['codex/max-retry-receipts']
 permissions:
@@ -29,6 +29,8 @@ jobs:
           done
           test "$ready" = true
       - run: npm run build
+      - name: Offline diagnostic snapshot provenance and compiled importer compatibility
+        run: node --test test/cup-legacy-max-snapshot.test.mjs
       - name: Compatibility defaults and guarded feature UI
         run: |
           npx ts-node test/release-capabilities.test.ts
