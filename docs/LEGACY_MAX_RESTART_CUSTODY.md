@@ -83,3 +83,39 @@ neither a read-only exporter nor a complete handoff proof. Do not use heap or
 credential bypass, invent `ACK=SENT`, replay uncertain sends, or infer a drain
 from historical Mongo counts. This source change alone does not authorize or
 prove that first production restart.
+
+## Recovery artifact for the installed83 runtime
+
+`scripts/prepare-cup-runtime-release.mjs` also builds a distinct recovery overlay
+from `83b1c17bc4c5edaec65387b25b5695e48337c3cf` and the exact three-module
+`deploy/recovery/legacy-max-custody-83.patch`. The output is
+`legacy-max-recovery-manifest.json` plus `legacy-max-recovery-runtime-delta.tgz`,
+covered by the artifact's `SHA256SUMS`. Its schema is
+`PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1`. The earlier8a tournament-only recovery
+artifact remains separate and does not establish MAX custody compatibility.
+
+The manifest distinguishes the publishing source from the derived recovery
+tree. The builder compares baseline and patched compilation, permits exactly
+three executable JS changes, and requires those three JS files to equal the
+candidate's compiled custody modules. An inferred controller declaration may
+change locally; declarations/maps are not included in the executable overlay.
+No dependency, SDK, configuration or other baseline runtime file is replaced.
+The two existing JS files require exact previous hashes. The new
+`dist/support/legacy-max-custody.js` has `expectedPreviousSha256: null`, which
+means **the destination must be absent**, never an unchecked replacement.
+
+The builder tests the actual derived83 compiled modules against an owned
+loopback Mongo fixture: concurrent claims, committed writes with lost ACK or
+failed readback, stale metadata, held snapshot import/replay/conflict, sync0
+restart and non-MAX/receipt-v1 delegation compatibility. These are LOCAL/CI
+checks, not provider or production acceptance.
+
+This overlay only establishes a recovery writer that respects custody. It
+does not prove the first restart, old-writer drain, target mapping or a live
+rollback. It requires legacy mode, sync interval zero and no full hydration.
+An executor must explicitly support this schema, preserve the approved queue
+mapping, attest the exact installed83 preimages and apply all three files as
+one recovery runtime. The historical executor's receipt-v1-only index check
+does not detect `meta.legacyMaxRestartCustody`; do not use that check to admit
+an old writer after held import. No automatic deployment consumes this new
+artifact.
