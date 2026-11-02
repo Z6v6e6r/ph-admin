@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
+import { LegacyMaxCustodyStore, LegacyMaxImportManifest, LegacyMaxTransition, validateLegacyMaxSnapshot } from './legacy-max-custody';
 import { performance } from 'node:perf_hooks';
 import { maxOutboxMode } from '../common/release-capabilities';
 import { ConflictException } from '@nestjs/common';
@@ -196,6 +198,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
 
   private readonly backendConfigs = this.buildBackendConfigs();
   private readonly backendStates = new Map<SupportPersistenceBackendKey, SupportPersistenceBackendState>();
+  private readonly legacyMaxWrites = new Set<Promise<unknown>>();
+  private legacyMaxWriteFailures = 0;
+  private legacyMaxClosing = false;
 
   async onModuleInit(): Promise<void> {
     for (const config of this.backendConfigs) {
@@ -260,6 +265,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.legacyMaxClosing = true;
+    await Promise.allSettled([...this.legacyMaxWrites]);
     await Promise.all(
       Array.from(this.backendStates.values()).map((state) => this.safeCloseBackend(state))
     );
@@ -910,7 +917,61 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     }, 'persistResponseMetric');
   }
 
-  persistOutboxCommand(command: SupportOutboxCommand): void {
+  legacyMaxCustodyDiagnostics() {
+    return { pendingWrites: this.legacyMaxWrites.size, writeFailures: this.legacyMaxWriteFailures };
+  }
+
+  private trackedLegacyMax<T>(action: () => Promise<T>): Promise<T> {
+    if (this.legacyMaxClosing) return Promise.reject(missingMaxStore());
+    const pending = Promise.resolve().then(action);
+    this.legacyMaxWrites.add(pending);
+    void pending.then(() => this.legacyMaxWrites.delete(pending), () => {
+      this.legacyMaxWrites.delete(pending);
+      this.legacyMaxWriteFailures++;
+    });
+    return pending;
+  }
+
+  private legacyMaxStore(connector: SupportConnectorRoute) {
+    const owner = this.getBackendState(this.resolveBackendKeyForConnector(connector));
+    if (!owner?.db) throw missingMaxStore();
+    return { owner, collection: this.collection<SupportOutboxCommand>(owner, 'outbox') };
+  }
+
+  /** Source/operator API only: no HTTP import route, startup import or automatic provider dispatch. */
+  async importLegacyMaxCustody(bytes: Buffer, manifest: LegacyMaxImportManifest) {
+    if (maxOutboxMode() !== 'legacy') throw new ConflictException({ code: 'MAX_OUTBOX_LEGACY_MODE_REQUIRED' });
+    const rows = validateLegacyMaxSnapshot(bytes, manifest);
+    // Validate every target before the first write. Never fall back to a different backend.
+    for (const row of rows) {
+      const { owner, collection } = this.legacyMaxStore(row.connector);
+      const actual = createHash('sha256').update(JSON.stringify({
+        hosts: owner.client!.options.hosts!.map(value => value.toString()),
+        db: owner.db!.databaseName, collection: collection.collectionName
+      })).digest('hex');
+      if (actual !== manifest.targetFingerprint) throw new ConflictException({ code: 'LEGACY_MAX_IMPORT_TARGET_MISMATCH' });
+    }
+    return this.trackedLegacyMax(async () => {
+      for (const row of rows) await new LegacyMaxCustodyStore(this.legacyMaxStore(row.connector).collection)
+        .importHeld(row, manifest.snapshotSha256);
+      return { imported: rows.length, snapshotSha256: manifest.snapshotSha256, automaticReplay: false };
+    });
+  }
+
+  persistOutboxCommand(command: SupportOutboxCommand, operation: LegacyMaxTransition, previous?: SupportOutboxCommand): Promise<SupportOutboxCommand>;
+  persistOutboxCommand(command: SupportOutboxCommand): void;
+  persistOutboxCommand(command: SupportOutboxCommand, operation?: LegacyMaxTransition,
+    previous?: SupportOutboxCommand): void | Promise<SupportOutboxCommand> {
+    if (isMaxConnector(command.connector) && maxOutboxMode() === 'legacy') {
+      const snapshot = structuredClone(command);
+      if (operation) return this.trackedLegacyMax(() =>
+        new LegacyMaxCustodyStore(this.legacyMaxStore(snapshot.connector).collection).transition(snapshot, operation, previous));
+      // Old reconciliation callers may move client/dialog metadata, never restore stale delivery state.
+      void this.trackedLegacyMax(() => new LegacyMaxCustodyStore(this.legacyMaxStore(snapshot.connector).collection)
+        .metadata(snapshot)).catch(() => this.logger.error('LEGACY_MAX_METADATA_WRITE_UNKNOWN'));
+      return;
+    }
+    if (operation) throw new ConflictException({ code: 'LEGACY_MAX_CUSTODY_MODE_REQUIRED' });
     supportDiagnostics.observe(command, 'max_outbox', { code: 'OUTCOME_UNKNOWN', connector: command.connector,
       outboxRef: supportDiagnostics.ref('outbox', command.id), leaseAttempt: command.attempts, outcome: 'outcome_unknown' });
     this.fireAndForget(async () => {

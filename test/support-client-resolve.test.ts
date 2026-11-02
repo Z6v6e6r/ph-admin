@@ -56,7 +56,7 @@ class InMemorySupportPersistence {
 
   persistResponseMetric(): void {}
 
-  persistOutboxCommand(): void {}
+  persistOutboxCommand(command?: unknown, operation?: string) { return operation ? command : undefined; }
 
   async findServiceMessages(): Promise<[]> {
     return [];

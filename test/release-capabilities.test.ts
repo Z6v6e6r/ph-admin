@@ -25,36 +25,51 @@ async function main() {
     delete process.env.PHAB_LOCATION_PHOTOS_ENABLED;
     validateReleaseCapabilities();
     for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
-      let stored: any;
-      const persistence = Object.create(SupportPersistenceService.prototype) as any;
-      persistence.resolveTargetBackendForConnector = () => ({ config: { key: 'max' } });
-      persistence.deleteFromOtherBackends = async () => {};
-      persistence.collection = () => ({ updateOne: async (_filter: unknown, update: any) => {
-        assert.ok(update.$set, 'legacy transitions must actually update durable state');
-        assert.equal(update.$setOnInsert, undefined);
-        stored = structuredClone(update.$set);
-        return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
-      } });
-      persistence.fireAndForget = (operation: () => Promise<void>) => { persistence.pending = operation(); };
-      const service = new SupportService(persistence, {} as any, {} as any) as any;
       const seed = { id: 'synthetic-legacy', connector, dialogId: 'synthetic-dialog', clientId: 'synthetic-client',
         text: 'synthetic', createdAt: new Date().toISOString(), status: Status.PENDING, attempts: 0 };
+      let stored: any = { ...structuredClone(seed), _id: 'synthetic-mongo-id' };
+      const persistence = new SupportPersistenceService() as any;
+      persistence.backendConfigs = [{ key: 'max' }];
+      persistence.backendStates.set('max', { config: { key: 'max' }, db: {} });
+      persistence.resolveTargetBackendForConnector = () => assert.fail('Legacy MAX must not fall back to another queue');
+      persistence.deleteFromOtherBackends = () => assert.fail('Legacy MAX must not clean another queue');
+      persistence.collection = () => ({
+        findOne: async (filter: any, options: any) => {
+          assert.equal(filter.id, seed.id); assert.equal(filter.connector, connector);
+          assert.equal(options.readConcern.level, 'majority'); assert.equal(options.readPreference, 'primary');
+          return structuredClone(stored);
+        },
+        updateOne: async (filter: any, update: any, options: any) => {
+          assert.ok(update.$set, 'legacy transitions must actually update durable state');
+          assert.equal(update.$setOnInsert, undefined);
+          assert.equal(options.writeConcern.w, 'majority');
+          assert.deepEqual(filter.$expr.$eq[1].$literal, stored, 'Transition must fence the complete durable preimage');
+          for (const [key, value] of Object.entries(update.$set)) {
+            if (key.startsWith('meta.')) { stored.meta ??= {}; stored.meta[key.slice(5)] = structuredClone(value); }
+            else stored[key] = structuredClone(value);
+          }
+          for (const key of Object.keys(update.$unset ?? {})) delete stored[key];
+          return { acknowledged: true, matchedCount: 1, modifiedCount: 1 };
+        }
+      });
+      persistence.fireAndForget = () => assert.fail('Legacy MAX transitions must be awaited');
+      const service = new SupportService(persistence, {} as any, {} as any) as any;
       service.outbox.set(seed.id, seed);
       const controller = new SupportController(service);
       const pulled = await controller.pullOutbox(undefined, connector);
-      await persistence.pending;
+      assert.equal(persistence.legacyMaxCustodyDiagnostics().pendingWrites, 0);
       assert.equal(pulled.commands[0].status, Status.LEASED);
       assert.equal(stored.status, Status.LEASED);
       assert.throws(() => service.pullOutbox(connector, 1, 30, 'max-lease-v1'), /Conflict/);
       await assert.rejects(() => controller.ackOutbox(undefined, seed.id, { leaseToken: 'synthetic-token' }), /Conflict/);
       await assert.rejects(() => service.failOutbox(seed.id, undefined, true, { failure: { status: 429 } }), /Conflict/);
       await controller.ackOutbox(undefined, seed.id, {});
-      await persistence.pending;
+      assert.equal(persistence.legacyMaxCustodyDiagnostics().pendingWrites, 0);
       assert.equal(stored.status, Status.SENT);
       // A separate process hydrates the persisted terminal state; no lease-expiry replay.
       const restarted = new SupportService(persistence, {} as any, {} as any) as any;
       restarted.outbox.set(seed.id, structuredClone(stored));
-      assert.deepEqual(restarted.pullOutbox(connector), []);
+      assert.deepEqual(await restarted.pullOutbox(connector), []);
       assert.throws(() => persistence.pullMaxOutbox(connector, 1, 30), /Conflict/);
     }
     let writes = 0;
