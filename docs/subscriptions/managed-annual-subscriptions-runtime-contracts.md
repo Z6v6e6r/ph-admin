@@ -224,3 +224,147 @@ The isolated first-publication candidate is documented in
 validators and unique indexes, is disabled by separate preview/command flags,
 and creates no production document until an explicitly approved command is
 released and invoked.
+
+
+## Organizer-quarter CREATE provenance bridge (source-only, v2 intake)
+
+This bounded extension prepares a canonical target for the organizer's **one of four**
+places in a 60-minute game. It does not create a game, reserve a provider booking, publish
+an existing policy or activate a runtime. Existing JOIN and legacy CREATE requests and
+idempotent decisions are unchanged. No generic discount evaluator or new flag is added.
+
+Publication may explicitly include `createQuarterDescriptor` schema 1, kind
+`ORGANIZER_QUARTER_CREATE`. Its exact fields are direction `4588`, type `1613`,
+selector revision, duration 60, participant count 4, spot 1, RUB, price basis
+`ORGANIZER_QUARTER`, benefit `FREE_ENTITLEMENT`, usage units 1, daily limit 1, and
+1–8 unique approved station/service rows. Each row explicitly binds **canonical
+stationId to providerStudioId**, masterServiceId and subServiceId; matching strings or
+aliases are not mapping evidence. The existing policy CREATE rule and station scope
+must admit exactly this FREE/60-minute/one-unit slice without surcharge. Direction 4588
+is not a station ID. A descriptor is an operator-approved mapping, not a live catalogue
+observation and not a claim that all eight LK source mappings have been approved.
+
+CUP normalizes descriptor keys/rows and hashes the content with domain
+`subscription-create-quarter-descriptor:v1\0`. Both
+`dictionary:create-quarter:<digest>` and `evidence:canonical-dictionary:<digest>` must
+match the supplied descriptor. Preview and publish bind its bytes and digest in the
+impact reference, request fingerprint, immutable opt-in schema-4 publication and existing
+approval audit (`createQuarterDescriptorJson`, `createQuarterDescriptorDigest`). The
+existing permission, command gates, provider product verification, approval-before-write
+and publication CAS remain required. Publications without the descriptor are **not**
+quarter capable, even when their revision text happens to match. Omission preserves
+legacy schema-3 publication/request bytes; null and malformed descriptors fail closed.
+
+The existing authenticated `POST /api/internal/subscriptions/canonical-targets` accepts a
+strict v2 union: `contractVersion:2`, `kind:ORGANIZER_QUARTER_CREATE`, targetId, revision,
+state, subscriptionTypeId, policyVersion, publicationId, createOperationId, draftId,
+clientRefHash, stationId, roomId, startsAt, observedAt, expiresAt, catalogue and price.
+Operation/draft are canonical UUIDs; targetId is exactly `create-draft:<draftId>`.
+clientRefHash is the **existing CUP identity hash**, never a raw provider ID or phone.
+The future LK producer must obtain/bind that existing identity contract; it must not
+invent a hash algorithm, expose private references publicly or treat an unsigned LK
+preparation capsule as authenticated authority.
+
+Catalogue contains directionId, typeId, providerStudioId, masterServiceId, subServiceId,
+selectorRevision and roomIds (null means provider catalogue omitted that restriction).
+Price contains basis `WHOLE_COURT_WINDOW`, amountMinor, RUB, durationMinutes 60,
+participantCount 4 and spot 1. CUP checks the exact approved mapping and accepts only a
+positive integer whole amount <=10,000,000 divisible by four. CUP computes the quarter
+**once**, persists it as basePriceMinor and retains the whole amount and original facts.
+Caller-supplied basePriceMinor, quarter price or dictionary revision is forbidden in v2.
+Authenticated producer observations are trusted transport input, not independently
+fetched by this CUP endpoint. Freshness uses the existing configured shadow-quote limit;
+observation cannot be future and expiry must be within 60 seconds of that original
+observation. An immutable revision cannot be reused with changed facts or timestamps.
+
+Schema-2 targets retain publication/policy/approval references, descriptor digest,
+original operation/draft/actor, exact catalogue facts and whole-price evidence in the
+existing target collection. Intake uses VERIFY_ONLY connection initialization, so it
+never creates indexes. Resolver rechecks exact publication and tenant-owned VERIFIED
+product mapping. Quote additionally compares the instance-pinned publication and the
+verified actor hash; a target cannot be borrowed by another actor. FREE then applies to
+this quarter base, not the whole court and not a second fractional calculation. Actual
+eligible results must have FREE, final price zero, usage one and active daily limit one.
+Daily exhaustion and fallback cannot authorize this new branch.
+
+Existing entitlement preflight accepts CREATE only with `contractVersion:2` and an
+already stored quarter target. Its existing nonbinding response adds `expectations.createQuarter`
+containing schemaVersion 1, createOperationId, draftId, clientRefHash, publicationId and
+descriptorDigest. Those original bindings enter the versioned reserve fingerprint; fresh
+reserve rechecks them before mutations and each CAS retry. Identical committed reserve
+replays use the stored decision without re-resolving a later publication or expired target.
+Changed original binding with the same key conflicts. Old JOIN response fields and legacy
+CREATE reserve fingerprints/replay remain unchanged. This is still not a provider receipt,
+booking authorization, usageRef issued before reservation or a new validity period.
+
+Adoption requires separate reviewed publication evidence, the LK authenticated producer,
+original CREATE journal/receipt integration, all compatible readers, and explicit runtime
+activation approval. None is supplied by this source change. Runtime mapping/catalogue and
+provider acceptance remain unverified. On rollback retain all targets and publication/audit
+facts: old readers reject schema-2 targets rather than using their quarter values as v1.
+Do not strip provenance, rewrite schema versions or redate targets to force availability.
+Descriptor-bearing publications require schema 4; schema 3 with a descriptor and schema 4
+without it are invalid. The exact previous schema-3 validator rejects schema 4 before
+reading its projection. New readers also reject a v1 CREATE target against a quarter
+publication, even if its dictionary revision was copied; JOIN and descriptor-absent v1
+publications retain historical behavior. This bidirectional fence prevents old binaries
+from silently granting whole-court FREE after rollback. Mixed-reader availability requires
+deployment validation before activation.
+
+**Unimplemented SOURCE adoption dependency:** existing instance projector, sale readiness
+and legacy binding promotion still require schema-3 publications. They intentionally remain
+closed for schema 4. No normal production instance can adopt the new publication through
+those paths yet. The physical test seeds a synthetic instance directly inside its owned CI
+DB; that is storage/transaction evidence, not a usable adoption workflow or approval to seed
+production. A separately reviewed bounded instance-adoption implementation is required;
+there is no manual production override or migration in this packet.
+
+LOCAL tests use synthetic repositories and actual service/parser/evaluator paths; they do
+not prove physical Mongo transactions, publication execution, provider observations or live
+CREATE acceptance. No indexes, database fixtures, migrations or provider calls are executed
+by the focused new synthetic suite. The existing CI-only entitlement Mongo harness additionally
+stores schema-4 publication/schema-2 target through the real repository, checks immutable
+duplicate/conflict behavior, and reserves/replays after lost ACK with real Mongo transactions.
+It reuses the existing unique owned DB, replica-set URI guard, index fixture and cleanup; it is
+not run or provisioned locally. Its physical result remains pending until automatic CI runs.
+At the schema-4 target packet boundary, full automatic CI, normal instance adoption
+and the separate LK producer were dependencies. The subsequent FULL_RECONCILIATION
+source packet supplies opt-in instance adoption; actor-bound intake and its paired
+LK owner are described below. None of these source packets proves runtime activation.
+
+### Actor-bound CREATE target intake, version 3
+
+The same `POST /internal/subscriptions/canonical-targets` accepts `contractVersion: 3`
+for the private LK CREATE owner. It requires the existing target-ingest integration token
+and the original actor Bearer. The target-ingest and trusted-shadow-adapter flags must both
+be enabled; this source change creates/enables no credential or flag.
+
+The exact body is version-2 quarter input minus `clientRefHash`, plus
+`subscriptionInstanceId`, with `contractVersion: 3` and `state: ACTIVE`. Extra properties,
+caller tenant fields/hash and revocation are rejected. CUP verifies the Bearer's canonical
+tenant key against configured runtime tenant, derives the existing private client HMAC
+inside CUP, and reads the exact owned instance. Instance policy/digest, mapping/product/scope,
+ACTIVE state, current reconciliation, mapping freshness and the approved schema-4 descriptor must match
+before the existing schema-2 target insert. Public PadlHub tenant UUIDs never substitute for
+the canonical CUP tenant key. The previous UUID-only token-authorized v1/v2 paths are unchanged.
+
+The response retains only `targetId`, `action`, `revision`, `snapshotId`, `replay`; it exposes
+no identity HMAC, provider client identity or token. Existing authenticated CREATE preflight
+returns the existing immutable expectations. Intake does not grant eligibility, reserve
+usage, charge, book, publish a policy or create indexes. Freshness and exact-revision conflict
+checks remain active on intake replay. LK must durably retain its original target/instance/
+expectations before reserve, never use intake to refresh evidence after an ambiguous write.
+
+The paired LK owner is the concrete consumer: verified original draft and server catalogue/
+whole-court price observations produce this input; provider CREATE remains a separate,
+once-dispatched canonical owner operation. Activation requires that matched owner, approved
+publication/instance-adoption evidence, existing purpose-bound credentials, physical CI and
+separate runtime/provider acceptance. Disabling intake blocks new snapshots and never releases
+or repeats an already attempted booking. No production settings are changed by this packet.
+
+The identical synthetic `quarter-create-owner-v1.json` fixture is consumed by actual
+LK producer/owner tests and CUP intake/resolver/evaluator/reserve tests. The existing
+CI-only entitlement Mongo harness additionally exercises actor-bound v3, canonical
+non-UUID tenant and server-derived hash, cross-connection target reads and transactional
+reserve/lost-ACK replay. Its identity verifier/provider facts are synthetic; it does
+not call a provider. The harness reuses its existing guarded rs0 service and owned DB.

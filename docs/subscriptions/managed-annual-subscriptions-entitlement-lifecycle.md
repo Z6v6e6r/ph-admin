@@ -274,3 +274,29 @@ the synthetic clock beyond proof TTL, confirms the old proof is rejected, and ch
 returns the minimal state while all four business collections stay identical. This new scenario
 requires its own successful CI run; prior lifecycle CI results do not prove the added readback.
 Identity and quote policy remain synthetic, and provider/STAGING/PRODUCTION acceptance is separate.
+
+## Signed unused quarter CREATE release
+
+`PRECREATE_EXPIRED_NOT_DISPATCHED` is a new private release reason. It always
+requires existing `release-v1` HMAC proof, even when strict owner-evidence mode is
+off. Claims remain operation ID, reason, null provider booking and issuedAt; the
+same maximum age applies. LK may sign only after fresh exact read of its durable,
+irreversible original no-dispatch abort marker. CUP does not infer no-dispatch
+from absence or capsule age and does not query provider or current policy.
+
+The owned operation must be CLIENT/BOOKING/CREATE_GAME with an ENTITLEMENT decision,
+one usage unit, zero final price, no provider correlation/evidence, and the exact
+RESERVED aggregate service (target, start, units). Only RESERVED can transition.
+CONFIRMED is refused; terminal FAILED/APPLIED replay must retain the same reason
+and null booking and still requires proof. Existing transaction atomically restores
+usage buckets/aggregate and writes operation, ledger and outbox. Legacy reasons
+retain their previous behavior. Readback retains its exact seven-field shape and
+adds this reason; it is read-only and never grants new release authority.
+
+The paired private receipt fixture `test/fixtures/quarter-create-expired-v2.json`
+records the LK receipt shape, not a new CUP endpoint. Old callers ignore/reject the
+new reason; old binaries cannot authorize this branch. Deploy/adoption is separate;
+no flags, schema, index, provider or production changes are included. Existing
+CI-owned Mongo fixture adds actual concurrent confirm-versus-expiry-release with
+both controlled winners and independent repositories, strict-off refusal and lost
+ACK/readback after proof TTL. LOCAL tests are synthetic; Mongo tests run only in CI.

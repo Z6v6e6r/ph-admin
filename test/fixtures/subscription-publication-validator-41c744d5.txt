@@ -1,0 +1,58 @@
+export function validateStoredSubscriptionPolicyPublication(
+  value: StoredSubscriptionPolicyPublication
+): void {
+  if (![1, 2, 3].includes(value.schemaVersion)) fail('SUBSCRIPTION_PUBLICATION_SCHEMA_INVALID');
+  requiredId(value.publicationId, 'publicationId');
+  requiredId(value.subscriptionTypeId, 'subscriptionTypeId');
+  positiveInteger(value.policyVersion, 'policyVersion');
+  digest(value.policyDigest, 'policyDigest');
+  requiredId(value.mappingId, 'mappingId');
+  requiredId(value.dictionaryRevision, 'dictionaryRevision');
+  requiredInstant(value.effectiveAt, 'effectiveAt');
+  requiredInstant(value.publishedAt, 'publishedAt');
+  requiredId(value.publishedBy, 'publishedBy');
+  requiredId(value.impactPreviewRef, 'impactPreviewRef');
+  requiredId(value.approvalAuditRef, 'approvalAuditRef');
+  if (value.schemaVersion === 2 && !value.idempotency) {
+    fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+  }
+  if ((value.schemaVersion === 1 || value.schemaVersion === 2) && value.runtimeCompatibility !== undefined) {
+    fail('SUBSCRIPTION_PUBLICATION_RUNTIME_COMPATIBILITY_UNATTESTED');
+  }
+  if (value.schemaVersion === 3) {
+    if (!value.idempotency) fail('SUBSCRIPTION_PUBLICATION_IDEMPOTENCY_REQUIRED');
+    validateRuntimeCompatibility(value.runtimeCompatibility);
+  }
+  if (value.idempotency) {
+    requiredId(value.idempotency.actorId, 'idempotency.actorId');
+    requiredText(value.idempotency.key, 'idempotency.key', 200);
+    hash(value.idempotency.requestHash, 'idempotency.requestHash');
+    requiredId(value.idempotency.correlationId, 'idempotency.correlationId');
+  }
+  oneOf(value.state, PUBLICATION_STATES, 'SUBSCRIPTION_PUBLICATION_STATE_INVALID', 'state');
+  if (value.runtimeProjection?.runtimeSchemaVersion !== 1
+    || value.runtimeProjection.status !== 'PUBLISHED'
+    || value.runtimeProjection.subscriptionTypeId !== value.subscriptionTypeId
+    || value.runtimeProjection.policyVersion !== value.policyVersion
+    || value.runtimeProjection.effectiveAt !== value.effectiveAt) {
+    fail('SUBSCRIPTION_PUBLICATION_PROJECTION_MISMATCH');
+  }
+  validateRuntimeProjection(value.runtimeProjection);
+  if (computeSubscriptionRuntimeProjectionDigest(value.runtimeProjection) !== value.policyDigest) {
+    fail('SUBSCRIPTION_PUBLICATION_DIGEST_MISMATCH');
+  }
+  if (value.state === 'SUPERSEDED') {
+    requiredInstant(value.supersededAt, 'supersededAt');
+    requiredId(value.supersededBy, 'supersededBy');
+  } else if (value.supersededAt !== null || value.supersededBy !== null) {
+    fail('SUBSCRIPTION_PUBLICATION_SUPERSESSION_INVALID');
+  }
+  if (value.supersededAt !== null) {
+    assertInstantOrder(
+      value.publishedAt,
+      value.supersededAt,
+      'SUBSCRIPTION_RUNTIME_TIME_ORDER_INVALID',
+      'supersededAt'
+    );
+  }
+}

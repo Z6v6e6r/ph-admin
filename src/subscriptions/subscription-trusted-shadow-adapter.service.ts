@@ -116,6 +116,20 @@ export class SubscriptionTrustedShadowAdapterService {
     );
   }
 
+  /** Same verified actor authority; the target-intake credential grants no entitlement write. */
+  async resolveTargetIntakeIdentity(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined
+  ): Promise<SubscriptionShadowQuoteIdentityContext> {
+    return this.resolveIdentityWithToken(
+      authorizationHeader,
+      integrationToken,
+      'SUBSCRIPTIONS_TARGET_INGEST_INTEGRATION_TOKEN',
+      'SUBSCRIPTIONS_TARGET_INGEST_NOT_CONFIGURED',
+      'SUBSCRIPTIONS_TARGET_INGEST_FORBIDDEN'
+    );
+  }
+
   private async resolveIdentityWithToken(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,

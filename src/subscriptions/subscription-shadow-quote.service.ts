@@ -1,3 +1,4 @@
+import { assertQuarterResolvedTarget } from './subscription-create-quarter-contract';
 import { Injectable } from '@nestjs/common';
 import {
   SubscriptionRuntimeContractError,
@@ -91,6 +92,11 @@ export class SubscriptionShadowQuoteService {
     }
     if (publication) {
       validateStoredSubscriptionPolicyPublication(publication);
+      if (request.target.createQuarter !== undefined
+        || (request.action === 'CREATE_GAME' && publication.createQuarterDescriptor !== undefined)) {
+        try { assertQuarterResolvedTarget(request.target, publication, request.identity.clientRefHash, request.action); }
+        catch { block('CREATE_QUARTER_PROVENANCE_MISMATCH', 'Подтверждение четверти корта не соответствует операции'); }
+      }
       if (publication.state === 'DISABLED_FOR_NEW_OPERATIONS') {
         block('POLICY_DISABLED_FOR_NEW_OPERATIONS', 'Версия правил отключена для новых операций');
       }
@@ -168,6 +174,13 @@ export class SubscriptionShadowQuoteService {
       action: request.action,
       target: request.target
     });
+    if (request.target.createQuarter && result.eligible
+      && (result.benefit?.kind !== 'FREE_ENTITLEMENT' || result.usageUnits !== 1
+        || result.decision?.usageUnits !== 1 || result.decision.money.finalPriceMinor !== 0
+        || result.decision.money.basePriceMinor !== request.target.basePriceMinor || result.dailyLimit !== 1
+        || result.dailyUsageApplies !== true || result.dailyLimitExceeded !== false)) {
+      return this.blocked(instance.subscriptionInstanceId, now, [this.blocker('CREATE_QUARTER_BENEFIT_MISMATCH', 'Правила четверти корта не подтверждены')]);
+    }
     return { ...result, tenantId: request.identity.tenantId };
   }
 

@@ -1,3 +1,8 @@
+import { quarterFixture, quarterIntakeBody, QUARTER_NOW, QUARTER_TENANT, QUARTER_TOKEN,
+  QuarterResolver, QuarterQuote, QuarterLifecycle } from './subscriptions-create-quarter.test';
+import { CanonicalTargetIntakeService } from '../src/subscriptions/canonical-target-intake.service';
+import { SubscriptionTrustedShadowAdapterService, computeSubscriptionClientRefHash } from '../src/subscriptions/subscription-trusted-shadow-adapter.service';
+import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
 import * as assert from 'node:assert/strict';
 import { runEntitlementReadbackTests } from './subscriptions-entitlement-readback.test';
 import { createHash, randomUUID } from 'node:crypto';
@@ -384,6 +389,91 @@ async function run(): Promise<void> {
     await assertReturned(repositories[1]);
     await assertOneLedgerChain(db, rejected.operationId, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
     console.log('PASS physical provider-rejection commit/lost response then read-only recovery beyond proof TTL');
+    for (const service of services) service.clock = NOW;
+    const unused = await services[0].reserve('Bearer fixture', 'fixture-integration', dto, { idempotencyKey: 'mongo-unused-quarter' });
+    const unusedDto = { operationId: unused.operationId!, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+    const unusedProof = createOwnerReleaseEvidence({ ...unusedDto, providerBookingId: null, issuedAt: NOW }, SECRET);
+    const strictBefore = process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT;
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'false';
+    try {
+      const beforeUnsigned = await snapshot(db);
+      await assert.rejects(services[1].release('Bearer fixture', 'fixture-integration', unusedDto), ForbiddenException);
+      assert.deepEqual(await snapshot(db), beforeUnsigned);
+      repositories[0].transitionRuntimeEntitlement = async input => { await transition(input); throw new Error('unused-release-ACK-lost'); };
+      await assert.rejects(services[0].release('Bearer fixture', 'fixture-integration', unusedDto, unusedProof), /unused-release-ACK-lost/);
+      repositories[0].transitionRuntimeEntitlement = transition;
+      await assert.rejects(services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: unused.operationId!, providerBookingId: 'booking:too-late' }));
+      services[1].clock = '2026-08-31T10:02:00.000Z';
+      const frozen = await snapshot(db);
+      const seen = await services[1].readback('Bearer fixture', 'fixture-integration', { operationId: unused.operationId!, subscriptionInstanceId: INSTANCE });
+      assert.equal(seen.operationState, 'FAILED'); assert.equal(seen.compensationState, 'APPLIED'); assert.equal(seen.releaseReason, unusedDto.reason); assert.equal(seen.providerBookingId, null);
+      assert.deepEqual(await snapshot(db), frozen);
+      const freshProof = createOwnerReleaseEvidence({ ...unusedDto, providerBookingId: null, issuedAt: services[1].clock }, SECRET);
+      assert.equal((await services[1].release('Bearer fixture', 'fixture-integration', unusedDto, freshProof)).replayed, true);
+      await assertReturned(repositories[2]);
+      await assertOneLedgerChain(db, unused.operationId!, ['ENTITLEMENT_RESERVED', 'ENTITLEMENT_RELEASED']);
+    } finally { repositories[0].transitionRuntimeEntitlement = transition;
+      if (strictBefore === undefined) delete process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT; else process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = strictBefore;
+      services[1].clock = NOW; }
+    const confirmFirst = await services[0].reserve('Bearer fixture', 'fixture-integration', dto, { idempotencyKey: 'mongo-created-before-abort' });
+    const confirmedId = confirmFirst.operationId!, confirmedBooking = 'booking:confirmed-before-abort';
+    await services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: confirmedId, providerBookingId: confirmedBooking }, confirmProof(confirmedId, confirmedBooking));
+    const noAbort = { operationId: confirmedId, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+    const beforeAbort = await snapshot(db);
+    await assert.rejects(services[2].release('Bearer fixture', 'fixture-integration', noAbort,
+      createOwnerReleaseEvidence({ ...noAbort, providerBookingId: null, issuedAt: NOW }, SECRET)), ConflictException);
+    assert.deepEqual(await snapshot(db), beforeAbort);
+    await services[0].release('Bearer fixture', 'fixture-integration', releaseDto(confirmedId, confirmedBooking), releaseProof(confirmedId, confirmedBooking));
+    await assertReturned(repositories[3]);
+    console.log('PASS physical unused CREATE signed release despite strict-off, lost ACK/post-TTL read, confirm-versus-release both orders and exact one compensation');
+
+    for (const winner of ['confirm', 'release'] as const) {
+      const held = await services[0].reserve('Bearer fixture', 'fixture-integration', dto,
+        { idempotencyKey: `mongo-unused-race-${winner}` });
+      const id = held.operationId!, booking = `booking:unused-race-${winner}`;
+      const abort = { operationId: id, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+      const originals = [repositories[1], repositories[2]].map(r => r.transitionRuntimeEntitlement.bind(r));
+      const both = firstWaveBarrier(2); let releaseLoser!: () => void;
+      const committed = new Promise<void>(resolve => { releaseLoser = resolve; });
+      let winnerSnapshot: unknown[] | undefined;
+      const revisions: number[][] = [];
+      [repositories[1], repositories[2]].forEach((r, i) => {
+        r.transitionRuntimeEntitlement = async input => {
+          revisions.push([input.expectedAggregateRevision, input.expectedOperationRevision]);
+          await both();
+          const isWinner = i === (winner === 'confirm' ? 0 : 1);
+          if (!isWinner) await committed;
+          try {
+            const result = await originals[i](input);
+            if (isWinner) winnerSnapshot = await snapshot(db);
+            return result;
+          } finally { if (isWinner) releaseLoser(); }
+        };
+      });
+      try {
+        const results = await Promise.allSettled([
+          services[1].confirm('Bearer fixture', 'fixture-integration', { operationId: id, providerBookingId: booking }, confirmProof(id, booking)),
+          services[2].release('Bearer fixture', 'fixture-integration', abort,
+            createOwnerReleaseEvidence({ ...abort, providerBookingId: null, issuedAt: NOW }, SECRET))
+        ]);
+        {
+          assert.equal(results[winner === 'confirm' ? 0 : 1].status, 'fulfilled');
+          assert.equal(results[winner === 'confirm' ? 1 : 0].status, 'rejected');
+          assert.equal(revisions.length, 2); assert.deepEqual(revisions[0], revisions[1]);
+          assert.deepEqual(await snapshot(db), winnerSnapshot, 'loser may not change aggregate, operation, ledger or outbox');
+        }
+        await assertOneLedgerChain(db, id, ['ENTITLEMENT_RESERVED', winner === 'confirm' ? 'BOOKING_CONFIRMED' : 'ENTITLEMENT_RELEASED']);
+        if (winner === 'release') await assertReturned(repositories[3]);
+        else {
+          const aggregate = await repositories[3].runtimeEntitlementAggregateByInstance(INSTANCE);
+          assert.equal(aggregate!.remainingUnits, 0); assert.equal(aggregate!.activeServiceCount, 1);
+        }
+      } finally { repositories[1].transitionRuntimeEntitlement = originals[0]; repositories[2].transitionRuntimeEntitlement = originals[1]; releaseLoser(); }
+      if (winner === 'confirm') await services[0].release('Bearer fixture', 'fixture-integration', releaseDto(id, booking), releaseProof(id, booking));
+      await assertReturned(repositories[3]);
+    }
+    console.log('PASS physical concurrent confirm vs signed unused-expiry release from identical snapshots, both controlled winners, loser zero mutation');
+
     const canonical = { policyVersion: 3, policyDigest: POLICY_DIGEST, snapshotRevision: 1,
       snapshotId: 'snapshot:target-1', evidenceRef: 'evidence:target-1' };
     const expectedDto = { ...dto, expectations: { schemaVersion: 1 as const,
@@ -440,6 +530,136 @@ async function run(): Promise<void> {
     assert.deepEqual(await snapshot(db), afterExpectedCommit, 'replay/conflict must not add ledger, outbox or counter changes');
     await assertOneLedgerChain(db, expectedReplay.operationId!, ['ENTITLEMENT_RESERVED']);
     console.log('PASS physical reserve expectations refuse stale refs before persistence and replay committed original decision after response loss');
+    // Same already-owned isolated replica-set DB/index plan; no ambient DB or extra service.
+    const quarterSettings = { SUBSCRIPTIONS_TARGET_INGEST_ENABLED: 'true', SUBSCRIPTIONS_TARGET_INGEST_INTEGRATION_TOKEN: QUARTER_TOKEN,
+      SUBSCRIPTIONS_RUNTIME_TENANT_ID: QUARTER_TENANT, SUBSCRIPTIONS_SHADOW_QUOTE_ENABLED: 'true',
+      SUBSCRIPTIONS_CANONICAL_TARGET_RESOLVER_ENABLED: 'true', SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS: '60',
+      SUBSCRIPTIONS_TRUSTED_SHADOW_ADAPTER_ENABLED: 'true', SUBSCRIPTIONS_ENTITLEMENT_INTEGRATION_TOKEN: QUARTER_TOKEN,
+      SUBSCRIPTIONS_RUNTIME_HASH_PEPPER: 'physical-synthetic-quarter-pepper-32' };
+    const quarterPrevious = Object.fromEntries(Object.keys(quarterSettings).map(key => [key, process.env[key]]));
+    Object.assign(process.env, quarterSettings);
+    try {
+      const data = quarterFixture().state; // Pure synthetic catalogue/policy/identity facts only.
+      const quarterRepository = new SubscriptionsRepository(); repositories.push(quarterRepository);
+      await quarterRepository.connectReadOnly();
+      await quarterRepository.insertRuntimeProviderMapping(structuredClone(data.mapping));
+      await quarterRepository.insertRuntimePolicyPublication(structuredClone(data.publication));
+      await quarterRepository.insertRuntimeInstance(structuredClone(data.instance));
+      await quarterRepository.insertRuntimeEntitlementAggregate(structuredClone(data.aggregate));
+      const observedPublication = await repositories[1].runtimePolicyPublicationByVersion(data.publication.subscriptionTypeId, data.publication.policyVersion);
+      assert.deepEqual(observedPublication, data.publication);
+      assert.equal(observedPublication!.schemaVersion, 4);
+      const indexBefore = await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray();
+      const intake = new CanonicalTargetIntakeService(quarterRepository);
+      const ingest = (body: unknown) => intake.ingest(QUARTER_TOKEN, body, { now: () => new Date(QUARTER_NOW) });
+      assert.equal((await ingest(quarterIntakeBody())).replay, false);
+      assert.equal((await ingest(quarterIntakeBody())).replay, true);
+      const changed = quarterIntakeBody(); changed.price.amountMinor = 800000;
+      await assert.rejects(ingest(changed), (error: any) => error.code === 'CANONICAL_TARGET_INTAKE_CONFLICT');
+      const targetQuery = { tenantId: QUARTER_TENANT, targetId: quarterIntakeBody().targetId, action: 'CREATE_GAME' as const, revision: 1 };
+      const storedTarget = await repositories[1].runtimeCanonicalTargetSnapshot(targetQuery);
+      assert.equal(storedTarget!.schemaVersion, 2); assert.equal(storedTarget!.basePriceMinor, 150000);
+      assert.equal(storedTarget!.createQuarter!.price.amountMinor, 600000);
+      assert.equal(storedTarget!.createQuarter!.binding.createOperationId, quarterIntakeBody().createOperationId);
+      assert.equal(await db.collection('subscription_canonical_target_snapshots').countDocuments(targetQuery), 1);
+      assert.deepEqual(await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray(), indexBefore);
+      const resolver = new QuarterResolver(quarterRepository), realQuote = new QuarterQuote(quarterRepository);
+      const identity = { resolutionSource: 'LK_IDENTITY' as const, tenantId: QUARTER_TENANT, clientRefHash: data.instance.clientRefHash,
+        evidenceRef: 'evidence:quarter-physical-actor', verifiedAt: QUARTER_NOW };
+      const adapter = { resolveEntitlementIdentity: async () => identity,
+        resolveEntitlementRequest: async (_a: unknown, _b: unknown, input: any) => ({ identity, subscriptionInstanceId: input.subscriptionInstanceId,
+          action: input.action, target: await resolver.resolveLatest({ tenantId: QUARTER_TENANT, targetId: input.target.targetId, action: input.action }) }) };
+      const quarterService = new QuarterLifecycle(adapter as any, realQuote, quarterRepository);
+      const request = { contractVersion: 2 as const, subscriptionInstanceId: data.instance.subscriptionInstanceId, action: 'CREATE_GAME' as const,
+        target: { targetId: quarterIntakeBody().targetId } };
+      const receipt = await quarterService.preflight('Bearer synthetic', 'synthetic', request);
+      const boundRequest = { subscriptionInstanceId: request.subscriptionInstanceId, action: request.action, target: request.target, expectations: receipt.expectations };
+      const write = quarterRepository.reserveRuntimeEntitlement.bind(quarterRepository);
+      quarterRepository.reserveRuntimeEntitlement = async input => { await write(input); throw new Error('quarter response lost after commit'); };
+      await assert.rejects(quarterService.reserve('Bearer synthetic', 'synthetic', boundRequest, { idempotencyKey: 'quarter-physical-original-key' }), /quarter response lost after commit/);
+      quarterRepository.reserveRuntimeEntitlement = write;
+      const replayAdapter = { resolveEntitlementIdentity: async () => identity,
+        resolveEntitlementRequest: async () => { throw new Error('committed replay must not resolve current target'); } };
+      const replayService = new QuarterLifecycle(replayAdapter as any, new QuarterQuote(repositories[1]), repositories[1]);
+      const replay = await replayService.reserve('Bearer synthetic', 'synthetic', boundRequest, { idempotencyKey: 'quarter-physical-original-key' });
+      assert.equal(replay.replayed, true); assert.equal(replay.decision!.money.basePriceMinor, 150000);
+      assert.equal(replay.decision!.money.finalPriceMinor, 0); assert.equal(replay.decision!.usageUnits, 1);
+      await assert.rejects(replayService.reserve('Bearer synthetic', 'synthetic', { ...boundRequest, expectations: { ...boundRequest.expectations,
+        createQuarter: { ...boundRequest.expectations.createQuarter!, createOperationId: '33333333-3333-4333-8333-333333333333' } } },
+      { idempotencyKey: 'quarter-physical-original-key' }), (error: any) => error.getResponse?.().code === 'SUBSCRIPTION_ENTITLEMENT_IDEMPOTENCY_CONFLICT');
+      assert.equal(await db.collection('subscription_operations').countDocuments({ subscriptionInstanceId: data.instance.subscriptionInstanceId }), 1);
+      assert.equal(await db.collection('subscription_usage_ledger').countDocuments({ operationId: replay.operationId }), 1);
+      assert.equal(await db.collection('subscription_outbox').countDocuments({ subscriptionInstanceId: data.instance.subscriptionInstanceId }), 1);
+      const after = await repositories[1].runtimeEntitlementAggregateByInstance(data.instance.subscriptionInstanceId);
+      assert.equal(after!.remainingUnits, data.aggregate.remainingUnits! - 1); assert.equal(after!.activeServiceCount, 1);
+      console.log('PASS physical schema4 approved descriptor/schema2 quarter target roundtrip, immutable duplicate conflict, reserve commit/lost ACK and exact replay');
+      // Same existing physical fixture, now the real actor-bound v3 producer path.
+      // Identity verification is synthetic; identity hashing, intake, target storage,
+      // quote, preflight, reserve transaction and cross-connection replay are real.
+      process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = 'iSkq6G';
+      const actorData = quarterFixture().state;
+      actorData.mapping.tenantId = 'iSkq6G'; actorData.mapping.mappingId += ':actor3';
+      actorData.mapping.subscriptionTypeId += ':actor3';
+      actorData.mapping.providerScope = { kind: 'TENANT', scopeId: 'iSkq6G' };
+      actorData.publication.publicationId += ':actor3';
+      actorData.publication.idempotency = { ...actorData.publication.idempotency!, key: 'quarter-actor-v3-publication-key' };
+      actorData.publication.mappingId = actorData.mapping.mappingId;
+      actorData.publication.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.publication.runtimeProjection.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(actorData.publication.runtimeProjection);
+      actorData.instance.tenantId = 'iSkq6G'; actorData.instance.subscriptionInstanceId += ':actor3';
+      actorData.instance.subscriptionTypeId = actorData.mapping.subscriptionTypeId;
+      actorData.instance.policyDigest = actorData.publication.policyDigest;
+      actorData.instance.mappingId = actorData.mapping.mappingId;
+      actorData.instance.providerClientId = 'physical-actor-three';
+      actorData.instance.clientSubscriptionId = 'physical-actor-three-subscription';
+      actorData.instance.clientRefHash = computeSubscriptionClientRefHash({ pepper: quarterSettings.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER,
+        tenantId: 'iSkq6G', providerClientId: actorData.instance.providerClientId });
+      actorData.aggregate.subscriptionInstanceId = actorData.instance.subscriptionInstanceId;
+      await quarterRepository.insertRuntimeProviderMapping(structuredClone(actorData.mapping));
+      await quarterRepository.insertRuntimePolicyPublication(structuredClone(actorData.publication));
+      await quarterRepository.insertRuntimeInstance(structuredClone(actorData.instance));
+      await quarterRepository.insertRuntimeEntitlementAggregate(structuredClone(actorData.aggregate));
+      class PhysicalActor extends SubscriptionTrustedShadowAdapterService { protected now(): Date { return new Date(QUARTER_NOW); } }
+      const authenticated = { tenantKey: 'iSkq6G', clientId: actorData.instance.providerClientId, issuer: 'synthetic', subject: 'synthetic' };
+      const verified = { verifyTrustedBearer: async (header: string) => {
+        assert.equal(header, 'Bearer physical-synthetic-actor'); return { actor: authenticated };
+      } };
+      const trusted = new PhysicalActor(verified as any, realQuote, resolver);
+      const actorIntake = new CanonicalTargetIntakeService(quarterRepository, trusted);
+      const { clientRefHash: _privateHash, ...targetInput } = quarterIntakeBody();
+      const actorInput = { ...targetInput, contractVersion: 3, subscriptionInstanceId: actorData.instance.subscriptionInstanceId,
+        subscriptionTypeId: actorData.publication.subscriptionTypeId, publicationId: actorData.publication.publicationId };
+      const actorIngest = () => actorIntake.ingest(QUARTER_TOKEN, actorInput,
+        { authorizationHeader: 'Bearer physical-synthetic-actor', now: () => new Date(QUARTER_NOW) });
+      const actorTarget = await actorIngest(); assert.equal(actorTarget.replay, false);
+      assert.equal((await actorIngest()).replay, true);
+      const persistedActorTarget = await repositories[2].runtimeCanonicalTargetSnapshot({ ...targetQuery, tenantId: 'iSkq6G' });
+      assert.equal(persistedActorTarget!.createQuarter!.binding.clientRefHash, actorData.instance.clientRefHash);
+      assert.doesNotMatch(JSON.stringify(actorTarget), /clientRefHash|tenantId|providerClientId|pepper/);
+      const actorService = new QuarterLifecycle(trusted, realQuote, quarterRepository);
+      const actorRequest = { ...request, subscriptionInstanceId: actorData.instance.subscriptionInstanceId };
+      const actorPreflight = await actorService.preflight('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorRequest);
+      const actorBound = { subscriptionInstanceId: actorRequest.subscriptionInstanceId, action: actorRequest.action,
+        target: actorRequest.target, expectations: actorPreflight.expectations };
+      quarterRepository.reserveRuntimeEntitlement = async input => { await write(input); throw Error('actor-v3 committed ACK lost'); };
+      await assert.rejects(actorService.reserve('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorBound,
+        { idempotencyKey: 'physical-actor-original-operation' }), /actor-v3 committed ACK lost/);
+      quarterRepository.reserveRuntimeEntitlement = write;
+      const replayTrusted = new PhysicalActor(verified as any, new QuarterQuote(repositories[2]), new QuarterResolver(repositories[2]));
+      const actorReplay = await new QuarterLifecycle(replayTrusted, new QuarterQuote(repositories[2]), repositories[2])
+        .reserve('Bearer physical-synthetic-actor', QUARTER_TOKEN, actorBound, { idempotencyKey: 'physical-actor-original-operation' });
+      assert.equal(actorReplay.replayed, true); assert.equal(actorReplay.decision!.usageUnits, 1);
+      assert.equal(actorReplay.decision!.money.basePriceMinor! * 4, targetInput.price.amountMinor);
+      assert.equal(actorReplay.decision!.money.finalPriceMinor, 0);
+      authenticated.clientId = 'foreign-physical-actor';
+      await assert.rejects(actorIngest());
+      assert.equal(await db.collection('subscription_canonical_target_snapshots').countDocuments({ ...targetQuery, tenantId: 'iSkq6G' }), 1);
+      assert.equal(await db.collection('subscription_operations').countDocuments({ subscriptionInstanceId: actorData.instance.subscriptionInstanceId }), 1);
+      assert.equal(await db.collection('subscription_usage_ledger').countDocuments({ operationId: actorReplay.operationId }), 1);
+      assert.deepEqual(await db.collection('subscription_canonical_target_snapshots').listIndexes().toArray(), indexBefore);
+      console.log('PASS physical actor-bound v3 canonical tenant/hash/owned instance, target/preflight/reserve/lost-ACK replay; no identity export or duplicate usage');
+    } finally { for (const [key, value] of Object.entries(quarterPrevious)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
     console.log('Canonical entitlement Mongo tests: PASS; policy/identity synthetic; provider writes=0; skipped=0');
   } finally {
     try {

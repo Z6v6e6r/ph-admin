@@ -1,3 +1,4 @@
+import type { CreateQuarterDescriptor, CreateQuarterProvenance } from './subscription-create-quarter-contract';
 export type SubscriptionTypeState = 'DRAFT' | 'ACTIVE' | 'ARCHIVED';
 export type SubscriptionPolicyStatus = 'DRAFT' | 'PUBLISHED' | 'SUPERSEDED';
 export type SubscriptionPolicyApplyTo = 'NEW_ONLY' | 'ACTIVE_AND_NEW';
@@ -684,7 +685,9 @@ export interface SubscriptionRuntimeProjectionSnapshot {
 }
 
 export interface StoredSubscriptionPolicyPublication {
-  schemaVersion: 1 | 2 | 3;
+  createQuarterDescriptor?: CreateQuarterDescriptor;
+  createQuarterDescriptorDigest?: string;
+  schemaVersion: 1 | 2 | 3 | 4;
   publicationId: string;
   subscriptionTypeId: string;
   policyVersion: number;
@@ -962,6 +965,7 @@ export interface SubscriptionShadowQuoteIdentityContext {
 }
 
 export interface SubscriptionShadowQuoteResolvedTarget {
+  createQuarter?: CreateQuarterProvenance;
   resolutionSource: 'SERVER';
   targetId: string;
   stationId: string;
@@ -983,7 +987,8 @@ export interface SubscriptionShadowQuoteResolvedTarget {
 export type SubscriptionCanonicalTargetSnapshotState = 'ACTIVE' | 'REVOKED';
 
 export interface StoredSubscriptionCanonicalTargetSnapshot {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  createQuarter?: CreateQuarterProvenance;
   snapshotId: string;
   tenantId: string;
   targetId: string;
@@ -1100,6 +1105,8 @@ export interface SubscriptionProviderMappingPreview {
 }
 
 export interface SubscriptionPolicyPublicationPreview {
+  createQuarterDescriptor?: CreateQuarterDescriptor;
+  createQuarterDescriptorDigest?: string;
   subscriptionTypeId: string;
   policyVersion: number;
   policyStatus: 'DRAFT';

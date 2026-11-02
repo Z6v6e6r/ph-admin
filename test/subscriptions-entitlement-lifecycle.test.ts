@@ -816,6 +816,56 @@ async function testMutationDtoTrustBoundary(): Promise<void> {
   })).some((error) => error.property === 'reason'));
 }
 
+async function testUnusedCreateRelease(): Promise<void> {
+  const names = ['SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT', 'SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET', 'SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS'];
+  const before = names.map(k => process.env[k]);
+  const secret = 'synthetic-unused-create-owner-secret-32';
+  try {
+    process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED = 'true';
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_STRICT = 'false';
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_SECRET = secret;
+    process.env.SUBSCRIPTIONS_OWNER_EVIDENCE_MAX_AGE_SECONDS = '60';
+    const fresh = async () => {
+      const f = serviceFixture();
+      const r = await f.service.reserve('Bearer token', 'integration-token', reserveDto(), { idempotencyKey: 'unused-quarter-reservation' });
+      const dto = { operationId: r.operationId!, reason: 'PRECREATE_EXPIRED_NOT_DISPATCHED' as const };
+      const proof = createOwnerReleaseEvidence({ ...dto, providerBookingId: null, issuedAt: NOW }, secret);
+      return { ...f, dto, proof };
+    };
+    const f = await fresh();
+    await assert.rejects(f.service.release('Bearer token', 'integration-token', f.dto), ForbiddenException);
+    const wrong = createOwnerReleaseEvidence({ operationId: f.dto.operationId, reason: 'PROVIDER_REJECTED', providerBookingId: null, issuedAt: NOW }, secret);
+    await assert.rejects(f.service.release('Bearer token', 'integration-token', f.dto, wrong), ForbiddenException);
+    assert.equal(f.repository.transitionCalls, 0);
+    const result = await Promise.all([f.service.release('Bearer token', 'integration-token', f.dto, f.proof), f.service.release('Bearer token', 'integration-token', f.dto, f.proof)]);
+    assert.deepEqual(result.map(x => x.replayed).sort(), [false, true]);
+    assert.equal(f.repository.aggregate.remainingUnits, 10);
+    assert.equal(f.repository.aggregate.activeServiceCount, 0);
+    assert.equal(f.repository.ledgers.length, 2); assert.equal(f.repository.outboxes.length, 2);
+    assert.equal(f.repository.operations.get(f.dto.operationId)!.lastReconciliationResult, f.dto.reason);
+    await assert.rejects(f.service.release('Bearer token', 'integration-token', f.dto), ForbiddenException);
+    for (const corrupt of [
+      (x: Awaited<ReturnType<typeof fresh>>) => { x.repository.operations.get(x.dto.operationId)!.actor.actorId = 'f'.repeat(64); },
+      (x: Awaited<ReturnType<typeof fresh>>) => { const d = x.repository.operations.get(x.dto.operationId)!.decision; assert.equal(d?.decisionKind, 'ENTITLEMENT'); if (d?.decisionKind === 'ENTITLEMENT') d.action = 'JOIN_GAME'; },
+      (x: Awaited<ReturnType<typeof fresh>>) => { x.repository.operations.get(x.dto.operationId)!.providerCorrelationId = 'booking:foreign'; },
+      (x: Awaited<ReturnType<typeof fresh>>) => { x.repository.operations.get(x.dto.operationId)!.providerEvidenceRefs = ['viva:booking:foreign']; },
+      (x: Awaited<ReturnType<typeof fresh>>) => { x.repository.aggregate.activeServices[0].targetId = 'exercise:foreign'; },
+      (x: Awaited<ReturnType<typeof fresh>>) => { x.repository.aggregate.activeServices[0].startsAt = '2026-09-01T10:00:00.000Z'; }
+    ]) {
+      const x = await fresh(); corrupt(x);
+      await assert.rejects(x.service.release('Bearer token', 'integration-token', x.dto, x.proof));
+      assert.equal(x.repository.transitionCalls, 0);
+    }
+    const confirmed = await fresh();
+    await confirmed.service.confirm('Bearer token', 'integration-token', { operationId: confirmed.dto.operationId, providerBookingId: 'booking:created' });
+    const held = JSON.stringify(confirmed.repository.aggregate);
+    await assert.rejects(confirmed.service.release('Bearer token', 'integration-token', confirmed.dto, confirmed.proof), ConflictException);
+    assert.equal(JSON.stringify(confirmed.repository.aggregate), held);
+    const dto = plainToInstance(ReleaseSubscriptionEntitlementDto, f.dto);
+    assert.equal((await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).length, 0);
+  } finally { names.forEach((k, i) => { if (before[i] === undefined) delete process.env[k]; else process.env[k] = before[i]; }); }
+}
+
 async function run(): Promise<void> {
   const originalFlag = process.env.SUBSCRIPTIONS_ENTITLEMENT_RESERVATION_ENABLED;
   try {
@@ -827,6 +877,7 @@ async function run(): Promise<void> {
     await testFullPriceFallbackAndGuards();
     await testStrictOwnerEvidence();
     await testStrictReleaseEvidenceAndRecovery();
+    await testUnusedCreateRelease();
     await testReleaseControllerHeader();
     await testMutationDtoTrustBoundary();
   } finally {

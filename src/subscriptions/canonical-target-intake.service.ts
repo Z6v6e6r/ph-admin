@@ -1,10 +1,14 @@
+import { assertQuarterCorrespondence, parseQuarterIntake, quarterBinding, quarterTargetEvidence, quarterPriceEvidence, QUARTER_EVENT, CreateQuarterProvenance } from './subscription-create-quarter-contract';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { validateStoredSubscriptionCanonicalTargetSnapshot } from './subscription-runtime-contracts';
+import { Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { validateStoredSubscriptionCanonicalTargetSnapshot, validateStoredSubscriptionInstance, validateStoredSubscriptionProviderMapping } from './subscription-runtime-contracts';
+import { subscriptionProviderScopeMatchesProjection } from './subscription-provider-scope';
+import { SubscriptionTrustedShadowAdapterService } from './subscription-trusted-shadow-adapter.service';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   StoredSubscriptionCanonicalTargetSnapshot,
+  StoredSubscriptionInstance,
   SubscriptionAction
 } from './subscriptions.types';
 
@@ -129,16 +133,25 @@ export function parseCanonicalTargetIntakeBody(value: unknown): CanonicalTargetI
  */
 @Injectable()
 export class CanonicalTargetIntakeService {
-  public constructor(private readonly repository: SubscriptionsRepository) {}
+  public constructor(
+    private readonly repository: SubscriptionsRepository,
+    @Optional() private readonly trustedIdentity?: SubscriptionTrustedShadowAdapterService
+  ) {}
 
   public async ingest(
     integrationToken: string | undefined,
     body: unknown,
-    options: { readonly now?: () => Date } = {}
+    options: { readonly now?: () => Date; readonly authorizationHeader?: string } = {}
   ): Promise<CanonicalTargetIntakeResult> {
     this.assertEnabledAndConfigured();
     this.assertIntegrationToken(integrationToken);
+    if (record(body) && body.contractVersion === 3) {
+      return this.ingestActorQuarter(integrationToken, options.authorizationHeader, body, options.now?.() ?? new Date());
+    }
     const tenantId = this.runtimeTenantId();
+    if (record(body) && Object.prototype.hasOwnProperty.call(body, 'contractVersion')) {
+      return this.ingestQuarter(tenantId, body, options.now?.() ?? new Date());
+    }
     const target = parseCanonicalTargetIntakeBody(body);
     const createdAt = (options.now?.() ?? new Date()).toISOString();
     const snapshot: StoredSubscriptionCanonicalTargetSnapshot = {
@@ -195,6 +208,95 @@ export class CanonicalTargetIntakeService {
     return { ...identity(target), snapshotId: existing.snapshotId, replay: true };
   }
 
+  private async ingestActorQuarter(
+    token: string | undefined, authorization: string | undefined, body: Record<string, unknown>, now: Date
+  ): Promise<CanonicalTargetIntakeResult> {
+    // Authenticate before any database read. Public LK2 tenant UUIDs are not CUP tenant keys.
+    if (!this.trustedIdentity) throw new CanonicalTargetIntakeError(503, 'CANONICAL_TARGET_ACTOR_UNAVAILABLE');
+    const actor = await this.trustedIdentity.resolveTargetIntakeIdentity(authorization, token);
+    if (Object.prototype.hasOwnProperty.call(body, 'clientRefHash')
+      || body.state !== 'ACTIVE' || typeof body.subscriptionInstanceId !== 'string'
+      || !ID_PATTERN.test(body.subscriptionInstanceId) || /[\r\n]/.test(body.subscriptionInstanceId)) {
+      throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID');
+    }
+    const { subscriptionInstanceId, ...facts } = body;
+    let input: ReturnType<typeof parseQuarterIntake>;
+    try { input = parseQuarterIntake({ ...facts, contractVersion: 2, clientRefHash: actor.clientRefHash }); }
+    catch { throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID'); }
+    await this.repository.connectReadOnly();
+    const instance = await this.repository.runtimeInstanceByTenantAndId(actor.tenantId, subscriptionInstanceId);
+    try { if (!instance) throw new Error(); validateStoredSubscriptionInstance(instance); }
+    catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH'); }
+    if (!instance || instance.tenantId !== actor.tenantId || instance.clientRefHash !== actor.clientRefHash
+      || instance.subscriptionInstanceId !== subscriptionInstanceId || instance.provider !== 'VIVA' || instance.state !== 'ACTIVE'
+      || instance.subscriptionTypeId !== input.subscriptionTypeId || instance.policyVersion !== input.policyVersion) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+    }
+    return this.ingestQuarter(actor.tenantId, input, now, instance);
+  }
+
+  private async ingestQuarter(tenantId: string, body: unknown, now: Date, ownedInstance?: StoredSubscriptionInstance): Promise<CanonicalTargetIntakeResult> {
+    let input: ReturnType<typeof parseQuarterIntake>;
+    try { input = parseQuarterIntake(body); } catch { throw new CanonicalTargetIntakeError(400, 'CANONICAL_TARGET_BODY_INVALID'); }
+    const staleness = Number(process.env.SUBSCRIPTIONS_SHADOW_QUOTE_MAX_STALENESS_SECONDS);
+    if (!Number.isSafeInteger(staleness) || staleness < 30 || staleness > 3600) {
+      throw new CanonicalTargetIntakeError(503, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    }
+    if (Date.parse(input.observedAt) > now.getTime() || now.getTime() - Date.parse(input.observedAt) > staleness * 1000
+      || Date.parse(input.expiresAt) <= now.getTime() || Date.parse(input.startsAt) <= now.getTime()) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_STALE');
+    }
+    // VERIFY_ONLY never creates indexes. The authenticated intake may insert only into the existing target store.
+    await this.repository.connectReadOnly();
+    const publication = await this.repository.runtimePolicyPublicationByVersion(input.subscriptionTypeId, input.policyVersion);
+    if (!publication) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    if (ownedInstance && (publication.policyDigest !== ownedInstance.policyDigest
+      || publication.mappingId !== ownedInstance.mappingId || publication.publicationId !== input.publicationId)) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+    }
+    const mapping = await this.repository.runtimeProviderMappingById(publication.mappingId);
+    if (!mapping || mapping.tenantId !== tenantId || mapping.state !== 'VERIFIED' || mapping.provider !== 'VIVA'
+      || mapping.subscriptionTypeId !== input.subscriptionTypeId) throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_UNAVAILABLE');
+    if (ownedInstance) {
+      try { validateStoredSubscriptionProviderMapping(mapping); }
+      catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH'); }
+      const fresh = (value: string | null) => Boolean(value && Number.isFinite(Date.parse(value))
+        && Date.parse(value) <= now.getTime() && now.getTime() - Date.parse(value) <= staleness * 1000);
+      if (mapping.mappingId !== ownedInstance.mappingId || mapping.providerProductId !== ownedInstance.providerProductId
+        || (mapping.providerScope.kind === 'TENANT' && mapping.providerScope.scopeId !== tenantId)
+        || (mapping.providerScope.kind === 'STATION' && mapping.providerScope.scopeId !== ownedInstance.homeStationId)
+        || mapping.providerScope.kind === 'STUDIO'
+        || (mapping.providerScope.kind === 'STATION_SET'
+          && !subscriptionProviderScopeMatchesProjection(mapping.providerScope, publication.runtimeProjection, tenantId))
+        || publication.state === 'DISABLED_FOR_NEW_OPERATIONS' || !fresh(mapping.verifiedAt)
+        || ownedInstance.reconciliation.state !== 'CURRENT' || !fresh(ownedInstance.reconciliation.asOf)) {
+        throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_ACTOR_INSTANCE_MISMATCH');
+      }
+    }
+    let descriptor: ReturnType<typeof assertQuarterCorrespondence>;
+    try { descriptor = assertQuarterCorrespondence(input, publication); }
+    catch { throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_QUARTER_MISMATCH'); }
+    const proof: CreateQuarterProvenance = { schemaVersion: 1, binding: quarterBinding(input, descriptor),
+      subscriptionTypeId: publication.subscriptionTypeId, policyVersion: publication.policyVersion,
+      policyDigest: publication.policyDigest, approvalAuditRef: publication.approvalAuditRef, roomId: input.roomId,
+      catalogue: input.catalogue, price: input.price };
+    const target = { targetId: input.targetId, action: 'CREATE_GAME' as const, revision: input.revision };
+    const snapshot: StoredSubscriptionCanonicalTargetSnapshot = { schemaVersion: 2, snapshotId: snapshotIdFor(tenantId, target),
+      tenantId, ...target, state: input.state, stationId: input.stationId, category: 'GAME', externalEventTypeId: QUARTER_EVENT,
+      productTypeId: null, durationMinutes: 60, startsAt: input.startsAt, basePriceMinor: input.price.amountMinor / 4,
+      currency: 'RUB', dictionaryRevision: publication.dictionaryRevision, evidenceRef: quarterTargetEvidence(tenantId, input, proof),
+      priceEvidenceRef: quarterPriceEvidence(input), sourceKind: 'CANONICAL_TARGET_PROJECTION', observedAt: input.observedAt,
+      expiresAt: input.expiresAt, createdAt: now.toISOString(), createQuarter: proof };
+    validateStoredSubscriptionCanonicalTargetSnapshot(snapshot);
+    try { await this.repository.insertRuntimeCanonicalTargetSnapshot(snapshot); return { ...target, snapshotId: snapshot.snapshotId, replay: false }; }
+    catch (error) { if (!this.repository.isDuplicateKey(error)) throw error; }
+    const existing = await this.repository.runtimeCanonicalTargetSnapshot({ tenantId, ...target });
+    if (!existing || !isDeepStrictEqual({ ...existing, createdAt: snapshot.createdAt }, snapshot)) {
+      throw new CanonicalTargetIntakeError(409, 'CANONICAL_TARGET_INTAKE_CONFLICT');
+    }
+    return { ...target, snapshotId: existing.snapshotId, replay: true };
+  }
+
   private runtimeTenantId(): string {
     const tenantId = String(process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID ?? '').trim();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(tenantId)) {
@@ -246,7 +348,7 @@ function identity(target: CanonicalTargetIntakeBody) {
   };
 }
 
-function snapshotIdFor(tenantId: string, target: CanonicalTargetIntakeBody): string {
+function snapshotIdFor(tenantId: string, target: Pick<CanonicalTargetIntakeBody, 'targetId' | 'action' | 'revision'>): string {
   const digest = createHash('sha256')
     .update(`canonical-target:v1\0${tenantId}\0${target.targetId}\0${target.action}\0${target.revision}`)
     .digest('hex')

@@ -1,3 +1,4 @@
+import { quarterSnapshotInput, assertQuarterCorrespondence } from './subscription-create-quarter-contract';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
@@ -77,7 +78,19 @@ export class SubscriptionCanonicalTargetResolverService {
         'Canonical subscription target has expired'
       );
     }
+    if (snapshot.schemaVersion === 2) {
+      const proof = snapshot.createQuarter!;
+      const publication = await this.repository.runtimePolicyPublicationByVersion(proof.subscriptionTypeId, proof.policyVersion);
+      const mapping = publication ? await this.repository.runtimeProviderMappingById(publication.mappingId) : null;
+      try {
+        if (!publication || !mapping || mapping.tenantId !== reference.tenantId || mapping.state !== 'VERIFIED'
+          || mapping.provider !== 'VIVA' || mapping.subscriptionTypeId !== proof.subscriptionTypeId
+          || proof.policyDigest !== publication.policyDigest || proof.approvalAuditRef !== publication.approvalAuditRef) throw new Error();
+        assertQuarterCorrespondence(quarterSnapshotInput(snapshot), publication);
+      } catch { this.unavailable('SUBSCRIPTIONS_CREATE_QUARTER_UNAVAILABLE', 'Approved organizer quarter target is not available'); }
+    }
     return {
+      ...(snapshot.schemaVersion === 2 ? { createQuarter: snapshot.createQuarter } : {}),
       resolutionSource: 'SERVER',
       targetId: snapshot.targetId,
       stationId: snapshot.stationId,

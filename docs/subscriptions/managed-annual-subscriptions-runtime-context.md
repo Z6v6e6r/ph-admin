@@ -237,3 +237,87 @@ SUBSCRIPTIONS_ACTIVATION_DEADLINE_BATCH_SIZE=<1..200>
 
 Create 90/120 add-ons, group training and tournament discounts remain closed
 until exact Viva prices, product/event ids and discount rules are published.
+
+
+## Schema4 quarter publication: immutable instance adoption
+
+This source-only extension does not activate sales, publish a policy, purchase a provider
+subscription, run a migration, or rebind an existing instance. It uses the existing
+projector flags, target/input/plan/approval attestations, read-only check and explicit
+apply command. Schema3 publications retain the existing schema2 `INITIAL_FULL` input
+and exact replay. Dev exact-allowlist input and historical legacy binding promotion
+remain unchanged; neither can adopt a schema4 publication.
+
+For an already checkpointed product, a strict validated schema4 quarter publication
+requires a production manifest with `schemaVersion: 4`, the same complete-snapshot
+source/producer/authority fields, and exactly this additional object:
+
+```text
+reconciliation: {
+  mode: "FULL_RECONCILIATION",
+  previousCheckpointSha256: "sha256:<canonical full previous checkpoint>",
+  previousCheckpointRevision: <positive integer>,
+  previousCheckpointCreatedAt: "<canonical ISO instant>",
+  existingInstances: [
+    { subscriptionInstanceId: "<internal id>", sha256: "sha256:<canonical entire stored instance>" }
+  ]
+}
+```
+
+Pins must be unique and sorted by instance id. Canonical JSON recursively sorts object
+keys by code unit and preserves array order; SHA-256 uses its UTF-8 bytes. The input
+hash covers the previous checkpoint and pins. The plan/reconciliation digests commit
+that preimage, all final instance bytes and the complete publication-history digest,
+including the quarter descriptor. No public client receives these private artifacts.
+The existing 500-record bound applies; no partial catalogue, pagination truncation or
+missing old identity is accepted.
+
+The complete provider snapshot must include every existing product instance. Its
+purchase identity, price, policy period, state, activation dates and original payment/
+instance evidence must agree with the stored instance. Observation/readback metadata
+may be newer, but **all old stored bytes are retained**, including revision, state,
+readback and reconciliation fields. This path is not lifecycle reconciliation.
+Only identities absent from all existing pins and purchased at or after the current
+schema4 publication's effectiveAt can be inserted. An unknown older purchase, changed
+old pin, omitted identity, history/descriptor drift or invalid previous checkpoint
+fails before writes. No inferred migration/backfill or old-instance policy upgrade.
+
+The existing checkpoint schema3 supports `FULL_RECONCILIATION`: revision advances by
+one, original createdAt is retained, insertedCount counts only new identities,
+replayedCount counts unchanged old identities, and updatedCount is zero. One Mongo
+snapshot/majority transaction compares the exact previous checkpoint and complete
+instance set, validates current mapping/publication history/release/fence, then CASes
+the fence, inserts only new instances and CASes the checkpoint. Failure rolls back
+all of those writes. Existing sale binding now CASes the same coordinationRevision
+before its original instance/operation/ledger/outbox inserts; the stale participant
+in a concurrent sale/adoption race must retry its read or fail without partial state.
+Exact stored sale replay is checked before mutable fence/readiness snapshots.
+
+For a lost projector response retain the **original** manifest and attestations. Its
+previous-checkpoint preimage and pinned rows reconstruct the identical final plan;
+exact final checkpoint/rows/fence return `EXACT_REPLAY` without another write. Do not
+refresh the snapshot or manufacture a new previous checkpoint to retry an ambiguous
+apply. This is **conditional replay**, only while the complete instance set, pinned
+rows, current history and fence still match. A later sale adds an instance; a later
+activation/readback can change old pins. Either makes the original retry fail closed
+without writes, even when the latest checkpoint still names the committed run. Inspect
+that original checkpoint under read-only authority; do not infer that the apply failed,
+repeat it with a new preimage, or call this a general historical receipt API. A new
+snapshot/apply requires a fresh reviewed attestation and separate runtime authority.
+Readiness reports purchase-identity adoption plus snapshot asOf/freshness, not live
+provider state or postcommit activation status. Existing activation gates still apply.
+
+Activation prerequisites (not performed here): approved authoritative complete provider
+snapshot/normalization/evidence; validated schema4 publication and current mapping/
+release; coherent upgraded projector and sale writers; **all old in-flight sale
+transactions drained**; exact target/input/plan approval; CI physical transaction proof
+and intended runtime acceptance. An old writer already inside a schema3 snapshot can
+insert after a newer publication because it lacks the fence CAS. Schema4 readiness
+rejection alone cannot protect that mixed-version window. No mixed-writer guarantee.
+
+Rollback is source-only until explicitly activated. After adoption, an old binary
+rejects schema4; do not downgrade the publication, delete the checkpoint, rewrite old
+instances, or roll the sale writer back while this mode is permitted. Stop future
+adoption/sales through the existing approved controls and retain committed evidence;
+use a separately reviewed forward repair if reconciliation is required. No new flag,
+collection, index, provider credential or provider-write endpoint is introduced.

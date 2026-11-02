@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException, HttpException, NotFoundException,
   ServiceUnavailableException, UnauthorizedException, ValidationPipe } from '@nestjs/common';
@@ -16,6 +18,7 @@ import { SubscriptionsRepository } from '../src/subscriptions/subscriptions.repo
 import { StoredSubscriptionRuntimeOperation } from '../src/subscriptions/subscriptions.types';
 import { aggregateFixture, quoteFixture, NOW } from './helpers/subscription-entitlement-fixtures';
 
+const unusedReceipt = JSON.parse(readFileSync(join(__dirname, 'fixtures/quarter-create-expired-v2.json'), 'utf8')).receipt;
 const TOKEN = 'synthetic-readback-integration-token-only';
 const PEPPER = 'synthetic-readback-hash-pepper-only-32';
 const TENANT = 'tenant:piter';
@@ -101,6 +104,7 @@ export async function runEntitlementReadbackTests(): Promise<void> {
       { state: 'RESERVED', compensationState: 'NONE', lastReconciliationResult: 'ENTITLEMENT_RESERVED', terminalAt: null },
       { state: 'CONFIRMED', compensationState: 'NONE', lastReconciliationResult: 'BOOKING_CONFIRMED',
         providerCorrelationId: 'booking:provider-1', providerEvidenceRefs: ['viva:booking:provider-1'], terminalAt: NOW },
+      { lastReconciliationResult: unusedReceipt.reason, providerCorrelationId: null },
       { compensationState: 'PENDING' }, { lastReconciliationResult: 'unrelated-reconcile' },
       { lastReconciliationResult: 'BOOKING_CANCELLED', providerCorrelationId: 'booking:provider-1' }
     ] as const) {
@@ -112,7 +116,7 @@ export async function runEntitlementReadbackTests(): Promise<void> {
       assert.equal(result.operationState, f.row.state);
       assert.equal(result.compensationState, f.row.compensationState);
       assert.equal(result.providerBookingId, f.row.providerCorrelationId);
-      assert.equal(result.releaseReason, ['PROVIDER_REJECTED', 'BOOKING_CANCELLED'].includes(f.row.lastReconciliationResult!)
+      assert.equal(result.releaseReason, ['PROVIDER_REJECTED', 'BOOKING_CANCELLED', unusedReceipt.reason].includes(f.row.lastReconciliationResult!)
         ? f.row.lastReconciliationResult : null);
       assert.deepEqual(f.row, stored);
     }
