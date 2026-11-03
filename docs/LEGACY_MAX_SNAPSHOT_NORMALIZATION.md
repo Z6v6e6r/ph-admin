@@ -146,3 +146,9 @@ Mongo, or detached sends, does not authorize restart, and does not restore timer
 Its `PHAB_CUP83_PRE_DRAIN_FENCE_V1` receipt is distinct from the completed diagnostic
 export receipt: current diagnostic-only normalization does not yet accept it. A full
 first-restart operator and receipt integration remain required before live use.
+
+## Web history compatibility
+
+The legacy web connector can retain PENDING outbox commands while the same reply is already available from persisted message history. First-restart custody must preserve both domains and original IDs; it must not infer missing delivery, ACK, resend or mark these commands FAILED from that status alone. The MAX-only importer is not a web-history reconstruction tool.
+
+`test/support-web-history-custody.test.ts` exercises the real SupportService with synthetic in-memory persistence: replies remain readable while commands stay PENDING; repeated reads do not lease/ACK; reconstruction preserves message/command IDs without enqueue; unauthorized reads reject without changing state. This is LOCAL compatibility evidence, not proof of live Mongo completeness or absence of an external web pull consumer.
