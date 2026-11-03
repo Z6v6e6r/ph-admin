@@ -124,3 +124,25 @@ An already active sync must refuse this admission before mutations. The later HT
 drain/final capture and old-process stop remain separate reviewed operations. This
 helper preserves the supplied known-ID union; it cannot recover a historical ID
 already absent from every retained Map and durable namespace.
+
+
+## CUP83 pre-drain primitive
+
+`captureAndFenceCup83Support` is a synchronous, target-process function with no CLI,
+Inspector attachment, signal, service stop, database or provider path. An independently
+reviewed operator must pin the loaded module/prototype/process, own the release lock and
+Inspector, and provide a new private directory. It refuses active Support hydration,
+unknown descriptors, oversized/nondata Maps, existing artifacts and unsafe paths.
+It serializes and fsyncs the pre-drain MAX Map before clearing the two Support timers
+and setting its sync interval to zero in the same JavaScript turn. No application
+callback can modify that Map between capture and fence. Raw rows stay in the private
+file; the returned receipt contains only hash/counts and always `drainProven:false`.
+
+Any lost acknowledgement or error after a snapshot file exists forbids replay. The file
+can survive a failed write/fsync and is not evidence of a successful fence; the owner
+must reconcile its exact bytes and receipt. Failure after timer changes must not be
+reported as unchanged state. This primitive does not drain HTTP, tournament producers,
+Mongo, or detached sends, does not authorize restart, and does not restore timers.
+Its `PHAB_CUP83_PRE_DRAIN_FENCE_V1` receipt is distinct from the completed diagnostic
+export receipt: current diagnostic-only normalization does not yet accept it. A full
+first-restart operator and receipt integration remain required before live use.
