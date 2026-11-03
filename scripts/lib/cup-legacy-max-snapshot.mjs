@@ -156,15 +156,20 @@ export function normalizeCup83MaxSnapshot(inputs, expected) {
 /** Draft union only. All old namespaces and every input byte must remain retained.
  * Capture/freeze, namespace completeness, target preparation and live import are
  * independently verified by the operator; this pure function cannot establish them. */
-export function buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs, expected) {
-  exact(expected, ['mapContextSha256', 'inventories'], 'UNION_EXPECTED');
+export function buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs, expected, additionalMaps = []) {
+  need(Array.isArray(additionalMaps) && additionalMaps.length <= 2, 'UNION_MAP_COUNT');
+  const multi = additionalMaps.length > 0;
+  exact(expected, ['mapContextSha256', 'inventories', ...(multi ? ['additionalMapContextSha256'] : [])], 'UNION_EXPECTED');
   need(expected.mapContextSha256 === hash(encoded(mapExpected)), 'UNION_MAP_CONTEXT');
+  if (multi) need(Array.isArray(expected.additionalMapContextSha256)
+    && expected.additionalMapContextSha256.length === additionalMaps.length, 'UNION_MAP_CONTEXT');
   need(Array.isArray(durableInputs) && Array.isArray(expected.inventories)
     && durableInputs.length >= 1 && durableInputs.length <= 3
     && durableInputs.length === expected.inventories.length, 'UNION_INVENTORIES');
   const normalized = normalizeCup83MaxSnapshot(mapInputs, mapExpected);
   const map = normalized.snapshot ? JSON.parse(normalized.snapshot) : { commands: [] };
-  const capturedAt = JSON.parse(mapInputs.captured).at;
+  let capturedAt = JSON.parse(mapInputs.captured).at;
+  const additionalMapEvidence = [];
   const rows = new Map(), origins = new Map(), namespaces = new Set();
   const mutable = new Set(['status', 'attempts', 'leasedUntil', 'lastError']);
   const immutable = row => Object.fromEntries(Object.entries(row).filter(([key]) => !mutable.has(key)));
@@ -179,6 +184,23 @@ export function buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs,
     origins.get(row.id).push(origin);
   }
   for (const [index, row] of map.commands.entries()) add(row, { kind: 'MAP', index });
+  for (const [mapIndex, bundle] of additionalMaps.entries()) {
+    exact(bundle, ['inputs', 'expected'], 'UNION_MAP_BUNDLE');
+    need(expected.additionalMapContextSha256[mapIndex] === hash(encoded(bundle.expected))
+      && isDeepStrictEqual(bundle.expected.source, mapExpected.source)
+      && isDeepStrictEqual(bundle.expected.identity, mapExpected.identity)
+      && bundle.expected.targetFingerprint === mapExpected.targetFingerprint, 'UNION_MAP_CONTEXT');
+    const next = normalizeCup83MaxSnapshot(bundle.inputs, bundle.expected);
+    const at = JSON.parse(bundle.inputs.captured).at;
+    need(timestamp(at) >= timestamp(capturedAt), 'UNION_MAP_ORDER');
+    capturedAt = at;
+    totalBytes += bundle.inputs.raw.length;
+    need(totalBytes <= 128 * 1024 * 1024, 'UNION_INPUT_BYTES');
+    const nextMap = next.snapshot ? JSON.parse(next.snapshot) : { commands: [] };
+    for (const [index, row] of nextMap.commands.entries()) add(row, { kind: 'MAP', map: mapIndex + 1, index });
+    additionalMapEvidence.push({ inputSha256: bundle.expected.hashes,
+      normalizationReceipt: JSON.parse(next.receipt), undefinedPaths: JSON.parse(next.undefinedPaths) });
+  }
   for (const [index, bytes] of durableInputs.entries()) {
     const pin = expected.inventories[index];
     exact(pin, ['sha256', 'targetFingerprint'], 'UNION_INVENTORY_PIN');
@@ -226,12 +248,14 @@ export function buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs,
     bytes += size + (batch.length ? 1 : 0); batch.push(row);
   }
   flush();
-  const provenance = encoded({ schema: 'PHAB_CUP83_MAX_UNION_PROVENANCE_V1',
+  const provenance = encoded({ schema: multi ? 'PHAB_CUP83_MAX_UNION_PROVENANCE_V2' : 'PHAB_CUP83_MAX_UNION_PROVENANCE_V1',
     mapInputSha256: mapExpected.hashes, inventories: expected.inventories,
+    ...(multi ? { additionalMapEvidence } : {}),
     undefinedPathsSha256: hash(normalized.undefinedPaths), membership });
-  const receipt = encoded({ schema: 'PHAB_CUP83_MAX_RESTART_UNION_V1', status: 'DRAFT_HELD_IMPORT_BATCHES',
+  const receipt = encoded({ schema: multi ? 'PHAB_CUP83_MAX_RESTART_UNION_V2' : 'PHAB_CUP83_MAX_RESTART_UNION_V1', status: 'DRAFT_HELD_IMPORT_BATCHES',
     expectedContextSha256: hash(encoded(expected)), mapNormalizationReceiptSha256: hash(normalized.receipt),
     source: mapExpected.source, targetFingerprint: mapExpected.targetFingerprint,
+    ...(multi ? { mapCount: additionalMaps.length + 1, lastMapCapturedAt: capturedAt } : {}),
     commandCount: commands.length, inputRowCount: totalRows, batchCount: batches.length,
     batches: batches.map((b, index) => ({ index, snapshotSha256: hash(b.snapshot), importManifestSha256: hash(b.importManifest) })),
     provenanceSha256: hash(provenance), undefinedPathsSha256: hash(normalized.undefinedPaths),

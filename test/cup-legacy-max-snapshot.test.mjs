@@ -219,3 +219,55 @@ test('union creates deterministic disjoint importer-compatible batches beyond500
   assert.equal(commands.length, 5009); assert.equal(new Set(commands.map(r => r.id)).size, 5009);
   assert.deepEqual(result, again);
 });
+
+function multipleMaps() {
+  const f = unionFixture(), later = fixture();
+  later.captured.at = '2026-11-02T22:01:01.000Z';
+  later.terminal.at = '2026-11-02T22:01:02.000Z';
+  later.raw.rows[1] = ['accepted-during-drain', { ...later.raw.rows[1][1], id: 'accepted-during-drain' }];
+  const additional = seal(later);
+  const run = () => {
+    const bytes = enc(f.inventory);
+    return buildCup83MaxRestartUnion(f.map.inputs, f.map.expected, [bytes], {
+      mapContextSha256: hash(enc(f.map.expected)),
+      additionalMapContextSha256: [hash(enc(additional.expected))],
+      inventories: [{ sha256: hash(bytes), targetFingerprint: f.inventory.targetFingerprint }],
+    }, [additional]);
+  };
+  return { f, later, additional, run };
+}
+test('pre-drain and final Maps retain disappeared and newly accepted IDs with separate hash-bound provenance', () => {
+  const f = multipleMaps(), result = f.run();
+  const commands = result.batches.flatMap(b => validateLegacyMaxSnapshot(b.snapshot, JSON.parse(b.importManifest)));
+  assert.equal(commands.length, 10);
+  for (const id of ['synthetic-1', 'accepted-during-drain', 'durable-only']) assert.ok(commands.some(c => c.id === id));
+  const provenance = JSON.parse(result.provenance), receipt = JSON.parse(result.receipt);
+  assert.equal(receipt.schema, 'PHAB_CUP83_MAX_RESTART_UNION_V2');
+  assert.equal(receipt.mapCount, 2); assert.equal(receipt.finalFreezeProven, false);
+  assert.deepEqual(provenance.additionalMapEvidence[0].inputSha256, f.additional.expected.hashes);
+  assert.deepEqual(provenance.additionalMapEvidence[0].undefinedPaths.undefinedPaths, f.later.raw.undefinedPaths);
+  assert.deepEqual(provenance.membership.find(c => c.id === 'accepted-during-drain').origins, [{ kind: 'MAP', map: 1, index: 1 }]);
+  assert.deepEqual(result, f.run());
+});
+test('additional Maps reject foreign identity, target, payload conflict, byte tampering and inverted capture order', () => {
+  for (const mutate of [
+    f => { f.additional.expected.source = { ...f.additional.expected.source, pid: 999 }; },
+    f => { f.additional.expected.targetFingerprint = 'e'.repeat(64); },
+    f => { f.additional.inputs.raw = Buffer.from('tampered'); },
+    f => { f.later.raw.rows[0][1].text = 'conflict'; Object.assign(f.additional, seal(f.later)); },
+    f => { f.later.intent.at = '2026-11-02T21:00:00.000Z'; f.later.captured.at = '2026-11-02T21:00:01.000Z'; f.later.terminal.at = '2026-11-02T21:00:02.000Z'; Object.assign(f.additional, seal(f.later)); },
+    f => { f.f.inventory.capturedAt = '2026-11-02T22:00:30.000Z'; },
+  ]) {
+    const f = multipleMaps(); mutate(f);
+    assert.throws(() => f.run(), /UNION_MAP_CONTEXT|INPUT_BYTES_OR_HASH|UNION_COMMAND_CONFLICT|UNION_MAP_ORDER|UNION_INVENTORY_IDENTITY/);
+  }
+});
+test('multi-Map entry remains bounded and requires exact complete additional context pins', () => {
+  const f = multipleMaps(), bytes = enc(f.f.inventory), base = {
+    mapContextSha256: hash(enc(f.f.map.expected)),
+    inventories: [{ sha256: hash(bytes), targetFingerprint: f.f.inventory.targetFingerprint }],
+  };
+  assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], base, [f.additional]), /UNION_EXPECTED/);
+  assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], { ...base, additionalMapContextSha256: [] }, [f.additional]), /UNION_MAP_CONTEXT/);
+  assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], base, [f.additional, f.additional, f.additional]), /UNION_MAP_COUNT/);
+});

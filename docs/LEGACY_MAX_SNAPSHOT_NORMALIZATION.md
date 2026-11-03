@@ -82,7 +82,7 @@ coverage, including primary/web namespaces that historical hydration can scan.
 
 The union includes every input ID. Same-ID differences are allowed only in
 `status`, `attempts`, `leasedUntil` and `lastError`; conflicting connector, payload,
-metadata or identity fails closed. Final Map is the representative when present;
+metadata or identity fails closed. The first pinned Map is the representative when present;
 otherwise the first pinned inventory is used. This selection is never a delivery
 judgment: the existing importer must hold every old ID in the fresh namespace.
 All source versions remain in the retained inventories, and the private provenance
@@ -101,3 +101,26 @@ Outputs are private draft `batches`, `provenance`, `undefinedPaths` and `receipt
 The receipt explicitly leaves freeze, namespace completeness, target verification,
 provider delivery and import authorization false. No live collector, fence,
 restart, database write, provider send or recovery executor is introduced here.
+
+### Preserve pre-drain and final snapshots
+
+The optional fifth argument accepts at most two additional `{inputs, expected}`
+Map bundles, each validated through the same five-artifact normalizer. The expected
+union context must then contain the exact ordered `additionalMapContextSha256`
+list. All snapshots must share the exact process/source identity and destination;
+capture times must be nondecreasing, and every durable inventory must be captured
+after the last Map acknowledgment. No input is replaced by a later snapshot.
+
+Multiple Maps emit explicit V2 union receipt/provenance schemas. Provenance retains
+each additional bundle's five hashes, normalization receipt, undefined-property
+evidence and per-command input position. Single-Map callers retain the V1 output.
+Original private files remain mandatory; V2 is not a new import authorization.
+
+For the installed83 first restart, a final Map alone is insufficient: an active
+hydration can clear a Map-only accepted command. Before starting a drain, the
+bounded operator must synchronously require persistence sync inactive, disable
+future sync and both Support timers, and capture the pre-drain Map without yielding.
+An already active sync must refuse this admission before mutations. The later HTTP
+drain/final capture and old-process stop remain separate reviewed operations. This
+helper preserves the supplied known-ID union; it cannot recover a historical ID
+already absent from every retained Map and durable namespace.
