@@ -61,3 +61,43 @@ does not prove a sole client or a queue drain. Mongo-only records, old late
 writes, sender admission, target mapping/indexes, recovery compatibility and
 explicit approval remain separate prerequisites. No code calls the importer
 automatically, and no current production restart is admitted by these files.
+
+## Isolated-namespace restart union
+
+`buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs, expected)` reuses
+that exact normalizer and binds one to three independently collected old Mongo
+inventories. Each inventory is a compact JSON+LF envelope with schema
+`PHAB_CUP83_MAX_DURABLE_INVENTORY_V1`, the same six-field source identity,
+`targetFingerprint`, canonical `capturedAt`, and `commands` containing the original
+Mongo documents. Only `_id` is omitted from importer commands; original input bytes
+must remain private and retained. Inventory capture timestamps cannot precede the
+Map capture acknowledgment. This ordering check does not prove a freeze or a
+consistent database snapshot.
+
+The separately reviewed expected context pins the entire mapExpected digest and
+ordered `{sha256,targetFingerprint}` inventory list. Old namespace fingerprints
+must be distinct and must not equal the new destination. The function cannot
+prove that this list covers every actual backend. The operator must attest that
+coverage, including primary/web namespaces that historical hydration can scan.
+
+The union includes every input ID. Same-ID differences are allowed only in
+`status`, `attempts`, `leasedUntil` and `lastError`; conflicting connector, payload,
+metadata or identity fails closed. Final Map is the representative when present;
+otherwise the first pinned inventory is used. This selection is never a delivery
+judgment: the existing importer must hold every old ID in the fresh namespace.
+All source versions remain in the retained inventories, and the private provenance
+artifact maps every ID to its Map/durable input positions and batch. Preserve it,
+the undefined-property sidecar and all input bytes for UNKNOWN reconciliation.
+
+Sorted IDs form deterministic, disjoint batches of at most5000 commands and32MiB,
+compatible with the unchanged held importer. No truncation or partial subset is
+returned. The helper bounds total input bytes128MiB, raw rows100000 and unique
+commands50000. A single oversized command fails closed. All batches must be
+imported and majority-readback verified before candidate or safe recovery may
+lease. The two runtimes must share the same fresh collection and durable hold
+barrier; stock83 rollback is forbidden after this transition.
+
+Outputs are private draft `batches`, `provenance`, `undefinedPaths` and `receipt`.
+The receipt explicitly leaves freeze, namespace completeness, target verification,
+provider delivery and import authorization false. No live collector, fence,
+restart, database write, provider send or recovery executor is introduced here.

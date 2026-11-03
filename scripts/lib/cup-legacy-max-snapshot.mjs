@@ -152,3 +152,91 @@ export function normalizeCup83MaxSnapshot(inputs, expected) {
     drainProven: false, durableInventoryIncluded: false, targetVerified: false, importAuthorized: false });
   return { snapshot, importManifest, undefinedPaths, receipt };
 }
+
+/** Draft union only. All old namespaces and every input byte must remain retained.
+ * Capture/freeze, namespace completeness, target preparation and live import are
+ * independently verified by the operator; this pure function cannot establish them. */
+export function buildCup83MaxRestartUnion(mapInputs, mapExpected, durableInputs, expected) {
+  exact(expected, ['mapContextSha256', 'inventories'], 'UNION_EXPECTED');
+  need(expected.mapContextSha256 === hash(encoded(mapExpected)), 'UNION_MAP_CONTEXT');
+  need(Array.isArray(durableInputs) && Array.isArray(expected.inventories)
+    && durableInputs.length >= 1 && durableInputs.length <= 3
+    && durableInputs.length === expected.inventories.length, 'UNION_INVENTORIES');
+  const normalized = normalizeCup83MaxSnapshot(mapInputs, mapExpected);
+  const map = normalized.snapshot ? JSON.parse(normalized.snapshot) : { commands: [] };
+  const capturedAt = JSON.parse(mapInputs.captured).at;
+  const rows = new Map(), origins = new Map(), namespaces = new Set();
+  const mutable = new Set(['status', 'attempts', 'leasedUntil', 'lastError']);
+  const immutable = row => Object.fromEntries(Object.entries(row).filter(([key]) => !mutable.has(key)));
+  let totalRows = 0, totalBytes = mapInputs.raw.length;
+  function add(row, origin) {
+    command(row, row.id);
+    need(++totalRows <= 100000, 'UNION_INPUT_COUNT');
+    const previous = rows.get(row.id);
+    if (previous) need(isDeepStrictEqual(immutable(previous), immutable(row)), 'UNION_COMMAND_CONFLICT');
+    else { rows.set(row.id, row); origins.set(row.id, []); }
+    need(rows.size <= 50000, 'UNION_COMMAND_COUNT');
+    origins.get(row.id).push(origin);
+  }
+  for (const [index, row] of map.commands.entries()) add(row, { kind: 'MAP', index });
+  for (const [index, bytes] of durableInputs.entries()) {
+    const pin = expected.inventories[index];
+    exact(pin, ['sha256', 'targetFingerprint'], 'UNION_INVENTORY_PIN');
+    need(matches(pin.targetFingerprint, SHA) && !namespaces.has(pin.targetFingerprint)
+      && pin.targetFingerprint !== mapExpected.targetFingerprint, 'UNION_NAMESPACE');
+    namespaces.add(pin.targetFingerprint);
+    totalBytes += bytes.length; need(totalBytes <= 128 * 1024 * 1024, 'UNION_INPUT_BYTES');
+    const inventory = parse(bytes, pin.sha256, 64 * 1024 * 1024);
+    exact(inventory, ['schema', 'source', 'targetFingerprint', 'capturedAt', 'commands'], 'UNION_INVENTORY_SHAPE');
+    need(inventory.schema === 'PHAB_CUP83_MAX_DURABLE_INVENTORY_V1'
+      && inventory.targetFingerprint === pin.targetFingerprint
+      && isDeepStrictEqual(inventory.source, mapExpected.source)
+      && timestamp(inventory.capturedAt) >= timestamp(capturedAt)
+      && Array.isArray(inventory.commands), 'UNION_INVENTORY_IDENTITY');
+    const localIds = new Set();
+    for (const [rowIndex, document] of inventory.commands.entries()) {
+      need(object(document) && !localIds.has(document.id), 'UNION_DURABLE_DUPLICATE');
+      localIds.add(document.id);
+      // The original Mongo document, including _id and all conflicting transition
+      // evidence, remains in the hash-bound private inventory. Only _id is omitted
+      // from the importer's existing command contract.
+      const row = Object.fromEntries(Object.entries(document).filter(([key]) => key !== '_id'));
+      add(row, { kind: 'DURABLE', inventory: index, index: rowIndex });
+    }
+  }
+  const batches = [], membership = [], commands = [...rows.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const envelope = commands => ({ schema: 'PHAB_LEGACY_MAX_CUSTODY_SNAPSHOT_V1', capturedAt,
+    source: mapExpected.source, targetFingerprint: mapExpected.targetFingerprint, commands });
+  const overhead = encoded(envelope([])).length;
+  let batch = [], bytes = overhead;
+  function flush() {
+    if (!batch.length) return;
+    const snapshot = encoded(envelope(batch));
+    need(snapshot.length <= LIMIT && batch.length <= 5000, 'UNION_BATCH_LIMIT');
+    const importManifest = encoded({ schema: 'PHAB_LEGACY_MAX_CUSTODY_IMPORT_V1',
+      snapshotSha256: hash(snapshot), targetFingerprint: mapExpected.targetFingerprint, source: mapExpected.source });
+    const batchIndex = batches.length;
+    for (const row of batch) membership.push({ id: row.id, batch: batchIndex, origins: origins.get(row.id) });
+    batches.push({ snapshot, importManifest }); batch = []; bytes = overhead;
+  }
+  for (const row of commands) {
+    const size = Buffer.byteLength(JSON.stringify(row));
+    need(overhead + size <= LIMIT, 'UNION_COMMAND_BYTES');
+    if (batch.length === 5000 || bytes + size + (batch.length ? 1 : 0) > LIMIT) flush();
+    bytes += size + (batch.length ? 1 : 0); batch.push(row);
+  }
+  flush();
+  const provenance = encoded({ schema: 'PHAB_CUP83_MAX_UNION_PROVENANCE_V1',
+    mapInputSha256: mapExpected.hashes, inventories: expected.inventories,
+    undefinedPathsSha256: hash(normalized.undefinedPaths), membership });
+  const receipt = encoded({ schema: 'PHAB_CUP83_MAX_RESTART_UNION_V1', status: 'DRAFT_HELD_IMPORT_BATCHES',
+    expectedContextSha256: hash(encoded(expected)), mapNormalizationReceiptSha256: hash(normalized.receipt),
+    source: mapExpected.source, targetFingerprint: mapExpected.targetFingerprint,
+    commandCount: commands.length, inputRowCount: totalRows, batchCount: batches.length,
+    batches: batches.map((b, index) => ({ index, snapshotSha256: hash(b.snapshot), importManifestSha256: hash(b.importManifest) })),
+    provenanceSha256: hash(provenance), undefinedPathsSha256: hash(normalized.undefinedPaths),
+    oldNamespacesMustBeRetained: true, allInputBytesMustBeRetained: true,
+    finalFreezeProven: false, namespaceCompletenessProven: false, targetVerified: false,
+    providerDeliveryProven: false, importAuthorized: false });
+  return { batches, provenance, undefinedPaths: normalized.undefinedPaths, receipt };
+}

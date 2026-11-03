@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { normalizeCup83MaxSnapshot } from '../scripts/lib/cup-legacy-max-snapshot.mjs';
+import { normalizeCup83MaxSnapshot, buildCup83MaxRestartUnion } from '../scripts/lib/cup-legacy-max-snapshot.mjs';
 
 // CI builds the existing backend before this test. No application instance or Mongo connection.
 const require = createRequire(import.meta.url);
@@ -159,4 +159,63 @@ test('digest, ID and epoch formats reject terminal line separators even with mat
     const pair = seal(fixture()); pair.expected.hashes.raw += suffix;
     assert.throws(() => normalizeCup83MaxSnapshot(pair.inputs, pair.expected), /INPUT_BYTES_OR_HASH/);
   }
+});
+
+
+function unionFixture() {
+  const map = seal(fixture());
+  const inventory = { schema: 'PHAB_CUP83_MAX_DURABLE_INVENTORY_V1', source: map.expected.source,
+    targetFingerprint: 'c'.repeat(64), capturedAt: '2026-11-02T22:02:00.000Z',
+    commands: [{ ...JSON.parse(map.inputs.raw).rows[0][1], _id: 'synthetic-mongo-id', status: 'SENT' },
+      { ...JSON.parse(map.inputs.raw).rows[0][1], id: 'durable-only', status: 'LEASED' }] };
+  return { map, inventory };
+}
+function unionRun(f) {
+  const bytes = enc(f.inventory);
+  return buildCup83MaxRestartUnion(f.map.inputs, f.map.expected, [bytes], {
+    mapContextSha256: hash(enc(f.map.expected)),
+    inventories: [{ sha256: hash(bytes), targetFingerprint: f.inventory.targetFingerprint }] });
+}
+test('restart union retains Map and durable-only IDs, transition disagreements and private provenance', () => {
+  const f = unionFixture(), before = structuredClone(f.inventory), result = unionRun(f);
+  const commands = result.batches.flatMap(b => validateLegacyMaxSnapshot(b.snapshot, JSON.parse(b.importManifest)));
+  assert.equal(commands.length, 9); assert.equal(commands.find(r => r.id === 'synthetic-0').status, 'PENDING');
+  assert.equal(commands.find(r => r.id === 'durable-only').status, 'LEASED');
+  assert.ok(commands.every(r => !Object.hasOwn(r, '_id')));
+  assert.deepEqual(f.inventory, before);
+  const provenance = JSON.parse(result.provenance);
+  assert.equal(provenance.membership.find(r => r.id === 'synthetic-0').origins.length, 2);
+  assert.equal(provenance.inventories[0].sha256, hash(enc(f.inventory)));
+  const receipt = JSON.parse(result.receipt);
+  for (const key of ['finalFreezeProven','namespaceCompletenessProven','targetVerified','providerDeliveryProven','importAuthorized']) assert.equal(receipt[key], false);
+  assert.equal(receipt.oldNamespacesMustBeRetained, true);
+});
+test('union rejects conflicting payload or connector, duplicate durable IDs and receipt markers', () => {
+  for (const mutate of [f => { f.inventory.commands[0].text = 'different'; },
+    f => { f.inventory.commands[0].connector = 'MAX_ACADEMY_BOT'; },
+    f => { f.inventory.commands.push(f.inventory.commands[0]); },
+    f => { f.inventory.commands[0].leaseToken = 'receipt-v1'; }]) {
+    const f = unionFixture(); mutate(f); assert.throws(() => unionRun(f), /UNION_COMMAND_CONFLICT|UNION_DURABLE_DUPLICATE|COMMAND_CUSTODY_MARKER/);
+  }
+});
+test('union pins source, times, namespace isolation and complete byte sets', () => {
+  for (const mutate of [f => { f.inventory.source = { ...f.inventory.source, pid: 999 }; },
+    f => { f.inventory.capturedAt = '2026-11-02T21:00:00.000Z'; },
+    f => { f.inventory.targetFingerprint = f.map.expected.targetFingerprint; }]) {
+    const f = unionFixture(); mutate(f); assert.throws(() => unionRun(f), /UNION_INVENTORY_IDENTITY|UNION_NAMESPACE/);
+  }
+  const f = unionFixture(), bytes = enc(f.inventory);
+  const expected = { mapContextSha256: hash(enc(f.map.expected)), inventories: [{ sha256: hash(bytes), targetFingerprint: f.inventory.targetFingerprint }] };
+  assert.throws(() => buildCup83MaxRestartUnion(f.map.inputs, f.map.expected, [], expected), /UNION_INVENTORIES/);
+  assert.throws(() => buildCup83MaxRestartUnion(f.map.inputs, f.map.expected, [Buffer.from('tampered')], expected), /INPUT_BYTES_OR_HASH/);
+  assert.throws(() => buildCup83MaxRestartUnion(f.map.inputs, f.map.expected, [bytes], { ...expected, mapContextSha256: 'e'.repeat(64) }), /UNION_MAP_CONTEXT/);
+});
+test('union creates deterministic disjoint importer-compatible batches beyond5000 without truncation', () => {
+  const f = unionFixture(), template = f.inventory.commands[1];
+  f.inventory.commands = Array.from({ length: 5001 }, (_, i) => ({ ...template, id: 'durable-' + String(i).padStart(5, '0') }));
+  const result = unionRun(f), again = unionRun(f);
+  assert.equal(result.batches.length, 2);
+  const commands = result.batches.flatMap(b => validateLegacyMaxSnapshot(b.snapshot, JSON.parse(b.importManifest)));
+  assert.equal(commands.length, 5009); assert.equal(new Set(commands.map(r => r.id)).size, 5009);
+  assert.deepEqual(result, again);
 });
