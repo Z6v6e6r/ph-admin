@@ -133,9 +133,9 @@ Inspector attachment, signal, service stop, database or provider path. An indepe
 reviewed operator must pin the loaded module/prototype/process, own the release lock and
 Inspector, and provide a new private directory. It refuses active Support hydration,
 unknown descriptors, oversized/nondata Maps, existing artifacts and unsafe paths.
-It serializes and fsyncs the pre-drain MAX Map before clearing the two Support timers
+It serializes and fsyncs the pre-drain MAX Map and a separate web-custody artifact before clearing the two Support timers
 and setting its sync interval to zero in the same JavaScript turn. No application
-callback can modify that Map between capture and fence. Raw rows stay in the private
+callback can modify those Maps between capture and fence. Raw rows stay in the private
 file; the returned receipt contains only hash/counts and always `drainProven:false`.
 
 Any lost acknowledgement or error after a snapshot file exists forbids replay. The file
@@ -152,3 +152,7 @@ first-restart operator and receipt integration remain required before live use.
 The legacy web connector can retain PENDING outbox commands while the same reply is already available from persisted message history. First-restart custody must preserve both domains and original IDs; it must not infer missing delivery, ACK, resend or mark these commands FAILED from that status alone. The MAX-only importer is not a web-history reconstruction tool.
 
 `test/support-web-history-custody.test.ts` exercises the real SupportService with synthetic in-memory persistence: replies remain readable while commands stay PENDING; repeated reads do not lease/ACK; reconstruction preserves message/command IDs without enqueue; unauthorized reads reject without changing state. This is LOCAL compatibility evidence, not proof of live Mongo completeness or absence of an external web pull consumer.
+
+The same synchronous primitive now saves `pre-drain-web.json` before timer mutation: web outbox commands, ordinary and SYSTEM message history, web/referenced dialogs with their ACL fields, and referenced client profiles. It preserves original IDs and PENDING state. The exact83 SYSTEM predicate is direction, senderRole or kind equal to SYSTEM. Missing dialog/client references, duplicate message IDs, mismatched dialog grouping, accessors, unsupported values and size limits abort before writes. All arrays/Maps are bounded; MAX and web payloads share the32MiB budget. Web undefined fields use a separate sidecar keyed by entity kind and ID.
+
+The receipt exposes only the two artifact hashes and counts. Both private0600 files must be durably written before fencing; a partial web write leaves timers unchanged and forbids replay. The web artifact explicitly records `durableCompletenessProven:false`. This capture does not prove all live Mongo namespaces contain the data, select a conflicting durable version, hydrate, import, ACK or resend anything. A complete post-drain durable inventory/comparator and the full first-restart operator are still required before restart.

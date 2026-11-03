@@ -9,6 +9,9 @@ const SOURCE = '83b1c17bc4c5edaec65387b25b5695e48337c3cf';
 const identity = () => ({ pid: process.pid, start: String(performance.timeOrigin),
   nodeVersion: process.version, sourceEpoch: SOURCE });
 class Support {
+  clients = new Map();
+  dialogs = new Map();
+  messages = new Map();
   isPersistenceSyncInProgress = false;
   persistenceSyncIntervalMs = 100;
   outbox = new Map([['command-1', { id: 'command-1', connector: 'MAX_BOT', status: 'SENT',
@@ -70,7 +73,7 @@ test('oversized Map and nondata command refuse before mutation', t => {
 });
 test('existing artifact and existing receipt independently refuse before fence', t => {
   const f = fixture(t);
-  for (const file of ['pre-drain-map.json', 'pre-drain-fence.json']) {
+  for (const file of ['pre-drain-map.json', 'pre-drain-web.json', 'pre-drain-fence.json']) {
     fs.writeFileSync(f.directory + '/' + file, 'retained', { mode: 0o600 });
     assert.throws(f.run, /NO_REPLAY/); assert.equal(f.support.persistenceSyncIntervalMs, 100);
     assert.equal(fs.readFileSync(f.directory + '/' + file, 'utf8'), 'retained');
@@ -117,7 +120,7 @@ test('receipt write failure after fence retains snapshot and refuses replay', t 
   const f = fixture(t), original = fs.writeFileSync;
   let writes = 0;
   fs.writeFileSync = (...args) => {
-    if (++writes === 2) throw Error('SYNTHETIC_RECEIPT_WRITE_FAILURE');
+    if (++writes === 3) throw Error('SYNTHETIC_RECEIPT_WRITE_FAILURE');
     return original(...args);
   };
   try { assert.throws(f.run, /SYNTHETIC_RECEIPT_WRITE_FAILURE/); }
@@ -128,4 +131,78 @@ test('receipt write failure after fence retains snapshot and refuses replay', t 
   assert.equal(JSON.parse(fs.readFileSync(f.directory + '/pre-drain-map.json')).maxCount, 1);
   assert.equal(fs.statSync(f.directory + '/pre-drain-fence.json').size, 0);
   assert.throws(f.run, /NO_REPLAY/);
+});
+
+function webFixture(t) {
+  const f = fixture(t);
+  f.support.clients.set('web-client', { id: 'web-client', primaryPhone: 'synthetic-private', nested: { absent: undefined } });
+  f.support.dialogs.set('web-dialog', { id: 'web-dialog', clientId: 'web-client', connectors: ['LK_WEB_MESSENGER'], accessStationIds: ['station-1'] });
+  f.support.outbox.set('web-command', { id: 'web-command', clientId: 'web-client', dialogId: 'web-dialog', connector: 'LK_WEB_MESSENGER', status: 'PENDING', text: 'synthetic-private' });
+  f.support.messages.set('web-dialog', [
+    { id: 'message-1', dialogId: 'web-dialog', clientId: 'web-client', connector: 'LK_WEB_MESSENGER', direction: 'OUTBOUND', senderRole: 'STAFF', kind: 'TEXT', text: 'synthetic-private' },
+    { id: 'system-1', dialogId: 'web-dialog', clientId: 'web-client', connector: 'LK_WEB_MESSENGER', direction: 'SYSTEM', senderRole: 'STAFF', kind: 'TEXT' },
+  ]);
+  return f;
+}
+test('web commands, ordinary/system history and identity/ACL context are privately retained', t => {
+  const f = webFixture(t), before = structuredClone(f.support.outbox), result = f.run();
+  const bytes = fs.readFileSync(f.directory + '/pre-drain-web.json'), saved = JSON.parse(bytes);
+  assert.equal(result.webArtifactSha256, createHash('sha256').update(bytes).digest('hex'));
+  assert.deepEqual(saved.counts, { commands: 1, messages: 1, serviceMessages: 1, dialogs: 1, clients: 1 });
+  assert.deepEqual(result.webCounts, saved.counts);
+  assert.equal(saved.rows.commands[0][1].status, 'PENDING');
+  assert.deepEqual(saved.rows.dialogs[0][1].accessStationIds, ['station-1']);
+  assert.equal(saved.rows.messages[0][0], 'message-1'); assert.equal(saved.rows.serviceMessages[0][0], 'system-1');
+  assert.equal(saved.durableCompletenessProven, false);
+  assert.deepEqual(saved.undefinedPaths, [{ commandId: 'clients:web-client', path: ['nested', 'absent'] }]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.directory + '/pre-drain-map.json')).undefinedPaths,
+    [{ commandId: 'command-1', path: ['nested', 'omitted'] }]);
+  assert.deepEqual(f.support.outbox, before);
+  for (const value of ['web-command', 'web-client', 'web-dialog', 'synthetic-private']) assert.equal(JSON.stringify(result).includes(value), false);
+});
+test('web-only dialog without commands/messages retains its client', t => {
+  const f = webFixture(t); f.support.outbox.delete('web-command'); f.support.messages.clear();
+  const result = f.run(); assert.deepEqual(result.webCounts, { commands: 0, messages: 0, serviceMessages: 0, dialogs: 1, clients: 1 });
+});
+test('referenced dialog is retained even when its connector metadata omits web', t => {
+  const f = webFixture(t); f.support.dialogs.get('web-dialog').connectors = ['MAX_BOT'];
+  assert.equal(f.run().webCounts.dialogs, 1);
+});
+for (const role of ['direction', 'senderRole', 'kind']) test('exact83 service-history predicate: ' + role, t => {
+  const f = webFixture(t), message = f.support.messages.get('web-dialog')[0];
+  message[role] = 'SYSTEM'; assert.equal(f.run().webCounts.serviceMessages, 2);
+});
+test('web missing references, duplicate IDs and dialog mismatch fail before any mutation', t => {
+  const f = webFixture(t), dialog = f.support.dialogs.get('web-dialog'), client = f.support.clients.get('web-client');
+  f.support.dialogs.delete('web-dialog'); assert.throws(f.run, /WEB_MISSING_DIALOG/); unchanged(f);
+  f.support.dialogs.set('web-dialog', dialog); f.support.clients.delete('web-client');
+  assert.throws(f.run, /WEB_MISSING_CLIENT/); unchanged(f); f.support.clients.set('web-client', client);
+  const rows = f.support.messages.get('web-dialog'); rows.push(rows[0]);
+  assert.throws(f.run, /WEB_DUPLICATE_MESSAGE/); unchanged(f); rows.pop(); rows[0].dialogId = 'different';
+  assert.throws(f.run, /WEB_IDENTITY/); unchanged(f);
+});
+test('web array accessor is rejected without calling application code', t => {
+  const f = webFixture(t); let called = false;
+  Object.defineProperty(f.support.messages.get('web-dialog'), '0', { get() { called = true; throw Error('must not run'); } });
+  assert.throws(f.run, /OWN_DATA_REQUIRED/); assert.equal(called, false); unchanged(f);
+});
+test('web snapshot failure leaves timers unchanged and refuses replay', t => {
+  const f = webFixture(t), original = fs.writeFileSync; let writes = 0;
+  fs.writeFileSync = (...args) => { if (++writes === 2) throw Error('WEB_WRITE_FAIL'); return original(...args); };
+  try { assert.throws(f.run, /WEB_WRITE_FAIL/); } finally { fs.writeFileSync = original; }
+  assert.equal(f.support.persistenceSyncIntervalMs, 100);
+  assert.equal(fs.existsSync(f.directory + '/pre-drain-fence.json'), false);
+  assert.throws(f.run, /NO_REPLAY/);
+});
+test('web row count bound prevents oversized capture before writes', t => {
+  const f = webFixture(t); f.support.messages.set('web-dialog', Array(20001).fill({}));
+  assert.throws(f.run, /COUNT_LIMIT/); unchanged(f);
+});
+
+test('SYSTEM undefined sidecar uses its actual serviceMessages domain', t => {
+  const f = webFixture(t); f.support.messages.get('web-dialog')[1].meta = { absent: undefined };
+  f.run(); const saved = JSON.parse(fs.readFileSync(f.directory + '/pre-drain-web.json'));
+  assert.deepEqual(saved.undefinedPaths.find(p => p.commandId === 'serviceMessages:system-1'),
+    { commandId: 'serviceMessages:system-1', path: ['meta', 'absent'] });
+  assert.equal(saved.undefinedPaths.some(p => p.commandId === 'messages:system-1'), false);
 });
