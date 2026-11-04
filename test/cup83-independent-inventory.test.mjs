@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -139,7 +141,7 @@ test('real live capture → pinned manifest → independent owned clients retain
 
 test('independent collector integrates with unchanged filesystem sink; client close failure quarantines completion', async t => {
   for (const failClose of [false, true]) {
-    const f = await fixture(), directory = fs.realpathSync(fs.mkdtempSync('/private/tmp/cup83-independent-sink-test-'));
+    const f = await fixture(), directory = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'cup83-independent-sink-test-')));
     const stat = fs.statSync(directory);
     const sink = createCup83PrivateInventorySink({ directory, expectedUid: process.getuid(), expectedDirectory: { dev: stat.dev, ino: stat.ino } });
     t.after(async () => { try { await sink.abort({ signal: new AbortController().signal }); } catch {} fs.rmSync(directory, { recursive: true, force: true }); });

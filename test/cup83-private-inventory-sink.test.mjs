@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Collection, Long, MongoClient } from 'mongodb';
@@ -15,7 +16,7 @@ const signal = () => new AbortController().signal;
 const safeSignal = () => ({ signal: signal() });
 function fixture(t, limits = {}) {
   // All mutations and cleanup below target this task-owned disposable directory.
-  const root = fs.realpathSync(fs.mkdtempSync('/private/tmp/cup83-private-sink-test-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'cup83-private-sink-test-')));
   const directory = path.join(root, 'inventory'); fs.mkdirSync(directory, { mode: 0o700 });
   const stat = fs.lstatSync(directory), options = { directory, expectedUid: process.getuid(),
     expectedDirectory: { dev: stat.dev, ino: stat.ino }, limits };

@@ -1,6 +1,8 @@
 // Owned disposable synthetic child only. Never connect, import custody or send.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { Collection, Long, MongoClient } from 'mongodb';
@@ -89,7 +91,7 @@ function emptyMapBundle() {
 }
 async function main() {
   assert.ok(process.execArgv.includes('--max-old-space-size=512'));
-  const directory = fs.realpathSync(fs.mkdtempSync('/private/tmp/cup83-budget-child-'));
+  const directory = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'cup83-budget-child-')));
   const stat = fs.statSync(directory), sink = createCup83PrivateInventorySink({ directory, expectedUid: process.getuid(), expectedDirectory: { dev: stat.dev, ino: stat.ino } });
   try {
     class Support {}
