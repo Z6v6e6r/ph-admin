@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { normalizeCup83MaxSnapshot, buildCup83MaxRestartUnion } from '../scripts/lib/cup-legacy-max-snapshot.mjs';
+import fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { captureAndFenceCup83Support } from '../scripts/lib/cup83-support-fence.mjs';
+import { normalizeCup83MaxSnapshot, normalizeCup83PreDrainFence, buildCup83MaxRestartUnion,
+  buildCup83FencedMaxRestartUnion } from '../scripts/lib/cup-legacy-max-snapshot.mjs';
 
 // CI builds the existing backend before this test. No application instance or Mongo connection.
 const require = createRequire(import.meta.url);
@@ -270,4 +275,196 @@ test('multi-Map entry remains bounded and requires exact complete additional con
   assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], base, [f.additional]), /UNION_EXPECTED/);
   assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], { ...base, additionalMapContextSha256: [] }, [f.additional]), /UNION_MAP_CONTEXT/);
   assert.throws(() => buildCup83MaxRestartUnion(f.f.map.inputs, f.f.map.expected, [bytes], base, [f.additional, f.additional, f.additional]), /UNION_MAP_COUNT/);
+});
+
+function fencedFixture(t) {
+  class Support {
+    isPersistenceSyncInProgress = false;
+    persistenceSyncIntervalMs = 100;
+    clients = new Map([['client', { id: 'client', meta: { absent: undefined } }]]);
+    dialogs = new Map([['dialog', { id: 'dialog', clientId: 'client', connectors: ['LK_WEB_MESSENGER'], accessStationIds: ['station'] }]]);
+    messages = new Map([['dialog', [
+      { id: 'message', clientId: 'client', dialogId: 'dialog', connector: 'LK_WEB_MESSENGER', direction: 'OUTBOUND', senderRole: 'STAFF', kind: 'TEXT' },
+      { id: 'system', clientId: 'client', dialogId: 'dialog', connector: 'LK_WEB_MESSENGER', direction: 'SYSTEM', senderRole: 'SYSTEM', kind: 'SYSTEM' },
+    ]]]);
+    outbox = new Map([
+      ['pre-only', { id: 'pre-only', clientId: 'client', dialogId: 'dialog', connector: 'MAX_BOT', status: 'LEASED', attempts: 1,
+        text: 'synthetic private MAX', meta: { absent: undefined } }],
+      ['max-sent', { id: 'max-sent', clientId: 'client', dialogId: 'dialog', connector: 'MAX_ACADEMY_BOT', status: 'SENT', attempts: 0, text: 'synthetic private MAX' }],
+      ['web', { id: 'web', clientId: 'client', dialogId: 'dialog', connector: 'LK_WEB_MESSENGER', status: 'PENDING', text: 'synthetic private web' }],
+    ]);
+  }
+  const directory = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'cup83-fenced-normalization-test-'));
+  fs.chmodSync(directory, 0o700); t.after(() => fs.rmSync(directory, { recursive: true }));
+  const identity = { pid: process.pid, start: String(performance.timeOrigin), sourceEpoch: '83b1c17bc4c5edaec65387b25b5695e48337c3cf', nodeVersion: process.version };
+  const support = new Support(), receipt = captureAndFenceCup83Support.call([support], identity, Support.prototype, directory);
+  const inputs = { raw: fs.readFileSync(directory + '/pre-drain-map.json'), web: fs.readFileSync(directory + '/pre-drain-web.json'),
+    fence: fs.readFileSync(directory + '/pre-drain-fence.json') };
+  const source = { pid: identity.pid, bootId: '11111111-1111-4111-8111-111111111111', startTicks: '98765',
+    sourceCommit: identity.sourceEpoch, sourceTree: 'cfffdce4d5c69f0da7c50fbc90527bf00894d0fa', runtimeInventorySha256: 'a'.repeat(64) };
+  const f = { directory, support, inputs, raw: JSON.parse(inputs.raw), web: JSON.parse(inputs.web), fence: receipt,
+    expected: { hashes: Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, hash(v)])), identity, source,
+      targetFingerprint: 'b'.repeat(64), fencedAt: receipt.at } };
+  f.reseal = (rebind = true) => {
+    f.inputs.raw = enc(f.raw); f.inputs.web = enc(f.web);
+    if (rebind) { f.fence.artifactSha256 = hash(f.inputs.raw); f.fence.webArtifactSha256 = hash(f.inputs.web); }
+    f.inputs.fence = enc(f.fence);
+    f.expected.hashes = Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, hash(v)]));
+  };
+  f.durable = () => ({ schema: 'PHAB_CUP83_MAX_DURABLE_INVENTORY_V1', source: f.expected.source, targetFingerprint: 'd'.repeat(64),
+    capturedAt: new Date(Date.parse(f.expected.fencedAt) + 1000).toISOString(),
+    commands: [{ ...f.raw.rows[1][1], id: 'durable-only' }] });
+  f.union = (value = f.durable(), additional = []) => {
+    const inventory = enc(value);
+    return buildCup83FencedMaxRestartUnion(f.inputs, f.expected, [inventory], { mapContextSha256: hash(enc(f.expected)),
+      inventories: [{ sha256: hash(inventory), targetFingerprint: value.targetFingerprint }],
+      ...(additional.length ? { laterMapContextSha256: additional.map(b => hash(enc(b.expected))) } : {}) }, { laterMaps: additional });
+  };
+  return f;
+}
+
+test('actual primitive three private artifacts normalize and join durable known IDs through unchanged importer validator', t => {
+  const f = fencedFixture(t), original = Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, Buffer.from(v)]));
+  const result = normalizeCup83PreDrainFence(f.inputs, f.expected), receipt = JSON.parse(result.receipt);
+  assert.deepEqual(validateLegacyMaxSnapshot(result.snapshot, JSON.parse(result.importManifest)), f.raw.rows.map(([, row]) => row));
+  assert.equal(JSON.parse(result.snapshot).capturedAt, f.fence.at); assert.equal(receipt.capturedAtSemantics, 'FENCE_RECEIPT_TIME');
+  assert.equal(receipt.schema, 'PHAB_CUP83_PRE_DRAIN_NORMALIZATION_V1'); assert.equal(receipt.webArtifactSha256, hash(f.inputs.web));
+  assert.equal(receipt.fullSourceBinding, 'INDEPENDENT_CALLER_PIN');
+  assert.deepEqual(receipt.primitiveVerifiedIdentityFields, ['pid', 'start', 'nodeVersion', 'sourceEpoch']);
+  for (const flag of ['sourceAttestationProven', 'inspectorClosedProven', 'soleClientProven', 'drainProven', 'durableInventoryIncluded', 'targetVerified', 'restartAuthorized', 'importAuthorized']) assert.equal(receipt[flag], false);
+  for (const field of ['operation', 'intent', 'terminalStatus', 'inspectorClosed']) assert.equal(Object.hasOwn(receipt, field), false);
+  const sidecar = JSON.parse(result.undefinedPaths);
+  assert.deepEqual(sidecar.undefinedPaths, f.raw.undefinedPaths); assert.deepEqual(sidecar.webUndefinedPaths, f.web.undefinedPaths);
+  assert.equal(sidecar.webSha256, hash(f.inputs.web));
+  assert.equal(Object.hasOwn(JSON.parse(result.snapshot).commands.find(row => row.id === 'pre-only').meta, 'absent'), false);
+  const union = f.union(), commands = union.batches.flatMap(b => validateLegacyMaxSnapshot(b.snapshot, JSON.parse(b.importManifest)));
+  assert.equal(commands.length, 3); assert.ok(commands.some(c => c.id === 'pre-only' && c.status === 'LEASED'));
+  assert.ok(commands.some(c => c.id === 'durable-only')); assert.equal(commands.some(c => c.connector === 'LK_WEB_MESSENGER'), false);
+  const provenance = JSON.parse(union.provenance), unionReceipt = JSON.parse(union.receipt);
+  assert.equal(provenance.schema, 'PHAB_CUP83_FENCED_MAX_UNION_PROVENANCE_V1');
+  assert.deepEqual(provenance.primaryFenceEvidence.normalizationReceipt, receipt);
+  assert.deepEqual(provenance.primaryFenceEvidence.undefinedPaths, sidecar);
+  assert.equal(unionReceipt.schema, 'PHAB_CUP83_FENCED_MAX_RESTART_UNION_V1');
+  assert.equal(unionReceipt.webArtifactSha256, hash(f.inputs.web)); assert.equal(unionReceipt.restartAuthorized, false);
+  assert.equal(unionReceipt.importAuthorized, false); assert.equal(unionReceipt.sourceAttestationProven, false);
+  for (const [key, value] of Object.entries(original)) assert.ok(f.inputs[key].equals(value));
+});
+
+test('zero MAX capture retains actual web/fence evidence without fabricating commands', t => {
+  const f = fencedFixture(t); f.raw.rows = []; f.raw.maxCount = 0; f.raw.counts = {}; f.raw.undefinedPaths = [];
+  f.fence.maxCount = 0; f.fence.counts = {}; f.reseal();
+  const result = normalizeCup83PreDrainFence(f.inputs, f.expected);
+  assert.equal(result.snapshot, null); assert.equal(result.importManifest, null);
+  assert.equal(JSON.parse(result.receipt).status, 'NO_IMPORTABLE_COMMANDS');
+  assert.equal(JSON.parse(result.receipt).webArtifactSha256, hash(f.inputs.web));
+});
+
+test('missing, partial and hash-drifted real private artifacts refuse before normalization', t => {
+  for (const key of ['raw', 'web', 'fence']) {
+    const f = fencedFixture(t), missing = { ...f.inputs }; delete missing[key];
+    assert.throws(() => normalizeCup83PreDrainFence(missing, f.expected), /FENCE_INPUT_SET/);
+    const file = { raw: 'pre-drain-map.json', web: 'pre-drain-web.json', fence: 'pre-drain-fence.json' }[key];
+    fs.truncateSync(f.directory + '/' + file, 0); f.inputs[key] = fs.readFileSync(f.directory + '/' + file);
+    assert.throws(() => normalizeCup83PreDrainFence(f.inputs, f.expected), /INPUT_BYTES_OR_HASH/);
+    f.expected.hashes[key] = hash(f.inputs[key]);
+    assert.throws(() => normalizeCup83PreDrainFence(f.inputs, f.expected), /INPUT_JSON_UTF8/);
+  }
+});
+
+test('incomplete fence, missing web linkage and false authority flags fail closed with repinned bytes', t => {
+  for (const mutate of [
+    f => f.fence.status = 'CAPTURED', f => f.fence.drainProven = true, f => f.fence.replayAllowed = true,
+    f => delete f.fence.webArtifactSha256, f => f.fence.webArtifactSha256 = '0'.repeat(64),
+  ]) {
+    const f = fencedFixture(t); mutate(f); f.reseal(false);
+    assert.throws(() => normalizeCup83PreDrainFence(f.inputs, f.expected), /FENCE_RECEIPT/);
+  }
+});
+
+test('process/source/time drift refuse; four primitive fields never attest independently pinned Linux metadata', t => {
+  for (const mutate of [
+    f => f.raw.identity.pid++, f => f.web.identity.start = '1', f => f.expected.source.pid++,
+    f => f.expected.source.sourceTree = '0'.repeat(40), f => f.expected.source.runtimeInventorySha256 = 'invalid',
+    f => f.fence.at = new Date(Date.parse(f.fence.at) + 1000).toISOString(), f => f.fence.at = '2026-11-04',
+  ]) {
+    const f = fencedFixture(t); mutate(f); f.reseal();
+    assert.throws(() => normalizeCup83PreDrainFence(f.inputs, f.expected), /FENCE_CAPTURE_IDENTITY|FENCE_WEB_BINDING|FENCE_SOURCE_BINDING|FENCE_TIME_BINDING|TIMESTAMP_INVALID/);
+  }
+  const f = fencedFixture(t); f.expected.source.bootId = '22222222-2222-4222-8222-222222222222';
+  const receipt = JSON.parse(normalizeCup83PreDrainFence(f.inputs, f.expected).receipt);
+  assert.equal(receipt.sourceAttestationProven, false); assert.equal(receipt.fullSourceBinding, 'INDEPENDENT_CALLER_PIN');
+});
+
+test('malformed MAX rows/counts/sidecars and dropped web references/domains/sidecars refuse', t => {
+  for (const mutate of [
+    f => f.raw.rows[0][1].attempts = -1, f => f.raw.rows[0][0] = 'wrong',
+    f => f.raw.rows[0][1].leaseToken = 'forbidden', f => f.raw.undefinedPaths[0].path = ['id'],
+    f => f.fence.maxCount++, f => f.fence.counts = Object.fromEntries(groups.map(key => [key, f.fence.counts[key] ?? 0])),
+    f => f.fence.webCounts.clients++, f => f.web.rows.dialogs = [],
+    f => { Object.assign(f.web.rows.serviceMessages[0][1], { kind: 'TEXT', direction: 'INBOUND', senderRole: 'CLIENT' }); },
+    f => f.web.undefinedPaths[0].path = ['id'], f => f.web.durableCompletenessProven = true,
+  ]) {
+    const f = fencedFixture(t); mutate(f); f.reseal();
+    assert.throws(() => normalizeCup83PreDrainFence(f.inputs, f.expected), /COMMAND_|UNDEFINED_|COUNTS_MISMATCH|FENCE_EXPORT_COUNT|FENCE_WEB_/);
+  }
+});
+
+test('fenced union rejects earlier durable evidence and additional diagnostic source/process drift', t => {
+  const f = fencedFixture(t), durable = f.durable(); durable.capturedAt = new Date(Date.parse(f.fence.at) - 1).toISOString();
+  assert.throws(() => f.union(durable), /UNION_INVENTORY_IDENTITY/);
+  const foreign = seal(fixture()); assert.throws(() => f.union(f.durable(), [foreign]), /UNION_MAP_CONTEXT/);
+});
+
+test('pre-drain MAX and web share the original32MiB byte limit', t => {
+  const f = fencedFixture(t);
+  assert.throws(() => normalizeCup83PreDrainFence({ raw: Buffer.alloc(17 * 1024 * 1024), web: Buffer.alloc(17 * 1024 * 1024),
+    fence: f.inputs.fence }, f.expected), /FENCE_CAPTURE_BYTES/);
+});
+
+test('historical prior diagnostic + fence + final diagnostic retains every phase known ID without changing old paths', () => {
+  // Pure historical format fixture; the preceding integration executes the actual
+  // primitive on the current Node without spoofing its identity or fabricating journals.
+  const diagnostic = fixture(), fullSource = diagnostic.expected.source;
+  const raw = structuredClone(diagnostic.raw); raw.rows.push(['pre-only', { ...raw.rows[0][1], id: 'pre-only' }]);
+  raw.maxCount++; raw.totalMapCount++; raw.counts['MAX_BOT:PENDING']++;
+  const web = { schema: 'PHAB_CUP83_WEB_CUSTODY_V1', identity: raw.identity,
+    rows: { commands: [], messages: [], serviceMessages: [], dialogs: [], clients: [] },
+    counts: { commands: 0, messages: 0, serviceMessages: 0, dialogs: 0, clients: 0 }, undefinedPaths: [], durableCompletenessProven: false };
+  const inputs = { raw: enc(raw), web: enc(web) };
+  const at = '2026-11-02T21:59:59.000Z';
+  inputs.fence = enc({ schema: 'PHAB_CUP83_PRE_DRAIN_FENCE_V1', status: 'SUPPORT_TIMERS_FENCED',
+    artifactSha256: hash(inputs.raw), webArtifactSha256: hash(inputs.web), webCounts: web.counts,
+    totalMapCount: raw.totalMapCount, maxCount: raw.maxCount, counts: raw.counts, at, drainProven: false, replayAllowed: false });
+  const expected = { hashes: Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, hash(v)])), identity: raw.identity,
+    source: fullSource, targetFingerprint: diagnostic.expected.targetFingerprint, fencedAt: at };
+  diagnostic.raw.rows[1] = ['final-only', { ...diagnostic.raw.rows[1][1], id: 'final-only' }];
+  const final = seal(diagnostic), durable = enc({ schema: 'PHAB_CUP83_MAX_DURABLE_INVENTORY_V1', source: fullSource,
+    targetFingerprint: 'd'.repeat(64), capturedAt: '2026-11-02T22:00:03.000Z', commands: [] });
+  const earlier = fixture(); earlier.raw.rows[0] = ['prior-only', { ...earlier.raw.rows[0][1], id: 'prior-only' }];
+  earlier.raw.undefinedPaths[0].commandId = 'prior-only';
+  earlier.intent.at = '2026-11-02T21:59:49.000Z'; earlier.captured.at = '2026-11-02T21:59:50.000Z'; earlier.terminal.at = '2026-11-02T21:59:51.000Z';
+  const prior = seal(earlier);
+  const run = (priorMaps = [prior], laterMaps = [final]) => buildCup83FencedMaxRestartUnion(inputs, expected, [durable], {
+    mapContextSha256: hash(enc(expected)), ...(priorMaps.length ? { priorMapContextSha256: priorMaps.map(b => hash(enc(b.expected))) } : {}),
+    ...(laterMaps.length ? { laterMapContextSha256: laterMaps.map(b => hash(enc(b.expected))) } : {}),
+    inventories: [{ sha256: hash(durable), targetFingerprint: 'd'.repeat(64) }] }, { priorMaps, laterMaps });
+  const result = run();
+  const commands = result.batches.flatMap(b => validateLegacyMaxSnapshot(b.snapshot, JSON.parse(b.importManifest)));
+  assert.equal(commands.length, 11); for (const id of ['prior-only', 'pre-only', 'synthetic-1', 'final-only']) assert.ok(commands.some(c => c.id === id));
+  assert.equal(JSON.parse(result.receipt).lastMapCapturedAt, diagnostic.captured.at);
+  assert.equal(JSON.parse(result.receipt).mapCount, 3); assert.equal(JSON.parse(result.receipt).priorMapCount, 1);
+  assert.deepEqual(JSON.parse(result.provenance).priorMapEvidence[0].inputSha256, prior.expected.hashes);
+  assert.deepEqual(JSON.parse(result.provenance).membership.find(row => row.id === 'prior-only').origins,
+    [{ kind: 'MAP', phase: 'PRIOR', map: 1, index: 0 }]);
+  assert.equal(JSON.parse(result.provenance).laterMapEvidence[0].normalizationReceipt.schema, 'PHAB_CUP83_SNAPSHOT_NORMALIZATION_V1');
+  assert.equal(JSON.parse(result.provenance).primaryFenceEvidence.normalizationReceipt.sourceAttestationProven, false);
+  assert.throws(() => run([final], []), /UNION_PRIOR_MAP_ORDER/);
+  assert.throws(() => run([], [prior]), /UNION_MAP_ORDER/);
+  assert.throws(() => run([prior, prior], [final]), /UNION_MAP_COUNT/);
+  const newerPrior = fixture(); newerPrior.intent.at = '2026-11-02T21:59:54.000Z';
+  newerPrior.captured.at = '2026-11-02T21:59:55.000Z'; newerPrior.terminal.at = '2026-11-02T21:59:56.000Z';
+  assert.throws(() => run([seal(newerPrior), prior], []), /UNION_PRIOR_MAP_ORDER/);
+  const badPin = { mapContextSha256: hash(enc(expected)), priorMapContextSha256: ['0'.repeat(64)],
+    inventories: [{ sha256: hash(durable), targetFingerprint: 'd'.repeat(64) }] };
+  assert.throws(() => buildCup83FencedMaxRestartUnion(inputs, expected, [durable], badPin, { priorMaps: [prior] }), /UNION_MAP_CONTEXT/);
 });

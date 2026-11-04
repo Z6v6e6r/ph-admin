@@ -1,4 +1,4 @@
-# CUP83 diagnostic snapshot normalization
+# CUP83 offline snapshot normalization
 
 `normalizeCup83MaxSnapshot(inputs, expected)` in
 `scripts/lib/cup-legacy-max-snapshot.mjs` converts the existing CUP83 diagnostic
@@ -125,6 +125,67 @@ drain/final capture and old-process stop remain separate reviewed operations. Th
 helper preserves the supplied known-ID union; it cannot recover a historical ID
 already absent from every retained Map and durable namespace.
 
+### Actual pre-drain normalization and phased union
+
+`normalizeCup83PreDrainFence(inputs, expected)` is a separate pure offline path
+for the real `captureAndFenceCup83Support` artifacts. Supply the exact private
+buffers `{raw, web, fence}` from `pre-drain-map.json`, `pre-drain-web.json` and
+`pre-drain-fence.json`. The independent expected context is
+`{hashes:{raw,web,fence}, identity, source, targetFingerprint, fencedAt}`. Every
+hash and `fencedAt` must be pinned to the reviewed original package. Missing or
+partial files, noncanonical bytes, substituted hashes/identity/time, incomplete
+fence claims, dropped web linkage, malformed rows/counts/references/sidecars refuse.
+The primitive's sparse MAX counts remain sparse. MAX+web bytes share the original
+32MiB capture limit; no input is truncated or reconstructed from a receipt.
+
+The capture identity may contain its four runtime fields or the existing eight
+diagnostic identity fields when those were explicitly passed to the primitive.
+In either case the primitive only verifies `pid`, `start` (timeOrigin),
+`nodeVersion` and `sourceEpoch`. The full six-field importer `source` remains an
+**independent caller pin**. Its overlapping PID/source commit must match; optional
+copied boot/startTicks fields must agree, but their presence is no runtime
+attestation. No boot ID, Linux ticks, runtime inventory or exact snapshot instant
+is inferred from the four-field capture.
+
+Outputs retain the existing snapshot/import-manifest envelopes, plus a distinct
+`PHAB_CUP83_PRE_DRAIN_NORMALIZATION_V1` receipt and
+`PHAB_CUP83_PRE_DRAIN_UNDEFINED_PATHS_V1` sidecar. Both MAX and web undefined paths
+and the raw/web hashes remain bound without restoring undefined/null fields.
+`capturedAt` uses the independently pinned fence receipt's `at`, with explicit
+`FENCE_RECEIPT_TIME` semantics. No diagnostic operation, CAPTURED journal or
+terminal receipt is fabricated. Source attestation, Inspector closure, sole
+client, drain, durable completeness, target verification, restart and import
+authority remain unproven/false. Zero MAX rows retain all web/fence evidence and
+return null snapshot/manifest. The original three files must remain private and
+retained; this structural web validation does not replace durable web comparison.
+
+`buildCup83FencedMaxRestartUnion(fenceInputs, fenceExpected, durableInputs,
+expected, {priorMaps:[], laterMaps:[]})` adds this actual fence to the known-ID
+union. Historical diagnostic captures must be supplied explicitly as `priorMaps`;
+post-fence diagnostic captures go into `laterMaps`. Combined prior/later bundles
+are limited to two, preserving the total three-Map limit. Each diagnostic bundle
+retains `{inputs,expected}` and its existing normalizer. The union expected context
+pins `mapContextSha256`, ordered `inventories`, and the ordered
+`priorMapContextSha256`/`laterMapContextSha256` lists when those phases are present.
+Every bundle must share the pinned full source/destination and four overlapping
+runtime identity fields. Prior acknowledgement times are nondecreasing and no
+later than the fence; later acknowledgement times are nondecreasing and no earlier
+than the fence. Durable evidence cannot predate the fence/latest later capture.
+An earlier capture is never silently discarded to satisfy temporal ordering.
+
+Distinct `PHAB_CUP83_FENCED_MAX_UNION_PROVENANCE_V1` and
+`PHAB_CUP83_FENCED_MAX_RESTART_UNION_V1` outputs preserve primary fence/web linkage,
+both diagnostic phases' hashes/normalization/undefined evidence and per-ID phase
+membership. The fence is the representative when it contains an ID; otherwise
+the first supplied prior/later/durable copy is retained under the existing
+immutable-payload conflict rules. This is no delivery decision. Every supplied ID
+is retained; the caller must still establish that the supplied inputs cover all
+reviewed historical captures/backends. All source files remain mandatory.
+The existing 100000 input rows/50000 unique IDs, 128MiB total input, 64MiB durable
+input and 5000-command/32MiB batch bounds are unchanged. The new fenced path also
+counts its web/fence and diagnostic metadata bytes in the total budget. Legacy
+diagnostic-only callers retain their original contracts, ordering and schemas.
+
 
 ## CUP83 pre-drain primitive
 
@@ -144,8 +205,9 @@ must reconcile its exact bytes and receipt. Failure after timer changes must not
 reported as unchanged state. This primitive does not drain HTTP, tournament producers,
 Mongo, or detached sends, does not authorize restart, and does not restore timers.
 Its `PHAB_CUP83_PRE_DRAIN_FENCE_V1` receipt is distinct from the completed diagnostic
-export receipt: current diagnostic-only normalization does not yet accept it. A full
-first-restart operator and receipt integration remain required before live use.
+export receipt: use the separate pre-drain normalization/phased union above. A full
+first-restart operator, source/lock custody and live acceptance remain required
+before use against an actual runtime.
 
 ## Web history compatibility
 
