@@ -1,7 +1,7 @@
 name: MAX outbox receipts
 on:
   pull_request:
-    paths: ['src/support/**', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
+    paths: ['src/support/**', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'scripts/lib/cup83-*.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/cup83-*.test.mjs', 'test/cup83-inventory-budget-child.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-web-history-custody.test.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
   push:
     branches: ['codex/max-retry-receipts']
 permissions:
@@ -30,7 +30,7 @@ jobs:
           test "$ready" = true
       - run: npm run build
       - name: Offline diagnostic snapshot provenance and compiled importer compatibility
-        run: node --test test/cup-legacy-max-snapshot.test.mjs
+        run: node --test test/cup-legacy-max-snapshot.test.mjs test/cup83-*.test.mjs
       - name: Compatibility defaults and guarded feature UI
         run: |
           npx ts-node test/release-capabilities.test.ts
@@ -41,6 +41,7 @@ jobs:
           npx ts-node test/support-contact-identity-isolation.test.ts
           npx ts-node test/support-diagnostics.test.ts
           npx ts-node test/legacy-max-restart-custody.test.ts
+          npx ts-node test/support-web-history-custody.test.ts
           npx ts-node test/support-cold-reply.mongodb.test.ts mongodb://127.0.0.1:27017
           npx ts-node test/messenger-dialog-resolution.test.ts
           npx ts-node test/max-outbox-local-defer.test.ts mongodb://127.0.0.1:27017
