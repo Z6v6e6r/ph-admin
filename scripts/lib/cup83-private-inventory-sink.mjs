@@ -187,7 +187,7 @@ export function createCup83PrivateInventorySink({ directory, expectedUid, expect
       for (const entry of receipt.counts) {
         exact(entry, ['fingerprint', 'counts'], 'PRIVATE_SINK_RECEIPT'); exact(entry.counts, kinds, 'PRIVATE_SINK_RECEIPT');
         need(namespaces.has(entry.fingerprint) && !counted.has(entry.fingerprint)
-          && Object.values(entry.counts).every(v => Number.isSafeInteger(v) && v >= 0 && v <= 20000), 'PRIVATE_SINK_RECEIPT');
+          && Object.values(entry.counts).every(v => Number.isSafeInteger(v) && v >= 0 && v <= 32768), 'PRIVATE_SINK_RECEIPT');
         counted.add(entry.fingerprint);
       }
       const payload = encode(receipt); need(payload.length <= 16384, 'PRIVATE_SINK_RECEIPT'); return payload;

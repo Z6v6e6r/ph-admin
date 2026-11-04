@@ -86,3 +86,17 @@ test('sidecar prototype-looking keys do not mutate prototypes', () => {
  Object.defineProperty(f.inventory.rows.clients[0][1], '__proto__', { value:null, enumerable:true });
  assert.equal(f.run().status, 'PINNED_WEB_CAPTURE_ROWS_MATCH'); assert.equal(Object.prototype.polluted, undefined);
 });
+
+test('complete durable inventory includes 25372 MAX rows without widening capture bounds', () => {
+ const f = fixture();
+ for (let i=1;i<25372;i++) f.inventory.rows.commands.push(['max-'+i,{id:'max-'+i,connector:'MAX_BOT',status:'SENT'}]);
+ f.inventory.counts=counts(f.inventory.rows);
+ assert.equal(f.run().status,'PINNED_WEB_CAPTURE_ROWS_MATCH');
+ assert.equal(f.inventory.rows.commands.length,25372);
+});
+test('32769 durable rows and 20001 capture rows still refuse without truncation', () => {
+ const f=fixture();f.inventory.rows.commands=Array.from({length:32769},(_,i)=>['max-'+i,{id:'max-'+i}]);
+ f.inventory.counts=counts(f.inventory.rows);assert.throws(f.run,/ROW_COUNT/);
+ const g=fixture();g.capture.rows.commands=Array.from({length:20001},(_,i)=>['web-'+i,{id:'web-'+i}]);
+ g.capture.counts=counts(g.capture.rows);assert.throws(g.run,/ROW_COUNT/);
+});

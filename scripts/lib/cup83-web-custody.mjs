@@ -24,11 +24,11 @@ function boundedData(value, depth = 0) {
   need(object(value) || Array.isArray(value), 'ROW_DATA');
   for (const child of Object.values(value)) boundedData(child, depth + 1);
 }
-function rowsByKind(rows, counts) {
+function rowsByKind(rows, counts, maxRows = 20000) {
   exact(rows, KINDS, 'COLLECTION_SET'); exact(counts, KINDS, 'COUNT_SET');
   const result = {};
   for (const kind of KINDS) {
-    need(Array.isArray(rows[kind]) && rows[kind].length <= 20000 && counts[kind] === rows[kind].length, 'ROW_COUNT');
+    need(Array.isArray(rows[kind]) && rows[kind].length <= maxRows && counts[kind] === rows[kind].length, 'ROW_COUNT');
     const map = result[kind] = new Map();
     for (const pair of rows[kind]) {
       need(Array.isArray(pair) && pair.length === 2, 'ROW_PAIR');
@@ -101,7 +101,7 @@ export function compareCup83WebCustody(inputs, expected) {
     need(value.schema === 'PHAB_CUP83_WEB_DURABLE_INVENTORY_V1' && value.sourceEpoch === SOURCE
       && value.fingerprint === binding.fingerprint && value.collectionsSha256 === binding.collectionsSha256
       && value.complete === true && value.ignoreUndefined === false, 'INVENTORY_BINDING_OR_COMPLETENESS');
-    inventories.push(rowsByKind(value.rows, value.counts));
+    inventories.push(rowsByKind(value.rows, value.counts, 32768));
   }
   // Reject conflicting duplicates, rather than letting loadState's timestamp and
   // backend-order tie-break hide a divergent identity, ACL or payload version.

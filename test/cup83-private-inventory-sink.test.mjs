@@ -294,3 +294,11 @@ test('concurrent abort prevents completion from resolving successful custody', a
   assert.equal(JSON.parse(fs.readFileSync(f.file(QUARANTINE))).completionInvalid, true);
   assert.deepEqual(fs.readFileSync(f.file(inventory)), p.payload);
 });
+
+test('post-stop consumer count32768 is accepted but32769 is refused; file byte caps unchanged', async t => {
+  const f = fixture(t), p = await populated(f); p.receipt.counts[0].counts.commands = 32768;
+  assert.equal((await p.sink.complete(p.receipt, safeSignal())).artifactCount, 2); p.sink.close();
+  const g = fixture(t), q = await populated(g); q.receipt.counts[0].counts.commands = 32769;
+  await assert.rejects(q.sink.complete(q.receipt, safeSignal()), /PRIVATE_SINK_RECEIPT/);
+  assert.equal(fs.existsSync(g.file(COMPLETION)), false);
+});

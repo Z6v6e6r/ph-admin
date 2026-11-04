@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { BSON, Collection, Long, MongoClient, ReadPreference } from 'mongodb';
-import { collectCup83DurableInventory } from '../scripts/lib/cup83-durable-inventory.mjs';
+import { captureCup83LiveMapping, collectCup83DurableInventory } from '../scripts/lib/cup83-durable-inventory.mjs';
 import { compareCup83WebCustody } from '../scripts/lib/cup83-web-custody.mjs';
 
 const sourceEpoch = '83b1c17bc4c5edaec65387b25b5695e48337c3cf';
@@ -326,4 +326,38 @@ test('backend drift during read or sink write invalidates complete custody', asy
   const g = fixture(), write = g.sink.write;
   g.sink.write = async (...args) => { await write(...args); g.persistence.backendStates.delete('primary'); };
   await assert.rejects(g.run(), /BACKEND_DRIFT/); assert.equal(g.completed, undefined); assert.ok(g.quarantined.size > 0);
+});
+
+test('synchronous live mapping-only capture validates actual handles without queries, Maps, URI reads or completeness claim', () => {
+  const f = fixture(['primary', 'web', 'max']);
+  for (const b of f.expected.backends) b.db.collection = () => { throw Error('MAPPING_MUST_NOT_QUERY'); };
+  Object.defineProperty(f.support, 'outbox', { get() { throw Error('MAPPING_MUST_NOT_READ_ROWS'); } });
+  const result = captureCup83LiveMapping({ support: f.support, expected: f.expected });
+  assert.equal(result.then, undefined); assert.equal(hash(result.capture), result.sha256);
+  const value = JSON.parse(result.capture);
+  assert.equal(value.schema, 'PHAB_CUP83_LIVE_MAPPING_CAPTURE_V1'); assert.equal(value.backends.length, 3);
+  assert.equal(value.backends[0].collections.responseMetrics, collections.responseMetrics);
+  assert.equal(value.durableCompletenessProven, false); assert.equal(value.producerDrainProven, false);
+  assert.equal(value.restartAuthorized, false); assert.equal(Object.hasOwn(value, 'rows'), false);
+  assert.equal(f.calls.length, 0); assert.equal(f.mutations, 0); assert.equal(f.writes.size, 0);
+});
+
+test('mapping-only capture refuses wrong process/handles/topology/collection aliases', () => {
+  for (const mutate of [
+    f => f.expected.identity.pid++, f => f.expected.backends[0].topology.servers = ['wrong.invalid:27017'],
+    f => f.persistence.backendStates.get('primary').client = {},
+    f => { f.expected.backends[0].collections.outbox = 'messages'; f.persistence.backendConfigs[0].collections.outbox = 'messages'; },
+  ]) {
+    const f = fixture(); mutate(f);
+    assert.throws(() => captureCup83LiveMapping({ support: f.support, expected: f.expected }), /PROCESS_IDENTITY|DRIVER_OR_HANDLE|TOPOLOGY_IDENTITY|COLLECTION_DOMAIN_ALIAS/);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('live scan still rejects 20001 rows and cannot opt into post-stop row/charge bounds', async () => {
+  const f = fixture(); f.data.get('primary').clients = Array.from({ length: 20001 }, (_, i) => ({ id: 'bounded-' + i }));
+  await assert.rejects(f.run(), /COUNT_LIMIT/); assert.equal(f.completed, undefined);
+  const g = fixture(); await assert.rejects(g.run({ maxRowsPerCollection: 32768 }), /LIMITS/);
+  const h = fixture(); await assert.rejects(h.run({ maxChargeBytes: 6 * 64 * 1024 * 1024 }), /LIMITS/);
+  assert.equal(g.calls.length + h.calls.length, 0);
 });
