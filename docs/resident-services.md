@@ -128,9 +128,11 @@ Content-Type: application/json
 | POST | `/api/v1/admin/resident-services/benefit-rules` | `resident-services:configure` |
 | PATCH | `/api/v1/admin/resident-services/benefit-rules/:ruleId` | `resident-services:configure` |
 
-Все обязательные мутации требуют `Idempotency-Key` (16..128 символов) и
-возвращают `Idempotency-Replayed: true|false`. Все ответы — `no-store`.
-Изменяющие cookie-запросы проверяют `Origin` по
+Выдача, возврат и создание правила преимущества требуют `Idempotency-Key`
+(16..128 символов) и возвращают `Idempotency-Replayed: true|false`. Изменение
+правила использует `expectedRevision` и при повторе после потери ответа может
+вернуть 409, после чего администратор перечитывает карточку. Все ответы —
+`no-store`. Изменяющие cookie-запросы проверяют `Origin` по
 `RESIDENT_SERVICES_ADMIN_ORIGINS`; Bearer-запросы проверку Origin не требуют.
 
 ### Проверка пропуска (scan/preview)

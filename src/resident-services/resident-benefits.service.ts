@@ -209,6 +209,18 @@ export class ResidentBenefitsService {
       ? rule.stationScope
       : this.normalizeScope(command.stationIds);
     this.assertCanConfigure(user, scope);
+    if (command.enabled !== undefined && typeof command.enabled !== 'boolean') {
+      throw new BadRequestException({
+        code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_INVALID,
+        message: 'Resident benefit enabled flag is invalid'
+      });
+    }
+    if (command.returnable !== undefined && typeof command.returnable !== 'boolean') {
+      throw new BadRequestException({
+        code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_INVALID,
+        message: 'Resident benefit returnable flag is invalid'
+      });
+    }
     const limitPeriod = command.limitPeriod ?? rule.limitPeriod;
     const limitQuantity = command.limitQuantity ?? rule.limitQuantity;
     const returnable = command.returnable ?? rule.returnable;
