@@ -20,6 +20,8 @@
     "subscriptions:indexes:apply": "node scripts/managed-subscriptions-indexes.mjs --apply",
     "referral-links:indexes:check": "node scripts/managed-referral-links-indexes.mjs --check",
     "referral-links:indexes:apply": "node scripts/managed-referral-links-indexes.mjs --apply",
+    "qr-links:indexes:check": "node scripts/managed-qr-links-indexes.mjs --check",
+    "qr-links:indexes:apply": "node scripts/managed-qr-links-indexes.mjs --apply",
     "referral-links:backup:target-fingerprint": "node scripts/referral-links-backup.mjs --target-fingerprint",
     "referral-links:backup:check": "node scripts/referral-links-backup.mjs --check",
     "referral-links:backup:create": "node scripts/referral-links-backup.mjs --create",
@@ -127,6 +129,7 @@
     "class-validator": "^0.14.1",
     "exceljs": "^4.4.0",
     "mongodb": "^6.21.0",
+    "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "web-push": "^3.6.7"
@@ -134,6 +137,10 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.12",
+    "@types/pngjs": "^6.0.5",
+    "@types/qrcode": "^1.5.5",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
   }
