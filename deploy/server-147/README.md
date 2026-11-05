@@ -85,6 +85,11 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+Permanent QR links (`/q/<code>`) and CUP deep links (`/admin/qr`) are a separate
+opt-in location patch: `deploy/server-147/nginx-qr-links-location.conf`, with an
+optional edge rate limit in `nginx-qr-links-rate-limit-http.conf`. See
+`docs/qr-links-admin.md` for the full enable/verify/rollback procedure.
+
 ## 4) Checks
 
 ```bash
