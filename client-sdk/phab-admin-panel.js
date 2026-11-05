@@ -210,7 +210,11 @@
     ['advertising:write', 'Реклама — изменение'],
     ['subscriptions:read', 'Подписки — просмотр'],
     ['subscriptions:catalog:write', 'Подписки — типы и правила'],
-    ['subscriptions:release:write', 'Подписки — программы выпуска']
+    ['subscriptions:release:write', 'Подписки — программы выпуска'],
+    ['resident-services:read', 'Резидентские услуги — журнал и выдачи'],
+    ['resident-services:issue', 'Резидентские услуги — проверка пропуска и выдача'],
+    ['resident-services:return', 'Резидентские услуги — приём возврата'],
+    ['resident-services:configure', 'Резидентские услуги — настройка преимуществ']
   ];
   var PADLHUB_FAVICON_URL = 'https://padlhub.ru/favicon.ico';
   var MAX_FAVICON_URL = 'https://max.ru/favicon.ico';

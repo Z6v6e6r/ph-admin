@@ -1,0 +1,60 @@
+name: resident-services
+on:
+  pull_request:
+    paths:
+      - 'src/resident-services/**'
+      - 'src/subscriptions/**'
+      - 'src/lk-identity/**'
+      - 'src/common/**'
+      - 'src/bootstrap.ts'
+      - 'src/app.module.ts'
+      - 'client-sdk/phab-admin-panel.js'
+      - 'scripts/managed-resident-services-indexes.mjs'
+      - 'test/resident-services*'
+      - 'test/helpers/resident-services-fixtures.ts'
+      - 'docs/resident-services.md'
+      - 'deploy/.env.app.example'
+      - 'package*.json'
+      - 'tsconfig*.json'
+      - '.github/workflows/resident-services.yml'
+  push:
+    branches:
+      - 'agent/resident-pass-20261105'
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npx tsc -p tsconfig.build.json --noEmit --incremental false
+      - name: Focused domain tests
+        run: npm run test:resident-services
+      - name: Start disposable Mongo replica set
+        run: |
+          docker run --detach --name phab-resident-mongo --publish 127.0.0.1:27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 60); do
+            if docker exec phab-resident-mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q 1; then break; fi
+            sleep 1
+          done
+          docker exec phab-resident-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for attempt in $(seq 1 60); do
+            if docker exec phab-resident-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then break; fi
+            sleep 1
+          done
+          docker exec phab-resident-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true
+      - name: Physical Mongo transaction and concurrency proof
+        run: |
+          export RESIDENT_SERVICES_TEST_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
+          export RESIDENT_SERVICES_TEST_MONGODB_DB="phab_resident_ci_$$_$(openssl rand -hex 16)"
+          npm run test:resident-services:mongo
+      - name: Stop disposable Mongo
+        if: always()
+        run: docker rm --force --volumes phab-resident-mongo || true
