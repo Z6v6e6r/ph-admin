@@ -28,7 +28,11 @@ export const ADMIN_PERMISSION_CATALOG = [
   { key: 'subscriptions:instances:manage', label: 'Подписки: управление экземплярами' },
   { key: 'subscriptions:financial:write', label: 'Подписки: возвраты и финансовые операции' },
   { key: 'subscriptions:analytics:read', label: 'Подписки: аналитика' },
-  { key: 'subscriptions:analytics:export', label: 'Подписки: экспорт аналитики и PII' }
+  { key: 'subscriptions:analytics:export', label: 'Подписки: экспорт аналитики и PII' },
+  { key: 'resident-services:read', label: 'Резидентские услуги: журнал и выдачи' },
+  { key: 'resident-services:issue', label: 'Резидентские услуги: проверка пропуска и выдача' },
+  { key: 'resident-services:return', label: 'Резидентские услуги: приём возврата' },
+  { key: 'resident-services:configure', label: 'Резидентские услуги: настройка преимуществ' }
 ] as const;
 
 export type AdminPermission = (typeof ADMIN_PERMISSION_CATALOG)[number]['key'];

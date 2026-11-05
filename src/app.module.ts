@@ -13,6 +13,7 @@ import { TelegramConnectorModule } from './integrations/telegram/telegram-connec
 import { MessengerModule } from './messenger/messenger.module';
 import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
 import { ReferralLinksModule } from './referral-links/referral-links.module';
+import { ResidentServicesModule } from './resident-services/resident-services.module';
 import { SupportModule } from './support/support.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { RolesGuard } from './common/rbac/roles.guard';
@@ -34,6 +35,7 @@ import { TrafficModule } from './traffic/traffic.module';
     MessengerModule,
     PlayerRatingsModule,
     ReferralLinksModule,
+    ResidentServicesModule,
     SubscriptionsModule,
     SupportModule,
     TelegramConnectorModule,
