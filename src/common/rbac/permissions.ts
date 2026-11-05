@@ -20,6 +20,8 @@ export const ADMIN_PERMISSION_CATALOG = [
   { key: 'player-ratings:write', label: 'Уровни игроков: изменение' },
   { key: 'advertising:read', label: 'Реклама: просмотр' },
   { key: 'advertising:write', label: 'Реклама: изменение' },
+  { key: 'qr:read', label: 'QR-коды: просмотр, статистика и выгрузка изображения' },
+  { key: 'qr:manage', label: 'QR-коды: создание, изменение назначения и архивирование' },
   { key: 'subscriptions:read', label: 'Подписки: просмотр' },
   { key: 'subscriptions:catalog:write', label: 'Подписки: типы и правила' },
   { key: 'subscriptions:publication:write', label: 'Подписки: публикация правил' },

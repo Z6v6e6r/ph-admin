@@ -90,6 +90,10 @@ the existing CUP route `/api/ui/admin/residency/check`. It is a separate opt-in
 location patch: `deploy/server-147/nginx-residency-check-location.conf`. See
 `docs/residency-check.md`. Routing/domain changes are not applied by this source
 branch and require explicit deployment approval.
+Permanent QR links (`/q/<code>`) and CUP deep links (`/admin/qr`) are a separate
+opt-in location patch: `deploy/server-147/nginx-qr-links-location.conf`, with an
+optional edge rate limit in `nginx-qr-links-rate-limit-http.conf`. See
+`docs/qr-links-admin.md` for the full enable/verify/rollback procedure.
 
 ## 4) Checks
 

@@ -14,12 +14,15 @@
     "subscriptions:dev-mongo:check": "ts-node scripts/managed-subscriptions-dev-mongo-preflight.ts --check",
     "subscriptions:dev-indexes:check": "ts-node scripts/managed-subscriptions-dev-indexes.ts --check",
     "subscriptions:dev-indexes:apply": "ts-node scripts/managed-subscriptions-dev-indexes.ts --apply",
-  "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
-  "tournaments:pending-payments:reconcile": "node scripts/reconcile-public-tournament-pending-payments.mjs",
+    "audit:indexes:dialogs": "node scripts/dialogs-index-audit.mjs --strict",
+    "tournaments:pending-payments:reconcile": "node scripts/reconcile-public-tournament-pending-payments.mjs",
     "subscriptions:indexes:check": "node scripts/managed-subscriptions-indexes.mjs --check",
     "subscriptions:indexes:apply": "node scripts/managed-subscriptions-indexes.mjs --apply",
     "referral-links:indexes:check": "node scripts/managed-referral-links-indexes.mjs --check",
     "referral-links:indexes:apply": "node scripts/managed-referral-links-indexes.mjs --apply",
+    "qr-links:indexes:check": "node scripts/managed-qr-links-indexes.mjs --check",
+    "qr-links:indexes:apply": "node scripts/managed-qr-links-indexes.mjs --apply",
+    "test:qr-links": "ts-node test/qr-links-target-url.test.ts && ts-node test/qr-links-image.test.ts && ts-node test/qr-links.service.test.ts && ts-node test/qr-links-public-redirect.test.ts && node --test test/qr-links-admin-ui.test.mjs",
     "referral-links:backup:target-fingerprint": "node scripts/referral-links-backup.mjs --target-fingerprint",
     "referral-links:backup:check": "node scripts/referral-links-backup.mjs --check",
     "referral-links:backup:create": "node scripts/referral-links-backup.mjs --create",
@@ -128,6 +131,8 @@
     "class-validator": "^0.14.1",
     "exceljs": "^4.4.0",
     "mongodb": "^6.21.0",
+    "pngjs": "^7.0.0",
+    "qrcode-generator": "^2.0.4",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "web-push": "^3.6.7"
@@ -135,6 +140,8 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.12",
+    "@types/pngjs": "^6.0.5",
+    "jsqr": "^1.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
   }

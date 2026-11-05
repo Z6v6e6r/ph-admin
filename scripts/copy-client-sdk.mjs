@@ -23,6 +23,7 @@ const files = [
   'phab-referral-links-admin.js',
   'phab-residency-check.js',
   'phab-residency-check.css',
+  'phab-qr-links-admin.js',
   'phab-community-feed.js',
   'phab-communities-showcase.js',
   'phab-client-messenger.js',
