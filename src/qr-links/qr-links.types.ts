@@ -125,6 +125,26 @@ export interface QrStationOption {
   isActive: boolean;
 }
 
+export const QR_ALLOWED_HOSTS_KEY = 'allowed-hosts';
+
+export interface StoredQrAllowedHostsSettings {
+  key: string;
+  hosts: string[];
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export interface QrAllowedHostsView {
+  /** Hosts from the trusted server configuration; always allowed. */
+  defaults: string[];
+  /** Additional hosts managed from CUP for this deployment. */
+  extra: string[];
+  version: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
 export interface QrListQuery {
   q?: string;
   stationId?: string;

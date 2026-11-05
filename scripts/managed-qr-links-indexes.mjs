@@ -11,6 +11,9 @@ const linksCollection = String(process.env.QR_LINKS_COLLECTION || 'cup_qr_links'
 const dailyStatsCollection = String(
   process.env.QR_LINKS_DAILY_STATS_COLLECTION || 'cup_qr_daily_stats'
 ).trim();
+const settingsCollection = String(
+  process.env.QR_LINKS_SETTINGS_COLLECTION || 'cup_qr_settings'
+).trim();
 
 const plan = [
   [linksCollection, { id: 1 }, { name: 'qr_link_id_unique', unique: true }],
@@ -28,7 +31,8 @@ const plan = [
   ],
   [linksCollection, { updatedAt: -1 }, { name: 'qr_link_updated_at' }],
   [dailyStatsCollection, { qrId: 1, dateKey: 1 }, { name: 'qr_daily_unique', unique: true }],
-  [dailyStatsCollection, { dateKey: 1 }, { name: 'qr_daily_date' }]
+  [dailyStatsCollection, { dateKey: 1 }, { name: 'qr_daily_date' }],
+  [settingsCollection, { key: 1 }, { name: 'qr_settings_key_unique', unique: true }]
 ];
 
 if (!uri || !dbName) {

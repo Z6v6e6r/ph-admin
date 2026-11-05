@@ -169,6 +169,16 @@
       stations: async function () {
         return (await request('/v1/admin/qr-links/stations', { headers: headers() })).json();
       },
+      allowedHosts: async function () {
+        return (await request('/v1/admin/qr-links/allowed-hosts', { headers: headers() })).json();
+      },
+      saveAllowedHosts: async function (hosts, expectedVersion) {
+        return (await request('/v1/admin/qr-links/allowed-hosts', {
+          method: 'PUT',
+          headers: headers({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ hosts: hosts, expectedVersion: expectedVersion })
+        })).json();
+      },
       get: async function (id) {
         return (await request('/v1/admin/qr-links/' + encodeURIComponent(id), { headers: headers() })).json();
       },
@@ -225,6 +235,7 @@
     }
     var canRead = can('qr:read');
     var canManage = can('qr:manage');
+    var canSettings = can('settings:write');
 
     var api = createApi(config);
     var state = {
@@ -339,6 +350,7 @@
       if (action !== 'sort') event.preventDefault();
       switch (action) {
         case 'create': openFormModal('create', null); break;
+        case 'allowed-hosts': void openAllowedHostsModal(); break;
         case 'refresh': void loadList(); if (!state.stationsLoaded) void loadStations(); break;
         case 'retry': void loadList(); break;
         case 'retry-card': if (state.selectedId) void loadCard(state.selectedId); break;
@@ -603,7 +615,7 @@
       section.className = state.visible ? 'phab-qr-page' : QUIET;
       section.innerHTML = '<div class="phab-qr-shell">' +
         '<div class="phab-qr-head"><div><h2>QR-коды</h2><p>' + DESCRIPTION + '</p></div>' +
-          '<div class="phab-qr-actions">' + (canManage ? '<button class="phab-qr-btn" type="button" data-action="create">Создать QR</button>' : '') + '</div></div>' +
+          '<div class="phab-qr-actions">' + (canManage && canSettings ? '<button class="phab-qr-btn secondary" type="button" data-action="allowed-hosts">Домены</button>' : '') + (canManage ? '<button class="phab-qr-btn" type="button" data-action="create">Создать QR</button>' : '') + '</div></div>' +
         '<div data-kpis-region>' + renderKpisHtml() + '</div>' +
         '<div data-filter-region></div>' +
         noticeHtml() +
@@ -924,6 +936,53 @@
           '<div class="phab-qr-table-wrap"><table class="phab-qr-table"><thead><tr><th>Когда</th><th>Действие</th><th>Кто</th></tr></thead><tbody>' + historyRows + '</tbody></table></div>' +
         '</div>' +
         '</div>';
+    }
+
+    async function openAllowedHostsModal() {
+      var current;
+      try {
+        current = await api.allowedHosts();
+      } catch (error) {
+        setNotice(error && error.message ? error.message : 'Не удалось загрузить настройку доменов.', true);
+        return;
+      }
+      var defaults = Array.isArray(current.defaults) ? current.defaults : [];
+      var defaultsHtml = defaults.length
+        ? defaults.map(function (host) { return '<span class="phab-qr-badge">' + escapeHtml(host) + '</span>'; }).join(' ')
+        : '—';
+      var modal = document.createElement('div');
+      modal.className = 'phab-qr-modal';
+      modal.innerHTML = '<form class="phab-qr-modal-card"><h3>Разрешённые домены</h3>' +
+        '<p class="phab-qr-meta">Домены из серверной конфигурации разрешены всегда. Здесь можно добавить дополнительные домены для целевых страниц. Изменение записывается в аудит; удаление домена не ломает уже напечатанные QR, но запрещает новые ссылки на него.</p>' +
+        '<div class="phab-qr-meta"><b>По умолчанию:</b><br>' + defaultsHtml + '</div>' +
+        '<label class="phab-qr-field phab-qr-wide"><span>Дополнительные домены (по одному в строке, можно *.example.com)</span><textarea name="hosts" rows="5" placeholder="lk.padlhub.ru&#10;*.padlhub.ru">' + escapeHtml((Array.isArray(current.extra) ? current.extra : []).join('\n')) + '</textarea></label>' +
+        '<div class="phab-qr-message error" data-error hidden></div>' +
+        '<div class="phab-qr-modal-actions"><button type="button" class="phab-qr-btn secondary" data-close>Отмена</button><button class="phab-qr-btn" type="submit">Сохранить</button></div></form>';
+      document.body.appendChild(modal);
+      var close = function () { modal.remove(); };
+      modal.querySelector('[data-close]').addEventListener('click', close);
+      modal.addEventListener('click', function (event) { if (event.target === modal) close(); });
+      var errorEl = modal.querySelector('[data-error]');
+      modal.querySelector('form').addEventListener('submit', async function (event) {
+        event.preventDefault();
+        var form = event.currentTarget;
+        var submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        errorEl.hidden = true;
+        var hosts = String(form.querySelector('textarea[name="hosts"]').value || '')
+          .split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
+        try {
+          await api.saveAllowedHosts(hosts, Number(current.version || 0));
+          close();
+          setNotice('Список разрешённых доменов обновлён');
+        } catch (error) {
+          errorEl.hidden = false;
+          errorEl.textContent = error && error.status === 409
+            ? 'Настройка доменов изменена в другом окне. Закройте окно и откройте заново.'
+            : (error && error.message ? error.message : 'Не удалось сохранить домены.');
+          submit.disabled = false;
+        }
+      });
     }
 
     function openFormModal(mode, item) {

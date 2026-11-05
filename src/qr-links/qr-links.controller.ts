@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -21,9 +22,11 @@ import { STAFF_ROLES } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
 import { CreateQrLinkDto } from './dto/create-qr-link.dto';
 import { UpdateQrLinkDto } from './dto/update-qr-link.dto';
+import { UpdateAllowedHostsDto } from './dto/update-allowed-hosts.dto';
 import { renderQrPublicPage } from './qr-public-page';
 import { QrLinksService } from './qr-links.service';
 import {
+  QrAllowedHostsView,
   QrHistoryResponse,
   QrLinkAnalytics,
   QrLinkListResponse,
@@ -90,6 +93,25 @@ export class QrLinksAdminController {
     @CurrentUser() user: RequestUser | undefined
   ): Promise<{ items: QrStationOption[] }> {
     return this.service.stationOptions(user);
+  }
+
+  @Get('allowed-hosts')
+  @Permissions('qr:read')
+  @Header('Cache-Control', 'private, no-store')
+  allowedHosts(): Promise<QrAllowedHostsView> {
+    return this.service.allowedHosts();
+  }
+
+  @Put('allowed-hosts')
+  @Permissions('qr:manage', 'settings:write')
+  @Header('Cache-Control', 'private, no-store')
+  updateAllowedHosts(
+    @Body() dto: UpdateAllowedHostsDto,
+    @CurrentUser() user: RequestUser | undefined,
+    @Req() request: Request
+  ): Promise<QrAllowedHostsView> {
+    this.assertTrustedCookieOrigin(request);
+    return this.service.updateAllowedHosts(dto, user);
   }
 
   @Post()
