@@ -109,12 +109,16 @@ export interface QrTargetUrlPolicyConfig {
 export class QrTargetUrlPolicy {
   readonly config: QrTargetUrlPolicyConfig;
 
-  constructor(environment: NodeJS.ProcessEnv = process.env) {
+  constructor(environment: NodeJS.ProcessEnv = process.env, extraHosts: readonly string[] = []) {
     const publicOrigin = parsePublicOrigin(environment.QR_LINKS_PUBLIC_BASE_URL);
     const publicHost = new URL(publicOrigin).hostname.toLowerCase();
+    const hostSet = new Set([
+      ...parseAllowedHosts(environment.QR_LINKS_ALLOWED_TARGET_HOSTS),
+      ...extraHosts.map((host) => normalizeHost(host)).filter((host) => host.length > 0)
+    ]);
     this.config = {
       publicBaseUrl: publicOrigin,
-      allowedHosts: parseAllowedHosts(environment.QR_LINKS_ALLOWED_TARGET_HOSTS),
+      allowedHosts: [...hostSet],
       allowedPorts: parseAllowedPorts(environment.QR_LINKS_ALLOWED_TARGET_PORTS),
       selfHosts: parseSelfHosts(publicHost, environment.QR_LINKS_SELF_HOSTS),
       maxLength: parsePositiveInteger(
@@ -135,7 +139,17 @@ export class QrTargetUrlPolicy {
     return `${this.config.publicBaseUrl}/q/${code}`;
   }
 
-  validate(rawValue: string): string {
+  /**
+   * Re-validates a destination that was already accepted and stored.
+   * The mutable allowlist is intentionally not re-applied here: removing a
+   * domain later must not break already printed QR codes. Structural and
+   * self-redirect checks still apply.
+   */
+  validateStoredTarget(rawValue: string): string {
+    return this.validate(rawValue, { checkHosts: false });
+  }
+
+  validate(rawValue: string, options: { checkHosts?: boolean } = {}): string {
     const value = String(rawValue ?? '').trim();
     if (!value) fail('QR_TARGET_URL_INVALID', 'Укажите целевой адрес.');
     if (value.length > this.config.maxLength) {
@@ -176,7 +190,7 @@ export class QrTargetUrlPolicy {
       fail('QR_TARGET_URL_PRIVATE_HOST_FORBIDDEN', 'Локальные и внутренние адреса запрещены.');
     }
 
-    if (!this.hostAllowed(hostname)) {
+    if (options.checkHosts !== false && !this.hostAllowed(hostname)) {
       fail('QR_TARGET_URL_HOST_NOT_ALLOWED', 'Домен целевой страницы не входит в разрешённый список.');
     }
 

@@ -19,7 +19,9 @@
 - пауза, включение и архивирование без физического удаления записи и
   статистики; архивный код никогда не выдаётся повторно;
 - серверная фильтрация, пагинация и сортировка, учитываемая в верхних
-  показателях.
+  показателях;
+- настройка дополнительных разрешённых доменов для целевых страниц прямо в ЦУП
+  (кнопка «Домены») с записью изменений в аудит.
 
 QR кодирует **только** постоянную короткую ссылку. В изображении нет текущего
 адреса назначения, персональных данных, токенов и временных кодов.
@@ -47,6 +49,8 @@ QR-код не подтверждает резидентство и не даё�
 | История изменений | — | `GET /api/v1/admin/qr-links/:id/history` |
 | PNG/SVG | — | `GET /api/v1/admin/qr-links/:id/image?format=png|svg` |
 | Справочник станций | — | `GET /api/v1/admin/qr-links/stations` |
+| Разрешённые домены: чтение | — | `GET /api/v1/admin/qr-links/allowed-hosts` |
+| Разрешённые домены: изменение | — | `PUT /api/v1/admin/qr-links/allowed-hosts` |
 
 Публичный маршрут `/q/:code` не требует входа. Он попадает в backend через
 отдельный nginx location (см. ниже), минуя авторизацию ЦУП и без SPA fallback.
@@ -75,7 +79,8 @@ backend выполняет HTTP 302. Повторные открытия учи�
 Коллекции (имена настраиваются):
 
 - `cup_qr_links` — `QR_LINKS_COLLECTION`;
-- `cup_qr_daily_stats` — `QR_LINKS_DAILY_STATS_COLLECTION`.
+- `cup_qr_daily_stats` — `QR_LINKS_DAILY_STATS_COLLECTION`;
+- `cup_qr_settings` — `QR_LINKS_SETTINGS_COLLECTION` (дополнительные домены).
 
 Запись QR: `id`, `code`, `name`, `stationId`, `stationName`, `placement`,
 `description`, `targetUrl`, `status` (ACTIVE/PAUSED/ARCHIVED), `version`,
@@ -95,7 +100,8 @@ Europe/Moscow), `redirectsCount`, `lastRedirectAt`, `updatedAt`.
 - `qr_link_station_status_created` — `{ stationId: 1, status: 1, createdAt: -1 }`;
 - `qr_link_updated_at` — `{ updatedAt: -1 }`;
 - `qr_daily_unique` — `{ qrId: 1, dateKey: 1 }`, unique;
-- `qr_daily_date` — `{ dateKey: 1 }`.
+- `qr_daily_date` — `{ dateKey: 1 }`;
+- `qr_settings_key_unique` — `{ key: 1 }`, unique.
 
 Счётчик увеличивается атомарно одним `updateOne` с `$inc` и `$max` по
 документу `(qrId, dateKey)`; уникальный индекс защищает от двойного агрегата.
@@ -120,6 +126,12 @@ Europe/Moscow), `redirectsCount`, `lastRedirectAt`, `updatedAt`.
 существующее правило `['*']`; остальным ролям `qr:read` / `qr:manage`
 назначает администратор в разделе «Роли и права доступа».
 
+Изменение списка разрешённых доменов (кнопка «Домены») требует одновременно
+`qr:manage` и существующего права `settings:write` и доступно только сотруднику
+с глобальным доступом (без ограничения по станциям). Изменения записываются в
+аудит. Домены из `QR_LINKS_ALLOWED_TARGET_HOSTS` разрешены всегда; добавленные
+в ЦУП домены не могут их отменить.
+
 Ограничение по станциям действует как для остальных прав: пустой список станций
 означает все станции, иначе сотрудник видит и изменяет только QR своих станций.
 Общий QR без станции доступен только сотруднику с глобальным доступом.
@@ -136,14 +148,20 @@ QR_LINKS_MONGODB_URI=          # fallback: MONGODB_URI
 QR_LINKS_MONGODB_DB=           # fallback: MONGODB_DB
 QR_LINKS_COLLECTION=cup_qr_links
 QR_LINKS_DAILY_STATS_COLLECTION=cup_qr_daily_stats
+QR_LINKS_SETTINGS_COLLECTION=cup_qr_settings
 QR_LINKS_STATS_WRITE_TIMEOUT_MS=750
+QR_LINKS_ALLOWED_HOSTS_CACHE_TTL_MS=5000
 # Необязательно: дополнительные собственные хосты, где /q/* уже управляется.
 QR_LINKS_SELF_HOSTS=
 ```
 
 Домены назначения сравниваются точно по hostname с границей метки; поддомены
 разрешаются только явной записью в списке (либо явной маской `*.example.com`
-в конфигурации). Разрешён только абсолютный HTTPS URL, порт 443 по умолчанию;
+в конфигурации). Дополнительные домены добавляются в ЦУП на странице «QR-коды»
+кнопкой «Домены»; они кэшируются на короткий TTL
+(`QR_LINKS_ALLOWED_HOSTS_CACHE_TTL_MS`). Удаление домена запрещает новые ссылки
+на него, но не ломает уже напечатанные QR: сохранённый адрес перепроверяется по
+структурным правилам без повторного применения изменяемого allowlist. Разрешён только абсолютный HTTPS URL, порт 443 по умолчанию;
 запрещены userinfo, CRLF и управляющие символы, `javascript:`/`data:`/`file:`,
 protocol-relative URL, localhost/loopback/private IP и переходы на собственные
 `/q/*`. Query-параметры сохранённого адреса сохраняются; публичные

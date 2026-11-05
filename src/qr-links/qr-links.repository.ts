@@ -7,7 +7,14 @@ import {
 } from '@nestjs/common';
 import { Collection, Db, Document, MongoClient, MongoServerError } from 'mongodb';
 import { ensureMongoIndex, isMongoIndexReadinessError } from '../common/mongo-index.guard';
-import { QrDailyStat, QrLinkListItem, QrListQuery, StoredQrLink } from './qr-links.types';
+import {
+  QrDailyStat,
+  QrLinkListItem,
+  QrListQuery,
+  StoredQrAllowedHostsSettings,
+  StoredQrLink,
+  QR_ALLOWED_HOSTS_KEY
+} from './qr-links.types';
 
 export const QR_LINK_REQUIRED_INDEXES = {
   links: [
@@ -30,6 +37,9 @@ export const QR_LINK_REQUIRED_INDEXES = {
   dailyStats: [
     { name: 'qr_daily_unique', key: { qrId: 1, dateKey: 1 }, unique: true },
     { name: 'qr_daily_date', key: { dateKey: 1 }, unique: false }
+  ],
+  settings: [
+    { name: 'qr_settings_key_unique', key: { key: 1 }, unique: true }
   ]
 } as const;
 
@@ -68,6 +78,9 @@ export class QrLinksRepository implements OnModuleInit, OnModuleDestroy {
   ).trim();
   private readonly dailyStatsCollectionName = String(
     process.env.QR_LINKS_DAILY_STATS_COLLECTION ?? 'cup_qr_daily_stats'
+  ).trim();
+  private readonly settingsCollectionName = String(
+    process.env.QR_LINKS_SETTINGS_COLLECTION ?? 'cup_qr_settings'
   ).trim();
   private client?: MongoClient;
   private db?: Db;
@@ -161,6 +174,38 @@ export class QrLinksRepository implements OnModuleInit, OnModuleDestroy {
   async insertLink(link: StoredQrLink): Promise<void> {
     this.requireAvailable();
     await this.links().insertOne(link);
+  }
+
+  async getAllowedHostsSettings(): Promise<StoredQrAllowedHostsSettings | null> {
+    this.requireAvailable();
+    return this.settings().findOne(
+      { key: QR_ALLOWED_HOSTS_KEY },
+      { projection: { _id: 0 } }
+    );
+  }
+
+  async insertAllowedHostsSettings(
+    settings: StoredQrAllowedHostsSettings
+  ): Promise<void> {
+    this.requireAvailable();
+    await this.settings().insertOne(settings);
+  }
+
+  async updateAllowedHostsSettings(
+    expectedVersion: number,
+    hosts: string[],
+    updatedAt: string,
+    updatedBy: string
+  ): Promise<StoredQrAllowedHostsSettings | null> {
+    this.requireAvailable();
+    return this.settings().findOneAndUpdate(
+      { key: QR_ALLOWED_HOSTS_KEY, version: expectedVersion },
+      {
+        $set: { hosts, updatedAt, updatedBy },
+        $inc: { version: 1 }
+      },
+      { returnDocument: 'after', projection: { _id: 0 } }
+    );
   }
 
   async updateLink(
@@ -383,6 +428,12 @@ export class QrLinksRepository implements OnModuleInit, OnModuleDestroy {
         unique: index.unique
       });
     }
+    for (const index of QR_LINK_REQUIRED_INDEXES.settings) {
+      await ensureMongoIndex(this.settings(), index.key, {
+        name: index.name,
+        unique: index.unique
+      });
+    }
   }
 
   private links(): Collection<StoredQrLink> {
@@ -391,6 +442,12 @@ export class QrLinksRepository implements OnModuleInit, OnModuleDestroy {
 
   private dailyStats(): Collection<QrDailyStat> {
     return this.requireDb().collection<QrDailyStat>(this.dailyStatsCollectionName);
+  }
+
+  private settings(): Collection<StoredQrAllowedHostsSettings> {
+    return this.requireDb().collection<StoredQrAllowedHostsSettings>(
+      this.settingsCollectionName
+    );
   }
 
   private requireDb(): Db {

@@ -48,6 +48,19 @@ test('QR links UI talks to the documented admin endpoints', () => {
   assert.match(source, /pageSize: state\.pageSize/);
 });
 
+test('allowed target domains are configurable with settings permission', () => {
+  assert.ok(source.includes("can('settings:write')"), 'settings permission must be checked');
+  assert.ok(source.includes('data-action="allowed-hosts"'), 'domains action must exist');
+  assert.ok(source.includes('Разрешённые домены'), 'modal title must be present');
+  assert.ok(source.includes('/v1/admin/qr-links/allowed-hosts'));
+  assert.ok(source.includes('allowedHosts: async function'));
+  assert.ok(source.includes('saveAllowedHosts: async function'));
+  assert.match(source, /method: 'PUT'/);
+  assert.match(source, /expectedVersion: expectedVersion/);
+  assert.match(source, /По умолчанию:/);
+  assert.match(source, /\*\.example\.com|\*\.padlhub/);
+});
+
 test('QR is rendered by the backend and displayed as an authenticated blob', () => {
   assert.match(source, /\/image' \+ queryString/);
   assert.match(source, /\.blob\(\)/);

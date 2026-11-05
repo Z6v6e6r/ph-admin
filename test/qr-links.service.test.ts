@@ -39,6 +39,7 @@ import {
   QrLinkListItem,
   QrListQuery,
   QrPublicResolution,
+  StoredQrAllowedHostsSettings,
   StoredQrLink
 } from '../src/qr-links/qr-links.types';
 import { QrTargetUrlPolicy } from '../src/qr-links/qr-target-url-policy';
@@ -140,6 +141,41 @@ class InMemoryQrLinksRepository {
       (link) => link.idempotency?.actorId === actorId && link.idempotency?.key === key
     );
     return found ? structuredClone(found) : null;
+  }
+
+  private allowedHostsSettings: StoredQrAllowedHostsSettings | null = null;
+
+  async getAllowedHostsSettings(): Promise<StoredQrAllowedHostsSettings | null> {
+    this.requireAvailable();
+    return this.allowedHostsSettings ? structuredClone(this.allowedHostsSettings) : null;
+  }
+
+  async insertAllowedHostsSettings(
+    settings: StoredQrAllowedHostsSettings
+  ): Promise<void> {
+    this.requireAvailable();
+    if (this.allowedHostsSettings) throw new FakeDuplicateKeyError({ key: 1 });
+    this.allowedHostsSettings = structuredClone(settings);
+  }
+
+  async updateAllowedHostsSettings(
+    expectedVersion: number,
+    hosts: string[],
+    updatedAt: string,
+    updatedBy: string
+  ): Promise<StoredQrAllowedHostsSettings | null> {
+    this.requireAvailable();
+    if (!this.allowedHostsSettings || this.allowedHostsSettings.version !== expectedVersion) {
+      return null;
+    }
+    this.allowedHostsSettings = {
+      ...this.allowedHostsSettings,
+      hosts: [...hosts],
+      version: expectedVersion + 1,
+      updatedAt,
+      updatedBy
+    };
+    return structuredClone(this.allowedHostsSettings);
   }
 
   async insertLink(link: StoredQrLink): Promise<void> {
@@ -1536,6 +1572,104 @@ async function scenarioArchivedCodeNeverReused(): Promise<void> {
   console.log('scenario 20: archived codes are never reused; exhausted retries fail cleanly passed');
 }
 
+async function scenarioAllowedHostsSetting(): Promise<void> {
+  const harness = createHarness();
+  const initial = await harness.service.allowedHosts();
+  assert.deepEqual(initial.extra, []);
+  assert.equal(initial.defaults.includes('padlhub.ru'), true);
+  assert.equal(initial.version, 0);
+
+  await expectServiceError(
+    harness.service.create(
+      createDto({ targetUrl: 'https://lk.padlhub.ru/page' }),
+      { idempotencyKey: 'qr-idem-hosts-0001' },
+      ADMIN
+    ),
+    BadRequestException,
+    'QR_TARGET_URL_HOST_NOT_ALLOWED'
+  );
+
+  const updated = await harness.service.updateAllowedHosts(
+    { hosts: ['lk.padlhub.ru', '*.cdn.padlhub.ru', 'lk.padlhub.ru'] },
+    ADMIN
+  );
+  assert.deepEqual(updated.extra, ['lk.padlhub.ru', '*.cdn.padlhub.ru']);
+  assert.equal(updated.version, 1);
+  assert.equal(updated.updatedBy, ADMIN.id);
+
+  const created = await harness.service.create(
+    createDto({ targetUrl: 'https://lk.padlhub.ru/page?utm=qr' }),
+    { idempotencyKey: 'qr-idem-hosts-0002' },
+    ADMIN
+  );
+  assert.equal(created.item.targetUrl, 'https://lk.padlhub.ru/page?utm=qr');
+  const resolved = await harness.service.resolvePublic(
+    created.item.code,
+    publicRequest()
+  );
+  assert.equal(resolved.kind, 'redirect');
+  if (resolved.kind === 'redirect') {
+    assert.equal(resolved.location, 'https://lk.padlhub.ru/page?utm=qr');
+  }
+
+  for (const badHost of ['https://lk.padlhub.ru', 'lk.padlhub.ru/path', '10.0.0.1', 'localhost', '*']) {
+    await expectServiceError(
+      harness.service.updateAllowedHosts({ hosts: [badHost] }, ADMIN),
+      BadRequestException,
+      'QR_ALLOWED_HOST_INVALID'
+    );
+  }
+
+  await expectServiceError(
+    harness.service.updateAllowedHosts({ hosts: [] }, SCOPED_MANAGER),
+    ForbiddenException,
+    'QR_ALLOWED_HOSTS_GLOBAL_SCOPE_REQUIRED'
+  );
+  await expectServiceError(
+    harness.service.updateAllowedHosts(
+      { hosts: [] },
+      makeUser({ permissions: ['qr:read', 'qr:manage'] })
+    ),
+    ForbiddenException,
+    'QR_ALLOWED_HOSTS_SETTINGS_PERMISSION_REQUIRED'
+  );
+  await expectServiceError(
+    harness.service.updateAllowedHosts({ hosts: [], expectedVersion: 0 }, ADMIN),
+    ConflictException,
+    'QR_ALLOWED_HOSTS_VERSION_CONFLICT'
+  );
+
+  const audit = harness.auth.entries.find(
+    (entry) => entry.action === 'UPDATE QR_LINKS_ALLOWED_HOSTS'
+  );
+  assert.ok(audit);
+  assert.equal(audit.actor?.id, ADMIN.id);
+  assert.equal(audit.metadata?.new_hosts, 'lk.padlhub.ru,*.cdn.padlhub.ru');
+
+  // Removing an extra host blocks new links but must not break already printed QR.
+  const cleared = await harness.service.updateAllowedHosts(
+    { hosts: [], expectedVersion: 1 },
+    ADMIN
+  );
+  assert.deepEqual(cleared.extra, []);
+  await expectServiceError(
+    harness.service.create(
+      createDto({ targetUrl: 'https://lk.padlhub.ru/new' }),
+      { idempotencyKey: 'qr-idem-hosts-0003' },
+      ADMIN
+    ),
+    BadRequestException,
+    'QR_TARGET_URL_HOST_NOT_ALLOWED'
+  );
+  const stillWorks = await harness.service.resolvePublic(
+    created.item.code,
+    publicRequest()
+  );
+  assert.equal(stillWorks.kind, 'redirect');
+
+  console.log('scenario 20b: configurable allowed target hosts passed');
+}
+
 async function main(): Promise<void> {
   await scenarioCreateAndIdempotency();
   await scenarioPatchKeepsPermanentIdentity();
@@ -1549,6 +1683,7 @@ async function main(): Promise<void> {
   await scenarioManageScopeAndStationIsolation();
   await scenarioAuditTrail();
   await scenarioArchivedCodeNeverReused();
+  await scenarioAllowedHostsSetting();
   console.log('QR links service acceptance tests passed.');
 }
 

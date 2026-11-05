@@ -11,6 +11,7 @@ const ENV_KEYS = [
   'QR_LINKS_MONGODB_DB',
   'QR_LINKS_COLLECTION',
   'QR_LINKS_DAILY_STATS_COLLECTION',
+  'QR_LINKS_SETTINGS_COLLECTION',
   'NODE_ENV'
 ] as const;
 
@@ -23,6 +24,7 @@ function captureEnv(): Record<EnvKey, string | undefined> {
     QR_LINKS_MONGODB_DB: process.env.QR_LINKS_MONGODB_DB,
     QR_LINKS_COLLECTION: process.env.QR_LINKS_COLLECTION,
     QR_LINKS_DAILY_STATS_COLLECTION: process.env.QR_LINKS_DAILY_STATS_COLLECTION,
+    QR_LINKS_SETTINGS_COLLECTION: process.env.QR_LINKS_SETTINGS_COLLECTION,
     NODE_ENV: process.env.NODE_ENV
   };
 }
@@ -113,6 +115,7 @@ async function main(): Promise<void> {
   assert.match(databaseName, /_qrlinks_it_/, 'integration database name must be disposable and unique');
   const linksCollection = 'cup_qr_links_it_' + suffix;
   const dailyStatsCollection = 'cup_qr_daily_stats_it_' + suffix;
+  const settingsCollection = 'cup_qr_settings_it_' + suffix;
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5_000, maxPoolSize: 10 });
   let repository: QrLinksRepository | undefined;
   try {
@@ -121,6 +124,7 @@ async function main(): Promise<void> {
     process.env.QR_LINKS_MONGODB_DB = databaseName;
     process.env.QR_LINKS_COLLECTION = linksCollection;
     process.env.QR_LINKS_DAILY_STATS_COLLECTION = dailyStatsCollection;
+    process.env.QR_LINKS_SETTINGS_COLLECTION = settingsCollection;
     process.env.NODE_ENV = 'test';
 
     await client.connect();
@@ -149,6 +153,33 @@ async function main(): Promise<void> {
     const dailyUnique = dailyIndexes.find((index) => index.name === 'qr_daily_unique');
     assert.ok(dailyUnique, 'daily aggregate unique index must exist');
     assert.equal(dailyUnique?.unique, true);
+    const settingsIndexes = await database
+      .collection(settingsCollection)
+      .listIndexes()
+      .toArray();
+    const settingsKeyIndex = settingsIndexes.find(
+      (index) => index.name === 'qr_settings_key_unique'
+    );
+    assert.ok(settingsKeyIndex, 'settings key unique index must exist');
+    assert.equal(settingsKeyIndex?.unique, true);
+
+    await repository.insertAllowedHostsSettings({
+      key: 'allowed-hosts',
+      hosts: ['lk.padlhub.ru'],
+      version: 1,
+      updatedAt: '2026-01-01T10:00:00.000Z',
+      updatedBy: 'admin:integration'
+    });
+    const storedSettings = await repository.getAllowedHostsSettings();
+    assert.deepEqual(storedSettings?.hosts, ['lk.padlhub.ru']);
+    const savedSettings = await repository.updateAllowedHostsSettings(
+      1,
+      ['lk.padlhub.ru', '*.padlhub.ru'],
+      '2026-01-01T11:00:00.000Z',
+      'admin:integration'
+    );
+    assert.equal(savedSettings?.version, 2);
+    assert.deepEqual(savedSettings?.hosts, ['lk.padlhub.ru', '*.padlhub.ru']);
 
     // Active code uniqueness and archived-code uniqueness share the same index.
     const archivedCandidate = makeLink({ code: 'sharedcode01' });

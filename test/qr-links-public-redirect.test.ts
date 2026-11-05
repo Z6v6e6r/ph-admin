@@ -79,6 +79,11 @@ class InMemoryQrLinksRepository {
     return found ? structuredClone(found) : null;
   }
 
+  async getAllowedHostsSettings(): Promise<null> {
+    this.requireAvailable();
+    return null;
+  }
+
   async insertLink(link: StoredQrLink): Promise<void> {
     this.requireAvailable();
     if (this.links.some((existing) => existing.code === link.code)) {

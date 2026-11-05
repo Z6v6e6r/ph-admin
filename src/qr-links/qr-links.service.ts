@@ -12,7 +12,8 @@ import {
 import { createHash, randomUUID } from 'crypto';
 import { AuthPersistenceService } from '../auth/auth-persistence.service';
 import {
-  getStationScopeForPermission
+  getStationScopeForPermission,
+  hasAdminPermission
 } from '../common/rbac/permissions';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { MessengerService } from '../messenger/messenger.service';
@@ -20,6 +21,7 @@ import { generateQrLinkCode, isQrLinkCode } from './qr-link-code';
 import { QrCodeImageService } from './qr-code-image.service';
 import { QrLinksRepository } from './qr-links.repository';
 import {
+  QrAllowedHostsView,
   QrHistoryEntry,
   QrHistoryResponse,
   QrLinkAnalytics,
@@ -33,8 +35,12 @@ import {
   QrPeriod,
   QrPublicResolution,
   QrStationOption,
-  StoredQrLink
+  StoredQrAllowedHostsSettings,
+  StoredQrLink,
+  QR_ALLOWED_HOSTS_KEY
 } from './qr-links.types';
+import { normalizeAllowedHosts } from './qr-allowed-hosts';
+import { UpdateAllowedHostsDto } from './dto/update-allowed-hosts.dto';
 import { QrTargetUrlPolicy } from './qr-target-url-policy';
 import { CreateQrLinkDto } from './dto/create-qr-link.dto';
 import { UpdateQrLinkDto } from './dto/update-qr-link.dto';
@@ -96,9 +102,11 @@ export class QrLinksService {
   private readonly logger = new Logger(QrLinksService.name);
   private readonly policy: QrTargetUrlPolicy;
   private readonly statsWriteTimeoutMs: number;
+  private readonly allowedHostsCacheTtlMs: number;
   private readonly codeGenerator: () => string;
   private readonly clock: () => Date;
   private statsFailureCount = 0;
+  private allowedHostsCache?: { hosts: string[]; at: number };
 
   constructor(
     private readonly repository: QrLinksRepository,
@@ -116,6 +124,10 @@ export class QrLinksService {
       process.env.QR_LINKS_STATS_WRITE_TIMEOUT_MS,
       750
     );
+    this.allowedHostsCacheTtlMs = this.readTimeout(
+      process.env.QR_LINKS_ALLOWED_HOSTS_CACHE_TTL_MS,
+      5000
+    );
   }
 
   async create(
@@ -126,7 +138,7 @@ export class QrLinksService {
     const actorId = this.requireActor(user);
     const idempotencyKey = this.requireIdempotencyKey(command.idempotencyKey);
     this.assertCodeIsImmutable(dto as unknown as Record<string, unknown>);
-    const targetUrl = this.policy.validate(dto.targetUrl);
+    const targetUrl = (await this.targetPolicy()).validate(dto.targetUrl);
     const name = this.requireName(dto.name);
     const station = this.resolveStationForWrite(user, dto.stationId ?? null);
     const placement = this.optionalString(dto.placement);
@@ -276,7 +288,7 @@ export class QrLinksService {
     this.applyOptionalField(dto, 'description', current, set, oldValues, newValues, changedFields);
 
     if (dto.targetUrl !== undefined) {
-      const targetUrl = this.policy.validate(dto.targetUrl);
+      const targetUrl = (await this.targetPolicy()).validate(dto.targetUrl);
       if (targetUrl !== current.targetUrl) {
         set.targetUrl = targetUrl;
         this.recordChange(
@@ -503,6 +515,78 @@ export class QrLinksService {
     };
   }
 
+  async allowedHosts(): Promise<QrAllowedHostsView> {
+    const settings = await this.repository.getAllowedHostsSettings();
+    return this.toAllowedHostsView(settings);
+  }
+
+  async updateAllowedHosts(
+    dto: UpdateAllowedHostsDto,
+    user?: RequestUser
+  ): Promise<QrAllowedHostsView> {
+    const actorId = this.requireActor(user);
+    if (getStationScopeForPermission(user, 'qr:manage') !== null) {
+      throw new ForbiddenException({
+        code: 'QR_ALLOWED_HOSTS_GLOBAL_SCOPE_REQUIRED',
+        message: 'Настройка доменов доступна только сотруднику с доступом ко всем станциям.'
+      });
+    }
+    if (!hasAdminPermission(user?.permissions, 'settings:write')) {
+      throw new ForbiddenException({
+        code: 'QR_ALLOWED_HOSTS_SETTINGS_PERMISSION_REQUIRED',
+        message: 'Для настройки доменов нужно право изменения настроек.'
+      });
+    }
+    const defaults = this.policy.config.allowedHosts;
+    const hosts = normalizeAllowedHosts(dto.hosts, defaults);
+    const current = await this.repository.getAllowedHostsSettings();
+    const now = this.clock().toISOString();
+    let saved: StoredQrAllowedHostsSettings | null = null;
+    if (!current) {
+      if (dto.expectedVersion !== undefined && dto.expectedVersion !== 0) {
+        throw this.allowedHostsVersionConflict();
+      }
+      const created: StoredQrAllowedHostsSettings = {
+        key: QR_ALLOWED_HOSTS_KEY,
+        hosts,
+        version: 1,
+        updatedAt: now,
+        updatedBy: actorId
+      };
+      try {
+        await this.repository.insertAllowedHostsSettings(created);
+        saved = created;
+      } catch (error) {
+        if (!this.repository.isDuplicateKey(error)) throw error;
+        throw this.allowedHostsVersionConflict();
+      }
+    } else {
+      if (dto.expectedVersion !== undefined && dto.expectedVersion !== current.version) {
+        throw this.allowedHostsVersionConflict();
+      }
+      saved = await this.repository.updateAllowedHostsSettings(
+        current.version,
+        hosts,
+        now,
+        actorId
+      );
+      if (!saved) throw this.allowedHostsVersionConflict();
+    }
+    this.allowedHostsCache = { hosts: saved.hosts, at: Date.now() };
+    await this.appendAudit({
+      action: 'UPDATE QR_LINKS_ALLOWED_HOSTS',
+      user,
+      targetId: 'qr-links-allowed-hosts',
+      targetLabel: 'Разрешённые домены QR',
+      metadata: {
+        old_hosts: (current?.hosts ?? []).join(','),
+        new_hosts: saved.hosts.join(','),
+        version: saved.version
+      }
+    });
+    return this.toAllowedHostsView(saved);
+  }
+
   async resolvePublic(
     code: string,
     request: PublicRequestInfo
@@ -522,7 +606,7 @@ export class QrLinksService {
     }
     let location: string;
     try {
-      location = this.policy.validate(link.targetUrl);
+      location = this.policy.validateStoredTarget(link.targetUrl);
     } catch (error) {
       this.logger.error(
         `QR_REDIRECT_TARGET_REJECTED code=${link.code} reason=${this.describeError(error)}`
@@ -605,6 +689,52 @@ export class QrLinksService {
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  private async targetPolicy(): Promise<QrTargetUrlPolicy> {
+    const extra = await this.extraAllowedHosts();
+    if (extra.length === 0) return this.policy;
+    return new QrTargetUrlPolicy(process.env, extra);
+  }
+
+  private async extraAllowedHosts(): Promise<string[]> {
+    const now = Date.now();
+    if (
+      this.allowedHostsCache
+      && now - this.allowedHostsCache.at < this.allowedHostsCacheTtlMs
+    ) {
+      return this.allowedHostsCache.hosts;
+    }
+    try {
+      const settings = await this.repository.getAllowedHostsSettings();
+      const hosts = settings?.hosts ?? [];
+      this.allowedHostsCache = { hosts, at: now };
+      return hosts;
+    } catch (error) {
+      this.logger.warn(
+        `QR_ALLOWED_HOSTS_READ_FAILED error=${this.describeError(error)}`
+      );
+      return this.allowedHostsCache?.hosts ?? [];
+    }
+  }
+
+  private toAllowedHostsView(
+    settings: StoredQrAllowedHostsSettings | null
+  ): QrAllowedHostsView {
+    return {
+      defaults: this.policy.config.allowedHosts,
+      extra: settings?.hosts ?? [],
+      version: settings?.version ?? 0,
+      updatedAt: settings?.updatedAt ?? null,
+      updatedBy: settings?.updatedBy ?? null
+    };
+  }
+
+  private allowedHostsVersionConflict(): ConflictException {
+    return new ConflictException({
+      code: 'QR_ALLOWED_HOSTS_VERSION_CONFLICT',
+      message: 'Настройка доменов изменена другим сотрудником. Обновите данные.'
+    });
   }
 
   private resolveStationForWrite(
