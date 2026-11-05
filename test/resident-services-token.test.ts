@@ -28,7 +28,8 @@ function main(): void {
   assert.match(hash, /^[a-f0-9]{64}$/);
   assert.equal(hash.includes(token), false);
   assert.equal(safeStringEqual(hash, hash), true);
-  assert.equal(safeStringEqual(hash, hash.slice(0, -1) + '0'), false);
+  const mutatedHash = (hash[0] === '0' ? '1' : '0') + hash.slice(1);
+  assert.equal(safeStringEqual(hash, mutatedHash), false);
 
   const idempotency = hashResidentIdempotencyKey({
     pepper,
