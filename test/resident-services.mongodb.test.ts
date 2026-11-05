@@ -215,6 +215,7 @@ async function main(): Promise<void> {
     await scenarioLimitAcrossPasses(repository);
     await scenarioExpiredPass(repository);
     await scenarioStaleEvidence(repository);
+    await scenarioPassStatus(repository);
     await scenarioReturnAfterResidencyEnd(repository);
     await scenarioAtomicRollback(repository);
     await scenarioJournal(repository);
@@ -646,6 +647,72 @@ async function scenarioPassRetention(repository: ResidentServicesRepository): Pr
     'idempotency.keyHash': { $exists: true }
   });
   console.log('mongo scenario pass retention: ok');
+}
+
+async function scenarioPassStatus(repository: ResidentServicesRepository): Promise<void> {
+  await clearResidentState(repository);
+  await createRules(buildHarness(repository));
+  const h = buildHarness(repository);
+  const created = await h.passes.createPass({
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    clientSubscriptionId: 'client_subscription:piter-1'
+  });
+  const db = (repository as unknown as { db: { collection(name: string): {
+    findOne(filter: object, options?: object): Promise<unknown>;
+  } } }).db;
+  const storedPass = async (): Promise<unknown> => db
+    .collection('cup_resident_passes')
+    .findOne({ passId: created.passId }, { projection: { _id: 0 } });
+  const input = {
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    passId: created.passId
+  };
+
+  const storedBefore = await storedPass();
+  assert.ok(storedBefore);
+  const active = await h.passes.status(input);
+  assert.equal(active.schemaVersion, 1);
+  assert.equal(active.passId, created.passId);
+  assert.equal(active.state, 'ACTIVE');
+  assert.equal(active.issuedAt, created.issuedAt);
+  assert.equal(active.expiresAt, created.expiresAt);
+  assert.equal(active.consumedAt, null);
+  assert.equal(active.stationId, null);
+  // Reading the status must not modify the stored pass at all.
+  assert.deepEqual(await storedPass(), storedBefore);
+
+  try {
+    await h.passes.status({ ...input, passId: 'resident_pass:unknown-1' });
+    assert.fail('unknown pass must not be reported');
+  } catch (error) {
+    assert.equal(codeOf(error), RESIDENT_SERVICES_ERROR_CODES.PASS_NOT_FOUND);
+  }
+  try {
+    await h.passes.status({ ...input, integrationToken: 'wrong-token' });
+    assert.fail('wrong integration token must be rejected');
+  } catch (error) {
+    assert.equal(codeOf(error), RESIDENT_SERVICES_ERROR_CODES.INTEGRATION_FORBIDDEN);
+  }
+
+  await h.issuances.confirm({
+    token: created.token,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'TOWEL', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'mongo-status-issuance-0001',
+    correlationHeader: 'corr:mongo-status'
+  });
+  const storedAfterConsume = await storedPass();
+  const consumed = await h.passes.status(input);
+  assert.equal(consumed.state, 'CONSUMED');
+  assert.equal(consumed.stationId, HOME_STATION);
+  assert.ok(consumed.consumedAt);
+  assert.equal(consumed.issuedAt, created.issuedAt);
+  assert.equal(consumed.expiresAt, created.expiresAt);
+  assert.deepEqual(await storedPass(), storedAfterConsume);
+  console.log('mongo scenario pass status: ok');
 }
 
 async function scenarioJournal(repository: ResidentServicesRepository): Promise<void> {

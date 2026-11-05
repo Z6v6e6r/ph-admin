@@ -56,11 +56,15 @@ export class ResidentResidencyService {
     @Optional() @Inject(RESIDENT_SERVICES_CLOCK) private readonly clock?: () => Date
   ) {}
 
-  async resolveByClientIdentity(
+  /**
+   * Single identity boundary for the internal resident-services routes: the
+   * integration token gates the route, the LK bearer identifies the client and
+   * the derived client reference hash decides pass ownership.
+   */
+  async verifyClientIdentity(
     authorizationHeader: string | undefined,
-    integrationToken: string | undefined,
-    clientSubscriptionId: string
-  ): Promise<ResidentContext> {
+    integrationToken: string | undefined
+  ): Promise<{ tenantId: string; providerClientId: string; clientRefHash: string }> {
     assertResidentServicesEnabled();
     requireResidentServicesIntegrationToken(integrationToken);
     const tenantId = requireResidentServicesTenantId();
@@ -79,11 +83,24 @@ export class ResidentResidencyService {
         message: 'Verified LK identity does not contain a canonical provider client id'
       });
     }
-    const clientRefHash = computeSubscriptionClientRefHash({
-      pepper,
+    return {
       tenantId,
-      providerClientId
-    });
+      providerClientId,
+      clientRefHash: computeSubscriptionClientRefHash({
+        pepper,
+        tenantId,
+        providerClientId
+      })
+    };
+  }
+
+  async resolveByClientIdentity(
+    authorizationHeader: string | undefined,
+    integrationToken: string | undefined,
+    clientSubscriptionId: string
+  ): Promise<ResidentContext> {
+    const { tenantId, providerClientId, clientRefHash } =
+      await this.verifyClientIdentity(authorizationHeader, integrationToken);
     this.repository.requireAvailable();
     const instance = await this.repository.runtimeInstanceByProviderIdentity({
       tenantId,

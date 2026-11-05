@@ -23,6 +23,7 @@ import {
   RESIDENT_NOW,
   RESIDENT_TENANT,
   configureResidentServicesEnv,
+  residentClientRefHash,
   residentInstanceFixture,
   residentMappingFixture,
   residentPublicationFixture,
@@ -461,6 +462,7 @@ async function main(): Promise<void> {
   const restore = configureResidentServicesEnv();
   try {
     await scenarioPassCreation();
+    await scenarioPassStatus();
     await scenarioResidencyFreshness();
     await scenarioPreview();
     await scenarioIssuanceAndReplay();
@@ -527,6 +529,154 @@ async function scenarioPassCreation(): Promise<void> {
   }), [RESIDENT_SERVICE_ERRORS.PASS_NOT_FOUND], 404);
 
   console.log('scenario pass creation: ok');
+}
+
+async function scenarioPassStatus(): Promise<void> {
+  const h = harness();
+  const created = await h.passes.createPass({
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    clientSubscriptionId: 'client_subscription:piter-1'
+  });
+  const pass = h.repository.state.passes[0];
+  assert.ok(pass);
+  const activeInput = {
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    passId: created.passId
+  };
+
+  // The status route only projects the stored pass: nothing is written.
+  const before = JSON.stringify(h.repository.state);
+  const active = await h.passes.status(activeInput);
+  assert.deepEqual(active, {
+    schemaVersion: 1,
+    passId: created.passId,
+    state: 'ACTIVE',
+    issuedAt: pass.issuedAt,
+    expiresAt: pass.expiresAt,
+    consumedAt: null,
+    stationId: null
+  });
+  assert.equal(JSON.stringify(h.repository.state), before);
+  assert.equal(h.repository.state.passes[0].state, 'ACTIVE');
+
+  // Unknown, malformed, foreign-tenant and foreign-client passes share one 404.
+  await rejects(
+    () => h.passes.status({ ...activeInput, passId: 'resident_pass:unknown-1' }),
+    [RESIDENT_SERVICE_ERRORS.PASS_NOT_FOUND],
+    404
+  );
+  await rejects(
+    () => h.passes.status({ ...activeInput, passId: 'x' }),
+    [RESIDENT_SERVICE_ERRORS.PASS_NOT_FOUND],
+    404
+  );
+  h.repository.state.passes[0].tenantId = 'tenant:other-1';
+  await rejects(() => h.passes.status(activeInput), [RESIDENT_SERVICE_ERRORS.PASS_NOT_FOUND], 404);
+  h.repository.state.passes[0].tenantId = RESIDENT_TENANT;
+  h.repository.state.passes[0].clientRefHash = residentClientRefHash('provider_client:other-1');
+  await rejects(() => h.passes.status(activeInput), [RESIDENT_SERVICE_ERRORS.PASS_NOT_FOUND], 404);
+  h.repository.state.passes[0].clientRefHash = residentClientRefHash();
+
+  // Identity and integration-token boundary matches pass creation.
+  await rejects(
+    () => h.passes.status({ ...activeInput, authorization: undefined }),
+    ['AUTH_REQUIRED'],
+    401
+  );
+  await rejects(
+    () => h.passes.status({ ...activeInput, authorization: 'Bearer other-token' }),
+    ['AUTH_REQUIRED'],
+    401
+  );
+  await rejects(
+    () => h.passes.status({ ...activeInput, integrationToken: undefined }),
+    [RESIDENT_SERVICE_ERRORS.INTEGRATION_FORBIDDEN],
+    403
+  );
+  await rejects(
+    () => h.passes.status({ ...activeInput, integrationToken: 'wrong-token' }),
+    [RESIDENT_SERVICE_ERRORS.INTEGRATION_FORBIDDEN],
+    403
+  );
+
+  // Disabled module and missing configuration stay 503.
+  const enabledBefore = process.env.RESIDENT_SERVICES_ENABLED;
+  process.env.RESIDENT_SERVICES_ENABLED = 'false';
+  try {
+    await rejects(() => h.passes.status(activeInput), [RESIDENT_SERVICE_ERRORS.DISABLED], 503);
+  } finally {
+    if (enabledBefore === undefined) delete process.env.RESIDENT_SERVICES_ENABLED;
+    else process.env.RESIDENT_SERVICES_ENABLED = enabledBefore;
+  }
+  const integrationBefore = process.env.RESIDENT_SERVICES_INTEGRATION_TOKEN;
+  process.env.RESIDENT_SERVICES_INTEGRATION_TOKEN = '';
+  try {
+    await rejects(
+      () => h.passes.status(activeInput),
+      [RESIDENT_SERVICE_ERRORS.NOT_CONFIGURED],
+      503
+    );
+  } finally {
+    process.env.RESIDENT_SERVICES_INTEGRATION_TOKEN = integrationBefore!;
+  }
+  const tenantBefore = process.env.RESIDENT_SERVICES_TENANT_ID;
+  process.env.RESIDENT_SERVICES_TENANT_ID = 'tenant:other-1';
+  try {
+    await rejects(() => h.passes.status(activeInput), [RESIDENT_SERVICE_ERRORS.NOT_ACTIVE], 403);
+  } finally {
+    process.env.RESIDENT_SERVICES_TENANT_ID = tenantBefore!;
+  }
+
+  // Staff confirmation turns the same pass into CONSUMED with its station.
+  const consumed = await h.repository.consumePass({
+    passId: pass.passId,
+    tenantId: RESIDENT_TENANT,
+    expectedRevision: pass.revision,
+    now: h.clock(),
+    consumedBy: 'admin:resident-manager',
+    consumedStationId: HOME_STATION,
+    operationId: 'operation:status-1'
+  });
+  assert.ok(consumed);
+  const consumedBefore = JSON.stringify(h.repository.state);
+  const consumedView = await h.passes.status(activeInput);
+  assert.equal(consumedView.state, 'CONSUMED');
+  assert.equal(consumedView.consumedAt, consumed!.consumedAt);
+  assert.equal(consumedView.stationId, HOME_STATION);
+  assert.equal(consumedView.issuedAt, pass.issuedAt);
+  assert.equal(consumedView.expiresAt, pass.expiresAt);
+  assert.equal(JSON.stringify(h.repository.state), consumedBefore);
+
+  // CONSUMED outranks EXPIRED while the client is still polling for the result.
+  h.now(Date.parse(pass.expiresAt) + 60_000);
+  assert.equal((await h.passes.status(activeInput)).state, 'CONSUMED');
+
+  // An expired, never-confirmed pass reports EXPIRED. Stale residency evidence
+  // does not block the read: this route reports a record, not a permission.
+  const expiredHarness = harness();
+  const expiring = await expiredHarness.passes.createPass({
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    clientSubscriptionId: 'client_subscription:piter-1'
+  });
+  expiredHarness.repository.state.instances[0].state = 'FROZEN';
+  expiredHarness.repository.state.instances[0].reconciliation.asOf =
+    new Date(ISSUE_START - 7200_000).toISOString();
+  expiredHarness.repository.state.mappings[0].verifiedAt =
+    new Date(ISSUE_START - 7200_000).toISOString();
+  expiredHarness.now(Date.parse(expiring.expiresAt));
+  const expired = await expiredHarness.passes.status({
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    passId: expiring.passId
+  });
+  assert.equal(expired.state, 'EXPIRED');
+  assert.equal(expired.consumedAt, null);
+  assert.equal(expired.stationId, null);
+
+  console.log('scenario pass status: ok');
 }
 
 async function scenarioResidencyFreshness(): Promise<void> {

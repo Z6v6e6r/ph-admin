@@ -31,6 +31,8 @@ import { ResidentServicesRepository, isResidentDuplicateKeyError } from './resid
 import {
   RESIDENT_SERVICES_ERROR_CODES,
   ResidentPassPreviewView,
+  ResidentPassStatusState,
+  ResidentPassStatusView,
   ResidentPassView,
   StoredResidentPass
 } from './resident-services.types';
@@ -201,7 +203,55 @@ export class ResidentPassesService {
     };
   }
 
+  /**
+   * Read-only pass status for the LK gateway. The stored record is reported as
+   * is: residency freshness is not re-validated and no state, limit or journal
+   * row is touched. Ownership is decided by tenant and clientRefHash derived
+   * from the verified LK identity.
+   */
+  async status(input: {
+    authorization: string | undefined;
+    integrationToken: string | undefined;
+    passId: string;
+  }): Promise<ResidentPassStatusView> {
+    const { tenantId, clientRefHash } = await this.residency.verifyClientIdentity(
+      input.authorization,
+      input.integrationToken
+    );
+    this.repository.requireAvailable();
+    const notFound = (): NotFoundException => new NotFoundException({
+      code: RESIDENT_SERVICES_ERROR_CODES.PASS_NOT_FOUND,
+      message: 'Resident pass was not found'
+    });
+    const passId = String(input.passId ?? '');
+    if (!RESIDENT_SERVICES_ID_PATTERN.test(passId)) {
+      throw notFound();
+    }
+    const pass = await this.repository.findPassById(passId);
+    if (!pass || pass.tenantId !== tenantId || pass.clientRefHash !== clientRefHash) {
+      throw notFound();
+    }
+    return {
+      schemaVersion: 1,
+      passId: pass.passId,
+      state: residentPassStatus(pass, this.now()),
+      issuedAt: pass.issuedAt,
+      expiresAt: pass.expiresAt,
+      consumedAt: pass.state === 'CONSUMED' ? pass.consumedAt : null,
+      stationId: pass.state === 'CONSUMED' ? pass.consumedStationId : null
+    };
+  }
+
   protected now(): Date {
     return this.clock ? this.clock() : new Date();
   }
+}
+
+function residentPassStatus(
+  pass: StoredResidentPass,
+  now: Date
+): ResidentPassStatusState {
+  if (pass.state === 'CONSUMED') return 'CONSUMED';
+  const expiresAt = Date.parse(pass.expiresAt);
+  return !Number.isFinite(expiresAt) || expiresAt <= now.getTime() ? 'EXPIRED' : 'ACTIVE';
 }

@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Get,
   Header,
   Headers,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   UseFilters
 } from '@nestjs/common';
@@ -13,7 +15,7 @@ import { Roles } from '../common/rbac/roles.decorator';
 import { CreateResidentPassDto } from './dto/create-resident-pass.dto';
 import { ResidentPassesService } from './resident-passes.service';
 import { ResidentServicesExceptionFilter } from './resident-services.exception.filter';
-import { ResidentPassView } from './resident-services.types';
+import { ResidentPassStatusView, ResidentPassView } from './resident-services.types';
 
 @Controller('internal/subscriptions/resident-passes')
 @Roles()
@@ -38,5 +40,18 @@ export class ResidentPassesInternalController {
       integrationToken,
       clientSubscriptionId: dto.clientSubscriptionId
     });
+  }
+
+  @Get(':passId')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  status(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-resident-services-integration-token') integrationToken: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Param('passId') passId: string
+  ): Promise<ResidentPassStatusView> {
+    void correlationId;
+    return this.passes.status({ authorization, integrationToken, passId });
   }
 }

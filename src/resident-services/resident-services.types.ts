@@ -259,6 +259,18 @@ export interface ResidentPassPreviewView {
   issuable: boolean;
 }
 
+export type ResidentPassStatusState = ResidentPassState | 'EXPIRED';
+
+export interface ResidentPassStatusView {
+  schemaVersion: 1;
+  passId: string;
+  state: ResidentPassStatusState;
+  issuedAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  stationId: string | null;
+}
+
 export interface ResidentIssuanceView {
   schemaVersion: 1;
   issuanceId: string;

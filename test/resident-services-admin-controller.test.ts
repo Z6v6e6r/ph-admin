@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
-import { ForbiddenException } from '@nestjs/common';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { ForbiddenException, RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { PERMISSIONS_KEY } from '../src/common/rbac/permissions.decorator';
 import { ROLES_KEY } from '../src/common/rbac/roles.decorator';
 import { ResidentPassesInternalController } from '../src/resident-services/resident-passes.internal.controller';
@@ -36,6 +36,26 @@ function main(): void {
   assert.deepEqual(
     Reflect.getMetadata(ROLES_KEY, ResidentPassesInternalController),
     []
+  );
+
+  const internalPrototype = ResidentPassesInternalController.prototype as unknown as {
+    status: (...args: unknown[]) => unknown;
+  };
+  assert.equal(typeof internalPrototype.status, 'function', 'internal status handler missing');
+  assert.equal(
+    Reflect.getMetadata(PATH_METADATA, internalPrototype.status),
+    ':passId',
+    'internal pass status path mismatch'
+  );
+  assert.equal(
+    Reflect.getMetadata(METHOD_METADATA, internalPrototype.status),
+    RequestMethod.GET,
+    'internal pass status must be a GET route'
+  );
+  assert.equal(
+    Reflect.getMetadata(PERMISSIONS_KEY, internalPrototype.status),
+    undefined,
+    'internal pass status must not require a CUP staff permission'
   );
 
   const prototype = ResidentServicesAdminController.prototype as unknown as Record<
