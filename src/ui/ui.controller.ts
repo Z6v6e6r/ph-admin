@@ -16,6 +16,8 @@ type AdminUiQuery = {
   stationIds?: string;
   connectorRoutes?: string;
   title?: string;
+  section?: string;
+  qrId?: string;
   pollIntervalMs?: string;
   authToken?: string;
 };
@@ -378,6 +380,12 @@ export class UiController {
         ['1', 'true', 'yes'].includes(
           String(process.env.REFERRAL_LINKS_ENABLED ?? '').trim().toLowerCase()
         ),
+      qrLinksAdminEnabled:
+        ['1', 'true', 'yes'].includes(
+          String(process.env.QR_LINKS_ENABLED ?? '').trim().toLowerCase()
+        ),
+      qrSection: query.section?.trim() || undefined,
+      qrId: query.qrId?.trim() || undefined,
       notificationApiBaseUrl:
         query.notificationApiBaseUrl?.trim() ||
         String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim() ||
@@ -449,6 +457,7 @@ export class UiController {
     <script src="/api/client-script/admin-panel.js"></script>
     <script src="/api/client-script/gift-certificates-admin.js"></script>
     <script src="/api/client-script/referral-links-admin.js"></script>
+    <script src="/api/client-script/qr-links-admin.js"></script>
     <script>
       (function bootstrap() {
         function start() {

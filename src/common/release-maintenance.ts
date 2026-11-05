@@ -35,7 +35,8 @@ export function releaseMaintenanceFence(): RequestHandler {
     '/api/ui/admin',
     '/api/client-script/admin-panel.js',
     '/api/client-script/gift-certificates-admin.js',
-    '/api/client-script/referral-links-admin.js'
+    '/api/client-script/referral-links-admin.js',
+    '/api/client-script/qr-links-admin.js'
   ]);
   return (request, response, next) => {
     response.setHeader('X-Phab-Release-Mode', 'maintenance');
