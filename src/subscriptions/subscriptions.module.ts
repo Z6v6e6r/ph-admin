@@ -95,6 +95,7 @@ import { Lk2ShadowQuoteEvaluator } from './lk2-runtime/lk2-shadow-quote-evaluato
         });
       }
     }
-  ]
+  ],
+  exports: [SubscriptionsRepository]
 })
 export class SubscriptionsModule {}

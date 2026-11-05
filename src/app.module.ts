@@ -14,6 +14,7 @@ import { MessengerModule } from './messenger/messenger.module';
 import { PlayerRatingsModule } from './player-ratings/player-ratings.module';
 import { QrLinksModule } from './qr-links/qr-links.module';
 import { ReferralLinksModule } from './referral-links/referral-links.module';
+import { ResidencyCheckModule } from './residency-check/residency-check.module';
 import { ResidentServicesModule } from './resident-services/resident-services.module';
 import { SupportModule } from './support/support.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
@@ -37,6 +38,7 @@ import { TrafficModule } from './traffic/traffic.module';
     PlayerRatingsModule,
     QrLinksModule,
     ReferralLinksModule,
+    ResidencyCheckModule,
     ResidentServicesModule,
     SubscriptionsModule,
     SupportModule,
