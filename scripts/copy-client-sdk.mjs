@@ -21,6 +21,8 @@ const files = [
   'phab-community-results-templates.js',
   'phab-gift-certificates-admin.js',
   'phab-referral-links-admin.js',
+  'phab-residency-check.js',
+  'phab-residency-check.css',
   'phab-community-feed.js',
   'phab-communities-showcase.js',
   'phab-client-messenger.js',
