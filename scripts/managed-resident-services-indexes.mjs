@@ -156,6 +156,7 @@ try {
         Object.keys(keys).map((field) => [field.replace(/\./g, '_'), '$' + field])
       );
       const duplicate = await db.collection(collectionName).aggregate([
+        ...(options.partialFilterExpression ? [{ $match: options.partialFilterExpression }] : []),
         ...(options.sparse ? [{ $match: { $or: matchFields } }] : []),
         { $group: { _id: groupId, count: { $sum: 1 } } },
         { $match: { count: { $gt: 1 } } },
