@@ -60,7 +60,7 @@ export const RESIDENT_SERVICES_REQUIRED_INDEXES = {
     },
     {
       name: 'resident_pass_expires_ttl',
-      key: { expiresAt: 1 },
+      key: { expiresAtDate: 1 },
       unique: false,
       expireAfterSeconds: RESIDENT_PASS_RETENTION_SECONDS
     }
@@ -76,7 +76,7 @@ export const RESIDENT_SERVICES_REQUIRED_INDEXES = {
       name: 'resident_benefit_rule_idempotency_unique',
       key: { tenantId: 1, 'idempotency.actorId': 1, 'idempotency.keyHash': 1 },
       unique: true,
-      sparse: true
+      partialFilterExpression: { 'idempotency.keyHash': { $exists: true } }
     },
     {
       name: 'resident_benefit_rule_type',
@@ -584,21 +584,11 @@ export class ResidentServicesRepository implements OnModuleInit, OnModuleDestroy
         remaining: Math.max(0, input.limitQuantity - input.quantity)
       };
     } catch (error) {
-      if (!isResidentDuplicateKeyError(error)) throw error;
-      const retried = await this.usage().findOneAndUpdate(
-        { ...identity, used: { $lte: input.limitQuantity - input.quantity } },
-        {
-          $inc: { used: input.quantity, revision: 1 },
-          $set: {
-            updatedAt: nowIso,
-            lastSubscriptionInstanceId: input.subscriptionInstanceId
-          }
-        },
-        { projection: { _id: 0 }, returnDocument: 'after', ...sessionOption }
-      );
-      return retried
-        ? { used: retried.used, remaining: Math.max(0, input.limitQuantity - retried.used) }
-        : null;
+      // A duplicate here means a concurrent transaction committed the same
+      // counter between our snapshot and the insert. The enclosing transaction
+      // is aborted, so the caller must retry the whole command; never continue
+      // on the same session.
+      throw error;
     }
   }
 
@@ -736,6 +726,9 @@ export class ResidentServicesRepository implements OnModuleInit, OnModuleDestroy
       for (const index of plan[name]) {
         const options: Document = { name: index.name, unique: index.unique };
         if ('sparse' in index && index.sparse) options.sparse = true;
+        if ('partialFilterExpression' in index && index.partialFilterExpression) {
+          options.partialFilterExpression = index.partialFilterExpression;
+        }
         if ('expireAfterSeconds' in index && index.expireAfterSeconds) {
           options.expireAfterSeconds = index.expireAfterSeconds;
         }
@@ -761,6 +754,9 @@ export class ResidentServicesRepository implements OnModuleInit, OnModuleDestroy
         const actual = existing.find((index) => index.name === expected.name);
         const options: Document = {};
         if ('sparse' in expected && expected.sparse) options.sparse = true;
+        if ('partialFilterExpression' in expected && expected.partialFilterExpression) {
+          options.partialFilterExpression = expected.partialFilterExpression;
+        }
         if ('expireAfterSeconds' in expected && expected.expireAfterSeconds) {
           options.expireAfterSeconds = expected.expireAfterSeconds;
         }
@@ -768,6 +764,8 @@ export class ResidentServicesRepository implements OnModuleInit, OnModuleDestroy
           || JSON.stringify(actual.key) !== JSON.stringify(expected.key)
           || Boolean(actual.unique) !== Boolean(expected.unique)
           || Boolean(actual.sparse) !== Boolean(options.sparse)
+          || JSON.stringify(actual.partialFilterExpression ?? null)
+            !== JSON.stringify(options.partialFilterExpression ?? null)
           || (actual.expireAfterSeconds ?? null) !== (options.expireAfterSeconds ?? null)) {
           throw new Error(
             'MONGO_INDEX_NOT_READY:' + collections[name].collectionName + ':' + expected.name

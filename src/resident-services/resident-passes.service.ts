@@ -86,6 +86,7 @@ export class ResidentPassesService {
       state: 'ACTIVE',
       issuedAt,
       expiresAt: new Date(expiresAt).toISOString(),
+      expiresAtDate: new Date(expiresAt),
       consumedAt: null,
       consumedBy: null,
       consumedOperationId: null,

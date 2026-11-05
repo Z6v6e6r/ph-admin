@@ -62,7 +62,8 @@ export const RESIDENT_SERVICES_ERROR_CODES = {
   BENEFIT_RULE_NOT_FOUND: 'RESIDENT_BENEFIT_RULE_NOT_FOUND',
   BENEFIT_RULE_CONFLICT: 'RESIDENT_BENEFIT_RULE_CONFLICT',
   BENEFIT_RULE_INVALID: 'RESIDENT_BENEFIT_RULE_INVALID',
-  BENEFIT_RULE_REVISION_CONFLICT: 'RESIDENT_BENEFIT_RULE_REVISION_CONFLICT'
+  BENEFIT_RULE_REVISION_CONFLICT: 'RESIDENT_BENEFIT_RULE_REVISION_CONFLICT',
+  RETRY_CONFLICT: 'RESIDENT_SERVICES_RETRY_CONFLICT'
 } as const;
 
 export interface ResidentServiceItemCommand {
@@ -80,6 +81,7 @@ export interface StoredResidentPass {
   state: ResidentPassState;
   issuedAt: string;
   expiresAt: string;
+  expiresAtDate: Date;
   consumedAt: string | null;
   consumedBy: string | null;
   consumedOperationId: string | null;
@@ -139,6 +141,7 @@ export interface StoredResidentIssuanceItem {
   returnable: boolean;
   returnedQuantity: number;
   benefitRuleId: string;
+  benefitRuleRevision: number;
   limitPeriod: ResidentServiceLimitPeriod;
   limitPeriodKey: string;
   limitQuantity: number;

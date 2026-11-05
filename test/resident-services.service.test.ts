@@ -473,6 +473,9 @@ async function main(): Promise<void> {
     await scenarioBenefitRules();
     await scenarioAtomicRollback();
     await scenarioJournal();
+    await scenarioInvalidEvidence();
+    await scenarioScopedRuleTakeover();
+    await scenarioSubscriptionRenewal();
   } finally {
     restore();
   }
@@ -487,6 +490,8 @@ async function scenarioPassCreation(): Promise<void> {
   const pass = h.repository.state.passes[0];
   assert.equal(pass.state, 'ACTIVE');
   assert.equal(pass.expiresAt, new Date(ISSUE_START + 120_000).toISOString());
+  assert.ok(pass.expiresAtDate instanceof Date);
+  assert.equal(pass.expiresAtDate.toISOString(), pass.expiresAt);
   assert.equal(pass.tenantId, RESIDENT_TENANT);
   assert.equal(pass.subscriptionInstanceId, INSTANCE_ID);
   assert.equal(JSON.stringify(pass).includes(token), false);
@@ -573,7 +578,7 @@ async function scenarioPreview(): Promise<void> {
     () => h.passes.preview(token, HOME_STATION, residentStaff({
       permissions: ['resident-services:read']
     }) as never),
-    [RESIDENT_SERVICE_ERRORS.STATION_FORBIDDEN],
+    ['FORBIDDEN'],
     403
   );
   await rejects(
@@ -841,6 +846,13 @@ async function scenarioReturns(): Promise<void> {
   h.repository.state.instances[0].activeTo = new Date(ISSUE_START + 1000).toISOString();
   h.repository.state.instances[0].state = 'EXPIRED';
   h.now(ISSUE_START + 400 * 86_400_000);
+  await rejects(() => h.issuances.returnItems({
+    issuanceId: lateIssued.view.issuanceId,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff({ stationIds: [OTHER_STATION] }) as never,
+    idempotencyHeader: 'return-idempotency-0006',
+    correlationHeader: 'corr:return-foreign-station'
+  }), [RESIDENT_SERVICE_ERRORS.ISSUANCE_NOT_FOUND], 404);
   const lateReturn = await h.issuances.returnItems({
     issuanceId: lateIssued.view.issuanceId,
     items: [{ serviceKind: 'RACKET', quantity: 1 }],
@@ -983,9 +995,152 @@ async function scenarioJournal(): Promise<void> {
 
   await rejects(() => h.issuances.getIssuance(issued.view.issuanceId, residentStaff({
     permissions: ['resident-services:issue']
-  }) as never), [RESIDENT_SERVICE_ERRORS.STATION_FORBIDDEN], 403);
+  }) as never), ['FORBIDDEN'], 403);
 
   console.log('scenario journal: ok');
+}
+
+async function scenarioSubscriptionRenewal(): Promise<void> {
+  const h = harness();
+  await h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'RACKET',
+    limitPeriod: 'SUBSCRIPTION',
+    limitQuantity: 1,
+    returnable: true
+  }, 'subscription-period-rule-0001', residentStaff() as never, 'corr:subscription-period');
+  const first = await issuePass(h);
+  await h.issuances.confirm({
+    token: first,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'subscription-period-issuance-0001',
+    correlationHeader: 'corr:subscription-period-1'
+  });
+  const second = await issuePass(h);
+  await rejects(() => h.issuances.confirm({
+    token: second,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'subscription-period-issuance-0002',
+    correlationHeader: 'corr:subscription-period-2'
+  }), [RESIDENT_SERVICE_ERRORS.SERVICE_LIMIT_EXCEEDED], 409);
+
+  // Renewal into a new subscription instance starts a new SUBSCRIPTION period.
+  const renewal = structuredClone(h.repository.state.instances[0]);
+  renewal.subscriptionInstanceId = 'subscription_instance:piter-2';
+  renewal.clientSubscriptionId = 'client_subscription:piter-2';
+  renewal.revision = 4;
+  h.repository.state.instances.push(renewal);
+  const renewed = await h.passes.createPass({
+    authorization: CLIENT_AUTH,
+    integrationToken: RESIDENT_INTEGRATION_TOKEN,
+    clientSubscriptionId: 'client_subscription:piter-2'
+  });
+  const issued = await h.issuances.confirm({
+    token: renewed.token,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'subscription-period-issuance-0003',
+    correlationHeader: 'corr:subscription-period-3'
+  });
+  assert.equal(issued.view.state, 'ISSUED');
+  const periods = h.repository.state.usage
+    .filter((row) => row.serviceKind === 'RACKET')
+    .map((row) => row.periodKey);
+  assert.deepEqual(periods.sort(), [
+    'subscription_instance:piter-1',
+    'subscription_instance:piter-2'
+  ]);
+  console.log('scenario subscription renewal: ok');
+}
+
+async function scenarioInvalidEvidence(): Promise<void> {
+  const h = harness();
+  h.repository.state.instances[0] = Object.assign({}, h.repository.state.instances[0], {
+    schemaVersion: 2
+  });
+  await rejects(() => issuePass(h), [RESIDENT_SERVICE_ERRORS.EVIDENCE_INVALID], 503);
+
+  const mapping = harness();
+  mapping.repository.state.mappings[0].tenantId = 'other-tenant';
+  await rejects(() => issuePass(mapping), [RESIDENT_SERVICE_ERRORS.MAPPING_NOT_CURRENT], 503);
+
+  const policy = harness();
+  policy.repository.state.publications[0].policyDigest = 'sha256:' + 'b'.repeat(64);
+  await rejects(() => issuePass(policy), [RESIDENT_SERVICE_ERRORS.POLICY_NOT_CURRENT], 503);
+  console.log('scenario invalid evidence: ok');
+}
+
+async function scenarioScopedRuleTakeover(): Promise<void> {
+  const h = harness();
+  await createRules(h);
+  const scopedActor = residentStaff({
+    permissionStationScopes: { 'resident-services:configure': [HOME_STATION] }
+  });
+  const globalRule = h.repository.state.rules.find((row) => row.serviceKind === 'TOWEL');
+  assert.ok(globalRule);
+  await rejects(() => h.benefits.updateRule(globalRule!.ruleId, {
+    stationIds: [HOME_STATION],
+    expectedRevision: globalRule!.revision
+  }, scopedActor as never), [RESIDENT_SERVICE_ERRORS.STATION_FORBIDDEN], 403);
+  assert.equal(h.repository.state.rules.find(
+    (row) => row.ruleId === globalRule!.ruleId
+  )?.stationScope.kind, 'ALL_STATIONS');
+
+  // A station-scoped admin cannot retarget a rule that belongs to another station.
+  await h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'TOWEL',
+    stationIds: [HOME_STATION],
+    limitPeriod: 'MONTH',
+    limitQuantity: 4,
+    returnable: false
+  }, 'scoped-month-rule-0001', residentStaff() as never, 'corr:scoped-month');
+  const homeRule = h.repository.state.rules.find(
+    (row) => row.stationScope.kind === 'STATION_LIST'
+  );
+  assert.ok(homeRule);
+  await rejects(() => h.benefits.updateRule(homeRule!.ruleId, {
+    limitQuantity: 10,
+    expectedRevision: homeRule!.revision
+  }, residentStaff({
+    permissionStationScopes: { 'resident-services:configure': [OTHER_STATION] }
+  }) as never), [RESIDENT_SERVICE_ERRORS.STATION_FORBIDDEN], 403);
+
+  // Overlapping station lists would create an ambiguous runtime rule.
+  await rejects(() => h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'TOWEL',
+    stationIds: [HOME_STATION, OTHER_STATION],
+    limitPeriod: 'WEEK',
+    limitQuantity: 1,
+    returnable: false
+  }, 'overlapping-rule-0001', residentStaff() as never, 'corr:overlap'),
+  [RESIDENT_SERVICE_ERRORS.BENEFIT_RULE_CONFLICT], 409);
+
+  // A duplicate-key race is reported as a conflict, never as an internal error.
+  const originalInsert = h.repository.insertBenefitRule.bind(h.repository);
+  h.repository.insertBenefitRule = async () => {
+    throw Object.assign(new Error('duplicate'), { code: 11000 });
+  };
+  try {
+    await rejects(() => h.benefits.createRule({
+      subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+      serviceKind: 'RACKET',
+      stationIds: [HOME_STATION],
+      limitPeriod: 'WEEK',
+      limitQuantity: 1,
+      returnable: true
+    }, 'duplicate-race-rule-0001', residentStaff() as never, 'corr:duplicate-race'),
+    [RESIDENT_SERVICE_ERRORS.BENEFIT_RULE_CONFLICT], 409);
+  } finally {
+    h.repository.insertBenefitRule = originalInsert;
+  }
+  console.log('scenario scoped rule takeover: ok');
 }
 
 void main().catch((error) => {

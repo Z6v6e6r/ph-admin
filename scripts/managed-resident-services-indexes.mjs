@@ -40,7 +40,7 @@ const plan = [
   ],
   [
     collections.passes,
-    { expiresAt: 1 },
+    { expiresAtDate: 1 },
     { name: 'resident_pass_expires_ttl', expireAfterSeconds: 86400 }
   ],
   [
@@ -56,7 +56,11 @@ const plan = [
   [
     collections.benefitRules,
     { tenantId: 1, 'idempotency.actorId': 1, 'idempotency.keyHash': 1 },
-    { name: 'resident_benefit_rule_idempotency_unique', unique: true, sparse: true }
+    {
+      name: 'resident_benefit_rule_idempotency_unique',
+      unique: true,
+      partialFilterExpression: { 'idempotency.keyHash': { $exists: true } }
+    }
   ],
   [
     collections.benefitRules,
@@ -175,6 +179,8 @@ try {
         || JSON.stringify(item.key) !== JSON.stringify(key)
         || Boolean(item.unique) !== Boolean(options.unique)
         || Boolean(item.sparse) !== Boolean(options.sparse)
+        || JSON.stringify(item.partialFilterExpression ?? null)
+          !== JSON.stringify(options.partialFilterExpression ?? null)
         || (item.expireAfterSeconds ?? null) !== (options.expireAfterSeconds ?? null);
     }).map(([, , options]) => options.name);
     mismatches += missing.length;

@@ -27,7 +27,6 @@ import {
 import { ResidentResidencyService, RESIDENT_SERVICES_CLOCK } from './resident-residency.service';
 import { ResidentServicesRepository, isResidentDuplicateKeyError } from './resident-services.repository';
 import {
-  assertResidentStationInScope,
   requireResidentStaff,
   requireResidentStation,
   residentStationScope
@@ -126,9 +125,11 @@ export class ResidentIssuancesService {
     if (existing) {
       return this.replayIssuance(existing, requestHash);
     }
-    const passport = { now: this.now() };
     try {
       const outcome = await this.repository.withTransaction(async (session) => {
+        // Recompute the clock on every transaction attempt so a retried command
+        // cannot treat an expired pass as still valid.
+        const now = this.now();
         const replay = await this.repository.issuanceByIdempotency(tenantId, keyHash, session);
         if (replay) return { document: replay, replayed: true };
         const pass = await this.repository.findPassByTokenHash(tokenHash, session);
@@ -144,7 +145,7 @@ export class ResidentIssuancesService {
             message: 'Resident pass was already used'
           });
         }
-        if (Date.parse(pass.expiresAt) <= passport.now.getTime()) {
+        if (Date.parse(pass.expiresAt) <= now.getTime()) {
           throw new ConflictException({
             code: RESIDENT_SERVICES_ERROR_CODES.PASS_EXPIRED,
             message: 'Resident pass has expired'
@@ -171,7 +172,7 @@ export class ResidentIssuancesService {
           context,
           stationId,
           items,
-          now: passport.now,
+          now,
           session
         });
         const issuanceId = 'resident_issuance:' + randomUUID();
@@ -179,7 +180,7 @@ export class ResidentIssuancesService {
           passId: pass.passId,
           tenantId,
           expectedRevision: pass.revision,
-          now: passport.now,
+          now,
           consumedBy: actorId,
           consumedStationId: stationId,
           operationId: issuanceId,
@@ -198,7 +199,7 @@ export class ResidentIssuancesService {
             message: 'Resident pass has expired'
           });
         }
-        const issuedAt = passport.now.toISOString();
+        const issuedAt = now.toISOString();
         const document: StoredResidentIssuance = {
           schemaVersion: 1,
           issuanceId,
@@ -255,6 +256,10 @@ export class ResidentIssuancesService {
       if (isResidentDuplicateKeyError(error)) {
         const duplicate = await this.repository.issuanceByIdempotency(tenantId, keyHash);
         if (duplicate) return this.replayIssuance(duplicate, requestHash);
+        throw new ConflictException({
+          code: RESIDENT_SERVICES_ERROR_CODES.RETRY_CONFLICT,
+          message: 'Resident service issuance conflicted; retry the request'
+        });
       }
       throw error;
     }
@@ -316,11 +321,14 @@ export class ResidentIssuancesService {
               message: 'Resident service issuance was not found'
             });
           }
-          assertResidentStationInScope(
-            input.user,
-            RETURN_PERMISSION,
-            issuance.stationId
-          );
+          const returnScope = residentStationScope(input.user, RETURN_PERMISSION);
+          if (returnScope !== null && (returnScope.length === 0
+            || !returnScope.includes(issuance.stationId))) {
+            throw new NotFoundException({
+              code: RESIDENT_SERVICES_ERROR_CODES.ISSUANCE_NOT_FOUND,
+              message: 'Resident service issuance was not found'
+            });
+          }
           const nextItems = this.applyReturn(issuance, items);
           const returnedAt = this.now().toISOString();
           const returnId = 'resident_return:' + randomUUID();
@@ -389,7 +397,10 @@ export class ResidentIssuancesService {
         if (isResidentDuplicateKeyError(error)) {
           const duplicate = await this.repository.returnByIdempotency(tenantId, keyHash);
           if (duplicate) return this.replayReturn(duplicate, requestHash);
-          throw error;
+          throw new ConflictException({
+            code: RESIDENT_SERVICES_ERROR_CODES.RETRY_CONFLICT,
+            message: 'Resident service return conflicted; retry the request'
+          });
         }
         if (error instanceof ConflictException) {
           const body = error.getResponse() as { code?: string };

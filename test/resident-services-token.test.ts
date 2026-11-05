@@ -63,7 +63,8 @@ function main(): void {
   assert.equal(residentPeriodKey('DAY', morning), '2026-11-05');
   assert.equal(residentPeriodKey('WEEK', morning), '2026-W45');
   assert.equal(residentPeriodKey('MONTH', morning), '2026-11');
-  assert.equal(residentPeriodKey('SUBSCRIPTION', morning), 'SUBSCRIPTION');
+  assert.equal(residentPeriodKey('SUBSCRIPTION', morning, 'subscription_instance:piter-1'), 'subscription_instance:piter-1');
+  assert.throws(() => residentPeriodKey('SUBSCRIPTION', morning));
 
   const afterMoscowMidnight = new Date('2026-11-05T21:30:00.000Z');
   assert.equal(residentPeriodKey('DAY', afterMoscowMidnight), '2026-11-06');

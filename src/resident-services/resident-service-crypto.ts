@@ -82,8 +82,17 @@ export function isoWeekKey(year: number, month: number, day: number): string {
   return String(weekYear) + '-W' + String(week).padStart(2, '0');
 }
 
-export function residentPeriodKey(period: ResidentServiceLimitPeriod, now: Date): string {
-  if (period === 'SUBSCRIPTION') return 'SUBSCRIPTION';
+export function residentPeriodKey(
+  period: ResidentServiceLimitPeriod,
+  now: Date,
+  subscriptionInstanceId?: string
+): string {
+  if (period === 'SUBSCRIPTION') {
+    if (!subscriptionInstanceId) {
+      throw new Error('RESIDENT_SERVICES_SUBSCRIPTION_PERIOD_IDENTITY_REQUIRED');
+    }
+    return subscriptionInstanceId;
+  }
   const parts = moscowLocalDateParts(now);
   const dateKey = String(parts.year) + '-'
     + String(parts.month).padStart(2, '0') + '-'

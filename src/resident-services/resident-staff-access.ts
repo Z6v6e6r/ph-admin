@@ -16,7 +16,7 @@ export function requireResidentStaff(
   }
   if (!(user.permissions?.includes('*') || user.permissions?.includes(permission))) {
     throw new ForbiddenException({
-      code: RESIDENT_SERVICES_ERROR_CODES.STATION_FORBIDDEN,
+      code: 'FORBIDDEN',
       message: 'Resident services permission is required'
     });
   }

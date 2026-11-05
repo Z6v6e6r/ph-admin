@@ -3,8 +3,12 @@ on:
   pull_request:
     paths:
       - 'src/resident-services/**'
-      - 'src/common/rbac/permissions.ts'
+      - 'src/subscriptions/**'
+      - 'src/lk-identity/**'
+      - 'src/common/**'
+      - 'src/bootstrap.ts'
       - 'src/app.module.ts'
+      - 'client-sdk/phab-admin-panel.js'
       - 'scripts/managed-resident-services-indexes.mjs'
       - 'test/resident-services*'
       - 'test/helpers/resident-services-fixtures.ts'

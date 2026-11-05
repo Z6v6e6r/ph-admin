@@ -151,6 +151,12 @@ export class ResidentBenefitsService {
       tenantId,
       command.subscriptionTypeId
     );
+    this.assertNoOverlappingScope(
+      sameScope,
+      command.serviceKind,
+      stationScope,
+      null
+    );
     if (sameScope.length >= RESIDENT_SERVICES_MAX_RULES_PER_TYPE) {
       throw new BadRequestException({
         code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_INVALID,
@@ -185,7 +191,32 @@ export class ResidentBenefitsService {
       updatedAt: now,
       idempotency: { actorId, keyHash, requestHash, correlationId }
     };
-    await this.repository.insertBenefitRule(rule);
+    try {
+      await this.repository.insertBenefitRule(rule);
+    } catch (error) {
+      if (!this.isDuplicateKey(error)) throw error;
+      const replay = await this.repository.benefitRuleByIdempotency(
+        tenantId,
+        actorId,
+        keyHash
+      );
+      if (replay) {
+        if (replay.idempotency?.requestHash !== requestHash) {
+          throw new ConflictException({
+            code: RESIDENT_SERVICES_ERROR_CODES.IDEMPOTENCY_CONFLICT,
+            message: 'Idempotency-Key was already used with another benefit rule intent'
+          });
+        }
+        return {
+          rule: this.ruleView(replay, await this.titleOf(replay.subscriptionTypeId)),
+          replayed: true
+        };
+      }
+      throw new ConflictException({
+        code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_CONFLICT,
+        message: 'Resident benefit rule already exists for this scope'
+      });
+    }
     return { rule: this.ruleView(rule, await this.titleOf(rule.subscriptionTypeId)), replayed: false };
   }
 
@@ -205,6 +236,7 @@ export class ResidentBenefitsService {
         message: 'Resident benefit rule was not found'
       });
     }
+    this.assertCanManageExistingScope(user, rule.stationScope);
     const scope = command.stationIds === undefined
       ? rule.stationScope
       : this.normalizeScope(command.stationIds);
@@ -241,6 +273,7 @@ export class ResidentBenefitsService {
         message: 'Resident benefit rule already exists for this scope'
       });
     }
+    this.assertNoOverlappingScope(siblings, rule.serviceKind, scope, rule.ruleId);
     const updated = await this.repository.updateBenefitRule({
       tenantId,
       ruleId,
@@ -276,7 +309,8 @@ export class ResidentBenefitsService {
       let blocker: string | null = null;
       try {
         rule = await this.resolveRule(context, serviceKind, stationId);
-      } catch {
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
         blocker = RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_CONFLICT;
       }
       if (!rule) {
@@ -293,7 +327,11 @@ export class ResidentBenefitsService {
         });
         continue;
       }
-      const periodKey = residentPeriodKey(rule.limitPeriod, now);
+      const periodKey = residentPeriodKey(
+        rule.limitPeriod,
+        now,
+        context.instance.subscriptionInstanceId
+      );
       const usage = await this.repository.usageFor({
         tenantId: context.tenantId,
         clientRefHash: context.clientRefHash,
@@ -372,7 +410,11 @@ export class ResidentBenefitsService {
           cause: { serviceKind: item.serviceKind }
         });
       }
-      const periodKey = residentPeriodKey(rule.limitPeriod, input.now);
+      const periodKey = residentPeriodKey(
+        rule.limitPeriod,
+        input.now,
+        input.context.instance.subscriptionInstanceId
+      );
       const usage = await this.repository.usageFor({
         tenantId: input.context.tenantId,
         clientRefHash: input.context.clientRefHash,
@@ -424,6 +466,7 @@ export class ResidentBenefitsService {
         returnable: rule.returnable,
         returnedQuantity: 0,
         benefitRuleId: rule.ruleId,
+        benefitRuleRevision: rule.revision,
         limitPeriod: rule.limitPeriod,
         limitPeriodKey: periodKey,
         limitQuantity: rule.limitQuantity,
@@ -520,6 +563,21 @@ export class ResidentBenefitsService {
     }
   }
 
+  private assertCanManageExistingScope(
+    user: RequestUser | undefined,
+    scope: ResidentBenefitStationScope
+  ): void {
+    const stationScope = this.readStationScope(user, CONFIGURE_PERMISSION);
+    if (stationScope === null) return;
+    if (scope.kind !== 'STATION_LIST'
+      || scope.stationIds.some((stationId) => !stationScope.includes(stationId))) {
+      throw new ForbiddenException({
+        code: RESIDENT_SERVICES_ERROR_CODES.STATION_FORBIDDEN,
+        message: 'Resident benefit rule is outside the allowed scope'
+      });
+    }
+  }
+
   private assertCanConfigure(
     user: RequestUser | undefined,
     scope: ResidentBenefitStationScope
@@ -555,7 +613,7 @@ export class ResidentBenefitsService {
     }
     if (!(user.permissions?.includes('*') || user.permissions?.includes(permission))) {
       throw new ForbiddenException({
-        code: RESIDENT_SERVICES_ERROR_CODES.STATION_FORBIDDEN,
+        code: 'FORBIDDEN',
         message: 'Resident services permission is required'
       });
     }
@@ -567,6 +625,33 @@ export class ResidentBenefitsService {
     permission: string
   ): string[] | null {
     return getStationScopeForPermission(user, permission);
+  }
+
+  private assertNoOverlappingScope(
+    rules: readonly StoredResidentBenefitRule[],
+    serviceKind: ResidentServiceKind,
+    scope: ResidentBenefitStationScope,
+    excludeRuleId: string | null
+  ): void {
+    if (scope.kind !== 'STATION_LIST') return;
+    const stations = new Set(scope.stationIds);
+    const conflict = rules.some((row) => (
+      row.ruleId !== excludeRuleId
+      && row.serviceKind === serviceKind
+      && row.stationScope.kind === 'STATION_LIST'
+      && row.stationScope.stationIds.some((stationId) => stations.has(stationId))
+    ));
+    if (conflict) {
+      throw new ConflictException({
+        code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_CONFLICT,
+        message: 'Resident benefit rule station scope overlaps an existing rule'
+      });
+    }
+  }
+
+  private isDuplicateKey(error: unknown): boolean {
+    return Boolean(error && typeof error === 'object'
+      && (error as { code?: unknown }).code === 11000);
   }
 
   private async requireSubscriptionType(subscriptionTypeId: string): Promise<void> {

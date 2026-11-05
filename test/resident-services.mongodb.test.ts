@@ -218,6 +218,9 @@ async function main(): Promise<void> {
     await scenarioReturnAfterResidencyEnd(repository);
     await scenarioAtomicRollback(repository);
     await scenarioJournal(repository);
+    await scenarioConcurrentLimitAcrossPasses(repository);
+    await scenarioConcurrentDoubleReturn(repository);
+    await scenarioPassRetention(repository);
     console.log('resident-services.mongodb: ok');
   } finally {
     await repository.close();
@@ -512,6 +515,137 @@ async function scenarioAtomicRollback(repository: ResidentServicesRepository): P
   });
   assert.equal(success.view.state, 'ISSUED');
   console.log('mongo scenario atomic rollback: ok');
+}
+
+async function scenarioConcurrentLimitAcrossPasses(
+  repository: ResidentServicesRepository
+): Promise<void> {
+  await clearResidentState(repository);
+  await createRules(buildHarness(repository));
+  const h = buildHarness(repository);
+  const first = await issuePass(h);
+  const second = await issuePass(h);
+  const results = await Promise.allSettled([
+    h.issuances.confirm({
+      token: first,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-concurrent-limit-0001',
+      correlationHeader: 'corr:mongo-concurrent-limit-1'
+    }),
+    h.issuances.confirm({
+      token: second,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-concurrent-limit-0002',
+      correlationHeader: 'corr:mongo-concurrent-limit-2'
+    })
+  ]);
+  assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1);
+  const rejected = results.filter((item) => item.status === 'rejected');
+  assert.equal(rejected.length, 1);
+  assert.equal(
+    codeOf((rejected[0] as PromiseRejectedResult).reason),
+    RESIDENT_SERVICES_ERROR_CODES.SERVICE_LIMIT_EXCEEDED
+  );
+  const db = (repository as unknown as { db: { collection(name: string): {
+    countDocuments(filter: object): Promise<number>;
+    findOne(filter: object): Promise<unknown>;
+  } } }).db;
+  assert.equal(await db.collection('cup_resident_service_issuances').countDocuments({}), 1);
+  const usage = await db.collection('cup_resident_service_usage').findOne({
+    serviceKind: 'RACKET'
+  }) as { used?: number } | null;
+  assert.equal(usage?.used, 1);
+  console.log('mongo scenario concurrent limit across passes: ok');
+}
+
+async function scenarioConcurrentDoubleReturn(
+  repository: ResidentServicesRepository
+): Promise<void> {
+  await clearResidentState(repository);
+  await createRules(buildHarness(repository));
+  const h = buildHarness(repository);
+  const token = await issuePass(h);
+  const issued = await h.issuances.confirm({
+    token,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'mongo-double-return-issuance-0001',
+    correlationHeader: 'corr:mongo-double-return'
+  });
+  const results = await Promise.allSettled([
+    h.issuances.returnItems({
+      issuanceId: issued.view.issuanceId,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-double-return-0001',
+      correlationHeader: 'corr:mongo-double-return-1'
+    }),
+    h.issuances.returnItems({
+      issuanceId: issued.view.issuanceId,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-double-return-0002',
+      correlationHeader: 'corr:mongo-double-return-2'
+    })
+  ]);
+  assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1);
+  const rejected = results.filter((item) => item.status === 'rejected');
+  assert.equal(rejected.length, 1);
+  assert.equal(
+    codeOf((rejected[0] as PromiseRejectedResult).reason),
+    RESIDENT_SERVICES_ERROR_CODES.SERVICE_ALREADY_RETURNED
+  );
+  const db = (repository as unknown as { db: { collection(name: string): {
+    countDocuments(filter: object): Promise<number>;
+  } } }).db;
+  assert.equal(await db.collection('cup_resident_service_returns').countDocuments({}), 1);
+  console.log('mongo scenario concurrent double return: ok');
+}
+
+async function scenarioPassRetention(repository: ResidentServicesRepository): Promise<void> {
+  await clearResidentState(repository);
+  await createRules(buildHarness(repository));
+  const h = buildHarness(repository);
+  await issuePass(h);
+  const db = (repository as unknown as { db: { collection(name: string): {
+    findOne(filter: object): Promise<unknown>;
+    indexes(): Promise<Array<{
+      name?: string;
+      expireAfterSeconds?: number;
+      key?: object;
+      unique?: boolean;
+      sparse?: boolean;
+      partialFilterExpression?: object;
+    }>>;
+  } } }).db;
+  const pass = await db.collection('cup_resident_passes').findOne({}) as {
+    expiresAt?: string;
+    expiresAtDate?: Date;
+  } | null;
+  assert.ok(pass);
+  assert.equal(pass!.expiresAtDate instanceof Date, true);
+  assert.equal(pass!.expiresAtDate!.toISOString(), pass!.expiresAt);
+  const indexes = await db.collection('cup_resident_passes').indexes();
+  const ttl = indexes.find((index) => index.name === 'resident_pass_expires_ttl');
+  assert.ok(ttl);
+  assert.equal(ttl!.expireAfterSeconds, 86400);
+  assert.deepEqual(ttl!.key, { expiresAtDate: 1 });
+  const ruleIndexes = await db.collection('cup_resident_benefit_rules').indexes();
+  const idempotencyIndex = ruleIndexes.find(
+    (index) => index.name === 'resident_benefit_rule_idempotency_unique'
+  );
+  assert.ok(idempotencyIndex);
+  assert.equal(idempotencyIndex!.unique, true);
+  assert.equal(Boolean(idempotencyIndex!.sparse), false);
+  assert.deepEqual(idempotencyIndex!.partialFilterExpression, {
+    'idempotency.keyHash': { $exists: true }
+  });
+  console.log('mongo scenario pass retention: ok');
 }
 
 async function scenarioJournal(repository: ResidentServicesRepository): Promise<void> {
