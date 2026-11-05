@@ -24,6 +24,13 @@ export interface VivaClientCabinetLookup {
   levelLabel?: string;
 }
 
+export interface VivaAdminClientProfile {
+  clientId: string;
+  displayName?: string;
+  avatarUrl: string | null;
+  phone?: string;
+}
+
 export interface VivaAdminClientSearchResult {
   clientId: string;
   clientLabel?: string;
@@ -451,6 +458,37 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       fields: {
         levelNumeric: levelNumericField
       }
+    };
+  }
+
+  /**
+   * Read-only display profile for the resident check screen. Uses the existing
+   * server-side Viva Admin credential and the existing client read route; it never
+   * accepts a client-supplied provider identifier and never writes Viva state.
+   */
+  async getClientProfile(clientId?: string): Promise<VivaAdminClientProfile | null> {
+    const normalizedClientId = this.normalizeOptional(clientId);
+    if (!normalizedClientId) {
+      return null;
+    }
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const payload = await this.fetchAdminJson(
+      `/api/v1/clients/${encodeURIComponent(normalizedClientId)}`,
+      token,
+      resolved.config.baseUrl
+    );
+    const client = this.unwrapRecord(payload);
+    if (!client) {
+      return null;
+    }
+
+    return {
+      clientId: this.extractClientId(client) ?? normalizedClientId,
+      displayName: this.extractClientName(client),
+      avatarUrl: this.extractClientAvatarUrl(client) ?? null,
+      phone: this.extractClientPhone(client)
     };
   }
 
