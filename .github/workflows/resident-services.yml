@@ -49,7 +49,7 @@ jobs:
       - name: Physical Mongo transaction and concurrency proof
         run: |
           export RESIDENT_SERVICES_TEST_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
-          export RESIDENT_SERVICES_TEST_MONGODB_DB="phab_resident_ci_$_$(openssl rand -hex 16)"
+          export RESIDENT_SERVICES_TEST_MONGODB_DB="phab_resident_ci_$$_$(openssl rand -hex 16)"
           npm run test:resident-services:mongo
       - name: Stop disposable Mongo
         if: always()
