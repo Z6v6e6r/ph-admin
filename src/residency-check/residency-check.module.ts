@@ -5,11 +5,12 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 import { ResidentProfileController } from './resident-profile.controller';
 import { ResidentProfileService } from './resident-profile.service';
 import { SubscriptionsVivaResidentProfileAdapter } from './resident-profile.adapter';
+import { HttpResidentPreviewAdapter } from './resident-preview.http.adapter';
 import {
   ResidencyCheckAssetController,
   ResidencyCheckPageController
 } from './residency-check-page.controller';
-import { RESIDENT_PROFILE_PORT } from './residency-check.types';
+import { RESIDENT_PREVIEW_PORT, RESIDENT_PROFILE_PORT } from './residency-check.types';
 
 /**
  * Isolated composition boundary for the mobile resident check.
@@ -32,6 +33,12 @@ import { RESIDENT_PROFILE_PORT } from './residency-check.types';
     {
       provide: RESIDENT_PROFILE_PORT,
       useExisting: SubscriptionsVivaResidentProfileAdapter
+    },
+    {
+      // Server-side D preview used to prove object authorization before any
+      // resident PII is returned. Overridden in tests by a fake port.
+      provide: RESIDENT_PREVIEW_PORT,
+      useFactory: () => new HttpResidentPreviewAdapter()
     }
   ]
 })

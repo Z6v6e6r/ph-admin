@@ -132,13 +132,13 @@ function parseConfig(html: string): Record<string, unknown> {
   return JSON.parse(match[1]) as Record<string, unknown>;
 }
 
-const defaultPageUrl = '/api/ui/admin/residency/check?pass=pass-abc';
+const defaultPageUrl = '/api/ui/admin/residency/check?stationId=Piter';
 const enabledStaffAuth = (user: RequestUser = staffUser()) =>
   createAuthService({ enabled: true, source: 'token', user, staff: true });
 
 async function expectShell(
   authService: AuthService,
-  query: { pass?: string; token?: string; stationId?: string } = { pass: 'pass-abc' },
+  query: { stationId?: string } = { stationId: 'Piter' },
   originalUrl = defaultPageUrl
 ): Promise<{ capture: ReturnType<typeof createResponseCapture>; config: Record<string, unknown>; html: string }> {
   const controller = new ResidencyCheckPageController(authService);
@@ -166,24 +166,43 @@ async function main(): Promise<void> {
   process.env.RESIDENCY_CHECK_ENABLED = 'true';
 
   {
+    // Anonymous: the login redirect keeps only the page path and stationId, so
+    // a legacy query-string pass token never reaches the login URL or its log.
     const calls = { resolve: 0 };
     const authService = createAuthService({ enabled: true, source: 'anonymous', calls });
     const controller = new ResidencyCheckPageController(authService);
     const capture = createResponseCapture();
-    await controller.residencyCheckPage(
-      createRequest('/api/ui/admin/residency/check?pass=pass-abc&stationId=Piter'),
-      capture.response,
-      { pass: 'pass-abc', stationId: 'Piter' }
-    );
+    const url = '/api/ui/admin/residency/check?pass=legacy-pass-secret&stationId=Piter';
+    await controller.residencyCheckPage(createRequest(url), capture.response, {
+      stationId: 'Piter'
+    });
     assert.equal(capture.getStatus(), 302);
+    const redirect = capture.getRedirect() ?? '';
     assert.equal(
-      capture.getRedirect(),
+      redirect,
       '/api/ui/admin/login?next=' +
-        encodeURIComponent('/api/ui/admin/residency/check?pass=pass-abc&stationId=Piter')
+        encodeURIComponent('/api/ui/admin/residency/check?stationId=Piter')
     );
+    assert.doesNotMatch(redirect, /legacy-pass-secret|pass=|token=/);
     assert.equal(calls.resolve, 1);
     assert.equal(capture.getHeader('cache-control'), 'private, no-store');
     assert.equal(capture.getHeader('referrer-policy'), 'no-referrer');
+  }
+
+  {
+    // Only a valid station id survives in next; anything else is dropped.
+    const authService = createAuthService({ enabled: true, source: 'anonymous' });
+    const controller = new ResidencyCheckPageController(authService);
+    const capture = createResponseCapture();
+    await controller.residencyCheckPage(
+      createRequest('/api/ui/admin/residency/check?pass=legacy-secret&stationId=%3Cx%3E'),
+      capture.response,
+      {}
+    );
+    assert.equal(
+      capture.getRedirect(),
+      '/api/ui/admin/login?next=' + encodeURIComponent('/api/ui/admin/residency/check')
+    );
   }
 
   {
@@ -196,7 +215,7 @@ async function main(): Promise<void> {
     const controller = new ResidencyCheckPageController(authService);
     const capture = createResponseCapture();
     await controller.residencyCheckPage(createRequest(defaultPageUrl), capture.response, {
-      pass: 'pass-abc'
+      stationId: 'Piter'
     });
     assert.equal(capture.getStatus(), 302, 'non-staff users are redirected to the CUP login (mirrors UiController)');
     assert.ok((capture.getRedirect() ?? '').startsWith('/api/ui/admin/login?next='));
@@ -214,7 +233,10 @@ async function main(): Promise<void> {
     assert.match(html, /<script src="\/api\/client-script\/residency-check.js"><\/script>/);
     assert.match(html, /window\.__PHAB_RESIDENCY_CHECK_CONFIG__ = /);
 
-    assert.equal(config.passToken, 'pass-abc');
+    // S-09: the pass token never enters the server-rendered shell or config.
+    assert.equal(Object.prototype.hasOwnProperty.call(config, 'passToken'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(config, 'token'), false);
+
     assert.equal(config.enabled, true);
     assert.equal(config.version, 'rsp1_');
     assert.equal(config.apiBase, '/api');
@@ -241,11 +263,32 @@ async function main(): Promise<void> {
 
     assert.doesNotMatch(html, /fullName|photoUrl|activeIssuances|residentName/);
     assert.doesNotMatch(html, /Анна/);
+    assert.doesNotMatch(html, /#pass=/);
+  }
+
+  {
+    // A legacy ?pass=/?token= link must not leak into HTML/config: the page is
+    // served tokenless and the client only reads the URL fragment.
+    const legacy = await expectShell(
+      enabledStaffAuth(),
+      { stationId: 'Piter' },
+      '/api/ui/admin/residency/check?pass=legacy-pass-secret&token=legacy-token-secret'
+    );
+    assert.equal(Object.prototype.hasOwnProperty.call(legacy.config, 'passToken'), false);
+    assert.doesNotMatch(legacy.html, /legacy-pass-secret|legacy-token-secret/);
+  }
+
+  {
+    // No token is required on the server route any more (S-09).
+    const bare = await expectShell(enabledStaffAuth(), {}, '/api/ui/admin/residency/check');
+    assert.equal(bare.capture.getStatus(), 200);
+    assert.equal(bare.config.enabled, true);
+    assert.doesNotMatch(bare.html, /Ссылка неполная/);
+    assert.doesNotMatch(bare.html, /#pass=/);
   }
 
   {
     const { config } = await expectShell(enabledStaffAuth(staffUser({ stationIds: [] })), {
-      pass: 'pass-abc',
       stationId: 'Yasenevo'
     });
     assert.deepEqual(config.allowedStationIds, []);
@@ -260,14 +303,14 @@ async function main(): Promise<void> {
         'resident-services:read': ['A']
       }
     });
-    const scoped = await expectShell(enabledStaffAuth(user), { pass: 'p', stationId: 'A' });
+    const scoped = await expectShell(enabledStaffAuth(user), { stationId: 'A' });
     assert.deepEqual(scoped.config.allowedStationIds, ['A', 'B']);
     assert.equal(scoped.config.defaultStationId, 'A');
 
-    const multiNoDefault = await expectShell(enabledStaffAuth(user), { pass: 'p' });
+    const multiNoDefault = await expectShell(enabledStaffAuth(user), {});
     assert.equal(multiNoDefault.config.defaultStationId, '');
 
-    const outOfScope = await expectShell(enabledStaffAuth(user), { pass: 'p', stationId: 'Piter' });
+    const outOfScope = await expectShell(enabledStaffAuth(user), { stationId: 'Piter' });
     assert.equal(outOfScope.config.defaultStationId, '');
 
     const single = await expectShell(
@@ -277,7 +320,7 @@ async function main(): Promise<void> {
           permissionStationScopes: { 'resident-services:issue': ['A'] }
         })
       ),
-      { pass: 'p' }
+      {}
     );
     assert.deepEqual(single.config.allowedStationIds, ['A']);
     assert.equal(single.config.defaultStationId, 'A');
@@ -289,26 +332,10 @@ async function main(): Promise<void> {
           permissionStationScopes: { 'resident-services:issue': null }
         })
       ),
-      { pass: 'p' }
+      {}
     );
     assert.deepEqual(globalNull.config.allowedStationIds, []);
     assert.equal(globalNull.config.defaultStationId, '');
-  }
-
-  {
-    const alias = await expectShell(enabledStaffAuth(), { token: 'token-alias' });
-    assert.equal(alias.config.passToken, 'token-alias');
-  }
-
-  {
-    const controller = new ResidencyCheckPageController(enabledStaffAuth());
-    const capture = createResponseCapture();
-    await controller.residencyCheckPage(createRequest('/api/ui/admin/residency/check'), capture.response, {});
-    assert.equal(capture.getStatus(), 400);
-    assert.match(capture.getHtml(), /Ссылка неполная/);
-    assert.doesNotMatch(capture.getHtml(), /PHAB_RESIDENCY_CHECK_CONFIG/);
-    assert.doesNotMatch(capture.getHtml(), /residency-check\.js/);
-    assert.equal(capture.getHeader('cache-control'), 'private, no-store');
   }
 
   {
@@ -336,14 +363,6 @@ async function main(): Promise<void> {
     const filtered = await expectShell(enabledStaffAuth());
     assert.equal(Object.prototype.hasOwnProperty.call(filtered.config, 'stationLabels'), false);
     delete process.env.RESIDENCY_CHECK_STATION_LABELS;
-  }
-
-  {
-    const malicious = "</script><script>alert('x')//";
-    const { config, html } = await expectShell(enabledStaffAuth(), { pass: malicious });
-    assert.equal(config.passToken, malicious);
-    assert.match(html, /\\u003c\/script\\u003e/);
-    assert.doesNotMatch(html, /<\/script><script>alert/);
   }
 
   {
@@ -376,7 +395,7 @@ async function main(): Promise<void> {
     const controller = new ResidencyCheckPageController(authService);
     const capture = createResponseCapture();
     await controller.residencyCheckPage(createRequest(defaultPageUrl), capture.response, {
-      pass: 'pass-abc'
+      stationId: 'Piter'
     });
     assert.equal(capture.getStatus(), 503);
     assert.match(capture.getHtml(), /Раздел выключен/);

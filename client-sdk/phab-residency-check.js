@@ -5,8 +5,13 @@
  * talks to the resident-services admin API (D) on the same origin.
  * - Staff authorization happens on the server page route before this script
  *   runs; the page config carries the verified station scope and permissions.
+ * - The pass token arrives in the URL fragment (#pass=<rsp1_...>), which is
+ *   never sent to a server. The script reads it once, immediately clears it from
+ *   the address bar with history.replaceState, keeps it only in memory and
+ *   sends it in request bodies.
  * - Pass preview is a POST with {token, stationId}; the resident photo/name come
- *   from the E profile endpoint and are merged client-side.
+ *   from the E profile endpoint (also a POST, verified server-side against the
+ *   same pass) and are merged client-side.
  * - Issuance is a critical command: exactly one Idempotency-Key per issuance
  *   intent, the same key and body are reused for a manual retry, and a new
  *   selection creates a new intent (and therefore a new key).
@@ -20,6 +25,7 @@
   'use strict';
 
   var CONFIG_VERSION = 'rsp1_';
+  var RESIDENT_PASS_TOKEN_PATTERN = /^rsp1_[A-Za-z0-9_-]{32,64}$/;
   var REQUEST_TIMEOUT_MS = 15000;
   var JOURNAL_LIMIT = 10;
   var MAX_PASS_TOKEN_LENGTH = 512;
@@ -67,6 +73,8 @@
     SUSPENDED: 'phab-rc-status-suspended',
     NONE: 'phab-rc-status-none'
   };
+
+  var passTokenState = { loaded: false, value: '' };
 
   var state = {
     started: false,
@@ -158,13 +166,66 @@
     return config && typeof config === 'object' ? config : {};
   }
 
-  function passToken() {
-    var raw = readConfig().passToken;
-    var value = typeof raw === 'string' ? raw.trim() : '';
-    if (!value || value.length > MAX_PASS_TOKEN_LENGTH) {
+  /**
+   * Reads the token from the URL fragment only. A query-string token would land
+   * in nginx access logs, browser history and Referer headers, so it is never
+   * accepted here.
+   */
+  function readFragmentPassToken() {
+    var fragment = '';
+    try {
+      fragment = typeof window.location.hash === 'string' ? window.location.hash : '';
+    } catch (_error) {
+      fragment = '';
+    }
+    var normalized = fragment.charAt(0) === '#' ? fragment.slice(1) : fragment;
+    var raw = '';
+    if (normalized.indexOf('pass=') === 0) {
+      raw = normalized.slice('pass='.length);
+    } else if (normalized.indexOf('token=') === 0) {
+      raw = normalized.slice('token='.length);
+    }
+    var value = '';
+    if (raw) {
+      try {
+        value = decodeURIComponent(raw);
+      } catch (_error) {
+        value = raw;
+      }
+      value = value.trim();
+    }
+    if (
+      !value ||
+      value.length > MAX_PASS_TOKEN_LENGTH ||
+      !RESIDENT_PASS_TOKEN_PATTERN.test(value)
+    ) {
       return '';
     }
     return value;
+  }
+
+  /** Rewrites the address bar without the fragment so the token does not persist. */
+  function clearLocationFragment() {
+    try {
+      if (!window.location.hash) {
+        return;
+      }
+      if (window.history && typeof window.history.replaceState === 'function') {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    } catch (_error) {
+      // A blocked history API must not break the resident check.
+    }
+  }
+
+  /** Read-once accessor: the fragment token is captured and cleared on first use. */
+  function passToken() {
+    if (!passTokenState.loaded) {
+      passTokenState.loaded = true;
+      passTokenState.value = readFragmentPassToken();
+      clearLocationFragment();
+    }
+    return passTokenState.value;
   }
 
   function stringList(value) {
@@ -1354,6 +1415,17 @@
     );
   }
 
+  /** The profile must belong to the exact resident instance D confirmed. */
+  function validProfile(body, expectedSubscriptionInstanceId) {
+    return Boolean(
+      body &&
+        typeof body === 'object' &&
+        typeof body.subscriptionInstanceId === 'string' &&
+        body.subscriptionInstanceId === expectedSubscriptionInstanceId &&
+        typeof body.fullName === 'string'
+    );
+  }
+
   async function loadCheck() {
     state.preview = null;
     state.profile = null;
@@ -1416,12 +1488,19 @@
     if (demoMode()) {
       state.profile = demoProfile();
     } else if (hasPermission(PERMISSION_ISSUE) && subscriptionInstanceId) {
-      var profileOutcome = await request(
-        apiUrl('/v1/admin/residency/profile?subscriptionInstanceId=' + encodeURIComponent(subscriptionInstanceId))
-      );
-      if (profileOutcome.ok && profileOutcome.body && typeof profileOutcome.body === 'object') {
+      var profileOutcome = await request(apiUrl('/v1/admin/residency/profile'), {
+        method: 'POST',
+        headers: mutationHeaders(null),
+        body: JSON.stringify({
+          passToken: token,
+          stationId: state.stationId,
+          subscriptionInstanceId: subscriptionInstanceId
+        })
+      });
+      if (profileOutcome.ok && validProfile(profileOutcome.body, subscriptionInstanceId)) {
         state.profile = profileOutcome.body;
       } else {
+        state.profile = null;
         state.profileError = errorMessage(profileOutcome);
       }
     } else if (!hasPermission(PERMISSION_ISSUE)) {
@@ -1856,6 +1935,8 @@
       return;
     }
     state.started = true;
+    // Capture and clear the fragment token before any rendering or request.
+    passToken();
     var preferred = defaultStationId();
     var allowed = allowedStationIds();
     if (preferred) {

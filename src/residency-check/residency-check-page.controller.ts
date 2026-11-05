@@ -6,8 +6,6 @@ import { AuthService } from '../auth/auth.service';
 import { RequestUser } from '../common/rbac/request-user.interface';
 
 type ResidencyCheckPageQuery = {
-  pass?: string;
-  token?: string;
   stationId?: string;
 };
 
@@ -32,7 +30,7 @@ const RESIDENCY_CHECK_ENABLED_VALUES = ['1', 'true', 'yes'];
 const RESIDENCY_STATION_SCOPE_PERMISSION = 'resident-services:issue';
 const RESIDENCY_CHECK_CONFIG_VERSION = 'rsp1_';
 const RESIDENCY_CHECK_API_BASE = '/api';
-const MAX_PASS_TOKEN_LENGTH = 512;
+const RESIDENCY_STATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
 
 /** Feature flag for the resident check section; disabled unless explicitly enabled. */
 const isResidencyCheckEnabled = (): boolean =>
@@ -114,9 +112,15 @@ const readStationLabels = (): Record<string, string> => {
 /**
  * Standalone mobile screen for the staff resident check.
  *
- * The page never renders resident data: it only carries the opaque pass token
- * plus the verified staff station scope to the served client script. Staff
- * authorization happens here, before the browser may request any pass data.
+ * The page never renders resident data and never renders the pass token: the
+ * QR destination puts the short-lived token in the URL fragment
+ * (`/admin/residency/check#pass=<token>`), which browsers do not send to the
+ * server, so it cannot reach access logs, the rendered HTML, the login redirect
+ * or a Referer header. The served client script reads the fragment, clears it
+ * with `history.replaceState` and calls D/E with the token in a request body.
+ *
+ * Staff authorization happens here; the page itself only receives the verified
+ * station scope and permissions.
  */
 @Controller('ui')
 export class ResidencyCheckPageController {
@@ -150,26 +154,13 @@ export class ResidencyCheckPageController {
       return;
     }
 
-    const passToken = this.resolvePassToken(query);
-    if (!passToken) {
-      response.status(400).send(
-        this.renderStandalonePage({
-          title: 'Ссылка неполная',
-          heading: 'Ссылка неполная',
-          message:
-            'В ссылке нет идентификатора пропуска. Откройте экран по QR-коду или ссылке из ЦУП.'
-        })
-      );
-      return;
-    }
-
     const stationScope = this.resolveStationScope(authContext.user, query);
     const permissions = Array.isArray(authContext.user?.permissions)
       ? authContext.user.permissions.filter(
           (permission): permission is string => typeof permission === 'string'
         )
       : [];
-    response.send(this.renderShell(passToken, stationScope, permissions));
+    response.send(this.renderShell(stationScope, permissions));
   }
 
   /** Mirrors UiController.resolveAdminAuthContext: cookie/bearer staff session only. */
@@ -189,27 +180,27 @@ export class ResidencyCheckPageController {
       !resolved.user ||
       !this.authService.hasStaffAccess(resolved.user)
     ) {
-      const nextPath = encodeURIComponent(
-        request.originalUrl || '/api/ui/admin/residency/check'
-      );
+      const nextPath = encodeURIComponent(this.loginNextPath(request));
       return { redirectToLogin: `/api/ui/admin/login?next=${nextPath}` };
     }
 
     return { user: resolved.user };
   }
 
-  private resolvePassToken(query: ResidencyCheckPageQuery): string {
-    const fromPass =
-      typeof query?.pass === 'string' ? query.pass.trim() : '';
-    const fromToken =
-      typeof query?.token === 'string' ? query.token.trim() : '';
-    const value = fromPass || fromToken;
-
-    if (!value || value.length > MAX_PASS_TOKEN_LENGTH) {
-      return '';
-    }
-
-    return value;
+  /**
+   * Post-login return path. Only the page path and a valid, non-secret
+   * `stationId` are kept: a legacy `?pass=`/`?token=` link must not be copied
+   * into the login redirect URL (and therefore into its access log).
+   */
+  private loginNextPath(request: Request): string {
+    const originalUrl = String(request.originalUrl || '');
+    const path = originalUrl.split('?')[0] || '/api/ui/admin/residency/check';
+    const requestedStationId = normalizeStationId(
+      new URLSearchParams(originalUrl.split('?')[1] ?? '').get('stationId')
+    );
+    return RESIDENCY_STATION_ID_PATTERN.test(requestedStationId)
+      ? `${path}?stationId=${encodeURIComponent(requestedStationId)}`
+      : path;
   }
 
   /**
@@ -266,12 +257,12 @@ export class ResidencyCheckPageController {
   }
 
   private renderShell(
-    passToken: string,
     stationScope: ResidencyStationScope,
     permissions: string[]
   ): string {
     const config: Record<string, unknown> = {
-      passToken,
+      // The pass token is intentionally absent: it lives only in the URL
+      // fragment and is read by the client script.
       version: RESIDENCY_CHECK_CONFIG_VERSION,
       enabled: true,
       allowedStationIds: stationScope.allowedStationIds,
@@ -332,8 +323,8 @@ export class ResidencyCheckPageController {
   }
 
   /**
-   * Standalone notice page (disabled feature / incomplete link). It has no
-   * client-script, no config and never contains resident data.
+   * Standalone notice page (disabled feature). It has no client script, no
+   * config and never contains resident data or a pass token.
    */
   private renderStandalonePage(options: {
     title: string;

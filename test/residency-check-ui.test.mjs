@@ -29,7 +29,6 @@ test('asset is a strict dependency-free IIFE with DOMContentLoaded auto-init', (
 test('reads the rsp1_ page config contract', () => {
   for (const key of [
     '__PHAB_RESIDENCY_CHECK_CONFIG__',
-    'passToken',
     'allowedStationIds',
     'defaultStationId',
     'stationLabels',
@@ -44,12 +43,55 @@ test('reads the rsp1_ page config contract', () => {
   assert.match(js, /'\/api'/);
 });
 
+test('S-09: the pass token comes from the URL fragment, never from query or config', () => {
+  // Read from location.hash only.
+  assert.match(js, /function readFragmentPassToken\(\)/);
+  assert.match(js, /window\.location\.hash/);
+  assert.match(js, /indexOf\('pass='\) === 0/);
+  assert.match(js, /indexOf\('token='\) === 0/);
+  assert.match(js, /slice\('pass='\.length\)/);
+  assert.doesNotMatch(js, /location\.search[^\n]*pass/i, 'search params are not a token source');
+  assert.doesNotMatch(js, /URLSearchParams|searchParams/, 'no query-string token parsing');
+  assert.doesNotMatch(js, /readConfig\(\)\.passToken/, 'the server config never carries the token');
+
+  // Cleared from the address bar as soon as it is captured.
+  const clear = sourceOf('clearLocationFragment');
+  assert.match(clear, /window\.history\.replaceState/);
+  assert.match(clear, /window\.location\.pathname \+ window\.location\.search/);
+  assert.doesNotMatch(
+    clear,
+    /replaceState\([^)]*(hash|location\.hash)/,
+    'the rewritten URL must not pass the fragment back into history'
+  );
+
+  const passToken = sourceOf('passToken');
+  assert.match(passToken, /passTokenState\.loaded/);
+  assert.match(passToken, /readFragmentPassToken\(\)/);
+  assert.match(passToken, /clearLocationFragment\(\)/);
+  const capture = passToken.indexOf('readFragmentPassToken()');
+  const clearIndex = passToken.indexOf('clearLocationFragment()');
+  assert.ok(capture >= 0 && clearIndex > capture, 'the fragment is cleared right after it is read');
+
+  // Boot captures and clears before any render or network request.
+  const boot = sourceOf('boot');
+  const bootToken = boot.indexOf('passToken()');
+  const bootStation = boot.indexOf('defaultStationId()');
+  const bootLoad = boot.indexOf('loadCheck()');
+  assert.ok(bootToken >= 0, 'boot captures the fragment token');
+  assert.ok(bootStation > bootToken && bootLoad > bootToken, 'capture happens before any request');
+
+  assert.match(js, /RESIDENT_PASS_TOKEN_PATTERN = \/\^rsp1_\[A-Za-z0-9_-\]\{32,64\}\$\//);
+  assert.match(js, /decodeURIComponent/);
+});
+
 test('calls the D resident-services API directly and no removed E proxy routes', () => {
   assert.match(js, /'\/v1\/admin\/resident-services\/passes\/preview'/);
   assert.match(js, /'\/v1\/admin\/resident-services\/issuances'/);
   assert.match(js, /\/v1\/admin\/resident-services\/issuances\/' \+ encodeURIComponent\(state\.returnTarget\.issuanceId\) \+ '\/returns'/);
   assert.match(js, /'\/v1\/admin\/resident-services\/journal\?stationId='/);
-  assert.match(js, /'\/v1\/admin\/residency\/profile\?subscriptionInstanceId='/);
+  assert.match(js, /'\/v1\/admin\/residency\/profile'/);
+  assert.doesNotMatch(js, /residency\/profile\?/, 'the PII endpoint must not take a query-string id');
+  assert.doesNotMatch(js, /subscriptionInstanceId=/, 'no resident id is put in a URL');
   assert.doesNotMatch(js, /\/v1\/admin\/residency\/(check|issue|returns|journal)/);
 });
 
@@ -58,8 +100,20 @@ test('preview request carries token and stationId with a command header', () => 
   assert.match(loadCheck, /'\/v1\/admin\/resident-services\/passes\/preview'/);
   assert.match(loadCheck, /JSON\.stringify\(\{ token: token, stationId: state\.stationId \}\)/);
   assert.match(loadCheck, /mutationHeaders\(null\)/);
-  assert.match(loadCheck, /'\/v1\/admin\/residency\/profile\?subscriptionInstanceId=' \+ encodeURIComponent\(subscriptionInstanceId\)/);
+  assert.match(loadCheck, /'\/v1\/admin\/residency\/profile'/);
+  // S-08: the profile is requested with the pass token in the POST body and is
+  // accepted only for the exact instance D confirmed in the preview.
+  assert.match(loadCheck, /method: 'POST'/);
+  assert.match(
+    loadCheck,
+    /body: JSON\.stringify\(\{\s*passToken: token,\s*stationId: state\.stationId,\s*subscriptionInstanceId: subscriptionInstanceId\s*\}\)/
+  );
+  assert.match(loadCheck, /validProfile\(profileOutcome\.body, subscriptionInstanceId\)/);
   assert.match(loadCheck, /state\.profile = profileOutcome\.body/);
+
+  const validProfile = sourceOf('validProfile');
+  assert.match(validProfile, /body\.subscriptionInstanceId === expectedSubscriptionInstanceId/);
+  assert.match(validProfile, /typeof body\.fullName === 'string'/);
 });
 
 test('issue body uses serviceKind/station and one idempotency key per intent', () => {
