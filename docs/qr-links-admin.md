@@ -210,10 +210,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://padlhub.su/api/v1/admin/qr-lin
 Локально модуль проверяется так:
 
 ```bash
-npx ts-node test/qr-links-target-url.test.ts
-npx ts-node test/qr-links.service.test.ts
-npx ts-node test/qr-links-public-redirect.test.ts
-npx ts-node test/qr-links-image.test.ts
+npm run test:qr-links
 npx tsc -p tsconfig.build.json --noEmit --incremental false
 npm run build
 ```
