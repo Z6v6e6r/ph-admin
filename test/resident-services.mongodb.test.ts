@@ -222,6 +222,7 @@ async function main(): Promise<void> {
     await scenarioConcurrentLimitAcrossPasses(repository);
     await scenarioConcurrentDoubleReturn(repository);
     await scenarioPassRetention(repository);
+    await scenarioManualPerIssuance(repository);
     console.log('resident-services.mongodb: ok');
   } finally {
     await repository.close();
@@ -271,6 +272,91 @@ async function scenarioConcurrentOnePassOneIssuance(
   const usage = await db.collection('cup_resident_service_usage').countDocuments({});
   assert.equal(usage, 1);
   console.log('mongo scenario concurrent one pass: ok');
+}
+
+async function scenarioManualPerIssuance(repository: ResidentServicesRepository): Promise<void> {
+  await clearResidentState(repository);
+  const h = buildHarness(repository);
+  await h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'RACKET',
+    limitPeriod: 'MANUAL_PER_ISSUANCE',
+    limitQuantity: 1,
+    returnable: true
+  }, 'mongo-manual-racket-rule-0001', residentStaff() as never, 'corr:mongo-manual-rule');
+
+  const tooManyToken = await issuePass(h);
+  await assert.rejects(
+    () => h.issuances.confirm({
+      token: tooManyToken,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'RACKET', quantity: 2 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-manual-quantity-two-0001',
+      correlationHeader: 'corr:mongo-manual-quantity-two'
+    }),
+    (error: unknown) => codeOf(error) === RESIDENT_SERVICES_ERROR_CODES.REQUEST_INVALID
+  );
+
+  const samePassToken = await issuePass(h);
+  const samePassResults = await Promise.allSettled([
+    h.issuances.confirm({
+      token: samePassToken,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-manual-same-pass-0001',
+      correlationHeader: 'corr:mongo-manual-same-pass-1'
+    }),
+    h.issuances.confirm({
+      token: samePassToken,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'RACKET', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'mongo-manual-same-pass-0002',
+      correlationHeader: 'corr:mongo-manual-same-pass-2'
+    })
+  ]);
+  assert.equal(samePassResults.filter((result) => result.status === 'fulfilled').length, 1);
+  const samePassRejected = samePassResults.find((result) => result.status === 'rejected');
+  assert.ok(samePassRejected && samePassRejected.status === 'rejected');
+  assert.equal(
+    codeOf(samePassRejected.reason),
+    RESIDENT_SERVICES_ERROR_CODES.PASS_ALREADY_USED
+  );
+
+  const firstToken = await issuePass(h);
+  const secondToken = await issuePass(h);
+  const body = (token: string, key: string) => ({
+    token,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET' as const, quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: key,
+    correlationHeader: 'corr:' + key
+  });
+  const results = await Promise.all([
+    h.issuances.confirm(body(firstToken, 'mongo-manual-issuance-0001')),
+    h.issuances.confirm(body(secondToken, 'mongo-manual-issuance-0002'))
+  ]);
+  assert.equal(results.length, 2, 'different QR scans are deliberately distinct manual operations');
+  assert.notEqual(results[0].view.issuanceId, results[1].view.issuanceId);
+  const replay = await h.issuances.confirm(body(firstToken, 'mongo-manual-issuance-0001'));
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.view.issuanceId, results[0].view.issuanceId);
+
+  const db = (repository as unknown as { db: { collection(name: string): {
+    countDocuments(filter: object): Promise<number>;
+    find(filter: object): { toArray(): Promise<Array<{ periodKey?: string; used?: number }>> };
+  } } }).db;
+  assert.equal(await db.collection('cup_resident_service_issuances').countDocuments({}), 3);
+  const usage = await db.collection('cup_resident_service_usage').find({
+    limitPeriod: 'MANUAL_PER_ISSUANCE',
+    serviceKind: 'RACKET'
+  }).toArray();
+  assert.equal(usage.length, 3);
+  assert.ok(usage.every((row) => row.used === 1 && row.periodKey?.startsWith('resident_issuance:')));
+  console.log('mongo scenario manual per issuance: ok');
 }
 
 async function scenarioReplayAfterLostResponse(

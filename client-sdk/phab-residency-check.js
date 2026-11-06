@@ -757,6 +757,9 @@
   }
 
   function maxQuantity(service) {
+    if (service && text(service.limitPeriod) === 'MANUAL_PER_ISSUANCE') {
+      return 1;
+    }
     var remaining = service ? Number(service.remaining) : NaN;
     if (isFinite(remaining) && remaining >= 1) {
       return Math.floor(remaining);
@@ -922,6 +925,15 @@
     if (!services.length) {
       card.appendChild(node('p', 'phab-rc-empty', 'Доступных услуг нет.'));
       return card;
+    }
+    if (services.some(function (service) {
+      return text(service && service.limitPeriod) === 'MANUAL_PER_ISSUANCE';
+    })) {
+      card.appendChild(node(
+        'p',
+        'phab-rc-manual-issuance-note',
+        'Перед выдачей проверьте посещение и убедитесь, что услуги за этот визит ещё не выданы. Можно выбрать одну ракетку и одно полотенце.'
+      ));
     }
     services.forEach(function (service) {
       card.appendChild(serviceRow(service));

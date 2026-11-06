@@ -85,8 +85,15 @@ export function isoWeekKey(year: number, month: number, day: number): string {
 export function residentPeriodKey(
   period: ResidentServiceLimitPeriod,
   now: Date,
-  subscriptionInstanceId?: string
+  subscriptionInstanceId?: string,
+  issuanceId?: string
 ): string {
+  if (period === 'MANUAL_PER_ISSUANCE') {
+    if (!issuanceId) {
+      throw new Error('RESIDENT_SERVICES_MANUAL_ISSUANCE_IDENTITY_REQUIRED');
+    }
+    return issuanceId;
+  }
   if (period === 'SUBSCRIPTION') {
     if (!subscriptionInstanceId) {
       throw new Error('RESIDENT_SERVICES_SUBSCRIPTION_PERIOD_IDENTITY_REQUIRED');
@@ -101,7 +108,8 @@ export function residentPeriodKey(
   if (period === 'MONTH') {
     return String(parts.year) + '-' + String(parts.month).padStart(2, '0');
   }
-  return isoWeekKey(parts.year, parts.month, parts.day);
+  if (period === 'WEEK') return isoWeekKey(parts.year, parts.month, parts.day);
+  throw new Error('RESIDENT_SERVICES_LIMIT_PERIOD_INVALID');
 }
 
 export function residentStationScopeKey(stationIds: readonly string[]): string {
