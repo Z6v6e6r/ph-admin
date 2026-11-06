@@ -235,6 +235,29 @@ test('return flow has its own key, default racket quantity and permission gate',
   assert.match(sourceOf('journalItem'), /hasPermission\(PERMISSION_RETURN\)/);
 });
 
+test('fully returned rackets are not offered again from the journal', () => {
+  const remaining = sourceOf('journalRacketRemaining');
+  assert.match(remaining, /ITEM_RETURNED/);
+  assert.match(remaining, /total - quantity/);
+  assert.match(remaining, /total \+ quantity/);
+
+  const journalItem = sourceOf('journalItem');
+  assert.match(journalItem, /racketsRemaining <= 0/);
+  assert.match(journalItem, /Ракетка полностью возвращена/);
+  assert.match(journalItem, /racketsRemaining > 0/);
+  assert.match(journalItem, /openJournalReturnFlow/);
+
+  const open = sourceOf('openJournalReturnFlow');
+  assert.match(open, /'\/v1\/admin\/resident-services\/issuances\/' \+ encodeURIComponent\(id\)/);
+  assert.match(open, /method: 'GET'/);
+  assert.match(open, /issueReturnableQuantity\(currentItems\)/);
+  assert.match(open, /уже полностью возвращена/);
+  assert.match(open, /contextRevision !== state\.contextRevision/);
+  assert.match(open, /journalIssuanceSnapshots\[id\] = \{ remaining: available \}/);
+  assert.match(journalItem, /journalSnapshotRemaining/);
+  assert.match(sourceOf('loadJournal'), /journalIssuanceSnapshots = \{\}/);
+});
+
 test('journal renders D events and hides without read permission', () => {
   assert.match(js, /'ISSUANCE_CONFIRMED'/);
   assert.match(js, /'ITEM_RETURNED'/);

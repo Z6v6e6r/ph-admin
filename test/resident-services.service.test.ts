@@ -5,6 +5,7 @@ import { ResidentBenefitsService } from '../src/resident-services/resident-benef
 import { ResidentIssuancesService } from '../src/resident-services/resident-issuances.service';
 import { ResidentPassesService } from '../src/resident-services/resident-passes.service';
 import { ResidentResidencyService } from '../src/resident-services/resident-residency.service';
+import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
 import {
   RESIDENT_SERVICES_ERROR_CODES as RESIDENT_SERVICE_ERRORS,
   StoredResidentBenefitRule,
@@ -478,10 +479,87 @@ async function main(): Promise<void> {
     await scenarioInvalidEvidence();
     await scenarioScopedRuleTakeover();
     await scenarioSubscriptionRenewal();
+    await scenarioSubscriptionOrResidencyBenefitEligibility();
   } finally {
     restore();
   }
   console.log('resident-services.service: ok');
+}
+
+/**
+ * A benefit is product-configured, never inferred from a tariff title. The
+ * resident screen therefore accepts either an ordinary subscription product or
+ * a residency product when each has a verified projection and an explicit
+ * service rule. Visit counters are intentionally outside this service.
+ */
+async function scenarioSubscriptionOrResidencyBenefitEligibility(): Promise<void> {
+  for (const product of [
+    { suffix: 'subscription', title: 'Подписка Питер 12 месяцев' },
+    { suffix: 'residency', title: 'Резидентство Питер 12 месяцев' }
+  ]) {
+    const h = harness();
+    const typeId = 'subscription_type:' + product.suffix;
+    const mappingId = 'mapping:' + product.suffix;
+    const instanceId = 'subscription_instance:' + product.suffix;
+    const clientSubscriptionId = 'client_subscription:' + product.suffix;
+    const type = residentSubscriptionTypeFixture();
+    type.subscriptionTypeId = typeId;
+    type.title = product.title;
+    type.code = product.suffix.toUpperCase();
+    type.codeNorm = product.suffix;
+    const publication = residentPublicationFixture();
+    publication.subscriptionTypeId = typeId;
+    publication.mappingId = mappingId;
+    publication.runtimeProjection.subscriptionTypeId = typeId;
+    publication.policyDigest = computeSubscriptionRuntimeProjectionDigest(publication.runtimeProjection);
+    const mapping = residentMappingFixture();
+    mapping.mappingId = mappingId;
+    mapping.subscriptionTypeId = typeId;
+    mapping.providerProductId = 'product:' + product.suffix;
+    const instance = residentInstanceFixture();
+    instance.subscriptionInstanceId = instanceId;
+    instance.subscriptionTypeId = typeId;
+    instance.mappingId = mappingId;
+    instance.policyDigest = publication.policyDigest;
+    instance.providerProductId = mapping.providerProductId;
+    instance.clientSubscriptionId = clientSubscriptionId;
+    h.repository.state.types = [type];
+    h.repository.state.publications = [publication];
+    h.repository.state.mappings = [mapping];
+    h.repository.state.instances = [instance];
+
+    await h.benefits.createRule({
+      subscriptionTypeId: typeId,
+      serviceKind: 'TOWEL',
+      limitPeriod: 'DAY',
+      limitQuantity: 1,
+      returnable: false
+    }, 'product-' + product.suffix + '-rule-0001', residentStaff() as never, 'corr:' + product.suffix);
+    const pass = await h.passes.createPass({
+      authorization: CLIENT_AUTH,
+      integrationToken: RESIDENT_INTEGRATION_TOKEN,
+      clientSubscriptionId
+    });
+    const preview = await h.passes.preview(pass.token, HOME_STATION, residentStaff() as never);
+    assert.equal(preview.resident.subscriptionTypeTitle, product.title);
+    assert.equal(preview.services.find((item) => item.serviceKind === 'TOWEL')?.available, true);
+    const instanceBeforeIssuance = structuredClone(h.repository.state.instances[0]);
+    await h.issuances.confirm({
+      token: pass.token,
+      stationId: HOME_STATION,
+      items: [{ serviceKind: 'TOWEL', quantity: 1 }],
+      user: residentStaff() as never,
+      idempotencyHeader: 'product-' + product.suffix + '-issuance-0001',
+      correlationHeader: 'corr:' + product.suffix + ':issuance'
+    });
+    assert.equal(h.repository.state.usage.length, 1, 'only the configured service benefit is consumed');
+    assert.deepEqual(
+      h.repository.state.instances[0],
+      instanceBeforeIssuance,
+      'issuance does not mutate subscription instance visit or balance state'
+    );
+  }
+  console.log('scenario subscription or residency eligibility: ok');
 }
 
 async function scenarioPassCreation(): Promise<void> {
