@@ -1670,7 +1670,126 @@ async function scenarioAllowedHostsSetting(): Promise<void> {
   console.log('scenario 20b: configurable allowed target hosts passed');
 }
 
+async function scenarioGlobalHostPermissions(): Promise<void> {
+  const both = ['qr:manage', 'settings:write'];
+  const cases: Array<[string, RequestUser | undefined, boolean]> = [
+    ['global', makeUser({ permissions: both, permissionStationScopes: { 'qr:manage': null, 'settings:write': null } }), true],
+    ['unknown settings scope', makeUser({ permissions: both, permissionStationScopes: { 'qr:manage': null } }), false],
+    ['settings scoped', makeUser({ permissions: both, permissionStationScopes: { 'qr:manage': null, 'settings:write': ['Yasenevo'] } }), false],
+    ['qr scoped', makeUser({ permissions: both, permissionStationScopes: { 'qr:manage': ['Yasenevo'], 'settings:write': null } }), false],
+    ['no qr', makeUser({ permissions: ['settings:write'] }), false],
+    ['no settings', makeUser({ permissions: ['qr:manage'] }), false],
+    ['anonymous', undefined, false],
+    ['wildcard', makeUser({ permissions: ['*'] }), true],
+    ['wildcard scoped override', makeUser({ permissions: ['*'], permissionStationScopes: { 'settings:write': [] } }), false],
+    ['global overrides', makeUser({ permissions: both, stationIds: ['Yasenevo'], permissionStationScopes: { 'qr:manage': null, 'settings:write': null } }), true],
+    ['legacy scoped fallback', makeUser({ permissions: both, stationIds: ['Yasenevo'] }), false]
+  ];
+  for (const [label, user, allowed] of cases) {
+    const h = createHarness();
+    await h.service.create(createDto(), { idempotencyKey: 'warm-cache-0001' }, ADMIN);
+    const before = await h.service.allowedHosts();
+    const auditBefore = structuredClone(h.auth.entries);
+    const cacheBefore = (h.service as any).allowedHostsCache;
+    const route = createGuard(adminHandler('updateAllowedHosts'), user ? { source: 'token', user } : { source: 'anonymous' });
+    const controller = new QrLinksAdminController(h.service);
+    const invoke = async () => {
+      if (!await route.guard.canActivate(route.context)) throw new ForbiddenException();
+      return controller.updateAllowedHosts({ hosts: ['extra.example.com'], expectedVersion: 0 }, route.request.user as RequestUser, route.request as any);
+    };
+    if (allowed) {
+      const result = await invoke();
+      assert.equal(result.version, 1, label);
+      assert.ok(result.defaults.includes('padlhub.ru'));
+      assert.ok(h.auth.entries.some(entry => entry.action === 'UPDATE QR_LINKS_ALLOWED_HOSTS'));
+    } else {
+      await assert.rejects(invoke, ForbiddenException, label);
+      assert.deepEqual(await h.service.allowedHosts(), before, label);
+      assert.deepEqual(h.auth.entries, auditBefore, label);
+      assert.equal((h.service as any).allowedHostsCache, cacheBefore, label);
+    }
+  }
+  console.log('global hosts controller/guard/service scope matrix passed');
+}
+
+async function scenarioRemovedHostMetadata(): Promise<void> {
+  const h = createHarness();
+  await h.service.updateAllowedHosts({ hosts: ['extra.example.com'] }, ADMIN);
+  const url = 'https://extra.example.com/path?sig=A%2fb+Z&x=1&x=2';
+  const { item } = await h.service.create(createDto({ targetUrl: url }), { idempotencyKey: 'removed-host-0001' }, ADMIN);
+  await h.service.updateAllowedHosts({ hosts: [], expectedVersion: 1 }, ADMIN);
+  const edited = await h.service.update(item.id, { expectedVersion: 1, targetUrl: url, description: 'Updated description' }, ADMIN);
+  assert.equal(edited.targetUrl, url);
+  assert.equal(edited.code, item.code);
+  const withoutTarget = await h.service.update(item.id, { expectedVersion: 2, description: 'Another description' }, ADMIN);
+  assert.equal(withoutTarget.targetUrl, url);
+  for (const targetUrl of [url + '&extra=1', url.replace('/path?', '/other?'), 'https://other.example.com/']) {
+    await expectServiceError(h.service.update(item.id, { expectedVersion: 3, targetUrl }, ADMIN), BadRequestException, 'QR_TARGET_URL_HOST_NOT_ALLOWED');
+  }
+  for (const targetUrl of ['http://extra.example.com/', 'https://u:p@extra.example.com/', 'https://127.0.0.1/', 'https://padlhub.su/q/loop', 'https://extra.example.com/pa\nth']) {
+    await assert.rejects(h.service.update(item.id, { expectedVersion: 3, targetUrl }, ADMIN), BadRequestException);
+  }
+  await assert.rejects(h.service.update(item.id, { expectedVersion: 1, targetUrl: url, description: 'stale edit' }, ADMIN), ConflictException);
+  const resolved = await h.service.resolvePublic(item.code, publicRequest());
+  assert.equal(resolved.kind, 'redirect');
+  if (resolved.kind === 'redirect') assert.equal(resolved.location, url);
+  await assert.rejects(h.service.create(createDto({ targetUrl: url }), { idempotencyKey: 'removed-host-0002' }, ADMIN), BadRequestException);
+  const moved = await h.service.update(item.id, { expectedVersion: 3, targetUrl: 'https://padlhub.ru/allowed' }, ADMIN);
+  assert.equal(moved.code, item.code);
+  assert.equal(moved.targetUrl, 'https://padlhub.ru/allowed');
+  console.log('removed hosts metadata and destination safety passed');
+}
+
+async function scenarioAuthenticatedHostScope(): Promise<void> {
+  const saved = { ...process.env };
+  try {
+    process.env.ADMIN_AUTH_SECRET = 'synthetic-qr-regression-secret';
+    process.env.ADMIN_AUTH_USERS_JSON = JSON.stringify([{ id: 'qr-test-root', login: 'qr_root', password: 'SyntheticQr123', roleIds: ['SUPER_ADMIN'], stationIds: [] }]);
+    const users = new Map<string, any>();
+    const roles = new Map<string, any>();
+    const persistence = {
+      isEnabled: () => true,
+      loadUsers: async () => [...users.values()],
+      loadRoles: async () => [...roles.values()],
+      seedUsers: async (rows: any[]) => { rows.forEach(row => users.set(row.id, structuredClone(row))); },
+      seedRoles: async (rows: any[]) => { rows.forEach(row => { if (!roles.has(row.id)) roles.set(row.id, structuredClone(row)); }); },
+      findUserById: async (id: string) => users.get(id) ?? null,
+      upsertUser: async (row: any) => { users.set(row.id, structuredClone(row)); },
+      upsertRole: async (row: any) => { roles.set(row.id, structuredClone(row)); },
+      appendAudit: async () => undefined
+    };
+    const auth = new AuthService(persistence as unknown as AuthPersistenceService);
+    await auth.onModuleInit();
+    const root = await auth.login('qr_root', 'SyntheticQr123');
+    const qrRole = await auth.createAdminRole({ id: 'qr-global-test', name: 'QR global test', permissions: ['qr:manage'], stationIds: [] }, root.user);
+    const settingsRole = await auth.createAdminRole({ id: 'settings-station-test', name: 'Settings station test', permissions: ['settings:write'], stationIds: ['Yasenevo'] }, root.user);
+    await auth.createAdminUser({ login: 'qr_mixed', password: 'SyntheticMixed123', roleIds: [qrRole.id, settingsRole.id], stationIds: [] }, root.user);
+    const login = await auth.login('qr_mixed', 'SyntheticMixed123');
+    const h = createHarness();
+    const controller = new QrLinksAdminController(h.service);
+    const request: any = { headers: { authorization: `Bearer ${login.accessToken}` } };
+    const context = { switchToHttp: () => ({ getRequest: () => request }), getHandler: () => adminHandler('updateAllowedHosts'), getClass: () => QrLinksAdminController } as unknown as ExecutionContext;
+    const guard = new RolesGuard(new Reflector(), auth);
+    assert.equal(await guard.canActivate(context), true);
+    assert.deepEqual(request.user.permissionStationScopes['settings:write'], ['Yasenevo']);
+    await assert.rejects(controller.updateAllowedHosts({ hosts: ['extra.example.com'] }, request.user, request), ForbiddenException);
+    assert.equal((await h.service.allowedHosts()).version, 0);
+    // The same authenticated account becomes eligible only after its effective role is global.
+    await auth.updateAdminRole(settingsRole.id, { stationIds: [] }, root.user);
+    assert.equal(await guard.canActivate(context), true);
+    assert.equal((await controller.updateAllowedHosts({ hosts: ['extra.example.com'] }, request.user, request)).version, 1);
+    request.headers.authorization = 'Bearer invalid-synthetic-token';
+    assert.equal(await guard.canActivate(context), false);
+  } finally {
+    process.env = saved;
+  }
+  console.log('real AuthService token -> RolesGuard -> controller -> service passed');
+}
+
 async function main(): Promise<void> {
+  await scenarioAuthenticatedHostScope();
+  await scenarioRemovedHostMetadata();
+  await scenarioGlobalHostPermissions();
   await scenarioCreateAndIdempotency();
   await scenarioPatchKeepsPermanentIdentity();
   await scenarioVersionConflict();
