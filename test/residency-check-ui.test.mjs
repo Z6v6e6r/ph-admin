@@ -363,3 +363,12 @@ test('authoritative completed return keeps the journal visible', () => {
   assert.match(flow, /state\.statusMessage = 'Ракетка по этой выдаче уже полностью возвращена\.'/);
   assert.doesNotMatch(flow, /state\.journalError = 'Ракетка по этой выдаче уже полностью возвращена\.'/);
 });
+
+test('manual per-issuance services show their narrow staff-control semantics', () => {
+  assert.match(sourceOf('maxQuantity'), /MANUAL_PER_ISSUANCE/);
+  assert.match(sourceOf('maxQuantity'), /return 1/);
+  const card = sourceOf('servicesCard');
+  assert.match(card, /MANUAL_PER_ISSUANCE/);
+  assert.match(card, /Перед выдачей проверьте посещение и убедитесь, что услуги за этот визит ещё не выданы/);
+  assert.match(card, /Можно выбрать одну ракетку и одно полотенце/);
+});

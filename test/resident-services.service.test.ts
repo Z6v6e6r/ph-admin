@@ -63,6 +63,7 @@ class FakeRepository {
   };
   journalFailures = 0;
   usageConsumptions = 0;
+  usageReads = 0;
 
   async withTransaction<T>(work: (session: unknown) => Promise<T>): Promise<T> {
     const snapshot = structuredClone(this.state);
@@ -204,6 +205,7 @@ class FakeRepository {
     tenantId: string; clientRefHash: string; serviceKind: string;
     limitPeriod: string; periodKey: string;
   }): Promise<StoredResidentServiceUsage | null> {
+    this.usageReads += 1;
     const found = this.state.usage.find((row) => row.tenantId === input.tenantId
       && row.clientRefHash === input.clientRefHash
       && row.serviceKind === input.serviceKind
@@ -480,6 +482,7 @@ async function main(): Promise<void> {
     await scenarioScopedRuleTakeover();
     await scenarioSubscriptionRenewal();
     await scenarioSubscriptionOrResidencyBenefitEligibility();
+    await scenarioManualPerIssuance();
   } finally {
     restore();
   }
@@ -560,6 +563,101 @@ async function scenarioSubscriptionOrResidencyBenefitEligibility(): Promise<void
     );
   }
   console.log('scenario subscription or residency eligibility: ok');
+}
+
+async function scenarioManualPerIssuance(): Promise<void> {
+  const h = harness();
+  await h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'TOWEL',
+    limitPeriod: 'MANUAL_PER_ISSUANCE',
+    limitQuantity: 1,
+    returnable: false
+  }, 'manual-towel-rule-0001', residentStaff() as never, 'corr:manual-towel');
+  await h.benefits.createRule({
+    subscriptionTypeId: 'subscription_type:piter-friendship-12m',
+    serviceKind: 'RACKET',
+    limitPeriod: 'MANUAL_PER_ISSUANCE',
+    limitQuantity: 1,
+    returnable: true
+  }, 'manual-racket-rule-0001', residentStaff() as never, 'corr:manual-racket');
+  const previewToken = await issuePass(h);
+  const preview = await h.passes.preview(previewToken, HOME_STATION, residentStaff() as never);
+  assert.equal(h.repository.usageReads, 0, 'manual availability must not query aggregate usage');
+  assert.deepEqual(
+    preview.services.map((item) => [item.serviceKind, item.limitPeriod, item.remaining, item.available]),
+    [
+      ['TOWEL', 'MANUAL_PER_ISSUANCE', 1, true],
+      ['RACKET', 'MANUAL_PER_ISSUANCE', 1, true]
+    ]
+  );
+  const rejectedToken = await issuePass(h);
+  const rejectedPassId = h.repository.state.passes[h.repository.state.passes.length - 1]?.passId;
+  await rejects(() => h.issuances.confirm({
+    token: rejectedToken,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'TOWEL', quantity: 2 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'manual-quantity-two-0001',
+    correlationHeader: 'corr:manual-quantity-two'
+  }), [RESIDENT_SERVICE_ERRORS.REQUEST_INVALID], 400);
+  assert.equal(
+    h.repository.state.passes.find((pass) => pass.passId === rejectedPassId)?.state,
+    'ACTIVE'
+  );
+
+  const firstToken = await issuePass(h);
+  const instanceBeforeIssuance = structuredClone(h.repository.state.instances[0]);
+  const first = await h.issuances.confirm({
+    token: firstToken,
+    stationId: HOME_STATION,
+    items: [
+      { serviceKind: 'TOWEL', quantity: 1 },
+      { serviceKind: 'RACKET', quantity: 1 }
+    ],
+    user: residentStaff() as never,
+    idempotencyHeader: 'manual-issuance-0001',
+    correlationHeader: 'corr:manual-issuance-1'
+  });
+  assert.equal(first.replayed, false);
+  assert.ok(first.view.items.every((item) => item.limitPeriod === 'MANUAL_PER_ISSUANCE'));
+  assert.ok(first.view.items.every((item) => item.limitQuantity === 1 && item.remainingAfter === 0));
+  const storedFirst = h.repository.state.issuances.find(
+    (issuance) => issuance.issuanceId === first.view.issuanceId
+  );
+  assert.ok(storedFirst?.items.every((item) => item.limitPeriodKey === first.view.issuanceId));
+  assert.deepEqual(h.repository.state.instances[0], instanceBeforeIssuance);
+  const replay = await h.issuances.confirm({
+    token: firstToken,
+    stationId: HOME_STATION,
+    items: [
+      { serviceKind: 'TOWEL', quantity: 1 },
+      { serviceKind: 'RACKET', quantity: 1 }
+    ],
+    user: residentStaff() as never,
+    idempotencyHeader: 'manual-issuance-0001',
+    correlationHeader: 'corr:manual-issuance-replay'
+  });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.view.issuanceId, first.view.issuanceId);
+
+  const secondToken = await issuePass(h);
+  const second = await h.issuances.confirm({
+    token: secondToken,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'RACKET', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'manual-issuance-0002',
+    correlationHeader: 'corr:manual-issuance-2'
+  });
+  assert.notEqual(second.view.issuanceId, first.view.issuanceId);
+  assert.equal(h.repository.state.usage.length, 3, 'each selected service is scoped to its manual issuance');
+  assert.ok(h.repository.state.usage.every((row) => row.periodKey.startsWith('resident_issuance:')));
+
+  const malformedToken = await issuePass(h);
+  h.repository.state.rules[0].limitPeriod = 'UNKNOWN_PERIOD' as never;
+  await expectThrow(() => h.passes.preview(malformedToken, HOME_STATION, residentStaff() as never));
+  console.log('scenario manual per issuance: ok');
 }
 
 async function scenarioPassCreation(): Promise<void> {

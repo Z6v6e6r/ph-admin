@@ -1,6 +1,6 @@
 export type ResidentServiceKind = 'TOWEL' | 'RACKET';
 export type ResidentPassState = 'ACTIVE' | 'CONSUMED';
-export type ResidentServiceLimitPeriod = 'DAY' | 'WEEK' | 'MONTH' | 'SUBSCRIPTION';
+export type ResidentServiceLimitPeriod = 'DAY' | 'WEEK' | 'MONTH' | 'SUBSCRIPTION' | 'MANUAL_PER_ISSUANCE';
 export type ResidentServiceIssuanceState = 'ISSUED' | 'PARTIALLY_RETURNED' | 'RETURNED';
 export type ResidentServiceJournalEventType = 'ISSUANCE_CONFIRMED' | 'ITEM_RETURNED';
 
@@ -9,7 +9,8 @@ export const RESIDENT_SERVICE_LIMIT_PERIODS: readonly ResidentServiceLimitPeriod
   'DAY',
   'WEEK',
   'MONTH',
-  'SUBSCRIPTION'
+  'SUBSCRIPTION',
+  'MANUAL_PER_ISSUANCE'
 ];
 export const RESIDENT_SERVICE_LABELS: Record<ResidentServiceKind, string> = {
   TOWEL: 'Полотенце',

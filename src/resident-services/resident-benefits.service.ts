@@ -327,6 +327,20 @@ export class ResidentBenefitsService {
         });
         continue;
       }
+      if (rule.limitPeriod === 'MANUAL_PER_ISSUANCE') {
+        items.push({
+          serviceKind,
+          label: RESIDENT_SERVICE_LABELS[serviceKind],
+          returnable: rule.returnable,
+          limitPeriod: rule.limitPeriod,
+          limitQuantity: 1,
+          used: 0,
+          remaining: 1,
+          available: rule.enabled,
+          blocker: rule.enabled ? null : RESIDENT_SERVICES_ERROR_CODES.SERVICE_LIMIT_EXCEEDED
+        });
+        continue;
+      }
       const periodKey = residentPeriodKey(
         rule.limitPeriod,
         now,
@@ -392,6 +406,7 @@ export class ResidentBenefitsService {
     stationId: string;
     items: ResidentServiceItemCommand[];
     now: Date;
+    issuanceId: string;
     session: ClientSession;
   }): Promise<StoredResidentIssuanceItem[]> {
     const normalized = this.normalizeItems(input.items);
@@ -410,10 +425,17 @@ export class ResidentBenefitsService {
           cause: { serviceKind: item.serviceKind }
         });
       }
+      if (rule.limitPeriod === 'MANUAL_PER_ISSUANCE' && item.quantity !== 1) {
+        throw new BadRequestException({
+          code: RESIDENT_SERVICES_ERROR_CODES.REQUEST_INVALID,
+          message: 'Manual resident service issuance quantity must be one'
+        });
+      }
       const periodKey = residentPeriodKey(
         rule.limitPeriod,
         input.now,
-        input.context.instance.subscriptionInstanceId
+        input.context.instance.subscriptionInstanceId,
+        input.issuanceId
       );
       const usage = await this.repository.usageFor({
         tenantId: input.context.tenantId,
@@ -553,6 +575,12 @@ export class ResidentBenefitsService {
       throw new BadRequestException({
         code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_INVALID,
         message: 'Resident benefit limit quantity is invalid'
+      });
+    }
+    if (limitPeriod === 'MANUAL_PER_ISSUANCE' && limitQuantity !== 1) {
+      throw new BadRequestException({
+        code: RESIDENT_SERVICES_ERROR_CODES.BENEFIT_RULE_INVALID,
+        message: 'Manual resident service issuance limit quantity must be one'
       });
     }
     if (typeof returnable !== 'boolean') {

@@ -125,6 +125,10 @@ export class ResidentIssuancesService {
     if (existing) {
       return this.replayIssuance(existing, requestHash);
     }
+    // Retained across Mongo transaction retries: MANUAL_PER_ISSUANCE usage is
+    // scoped to this explicit staff-confirmed operation, never a calendar or
+    // subscription aggregate.
+    const issuanceId = 'resident_issuance:' + randomUUID();
     try {
       const outcome = await this.repository.withTransaction(async (session) => {
         // Recompute the clock on every transaction attempt so a retried command
@@ -173,9 +177,9 @@ export class ResidentIssuancesService {
           stationId,
           items,
           now,
+          issuanceId,
           session
         });
-        const issuanceId = 'resident_issuance:' + randomUUID();
         const consumed = await this.repository.consumePass({
           passId: pass.passId,
           tenantId,
