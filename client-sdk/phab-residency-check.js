@@ -109,6 +109,9 @@
     returnPlus: null,
     journalOpen: false,
     journalLoading: false,
+    journalReturnLoading: false,
+    journalIssuanceSnapshots: {},
+    contextRevision: 0,
     journal: null,
     journalError: '',
     demoJournal: null,
@@ -953,6 +956,67 @@
     }, 0);
   }
 
+  /**
+   * The journal is append-only. Use return events already on the screen to
+   * render a completed return accurately; opening a return still reads the
+   * current issuance below, because a paginated journal is not authoritative.
+   */
+  function journalRacketRemaining(entries, issuanceId) {
+    return (Array.isArray(entries) ? entries : []).reduce(function (total, entry) {
+      if (!entry || text(entry.issuanceId) !== issuanceId) {
+        return total;
+      }
+      var quantity = eventRacketQuantity(entry.items);
+      return text(entry.eventType) === 'ITEM_RETURNED' ? total - quantity : total + quantity;
+    }, 0);
+  }
+
+  function journalSnapshotRemaining(issuanceId) {
+    var snapshot = state.journalIssuanceSnapshots[text(issuanceId)];
+    return snapshot && typeof snapshot.remaining === 'number' ? snapshot.remaining : null;
+  }
+
+  async function openJournalReturnFlow(issuanceId) {
+    var id = text(issuanceId).trim();
+    if (!id || state.journalReturnLoading || state.returnBusy || state.busy) {
+      return;
+    }
+    var contextRevision = state.contextRevision;
+    var stationId = state.stationId;
+    state.journalReturnLoading = true;
+    state.journalError = '';
+    render();
+    var outcome;
+    if (demoMode()) {
+      outcome = { ok: true, body: state.demoIssuances[id] || null };
+    } else {
+      outcome = await request(
+        apiUrl('/v1/admin/resident-services/issuances/' + encodeURIComponent(id)),
+        { method: 'GET', headers: { 'X-Correlation-ID': newCorrelationId() } }
+      );
+    }
+    state.journalReturnLoading = false;
+    if (contextRevision !== state.contextRevision || stationId !== state.stationId) {
+      return;
+    }
+    var currentItems = outcome && outcome.body && Array.isArray(outcome.body.items) ? outcome.body.items : null;
+    if (!outcome || !outcome.ok || !currentItems) {
+      state.journalError = outcome && outcome.ok
+        ? 'Сервис выдачи вернул некорректные данные. Обновите журнал.'
+        : errorMessage(outcome);
+      render();
+      return;
+    }
+    var available = issueReturnableQuantity(currentItems);
+    state.journalIssuanceSnapshots[id] = { remaining: available };
+    if (available < 1) {
+      state.statusMessage = 'Ракетка по этой выдаче уже полностью возвращена.';
+      render();
+      return;
+    }
+    openReturnFlow(id, available);
+  }
+
   function journalToggle() {
     var wrap = node('div', 'phab-rc-journal-toggle-wrap');
     var toggle = button(state.journalOpen ? 'Скрыть журнал' : 'Журнал операций', function () {
@@ -976,18 +1040,26 @@
     if (eventType === 'ITEM_RETURNED' && text(entry ? entry.returnId : '')) {
       item.appendChild(node('div', 'phab-rc-journal-op', 'Возврат: ' + shortId(entry.returnId)));
     }
+    var issuanceId = text(entry ? entry.issuanceId : '');
+    var snapshotRemaining = journalSnapshotRemaining(issuanceId);
+    var racketsRemaining = snapshotRemaining === null
+      ? journalRacketRemaining(state.journal, issuanceId)
+      : snapshotRemaining;
+    if (eventType === 'ISSUANCE_CONFIRMED' && eventRacketQuantity(entry ? entry.items : []) > 0 && racketsRemaining <= 0) {
+      item.appendChild(node('div', 'phab-rc-journal-returned', 'Ракетка полностью возвращена'));
+    }
     if (
       eventType === 'ISSUANCE_CONFIRMED' &&
       entry &&
       entry.issuanceId &&
       hasPermission(PERMISSION_RETURN) &&
-      eventRacketQuantity(entry.items) > 0
+      racketsRemaining > 0
     ) {
       var returnButton = button('Вернуть ракетку', function () {
-        openReturnFlow(text(entry.issuanceId), eventRacketQuantity(entry.items));
+        void openJournalReturnFlow(text(entry.issuanceId));
       }, 'phab-rc-button-return');
       returnButton.setAttribute('data-return-issuance-id', text(entry.issuanceId));
-      returnButton.disabled = state.returnBusy || state.busy;
+      returnButton.disabled = state.journalReturnLoading || state.returnBusy || state.busy;
       item.appendChild(returnButton);
     }
     return item;
@@ -1427,6 +1499,7 @@
   }
 
   async function loadCheck() {
+    state.contextRevision += 1;
     state.preview = null;
     state.profile = null;
     state.profileError = '';
@@ -1437,6 +1510,11 @@
     state.returnIntent = null;
     state.returnError = '';
     state.returnCompleted = null;
+    state.journalIssuanceSnapshots = {};
+    state.journalLoading = false;
+    state.journalReturnLoading = false;
+    state.journal = null;
+    state.journalError = '';
     state.selection = {};
     state.issueIntent = null;
     state.issueResult = null;
@@ -1518,7 +1596,10 @@
     if (!state.stationId || !hasPermission(PERMISSION_READ)) {
       return;
     }
+    var contextRevision = state.contextRevision;
+    var stationId = state.stationId;
     state.journalLoading = true;
+    state.journalIssuanceSnapshots = {};
     state.journalError = '';
     render();
 
@@ -1538,6 +1619,9 @@
           JOURNAL_LIMIT
       )
     );
+    if (contextRevision !== state.contextRevision || stationId !== state.stationId) {
+      return;
+    }
     state.journalLoading = false;
     if (outcome.ok && outcome.body && Array.isArray(outcome.body.items)) {
       state.journal = outcome.body.items;
