@@ -45,6 +45,10 @@ function expectConfigurationError(factory: () => unknown, pattern: RegExp): void
 }
 
 async function main(): Promise<void> {
+  for (const value of ['\nhttps://padlhub.ru/', 'https://padlhub.ru/\t']) {
+    expectRejected(value, 'QR_TARGET_URL_CONTROL_CHARS');
+    assert.throws(() => policy().validateStoredTarget(value), BadRequestException);
+  }
   // Configuration is derived from the injected environment only (no process.env coupling).
   const defaultPolicy = policy();
   assert.equal(defaultPolicy.publicBaseUrl, 'https://padlhub.su');

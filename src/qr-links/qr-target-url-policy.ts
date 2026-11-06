@@ -150,7 +150,11 @@ export class QrTargetUrlPolicy {
   }
 
   validate(rawValue: string, options: { checkHosts?: boolean } = {}): string {
-    const value = String(rawValue ?? '').trim();
+    const raw = String(rawValue ?? '');
+    if (CONTROL_CHARACTERS.test(raw)) {
+      fail('QR_TARGET_URL_CONTROL_CHARS', 'Целевой адрес содержит недопустимые символы.');
+    }
+    const value = raw.trim();
     if (!value) fail('QR_TARGET_URL_INVALID', 'Укажите целевой адрес.');
     if (value.length > this.config.maxLength) {
       fail('QR_TARGET_URL_TOO_LONG', 'Целевой адрес слишком длинный.');

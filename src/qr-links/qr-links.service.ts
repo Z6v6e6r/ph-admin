@@ -288,8 +288,11 @@ export class QrLinksService {
     this.applyOptionalField(dto, 'description', current, set, oldValues, newValues, changedFields);
 
     if (dto.targetUrl !== undefined) {
-      const targetUrl = (await this.targetPolicy()).validate(dto.targetUrl);
+      // Always check structural safety, but re-apply the mutable allowlist only
+      // when the canonical destination changes. Do not reserialize query params.
+      const targetUrl = this.policy.validateStoredTarget(dto.targetUrl);
       if (targetUrl !== current.targetUrl) {
+        (await this.targetPolicy()).validate(dto.targetUrl);
         set.targetUrl = targetUrl;
         this.recordChange(
           'targetUrl',
@@ -525,7 +528,13 @@ export class QrLinksService {
     user?: RequestUser
   ): Promise<QrAllowedHostsView> {
     const actorId = this.requireActor(user);
-    if (getStationScopeForPermission(user, 'qr:manage') !== null) {
+    const scopes = user?.permissionStationScopes;
+    const unknownScope = scopes !== undefined
+      && ['qr:manage', 'settings:write'].some((permission) =>
+        !Object.prototype.hasOwnProperty.call(scopes, permission)
+        || scopes[permission] === undefined);
+    if (unknownScope || getStationScopeForPermission(user, 'qr:manage') !== null
+      || getStationScopeForPermission(user, 'settings:write') !== null) {
       throw new ForbiddenException({
         code: 'QR_ALLOWED_HOSTS_GLOBAL_SCOPE_REQUIRED',
         message: 'Настройка доменов доступна только сотруднику с доступом ко всем станциям.'
@@ -535,6 +544,12 @@ export class QrLinksService {
       throw new ForbiddenException({
         code: 'QR_ALLOWED_HOSTS_SETTINGS_PERMISSION_REQUIRED',
         message: 'Для настройки доменов нужно право изменения настроек.'
+      });
+    }
+    if (!hasAdminPermission(user?.permissions, 'qr:manage')) {
+      throw new ForbiddenException({
+        code: 'QR_ALLOWED_HOSTS_QR_PERMISSION_REQUIRED',
+        message: 'Для настройки доменов нужно право управления QR-кодами.'
       });
     }
     const defaults = this.policy.config.allowedHosts;
