@@ -1010,7 +1010,7 @@
     var available = issueReturnableQuantity(currentItems);
     state.journalIssuanceSnapshots[id] = { remaining: available };
     if (available < 1) {
-      state.journalError = 'Ракетка по этой выдаче уже полностью возвращена.';
+      state.statusMessage = 'Ракетка по этой выдаче уже полностью возвращена.';
       render();
       return;
     }

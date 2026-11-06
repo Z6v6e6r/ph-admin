@@ -357,3 +357,9 @@ test('stylesheet is isolated, mobile-first, 44px targets, safe-area and reduced 
   assert.match(css, /phab-rc-demo-badge/);
   assert.match(css, /phab-rc-permission-notice/);
 });
+
+test('authoritative completed return keeps the journal visible', () => {
+  const flow = sourceOf('openJournalReturnFlow');
+  assert.match(flow, /state\.statusMessage = 'Ракетка по этой выдаче уже полностью возвращена\.'/);
+  assert.doesNotMatch(flow, /state\.journalError = 'Ракетка по этой выдаче уже полностью возвращена\.'/);
+});
