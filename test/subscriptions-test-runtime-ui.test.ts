@@ -177,9 +177,34 @@ function testResidentBenefitRulesScreenUsesExistingContract(): void {
   assert.match(uiController, /residentServicesAdminEnabled: residentServicesEnabled\(\)/);
 }
 
+function testPolicyPublicationIsPreviewedAndConfirmed(): void {
+  const source = readFileSync(resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'), 'utf8');
+  // Uses the existing two-step contract only.
+  assert.match(source, /'\/publication-preview',\s*'POST',\s*payload/);
+  assert.match(source, /'\/publish',\s*'POST',\s*payload,\s*\{ headers: commandHeaders \}/);
+  assert.match(source, /hasPermission\(cfg, 'subscriptions:publication:write'\)/);
+  assert.match(source, /'subscriptions:publication:write': \['SUPER_ADMIN'\]/);
+  // Publish carries exactly what preview returned and an operator reason.
+  assert.match(source, /expectedPolicyDigest: preview\.policyDigest/);
+  assert.match(source, /expectedImpactPreviewRef: preview\.impactPreviewRef/);
+  assert.match(source, /reason\.length < 10 \|\| reason\.length > 500/);
+  // Only a DRAFT latest version is publishable; the button needs explicit confirmation and the server flag.
+  assert.match(source, /if \(policy\.status !== 'DRAFT'\)/);
+  assert.match(source, /publishBtn\.disabled = Boolean\(publication\.busy\) \|\| !publication\.confirmed \|\| !cfg\.subscriptionPublicationCommandEnabled/);
+  // Changing preview inputs invalidates the preview.
+  assert.match(source, /subscriptionPublicationInputsKey\(inputs\) !== publication\.previewInputsKey/);
+  // Idempotency key survives only unknown outcomes.
+  assert.match(source, /'Idempotency-Key': 'cup-subscription-publish-' \+ randomId/);
+  assert.match(source, /if \(status >= 400 && status < 500\) \{[\s\S]{0,200}publication\.commandHeaders = null;/);
+  const uiController = readFileSync(resolve(process.cwd(), 'src/ui/ui.controller.ts'), 'utf8');
+  assert.match(uiController, /subscriptionPublicationPreviewEnabled:/);
+  assert.match(uiController, /subscriptionPublicationCommandEnabled:[\s\S]{0,200}SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED/);
+}
+
 testDisabledPageIsNotServed();
 testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes();
 testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit();
 testSubscriptionBenefitsUseSingleRowLayout();
 testResidentBenefitRulesScreenUsesExistingContract();
+testPolicyPublicationIsPreviewedAndConfirmed();
 console.log('Subscription test runtime UI safety tests passed');

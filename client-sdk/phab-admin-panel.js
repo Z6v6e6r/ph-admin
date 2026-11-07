@@ -7650,6 +7650,14 @@
       .phab-subscriptions-group .phab-subscriptions-capabilities details{background:#fff}
       .phab-subscriptions-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 -16px;padding:12px 16px;border-top:1px solid rgba(51,0,32,.1);border-radius:0 0 16px 16px;background:rgba(255,255,255,.96);backdrop-filter:blur(6px);font-size:11px;color:rgba(51,0,32,.64)}
       .phab-subscriptions-editor > .phab-subscriptions-list{margin:0 16px 16px}
+      .phab-subscriptions-publication{margin:0 16px 16px;display:flex;flex-direction:column;gap:10px;border-color:rgba(51,0,32,.22)}
+      .phab-subscriptions-publication-head strong{color:var(--cup-wine);font-size:13px;font-weight:900}
+      .phab-subscriptions-publication .phab-subscriptions-group-hint{margin:0}
+      .phab-subscriptions-publication-preview{border-radius:12px;background:rgba(182,253,255,.22);padding:10px 12px}
+      .phab-subscriptions-publication-preview dl{display:grid;grid-template-columns:minmax(160px,auto) 1fr;gap:6px 14px;margin:0;font-size:12px}
+      .phab-subscriptions-publication-preview dt{color:rgba(51,0,32,.6);font-weight:700}
+      .phab-subscriptions-publication-preview dd{margin:0;color:var(--cup-wine);font-weight:700;overflow-wrap:anywhere}
+      .phab-subscriptions-publication-success{border-radius:11px;background:rgba(46,160,90,.12);padding:10px 12px;font-size:12px;color:#1d6b3c;font-weight:700}
       .phab-resident-body{margin-top:12px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
       .phab-resident-body > *{align-self:stretch}
       .phab-resident-body > .phab-admin-btn-secondary{align-self:flex-start}
@@ -9077,6 +9085,23 @@
       },
       updateSplitPaymentPromoSettings: function (payload) {
         return request('/advertising/split-payment-promo/admin', 'PATCH', payload);
+      },
+      previewSubscriptionPolicyPublication: function (subscriptionTypeId, version, payload) {
+        return request(
+          '/v1/admin/subscription-types/' + encodeURIComponent(subscriptionTypeId) +
+            '/policy-versions/' + encodeURIComponent(String(version)) + '/publication-preview',
+          'POST',
+          payload
+        );
+      },
+      publishSubscriptionPolicy: function (subscriptionTypeId, version, payload, commandHeaders) {
+        return request(
+          '/v1/admin/subscription-types/' + encodeURIComponent(subscriptionTypeId) +
+            '/policy-versions/' + encodeURIComponent(String(version)) + '/publish',
+          'POST',
+          payload,
+          { headers: commandHeaders }
+        );
       },
       getResidentBenefitRules: function () {
         return request('/v1/admin/resident-services/benefit-rules', 'GET');
@@ -10556,7 +10581,7 @@
       '</div></details>' +
       '</div></fieldset>' +
       '<div class="phab-subscriptions-savebar"><span data-subscription-savebar-hint>Сохранение создаёт новую версию-черновик. Действующие продажи не меняются.</span><button class="phab-admin-btn" type="submit" data-subscription-policy-create>Сохранить версию правил</button></div>' +
-      '</form><div class="phab-subscriptions-list" data-subscription-policy-result></div></section></div></div>' +
+      '</form><div class="phab-subscriptions-list" data-subscription-policy-result></div><div data-subscription-publication></div></section></div></div>' +
       '<div class="phab-subscriptions-panel phab-admin-hidden" data-subscriptions-panel="release">' +
       '<section class="phab-subscriptions-card"><h3>Программа выпуска</h3><p>Лестница цен: следующая партия открывается вручную, по таймеру или после распродажи предыдущей. Тестовая ссылка создаётся отдельно и черновик не меняет.</p>' +
       '<form class="phab-subscriptions-form" data-subscription-release-form>' +
@@ -10619,6 +10644,7 @@
     var subscriptionEditorHead = subscriptionsSection.querySelector('[data-subscription-editor-head]');
     var subscriptionSavebarHint = subscriptionsSection.querySelector('[data-subscription-savebar-hint]');
     var residentRulesRoot = subscriptionsSection.querySelector('[data-resident-rules]');
+    var subscriptionPublicationRoot = subscriptionsSection.querySelector('[data-subscription-publication]');
 
     var messagesGrid = document.createElement('div');
     messagesGrid.className = 'phab-admin-msg-grid';
@@ -14151,6 +14177,7 @@
       subscriptionEditorHead: subscriptionEditorHead,
       subscriptionSavebarHint: subscriptionSavebarHint,
       residentRulesRoot: residentRulesRoot,
+      subscriptionPublicationRoot: subscriptionPublicationRoot,
       advertisingPlacementDescription: advertisingEditorContext,
       advertisingDraftFileMeta: advertisingDraftFileMeta,
       messagesGrid: messagesGrid,
@@ -14663,6 +14690,7 @@
       'subscriptions:read': ['SUPER_ADMIN'],
       'subscriptions:catalog:write': ['SUPER_ADMIN'],
       'subscriptions:release:write': ['SUPER_ADMIN'],
+      'subscriptions:publication:write': ['SUPER_ADMIN'],
       'resident-services:read': ['SUPER_ADMIN'],
       'resident-services:configure': ['SUPER_ADMIN']
     };
@@ -14913,6 +14941,10 @@
 
   function canAccessSubscriptions(cfg) {
     return Boolean(cfg && cfg.subscriptionAdminEnabled) && hasPermission(cfg, 'subscriptions:read');
+  }
+
+  function canPublishSubscriptionPolicy(cfg) {
+    return canAccessSubscriptions(cfg) && hasPermission(cfg, 'subscriptions:publication:write');
   }
 
   function canAccessResidentRules(cfg) {
@@ -15934,6 +15966,19 @@
       },
       subscriptions: {
         activeSection: 'settings',
+        publication: {
+          subscriptionTypeId: '',
+          version: null,
+          inputs: { providerStudioId: '', dictionaryRevision: '', dictionaryEvidenceRef: '' },
+          preview: null,
+          previewInputsKey: '',
+          reason: '',
+          confirmed: false,
+          busy: '',
+          error: '',
+          success: '',
+          commandHeaders: null
+        },
         resident: {
           items: [],
           loaded: false,
@@ -39682,6 +39727,7 @@
       }
       head.appendChild(title);
       head.appendChild(meta);
+      renderSubscriptionPublication();
       if (dom.subscriptionSavebarHint) {
         dom.subscriptionSavebarHint.textContent = canManageSubscriptionCatalog(cfg)
           ? 'Сохранение создаёт новую версию-черновик. Действующие продажи не меняются.'
@@ -39926,6 +39972,328 @@
       var tasks = [];
       if (canAccessSubscriptions(cfg)) tasks.push(loadSubscriptions());
       await Promise.all(tasks);
+    }
+
+    var SUBSCRIPTION_PUBLICATION_ERRORS = {
+      SUBSCRIPTIONS_PUBLICATION_PREVIEW_DISABLED: 'Проверка публикации выключена на сервере (SUBSCRIPTIONS_PUBLICATION_PREVIEW_ENABLED).',
+      SUBSCRIPTIONS_PUBLICATION_COMMAND_DISABLED: 'Публикация выключена на сервере (SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED). Проверка работает, публиковать пока нельзя.',
+      SUBSCRIPTIONS_PUBLICATION_GLOBAL_SCOPE_REQUIRED: 'Публиковать может только сотрудник с доступом ко всем станциям.',
+      SUBSCRIPTIONS_POLICY_ALREADY_PUBLISHED: 'Эта версия уже опубликована.',
+      SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED: 'Правила или данные изменились после проверки. Нажмите «Проверить» ещё раз.',
+      SUBSCRIPTIONS_PUBLICATION_DRAFT_V3_REQUIRED: 'Публиковать можно только черновик текущего формата. Сохраните правила заново и проверьте новую версию.',
+      SUBSCRIPTIONS_ACTIVE_INSTANCE_MIGRATION_UNSUPPORTED: 'Применение «Действующим и новым» к уже купленным подпискам пока не поддерживается. Выберите «Только новым покупателям» и сохраните новую версию.',
+      SUBSCRIPTIONS_PROVIDER_BINDING_CANDIDATE_REQUIRED: 'В правилах не указан Viva productId подписки (блок «Привязка к Viva»).',
+      SUBSCRIPTIONS_SALE_PERIOD_OVERLAP: 'Период продажи пересекается с уже опубликованной версией.',
+      SUBSCRIPTIONS_PROVIDER_MAPPING_CONFLICT: 'Этот продукт Viva уже привязан к другой подписке.',
+      SUBSCRIPTIONS_PROVIDER_EVIDENCE_MISMATCH: 'Продукт в Viva не совпадает с указанным в правилах.',
+      SUBSCRIPTIONS_PUBLICATION_ADAPTER_UNSUPPORTED: 'Эти правила пока не поддерживаются средой исполнения ЛК. Проверьте настройки адаптера на сервере.',
+      SUBSCRIPTIONS_PUBLICATION_STATION_SCOPE_UNSUPPORTED: 'Набор станций в правилах не поддерживается для публикации.',
+      SUBSCRIPTIONS_PUBLICATION_INPUT_INVALID: 'Проверьте поля публикации.',
+      SUBSCRIPTIONS_PUBLICATION_AUDIT_UNAVAILABLE: 'Журнал аудита недоступен — публикация остановлена. Попробуйте позже.',
+      IDEMPOTENCY_CONFLICT: 'Повтор с другими данными. Нажмите «Проверить» ещё раз.'
+    };
+
+    function subscriptionPublicationErrorMessage(error) {
+      var code = String(error && error.code || '');
+      var known = SUBSCRIPTION_PUBLICATION_ERRORS[code];
+      var detail = String(error && error.message || '');
+      if (known) return known + (code === 'SUBSCRIPTIONS_PUBLICATION_INPUT_INVALID' && detail ? ' ' + detail : '');
+      if (Number(error && error.status || 0) === 403) return 'Недостаточно прав: нужно право «Подписки: публикация правил».';
+      return detail || 'Ошибка публикации';
+    }
+
+    function subscriptionPublicationInputsKey(inputs) {
+      return [inputs.providerStudioId, inputs.dictionaryRevision, inputs.dictionaryEvidenceRef].join('\u0000');
+    }
+
+    function resetSubscriptionPublicationFor(subscriptionTypeId, version) {
+      var publication = state.subscriptions.publication;
+      if (publication.subscriptionTypeId === subscriptionTypeId && publication.version === version) return;
+      publication.subscriptionTypeId = subscriptionTypeId;
+      publication.version = version;
+      publication.preview = null;
+      publication.previewInputsKey = '';
+      publication.reason = '';
+      publication.confirmed = false;
+      publication.error = '';
+      publication.success = '';
+      publication.commandHeaders = null;
+    }
+
+    async function previewSubscriptionPublication() {
+      var publication = state.subscriptions.publication;
+      if (publication.busy) return;
+      var inputs = publication.inputs;
+      var trimmed = {
+        providerStudioId: String(inputs.providerStudioId || '').trim(),
+        dictionaryRevision: String(inputs.dictionaryRevision || '').trim(),
+        dictionaryEvidenceRef: String(inputs.dictionaryEvidenceRef || '').trim()
+      };
+      if (!trimmed.providerStudioId || !trimmed.dictionaryRevision || !trimmed.dictionaryEvidenceRef) {
+        publication.error = 'Заполните все три поля проверки.';
+        renderSubscriptionPublication();
+        return;
+      }
+      if (!/^evidence:canonical-dictionary:[a-f0-9]{64}$/.test(trimmed.dictionaryEvidenceRef)) {
+        publication.error = 'Ссылка на подтверждение справочника должна иметь вид evidence:canonical-dictionary:<64 hex>.';
+        renderSubscriptionPublication();
+        return;
+      }
+      publication.busy = 'preview';
+      publication.error = '';
+      publication.success = '';
+      publication.preview = null;
+      publication.confirmed = false;
+      publication.commandHeaders = null;
+      renderSubscriptionPublication();
+      try {
+        var preview = await api.previewSubscriptionPolicyPublication(
+          publication.subscriptionTypeId,
+          publication.version,
+          trimmed
+        );
+        publication.preview = preview;
+        publication.previewInputsKey = subscriptionPublicationInputsKey(trimmed);
+      } catch (error) {
+        publication.error = subscriptionPublicationErrorMessage(error);
+      } finally {
+        publication.busy = '';
+        renderSubscriptionPublication();
+      }
+    }
+
+    async function publishSubscriptionPolicyVersion() {
+      var publication = state.subscriptions.publication;
+      var preview = publication.preview;
+      if (publication.busy || !preview) return;
+      var inputs = {
+        providerStudioId: String(publication.inputs.providerStudioId || '').trim(),
+        dictionaryRevision: String(publication.inputs.dictionaryRevision || '').trim(),
+        dictionaryEvidenceRef: String(publication.inputs.dictionaryEvidenceRef || '').trim()
+      };
+      if (subscriptionPublicationInputsKey(inputs) !== publication.previewInputsKey) {
+        publication.error = 'Поля проверки изменились. Нажмите «Проверить» ещё раз.';
+        publication.preview = null;
+        renderSubscriptionPublication();
+        return;
+      }
+      var reason = String(publication.reason || '').trim();
+      if (reason.length < 10 || reason.length > 500) {
+        publication.error = 'Опишите причину публикации: от 10 до 500 символов.';
+        renderSubscriptionPublication();
+        return;
+      }
+      if (!publication.confirmed) {
+        publication.error = 'Подтвердите, что понимаете последствия публикации.';
+        renderSubscriptionPublication();
+        return;
+      }
+      if (!publication.commandHeaders) {
+        var randomId = window.crypto && typeof window.crypto.randomUUID === 'function'
+          ? window.crypto.randomUUID()
+          : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+        publication.commandHeaders = {
+          'Idempotency-Key': 'cup-subscription-publish-' + randomId,
+          'X-Correlation-Id': 'cup-' + randomId
+        };
+      }
+      publication.busy = 'publish';
+      publication.error = '';
+      renderSubscriptionPublication();
+      var typeId = publication.subscriptionTypeId;
+      var version = publication.version;
+      try {
+        var body = {
+          providerStudioId: inputs.providerStudioId,
+          dictionaryRevision: inputs.dictionaryRevision,
+          dictionaryEvidenceRef: inputs.dictionaryEvidenceRef,
+          expectedPolicyDigest: preview.policyDigest,
+          expectedImpactPreviewRef: preview.impactPreviewRef,
+          approvalReason: reason
+        };
+        if (preview.createQuarterDescriptor) body.createQuarterDescriptor = preview.createQuarterDescriptor;
+        await api.publishSubscriptionPolicy(typeId, version, body, publication.commandHeaders);
+        publication.commandHeaders = null;
+        publication.preview = null;
+        publication.reason = '';
+        publication.confirmed = false;
+        publication.success = 'Версия ' + String(version) + ' опубликована. ЛК2 применяет её к новым операциям.';
+        setStatus('Версия правил ' + String(version) + ' опубликована', false);
+        delete state.subscriptions.policyVersionsByType[typeId];
+        delete state.subscriptions.policySummaryStateByType[typeId];
+        loadSubscriptions().catch(handleError);
+        if (dom.subscriptionPolicyTypeInput.value === typeId) {
+          loadSubscriptionPolicyVersionsForType(typeId).catch(handleError);
+        }
+      } catch (error) {
+        var status = Number(error && error.status || 0);
+        if (status >= 400 && status < 500) {
+          // Definitive answer: the next attempt is a new command. Unknown outcomes keep the key.
+          publication.commandHeaders = null;
+        }
+        if (error && error.code === 'SUBSCRIPTIONS_PUBLICATION_PRECONDITION_CHANGED') {
+          publication.preview = null;
+        }
+        publication.error = subscriptionPublicationErrorMessage(error);
+      } finally {
+        publication.busy = '';
+        renderSubscriptionPublication();
+      }
+    }
+
+    function subscriptionPublicationScopeText(scope) {
+      if (!scope) return '—';
+      var labels = { TENANT: 'Все станции', STUDIO: 'Студия', STATION: 'Станция', STATION_SET: 'Набор станций' };
+      return (labels[scope.kind] || scope.kind) + (scope.kind === 'TENANT' ? '' : ' · ' + String(scope.scopeId || ''));
+    }
+
+    function renderSubscriptionPublication() {
+      var root = dom.subscriptionPublicationRoot;
+      if (!root) return;
+      clearNode(root);
+      var typeId = dom.subscriptionPolicyTypeInput.value;
+      var policy = typeId ? latestSubscriptionPolicy(typeId) : null;
+      if (!canPublishSubscriptionPolicy(cfg) || !typeId || !policy) return;
+      var publication = state.subscriptions.publication;
+      resetSubscriptionPublicationFor(typeId, Number(policy.version));
+
+      var card = residentElement('section', 'phab-subscriptions-group phab-subscriptions-publication');
+      card.setAttribute('aria-label', 'Публикация правил');
+      var heading = residentElement('div', 'phab-subscriptions-publication-head');
+      heading.appendChild(residentElement('strong', '', 'Публикация'));
+      card.appendChild(heading);
+
+      if (policy.status !== 'DRAFT') {
+        card.appendChild(residentElement('p', 'phab-subscriptions-group-hint',
+          'Последняя версия ' + String(policy.version) + ' — ' +
+          (SUBSCRIPTION_POLICY_STATUS_LABELS[policy.status] || policy.status) +
+          '. Чтобы изменить правила в ЛК2, сохраните новую версию и опубликуйте её.'));
+        if (publication.success) {
+          var done = residentElement('div', 'phab-subscriptions-publication-success', publication.success);
+          done.setAttribute('role', 'status');
+          card.appendChild(done);
+        }
+        root.appendChild(card);
+        return;
+      }
+
+      card.appendChild(residentElement('p', 'phab-subscriptions-group-hint',
+        'ЛК2 применяет только опубликованные правила. Публикуется последняя сохранённая версия ' +
+        String(policy.version) + ' — несохранённые изменения формы в неё не попадут. Сначала проверка, потом публикация.'));
+      if (!cfg.subscriptionPublicationPreviewEnabled) {
+        card.appendChild(residentElement('div', 'phab-subscriptions-unavailable', SUBSCRIPTION_PUBLICATION_ERRORS.SUBSCRIPTIONS_PUBLICATION_PREVIEW_DISABLED));
+        root.appendChild(card);
+        return;
+      }
+
+      var grid = residentElement('div', 'phab-subscriptions-group-grid');
+      [
+        { key: 'providerStudioId', label: 'Viva studio ID', placeholder: 'ID студии в Viva' },
+        { key: 'dictionaryRevision', label: 'Ревизия справочника', placeholder: 'Например, 2026-11-07' },
+        { key: 'dictionaryEvidenceRef', label: 'Подтверждение справочника', placeholder: 'evidence:canonical-dictionary:…' }
+      ].forEach(function (field) {
+        var input = residentElement('input', 'phab-admin-input');
+        input.value = publication.inputs[field.key] || '';
+        input.placeholder = field.placeholder;
+        input.maxLength = field.key === 'dictionaryEvidenceRef' ? 100 : 200;
+        input.setAttribute('data-publication-' + field.key, '');
+        input.disabled = Boolean(publication.busy);
+        input.addEventListener('input', function () {
+          publication.inputs[field.key] = input.value;
+          if (publication.preview && subscriptionPublicationInputsKey(publication.inputs) !== publication.previewInputsKey) {
+            publication.preview = null;
+            renderSubscriptionPublication();
+            var again = root.querySelector('[data-publication-' + field.key + ']');
+            if (again) {
+              again.focus();
+              again.setSelectionRange(again.value.length, again.value.length);
+            }
+          }
+        });
+        grid.appendChild(subscriptionField(field.label, input));
+      });
+      card.appendChild(grid);
+
+      var previewActions = residentElement('div', 'phab-subscriptions-actions');
+      var previewBtn = residentElement('button', 'phab-admin-btn-secondary',
+        publication.busy === 'preview' ? 'Проверяем…' : 'Проверить перед публикацией');
+      previewBtn.type = 'button';
+      previewBtn.disabled = Boolean(publication.busy);
+      previewBtn.setAttribute('data-publication-preview', '');
+      previewBtn.addEventListener('click', function () { previewSubscriptionPublication().catch(handleError); });
+      previewActions.appendChild(previewBtn);
+      card.appendChild(previewActions);
+
+      var preview = publication.preview;
+      if (preview) {
+        var summary = residentElement('div', 'phab-subscriptions-publication-preview');
+        summary.setAttribute('data-publication-summary', '');
+        var rows = [
+          ['Что произойдёт', preview.publicationMode === 'SUPERSESSION' && preview.supersedes
+            ? 'Заменит опубликованную версию ' + String(preview.supersedes.policyVersion)
+            : 'Первая публикация этого типа'],
+          ['К кому применяется', preview.instanceImpact && preview.instanceImpact.applyTo === 'ACTIVE_AND_NEW'
+            ? 'К действующим и новым подпискам'
+            : 'Только к новым покупкам'],
+          ['Уже купленных подписок этого типа', String(preview.instanceImpact ? preview.instanceImpact.existingInstanceCount : '—')],
+          ['Продукт Viva', String(preview.providerProductId || '—') +
+            (preview.providerEvidence && preview.providerEvidence.name ? ' · ' + preview.providerEvidence.name : '')],
+          ['Станции', subscriptionPublicationScopeText(preview.providerScope)],
+          ['Отпечаток правил', String(preview.policyDigest || '').slice(0, 19) + '…']
+        ];
+        var list = document.createElement('dl');
+        rows.forEach(function (row) {
+          list.appendChild(residentElement('dt', '', row[0]));
+          list.appendChild(residentElement('dd', '', row[1]));
+        });
+        summary.appendChild(list);
+        card.appendChild(summary);
+
+        var reason = residentElement('textarea', 'phab-admin-input');
+        reason.maxLength = 500;
+        reason.placeholder = 'Например: запуск годовой подписки Котельники с 1 декабря';
+        reason.value = publication.reason;
+        reason.disabled = Boolean(publication.busy);
+        reason.setAttribute('data-publication-reason', '');
+        reason.addEventListener('input', function () { publication.reason = reason.value; });
+        card.appendChild(subscriptionField('Причина публикации (попадёт в журнал аудита)', reason));
+
+        var confirmLabel = residentElement('label', 'phab-subscriptions-check');
+        var confirm = document.createElement('input');
+        confirm.type = 'checkbox';
+        confirm.checked = publication.confirmed;
+        confirm.disabled = Boolean(publication.busy);
+        confirm.setAttribute('data-publication-confirm', '');
+        confirm.addEventListener('change', function () {
+          publication.confirmed = confirm.checked;
+          renderSubscriptionPublication();
+        });
+        confirmLabel.appendChild(confirm);
+        confirmLabel.appendChild(document.createTextNode(
+          'Понимаю: после публикации ЛК2 начнёт применять версию ' + String(policy.version) +
+          ', отменить можно только публикацией новой версии.'));
+        card.appendChild(confirmLabel);
+
+        var publishActions = residentElement('div', 'phab-subscriptions-actions');
+        var publishBtn = residentElement('button', 'phab-admin-btn',
+          publication.busy === 'publish' ? 'Публикуем…' : 'Опубликовать версию ' + String(policy.version));
+        publishBtn.type = 'button';
+        publishBtn.disabled = Boolean(publication.busy) || !publication.confirmed || !cfg.subscriptionPublicationCommandEnabled;
+        publishBtn.setAttribute('data-publication-publish', '');
+        publishBtn.addEventListener('click', function () { publishSubscriptionPolicyVersion().catch(handleError); });
+        publishActions.appendChild(publishBtn);
+        card.appendChild(publishActions);
+        if (!cfg.subscriptionPublicationCommandEnabled) {
+          card.appendChild(residentElement('div', 'phab-subscriptions-note', SUBSCRIPTION_PUBLICATION_ERRORS.SUBSCRIPTIONS_PUBLICATION_COMMAND_DISABLED));
+        }
+      }
+
+      if (publication.error) {
+        var errorBox = residentElement('div', 'phab-resident-error', publication.error);
+        errorBox.setAttribute('role', 'alert');
+        card.appendChild(errorBox);
+      }
+      root.appendChild(card);
     }
 
     var RESIDENT_SERVICE_LABELS = { TOWEL: 'Полотенце', RACKET: 'Ракетка' };
