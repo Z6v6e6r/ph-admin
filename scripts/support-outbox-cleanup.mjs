@@ -277,6 +277,15 @@ async function main() {
   try {
     await client.connect();
     const collection = client.db(backend.dbName).collection(backend.collectionName);
+    if ((options.markFailed || options.deleteMatched) && (!options.connector || ['MAX_BOT', 'MAX_ACADEMY_BOT'].includes(options.connector))) {
+      const control = await client.db(backend.dbName).collection(backend.collectionName + '_max_control')
+        .findOne({ _id: 'max-queue-v1' }, { projection: { _id: 1 }, readConcern: { level: 'majority' }, timeoutMS: 5000 });
+      const fenced = await collection.findOne({ connector: { $in: ['MAX_BOT', 'MAX_ACADEMY_BOT'] }, queueSequence: { $exists: true } },
+        { projection: { _id: 1 }, readConcern: { level: 'majority' }, timeoutMS: 5000 });
+      if (String(process.env.SUPPORT_MAX_OUTBOX_MODE).trim() === 'receipt-v1' || control || fenced) {
+        throw new Error('MAX_FENCED_QUEUE_REQUIRES_PER_RECORD_RECONCILIATION');
+      }
+    }
     const matchedCount = await collection.countDocuments(filter);
     const sample = await collection
       .find(filter)

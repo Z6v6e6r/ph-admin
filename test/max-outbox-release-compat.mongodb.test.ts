@@ -75,13 +75,36 @@ async function main() {
       assert.equal(racing.filter(result => result.status === 'fulfilled').length, 1, 'physical CAS permits one dispatch');
       const winner = racing.find(result => result.status === 'fulfilled') as PromiseFulfilledResult<Command>;
       assert.equal((await coll.findOne({ id: command.id }))!.attempts, 1);
-      // Mongo applies the update, then returns a write concern error: only exact readback admits ACK.
+      const ackOf = (leased: Command): Command => ({ ...leased, status: Status.SENT, leasedUntil: undefined });
+      // A write concern error is ambiguous. On a standalone server failCommand applies the update first; on a
+      // replica set the error returns before majority commit, so the immediate majority readback may not see it.
+      // Either way only exact readback admits ACK, UNKNOWN never reopens the command, and a repeated ACK converges.
       await db.admin().command({ configureFailPoint: 'failCommand', mode: { times: 1 },
         data: { failCommands: ['update'], writeConcernError: { code: 64, errmsg: 'synthetic lost durable ACK' } } });
       try {
-        const sent = await store.transition({ ...winner.value, status: Status.SENT, leasedUntil: undefined }, 'ack', winner.value);
-        assert.equal(sent.status, Status.SENT);
+        const outcome = await store.transition(ackOf(winner.value), 'ack', winner.value).catch((error: any) => error);
+        if (outcome instanceof Error) {
+          assert.equal((outcome as any).getResponse().code, 'LEGACY_MAX_CUSTODY_UNKNOWN');
+          assert.ok([Status.LEASED, Status.SENT].includes((await coll.findOne({ id: command.id }))!.status),
+            'an unconfirmed ACK never reopens the command');
+        } else assert.equal(outcome.status, Status.SENT);
       } finally { await db.admin().command({ configureFailPoint: 'failCommand', mode: 'off' }); }
+      assert.equal((await store.transition(ackOf(winner.value), 'ack', winner.value)).status, Status.SENT);
+      // Topology-independent lost reply after a durable update: only exact readback admits ACK.
+      const lostReply = new Proxy(coll, { get(target: any, key) {
+        if (key === 'updateOne') return async (...args: any[]) => {
+          await target.updateOne(...args);
+          throw new Error('synthetic lost reply after durable update');
+        };
+        const value = target[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      const second = await store.transition({ ...command, id: randomUUID() }, 'enqueue');
+      const secondLease = await store.transition({ ...second, status: Status.LEASED, attempts: 1,
+        leasedUntil: new Date(Date.now() + 60000).toISOString(), meta: { legacyMaxLeaseId: randomUUID() } }, 'lease', second);
+      const lostReplyStore = new LegacyMaxCustodyStore(lostReply);
+      assert.equal((await lostReplyStore.transition(ackOf(secondLease), 'ack', secondLease)).status, Status.SENT);
+      assert.equal((await coll.findOne({ id: second.id }))!.status, Status.SENT);
       await store.metadata({ ...accepted, clientId: 'synthetic-moved-client', dialogId: 'synthetic-moved-dialog' });
       assert.equal((await coll.findOne({ id: command.id }))!.status, Status.SENT, 'stale metadata cannot resurrect SENT');
       const expired: Command = { ...command, id: randomUUID(), status: Status.LEASED, attempts: 1, leasedUntil: new Date(0).toISOString() };
@@ -133,7 +156,7 @@ async function main() {
       restarted.onModuleDestroy();
       await persistence.onModuleDestroy(); persistence = undefined;
     }
-    for (const marker of ['leaseToken', 'lastReceipt', 'terminalReason']) {
+    for (const marker of ['leaseToken', 'lastReceipt', 'terminalReason', 'queueSequence']) {
       await coll.deleteMany({});
       const id = randomUUID();
       await coll.insertOne({ id, connector: Route.MAX_BOT, status: Status.LEASED,
