@@ -1,7 +1,15 @@
+import type { CreateQuarterBinding } from '../subscription-create-quarter-contract';
 import { Type } from 'class-transformer';
 import {
   IsDefined,
   IsIn,
+  IsInt,
+  IsObject,
+  Length,
+  NotContains,
+  Min,
+  Max,
+  ValidateIf,
   IsOptional,
   IsString,
   Matches,
@@ -26,6 +34,51 @@ export class ReserveSubscriptionEntitlementTargetDto {
   targetId!: string;
 }
 
+export class ReserveSubscriptionEntitlementSnapshotExpectationDto {
+  @NotContains('\n')
+  @NotContains('\r')
+  @IsString()
+  @Matches(ID_PATTERN)
+  snapshotId!: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(Number.MAX_SAFE_INTEGER)
+  revision!: number;
+
+  @IsString()
+  @Matches(ID_PATTERN)
+  @NotContains('\n')
+  @NotContains('\r')
+  evidenceRef!: string;
+}
+
+export class ReserveSubscriptionEntitlementExpectationsDto {
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDefined()
+  @IsObject()
+  createQuarter?: CreateQuarterBinding;
+
+  @IsIn([1])
+  schemaVersion!: 1;
+
+  @IsInt()
+  @Min(1)
+  @Max(Number.MAX_SAFE_INTEGER)
+  policyVersion!: number;
+
+  @IsString()
+  @Length(71, 71)
+  @Matches(/^sha256:[a-f0-9]{64}$/)
+  policyDigest!: string;
+
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ReserveSubscriptionEntitlementSnapshotExpectationDto)
+  targetSnapshot!: ReserveSubscriptionEntitlementSnapshotExpectationDto;
+}
+
 export class ReserveSubscriptionEntitlementDto {
   @IsString()
   @MinLength(3)
@@ -40,6 +93,44 @@ export class ReserveSubscriptionEntitlementDto {
   @IsDefined()
   @Type(() => ReserveSubscriptionEntitlementTargetDto)
   target!: ReserveSubscriptionEntitlementTargetDto;
+
+  // Omission preserves the legacy contract; explicit null is invalid.
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => ReserveSubscriptionEntitlementExpectationsDto)
+  expectations?: ReserveSubscriptionEntitlementExpectationsDto;
+}
+
+export class PreflightSubscriptionEntitlementTargetDto {
+  @IsString()
+  @Matches(ID_PATTERN)
+  @NotContains('\n')
+  @NotContains('\r')
+  targetId!: string;
+}
+
+export class PreflightSubscriptionEntitlementDto {
+  @ValidateIf((object, value) => object.action === 'CREATE_GAME' || value !== undefined)
+  @IsDefined()
+  @IsIn([2])
+  contractVersion?: 2;
+
+  @IsString()
+  @Matches(ID_PATTERN)
+  @NotContains('\n')
+  @NotContains('\r')
+  subscriptionInstanceId!: string;
+
+  @IsIn(['JOIN_GAME', 'CREATE_GAME'])
+  action!: 'JOIN_GAME' | 'CREATE_GAME';
+
+  @IsDefined()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PreflightSubscriptionEntitlementTargetDto)
+  target!: PreflightSubscriptionEntitlementTargetDto;
 }
 
 export class ConfirmSubscriptionEntitlementDto {
@@ -57,11 +148,21 @@ export class ReleaseSubscriptionEntitlementDto {
   @Matches(ID_PATTERN)
   operationId!: string;
 
-  @IsIn(['PROVIDER_REJECTED', 'BOOKING_CANCELLED'])
-  reason!: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED';
+  @IsIn(['PROVIDER_REJECTED', 'BOOKING_CANCELLED', 'PRECREATE_EXPIRED_NOT_DISPATCHED'])
+  reason!: 'PROVIDER_REJECTED' | 'BOOKING_CANCELLED' | 'PRECREATE_EXPIRED_NOT_DISPATCHED';
 
   @IsOptional()
   @IsString()
   @Matches(ID_PATTERN)
   providerBookingId?: string;
+}
+
+export class ReadbackSubscriptionEntitlementDto {
+  @IsString()
+  @Matches(ID_PATTERN)
+  operationId!: string;
+
+  @IsString()
+  @Matches(ID_PATTERN)
+  subscriptionInstanceId!: string;
 }

@@ -1,3 +1,16 @@
+import { TournamentChatNotificationProof } from './tournament-chat-notification.proof';
+import { TournamentChatNotificationService } from './tournament-chat-notification.service';
+import { TournamentChatNotificationController } from './tournament-chat-notification.controller';
+import { TournamentChatActorProof } from './tournament-chat.actor-proof';
+import { TournamentChatPersistence } from './tournament-chat.persistence';
+import { TournamentChatService } from './tournament-chat.service';
+import { TournamentChatRecovery } from './tournament-chat.recovery';
+import { TournamentChatController } from './tournament-chat.controller';
+import { TournamentOrganizerController } from './tournament-organizer.controller';
+import { TournamentOrganizerService } from './tournament-organizer.service';
+import { TournamentOrganizerLookupClient } from './tournament-organizer-lookup.client';
+import { TournamentsLocalOwnerController } from './tournaments-local-owner.controller';
+import { TournamentsOwnerPreparationController } from './tournaments-owner-preparation.controller';
 import { Module } from '@nestjs/common';
 import { CommunitiesModule } from '../communities/communities.module';
 import { GamesModule } from '../games/games.module';
@@ -22,8 +35,11 @@ import { TournamentsVivaStatusSyncService } from './tournaments-viva-status-sync
 
 @Module({
   imports: [LkPadelHubModule, GamesModule, CommunitiesModule, LkIdentityModule, PlayerRatingsModule],
-  controllers: [TournamentsController, TournamentsPublicController],
+  controllers: [TournamentChatNotificationController, TournamentChatController, TournamentOrganizerController, TournamentsLocalOwnerController, TournamentsController, TournamentsPublicController, TournamentsOwnerPreparationController],
   providers: [
+    TournamentChatNotificationProof, TournamentChatNotificationService,
+    TournamentChatActorProof, TournamentChatPersistence, TournamentChatService, TournamentChatRecovery,
+    TournamentOrganizerService, TournamentOrganizerLookupClient,
     AmericanoScheduleService,
     AmericanoRatingSimulationService,
     TournamentsService,

@@ -14,7 +14,8 @@ import {
 import { SubscriptionsRepository } from './subscriptions.repository';
 import {
   validateStoredSubscriptionInstanceProjectorCheckpoint,
-  validateStoredSubscriptionProjectionFence
+  validateStoredSubscriptionProjectionFence,
+  validateStoredSubscriptionPolicyPublication
 } from './subscription-runtime-contracts';
 import {
   StoredSubscriptionInstanceProjectorCheckpoint,
@@ -344,6 +345,10 @@ export class SubscriptionSaleReadinessService {
     checkedAt: Date,
     requiredCompatibility: SubscriptionRuntimeCompatibility
   ): void {
+    if (publication.schemaVersion === 4) {
+      try { validateStoredSubscriptionPolicyPublication(publication); }
+      catch { blockers.push('SUBSCRIPTIONS_SALE_READINESS_RUNTIME_COMPATIBILITY_UNATTESTED'); return; }
+    }
     const effectiveAt = Date.parse(publication.effectiveAt);
     if (publication.state !== 'PUBLISHED') {
       blockers.push('SUBSCRIPTIONS_SALE_READINESS_PUBLICATION_NOT_PUBLISHED');
@@ -363,7 +368,7 @@ export class SubscriptionSaleReadinessService {
     )) {
       blockers.push('SUBSCRIPTIONS_SALE_READINESS_PROVIDER_SCOPE_MISMATCH');
     }
-    if (publication.schemaVersion !== 3 || !publication.runtimeCompatibility) {
+    if ((publication.schemaVersion !== 3 && publication.schemaVersion !== 4) || !publication.runtimeCompatibility) {
       blockers.push('SUBSCRIPTIONS_SALE_READINESS_RUNTIME_COMPATIBILITY_UNATTESTED');
     } else if (!this.runtimeCompatibilityMatches(
       publication.runtimeCompatibility,
@@ -416,6 +421,7 @@ export class SubscriptionSaleReadinessService {
     }
     const compatibility = checkpoint.binding.runtimeCompatibility;
     return historyMatches
+      && (publication.schemaVersion !== 4 || checkpoint.reconciliation.mode === 'FULL_RECONCILIATION')
       && checkpoint.state === 'CURRENT'
       && checkpoint.coverage.kind === 'CONSISTENT_FULL_SNAPSHOT'
       && checkpoint.coverage.sourceItemCount > 0

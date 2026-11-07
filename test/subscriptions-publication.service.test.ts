@@ -1,3 +1,4 @@
+import { parseQuarterDescriptor, quarterDescriptorDigest, quarterDictionaryRevision, quarterDictionaryEvidence } from '../src/subscriptions/subscription-create-quarter-contract';
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -834,6 +835,45 @@ async function main(): Promise<void> {
   process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = 'LK_NODE_RED_ANNUAL_BOOKING_V1';
   process.env.SUBSCRIPTIONS_RUNTIME_TENANT_ID = 'tenant:iSkq6G';
   process.env.SUBSCRIPTIONS_PROVIDER_MAPPING_PREVIEW_CLIENT_ID = 'client:synthetic-preview';
+
+  const quarter = parseQuarterDescriptor({ schemaVersion: 1, kind: 'ORGANIZER_QUARTER_CREATE', directionId: '4588', typeId: '1613',
+    selectorRevision: 'selector:quarter-v1', durationMinutes: 60, participantCount: 4, spot: 1, currency: 'RUB',
+    priceBasis: 'ORGANIZER_QUARTER', benefitKind: 'FREE_ENTITLEMENT', usageUnits: 1, dailyUsageLimit: 1,
+    stations: [{ stationId: '1ea77cbf-bc36-49a1-96d6-f35c216a409b', providerStudioId: 'studio:approved-piter', masterServiceId: 'master:synthetic', subServiceId: 'service:synthetic' }] });
+  const quarterDto = { ...previewDto(), createQuarterDescriptor: quarter,
+    dictionaryRevision: quarterDictionaryRevision(quarter), dictionaryEvidenceRef: quarterDictionaryEvidence(quarter) };
+  const q = createService();
+  const qPreview = await q.service.preview(q.repository.type.subscriptionTypeId, '1', quarterDto, globalAdmin);
+  assert.equal(qPreview.createQuarterDescriptorDigest, quarterDescriptorDigest(quarter));
+  const qCommand = { ...quarterDto, expectedPolicyDigest: qPreview.policyDigest, expectedImpactPreviewRef: qPreview.impactPreviewRef,
+    approvalReason: 'Explicit approval of exact organizer-quarter dictionary and service mapping' };
+  const qResult = await q.service.publish(q.repository.type.subscriptionTypeId, '1', qCommand, headers('quarter'), globalAdmin);
+  assert.equal(qResult.item.publication.schemaVersion, 4);
+  assert.deepEqual(qResult.item.publication.createQuarterDescriptor, quarter);
+  await verifyRepositoryTransaction(q.repository.mapping!, q.repository.publication!);
+  const qAudit = q.audit.entries[0].metadata as Record<string, unknown>;
+  assert.deepEqual(JSON.parse(qAudit.createQuarterDescriptorJson as string), quarter);
+  assert.equal(qAudit.createQuarterDescriptorDigest, quarterDescriptorDigest(quarter));
+  assert.equal((await q.service.publish(q.repository.type.subscriptionTypeId, '1', qCommand, headers('quarter'), globalAdmin)).replayed, true);
+  assert.equal(q.repository.publishCalls, 1);
+  for (const raw of [null, {}, { ...quarter, extra: true }, { ...quarter, participantCount: 2 }]) {
+    await assert.rejects(q.service.preview(q.repository.type.subscriptionTypeId, '1', { ...quarterDto, createQuarterDescriptor: raw as any }, globalAdmin));
+  }
+  const qBad = createService();
+  await assert.rejects(qBad.service.preview(qBad.repository.type.subscriptionTypeId, '1', { ...quarterDto, dictionaryEvidenceRef: previewDto().dictionaryEvidenceRef }, globalAdmin));
+  assert.equal(qBad.repository.publishCalls, 0); assert.equal(qBad.audit.entries.length, 0);
+  const otherQuarter = parseQuarterDescriptor({ ...quarter, stations: [{ ...quarter.stations[0], stationId: 'station:foreign' }] });
+  await assert.rejects(qBad.service.preview(qBad.repository.type.subscriptionTypeId, '1', { ...quarterDto, createQuarterDescriptor: otherQuarter,
+    dictionaryRevision: quarterDictionaryRevision(otherQuarter), dictionaryEvidenceRef: quarterDictionaryEvidence(otherQuarter) }, globalAdmin));
+  const changedQuarter = parseQuarterDescriptor({ ...quarter, stations: [{ ...quarter.stations[0], subServiceId: 'service:changed' }] });
+  await assert.rejects(q.service.publish(q.repository.type.subscriptionTypeId, '1', { ...qCommand, createQuarterDescriptor: changedQuarter,
+    dictionaryRevision: quarterDictionaryRevision(changedQuarter), dictionaryEvidenceRef: quarterDictionaryEvidence(changedQuarter) }, headers('quarter'), globalAdmin), ConflictException);
+  const qDrift = createService();
+  const qNewPreview = await qDrift.service.preview(qDrift.repository.type.subscriptionTypeId, '1', quarterDto, globalAdmin);
+  await assert.rejects(qDrift.service.publish(qDrift.repository.type.subscriptionTypeId, '1', { ...qCommand,
+    expectedImpactPreviewRef: qNewPreview.impactPreviewRef, createQuarterDescriptor: changedQuarter,
+    dictionaryRevision: quarterDictionaryRevision(changedQuarter), dictionaryEvidenceRef: quarterDictionaryEvidence(changedQuarter) }, headers('quarter-drift'), globalAdmin), ConflictException);
+  assert.equal(qDrift.repository.publishCalls, 0); assert.equal(qDrift.audit.entries.length, 0);
 
   assert.doesNotThrow(() => assertPolicySupportedByPublicationAdapter(
     LK_NODE_RED_ANNUAL_BOOKING_V1,

@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "actor": {
+    "tenantKey": "iSkq6G",
+    "providerClientId": "synthetic-player"
+  },
+  "admission": {
+    "contractVersion": 1,
+    "action": "CREATE_GAME",
+    "subscriptionId": "11111111-1111-4111-8111-000000000001",
+    "target": {
+      "draftId": "11111111-1111-4111-8111-000000000002",
+      "expectedRevision": 1,
+      "stationId": "11111111-1111-4111-8111-000000000003",
+      "courtId": "11111111-1111-4111-8111-000000000004",
+      "startsAt": "2035-04-02T09:00:00.000Z",
+      "durationMinutes": 60
+    },
+    "preparation": {
+      "schemaVersion": 1,
+      "nonBinding": true,
+      "operationId": "abf4b2e0-82dd-89be-962e-6ddb55694b22",
+      "requestSha256": "sha256:0cc123181f2b067f4a93559ac9a8c781c89b1aeba038e2c8026e65c660f4144d",
+      "idempotencyKeySha256": "sha256:2ee8f42267a3635138b7b04501b6a854349d168cdc4e2db23bf05b64e65371f7",
+      "actor": {
+        "tenantId": "11111111-1111-4111-8111-000000000008",
+        "userId": "11111111-1111-4111-8111-000000000005",
+        "providerClientId": "synthetic-player",
+        "providerMappingId": "11111111-1111-4111-8111-000000000009"
+      },
+      "subscription": {
+        "id": "11111111-1111-4111-8111-000000000001",
+        "providerClientSubscriptionId": "synthetic-subscription"
+      },
+      "target": {
+        "draftId": "11111111-1111-4111-8111-000000000002",
+        "expectedRevision": 1,
+        "stationId": "11111111-1111-4111-8111-000000000003",
+        "courtId": "11111111-1111-4111-8111-000000000004",
+        "startsAt": "2035-04-02T09:00:00.000Z",
+        "durationMinutes": 60,
+        "endsAt": "2035-04-02T10:00:00.000Z",
+        "stationMappingId": "11111111-1111-4111-8111-000000000011",
+        "courtMappingId": "11111111-1111-4111-8111-000000000012",
+        "mappingVersion": "synthetic-v1",
+        "providerStationId": "6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1",
+        "providerRoomId": "synthetic-room"
+      },
+      "pricing": {
+        "masterServiceId": "2f4155ad-7bc0-4a15-a12c-da7fce15c37a",
+        "subServiceIds": [
+          "415edff9-b4ad-4d88-8709-75f1ab7d4081"
+        ],
+        "selectorRevision": "sha256:5506b32696f8c1844c3006bae873f5c519ed027291d386183c99b5457d3a8cc9",
+        "catalogEvidenceSha256": "sha256:b0399fa80522191a39193d8a8d84a19375c736b9837354cac93f7f9b4d49d709",
+        "participantCount": 4,
+        "priceBasis": "WHOLE_COURT_WINDOW",
+        "courtWindowPriceMinor": 600000,
+        "quarterPriceMinor": 150000,
+        "currency": "RUB"
+      },
+      "observedAt": "2035-04-01T09:00:00.000Z",
+      "expiresAt": "2035-04-01T09:01:00.000Z",
+      "sha256": "sha256:ddcee6768b6a2dea85f08b151d23f22edc87f8ad163953372ccd3da704476c04"
+    }
+  },
+  "targetIntake": {
+    "contractVersion": 3,
+    "kind": "ORGANIZER_QUARTER_CREATE",
+    "subscriptionInstanceId": "instance:synthetic-create",
+    "targetId": "create-draft:11111111-1111-4111-8111-000000000002",
+    "revision": 1,
+    "state": "ACTIVE",
+    "subscriptionTypeId": "type:synthetic-quarter",
+    "policyVersion": 3,
+    "publicationId": "publication:synthetic-quarter",
+    "createOperationId": "abf4b2e0-82dd-89be-962e-6ddb55694b22",
+    "draftId": "11111111-1111-4111-8111-000000000002",
+    "stationId": "11111111-1111-4111-8111-000000000003",
+    "roomId": "synthetic-room",
+    "startsAt": "2035-04-02T09:00:00.000Z",
+    "observedAt": "2035-04-01T09:00:00.000Z",
+    "expiresAt": "2035-04-01T09:01:00.000Z",
+    "catalogue": {
+      "directionId": "4588",
+      "typeId": "1613",
+      "providerStudioId": "6a7a9edc-6869-40ad-a5a1-8a1cdfb746a1",
+      "masterServiceId": "2f4155ad-7bc0-4a15-a12c-da7fce15c37a",
+      "subServiceId": "415edff9-b4ad-4d88-8709-75f1ab7d4081",
+      "selectorRevision": "sha256:5506b32696f8c1844c3006bae873f5c519ed027291d386183c99b5457d3a8cc9",
+      "roomIds": [
+        "synthetic-room"
+      ]
+    },
+    "price": {
+      "basis": "WHOLE_COURT_WINDOW",
+      "amountMinor": 600000,
+      "currency": "RUB",
+      "durationMinutes": 60,
+      "participantCount": 4,
+      "spot": 1
+    }
+  },
+  "runtime": {
+    "schemaVersion": 1,
+    "subscriptionInstanceId": "instance:synthetic-create",
+    "clientSubscriptionId": "synthetic-subscription",
+    "policyDigest": "sha256:195e979ea34a425668033e5342636935b08696aee2fac8b7d4638a3e149a9112",
+    "policy": {
+      "subscriptionTypeId": "type:synthetic-quarter",
+      "policyVersion": 3,
+      "createGame": {
+        "enabled": true,
+        "durationsMinutes": [
+          60
+        ]
+      }
+    },
+    "instance": {
+      "subscriptionInstanceId": "instance:synthetic-create",
+      "subscriptionTypeId": "type:synthetic-quarter",
+      "policyVersion": 3,
+      "state": "ACTIVE",
+      "activeFrom": "2035-01-01T00:00:00.000Z",
+      "activeTo": "2036-01-01T00:00:00.000Z",
+      "frozenUntil": null,
+      "homeStationId": "11111111-1111-4111-8111-000000000003",
+      "noShowBlockedUntil": null
+    },
+    "evidence": {
+      "mappingId": "mapping:synthetic-quarter",
+      "mappingRevision": 1,
+      "mappingVerifiedAt": "2035-04-01T09:00:00.000Z",
+      "publicationId": "publication:synthetic-quarter",
+      "publishedAt": "2035-01-01T00:00:00.000Z",
+      "instanceRevision": 1,
+      "instanceAsOf": "2035-04-01T09:00:00.000Z"
+    }
+  },
+  "ownerReceipt": {
+    "schemaVersion": 1,
+    "operationId": "abf4b2e0-82dd-89be-962e-6ddb55694b22",
+    "admissionRequestSha256": "sha256:6e4e4d156a57995a61649a156afae3789c0bea580acd08f47cd278bb7e8306fa",
+    "actor": {
+      "tenantId": "11111111-1111-4111-8111-000000000008",
+      "userId": "11111111-1111-4111-8111-000000000005"
+    },
+    "target": {
+      "draftId": "11111111-1111-4111-8111-000000000002",
+      "expectedRevision": 1,
+      "stationId": "11111111-1111-4111-8111-000000000003",
+      "courtId": "11111111-1111-4111-8111-000000000004",
+      "startsAt": "2035-04-02T09:00:00.000Z",
+      "durationMinutes": 60
+    },
+    "providerExerciseId": "exercise:original",
+    "providerBookingId": "booking:original",
+    "entitlement": {
+      "subscriptionInstanceId": "instance:synthetic-create",
+      "policyVersion": 3,
+      "policyDigest": "sha256:195e979ea34a425668033e5342636935b08696aee2fac8b7d4638a3e149a9112",
+      "usageOperationId": "usage:synthetic-create",
+      "reservedUnits": 1
+    },
+    "confirmedAt": "2035-04-01T09:00:00.000Z"
+  },
+  "cup": {
+    "policyDigest": "sha256:98683bd474b068c74e1a19121e51673c50bb2de899c13dec4d0d03f55771a089",
+    "intake": {
+      "targetId": "create-draft:11111111-1111-4111-8111-000000000002",
+      "action": "CREATE_GAME",
+      "revision": 1,
+      "snapshotId": "canonical_target:70eb995e0384477456965c305f38bb93a99b47eaf8b9a426",
+      "replay": false
+    },
+    "preflight": {
+      "schemaVersion": 1,
+      "nonBinding": true,
+      "subscriptionInstanceId": "instance:synthetic-create",
+      "action": "CREATE_GAME",
+      "target": {
+        "targetId": "create-draft:11111111-1111-4111-8111-000000000002"
+      },
+      "expectations": {
+        "createQuarter": {
+          "schemaVersion": 1,
+          "createOperationId": "abf4b2e0-82dd-89be-962e-6ddb55694b22",
+          "draftId": "11111111-1111-4111-8111-000000000002",
+          "clientRefHash": "a80cd93c33fda5d1e6a760e053bda5d2475509cee279310782c744976fafb753",
+          "publicationId": "publication:synthetic-quarter",
+          "descriptorDigest": "sha256:6f69fe4acda8db9cb067b3448aab7e28fd5923ff8ab0d8c861dbc10f2e01b053"
+        },
+        "schemaVersion": 1,
+        "policyVersion": 3,
+        "policyDigest": "sha256:98683bd474b068c74e1a19121e51673c50bb2de899c13dec4d0d03f55771a089",
+        "targetSnapshot": {
+          "snapshotId": "canonical_target:70eb995e0384477456965c305f38bb93a99b47eaf8b9a426",
+          "revision": 1,
+          "evidenceRef": "evidence:create-quarter:9f395de85a5996d9cff2e7a2c1d703a8492f5e06a0f379488ca6a84d4f13c9e7"
+        }
+      }
+    },
+    "reserve": {
+      "schemaVersion": 1,
+      "outcome": "RESERVED",
+      "replayed": false,
+      "operationId": "booking:844d02430398a59267ac95d2c0347846b6e496f68459047e",
+      "subscriptionInstanceId": "instance:synthetic-create",
+      "aggregateRevision": 5,
+      "operationState": "RESERVED",
+      "decision": {
+        "decisionKind": "ENTITLEMENT",
+        "policyVersion": 3,
+        "policyDigest": "sha256:98683bd474b068c74e1a19121e51673c50bb2de899c13dec4d0d03f55771a089",
+        "action": "CREATE_GAME",
+        "target": {
+          "targetId": "create-draft:11111111-1111-4111-8111-000000000002",
+          "stationId": "11111111-1111-4111-8111-000000000003",
+          "eventTypeId": "viva:direction:4588:type:1613",
+          "productTypeId": null,
+          "durationMinutes": 60,
+          "startsAt": "2035-04-02T09:00:00.000Z"
+        },
+        "usageUnits": 1,
+        "money": {
+          "basePriceMinor": 150000,
+          "discountMinor": 150000,
+          "surchargeMinor": 0,
+          "finalPriceMinor": 0,
+          "currency": "RUB"
+        }
+      },
+      "blockers": []
+    }
+  }
+}

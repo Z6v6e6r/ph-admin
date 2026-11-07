@@ -1,5 +1,10 @@
+import { LocalOperation, commandInput, commandIdentity, digest, object, uuid, assertLocalOnly, operations, operationView, LOCAL_OPERATION_LIMIT } from './tournament-local-operation.contract';
+import { TRUSTED_TOURNAMENT_CLIENT, TournamentGenderDecision, TournamentAdmissionRule } from './tournaments.types';
+import { PrepareTournamentOwnerDto } from './dto/prepare-tournament-owner.dto';
+import { TournamentOwnerPreparation, TournamentOwnerPreparationReason } from './tournaments.types';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -81,6 +86,7 @@ import {
 } from './tournaments.types';
 
 interface RegistrationInput {
+  trustedIdentity?: object;
   clientId?: string;
   name: string;
   phone: string;
@@ -188,6 +194,7 @@ interface PendingJoinPayment {
   checkoutUrl?: string;
   paymentExpiresAt?: string;
   eligibilitySnapshot?: {
+    genderDecision?: TournamentGenderDecision;
     decisionId: string;
     playerId: string;
     activityId: string;
@@ -370,6 +377,343 @@ export class TournamentsService {
     @Optional() private readonly playerRatingsService?: PlayerRatingsService
   ) {}
 
+  /** Nonbinding, integration-only mapping observation. Never calls an admission or provider API. */
+  private async localOperationActor(authorization?: string, token?: string) {
+    // Default off. A switch does not disable the persistent legacy-writer adoption barriers.
+    if (process.env.TOURNAMENT_LOCAL_OPERATIONS_ENABLED !== 'true') throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_DISABLED' });
+    if (!this.lkIdentityService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_AUTH_UNAVAILABLE' });
+    const { actor } = await this.lkIdentityService.verify(authorization, token);
+    if (!actor.clientId || !actor.verified || !actor.tenantKey || !/^\d{10,15}$/.test(actor.phoneNorm)) throw new ForbiddenException({ code: 'TOURNAMENT_LOCAL_ACTOR_INVALID' });
+    return actor;
+  }
+
+  async readLocalTournamentOperation(authorization: string | undefined, token: string | undefined, input: unknown) {
+    const actor = await this.localOperationActor(authorization, token);
+    if (!object(input) || Object.keys(input).sort().join(',') !== 'operationId,schemaVersion,tournamentId'
+      || input.schemaVersion !== 1 || !uuid(input.tournamentId) || !uuid(input.operationId)) throw new BadRequestException({ code: 'TOURNAMENT_LOCAL_INPUT_INVALID' });
+    const row = await this.tournamentsPersistence.readLocalParticipationTarget(input.tournamentId);
+    if (!row) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_OPERATION_NOT_FOUND' });
+    const actorHash = digest('tournament-local-actor:v1', [actor.tenantKey, actor.clientId]);
+    const op = operations(row, actor.tenantKey).find(x => x.operationId === input.operationId && x.actorHash === actorHash);
+    if (!op) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_OPERATION_NOT_FOUND' });
+    return operationView(row, op);
+  }
+
+  async executeLocalTournamentOperation(authorization: string | undefined, token: string | undefined, key: unknown, input: unknown) {
+    const actor = await this.localOperationActor(authorization, token);
+    const command = commandInput(input);
+    const identity = commandIdentity(actor.tenantKey, actor.clientId!, key, command);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await this.tournamentsPersistence.readLocalParticipationTarget(command.tournamentId);
+      if (!row) throw new NotFoundException({ code: 'TOURNAMENT_LOCAL_TARGET_NOT_FOUND' });
+      const journal = operations(row, actor.tenantKey);
+      const previous = journal.find(x => x.keyHash === identity.keyHash);
+      if (previous) {
+        if (previous.requestHash !== identity.requestHash || previous.operationId !== identity.operationId
+          || previous.actorHash !== identity.actorHash) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_KEY_CONFLICT' });
+        return operationView(row, previous);
+      }
+      const activeActorJoins = journal.filter(x => x.outcome === 'REGISTERED' && x.actorHash === identity.actorHash
+        && !journal.some(left => left.outcome === 'LEFT' && left.generation === x.generation));
+      if (command.action === 'JOIN' && activeActorJoins.some(x => x.phone !== actor.phoneNorm)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_ACTOR_BINDING_CHANGED' });
+      assertLocalOnly(row);
+      let receiptPhone = actor.phoneNorm;
+      let mappingHash: string; let eligibility: LocalOperation['eligibility'];
+      let outcome: LocalOperation['outcome']; let reason: LocalOperation['reason']; let generation: string | null = null;
+      let participants = row.participants;
+      if (command.action === 'JOIN') {
+        if (!['PLANNED','REGISTRATION','RUNNING'].includes(row.status)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_CLOSED' });
+        const prepared = await this.prepareTournamentOwner(authorization, token, { tournamentId: command.tournamentId, date: command.date });
+        if (prepared.status !== 'RESOLVED' || prepared.owner !== 'CUP_CUSTOM' || prepared.binding.exerciseId !== null
+          || prepared.binding.customTournamentId !== row.id || prepared.binding.customUpdatedAt !== row.updatedAt) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_MAPPING_UNAVAILABLE' });
+        mappingHash = prepared.binding.mappingSha256.slice(7);
+        if (!/^[a-f0-9]{64}$/.test(mappingHash)) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_MAPPING_UNAVAILABLE' });
+        if (!this.playerRatingsService) throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_ELIGIBILITY_UNAVAILABLE' });
+        const level = await this.playerRatingsService.resolveCanonicalLevelByIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
+        const access = this.evaluateAccess(row as CustomTournament, level?.levelLabel);
+        if (!access.ok) throw new ForbiddenException({ code: access.code });
+        const trusted = this.rememberRegistrationIdentity({ clientId: actor.clientId, phone: actor.phoneNorm });
+        const gender = await this.checkGenderAdmission(row as CustomTournament, { ...trusted, trustedIdentity: trusted });
+        if (!gender.ok) throw new ForbiddenException({ code: gender.code });
+        eligibility = { gender: gender.decision.gender, playerGender: gender.decision.playerGender, levelLabel: level?.levelLabel ?? null, accessLevels: [...row.accessLevels], ruleUpdatedAt: gender.decision.updatedAt };
+        if (activeActorJoins.length > 0 || [...row.participants, ...row.waitlist].some((p: any) => p.phone === actor.phoneNorm)) {
+          outcome = 'REJECTED'; reason = 'MEMBERSHIP_EXISTS';
+        } else if (row.participants.length >= row.maxPlayers) {
+          // WAITLIST creation and promotion are deliberately outside this owner subset.
+          outcome = 'REJECTED'; reason = 'FULL';
+        } else {
+          outcome = 'REGISTERED'; reason = 'REGISTERED'; generation = identity.operationId;
+          participants = [...row.participants, { id: generation, name: actor.name || 'Player', phone: actor.phoneNorm,
+            ...(level?.levelLabel ? { levelLabel: level.levelLabel } : {}), gender: gender.decision.playerGender ?? 'MIXED',
+            paymentStatus: 'UNPAID', status: 'REGISTERED', registeredAt: new Date().toISOString() }];
+        }
+      } else {
+        const original = journal.find(x => x.operationId === command.originalJoinOperationId && x.actorHash === identity.actorHash
+          && x.command.action === 'JOIN' && x.command.date === command.date && x.outcome === 'REGISTERED');
+        if (!original) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_ORIGINAL_REQUIRED' });
+        mappingHash = original.mappingHash; eligibility = original.eligibility; receiptPhone = original.phone;
+        const current = row.participants.filter((p: any) => p.id === original.generation || p.phone === original.phone);
+        if (current.length !== 1 || current[0].id !== original.generation || current[0].phone !== original.phone
+          || current[0].status !== 'REGISTERED' || current[0].paymentStatus !== 'UNPAID'
+          || journal.some(x => x.outcome === 'LEFT' && x.generation === original.generation)) {
+          outcome = 'REJECTED'; reason = 'GENERATION_NOT_CURRENT';
+        } else {
+          outcome = 'LEFT'; reason = 'LEFT'; generation = original.generation;
+          participants = row.participants.filter((p: any) => p.id !== original.generation);
+        }
+      }
+      // Reserve one future LEAVE entry for every original JOIN not yet durably left.
+      const activeGenerations = journal.filter(x => x.outcome === 'REGISTERED'
+        && !journal.some(left => left.outcome === 'LEFT' && left.generation === x.generation)).length;
+      const nextActive = activeGenerations + (outcome === 'REGISTERED' ? 1 : outcome === 'LEFT' ? -1 : 0);
+      if (journal.length + 1 + nextActive > LOCAL_OPERATION_LIMIT) throw new ConflictException({ code: 'TOURNAMENT_LOCAL_JOURNAL_FULL' });
+      const operation: LocalOperation = { schemaVersion: 1, tenantKey: actor.tenantKey, phone: receiptPhone, ...identity,
+        command, outcome, reason, generation, mappingHash, eligibility, committedAt: new Date().toISOString(), audit: 'TOURNAMENT_LOCAL_OPERATION_V1' };
+      try {
+        const changed = await this.tournamentsPersistence.commitLocalParticipation(row, operation, participants);
+        if (!changed) continue;
+        this.invalidatePublicDirectoryCache();
+        return operationView(changed, operation);
+      } catch {
+        // A lost Mongo ACK is not permission to replace an operation. Only exact primary-majority readback counts.
+        const found = await this.tournamentsPersistence.readLocalParticipationTarget(command.tournamentId);
+        const committed = found && operations(found, actor.tenantKey).find(x => x.operationId === identity.operationId
+          && x.actorHash === identity.actorHash && x.requestHash === identity.requestHash);
+        if (found && committed) return operationView(found, committed);
+        throw new ServiceUnavailableException({ code: 'TOURNAMENT_LOCAL_RESULT_UNKNOWN' });
+      }
+    }
+    throw new ConflictException({ code: 'TOURNAMENT_LOCAL_CONCURRENT_CHANGE' });
+  }
+
+  async prepareTournamentOwner(
+    authorization: string | undefined,
+    integrationToken: string | undefined,
+    input: PrepareTournamentOwnerDto
+  ): Promise<TournamentOwnerPreparation> {
+    if (!this.lkIdentityService) throw new ServiceUnavailableException('LK identity is unavailable');
+    // Existing verifier fixes the configured tenant; no client-selected tenant or header identity.
+    const { actor } = await this.lkIdentityService.verify(authorization, integrationToken);
+    const record = (value: unknown): Record<string, unknown> | null =>
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown> : null;
+    const dateKey = (value: unknown): value is string => typeof value === 'string'
+      && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && Number.isFinite(Date.parse(value + 'T00:00:00.000Z'))
+      && new Date(value + 'T00:00:00.000Z').toISOString().slice(0, 10) === value;
+    const body = record(input);
+    if (!body || Object.keys(body).sort().join(',') !== 'date,tournamentId'
+      || typeof body.tournamentId !== 'string' || /[\r\n]/.test(body.tournamentId)
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.tournamentId)
+      || !dateKey(body.date)) {
+      throw new BadRequestException({ code: 'TOURNAMENT_OWNER_PREPARATION_INVALID', message: 'Invalid owner preparation input' });
+    }
+    const now = Date.now();
+    const common = { schemaVersion: 1 as const, nonBinding: true as const,
+      tournamentId: input.tournamentId, date: input.date, observedAt: new Date(now).toISOString() };
+    const unknown = (reason: TournamentOwnerPreparationReason): TournamentOwnerPreparation =>
+      ({ ...common, status: 'UNKNOWN', owner: null, binding: null, reason });
+    const identifier = (value: unknown): value is string => typeof value === 'string'
+      && !/[\r\n]/.test(value) && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+    const timestamp = (value: unknown): value is string => typeof value === 'string'
+      && dateKey(value.slice(0, 10))
+      && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value)
+      && Number.isFinite(Date.parse(value)) && Date.parse(value) <= now;
+    const publicId = (id: string): string => {
+      const bytes = createHash('sha256').update(`phub-public-tournament-v1:${id}`).digest().subarray(0, 16);
+      bytes[6] = (bytes[6]! & 15) | 64; bytes[8] = (bytes[8]! & 63) | 128;
+      const hex = bytes.toString('hex');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    };
+    let observed: Awaited<ReturnType<VivaTournamentSnapshotService['readOwnerPreparationSnapshot']>>;
+    let customs: Record<string, unknown>[];
+    try {
+      observed = await this.vivaTournamentSnapshotService?.readOwnerPreparationSnapshot() ?? null;
+      if (!observed) return unknown('SNAPSHOT_UNAVAILABLE');
+      customs = await this.tournamentsPersistence.readOwnerPreparationCustomRecords();
+    } catch {
+      return unknown('READ_UNAVAILABLE');
+    }
+    const snapshot = record(observed.document);
+    const dateFreshness = record(snapshot?.dateLastSuccessfulAt);
+    const dayObservedAt = dateFreshness?.[input.date];
+    if (!snapshot || !dateKey(snapshot.windowFrom) || !dateKey(snapshot.windowTo)
+      || snapshot.windowFrom > input.date || snapshot.windowTo < input.date
+      || !timestamp(snapshot.generatedAt) || !timestamp(snapshot.lastSuccessfulAt)
+      || !timestamp(dayObservedAt) || Date.parse(dayObservedAt) > Date.parse(snapshot.generatedAt)
+      || Date.parse(snapshot.lastSuccessfulAt) > Date.parse(snapshot.generatedAt)
+      || !Number.isFinite(observed.freshnessIntervalMs)
+      || observed.freshnessIntervalMs < 1000 || observed.freshnessIntervalMs > 300_000) {
+      return unknown('DATA_INVALID');
+    }
+    // Full-window refresh can be partial. Only the explicit successful dated observation counts.
+    if (now - Date.parse(dayObservedAt) > observed.freshnessIntervalMs) return unknown('SNAPSHOT_STALE');
+    if (!Array.isArray(snapshot.tournaments) || !Array.isArray(customs)
+      || snapshot.tournamentsCount !== snapshot.tournaments.length) return unknown('DATA_INVALID');
+    if (snapshot.tournaments.length > 10_000 || customs.length > 500) return unknown('READ_LIMIT_EXCEEDED');
+    const sources = snapshot.tournaments.map(record);
+    if (sources.some((row) => !row || !identifier(row.id))) return unknown('DATA_INVALID');
+    const sourceRows = sources as Record<string, unknown>[];
+    const validOptionalId = (row: Record<string, unknown>, key: string) =>
+      row[key] === undefined || row[key] === null || identifier(row[key]);
+    const mappingParentsValid = (row: Record<string, unknown>): boolean => {
+      const types = record(row.ownerPreparationMappingTypes);
+      return Boolean(types && Object.keys(types).sort().join(',') === 'booking,bookingViva,details,joinFlow,joinFlowViva'
+        && ['missing', 'null', 'object'].includes(String(types.details))
+        && ['booking', 'bookingViva', 'joinFlow', 'joinFlowViva']
+          .every((key) => ['missing', 'object'].includes(String(types[key]))));
+    };
+    if (sourceRows.some((row) => !validOptionalId(row, 'exerciseId'))
+      || sourceRows.some((row) => row.source !== 'VIVA')
+      || customs.some((row) => !record(row) || !identifier(row.id) || !mappingParentsValid(row)
+        || !validOptionalId(row, 'sourceTournamentId') || !validOptionalId(row, 'exerciseId')
+        || typeof row.name !== 'string' || !row.name.trim() || !timestamp(row.updatedAt)
+        || !Object.values(TournamentStatus).includes(row.status as TournamentStatus)
+        || (row.archived !== undefined && typeof row.archived !== 'boolean')
+        || (row.isPublic !== undefined && typeof row.isPublic !== 'boolean')
+        || !Array.isArray(row.accessLevels) || row.accessLevels.some((value) => typeof value !== 'string')
+        || !['MALE', 'FEMALE', 'MIXED'].includes(String(row.gender))
+        || (row.details !== undefined && row.details !== null && !record(row.details)))) return unknown('DATA_INVALID');
+    if (new Set(sourceRows.map((row) => row.id)).size !== sourceRows.length
+      || new Set(customs.map((row) => row.id)).size !== customs.length) return unknown('MAPPING_AMBIGUOUS');
+    const sourceDay = sourceRows.filter((row) => typeof row.startsAt === 'string' && row.startsAt.slice(0, 10) === input.date);
+    if (sourceDay.length > 500) return unknown('READ_LIMIT_EXCEEDED');
+    const dated = (row: Record<string, unknown>) => this.matchesTournamentListFilters(
+      row as unknown as Tournament, { date: input.date, now: new Date(now) });
+    const sourceIds = new Set(sourceDay.map((row) => row.id));
+    const candidates = [
+      ...sourceDay.map((row) => ({ row, source: row })),
+      ...customs.filter((row) => row.archived !== true && dated(row)
+        && (!row.sourceTournamentId || !sourceIds.has(row.sourceTournamentId)))
+        .map((row) => ({ row, source: null as Record<string, unknown> | null }))
+    ].filter(({ row }) => publicId(row.id as string) === input.tournamentId);
+    if (candidates.length !== 1) return unknown(candidates.length ? 'MAPPING_AMBIGUOUS' : 'TARGET_NOT_FOUND');
+    const candidate = candidates[0]!;
+    let source = candidate.source;
+    const bookingRefs = (row: Record<string, unknown>): unknown[] => {
+      const details = record(row.details);
+      const values: unknown[] = [];
+      for (const container of ['booking', 'joinFlow']) {
+        const booking = record(details?.[container]);
+        if (details?.[container] !== undefined && !booking) values.push(false);
+        const viva = record(booking?.viva);
+        if (booking?.viva !== undefined && !viva) values.push(false);
+        for (const value of [booking?.vivaExerciseId, booking?.exerciseId, viva?.exerciseId]) {
+          if (value !== undefined && value !== null) values.push(value);
+        }
+      }
+      return values;
+    };
+    if (customs.some((row) => bookingRefs(row).some((value) => !identifier(value)))) return unknown('DATA_INVALID');
+    if (!source) {
+      const refs = [candidate.row.sourceTournamentId, candidate.row.exerciseId, ...bookingRefs(candidate.row)].filter(identifier);
+      const matches = sourceDay.filter((row) => refs.includes(row.id as string) || refs.includes(row.exerciseId as string));
+      if (matches.length > 1) return unknown('MAPPING_AMBIGUOUS');
+      if (refs.length && matches.length === 0) return unknown('SOURCE_UNAVAILABLE');
+      source = matches[0] ?? null;
+    }
+    if (source && (!identifier(source.exerciseId)
+      || sourceRows.filter((row) => row.exerciseId === source!.exerciseId).length !== 1)) {
+      return unknown(identifier(source.exerciseId) ? 'MAPPING_AMBIGUOUS' : 'DATA_INVALID');
+    }
+    const refs = new Set([candidate.row.id, source?.id, source?.exerciseId].filter(identifier));
+    const matches = customs.filter((row) => [row.id, row.sourceTournamentId, row.exerciseId, ...bookingRefs(row)]
+      .some((value) => identifier(value) && refs.has(value)));
+    if (matches.length > 1) return unknown('MAPPING_AMBIGUOUS');
+    const custom = matches[0] ?? null;
+    if (!source && !custom) return unknown('DATA_INVALID');
+    if (custom?.archived === true) return unknown('DATA_INVALID');
+    if (custom && source) {
+      if (![custom.sourceTournamentId, custom.exerciseId, ...bookingRefs(custom)]
+        .some((value) => value === source!.id || value === source!.exerciseId)) return unknown('MAPPING_AMBIGUOUS');
+      if ((custom.sourceTournamentId && ![source.id, source.exerciseId].includes(custom.sourceTournamentId))
+        || (custom.exerciseId && custom.exerciseId !== source.exerciseId)
+        || bookingRefs(custom).some((value) => value !== source!.exerciseId)) return unknown('MAPPING_AMBIGUOUS');
+    }
+    const visible = (row: Record<string, unknown>) => row.isPublic !== false
+      && (row.isPublic === undefined || typeof row.isPublic === 'boolean')
+      && (row.rawStatus ?? row.status) === 'REGISTRATION'
+      && typeof row.name === 'string' && row.name.trim().length > 0
+      && typeof row.maxPlayers === 'number' && Number.isInteger(row.maxPlayers) && row.maxPlayers > 0
+      && typeof row.startsAt === 'string' && typeof row.endsAt === 'string'
+      && Number.isFinite(Date.parse(row.startsAt)) && Number.isFinite(Date.parse(row.endsAt))
+      && Date.parse(row.endsAt) > Date.parse(row.startsAt) && dated(row);
+    if ((source && (!visible(source) || typeof source.participantsCount !== 'number'
+      || !Number.isFinite(source.participantsCount) || source.participantsCount < 0)) || (custom && !visible(custom))) return unknown('TARGET_NOT_FOUND');
+    if (custom && (!timestamp(custom.updatedAt) || !Array.isArray(custom.accessLevels)
+      || custom.accessLevels.some((value) => typeof value !== 'string')
+      || !['MALE', 'FEMALE', 'MIXED'].includes(String(custom.gender)))) return unknown('DATA_INVALID');
+    if (source?.updatedAt !== undefined && !timestamp(source.updatedAt)) return unknown('DATA_INVALID');
+    const owner = custom ? 'CUP_CUSTOM' as const : 'VIVA_SOURCE' as const;
+    const binding = {
+      feedId: candidate.row.id as string,
+      exerciseId: source ? source.exerciseId as string : null,
+      customTournamentId: custom ? custom.id as string : null,
+      customUpdatedAt: custom ? custom.updatedAt as string : null,
+      sourceUpdatedAt: source?.updatedAt as string | undefined ?? null,
+      snapshotGeneratedAt: snapshot.generatedAt,
+      snapshotLastSuccessfulAt: dayObservedAt
+    };
+    const facts = (row: Record<string, unknown> | null) => row ? [
+      row.id, row.sourceTournamentId ?? null, row.exerciseId ?? null,
+      row.updatedAt ?? null, row.rawStatus ?? row.status, row.startsAt, row.endsAt,
+      row.isPublic ?? null, row.accessLevels ?? null, row.gender ?? null,
+      row.maxPlayers, row.tournamentType ?? null, row.exerciseTypeId ?? null,
+      bookingRefs(row).sort()
+    ] : null;
+    const mappingSha256 = 'sha256:' + createHash('sha256')
+      .update('tournament-owner-preparation:v1\0')
+      .update(JSON.stringify([actor.tenantKey, input.tournamentId, input.date, owner,
+        Object.values(binding), facts(source), facts(custom)]))
+      .digest('hex');
+    return { ...common, status: 'RESOLVED', owner, binding: { ...binding, mappingSha256 }, reason: null };
+  }
+
+  private readonly trustedRegistrationIdentities = new WeakMap<object, { clientId?: string; phone: string }>();
+
+  private rememberRegistrationIdentity<T extends { clientId?: string; phone: string }>(client: T): T {
+    this.trustedRegistrationIdentities.set(client, { clientId: client.clientId, phone: client.phone });
+    return client;
+  }
+
+  private async checkGenderAdmission(tournament: CustomTournament, input: {
+    phone?: string; clientId?: string; trustedIdentity?: object; vivaAuthorizationHeader?: string;
+  }): Promise<{ ok: true; decision: TournamentGenderDecision } | {
+    ok: false; code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string;
+  }> {
+    const changed = { ok: false as const, code: 'TOURNAMENT_RULE_CHANGED' as const,
+      message: 'Правила турнира изменились или не подтверждены. Обновите страницу.' };
+    let rule: TournamentAdmissionRule | null;
+    try { rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id); }
+    catch { return changed; }
+    if (!rule || rule.updatedAt !== tournament.updatedAt || rule.gender !== tournament.gender) return changed;
+    if (rule.gender === 'MIXED') return { ok: true, decision: { ...rule,
+      playerGender: null, evaluatedAt: new Date().toISOString() } };
+    const unknown = { ok: false as const, code: 'PLAYER_GENDER_REQUIRED' as const,
+      message: 'Не удалось подтвердить пол в профиле. Укажите его в личном кабинете и повторите запись.' };
+    try {
+      let identity = input.trustedIdentity && this.trustedRegistrationIdentities.get(input.trustedIdentity);
+      if (!identity && input.vivaAuthorizationHeader && this.lkIdentityService) {
+        const verified = await this.lkIdentityService.verifyTrustedBearer(input.vivaAuthorizationHeader);
+        identity = { clientId: verified.actor.clientId, phone: verified.actor.phoneNorm };
+      }
+      if (!identity?.clientId || this.normalizePhone(input.phone) !== identity.phone
+        || (input.clientId !== undefined && input.clientId !== identity.clientId)
+        || !this.vivaAdminService) return unknown;
+      const gender = await this.vivaAdminService.readTournamentProfileSex({
+        clientId: identity.clientId, phone: identity.phone
+      });
+      if (!gender) return unknown;
+      if (gender !== rule.gender) return { ok: false, code: 'GENDER_NOT_ALLOWED',
+        message: rule.gender === 'MALE' ? 'Этот турнир предназначен для мужчин.' : 'Этот турнир предназначен для женщин.' };
+      return { ok: true, decision: { ...rule, playerGender: gender, evaluatedAt: new Date().toISOString() } };
+    } catch { return unknown; }
+  }
+
+  private genderRefusal(tournament: CustomTournament, result: { code: 'PLAYER_GENDER_REQUIRED' | 'GENDER_NOT_ALLOWED' | 'TOURNAMENT_RULE_CHANGED'; message: string }): TournamentRegistrationResponse {
+    return { ok: false, ...result, tournamentId: tournament.id, tournamentSlug: tournament.slug };
+  }
+
   async resolveTrustedLkRegistrationClient(
     authorizationHeader?: string
   ): Promise<{ clientId?: string; name: string; phone: string; levelLabel?: string }> {
@@ -385,12 +729,12 @@ export class TournamentsService {
       clientId: actor.clientId,
       phone: actor.phoneNorm
     });
-    return {
+    return this.rememberRegistrationIdentity({
       clientId: actor.clientId,
       name: actor.name || actor.phoneNorm,
       phone: actor.phoneNorm,
       ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
-    };
+    });
   }
 
   async resolveCanonicalLkRegistrationClientByVerifiedPhone(input: {
@@ -413,12 +757,12 @@ export class TournamentsService {
     const canonicalLevel = await this.playerRatingsService.resolveCanonicalLevelByIdentity({
       phone
     });
-    return {
+    return this.rememberRegistrationIdentity({
       ...(canonicalLevel?.clientId ? { clientId: canonicalLevel.clientId } : {}),
       name: this.pickString(input.name) ?? phone,
       phone,
       ...(canonicalLevel ? { levelLabel: canonicalLevel.levelLabel } : {})
-    };
+    });
   }
 
   async generateSchedule(
@@ -836,6 +1180,21 @@ export class TournamentsService {
     return this.createOrUpdateCustomTournamentFromSource(sourceTournament, mutation);
   }
 
+  /** Applies the existing per-permission station scope to the exact raw CAS preimage. */
+  assertOrganizerTargetAccess(row: Record<string, unknown>, user?: RequestUser): void {
+    if (!user || user.authSource !== 'token' || !user.id || user.id.length > 200
+      || !hasAdminPermission(user.permissions, 'tournaments:write')) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_ORGANIZER_FORBIDDEN' });
+    }
+    const scope = getStationScopeForPermission(user, 'tournaments:write');
+    if (scope === null) return;
+    const candidates = [row.studioId, row.studioName, row.locationName, row.courtName]
+      .filter((v): v is string => typeof v === 'string').map(v => this.normalizeFilterValue(v)).filter(Boolean);
+    if (!scope.some(v => candidates.includes(this.normalizeFilterValue(v)))) {
+      throw new NotFoundException({ code: 'TOURNAMENT_ORGANIZER_NOT_FOUND' });
+    }
+  }
+
   async updateCustom(
     id: string,
     mutation: UpdateCustomTournamentMutation,
@@ -1250,6 +1609,25 @@ export class TournamentsService {
       }
     }
 
+    if (!this.findPendingJoinPayment(tournament, normalizedPhone ?? '')) {
+      const gender = await this.checkGenderAdmission(tournament, {
+        phone: normalizedPhone, clientId: normalizedClient.clientId,
+        trustedIdentity: client[TRUSTED_TOURNAMENT_CLIENT]
+      });
+      if (!gender.ok) return { ok: false, code: gender.code, message: gender.message,
+        tournament: publicTournament, client: normalizedClient, access,
+        missingFields: [], waitlistAllowed: false, payment };
+      const occupied = tournament.participants.length + this.getPendingJoinPayments(tournament)
+        .filter(item => this.isCapacityHoldingPendingJoinPayment(item)).length;
+      if (gender.decision.gender !== 'MIXED' && !payment.required
+        && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA'
+        && occupied < Math.max(2, Number(tournament.maxPlayers || 0) || 8)) {
+        return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
+          message: 'Бесплатная внешняя запись для этого турнира пока недоступна. Нужен защищённый способ участия.',
+          tournament: publicTournament, client: normalizedClient, access, missingFields: [], waitlistAllowed: false, payment };
+      }
+    }
+
     if (missingFields.includes('phone')) {
       return {
         ok: false,
@@ -1411,22 +1789,6 @@ export class TournamentsService {
       };
     }
 
-    const participant = await this.enrichTournamentParticipantWithViva({
-      name: String(input.name || '').trim() || normalizedPhone,
-      phone: normalizedPhone,
-      levelLabel: normalizedLevel,
-      gender: input.gender ?? 'MIXED',
-      paymentStatus: payment.required ? 'PAID' : 'UNPAID',
-      status: 'REGISTERED' as const,
-      registeredAt: new Date().toISOString(),
-      paidAt: payment.required ? new Date().toISOString() : undefined,
-      notes: this.composeRegistrationNotes(
-        this.pickString(input.notes) ?? undefined,
-        payment,
-        input.selectedPurchaseOptionId
-      )
-    });
-
     const existingParticipant = tournament.participants.find(
       (item) => this.normalizePhone(item.phone) === normalizedPhone
     );
@@ -1457,6 +1819,29 @@ export class TournamentsService {
       };
     }
 
+    if (this.findPendingJoinPayment(tournament, normalizedPhone)) return {
+      ok: false, code: 'BOOKING_FAILED', message: 'Существующая оплата требует продолжения исходной операции.',
+      tournamentId: tournament.id, tournamentSlug: tournament.slug
+    };
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
+    const participant = await this.enrichTournamentParticipantWithViva({
+      name: String(input.name || '').trim() || normalizedPhone,
+      phone: normalizedPhone,
+      levelLabel: normalizedLevel,
+      gender: gender.decision.playerGender ?? 'MIXED',
+      paymentStatus: payment.required ? 'PAID' : 'UNPAID',
+      status: 'REGISTERED' as const,
+      registeredAt: new Date().toISOString(),
+      paidAt: payment.required ? new Date().toISOString() : undefined,
+      notes: this.composeRegistrationNotes(
+        this.pickString(input.notes) ?? undefined,
+        payment,
+        input.selectedPurchaseOptionId
+      )
+    });
+
     const maxPlayers = Math.max(2, Number(tournament.maxPlayers || 0) || 8);
     const reservedPaymentSeats = this.getPendingJoinPayments(tournament).filter(
       (item) => this.isCapacityHoldingPendingJoinPayment(item)
@@ -1470,9 +1855,12 @@ export class TournamentsService {
           waitlistReason: 'FULL'
         }
       ];
-      await this.updateCustom(tournament.id, {
-        waitlist: nextWaitlist
-      });
+      const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
+        tournament.id, normalizedPhone, nextWaitlist[nextWaitlist.length - 1], gender.decision
+      );
+      if (!appended) return this.genderRefusal(tournament, { code: 'TOURNAMENT_RULE_CHANGED', message: 'Состав или правила турнира изменились. Обновите страницу.' });
+      this.invalidatePublicDirectoryCache();
+      await this.publishTournamentToSelectedCommunities(await this.hydrateCustomTournament(appended));
       return {
         ok: true,
         code: 'WAITLISTED',
@@ -1484,6 +1872,11 @@ export class TournamentsService {
       };
     }
 
+    if (gender.decision.gender !== 'MIXED' && this.resolveSourceTournamentProvider(tournament) !== 'NON_VIVA') {
+      return { ok: false, code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', tournamentId: tournament.id,
+        tournamentSlug: tournament.slug,
+        message: 'Для этого турнира нужна защищённая запись. Бесплатная внешняя запись пока недоступна; выберите защищённый способ участия, если он предложен.' };
+    }
     const vivaBookingCreated = await this.createSourceTournamentBooking(tournament, {
       name: participant.name,
       phone: normalizedPhone,
@@ -1504,7 +1897,7 @@ export class TournamentsService {
     const appended = await this.tournamentsPersistence.appendPublicParticipantIfCapacity(
       tournament.id,
       normalizedPhone,
-      participant
+      participant, gender.decision
     );
     if (!appended) {
       const current = await this.requireCustomBySlug(tournament.slug);
@@ -1728,6 +2121,15 @@ export class TournamentsService {
       routeExerciseId,
       tournamentPayload
     );
+    const rule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
+    if (!rule || rule.gender !== 'MIXED' || rule.updatedAt !== tournament.updatedAt) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED',
+        message: 'Используйте защищённую запись на странице турнира. Этот способ оплаты недоступен для ограниченного турнира.' });
+    }
+    const suppliedClientId = this.pickString(clientRecord.id);
+    if (!authProfile.clientId || (suppliedClientId && suppliedClientId !== authProfile.clientId)) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_IDENTITY_MISMATCH', message: 'Не удалось подтвердить игрока.' });
+    }
     const booking = this.resolveBookingConfig(tournament);
     const bookingExerciseId =
       this.pickString(booking.vivaExerciseId)
@@ -1767,9 +2169,13 @@ export class TournamentsService {
     }
 
     const returnUrls = this.toRecord(body.returnUrls) ?? {};
+    const latestRule = await this.tournamentsPersistence.readPublicAdmissionRule(tournament.id);
+    if (!latestRule || latestRule.gender !== rule.gender || latestRule.updatedAt !== rule.updatedAt) {
+      throw new ForbiddenException({ code: 'TOURNAMENT_SECURE_JOIN_REQUIRED', message: 'Правила изменились. Используйте защищённую запись на странице турнира.' });
+    }
     const vivaCheckout = await this.vivaAdminService.createTournamentEnergyCheckout({
       clientPhone,
-      clientId: this.pickString(clientRecord.id) ?? authProfile.clientId,
+      clientId: authProfile.clientId,
       studioId,
       paymentMethod: 'SMS',
       baseAmountMinor: pricing.baseAmountMinor,
@@ -1981,6 +2387,9 @@ export class TournamentsService {
       };
     }
 
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
     if (selectedClientSubscription) {
       return this.startPublicJoinSubscriptionBooking(
         tournament,
@@ -1988,7 +2397,8 @@ export class TournamentsService {
         selectedClientSubscription,
         normalizedPhone,
         normalizedLevel,
-        input
+        input,
+        gender.decision
       );
     }
 
@@ -2016,11 +2426,11 @@ export class TournamentsService {
       eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
         tournament,
         normalizedPhone,
-        normalizedLevel
+        normalizedLevel, gender.decision
       ),
       createdAt: new Date().toISOString()
     };
-    const reserved = await this.savePendingJoinPayment(tournament, pending);
+    const reserved = await this.savePendingJoinPayment(tournament, pending, gender.decision);
     if (!reserved) {
       return {
         ok: false,
@@ -2186,11 +2596,14 @@ export class TournamentsService {
       };
     }
 
+    const gender = await this.checkGenderAdmission(tournament, input);
+    if (!gender.ok) return this.genderRefusal(tournament, gender);
+
     const participant = await this.enrichTournamentParticipantWithViva({
       name: String(input.name || '').trim() || normalizedPhone,
       phone: normalizedPhone,
       levelLabel: this.normalizeLevel(input.levelLabel) ?? undefined,
-      gender: input.gender ?? 'MIXED',
+      gender: gender.decision.playerGender ?? 'MIXED',
       paymentStatus: 'UNPAID',
       status: 'WAITLIST' as const,
       waitlistReason: 'LEVEL_MISMATCH',
@@ -2199,9 +2612,12 @@ export class TournamentsService {
     });
 
     const nextWaitlist: TournamentParticipant[] = [...tournament.waitlist, participant];
-    await this.updateCustom(tournament.id, {
-      waitlist: nextWaitlist
-    });
+    const appended = await this.tournamentsPersistence.appendPublicWaitlistWithAdmission(
+      tournament.id, normalizedPhone, participant, gender.decision
+    );
+    if (!appended) return this.genderRefusal(tournament, { code: 'TOURNAMENT_RULE_CHANGED', message: 'Состав или правила турнира изменились. Обновите страницу.' });
+    this.invalidatePublicDirectoryCache();
+    await this.publishTournamentToSelectedCommunities(await this.hydrateCustomTournament(appended));
 
     return {
       ok: true,
@@ -2275,10 +2691,20 @@ export class TournamentsService {
     const userInfo = verifiedClaims
       ? await this.fetchLkUserInfoSafe(token)
       : await this.fetchLkUserInfo(token);
-    const merged = {
-      ...(claims ?? {}),
-      ...(userInfo ?? {})
-    };
+    // Decoded fallback claims may deny an expired token, but never grant identity.
+    // Successful authenticated userinfo is the sole authority when signature verification failed.
+    if (verifiedClaims && userInfo) {
+      for (const extract of [this.extractLkAuthPhone, this.extractLkAuthClientId, this.extractLkAuthTenantKey]) {
+        const signed = extract.call(this, verifiedClaims);
+        const observed = extract.call(this, userInfo);
+        if (signed && observed && signed !== observed) {
+          throw new ForbiddenException('Verified checkout identity sources disagree');
+        }
+      }
+    }
+    const merged = verifiedClaims
+      ? { ...verifiedClaims, ...(userInfo ?? {}) }
+      : (userInfo ?? {});
     const phone = this.extractLkAuthPhone(merged);
     if (!phone) {
       throw new UnauthorizedException('LK auth token does not contain a phone');
@@ -6018,6 +6444,14 @@ export class TournamentsService {
     const snapshotResult = this.pickString(rawSnapshot?.result);
     const snapshotActivityType = this.pickString(rawSnapshot?.activityType);
     const snapshotReasonCode = this.pickString(rawSnapshot?.reasonCode);
+    const rawGender = this.toRecord(rawSnapshot?.genderDecision);
+    const genderDecision: TournamentGenderDecision | undefined = rawGender
+      && ['MALE', 'FEMALE', 'MIXED'].includes(String(rawGender.gender))
+      && (rawGender.gender === 'MIXED' ? rawGender.playerGender === null : rawGender.playerGender === rawGender.gender)
+      && typeof rawGender.updatedAt === 'string' && Number.isFinite(Date.parse(rawGender.updatedAt))
+      && typeof rawGender.evaluatedAt === 'string' && Number.isFinite(Date.parse(rawGender.evaluatedAt))
+      ? { gender: rawGender.gender as TournamentGender, playerGender: rawGender.playerGender as 'MALE' | 'FEMALE' | null,
+        updatedAt: rawGender.updatedAt, evaluatedAt: rawGender.evaluatedAt } : undefined;
     const eligibilitySnapshot = rawSnapshot
       && this.pickString(rawSnapshot.decisionId)
       && this.pickString(rawSnapshot.playerId)
@@ -6026,6 +6460,7 @@ export class TournamentsService {
       && (snapshotResult === 'ALLOWED' || snapshotResult === 'WARNING')
       && (snapshotReasonCode === 'LEVEL_ALLOWED' || snapshotReasonCode === 'LEVEL_NOT_RESTRICTED')
       ? {
+          ...(genderDecision ? { genderDecision } : {}),
           decisionId: this.pickString(rawSnapshot.decisionId) as string,
           playerId: this.pickString(rawSnapshot.playerId) as string,
           activityId: this.pickString(rawSnapshot.activityId) as string,
@@ -6153,7 +6588,8 @@ export class TournamentsService {
   private buildTournamentEligibilitySnapshot(
     tournament: CustomTournament,
     playerId: string,
-    levelLabel?: string
+    levelLabel?: string,
+    genderDecision?: TournamentGenderDecision
   ): NonNullable<PendingJoinPayment['eligibilitySnapshot']> {
     const evaluatedAt = new Date().toISOString();
     const playerLevel = this.parseLevelDescriptor(levelLabel);
@@ -6167,6 +6603,7 @@ export class TournamentsService {
       ? Math.max(...activityLevels.map((value) => value.maxScore))
       : undefined;
     return {
+      ...(genderDecision ? { genderDecision } : {}),
       decisionId: randomUUID(),
       playerId,
       activityId: tournament.id,
@@ -6342,7 +6779,8 @@ export class TournamentsService {
     subscription: TournamentClientSubscription,
     normalizedPhone: string,
     normalizedLevel: string | undefined,
-    input: JoinPurchaseTransactionInput
+    input: JoinPurchaseTransactionInput,
+    genderDecision: TournamentGenderDecision
   ): Promise<TournamentRegistrationResponse> {
     const clientId = this.pickString(input.clientId);
     const exerciseId = this.pickString(booking.vivaExerciseId);
@@ -6377,11 +6815,11 @@ export class TournamentsService {
       eligibilitySnapshot: this.buildTournamentEligibilitySnapshot(
         tournament,
         normalizedPhone,
-        normalizedLevel
+        normalizedLevel, genderDecision
       ),
       createdAt: new Date().toISOString()
     };
-    if (!await this.savePendingJoinPayment(tournament, pending)) {
+    if (!await this.savePendingJoinPayment(tournament, pending, genderDecision)) {
       return {
         ok: false,
         code: 'BOOKING_FAILED',
@@ -6642,7 +7080,7 @@ export class TournamentsService {
       name: pending.name ?? fallback.fallbackName ?? pending.phone,
       phone: pending.phone,
       levelLabel: pending.levelLabel ?? fallback.fallbackLevelLabel,
-      gender: 'MIXED',
+      gender: pending.eligibilitySnapshot?.genderDecision?.playerGender ?? 'MIXED',
       paymentStatus: 'PAID',
       status: 'REGISTERED',
       registeredAt: paidAt,
@@ -6689,12 +7127,13 @@ export class TournamentsService {
 
   private async savePendingJoinPayment(
     tournament: CustomTournament,
-    pending: PendingJoinPayment
+    pending: PendingJoinPayment,
+    admissionRule?: TournamentAdmissionRule
   ): Promise<boolean> {
     const enrichedPending = await this.enrichPendingJoinPaymentWithViva(pending);
     const reserved = await this.tournamentsPersistence.reservePublicJoinPayment(
       tournament.id,
-      enrichedPending as unknown as Record<string, unknown>
+      enrichedPending as unknown as Record<string, unknown>, admissionRule
     );
     if (reserved) {
       this.invalidatePublicDirectoryCache();

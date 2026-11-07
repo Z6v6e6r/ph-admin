@@ -241,6 +241,31 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     return this.refreshEnabled;
   }
 
+  /** Persisted observation only. No memory fallback, source refresh, audit or index creation. */
+  async readOwnerPreparationSnapshot(): Promise<{
+    document: Record<string, unknown>;
+    freshnessIntervalMs: number;
+  } | null> {
+    if (!this.readModelEnabled || !this.mongoUri) return null;
+    const collection = await this.collection(false);
+    const rows = await collection.find({ key: this.snapshotKey }, {
+      readPreference: 'primary', readConcern: { level: 'majority' }, maxTimeMS: 2000,
+      projection: {
+        _id: 0, key: 1, generatedAt: 1, lastSuccessfulAt: 1,
+        windowFrom: 1, windowTo: 1, dateLastSuccessfulAt: 1, tournamentsCount: 1,
+        'tournaments.id': 1, 'tournaments.exerciseId': 1, 'tournaments.name': 1,
+        'tournaments.source': 1, 'tournaments.startsAt': 1, 'tournaments.endsAt': 1,
+        'tournaments.updatedAt': 1, 'tournaments.isPublic': 1, 'tournaments.status': 1,
+        'tournaments.rawStatus': 1, 'tournaments.maxPlayers': 1,
+        'tournaments.participantsCount': 1, 'tournaments.accessLevels': 1,
+        'tournaments.gender': 1, 'tournaments.exerciseTypeId': 1,
+        'tournaments.tournamentType': 1
+      }
+    }).limit(2).toArray();
+    if (rows.length !== 1) return null;
+    return { document: rows[0]!, freshnessIntervalMs: this.activeRefreshIntervalMs };
+  }
+
   async listTournaments(options?: VivaTournamentSnapshotListOptions): Promise<Tournament[] | null> {
     if (!this.refreshEnabled && !this.readModelEnabled) {
       return null;
@@ -992,7 +1017,7 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     }
   }
 
-  private async collection(): Promise<Collection<VivaTournamentSnapshotDocument>> {
+  private async collection(ensureIndexes = true): Promise<Collection<VivaTournamentSnapshotDocument>> {
     if (!this.mongoUri) {
       throw new Error('Viva tournament snapshot MongoDB is not configured');
     }
@@ -1006,7 +1031,7 @@ export class VivaTournamentSnapshotService implements OnModuleInit, OnModuleDest
     }
 
     const collection = this.requireDb().collection<VivaTournamentSnapshotDocument>(this.collectionName);
-    if (!this.indexesEnsured) {
+    if (ensureIndexes && !this.indexesEnsured) {
       try {
         await ensureMongoIndex(collection, { key: 1 }, { unique: true });
         await ensureMongoIndex(collection, { lastSuccessfulAt: -1 });

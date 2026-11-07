@@ -71,3 +71,105 @@ test('records subscription errors without exception body and ignores unlisted ra
   await lastValueFrom(interceptor.intercept(context('/unknown/private-id'), { handle: () => of({}) }));
   assert.equal(rows.length, 1);
 });
+
+
+test('readback success/failure use bounded labels without identity, proof, body or query contents', async () => {
+  const rows: Recorded[] = [];
+  const interceptor = new RequestMetricsInterceptor({
+    record: (route: string, _duration: number, status: number, sample: Record<string, unknown>) => {
+      rows.push({ route, status, sample });
+    }
+  } as any);
+  for (const base of ['/api/internal/subscriptions', '/internal/subscriptions']) {
+    const fullPath = `${base}/entitlements/readback`;
+    for (const status of [200, 503]) {
+      const response = { schemaVersion: 1, operationId: 'booking:private-operation',
+        subscriptionInstanceId: 'subscription:private-instance', operationState: 'FAILED',
+        compensationState: 'APPLIED', releaseReason: 'PROVIDER_REJECTED', providerBookingId: null };
+      const result = lastValueFrom(interceptor.intercept(context('/entitlements/readback', status,
+        `${fullPath}?token=private-query-token&operationId=private-query-operation`, base), {
+        handle: () => status === 200 ? of(response) : throwError(() => new HttpException({
+          ...response, proof: 'private-proof', token: 'private-error-token'
+        }, status))
+      }));
+      if (status === 200) await result; else await assert.rejects(result);
+      assert.equal(rows[rows.length - 1]?.route, `POST ${fullPath}`);
+      assert.equal(rows[rows.length - 1]?.status, status);
+    }
+    await lastValueFrom(interceptor.intercept(context('', 200, `${fullPath}?token=private-fallback`, ''), {
+      handle: () => of({ privateBody: 'private-response' })
+    }));
+    assert.equal(rows[rows.length - 1]?.route, `POST ${fullPath}`);
+  }
+  assert.equal(rows.length, 6);
+  assert.doesNotMatch(JSON.stringify(rows), /private|secret|authorization|token|proof|operationId|subscriptionInstanceId|FAILED|APPLIED|PROVIDER_REJECTED/);
+  await lastValueFrom(interceptor.intercept(context('/entitlements/readback/private-operation'), {
+    handle: () => of({})
+  }));
+  assert.equal(rows.length, 6, 'unlisted operation-specific paths never create metric labels');
+});
+
+test('preflight success/failure use bounded labels without identity, proof, body or query contents', async () => {
+  const rows: Recorded[] = [];
+  const interceptor = new RequestMetricsInterceptor({
+    record: (route: string, _duration: number, status: number, sample: Record<string, unknown>) => {
+      rows.push({ route, status, sample });
+    }
+  } as any);
+  for (const base of ['/api/internal/subscriptions', '/internal/subscriptions']) {
+    const fullPath = `${base}/entitlements/preflight`;
+    for (const status of [200, 503]) {
+      const response = { schemaVersion: 1, nonBinding: true,
+        subscriptionInstanceId: 'subscription:private-instance', action: 'JOIN_GAME',
+        target: { targetId: 'exercise:private-target' },
+        expectations: { schemaVersion: 1, policyVersion: 3, policyDigest: 'private-policy-digest',
+          targetSnapshot: { snapshotId: 'private-snapshot', revision: 1, evidenceRef: 'private-evidence' } } };
+      const result = lastValueFrom(interceptor.intercept(context('/entitlements/preflight', status,
+        `${fullPath}?token=private-query-token&operationId=private-query-operation`, base), {
+        handle: () => status === 200 ? of(response) : throwError(() => new HttpException({
+          ...response, proof: 'private-proof', token: 'private-error-token'
+        }, status))
+      }));
+      if (status === 200) await result; else await assert.rejects(result);
+      assert.equal(rows[rows.length - 1]?.route, `POST ${fullPath}`);
+      assert.equal(rows[rows.length - 1]?.status, status);
+    }
+    await lastValueFrom(interceptor.intercept(context('', 200, `${fullPath}?token=private-fallback`, ''), {
+      handle: () => of({ privateBody: 'private-response' })
+    }));
+    assert.equal(rows[rows.length - 1]?.route, `POST ${fullPath}`);
+  }
+  assert.equal(rows.length, 6);
+  assert.doesNotMatch(JSON.stringify(rows), /private|secret|authorization|token|proof|operationId|subscriptionInstanceId|FAILED|APPLIED|PROVIDER_REJECTED/);
+  await lastValueFrom(interceptor.intercept(context('/entitlements/preflight/private-operation'), {
+    handle: () => of({})
+  }));
+  assert.equal(rows.length, 6, 'unlisted operation-specific paths never create metric labels');
+});
+
+test('owner preparation tracks only the exact private route and never query/body identity', async () => {
+  const rows: Recorded[] = [];
+  const interceptor = new RequestMetricsInterceptor({
+    record: (route: string, _duration: number, status: number, sample: Record<string, unknown>) => {
+      rows.push({ route, status, sample });
+    }
+  } as any);
+  await lastValueFrom(interceptor.intercept(context('/owner-preparations', 200,
+    '/api/internal/tournaments/owner-preparations?actor=private-actor', '/api/internal/tournaments'), {
+    handle: () => of({ status: 'RESOLVED', binding: { feedId: 'private-feed' } })
+  }));
+  assert.equal(rows[0]?.route, 'POST /api/internal/tournaments/owner-preparations');
+  assert.ok(!JSON.stringify(rows).includes('private-'));
+  assert.ok(!JSON.stringify(rows).includes('secret'));
+});
+
+test('local tournament command/read metrics never include actor, command or receipt payloads', async () => {
+ const rows:Recorded[]=[];const interceptor=new RequestMetricsInterceptor({record:(route:string,_d:number,status:number,sample:Record<string,unknown>)=>rows.push({route,status,sample})} as any);
+ for(const prefix of ['/api/internal/tournaments','/internal/tournaments'])for(const suffix of ['/local-operations','/local-operations/read'])for(const status of [200,409]) {
+   const result=lastValueFrom(interceptor.intercept(context(suffix,status,prefix+suffix+'?key=private-key',prefix),{handle:()=>status===200?of({operation:{phone:'private-phone',generation:'private-generation'},token:'secret'}):throwError(()=>new HttpException({phone:'private-phone'},status))}));
+   if(status===200)await result;else await assert.rejects(result);
+   assert.equal(rows.at(-1)?.route,'POST '+prefix+suffix);
+ }
+ assert.equal(rows.length,8);assert.doesNotMatch(JSON.stringify(rows),/private|secret|phone|generation|token|operationId/);
+ await lastValueFrom(interceptor.intercept(context('/local-operations/private-id',200,'/internal/tournaments/local-operations/private-id','/internal/tournaments'),{handle:()=>of({})}));assert.equal(rows.length,8);
+});

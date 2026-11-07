@@ -13,6 +13,12 @@ export enum TournamentStatus {
 }
 
 export type TournamentSource = 'LK_PADELHUB' | 'VIVA' | 'CUSTOM';
+// Internal identity capability; symbols never enter public JSON. Only service-created identities are accepted.
+export const TRUSTED_TOURNAMENT_CLIENT = Symbol('trusted-tournament-client');
+export interface TournamentAdmissionRule { gender: TournamentGender; updatedAt: string }
+export interface TournamentGenderDecision extends TournamentAdmissionRule {
+  playerGender: 'MALE' | 'FEMALE' | null; evaluatedAt: string;
+}
 export type TournamentGender = 'MALE' | 'FEMALE' | 'MIXED';
 export type TournamentPaymentStatus = 'UNPAID' | 'PAID';
 export type TournamentParticipantStatus = 'REGISTERED' | 'WAITLIST';
@@ -22,7 +28,11 @@ export type TournamentAccessCheckCode =
   | 'PLAYER_LEVEL_REQUIRED'
   | 'LEVEL_NOT_ALLOWED'
   | 'PHONE_REQUIRED'
-  | 'TOURNAMENT_NOT_FOUND';
+  | 'TOURNAMENT_NOT_FOUND'
+  | 'PLAYER_GENDER_REQUIRED'
+  | 'GENDER_NOT_ALLOWED'
+  | 'TOURNAMENT_SECURE_JOIN_REQUIRED'
+  | 'TOURNAMENT_RULE_CHANGED';
 
 export interface TournamentParticipant {
   id?: string;
@@ -433,6 +443,7 @@ export interface TournamentClientSubscription {
 }
 
 export interface TournamentPublicClientProfile {
+  [TRUSTED_TOURNAMENT_CLIENT]?: object;
   id: string;
   /** Authoritative Viva client id resolved by a trusted backend identity lookup. */
   clientId?: string;
@@ -447,6 +458,10 @@ export interface TournamentPublicClientProfile {
 }
 
 export type TournamentJoinFlowCode =
+  | 'PLAYER_GENDER_REQUIRED'
+  | 'GENDER_NOT_ALLOWED'
+  | 'TOURNAMENT_SECURE_JOIN_REQUIRED'
+  | 'TOURNAMENT_RULE_CHANGED'
   | 'AUTH_REQUIRED'
   | 'PHONE_VERIFICATION_REQUIRED'
   | 'PROFILE_REQUIRED'
@@ -498,3 +513,36 @@ export interface TournamentJoinFlowResponse {
   cabinetUrl?: string;
   vivaAuthorizationHeader?: string;
 }
+
+/** Read-only observation, never an admission receipt, ownership lease or eligibility proof. */
+export type TournamentOwnerPreparationReason =
+  | 'SNAPSHOT_UNAVAILABLE' | 'SNAPSHOT_STALE' | 'TARGET_NOT_FOUND'
+  | 'MAPPING_AMBIGUOUS' | 'SOURCE_UNAVAILABLE' | 'DATA_INVALID'
+  | 'READ_LIMIT_EXCEEDED' | 'READ_UNAVAILABLE';
+export interface TournamentOwnerPreparationBinding {
+  feedId: string;
+  exerciseId: string | null;
+  customTournamentId: string | null;
+  customUpdatedAt: string | null;
+  sourceUpdatedAt: string | null;
+  snapshotGeneratedAt: string;
+  snapshotLastSuccessfulAt: string;
+  mappingSha256: string;
+}
+export type TournamentOwnerPreparation = {
+  schemaVersion: 1;
+  nonBinding: true;
+  tournamentId: string;
+  date: string;
+  observedAt: string;
+} & ({
+  status: 'RESOLVED';
+  owner: 'CUP_CUSTOM' | 'VIVA_SOURCE';
+  binding: TournamentOwnerPreparationBinding;
+  reason: null;
+} | {
+  status: 'UNKNOWN';
+  owner: null;
+  binding: null;
+  reason: TournamentOwnerPreparationReason;
+});

@@ -1,3 +1,4 @@
+import { parseQuarterDescriptor, quarterDescriptorDigest, quarterDictionaryRevision, quarterDictionaryEvidence, assertQuarterPolicy, CreateQuarterDescriptor } from './subscription-create-quarter-contract';
 import {
   BadRequestException,
   ConflictException,
@@ -187,7 +188,9 @@ export class SubscriptionPublicationService {
       }
     };
     const publication: StoredSubscriptionPolicyPublication = {
-      schemaVersion: 3,
+      ...(plan.preview.createQuarterDescriptor ? { createQuarterDescriptor: plan.preview.createQuarterDescriptor,
+        createQuarterDescriptorDigest: plan.preview.createQuarterDescriptorDigest } : {}),
+      schemaVersion: plan.preview.createQuarterDescriptor ? 4 : 3,
       publicationId,
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
@@ -291,6 +294,7 @@ export class SubscriptionPublicationService {
       providerStudioId: string;
       dictionaryRevision: string;
       dictionaryEvidenceRef: string;
+      createQuarterDescriptor?: CreateQuarterDescriptor;
     },
     adapterVersion: ReturnType<typeof requirePublicationEnforcementAdapter>
   ): Promise<PublicationPlan> {
@@ -426,6 +430,10 @@ export class SubscriptionPublicationService {
       }
     }
 
+    if (input.createQuarterDescriptor) {
+      try { assertQuarterPolicy(input.createQuarterDescriptor, runtimeProjection); }
+      catch { throw new UnprocessableEntityException({ code: 'SUBSCRIPTIONS_PUBLICATION_QUARTER_INVALID', message: 'Policy does not support the approved organizer quarter' }); }
+    }
     const providerEvidence = await this.vivaAdmin.inspectSubscriptionProduct({
       productId: binding.externalId,
       clientId: this.previewClientId(),
@@ -437,8 +445,11 @@ export class SubscriptionPublicationService {
         message: 'Viva product evidence does not match the policy candidate'
       });
     }
+    const quarterFields = input.createQuarterDescriptor ? { createQuarterDescriptor: input.createQuarterDescriptor,
+      createQuarterDescriptorDigest: quarterDescriptorDigest(input.createQuarterDescriptor) } : {};
     const impactPreviewRef = this.reference('impact:subscription-publication', {
       schemaVersion: 2,
+      ...quarterFields,
       tenantId,
       subscriptionTypeId: input.subscriptionTypeId,
       policyVersion: input.policyVersion,
@@ -463,6 +474,7 @@ export class SubscriptionPublicationService {
       previousPublication,
       mapping: existingMapping,
       preview: {
+        ...quarterFields,
         subscriptionTypeId: input.subscriptionTypeId,
         policyVersion: input.policyVersion,
         policyStatus: 'DRAFT',
@@ -666,6 +678,7 @@ export class SubscriptionPublicationService {
     providerStudioId: string;
     dictionaryRevision: string;
     dictionaryEvidenceRef: string;
+    createQuarterDescriptor?: CreateQuarterDescriptor;
   } {
     const normalizedTypeId = String(subscriptionTypeId ?? '').trim();
     const normalizedVersion = String(rawVersion ?? '').trim();
@@ -690,7 +703,16 @@ export class SubscriptionPublicationService {
         message: 'Canonical dictionary evidence must be a content-addressed reference'
       });
     }
+    let descriptor: CreateQuarterDescriptor | undefined;
+    if (Object.prototype.hasOwnProperty.call(dto, 'createQuarterDescriptor')) {
+      try {
+        descriptor = parseQuarterDescriptor(dto.createQuarterDescriptor);
+        if (dictionaryRevision !== quarterDictionaryRevision(descriptor)
+          || dictionaryEvidenceRef !== quarterDictionaryEvidence(descriptor)) throw new Error();
+      } catch { throw new BadRequestException({ code: 'SUBSCRIPTIONS_PUBLICATION_QUARTER_INVALID', message: 'Quarter descriptor and dictionary evidence must match' }); }
+    }
     return {
+      ...(descriptor ? { createQuarterDescriptor: descriptor } : {}),
       subscriptionTypeId: normalizedTypeId,
       policyVersion,
       providerStudioId,
@@ -764,6 +786,8 @@ export class SubscriptionPublicationService {
           runtimeAdapterId: input.plan.preview.runtimeCompatibility.adapterId,
           runtimeContractVersion: input.plan.preview.runtimeCompatibility.contractVersion,
           runtimeCapabilityDigest: input.plan.preview.runtimeCompatibility.capabilityDigest,
+          ...(input.plan.preview.createQuarterDescriptor ? { createQuarterDescriptorJson: JSON.stringify(input.plan.preview.createQuarterDescriptor),
+            createQuarterDescriptorDigest: input.plan.preview.createQuarterDescriptorDigest } : {}),
           dictionaryRevision: input.plan.preview.dictionaryRevision,
           dictionaryEvidenceRef: input.plan.preview.dictionaryEvidenceRef,
           providerEvidenceRef: input.plan.preview.providerEvidence.evidenceRef,

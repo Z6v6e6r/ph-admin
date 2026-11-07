@@ -1,0 +1,24 @@
+name: QR links permissions and destination regression
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/qr-links/**', 'src/common/rbac/**', 'src/auth/**', 'test/qr-links*', 'test/auth-rbac*', 'package*.json', '.github/workflows/qr-links.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:qr-links
+      - run: npm run test:auth-rbac
+      - run: npx tsc -p tsconfig.build.json --noEmit --incremental false
+      - run: npm run build

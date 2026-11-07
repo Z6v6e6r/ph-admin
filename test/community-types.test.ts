@@ -45,8 +45,8 @@ async function main() {
   const collection = { async updateOne(filter: any, mutation: any) {
     writes++; payloads.push({ filter, mutation });
     assert.equal(mutation.$set.members, undefined, 'settings must never overwrite concurrent members');
-    if (conflict) return { matchedCount: 0 };
-    Object.assign(document, mutation.$set); return { matchedCount: 1 };
+    if (conflict) return { acknowledged: true, matchedCount: 0 };
+    Object.assign(document, mutation.$set); return { acknowledged: true, matchedCount: 1 };
   } };
   persistence.findDocumentWithSourceById = async () => ({ document: structuredClone(document), collection });
   persistence.findCommunityById = async () => persistence.toCommunity(document);

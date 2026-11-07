@@ -275,6 +275,7 @@ export class TournamentsController {
     }
 
     const outcome = await this.tournamentsService.registerPublicParticipantByTournamentRef(id, {
+      trustedIdentity: client,
       name: client.name || client.phone,
       phone: client.phone,
       levelLabel: client.levelLabel,

@@ -1,6 +1,7 @@
 import { supportClientReplyBinding } from './support-persistence.service';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
+import { legacyMaxHeld } from './legacy-max-custody';
 import { supportDiagnostics } from './support-diagnostics';
 import {
   BadRequestException,
@@ -314,6 +315,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
     persistence: SupportPersistenceRuntimeDiagnostics;
     connectors: ReturnType<SupportConnectorRegistry['listEntries']>;
+    legacyMaxCustody: { states: Record<string, number>; held: number; pendingWrites: number; writeFailures: number };
   }> {
     this.ensureStaff(user);
     const dialogs = Array.from(this.dialogs.values());
@@ -326,6 +328,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       0
     );
     const persistence = await this.persistence.getRuntimeDiagnostics();
+    const legacyMaxStates: Record<string, number> = { PENDING: 0, LEASED: 0, SENT: 0, FAILED: 0 };
+    let held = 0;
+    for (const command of this.outbox.values()) if (isMaxConnector(command.connector)) {
+      const state = Object.prototype.hasOwnProperty.call(legacyMaxStates, command.status) ? command.status : 'OTHER';
+      legacyMaxStates[state] = (legacyMaxStates[state] ?? 0) + 1;
+      if (legacyMaxHeld(command)) held++;
+    }
     return {
       timestamp: new Date().toISOString(),
       inMemory: {
@@ -347,7 +356,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         lastError: this.lastPersistenceSyncError
       },
       persistence,
-      connectors: this.connectorRegistry.listEntries()
+      connectors: this.connectorRegistry.listEntries(),
+      legacyMaxCustody: { states: legacyMaxStates, held, ...this.persistence.legacyMaxCustodyDiagnostics() }
     };
   }
 
@@ -413,11 +423,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return;
     }
     this.noReplyQuickReplyTimer = setInterval(() => {
-      this.sweepNoReplyQuickReplies();
+      void this.sweepNoReplyQuickReplies().catch(() => this.logger.error('SUPPORT_QUICK_REPLY_WRITE_UNKNOWN'));
     }, 30000);
   }
 
-  private sweepNoReplyQuickReplies(): void {
+  private async sweepNoReplyQuickReplies(): Promise<void> {
     for (const dialog of this.dialogs.values()) {
       if (dialog.status !== SupportDialogStatus.OPEN || !this.canReplyToDialog(dialog)) {
         continue;
@@ -468,7 +478,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         if (completed) this.noReplyQuickReplySignatures.delete(completed);
       }
 
-      void this.sendQuickReplyAutoResponse(
+      await this.sendQuickReplyAutoResponse(
         dialog,
         this.getLatestClientMessage(dialog.id) ?? staffMessage,
         connector,
@@ -718,8 +728,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         this.canReplyToDialog(dialog)
       ) {
         if (outbox) {
-          this.outbox.set(outbox.id, outbox);
-          this.persistence.persistOutboxCommand(outbox);
+          outbox = await this.acceptOutbox(outbox);
           dialog.lastReplyConnector = normalizedDto.connector;
         }
       }
@@ -1088,7 +1097,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       meta: this.buildStaffMessageMeta(user)
     };
 
-    const outbox = this.createOutboxCommand(dialog, message, connector);
+    let outbox = this.createOutboxCommand(dialog, message, connector);
     if (outbox && isMaxConnector(outbox.connector) && maxOutboxMode() === 'receipt-v1') await this.persistence.enqueueMaxOutbox(outbox);
     this.appendMessage(dialog, message);
     dialog.lastStaffMessageAt = createdAt;
@@ -1111,8 +1120,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     this.persistDialog(dialog);
 
     if (outbox) {
-      this.outbox.set(outbox.id, outbox);
-      this.persistence.persistOutboxCommand(outbox);
+      outbox = await this.acceptOutbox(outbox);
     }
 
     if (dto.quickReplyRuleId) {
@@ -1180,6 +1188,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     if (isMaxConnector(connector) && receiptProtocol !== undefined) {
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
+    if (isMaxConnector(connector)) return this.pullLegacyMax(connector, limit, leaseSec);
     const now = Date.now();
     this.sweepOutboxAttemptLimit(connector, now);
     const leasedUntil = new Date(now + Math.max(5, leaseSec) * 1000).toISOString();
@@ -1212,6 +1221,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
 
     return commands.map((command) => this.outbox.get(command.id) ?? command);
+  }
+
+  private async acceptOutbox(command: SupportOutboxCommand): Promise<SupportOutboxCommand> {
+    if (isMaxConnector(command.connector) && maxOutboxMode() === 'legacy') {
+      const durable = await this.persistence.persistOutboxCommand(command, 'enqueue');
+      this.outbox.set(durable.id, durable);
+      return durable;
+    }
+    this.outbox.set(command.id, command);
+    this.persistence.persistOutboxCommand(command);
+    return command;
+  }
+
+  private async pullLegacyMax(connector: SupportConnectorRoute, limit: number, leaseSec: number): Promise<SupportOutboxCommand[]> {
+    const now = Date.now(), commands: SupportOutboxCommand[] = [];
+    const rows = Array.from(this.outbox.values()).filter(row => row.connector === connector && !legacyMaxHeld(row)
+      && (row.status === SupportOutboxStatus.PENDING || (row.status === SupportOutboxStatus.LEASED && this.toTimestamp(row.leasedUntil) <= now)))
+      .sort((a, b) => this.toTimestamp(a.createdAt) - this.toTimestamp(b.createdAt));
+    for (const row of rows) {
+      if (commands.length >= Math.min(50, Math.max(1, limit))) break;
+      const uncertain = row.status === SupportOutboxStatus.LEASED;
+      const exhausted = this.outboxMaxAttempts > 0 && row.attempts >= this.outboxMaxAttempts;
+      const next: SupportOutboxCommand = uncertain || exhausted
+        ? { ...row, status: SupportOutboxStatus.FAILED, leasedUntil: undefined,
+          lastError: uncertain ? 'DELIVERY_UNKNOWN' : 'ATTEMPTS_EXHAUSTED' }
+        : { ...row, status: SupportOutboxStatus.LEASED, leasedUntil: new Date(now + Math.max(5, leaseSec) * 1000).toISOString(), attempts: row.attempts + 1,
+          meta: { ...row.meta, legacyMaxLeaseId: randomUUID() } };
+      try {
+        const durable = await this.persistence.persistOutboxCommand(next, uncertain ? 'hold' : exhausted ? 'fail' : 'lease', row);
+        this.outbox.set(durable.id, durable);
+        if (!uncertain && !exhausted) commands.push(durable);
+      } catch (error) {
+        if (!(error instanceof ConflictException)) throw error;
+        // Another request won this exact durable claim. No second dispatch and no fresh-preimage retry.
+      }
+    }
+    return commands;
   }
 
   private sweepOutboxAttemptLimit(
@@ -1269,6 +1315,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       leasedUntil: undefined,
       lastError: undefined
     };
+    if (isMaxConnector(command.connector)) {
+      const durable = await this.persistence.persistOutboxCommand(updated, 'ack', command);
+      this.outbox.set(durable.id, durable);
+      return durable;
+    }
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
     supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
@@ -1293,6 +1344,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       leasedUntil: undefined,
       lastError: String(error ?? '').trim() || undefined
     };
+    if (isMaxConnector(command.connector)) {
+      // The legacy failure body carries no attempt token or classified provider evidence.
+      // Even requeue=true cannot prove that the original provider send did not succeed.
+      const durable = await this.persistence.persistOutboxCommand({ ...updated, status: SupportOutboxStatus.FAILED }, 'hold', command);
+      this.outbox.set(durable.id, durable);
+      return durable;
+    }
     this.outbox.set(updated.id, updated);
     this.persistence.persistOutboxCommand(updated);
     return updated;
@@ -2541,7 +2599,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
     };
 
-    const outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
+    let outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
     if (outbox && isMaxConnector(outbox.connector) && maxOutboxMode() === 'receipt-v1') await this.persistence.enqueueMaxOutbox(outbox);
     if (outbox && isMaxConnector(connector) && maxOutboxMode() === 'receipt-v1') {
       serviceMessage.createdAt = outbox.createdAt;
@@ -2551,8 +2609,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog.lastReplyConnector = connector;
     dialog.updatedAt = createdAt;
     if (outbox) {
-      this.outbox.set(outbox.id, outbox);
-      this.persistence.persistOutboxCommand(outbox);
+      outbox = await this.acceptOutbox(outbox);
     }
 
     this.quickReplies.registerUsage(

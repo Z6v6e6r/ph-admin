@@ -1,0 +1,35 @@
+name: residency-check
+on:
+  pull_request:
+    paths:
+      - 'src/residency-check/**'
+      - 'client-sdk/phab-residency-check.*'
+      - 'test/residency-check-*'
+      - 'test/resident-profile.*'
+      - 'docs/residency-check.md'
+      - 'deploy/server-147/nginx-residency-check-location.conf'
+      - 'package*.json'
+      - 'tsconfig*.json'
+      - '.github/workflows/residency-check.yml'
+  push:
+    branches:
+      - 'agent/residency-check-20261105'
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npx tsc -p tsconfig.build.json --noEmit --incremental false
+      - name: Focused residency-check tests
+        run: npm run test:residency-check

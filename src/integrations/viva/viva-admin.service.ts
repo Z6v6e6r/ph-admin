@@ -24,6 +24,13 @@ export interface VivaClientCabinetLookup {
   levelLabel?: string;
 }
 
+export interface VivaAdminClientProfile {
+  clientId: string;
+  displayName?: string;
+  avatarUrl: string | null;
+  phone?: string;
+}
+
 export interface VivaAdminClientSearchResult {
   clientId: string;
   clientLabel?: string;
@@ -390,6 +397,33 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return Array.from(clientsById.values());
   }
 
+  /** Exact actor profile only. No cache, phone search, identity fallback or profile mutation. */
+  async readTournamentProfileSex(identity: { clientId: string; phone: string }): Promise<'MALE' | 'FEMALE' | null> {
+    const clientId = this.normalizeOptional(identity.clientId);
+    const phone = this.normalizePhone(identity.phone);
+    if (!clientId || !phone) throw new BadRequestException('Tournament profile identity is required');
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const baseUrl = this.normalizeBaseUrl(this.envEndUserBaseUrlRaw)
+      || this.normalizeBaseUrl(this.envBaseUrlRaw) || resolved.config.baseUrl;
+    const widgetId = this.normalizeString(this.envEndUserWidgetId) || 'iSkq6G';
+    const url = new URL(`/end-user/api/v1/${encodeURIComponent(widgetId)}/profile`, `${baseUrl}/`).toString();
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}`,
+        'x-user-id': clientId, 'x-user-phone': phone },
+      redirect: 'error', signal: this.buildAbortSignal()
+    });
+    if (response.status !== 200 || response.redirected || response.url !== url) {
+      throw new ServiceUnavailableException('Tournament profile unavailable');
+    }
+    const profile: unknown = await response.json().catch(() => null);
+    if (!this.isRecord(profile) || profile.id !== clientId
+      || this.normalizePhone(typeof profile.phone === 'string' ? profile.phone : undefined) !== phone) {
+      throw new ServiceUnavailableException('Tournament profile identity mismatch');
+    }
+    return profile.sex === 'M' ? 'MALE' : profile.sex === 'F' ? 'FEMALE' : null;
+  }
+
   async getClientRating(clientId?: string): Promise<VivaAdminClientRatingSnapshot> {
     const normalizedClientId = this.normalizeOptional(clientId);
     if (!normalizedClientId) {
@@ -424,6 +458,37 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
       fields: {
         levelNumeric: levelNumericField
       }
+    };
+  }
+
+  /**
+   * Read-only display profile for the resident check screen. Uses the existing
+   * server-side Viva Admin credential and the existing client read route; it never
+   * accepts a client-supplied provider identifier and never writes Viva state.
+   */
+  async getClientProfile(clientId?: string): Promise<VivaAdminClientProfile | null> {
+    const normalizedClientId = this.normalizeOptional(clientId);
+    if (!normalizedClientId) {
+      return null;
+    }
+
+    const token = await this.requireAccessToken();
+    const resolved = await this.getResolvedSettings();
+    const payload = await this.fetchAdminJson(
+      `/api/v1/clients/${encodeURIComponent(normalizedClientId)}`,
+      token,
+      resolved.config.baseUrl
+    );
+    const client = this.unwrapRecord(payload);
+    if (!client) {
+      return null;
+    }
+
+    return {
+      clientId: this.extractClientId(client) ?? normalizedClientId,
+      displayName: this.extractClientName(client),
+      avatarUrl: this.extractClientAvatarUrl(client) ?? null,
+      phone: this.extractClientPhone(client)
     };
   }
 

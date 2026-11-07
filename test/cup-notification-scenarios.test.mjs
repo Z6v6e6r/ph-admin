@@ -124,6 +124,24 @@ test('supports negative birthday offset, selected channel order and mobile inbox
   assert.deepEqual(saved.channels, ['IN_APP', 'EMAIL', 'IOS_PUSH']); assert.equal(saved.active, false);
 });
 
+test('offers the game reminder default only after API capability discovery', async () => {
+  const oldApi = fixture();
+  oldApi.pane.activate(); await settle();
+  assert.equal(oldApi.field('Триггер').value, 'BOOKING_STARTS');
+  assert.equal(oldApi.field('Сдвиг, минут: минус — до события, плюс — после').value, '-120');
+
+  const currentApi = fixture({
+    listScenarios: async () => ({
+      items: [], runtimeEnabled: false,
+      catalog: [{ type: 'GAME_STARTS', available: true, reason: null }],
+    }),
+  });
+  currentApi.pane.activate(); await settle();
+  assert.equal(currentApi.field('Триггер').value, 'GAME_STARTS');
+  assert.equal(currentApi.field('Сдвиг, минут: минус — до события, плюс — после').value, '-60');
+  assert.equal(currentApi.field('Название').value, 'Напоминание участнику о предстоящей игре');
+});
+
 test('ambiguous save locks edits and replays identical body/version/key; acknowledged journal failure is not retried', async () => {
   const calls = []; let failSave = true, failJournal = false;
   const f = fixture({
