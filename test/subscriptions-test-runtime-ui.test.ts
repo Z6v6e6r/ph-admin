@@ -70,7 +70,11 @@ function testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes(): void {
 
 function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   const source = readFileSync(resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'), 'utf8');
-  assert.match(source, /data-subscriptions-tab="settings"[^>]*>Настройка подписки/);
+  assert.match(source, /data-subscriptions-tab="settings"[^>]*>Типы и правила/);
+  assert.match(source, /data-subscriptions-tab="release"[^>]*>Выпуск и продажа/);
+  assert.match(source, /data-subscriptions-tab="resident"[^>]*>Услуги резидентам/);
+  assert.match(source, /data-subscriptions-panel="release"/);
+  assert.match(source, /data-subscriptions-panel="resident"><div data-resident-rules>/);
   assert.match(source, /data-subscriptions-tab="instances"[^>]*>Список подписок/);
   assert.match(source, /data-subscriptions-tab="analytics"[^>]*>Аналитика/);
   assert.match(source, /data-subscription-active-limit-enabled/);
@@ -89,12 +93,15 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.match(source, /aria-controls="phab-subscription-type-create" data-subscription-type-toggle>\+ Добавить тип/);
   assert.match(source, /id="phab-subscription-type-create"[^>]+data-subscription-type-form/);
   assert.match(source, /phab-subscriptions-type-create phab-admin-hidden/);
-  assert.match(source, /<h3>Настройка подписки<\/h3>/);
+  assert.match(source, /phab-subscriptions-workspace/);
+  assert.match(source, /data-subscription-editor-head/);
+  assert.match(source, /<legend>Основное<\/legend>[\s\S]*?<legend>Игры<\/legend>[\s\S]*?<legend>Лимиты<\/legend>[\s\S]*?<legend>Станции<\/legend>[\s\S]*?<legend>Скидки и льготы<\/legend>/);
+  assert.match(source, /phab-subscriptions-savebar/);
   assert.doesNotMatch(source, /Одна неизменяемая версия-кандидат/);
   assert.match(source, /data-subscription-booking-window>[\s\S]*?<option>1<\/option>[\s\S]*?<option>14<\/option>/);
   assert.ok(
     source.indexOf('<span>Присоединение к играм</span>')
-      < source.indexOf('<span>Разрешённый диапазон длительности</span>')
+      < source.indexOf('data-subscription-join-min')
   );
   assert.match(source, /renderSubscriptionTypeOptions/);
   assert.match(source, /Math\.min\(4, state\.subscriptions\.types\.length\)/);
@@ -111,6 +118,8 @@ function testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit(): void {
   assert.match(source, /async function loadSubscriptionPolicyVersionsForType/);
   assert.match(source, /subscriptionPolicyTypeInput\.addEventListener\('change'/);
   assert.match(source, /state\.subscriptions\.lastPolicy = versions\.slice\(\)\.sort/);
+  assert.match(source, /if \(applyToForm\) applySubscriptionPolicyToForm\(state\.subscriptions\.lastPolicy\)/);
+  assert.match(source, /function applySubscriptionCapabilitiesToForm/);
   assert.doesNotMatch(source, /data-subscriptions-panel="instances"[\s\S]{0,500}>0 активн/);
 }
 
@@ -136,8 +145,41 @@ function testSubscriptionBenefitsUseSingleRowLayout(): void {
   assert.doesNotMatch(source, /\.phab-subscriptions-benefit\{[^}]*background:rgba\(248,246,249,.75\)/);
 }
 
+function testResidentBenefitRulesScreenUsesExistingContract(): void {
+  const source = readFileSync(resolve(process.cwd(), 'client-sdk/phab-admin-panel.js'), 'utf8');
+  // Only the existing resident-services admin routes are used; no new server contract.
+  assert.match(source, /request\('\/v1\/admin\/resident-services\/benefit-rules', 'GET'\)/);
+  assert.match(source, /request\('\/v1\/admin\/resident-services\/benefit-rules', 'POST', payload, \{ headers: commandHeaders \}\)/);
+  assert.match(source, /'\/v1\/admin\/resident-services\/benefit-rules\/' \+ encodeURIComponent\(ruleId\)/);
+  // Access follows the server flag and resident-services permissions.
+  assert.match(source, /Boolean\(cfg && cfg\.residentServicesAdminEnabled\) && hasPermission\(cfg, 'resident-services:read'\)/);
+  assert.match(source, /canAccessResidentRules\(cfg\) && hasPermission\(cfg, 'resident-services:configure'\)/);
+  assert.match(source, /'resident-services:read': \['SUPER_ADMIN'\]/);
+  // Create is idempotent; the key survives only unknown outcomes.
+  assert.match(source, /'Idempotency-Key': 'cup-resident-rule-' \+ randomId/);
+  assert.match(source, /if \(errorStatus >= 400 && errorStatus < 500\) \{[\s\S]{0,240}resident\.commandHeaders = null;/);
+  // Updates carry optimistic concurrency.
+  assert.match(source, /expectedRevision: Number\(draft\.revision\)/);
+  assert.match(source, /expectedRevision: Number\(rule\.revision\)/);
+  // Manual per-issuance rules are always a single item.
+  assert.match(source, /draft\.limitPeriod === 'MANUAL_PER_ISSUANCE' \? 1 :/);
+  assert.match(source, /RESIDENT_SERVICES_DISABLED/);
+  assert.match(source, /RESIDENT_BENEFIT_RULE_REVISION_CONFLICT/);
+  assert.match(source, /Пока для типа подписки нет правила, сотрудник станции не сможет выдать/);
+  // Rendering uses textContent for server values, not innerHTML.
+  const residentRender = source.slice(
+    source.indexOf('function renderResidentRulesTable'),
+    source.indexOf('function renderResidentBenefitRules')
+  );
+  assert.ok(residentRender.length > 0);
+  assert.doesNotMatch(residentRender, /innerHTML/);
+  const uiController = readFileSync(resolve(process.cwd(), 'src/ui/ui.controller.ts'), 'utf8');
+  assert.match(uiController, /residentServicesAdminEnabled: residentServicesEnabled\(\)/);
+}
+
 testDisabledPageIsNotServed();
 testPageIsExplicitlyFakeAndUsesOnlyTestRuntimeRoutes();
 testAdminSubscriptionSectionsAndRuntimeControlsAreExplicit();
 testSubscriptionBenefitsUseSingleRowLayout();
+testResidentBenefitRulesScreenUsesExistingContract();
 console.log('Subscription test runtime UI safety tests passed');
