@@ -497,6 +497,35 @@ export class ResidentIssuancesService {
     return this.issuanceView(issuance);
   }
 
+  /**
+   * Read-only recovery of an issuance attempt whose response was lost (for
+   * example a full page reload after a timeout). The key hash is scoped to the
+   * calling staff actor, so only the actor that sent the original command can
+   * resolve it. It never creates, replays or changes an issuance; absence means
+   * "not committed yet", not a permission to issue again.
+   */
+  async issuanceAttempt(
+    idempotencyHeader: string | undefined,
+    user: RequestUser | undefined
+  ): Promise<ResidentIssuanceView> {
+    assertResidentServicesEnabled();
+    this.repository.requireAvailable();
+    const tenantId = requireResidentServicesTenantId();
+    const pepper = requireResidentServicesTokenPepper();
+    const actorId = requireResidentStaff(user, ISSUE_PERMISSION);
+    const key = requireResidentServicesIdempotencyKey(idempotencyHeader);
+    const keyHash = hashResidentIdempotencyKey({ pepper, tenantId, actorId, key });
+    const issuance = await this.repository.issuanceByIdempotency(tenantId, keyHash);
+    const scope = residentStationScope(user, ISSUE_PERMISSION);
+    if (!issuance || (scope !== null && !scope.includes(issuance.stationId))) {
+      throw new NotFoundException({
+        code: RESIDENT_SERVICES_ERROR_CODES.ISSUANCE_NOT_FOUND,
+        message: 'Resident service issuance was not found'
+      });
+    }
+    return this.issuanceView(issuance);
+  }
+
   private replayIssuance(
     issuance: StoredResidentIssuance,
     requestHash: string

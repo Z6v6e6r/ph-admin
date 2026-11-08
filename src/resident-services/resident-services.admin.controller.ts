@@ -138,6 +138,20 @@ export class ResidentServicesAdminController {
     return result.view;
   }
 
+  /**
+   * Resolves the outcome of the caller's own issuance attempt by its
+   * Idempotency-Key after a lost response or page reload. Read-only.
+   */
+  @Get('issuance-attempts')
+  @Permissions('resident-services:issue')
+  @Header('Cache-Control', 'private, no-store')
+  issuanceAttempt(
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentUser() user: RequestUser | undefined
+  ): Promise<ResidentIssuanceView> {
+    return this.issuances.issuanceAttempt(idempotencyKey, user);
+  }
+
   @Get('issuances/:issuanceId')
   @Permissions('resident-services:read')
   @Header('Cache-Control', 'private, no-store')

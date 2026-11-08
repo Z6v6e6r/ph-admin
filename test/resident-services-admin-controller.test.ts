@@ -11,6 +11,7 @@ const EXPECTED_PERMISSIONS: Record<string, string> = {
   previewPass: 'resident-services:issue',
   issue: 'resident-services:issue',
   returnItems: 'resident-services:return',
+  issuanceAttempt: 'resident-services:issue',
   issuance: 'resident-services:read',
   journal: 'resident-services:read',
   benefitRules: 'resident-services:read',
@@ -82,6 +83,14 @@ function main(): void {
       'unexpected admin handler without an explicit expectation: ' + name
     );
   }
+
+  const attempt = prototype.issuanceAttempt as (...args: unknown[]) => unknown;
+  assert.equal(Reflect.getMetadata(PATH_METADATA, attempt), 'issuance-attempts');
+  assert.equal(
+    Reflect.getMetadata(METHOD_METADATA, attempt),
+    RequestMethod.GET,
+    'issuance attempt recovery must be a read-only GET route'
+  );
 
   const originCheck = controller as unknown as {
     assertTrustedOrigin(request: { headers: Record<string, string> }): void;
