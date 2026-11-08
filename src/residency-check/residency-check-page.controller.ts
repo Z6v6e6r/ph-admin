@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Controller, Get, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { existsSync } from 'node:fs';
@@ -160,7 +161,12 @@ export class ResidencyCheckPageController {
           (permission): permission is string => typeof permission === 'string'
         )
       : [];
-    response.send(this.renderShell(stationScope, permissions));
+    // Opaque per-login reference (not the staff id): lets the screen tell whether a
+    // persisted unresolved issuance belongs to the signed-in staff member.
+    const staffRef = authContext.user?.id
+      ? createHash('sha256').update('residency-check-staff\0' + String(authContext.user.id)).digest('hex').slice(0, 32)
+      : '';
+    response.send(this.renderShell(stationScope, permissions, staffRef));
   }
 
   /** Mirrors UiController.resolveAdminAuthContext: cookie/bearer staff session only. */
@@ -258,7 +264,8 @@ export class ResidencyCheckPageController {
 
   private renderShell(
     stationScope: ResidencyStationScope,
-    permissions: string[]
+    permissions: string[],
+    staffRef = ''
   ): string {
     const config: Record<string, unknown> = {
       // The pass token is intentionally absent: it lives only in the URL
@@ -268,6 +275,7 @@ export class ResidencyCheckPageController {
       allowedStationIds: stationScope.allowedStationIds,
       defaultStationId: stationScope.defaultStationId,
       permissions,
+      staffRef,
       demoMode: isResidencyCheckDemoMode(),
       apiBase: RESIDENCY_CHECK_API_BASE
     };

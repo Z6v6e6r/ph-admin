@@ -264,6 +264,29 @@ export class UiController {
     <script>
       (function () {
         var nextPath = ${nextPathJson};
+        // A resident pass QR (#pass=rsp1_...) survives the 302 to this page as a
+        // URL fragment. Keep it in memory only, remove it from this page's
+        // address bar/history, and hand it back to the residency check after
+        // login so staff land on the same pass instead of a dead end.
+        var residencyCheckFragment = '';
+        try {
+          var loginHash = String(window.location.hash || '');
+          if (/^#pass=rsp1_[A-Za-z0-9_-]{32,64}$/.test(loginHash)) {
+            residencyCheckFragment = loginHash;
+            if (window.history && typeof window.history.replaceState === 'function') {
+              window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+          }
+        } catch (_error) {
+          residencyCheckFragment = '';
+        }
+        function loginTarget() {
+          var target = nextPath || '/api/ui/admin';
+          if (residencyCheckFragment && /^\\/api\\/ui\\/admin\\/residency\\/check(\\?|$)/.test(target)) {
+            return target + residencyCheckFragment;
+          }
+          return target;
+        }
         var loginEl = document.getElementById('login');
         var passwordEl = document.getElementById('password');
         var submitEl = document.getElementById('submit');
@@ -302,7 +325,7 @@ export class UiController {
               // ignore localStorage errors
             }
 
-            window.location.href = nextPath || '/api/ui/admin';
+            window.location.href = loginTarget();
           } catch (error) {
             var message = error && error.message ? error.message : 'Ошибка авторизации';
             setStatus(message, true);

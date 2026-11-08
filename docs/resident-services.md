@@ -196,6 +196,7 @@ X-Resident-Services-Integration-Token: <server token>
 | POST | `/api/v1/admin/resident-services/passes/preview` | `resident-services:issue` |
 | POST | `/api/v1/admin/resident-services/issuances` | `resident-services:issue` |
 | POST | `/api/v1/admin/resident-services/issuances/:issuanceId/returns` | `resident-services:return` |
+| GET | `/api/v1/admin/resident-services/issuance-attempts` (заголовок `Idempotency-Key`) | `resident-services:issue` |
 | GET | `/api/v1/admin/resident-services/issuances/:issuanceId` | `resident-services:read` |
 | GET | `/api/v1/admin/resident-services/journal` | `resident-services:read` |
 | GET | `/api/v1/admin/resident-services/benefit-rules` | `resident-services:read` |
@@ -241,6 +242,13 @@ X-Correlation-Id: <optional>
 Повтор с тем же `Idempotency-Key` и тем же телом возвращает тот же
 `issuanceId`; другой intent под тем же ключом — `409`
 `RESIDENT_SERVICES_IDEMPOTENCY_CONFLICT`.
+
+Если ответ потерян и страница перезагружена (токена в памяти больше нет),
+исход своей попытки сотрудник читает `GET .../issuance-attempts` с тем же
+`Idempotency-Key`: 200 — та же выдача, 404 `RESIDENT_ISSUANCE_NOT_FOUND` — не
+записана (окончательно только для того же сотрудника и после истечения пропуска с запасом на повторы фиксации). Маршрут только читает;
+ключ хешируется с `actorId`, поэтому чужую попытку найти нельзя, а scope станций
+сотрудника применяется к станции выдачи.
 
 Две параллельные выдачи по одному пропуску дают ровно одну: пропуск
 переводится `ACTIVE → CONSUMED` условным CAS внутри транзакции, проигравший

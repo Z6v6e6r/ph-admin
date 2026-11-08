@@ -19,7 +19,9 @@
  *   confirms only after 2xx with response.returnId.
  * - demoMode uses deterministic local data and never touches the network.
  * - The pass token, photo URL and resident data are never written to storage,
- *   console or analytics.
+ *   console or analytics. Only an unresolved issuance attempt is marked in
+ *   sessionStorage (Idempotency-Key, station, pass expiry) so a full reload
+ *   resolves that exact attempt read-only before any new issuance.
  */
 (function () {
   'use strict';
@@ -50,7 +52,7 @@
   var ERROR_COPY = {
     RESIDENT_PASS_NOT_FOUND: 'Пропуск не найден. Проверьте QR-код или обратитесь в ЦУП.',
     RESIDENT_PASS_INVALID: 'Пропуск недействителен. Проверьте QR-код или обратитесь в ЦУП.',
-    RESIDENT_PASS_EXPIRED: 'Срок действия пропуска истёк. Обратитесь в ЦУП.',
+    RESIDENT_PASS_EXPIRED: 'QR-код клиента истёк. Попросите клиента показать новый QR и отсканируйте его.',
     RESIDENT_PASS_ALREADY_USED: 'Пропуск уже использован. Обратитесь в ЦУП.',
     RESIDENT_NOT_ACTIVE: 'Резидент не активен. Обратитесь в ЦУП.',
     RESIDENT_TERM_EXPIRED: 'Срок резидентства истёк. Обратитесь в ЦУП.',
@@ -119,6 +121,7 @@
     demoSequence: 0,
     demoReturnSequence: 0,
     busy: false,
+    recovery: null,
     pendingFocus: ''
   };
 
@@ -321,6 +324,122 @@
 
   function newCorrelationId() {
     return newIdempotencyKey();
+  }
+
+  /*
+   * Unresolved-issuance marker for recovery after a full page reload.
+   * Stores only the Idempotency-Key of the caller's own attempt, the station and
+   * the pass expiry: never the pass token, a Bearer, the photo or resident data.
+   * The key alone cannot replay an issuance (the server binds the request hash
+   * to the token) and is resolvable only by the same staff actor.
+   */
+  var PENDING_ISSUE_STORAGE_KEY = 'phab.residency.pendingIssue.v1';
+  var PENDING_ISSUE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+  // Judged only on this device's own clock (no server/client clock comparison):
+  // a pass lives at most 120s and the attempt starts after it was issued, so it
+  // has expired by createdAt + 120s. A further 180s covers the driver's commit
+  // retry window (~120s) with margin. Only after that can "not found" become a
+  // definitive "not saved".
+  var PENDING_ISSUE_MAX_PASS_TTL_MS = 120 * 1000;
+  var PENDING_ISSUE_SETTLE_MS = 180 * 1000;
+
+  function currentStaffRef() {
+    var value = readConfig().staffRef;
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  function pendingStorage() {
+    try {
+      return window.sessionStorage || null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function writePendingIssue(intent) {
+    var storage = pendingStorage();
+    if (!storage || !intent || demoMode()) {
+      return;
+    }
+    try {
+      storage.setItem(
+        PENDING_ISSUE_STORAGE_KEY,
+        JSON.stringify({
+          v: 1,
+          key: intent.key,
+          stationId: text(intent.body && intent.body.stationId),
+          staffRef: currentStaffRef(),
+          createdAt: text(intent.createdAt) || new Date().toISOString()
+        })
+      );
+    } catch (_error) {
+      // Storage may be blocked; in-memory retry still works on this page.
+    }
+  }
+
+  function clearPendingIssue() {
+    var storage = pendingStorage();
+    if (!storage) {
+      return;
+    }
+    try {
+      storage.removeItem(PENDING_ISSUE_STORAGE_KEY);
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  function readPendingIssue() {
+    var storage = pendingStorage();
+    if (!storage || demoMode()) {
+      return null;
+    }
+    var raw = null;
+    try {
+      raw = storage.getItem(PENDING_ISSUE_STORAGE_KEY);
+    } catch (_error) {
+      return null;
+    }
+    if (!raw) {
+      return null;
+    }
+    var parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_error) {
+      parsed = null;
+    }
+    var createdAt = parsed ? Date.parse(text(parsed.createdAt)) : NaN;
+    if (
+      !parsed ||
+      parsed.v !== 1 ||
+      typeof parsed.key !== 'string' ||
+      parsed.key.length < 16 ||
+      parsed.key.length > 128 ||
+      !Number.isFinite(createdAt) ||
+      Date.now() - createdAt > PENDING_ISSUE_MAX_AGE_MS
+    ) {
+      clearPendingIssue();
+      return null;
+    }
+    return {
+      key: parsed.key,
+      stationId: text(parsed.stationId).trim(),
+      staffRef: text(parsed.staffRef),
+      createdAt: text(parsed.createdAt)
+    };
+  }
+
+  /** True when the pass behind an unresolved attempt can no longer commit. */
+  function pendingIssueSettled(marker) {
+    var createdAt = Date.parse(text(marker && marker.createdAt));
+    return Number.isFinite(createdAt)
+      && Date.now() > createdAt + PENDING_ISSUE_MAX_PASS_TTL_MS + PENDING_ISSUE_SETTLE_MS;
+  }
+
+  /** Only the staff login that sent the attempt can resolve its key. */
+  function pendingIssueOwnedByCurrentStaff(marker) {
+    return Boolean(marker && marker.staffRef && marker.staffRef === currentStaffRef());
   }
 
   function readCorrelationId(response) {
@@ -1391,7 +1510,12 @@
       page.appendChild(node('div', 'phab-rc-context', 'Станция: ' + stationLabel(state.stationId)));
     }
 
-    if (state.phase === 'loading') {
+    if (state.phase === 'recovery') {
+      page.appendChild(recoveryCard());
+      if (state.journalOpen && hasPermission(PERMISSION_READ)) {
+        page.appendChild(journalSection());
+      }
+    } else if (state.phase === 'loading') {
       page.appendChild(loadingCard());
     } else if (state.phase === 'station') {
       page.appendChild(stationCard());
@@ -1459,7 +1583,9 @@
     var intent = {
       key: newIdempotencyKey(),
       body: { token: passToken(), stationId: state.stationId, items: items },
-      signature: signature
+      signature: signature,
+      createdAt: new Date().toISOString(),
+      unknownSent: false
     };
     state.issueIntent = intent;
     return intent;
@@ -1538,7 +1664,7 @@
     var token = passToken();
     if (!token) {
       state.phase = 'load-error';
-      state.loadError = 'В ссылке нет идентификатора пропуска. Откройте экран по QR-коду или ссылке из ЦУП.';
+      state.loadError = 'В ссылке нет QR-пропуска. Отсканируйте QR-код на телефоне клиента камерой.';
       state.pendingFocus = 'load-error';
       render();
       return;
@@ -1680,6 +1806,9 @@
     if (demoMode()) {
       outcome = { ok: true, status: 200, body: demoIssue(intent.body), correlationId: '', network: false };
     } else {
+      // Persist the attempt marker before sending, so a reload while the
+      // request is in flight can still resolve the exact operation.
+      writePendingIssue(intent);
       outcome = await request(apiUrl('/v1/admin/resident-services/issuances'), {
         method: 'POST',
         headers: mutationHeaders(intent.key),
@@ -1689,6 +1818,7 @@
     state.busy = false;
 
     if (outcome.ok && isIssueConfirmed(outcome.body)) {
+      clearPendingIssue();
       state.issueResult = outcome.body;
       state.successIssuanceItems = Array.isArray(outcome.body.items) ? outcome.body.items : null;
       state.issueIntent = null;
@@ -1701,6 +1831,9 @@
     }
 
     if (outcome.ok || outcome.network || Number(outcome.status) >= 500) {
+      // Once a send of this key ended without a known outcome, a later 4xx on a
+      // retry no longer proves that nothing was saved.
+      intent.unknownSent = true;
       state.phase = 'unknown';
       state.pendingFocus = 'unknown';
       state.unknownError = outcome.ok
@@ -1711,6 +1844,12 @@
       return;
     }
 
+    // A definitive 4xx means the server rejected this attempt: nothing to recover.
+    // 401/403/408/429 are excluded: they say nothing about whether an earlier
+    // send of the same key was committed.
+    if (!intent.unknownSent && [401, 403, 408, 429].indexOf(Number(outcome.status)) === -1) {
+      clearPendingIssue();
+    }
     if (readErrorCode(outcome) === 'RESIDENT_SERVICES_IDEMPOTENCY_CONFLICT') {
       state.issueIntent = null;
     }
@@ -2026,13 +2165,145 @@
     };
   }
 
-  function boot() {
-    if (state.started) {
+  function recoveryCard() {
+    var marker = state.recovery || {};
+    var card = node('section', 'phab-rc-card phab-rc-unknown');
+    card.setAttribute('data-recovery', marker.status || '');
+    if (marker.status === 'checking') {
+      card.appendChild(headingNode('h2', 'phab-rc-card-title', 'Проверяем прошлую выдачу…', true));
+      card.appendChild(
+        node('p', 'phab-rc-card-text', 'Страница была перезагружена до ответа сервера. Сначала узнаём, сохранилась ли та выдача.')
+      );
+      return card;
+    }
+    if (marker.status === 'not-saved') {
+      card.appendChild(headingNode('h2', 'phab-rc-card-title', 'Прошлая выдача не сохранилась', true));
+      card.appendChild(
+        node(
+          'p',
+          'phab-rc-card-text',
+          'Сервер не записал операцию, а её пропуск уже истёк. Предметы по ней не выданы. Отсканируйте новый QR клиента.'
+        )
+      );
+    } else {
+      card.appendChild(headingNode('h2', 'phab-rc-card-title', 'Результат прошлой выдачи неизвестен', true));
+      card.appendChild(
+        node(
+          'p',
+          'phab-rc-card-text',
+          'Страница была перезагружена до ответа сервера. Не выдавайте предметы повторно, пока не проверите результат или журнал.'
+        )
+      );
+      if (marker.error) {
+        card.appendChild(node('p', 'phab-rc-inline-error', marker.error));
+      }
+      var again = button('Проверить снова', function () {
+        void resolvePendingIssue(true);
+      }, 'phab-rc-button-primary');
+      card.appendChild(again);
+      if (hasPermission(PERMISSION_READ)) {
+        card.appendChild(
+          button('Открыть журнал', function () {
+            openJournal();
+          }, 'phab-rc-button-secondary')
+        );
+      }
+      // Explicit staff decision after checking the journal; never automatic.
+      card.appendChild(
+        button('Проверено по журналу, продолжить', function () {
+          state.recovery = null;
+          proceedAfterRecovery();
+        }, 'phab-rc-button-secondary')
+      );
+      card.appendChild(
+        node('p', 'phab-rc-hint', 'Отметка о незавершённой выдаче хранится до проверки и не содержит QR-токена.')
+      );
+      return card;
+    }
+    card.appendChild(
+      button(passToken() ? 'Проверить новый QR' : 'Продолжить', function () {
+        state.recovery = null;
+        proceedAfterRecovery();
+      }, 'phab-rc-button-primary')
+    );
+    return card;
+  }
+
+  /** Resolves the persisted attempt with a read-only lookup; never re-issues. */
+  async function resolvePendingIssue(manual) {
+    var marker = readPendingIssue();
+    if (!marker) {
+      state.recovery = null;
+      proceedAfterRecovery();
       return;
     }
-    state.started = true;
-    // Capture and clear the fragment token before any rendering or request.
-    passToken();
+    if (marker.stationId && !state.stationId) {
+      state.stationId = marker.stationId;
+    }
+    if (!pendingIssueOwnedByCurrentStaff(marker)) {
+      // Another login (or a marker without owner) cannot resolve this key, so a
+      // 404 would prove nothing: never say "not saved", send staff to the journal.
+      state.recovery = {
+        status: 'unknown',
+        error: 'Незавершённую выдачу отправлял другой сотрудник. Проверьте её по журналу станции.'
+      };
+      state.phase = 'recovery';
+      state.statusMessage = 'Результат прошлой выдачи неизвестен.';
+      render();
+      return;
+    }
+    state.recovery = { status: 'checking', marker: marker };
+    state.phase = 'recovery';
+    if (manual) {
+      setStatus('Проверяем прошлую выдачу…');
+    }
+    render();
+    var outcome = await request(apiUrl('/v1/admin/resident-services/issuance-attempts'), {
+      method: 'GET',
+      headers: { 'Idempotency-Key': marker.key, 'X-Correlation-ID': newCorrelationId() }
+    });
+    if (outcome.ok && isIssueConfirmed(outcome.body)) {
+      clearPendingIssue();
+      state.recovery = null;
+      state.issueResult = outcome.body;
+      state.successIssuanceItems = Array.isArray(outcome.body.items) ? outcome.body.items : null;
+      if (text(outcome.body.stationId)) {
+        state.stationId = text(outcome.body.stationId);
+      }
+      state.phase = 'success';
+      state.pendingFocus = 'success';
+      state.statusMessage = 'Прошлая выдача сохранена сервером. Повторно не выдавайте.';
+      render();
+      return;
+    }
+    if (readErrorCode(outcome) === 'RESIDENT_ISSUANCE_NOT_FOUND' && pendingIssueSettled(marker)) {
+      clearPendingIssue();
+      state.recovery = { status: 'not-saved' };
+      state.statusMessage = 'Прошлая выдача не сохранилась.';
+      render();
+      return;
+    }
+    state.recovery = {
+      status: 'unknown',
+      error: readErrorCode(outcome) === 'RESIDENT_ISSUANCE_NOT_FOUND'
+        ? 'Операция пока не найдена. Пропуск ещё действует, запись могла не завершиться — проверьте снова через минуту.'
+        : errorMessage(outcome)
+    };
+    state.statusMessage = 'Результат прошлой выдачи неизвестен.';
+    render();
+  }
+
+  /** Ordinary start once no unresolved attempt blocks a new issuance. */
+  function proceedAfterRecovery() {
+    clearPendingIssue();
+    if (state.stationId) {
+      void loadCheck();
+      return;
+    }
+    startStationSelection();
+  }
+
+  function startStationSelection() {
     var preferred = defaultStationId();
     var allowed = allowedStationIds();
     if (preferred) {
@@ -2049,6 +2320,20 @@
     state.pendingStationId = '';
     state.pendingFocus = 'station';
     render();
+  }
+
+  function boot() {
+    if (state.started) {
+      return;
+    }
+    state.started = true;
+    // Capture and clear the fragment token before any rendering or request.
+    passToken();
+    if (readPendingIssue()) {
+      void resolvePendingIssue(false);
+      return;
+    }
+    startStationSelection();
   }
 
   if (typeof window !== 'undefined') {

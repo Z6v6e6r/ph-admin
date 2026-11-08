@@ -211,6 +211,7 @@ async function main(): Promise<void> {
 
     await scenarioConcurrentOnePassOneIssuance(repository);
     await scenarioReplayAfterLostResponse(repository);
+    await scenarioIssuanceAttemptAfterReload(repository);
     await scenarioConcurrentSameIdempotencyKey(repository);
     await scenarioLimitAcrossPasses(repository);
     await scenarioExpiredPass(repository);
@@ -393,6 +394,70 @@ async function scenarioReplayAfterLostResponse(
   const usage = await db.collection('cup_resident_service_usage').findOne({ serviceKind: 'TOWEL' }) as { used?: number } | null;
   assert.equal(usage?.used, 1);
   console.log('mongo scenario replay after lost response: ok');
+}
+
+/**
+ * Full page reload after a lost response: the browser has lost the pass token,
+ * keeps only the Idempotency-Key, and resolves the exact attempt read-only.
+ */
+async function scenarioIssuanceAttemptAfterReload(
+  repository: ResidentServicesRepository
+): Promise<void> {
+  await clearResidentState(repository);
+  await createRules(buildHarness(repository));
+  const h = buildHarness(repository);
+  const notFound = (error: unknown) => codeOf(error) === RESIDENT_SERVICES_ERROR_CODES.ISSUANCE_NOT_FOUND;
+
+  // Not committed yet: nothing found, and the lookup itself writes nothing.
+  await assert.rejects(
+    () => h.issuances.issuanceAttempt('reload-issuance-key-0001', residentStaff() as never),
+    notFound
+  );
+
+  const token = await issuePass(h);
+  const first = await h.issuances.confirm({
+    token,
+    stationId: HOME_STATION,
+    items: [{ serviceKind: 'TOWEL', quantity: 1 }],
+    user: residentStaff() as never,
+    idempotencyHeader: 'reload-issuance-key-0001',
+    correlationHeader: 'corr:reload'
+  });
+  const resolved = await h.issuances.issuanceAttempt('reload-issuance-key-0001', residentStaff() as never);
+  assert.equal(resolved.issuanceId, first.view.issuanceId);
+  assert.deepEqual(resolved.items.map((item) => item.serviceKind), ['TOWEL']);
+
+  // Another staff actor cannot resolve someone else's key.
+  await assert.rejects(
+    () => h.issuances.issuanceAttempt(
+      'reload-issuance-key-0001',
+      residentStaff({ id: 'admin:other-manager' }) as never
+    ),
+    notFound
+  );
+  // The same actor scoped away from the issuing station sees nothing.
+  await assert.rejects(
+    () => h.issuances.issuanceAttempt(
+      'reload-issuance-key-0001',
+      residentStaff({ stationIds: ['station:elsewhere'] }) as never
+    ),
+    notFound
+  );
+  // Read permission alone is not enough: the lookup belongs to the issuer.
+  await assert.rejects(
+    () => h.issuances.issuanceAttempt(
+      'reload-issuance-key-0001',
+      residentStaff({ permissions: ['resident-services:read'] }) as never
+    ),
+    (error: unknown) => error instanceof HttpException && error.getStatus() === 403
+  );
+
+  const db = (repository as unknown as { db: { collection(name: string): {
+    countDocuments(filter: object): Promise<number>;
+  } } }).db;
+  assert.equal(await db.collection('cup_resident_service_issuances').countDocuments({}), 1);
+  assert.equal(await db.collection('cup_resident_service_journal').countDocuments({}), 1);
+  console.log('mongo scenario issuance attempt after reload: ok');
 }
 
 async function scenarioConcurrentSameIdempotencyKey(

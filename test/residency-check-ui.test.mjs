@@ -20,7 +20,14 @@ test('asset is a strict dependency-free IIFE with DOMContentLoaded auto-init', (
   assert.match(js, /document\.readyState === 'loading'/);
   assert.match(js, /document\.addEventListener\('DOMContentLoaded', boot\)/);
   assert.match(js, /window\.PHABResidencyCheck/);
-  assert.doesNotMatch(js, /localStorage|sessionStorage|document\.cookie|sendBeacon|console\./);
+  assert.doesNotMatch(js, /localStorage|document\.cookie|sendBeacon|console\./);
+  // sessionStorage is used only for the reload-recovery marker of an
+  // unresolved issuance (key/station/expiry), never for the token or PII.
+  assert.equal((js.match(/window\.sessionStorage/g) ?? []).length, 1, 'one guarded sessionStorage accessor');
+  assert.match(sourceOf('pendingStorage'), /window\.sessionStorage/);
+  const write = sourceOf('writePendingIssue');
+  assert.match(write, /key: intent\.key/);
+  assert.doesNotMatch(write, /token|passToken|intent\.body\.items|profile|fullName/);
   assert.doesNotMatch(js, /XMLHttpRequest|setInterval/);
   assert.doesNotMatch(js, /https?:\/\//);
   assert.doesNotMatch(js, /аналитик|экспорт|склад|CRM|inventory|warehouse/i);
@@ -75,10 +82,10 @@ test('S-09: the pass token comes from the URL fragment, never from query or conf
   // Boot captures and clears before any render or network request.
   const boot = sourceOf('boot');
   const bootToken = boot.indexOf('passToken()');
-  const bootStation = boot.indexOf('defaultStationId()');
-  const bootLoad = boot.indexOf('loadCheck()');
+  const bootRecovery = boot.indexOf('resolvePendingIssue(');
+  const bootStation = boot.indexOf('startStationSelection()');
   assert.ok(bootToken >= 0, 'boot captures the fragment token');
-  assert.ok(bootStation > bootToken && bootLoad > bootToken, 'capture happens before any request');
+  assert.ok(bootRecovery > bootToken && bootStation > bootToken, 'capture happens before any request');
 
   assert.match(js, /RESIDENT_PASS_TOKEN_PATTERN = \/\^rsp1_\[A-Za-z0-9_-\]\{32,64\}\$\//);
   assert.match(js, /decodeURIComponent/);
@@ -194,10 +201,10 @@ test('renders required resident, station, residency and service fields', () => {
 
 test('station selection flow: auto single, selector for scoped multiple, explicit input for global', () => {
   assert.match(js, /'Выберите станцию'/);
-  const boot = sourceOf('boot');
-  assert.match(boot, /defaultStationId\(\)/);
-  assert.match(boot, /allowedStationIds\(\)/);
-  assert.match(boot, /allowed\.length === 1/);
+  const selection = sourceOf('startStationSelection');
+  assert.match(selection, /defaultStationId\(\)/);
+  assert.match(selection, /allowedStationIds\(\)/);
+  assert.match(selection, /allowed\.length === 1/);
   assert.match(js, /phab-rc-station-radio/);
   assert.match(js, /phab-rc-station-input/);
   assert.match(js, /role', 'radiogroup'/);
