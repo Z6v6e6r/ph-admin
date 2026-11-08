@@ -335,9 +335,18 @@
    */
   var PENDING_ISSUE_STORAGE_KEY = 'phab.residency.pendingIssue.v1';
   var PENDING_ISSUE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-  // A pass that expired this long ago can no longer be committed by an in-flight
-  // transaction, so "not found" becomes a definitive "not saved".
-  var PENDING_ISSUE_SETTLE_MS = 90 * 1000;
+  // Judged only on this device's own clock (no server/client clock comparison):
+  // a pass lives at most 120s and the attempt starts after it was issued, so it
+  // has expired by createdAt + 120s. A further 180s covers the driver's commit
+  // retry window (~120s) with margin. Only after that can "not found" become a
+  // definitive "not saved".
+  var PENDING_ISSUE_MAX_PASS_TTL_MS = 120 * 1000;
+  var PENDING_ISSUE_SETTLE_MS = 180 * 1000;
+
+  function currentStaffRef() {
+    var value = readConfig().staffRef;
+    return typeof value === 'string' ? value.trim() : '';
+  }
 
   function pendingStorage() {
     try {
@@ -359,8 +368,8 @@
           v: 1,
           key: intent.key,
           stationId: text(intent.body && intent.body.stationId),
-          passExpiresAt: text(intent.passExpiresAt),
-          createdAt: new Date().toISOString()
+          staffRef: currentStaffRef(),
+          createdAt: text(intent.createdAt) || new Date().toISOString()
         })
       );
     } catch (_error) {
@@ -416,18 +425,21 @@
     return {
       key: parsed.key,
       stationId: text(parsed.stationId).trim(),
-      passExpiresAt: text(parsed.passExpiresAt),
+      staffRef: text(parsed.staffRef),
       createdAt: text(parsed.createdAt)
     };
   }
 
   /** True when the pass behind an unresolved attempt can no longer commit. */
   function pendingIssueSettled(marker) {
-    var expiresAt = Date.parse(text(marker && marker.passExpiresAt));
     var createdAt = Date.parse(text(marker && marker.createdAt));
-    // Without a known expiry fall back to the server's maximum pass TTL (120s).
-    var deadline = Number.isFinite(expiresAt) ? expiresAt : createdAt + 120 * 1000;
-    return Number.isFinite(deadline) && Date.now() > deadline + PENDING_ISSUE_SETTLE_MS;
+    return Number.isFinite(createdAt)
+      && Date.now() > createdAt + PENDING_ISSUE_MAX_PASS_TTL_MS + PENDING_ISSUE_SETTLE_MS;
+  }
+
+  /** Only the staff login that sent the attempt can resolve its key. */
+  function pendingIssueOwnedByCurrentStaff(marker) {
+    return Boolean(marker && marker.staffRef && marker.staffRef === currentStaffRef());
   }
 
   function readCorrelationId(response) {
@@ -1572,7 +1584,8 @@
       key: newIdempotencyKey(),
       body: { token: passToken(), stationId: state.stationId, items: items },
       signature: signature,
-      passExpiresAt: text(state.preview && state.preview.expiresAt)
+      createdAt: new Date().toISOString(),
+      unknownSent: false
     };
     state.issueIntent = intent;
     return intent;
@@ -1818,6 +1831,9 @@
     }
 
     if (outcome.ok || outcome.network || Number(outcome.status) >= 500) {
+      // Once a send of this key ended without a known outcome, a later 4xx on a
+      // retry no longer proves that nothing was saved.
+      intent.unknownSent = true;
       state.phase = 'unknown';
       state.pendingFocus = 'unknown';
       state.unknownError = outcome.ok
@@ -1831,7 +1847,7 @@
     // A definitive 4xx means the server rejected this attempt: nothing to recover.
     // 401/403/408/429 are excluded: they say nothing about whether an earlier
     // send of the same key was committed.
-    if ([401, 403, 408, 429].indexOf(Number(outcome.status)) === -1) {
+    if (!intent.unknownSent && [401, 403, 408, 429].indexOf(Number(outcome.status)) === -1) {
       clearPendingIssue();
     }
     if (readErrorCode(outcome) === 'RESIDENT_SERVICES_IDEMPOTENCY_CONFLICT') {
@@ -2223,6 +2239,18 @@
     }
     if (marker.stationId && !state.stationId) {
       state.stationId = marker.stationId;
+    }
+    if (!pendingIssueOwnedByCurrentStaff(marker)) {
+      // Another login (or a marker without owner) cannot resolve this key, so a
+      // 404 would prove nothing: never say "not saved", send staff to the journal.
+      state.recovery = {
+        status: 'unknown',
+        error: 'Незавершённую выдачу отправлял другой сотрудник. Проверьте её по журналу станции.'
+      };
+      state.phase = 'recovery';
+      state.statusMessage = 'Результат прошлой выдачи неизвестен.';
+      render();
+      return;
     }
     state.recovery = { status: 'checking', marker: marker };
     state.phase = 'recovery';

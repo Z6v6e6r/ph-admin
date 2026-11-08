@@ -249,6 +249,8 @@ async function main(): Promise<void> {
       'resident-services:return'
     ]);
     assert.equal(Object.prototype.hasOwnProperty.call(config, 'stationLabels'), false);
+    assert.match(String(config.staffRef), /^[a-f0-9]{32}$/, 'opaque per-login staff reference');
+    assert.equal(html.includes('"staffRef":"' + String(config.staffRef)), true);
 
     assert.equal(capture.getHeader('content-type'), 'text/html; charset=utf-8');
     assert.equal(capture.getHeader('cache-control'), 'private, no-store');

@@ -171,7 +171,17 @@ function issuanceBody(key) {
 }
 
 /** One page load: fresh globals, shared sessionStorage, scripted fetch. */
-function loadPage({ hash, storage, handler }) {
+function loadPage({ hash, storage, handler, staffRef = 'staff-ref-a', now }) {
+  const PageDate = now
+    ? class extends Date {
+        constructor(...args) {
+          super(...(args.length ? args : [now()]));
+        }
+        static now() {
+          return now();
+        }
+      }
+    : Date;
   const root = new FakeElement('div');
   root.id = 'phab-residency-check-root';
   const calls = [];
@@ -191,7 +201,8 @@ function loadPage({ hash, storage, handler }) {
       permissions: ['resident-services:issue', 'resident-services:return', 'resident-services:read'],
       allowedStationIds: [STATION],
       defaultStationId: STATION,
-      stationLabels: { [STATION]: 'Альфа' }
+      stationLabels: { [STATION]: 'Альфа' },
+      staffRef
     },
     location,
     history: { replaceState: () => { location.hash = ''; } },
@@ -211,7 +222,7 @@ function loadPage({ hash, storage, handler }) {
     AbortController,
     Uint8Array,
     JSON,
-    Date,
+    Date: PageDate,
     Math,
     Number,
     String,
@@ -270,7 +281,7 @@ function assertMarkerHasNoSecrets(storage) {
   for (const write of storage.writes) {
     assert.equal(write.key, STORAGE_KEY, 'only the recovery marker is written');
     assert.doesNotMatch(write.value, /rsp1_|Bearer|token|fullName|photo/i, 'marker carries no token or PII');
-    assert.deepEqual(Object.keys(JSON.parse(write.value)).sort(), ['createdAt', 'key', 'passExpiresAt', 'stationId', 'v']);
+    assert.deepEqual(Object.keys(JSON.parse(write.value)).sort(), ['createdAt', 'key', 'staffRef', 'stationId', 'v']);
   }
 }
 
@@ -335,12 +346,25 @@ test('reload while the attempt is undetermined blocks a new issuance until staff
   assert.equal(storage.getItem(STORAGE_KEY), null);
 });
 
-test('reload after the pass has expired without a record reports "not saved"', async () => {
+test('reload after the settle window without a record reports "not saved"', async () => {
   const storage = new MemoryStorage();
-  await issueWithLostResponse(storage, new Date(Date.now() - 120_000).toISOString());
+  await issueWithLostResponse(storage, new Date(Date.now() + 100_000).toISOString());
+
+  // 4 minutes later (on this device's clock) a commit could still land: stay unknown.
+  const early = loadPage({
+    hash: '',
+    storage,
+    now: () => Date.now() + 240_000,
+    handler: () => jsonResponse(404, { code: 'RESIDENT_ISSUANCE_NOT_FOUND' })
+  });
+  await settle();
+  assert.match(early.root.textContent, /Результат прошлой выдачи неизвестен/);
+  assert.notEqual(storage.getItem(STORAGE_KEY), null);
+
   const reloaded = loadPage({
     hash: '',
     storage,
+    now: () => Date.now() + 301_000,
     handler: (call) => {
       if (call.url.endsWith('/issuance-attempts')) return jsonResponse(404, { code: 'RESIDENT_ISSUANCE_NOT_FOUND' });
       return jsonResponse(503, {});
@@ -387,4 +411,58 @@ test('a definitive rejection clears the marker; a confirmed issuance never leave
   await settle();
   assert.match(page.root.textContent, /Пропуск уже использован/);
   assert.equal(storage.getItem(STORAGE_KEY), null);
+});
+
+test('a different staff login never gets "not saved" for someone else\'s attempt', async () => {
+  const storage = new MemoryStorage();
+  await issueWithLostResponse(storage, new Date(Date.now() + 100_000).toISOString());
+  const reloaded = loadPage({
+    hash: '',
+    storage,
+    staffRef: 'staff-ref-b',
+    now: () => Date.now() + 3_600_000,
+    handler: (call) => {
+      if (call.url.includes('/journal')) return jsonResponse(200, { items: [] });
+      return jsonResponse(404, { code: 'RESIDENT_ISSUANCE_NOT_FOUND' });
+    }
+  });
+  await settle();
+  assert.match(reloaded.root.textContent, /Результат прошлой выдачи неизвестен/);
+  assert.match(reloaded.root.textContent, /другой сотрудник/);
+  assert.doesNotMatch(reloaded.root.textContent, /не сохранилась/);
+  assert.ok(!reloaded.calls.some((call) => call.url.endsWith('/issuance-attempts')), 'no pointless lookup with a foreign key');
+  assert.notEqual(storage.getItem(STORAGE_KEY), null);
+});
+
+test('a 4xx on a same-key retry after an unknown send keeps the marker', async () => {
+  const storage = new MemoryStorage();
+  let sends = 0;
+  const page = loadPage({
+    hash: '#pass=' + PASS_TOKEN,
+    storage,
+    handler: (call) => {
+      if (call.url.endsWith('/passes/preview')) return jsonResponse(200, previewBody(new Date(Date.now() + 100_000).toISOString()));
+      if (call.url.endsWith('/resident-services/issuances')) {
+        sends += 1;
+        if (sends === 1) throw new TypeError('timeout, first transaction may still commit');
+        return jsonResponse(409, { code: 'RESIDENT_PASS_EXPIRED' });
+      }
+      return jsonResponse(503, {});
+    }
+  });
+  await settle();
+  for (const element of page.root.walk()) {
+    if (element.tagName === 'INPUT') {
+      element.checked = true;
+      element.dispatch('change');
+    }
+  }
+  page.root.querySelector('[data-confirm-button]').click();
+  await settle();
+  findButton(page.root, 'Повторить с тем же идентификатором').click();
+  await settle();
+  const issued = page.calls.filter((call) => call.url.endsWith('/resident-services/issuances'));
+  assert.equal(issued.length, 2);
+  assert.equal(issued[0].headers['Idempotency-Key'], issued[1].headers['Idempotency-Key'], 'retry reuses the key');
+  assert.notEqual(storage.getItem(STORAGE_KEY), null, 'marker survives: the first send is still unresolved');
 });
