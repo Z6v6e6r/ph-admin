@@ -228,6 +228,13 @@
   var MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES = 12 * 1024 * 1024;
   var MAX_ADVERTISING_SOURCE_IMAGE_BYTES = 15 * 1024 * 1024;
   var MAX_ADVERTISING_IMAGE_SIZE_BYTES = 900 * 1024;
+  // Station photos are re-encoded in the browser before they reach the ЦУП bridge. The bridge and
+  // LK2 refuse large bodies, and a phone JPEG is often 8-20 MB, so shipping the original bytes turns
+  // an ordinary photo into an HTTP 413 operator error.
+  var LOCATION_PHOTO_MAX_SOURCE_BYTES = 25 * 1024 * 1024;
+  var LOCATION_PHOTO_MAX_UPLOAD_BYTES = 6 * 1024 * 1024;
+  var LOCATION_PHOTO_MAX_DIMENSION = 1600;
+  var LOCATION_PHOTO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   var DEFAULT_QUICK_REPLY_OPTIONS = [
     { label: 'Сертификат', text: 'Сертификат' },
     { label: 'Оплата', text: 'Оплата' },
@@ -9306,10 +9313,18 @@
         ? await response.json().catch(function () { return null; })
         : null;
       if (!response.ok) {
+        // A proxy rejects an oversized body before ph-admin sees it and answers text/html, so there is
+        // no JSON message to show. At least say which limit the operator hit.
+        var fallbackMessage =
+          response.status === 413
+            ? /\/location-media(?:[?#]|$)/.test(String(url))
+              ? 'Файл слишком большой для загрузки через ЦУП. Выберите фотографию меньшего размера.'
+              : 'Запрос слишком большой для PadlHub Admin API.'
+            : 'PadlHub Admin API: HTTP ' + response.status;
         var message =
           payload && typeof payload.message === 'string' && payload.message.trim()
             ? payload.message.trim()
-            : 'PadlHub Admin API: HTTP ' + response.status;
+            : fallbackMessage;
         var error = new Error(message);
         error.status = response.status;
         error.code = payload && payload.code ? String(payload.code) : '';
@@ -16715,7 +16730,7 @@
               '<label class="phab-location-field">Город<input data-location-field="city" maxlength="120"></label>' +
               '<label class="phab-location-field">Количество кортов<input type="number" min="0" max="999" data-location-field="courtCount"></label>' +
             '</div></section>' +
-            '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Галерея</h4><input class="phab-admin-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-location-upload-input><button type="button" class="phab-admin-btn-secondary" data-location-upload>+ Загрузить фото</button><button type="button" class="phab-admin-btn-secondary" data-location-add-image>+ Ссылка</button></div><div class="phab-location-repeat-list" data-location-gallery></div></section>' +
+            '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Галерея</h4><input class="phab-admin-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-location-upload-input><button type="button" class="phab-admin-btn-secondary" data-location-upload title="JPEG, PNG или WebP до 25 МБ — фото уменьшится автоматически">+ Загрузить фото</button><button type="button" class="phab-admin-btn-secondary" data-location-add-image>+ Ссылка</button></div><div class="phab-location-repeat-list" data-location-gallery></div></section>' +
             '<section class="phab-location-section" data-location-recommendation-photos><h4>Фото рекомендательных карточек</h4><p class="phab-admin-settings-row-meta">Загрузите фото для типа карточки, активируйте нужные варианты, затем сохраните черновик или опубликуйте станцию.</p></section>' +
             '<section class="phab-location-section"><h4>Режим работы</h4><div class="phab-location-schedule" data-location-schedule></div><p class="phab-admin-settings-row-meta">Можно указать несколько интервалов через запятую, включая ночной график.</p></section>' +
             '<section class="phab-location-section"><div class="phab-location-panel-head"><h4>Преимущества</h4><button type="button" class="phab-admin-btn-secondary" data-location-add-amenity>+ Преимущество</button></div><div class="phab-location-repeat-list" data-location-amenities></div></section>' +
@@ -16857,7 +16872,8 @@
       locationAdminState.error = '';
       renderLocationAdmin();
       try {
-        var asset = await notificationApi.uploadLocationMedia(file);
+        var prepared = await prepareLocationPhotoFile(file);
+        var asset = await notificationApi.uploadLocationMedia(prepared);
         if (
           locationAdminState.photoUploadOperation !== uploadOperation ||
           locationAdminState.selectionRevision !== selectionRevision ||
@@ -16875,7 +16891,7 @@
           sortOrder: profile.gallery.length
         });
         locationAdminState.profile = profile;
-        setStatus('Фотография загружена и сохранена как WebP.', false);
+        setStatus('Фотография загружена и сохранена.', false);
       } catch (error) {
         if (
           locationAdminState.photoUploadOperation !== uploadOperation ||
@@ -16922,6 +16938,7 @@
       var added = 0;
       var skipped = 0;
       var failed = 0;
+      var lastFailureMessage = '';
       function ownsUpload() {
         return (
           locationAdminState.photoUploadOperation === uploadOperation &&
@@ -16939,7 +16956,8 @@
           if (!ownsUpload()) return;
           var asset;
           try {
-            asset = await notificationApi.uploadLocationMedia(batch[index]);
+            var prepared = await prepareLocationPhotoFile(batch[index]);
+            asset = await notificationApi.uploadLocationMedia(prepared);
           } catch (error) {
             if (!ownsUpload()) return;
             if (error && (error.status === 401 || error.status === 403)) {
@@ -16947,6 +16965,7 @@
               throw error;
             }
             failed += 1;
+            lastFailureMessage = error && error.message ? String(error.message) : '';
             continue;
           }
           if (!ownsUpload()) return;
@@ -16980,6 +16999,7 @@
             'Добавлено фото: ' + added +
               (skipped ? ', уже было добавлено: ' + skipped : '') +
               (failed ? ', не удалось загрузить: ' + failed : '') +
+              (failed && lastFailureMessage ? ' (' + lastFailureMessage + ')' : '') +
               '. Активируйте нужные варианты и сохраните станцию.',
             failed > 0 && added === 0
           );
@@ -18768,6 +18788,139 @@
         };
         image.src = dataUrl;
       });
+    }
+
+    // Decode straight from the file: a 25 MB source becomes a ~33 MB base64 string through
+    // FileReader, which is the expensive part on a phone. The data-URL path stays as a fallback.
+    function loadImageFromFile(file) {
+      if (typeof URL === 'function' && typeof URL.createObjectURL === 'function') {
+        var objectUrl;
+        try {
+          objectUrl = URL.createObjectURL(file);
+        } catch (objectUrlError) {
+          objectUrl = '';
+        }
+        if (!objectUrl) return readImageFileAsDataUrl(file).then(loadImageFromDataUrl);
+        return new Promise(function (resolve, reject) {
+          var image = new Image();
+          image.onload = function () {
+            URL.revokeObjectURL(objectUrl);
+            resolve(image);
+          };
+          image.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Не удалось обработать фото'));
+          };
+          image.src = objectUrl;
+        });
+      }
+      return readImageFileAsDataUrl(file).then(loadImageFromDataUrl);
+    }
+
+    function locationPhotoMimeType(file) {
+      var type = String((file && file.type) || '').toLowerCase();
+      return type === 'image/jpg' ? 'image/jpeg' : type;
+    }
+
+    function locationPhotoFileName(file, mimeType) {
+      var baseName = String((file && file.name) || 'station-photo').replace(/\.[^./\\]+$/, '').trim();
+      var extension = mimeType === 'image/webp' ? 'webp' : mimeType === 'image/png' ? 'png' : 'jpg';
+      return (baseName || 'station-photo') + '.' + extension;
+    }
+
+    function locationPhotoDataUrlToBlob(dataUrl) {
+      if (typeof Blob !== 'function' || typeof window.atob !== 'function') return null;
+      var normalized = String(dataUrl || '');
+      var commaIndex = normalized.indexOf(',');
+      if (commaIndex < 0) return null;
+      var mimeMatch = /^data:([^;]+)/.exec(normalized.slice(0, commaIndex));
+      var mimeType = mimeMatch ? String(mimeMatch[1]).toLowerCase() : 'image/webp';
+      var binary = window.atob(normalized.slice(commaIndex + 1));
+      var bytes = new Uint8Array(binary.length);
+      for (var index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], { type: mimeType });
+    }
+
+    function locationPhotoFileFromBlob(blob, fileName) {
+      if (typeof File === 'function') return new File([blob], fileName, { type: blob.type });
+      blob.name = fileName;
+      return blob;
+    }
+
+    function canSendLocationPhotoAsIs(file, mimeType, size) {
+      return (
+        LOCATION_PHOTO_MIME_TYPES.indexOf(mimeType) >= 0 &&
+        size > 0 &&
+        size <= LOCATION_PHOTO_MAX_UPLOAD_BYTES
+      );
+    }
+
+    // A phone photo is usually 8-20 MB, LK2 accepts at most 8 MiB and the ЦУП bridge stops at 12 MiB.
+    // The panel therefore shrinks the image to LK2's own 1600 px WebP target and uploads a few hundred
+    // KB; the fallback is only for a browser that cannot decode or canvas-encode the file.
+    async function prepareLocationPhotoFile(file) {
+      var mimeType = locationPhotoMimeType(file);
+      var size = Math.max(0, Number((file && file.size) || 0));
+      var fileName = String((file && file.name) || 'фото');
+      // An empty type happens on drag&drop on some operating systems; the decode step decides then.
+      if (!file || (mimeType !== '' && mimeType.indexOf('image/') !== 0)) {
+        throw new Error('Для фотографии станции подходит JPEG, PNG или WebP.');
+      }
+      if (size > LOCATION_PHOTO_MAX_SOURCE_BYTES) {
+        throw new Error(
+          'Фото "' + fileName + '" слишком тяжёлое. Выберите файл до ' +
+            formatFileSize(LOCATION_PHOTO_MAX_SOURCE_BYTES) + '.'
+        );
+      }
+      var image = null;
+      try {
+        image = await loadImageFromFile(file);
+      } catch (error) {
+        image = null;
+      }
+      var width = image ? image.naturalWidth || image.width || 0 : 0;
+      var height = image ? image.naturalHeight || image.height || 0 : 0;
+      if (!image || !width || !height) {
+        // An already small JPEG/PNG/WebP can still go as-is; an undecodable HEIC/HEIF or a picture the
+        // canvas could not open gets the error that matches its cause instead of one generic text.
+        if (canSendLocationPhotoAsIs(file, mimeType, size)) return file;
+        if (mimeType !== '' && LOCATION_PHOTO_MIME_TYPES.indexOf(mimeType) < 0) {
+          throw new Error('Формат фотографии не поддерживается. Сохраните её как JPEG, PNG или WebP.');
+        }
+        throw new Error('Не удалось обработать фотографию. Попробуйте другое фото меньшего размера.');
+      }
+      var scale = Math.min(1, LOCATION_PHOTO_MAX_DIMENSION / Math.max(width, height));
+      var qualities = [0.86, 0.8, 0.72, 0.64];
+      for (var attempt = 0; attempt < 5; attempt += 1) {
+        var targetWidth = Math.max(1, Math.round(width * scale));
+        var targetHeight = Math.max(1, Math.round(height * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        var context = canvas.getContext('2d');
+        if (!context) break;
+        context.drawImage(image, 0, 0, targetWidth, targetHeight);
+        for (var qualityIndex = 0; qualityIndex < qualities.length; qualityIndex += 1) {
+          var dataUrl;
+          try {
+            dataUrl = canvas.toDataURL('image/webp', qualities[qualityIndex]);
+            if (dataUrl.indexOf('data:image/webp') !== 0) {
+              dataUrl = canvas.toDataURL('image/jpeg', qualities[qualityIndex]);
+            }
+          } catch (encodeError) {
+            throw new Error('Не удалось подготовить фотографию. Попробуйте другое фото.');
+          }
+          if (estimateDataUrlSize(dataUrl) > LOCATION_PHOTO_MAX_UPLOAD_BYTES) continue;
+          var blob = locationPhotoDataUrlToBlob(dataUrl);
+          if (!blob) break;
+          return locationPhotoFileFromBlob(blob, locationPhotoFileName(file, blob.type));
+        }
+        scale *= 0.75;
+      }
+      if (canSendLocationPhotoAsIs(file, mimeType, size)) return file;
+      throw new Error('Не удалось уменьшить фотографию. Выберите другой файл.');
     }
 
     async function compressImageFileAttachment(file) {
