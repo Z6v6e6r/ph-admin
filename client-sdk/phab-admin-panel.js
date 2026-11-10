@@ -16891,7 +16891,7 @@
           sortOrder: profile.gallery.length
         });
         locationAdminState.profile = profile;
-        setStatus('Фотография загружена и сохранена как WebP.', false);
+        setStatus('Фотография загружена и сохранена.', false);
       } catch (error) {
         if (
           locationAdminState.photoUploadOperation !== uploadOperation ||
@@ -18794,8 +18794,14 @@
     // FileReader, which is the expensive part on a phone. The data-URL path stays as a fallback.
     function loadImageFromFile(file) {
       if (typeof URL === 'function' && typeof URL.createObjectURL === 'function') {
+        var objectUrl;
+        try {
+          objectUrl = URL.createObjectURL(file);
+        } catch (objectUrlError) {
+          objectUrl = '';
+        }
+        if (!objectUrl) return readImageFileAsDataUrl(file).then(loadImageFromDataUrl);
         return new Promise(function (resolve, reject) {
-          var objectUrl = URL.createObjectURL(file);
           var image = new Image();
           image.onload = function () {
             URL.revokeObjectURL(objectUrl);
@@ -18883,7 +18889,7 @@
         if (mimeType !== '' && LOCATION_PHOTO_MIME_TYPES.indexOf(mimeType) < 0) {
           throw new Error('Формат фотографии не поддерживается. Сохраните её как JPEG, PNG или WebP.');
         }
-        throw new Error('Не удалось обработать фотографию. Попробуйте другое фото или сохраните его как JPEG.');
+        throw new Error('Не удалось обработать фотографию. Попробуйте другое фото меньшего размера.');
       }
       var scale = Math.min(1, LOCATION_PHOTO_MAX_DIMENSION / Math.max(width, height));
       var qualities = [0.86, 0.8, 0.72, 0.64];
@@ -18897,9 +18903,14 @@
         if (!context) break;
         context.drawImage(image, 0, 0, targetWidth, targetHeight);
         for (var qualityIndex = 0; qualityIndex < qualities.length; qualityIndex += 1) {
-          var dataUrl = canvas.toDataURL('image/webp', qualities[qualityIndex]);
-          if (dataUrl.indexOf('data:image/webp') !== 0) {
-            dataUrl = canvas.toDataURL('image/jpeg', qualities[qualityIndex]);
+          var dataUrl;
+          try {
+            dataUrl = canvas.toDataURL('image/webp', qualities[qualityIndex]);
+            if (dataUrl.indexOf('data:image/webp') !== 0) {
+              dataUrl = canvas.toDataURL('image/jpeg', qualities[qualityIndex]);
+            }
+          } catch (encodeError) {
+            throw new Error('Не удалось подготовить фотографию. Попробуйте другое фото.');
           }
           if (estimateDataUrlSize(dataUrl) > LOCATION_PHOTO_MAX_UPLOAD_BYTES) continue;
           var blob = locationPhotoDataUrlToBlob(dataUrl);

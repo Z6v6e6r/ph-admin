@@ -120,6 +120,7 @@ function setup(options = {}) {
           function URL() {},
           {
             createObjectURL(file) {
+              if (options.objectUrlThrows) throw new TypeError('object URLs are unavailable');
               return file && file.__undecodable ? 'blob:UNDECODABLE' : 'blob:mock';
             },
             revokeObjectURL() {}
@@ -249,6 +250,23 @@ test('the FileReader fallback still prepares the photo without object URLs', asy
   assert.equal(prepared.name, 'fallback.webp');
 });
 
+test('a throwing createObjectURL falls back to the FileReader path', async () => {
+  const { context } = setup({ objectUrlThrows: true });
+  const prepared = await context.prepareLocationPhotoFile({ name: 'fallback2.png', type: 'image/png', size: MIB });
+  assert.equal(prepared.type, 'image/webp');
+});
+
+test('an encoder failure is reported in Russian, not as a DOMException', async () => {
+  const { context } = setup({
+    encode() {
+      throw new Error('SecurityError: tainted canvas');
+    }
+  });
+  await assert.rejects(
+    () => context.prepareLocationPhotoFile({ name: 'upload.png', type: 'image/png', size: MIB }),
+    /Не удалось подготовить фотографию/
+  );
+});
 test('the panel refuses files it cannot shrink below the upload cap', async () => {
   const { context } = setup({ encode: () => 'data:image/webp;base64,' + 'A'.repeat(9000000) });
   await assert.rejects(
@@ -303,7 +321,7 @@ test('the gallery upload path sends the prepared file to the media bridge', asyn
   assert.equal(context.locationAdminState.profile.gallery[0].isCover, true);
   assert.equal(context.locationAdminState.profile.gallery[0].url, 'https://media.example.invalid/asset.webp');
   assert.equal(context.locationAdminState.uploading, false);
-  assert.deepEqual(statuses.at(-1), { message: 'Фотография загружена и сохранена как WebP.', error: false });
+  assert.deepEqual(statuses.at(-1), { message: 'Фотография загружена и сохранена.', error: false });
 });
 test('both station upload flows send the prepared file', () => {
   assert.match(

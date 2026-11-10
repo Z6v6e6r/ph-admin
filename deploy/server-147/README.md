@@ -93,8 +93,19 @@ The probe passes when the answer is `401`/`403` with `Content-Type: application/
 response from ph-admin; a `413` with `Server: nginx` and `Content-Type: text/html` means the
 directive is still missing or not inside the `/api/` location. After the current panel release the
 operator additionally sees the actionable `Файл слишком большой…` text instead of the bare status.
-Rollback: `sudo cp -a "$PREIMAGE" "$SITE"`, `sudo nginx -t && sudo systemctl reload nginx`; verify
-with the same probe and `nginx -T`.
+Edit `$SITE`, not the `sites-enabled` symlink: an editor that replaces it with a regular file
+leaves nginx reading the old target. Rollback in a fresh shell re-derives both paths and checks the
+restored digest:
+
+```bash
+SITE=$(readlink -f /etc/nginx/sites-enabled/padlhub.su)
+PREIMAGE=$(ls -1t /root/*.before-body-limit.* | head -1)
+sudo cp -a "$PREIMAGE" "$SITE" && sudo sha256sum "$SITE" "$PREIMAGE"
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+The two digests must match, and the probe above must now answer the pre-change `413 text/html`;
+that inverted result is what proves the rollback took effect.
 
 The production `location ^~ /api/tournaments/public/` compatibility block must be
 patched from an audited server preimage before reload. Build a candidate first:

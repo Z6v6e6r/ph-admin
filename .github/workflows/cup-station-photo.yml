@@ -13,6 +13,18 @@ on:
       - 'test/location-recommendation-photos-ui.test.mjs'
       - 'package*.json'
       - '.github/workflows/cup-station-photo.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'client-sdk/phab-admin-panel.js'
+      - 'deploy/nginx/ph-ab.conf'
+      - 'deploy/server-147/nginx-api-snippet.conf'
+      - 'deploy/server-147/README.md'
+      - 'src/padlhub-admin-proxy/**'
+      - 'test/cup-station-photo-upload.test.mjs'
+      - 'test/location-recommendation-photos-ui.test.mjs'
+      - 'package*.json'
+      - '.github/workflows/cup-station-photo.yml'
 permissions:
   contents: read
 jobs:
