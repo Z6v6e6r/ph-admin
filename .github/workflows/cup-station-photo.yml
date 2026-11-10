@@ -1,0 +1,30 @@
+name: CUP station photo upload
+# The station-photo upload contract spans the served panel, the server-147 ingress snippet and the
+# bridge cap. Keep the two unit suites that pin it in CI on every change to those inputs.
+on:
+  pull_request:
+    paths:
+      - 'client-sdk/phab-admin-panel.js'
+      - 'deploy/nginx/ph-ab.conf'
+      - 'deploy/server-147/nginx-api-snippet.conf'
+      - 'deploy/server-147/README.md'
+      - 'src/padlhub-admin-proxy/**'
+      - 'test/cup-station-photo-upload.test.mjs'
+      - 'test/location-recommendation-photos-ui.test.mjs'
+      - 'package*.json'
+      - '.github/workflows/cup-station-photo.yml'
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.1'
+      - name: Station photo preparation and ingress contract
+        run: node --test test/cup-station-photo-upload.test.mjs
+      - name: Recommendation-card photo bindings
+        run: node --test test/location-recommendation-photos-ui.test.mjs

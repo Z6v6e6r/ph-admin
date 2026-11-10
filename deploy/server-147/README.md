@@ -65,30 +65,36 @@ Use snippet from:
 ### Request body limit for uploads
 
 The `location ^~ /api/` block must carry `client_max_body_size 20m;`. Ubuntu nginx defaults to
-`1m` and answers every larger request with `413 Request Entity Too Large` as `text/html` before
-it reaches ph-admin; the ЦУП panel can only show that as `PadlHub Admin API: HTTP 413` and the
-operator cannot upload station photos, gallery covers or event-showcase images at all. The snippet
-in this repository already contains the directive — check the deployed block after any manual edit:
+`1m` and answers every larger request with `413 Request Entity Too Large` as `text/html` before it
+reaches ph-admin. Before this change the ЦУП panel showed only the fallback
+`PadlHub Admin API: HTTP 413` for that response, so station photos, gallery covers and
+event-showcase images could not be uploaded at all. The snippet in this repository already contains
+the directive; `sites-enabled` entries are commonly symlinks, so keep the preimage of the resolved
+regular file and record its digest:
 
 ```bash
-# 1) Read the active limit and keep a preimage before editing.
+# 1) Read the active limit and keep a reproducible preimage of the real file.
 sudo nginx -T | grep -nE "server_name padlhub.su|client_max_body_size"
-sudo cp -a /etc/nginx/sites-enabled/padlhub.su /root/padlhub.su.before-body-limit
+SITE=$(readlink -f /etc/nginx/sites-enabled/padlhub.su)
+PREIMAGE="/root/$(basename "$SITE").before-body-limit.$(date -u +%Y%m%dT%H%M%SZ)"
+sudo cp -a --no-clobber "$SITE" "$PREIMAGE" && sudo sha256sum "$SITE" "$PREIMAGE"
 
 # 2) Add `client_max_body_size 20m;` inside `location ^~ /api/`, then validate and reload.
 sudo nginx -t && sudo systemctl reload nginx
 
-# 3) Prove the boundary: a 2 MB body must leave nginx (401/403 JSON from ph-admin) instead of 413.
-head -c 2097152 /dev/zero > /tmp/phab-body-probe.bin
-curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: image/jpeg' \
+# 3) Prove the boundary: a 13 MiB body must leave nginx (JSON 401/403 from ph-admin), not 413.
+head -c 13631488 /dev/zero > /tmp/phab-body-probe.bin
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: image/jpeg' -H 'Expect:' \
   --data-binary @/tmp/phab-body-probe.bin \
   https://padlhub.su/api/ui/padlhub-admin/<tenantKey>/location-media
 ```
 
-A `413` with `Server: nginx` and `Content-Type: text/html` means the directive is still missing or
-not inside the `/api/` location. `401`/`403` with `Content-Type: application/json` means nginx now
-passes the body to ph-admin and only authentication answered. Rollback: restore the preimage,
-`sudo nginx -t && sudo systemctl reload nginx`.
+The probe passes when the answer is `401`/`403` with `Content-Type: application/json` or any JSON
+response from ph-admin; a `413` with `Server: nginx` and `Content-Type: text/html` means the
+directive is still missing or not inside the `/api/` location. After the current panel release the
+operator additionally sees the actionable `Файл слишком большой…` text instead of the bare status.
+Rollback: `sudo cp -a "$PREIMAGE" "$SITE"`, `sudo nginx -t && sudo systemctl reload nginx`; verify
+with the same probe and `nginx -T`.
 
 The production `location ^~ /api/tournaments/public/` compatibility block must be
 patched from an audited server preimage before reload. Build a candidate first:

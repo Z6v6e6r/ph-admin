@@ -71,6 +71,7 @@ const LOCATION_HELPERS = [
   'estimateDataUrlSize',
   'readImageFileAsDataUrl',
   'loadImageFromDataUrl',
+  'loadImageFromFile',
   'locationPhotoMimeType',
   'locationPhotoFileName',
   'locationPhotoDataUrlToBlob',
@@ -112,6 +113,18 @@ function setup(options = {}) {
   const draws = [];
   const context = vm.createContext({
     window: { atob, location: { href: 'https://cup.example.invalid/' } },
+    // Browsers decode through an object URL; the FileReader path stays as the fallback.
+    URL: options.noObjectUrl
+      ? {}
+      : Object.assign(
+          function URL() {},
+          {
+            createObjectURL(file) {
+              return file && file.__undecodable ? 'blob:UNDECODABLE' : 'blob:mock';
+            },
+            revokeObjectURL() {}
+          }
+        ),
     document: {
       createElement(tag) {
         assert.equal(tag, 'canvas');
@@ -146,7 +159,7 @@ function setup(options = {}) {
   return { context, canvases, draws };
 }
 
-test('the production ingress admits the whole station-media envelope', () => {
+test('the repository ingress snippet admits the whole station-media envelope', () => {
   const apiBlock = blockAt(apiSnippet, apiSnippet.indexOf('location ^~ /api/'));
   const limit = bodyLimitBytes(apiBlock);
   assert.ok(
@@ -154,7 +167,11 @@ test('the production ingress admits the whole station-media envelope', () => {
     'the /api/ nginx limit ' + limit + ' must cover the ' + bridgeMediaCapBytes() + ' bridge cap'
   );
   assert.ok(limit >= 16 * MIB, 'the upload location must not keep the 1m Ubuntu default');
-  assert.ok(bodyLimitBytes(containerNginx) >= bridgeMediaCapBytes(), 'the CUP container nginx keeps the same floor');
+  const containerServer = blockAt(containerNginx, containerNginx.indexOf('server {'));
+  assert.ok(
+    bodyLimitBytes(containerServer) >= bridgeMediaCapBytes(),
+    'the CUP container nginx keeps the same floor'
+  );
   assert.match(serverReadme, /client_max_body_size 20m/);
   assert.match(serverReadme, /413 Request Entity Too Large/);
 });
@@ -203,11 +220,33 @@ test('a browser without a WebP encoder falls back to JPEG bytes', async () => {
 
 test('unreadable HEIC is refused while a small undecodable JPEG still goes as-is', async () => {
   const { context } = setup();
-  const heic = { name: 'IMG_0002.HEIC', type: 'image/heic', size: 3 * MIB, __dataUrl: 'data:image/heic;base64,UNDECODABLE' };
+  const heic = { name: 'IMG_0002.HEIC', type: 'image/heic', size: 3 * MIB, __undecodable: true };
   await assert.rejects(() => context.prepareLocationPhotoFile(heic), /JPEG, PNG или WebP/);
 
-  const jpeg = { name: 'small.jpg', type: 'image/jpeg', size: 500 * 1024, __dataUrl: 'data:image/jpeg;base64,UNDECODABLE' };
+  const jpeg = { name: 'small.jpg', type: 'image/jpeg', size: 500 * 1024, __undecodable: true };
   assert.equal(await context.prepareLocationPhotoFile(jpeg), jpeg);
+});
+
+test('a JPEG the canvas cannot open gets a decode error, not a format claim', async () => {
+  const { context } = setup();
+  const big = { name: 'big.jpg', type: 'image/jpeg', size: 12 * MIB, __undecodable: true };
+  await assert.rejects(
+    () => context.prepareLocationPhotoFile(big),
+    /Не удалось обработать фотографию/
+  );
+});
+
+test('a file with no declared type is decided by its bytes', async () => {
+  const { context } = setup();
+  const prepared = await context.prepareLocationPhotoFile({ name: 'IMG_0003', type: '', size: 8 * MIB });
+  assert.equal(prepared.type, 'image/webp');
+});
+
+test('the FileReader fallback still prepares the photo without object URLs', async () => {
+  const { context } = setup({ noObjectUrl: true });
+  const prepared = await context.prepareLocationPhotoFile({ name: 'fallback.png', type: 'image/png', size: MIB });
+  assert.equal(prepared.type, 'image/webp');
+  assert.equal(prepared.name, 'fallback.webp');
 });
 
 test('the panel refuses files it cannot shrink below the upload cap', async () => {
@@ -226,6 +265,46 @@ test('the panel refuses files it cannot shrink below the upload cap', async () =
   );
 });
 
+test('the gallery upload path sends the prepared file to the media bridge', async () => {
+  const uploaded = [];
+  const statuses = [];
+  const context = vm.createContext({
+    locationAdminState: {
+      selectedId: 'station-1',
+      selectionRevision: 0,
+      uploading: false,
+      saving: false,
+      photoUploadOperation: null,
+      error: '',
+      profile: null,
+      items: []
+    },
+    notificationState: { session: null },
+    notificationApi: {
+      uploadLocationMedia: async (file) => {
+        uploaded.push(file);
+        return { mediaUrl: 'https://media.example.invalid/asset.webp' };
+      }
+    },
+    readLocationProfileFromEditor: () => ({ gallery: [] }),
+    renderLocationAdmin: () => {},
+    setStatus: (message, error) => statuses.push({ message, error }),
+    prepareLocationPhotoFile: async () => ({ name: 'prepared.webp', type: 'image/webp', size: 12345 })
+  });
+  vm.runInContext(functionSource('uploadLocationAdminPhoto'), context);
+  await context.uploadLocationAdminPhoto(
+    { name: 'IMG_0004.JPG', type: 'image/jpeg', size: 4 * MIB },
+    {}
+  );
+  assert.equal(uploaded.length, 1);
+  assert.equal(uploaded[0].name, 'prepared.webp');
+  assert.equal(uploaded[0].type, 'image/webp');
+  assert.equal(context.locationAdminState.profile.gallery.length, 1);
+  assert.equal(context.locationAdminState.profile.gallery[0].isCover, true);
+  assert.equal(context.locationAdminState.profile.gallery[0].url, 'https://media.example.invalid/asset.webp');
+  assert.equal(context.locationAdminState.uploading, false);
+  assert.deepEqual(statuses.at(-1), { message: 'Фотография загружена и сохранена как WebP.', error: false });
+});
 test('both station upload flows send the prepared file', () => {
   assert.match(
     panel,
@@ -239,7 +318,7 @@ test('both station upload flows send the prepared file', () => {
 
 test('a 413 without a JSON body explains what the operator can do', () => {
   assert.match(panel, /response\.status === 413/);
-  assert.match(panel, /String\(url\)\.indexOf\('\/location-media'\) >= 0/);
+  assert.ok(panel.includes('/\\/location-media(?:[?#]|$)/'), 'the media route is matched exactly');
   assert.match(panel, /Файл слишком большой для загрузки через ЦУП\. Выберите фотографию меньшего размера\./);
   assert.match(panel, /Запрос слишком большой для PadlHub Admin API\./);
 });

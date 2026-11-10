@@ -8,9 +8,9 @@ import { createHmac, randomUUID } from 'crypto';
  * The ЦУП operator is already authenticated here, so the browser must never hold a PadlHub credential.
  * This service attaches a short-lived assertion — an HMAC over the tenant key and the current time,
  * keyed with `PADLHUB_ADMIN_DELEGATION_TOKEN` — which the PadlHub API accepts only for
- * `/admin/api/v1/{tenant}/notifications/**` and `/admin/api/v1/{tenant}/locations**`, only inside its
- * replay window. A captured request therefore stops working within seconds and cannot be replayed for
- * another tenant.
+ * `/admin/api/v1/{tenant}/notifications/**`, `/admin/api/v1/{tenant}/locations**` and
+ * `/admin/api/v1/{tenant}/location-media`, only inside its replay window. A captured request
+ * therefore stops working within seconds and cannot be replayed for another tenant.
  */
 
 export const PADLHUB_ADMIN_PROXY_PREFIX = '/api/ui/padlhub-admin';

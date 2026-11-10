@@ -9317,7 +9317,7 @@
         // no JSON message to show. At least say which limit the operator hit.
         var fallbackMessage =
           response.status === 413
-            ? String(url).indexOf('/location-media') >= 0
+            ? /\/location-media(?:[?#]|$)/.test(String(url))
               ? 'Файл слишком большой для загрузки через ЦУП. Выберите фотографию меньшего размера.'
               : 'Запрос слишком большой для PadlHub Admin API.'
             : 'PadlHub Admin API: HTTP ' + response.status;
@@ -16938,6 +16938,7 @@
       var added = 0;
       var skipped = 0;
       var failed = 0;
+      var lastFailureMessage = '';
       function ownsUpload() {
         return (
           locationAdminState.photoUploadOperation === uploadOperation &&
@@ -16964,6 +16965,7 @@
               throw error;
             }
             failed += 1;
+            lastFailureMessage = error && error.message ? String(error.message) : '';
             continue;
           }
           if (!ownsUpload()) return;
@@ -16997,6 +16999,7 @@
             'Добавлено фото: ' + added +
               (skipped ? ', уже было добавлено: ' + skipped : '') +
               (failed ? ', не удалось загрузить: ' + failed : '') +
+              (failed && lastFailureMessage ? ' (' + lastFailureMessage + ')' : '') +
               '. Активируйте нужные варианты и сохраните станцию.',
             failed > 0 && added === 0
           );
@@ -18787,6 +18790,27 @@
       });
     }
 
+    // Decode straight from the file: a 25 MB source becomes a ~33 MB base64 string through
+    // FileReader, which is the expensive part on a phone. The data-URL path stays as a fallback.
+    function loadImageFromFile(file) {
+      if (typeof URL === 'function' && typeof URL.createObjectURL === 'function') {
+        return new Promise(function (resolve, reject) {
+          var objectUrl = URL.createObjectURL(file);
+          var image = new Image();
+          image.onload = function () {
+            URL.revokeObjectURL(objectUrl);
+            resolve(image);
+          };
+          image.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Не удалось обработать фото'));
+          };
+          image.src = objectUrl;
+        });
+      }
+      return readImageFileAsDataUrl(file).then(loadImageFromDataUrl);
+    }
+
     function locationPhotoMimeType(file) {
       var type = String((file && file.type) || '').toLowerCase();
       return type === 'image/jpg' ? 'image/jpeg' : type;
@@ -18834,7 +18858,8 @@
       var mimeType = locationPhotoMimeType(file);
       var size = Math.max(0, Number((file && file.size) || 0));
       var fileName = String((file && file.name) || 'фото');
-      if (!file || !String(file.type || '').toLowerCase().startsWith('image/')) {
+      // An empty type happens on drag&drop on some operating systems; the decode step decides then.
+      if (!file || (mimeType !== '' && mimeType.indexOf('image/') !== 0)) {
         throw new Error('Для фотографии станции подходит JPEG, PNG или WebP.');
       }
       if (size > LOCATION_PHOTO_MAX_SOURCE_BYTES) {
@@ -18843,24 +18868,22 @@
             formatFileSize(LOCATION_PHOTO_MAX_SOURCE_BYTES) + '.'
         );
       }
-      var originalDataUrl;
-      try {
-        originalDataUrl = await readImageFileAsDataUrl(file);
-      } catch (error) {
-        throw new Error('Не удалось прочитать фото. Попробуйте другой файл.');
-      }
       var image = null;
       try {
-        image = await loadImageFromDataUrl(originalDataUrl);
+        image = await loadImageFromFile(file);
       } catch (error) {
         image = null;
       }
       var width = image ? image.naturalWidth || image.width || 0 : 0;
       var height = image ? image.naturalHeight || image.height || 0 : 0;
       if (!image || !width || !height) {
-        // Undecodable HEIC/HEIF is refused; an already small JPEG/PNG/WebP can still go as-is.
+        // An already small JPEG/PNG/WebP can still go as-is; an undecodable HEIC/HEIF or a picture the
+        // canvas could not open gets the error that matches its cause instead of one generic text.
         if (canSendLocationPhotoAsIs(file, mimeType, size)) return file;
-        throw new Error('Формат фотографии не поддерживается. Сохраните её как JPEG, PNG или WebP.');
+        if (mimeType !== '' && LOCATION_PHOTO_MIME_TYPES.indexOf(mimeType) < 0) {
+          throw new Error('Формат фотографии не поддерживается. Сохраните её как JPEG, PNG или WebP.');
+        }
+        throw new Error('Не удалось обработать фотографию. Попробуйте другое фото или сохраните его как JPEG.');
       }
       var scale = Math.min(1, LOCATION_PHOTO_MAX_DIMENSION / Math.max(width, height));
       var qualities = [0.86, 0.8, 0.72, 0.64];
