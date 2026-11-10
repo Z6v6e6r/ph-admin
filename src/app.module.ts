@@ -19,6 +19,7 @@ import { ResidentServicesModule } from './resident-services/resident-services.mo
 import { SupportModule } from './support/support.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { RolesGuard } from './common/rbac/roles.guard';
+import { PadlhubAdminProxyModule } from './padlhub-admin-proxy/padlhub-admin-proxy.module';
 import { SystemController } from './system/system.controller';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { UiController } from './ui/ui.controller';
@@ -36,6 +37,7 @@ import { TrafficModule } from './traffic/traffic.module';
     TournamentsModule,
     MessengerModule,
     PlayerRatingsModule,
+    PadlhubAdminProxyModule,
     QrLinksModule,
     ReferralLinksModule,
     ResidencyCheckModule,

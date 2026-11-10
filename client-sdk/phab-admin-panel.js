@@ -24,6 +24,7 @@
     communityPoliciesEnabled: false,
     communityPolicyTypesEnabled: [],
     notificationApiBaseUrl: '',
+    padlhubAdminProxyBaseUrl: '',
     notificationTenantKey: 'local-padel',
     notificationAppVersion: 'phab-cup-local-0.1.0'
   };
@@ -412,6 +413,7 @@
       cfg.subscriptionTestRuntimeEnabled === true ||
       String(cfg.subscriptionTestRuntimeEnabled || '').trim().toLowerCase() === 'true';
     cfg.notificationApiBaseUrl = String(cfg.notificationApiBaseUrl || '').replace(/\/+$/, '');
+    cfg.padlhubAdminProxyBaseUrl = String(cfg.padlhubAdminProxyBaseUrl || '').replace(/\/+$/, '');
     cfg.notificationTenantKey = String(cfg.notificationTenantKey || 'local-padel').trim();
     cfg.notificationAppVersion = String(
       cfg.notificationAppVersion || DEFAULTS.notificationAppVersion
@@ -9260,8 +9262,13 @@
   function createNotificationAdminApi(cfg) {
     var apiBaseUrl = String(cfg.notificationApiBaseUrl || '').replace(/\/+$/, '');
     var tenantKey = encodeURIComponent(String(cfg.notificationTenantKey || 'local-padel'));
+    // Bridge mode: the ЦУП answers these admin calls itself with its server-side delegation
+    // credential, so the operator needs no PadlHub session and the browser never sees that credential.
+    var proxyBaseUrl = String(cfg.padlhubAdminProxyBaseUrl || '').replace(/\/+$/, '');
     var userRoot = apiBaseUrl + '/user/api/v1/' + tenantKey;
-    var adminRoot = apiBaseUrl + '/admin/api/v1/' + tenantKey;
+    var adminRoot = proxyBaseUrl
+      ? proxyBaseUrl + '/' + tenantKey
+      : apiBaseUrl + '/admin/api/v1/' + tenantKey;
     var accessToken = '';
     var requestSequence = 0;
 
@@ -9312,6 +9319,11 @@
     }
 
     async function refreshSession(signal) {
+      if (proxyBaseUrl) {
+        // The console session is the whole authorization in bridge mode: there is no second session to
+        // refresh, only the bridge readiness probe.
+        return request(adminRoot + '/session', { method: 'GET', signal: signal });
+      }
       var idempotencyKey = operationId();
       var session = await request(userRoot + '/auth/session/refresh', {
         method: 'POST',
@@ -10295,6 +10307,11 @@
     }
 
     var notificationAuth = notificationNode('[data-notification-auth]');
+    if (cfg.padlhubAdminProxyBaseUrl) {
+      // The console authorizes this block with its own operator session in bridge mode, so the second
+      // PadlHub login card has nothing to authorize and stays hidden.
+      notificationAuth.classList.add('phab-admin-hidden');
+    }
     var notificationWorkspace = notificationNode('[data-notification-workspace]');
     var notificationPhoneInput = notificationNode('[data-notification-phone]');
     var notificationCodeField = notificationNode('[data-notification-code-field]');
@@ -16996,26 +17013,30 @@
         var auth = document.createElement('div');
         auth.className = 'phab-location-message' + (locationAdminState.error ? ' is-error' : '');
         var authText = document.createElement('p');
-        authText.textContent = locationAdminState.error || 'Подключите операторскую PadlHub-сессию для управления публичными карточками.';
+        authText.textContent = locationAdminState.error || (cfg.padlhubAdminProxyBaseUrl
+          ? 'Станции недоступны: ЦУП не смог авторизоваться в PadlHub Admin API.'
+          : 'Подключите операторскую PadlHub-сессию для управления публичными карточками.');
         auth.appendChild(authText);
-        var retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'phab-admin-btn';
-        retry.textContent = 'Подключить PadlHub';
-        retry.addEventListener('click', function () {
-          loadLocationAdmin(locationAdminState.selectedId).catch(handleError);
-        });
-        auth.appendChild(retry);
-        var login = document.createElement('button');
-        login.type = 'button';
-        login.className = 'phab-admin-btn-secondary';
-        login.style.marginLeft = '8px';
-        login.textContent = 'Войти через «Уведомления»';
-        login.addEventListener('click', function () {
-          switchTab('notifications');
-          ensureNotificationSession().catch(handleError);
-        });
-        auth.appendChild(login);
+        if (!cfg.padlhubAdminProxyBaseUrl) {
+          var retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'phab-admin-btn';
+          retry.textContent = 'Подключить PadlHub';
+          retry.addEventListener('click', function () {
+            loadLocationAdmin(locationAdminState.selectedId).catch(handleError);
+          });
+          auth.appendChild(retry);
+          var login = document.createElement('button');
+          login.type = 'button';
+          login.className = 'phab-admin-btn-secondary';
+          login.style.marginLeft = '8px';
+          login.textContent = 'Войти через «Уведомления»';
+          login.addEventListener('click', function () {
+            switchTab('notifications');
+            ensureNotificationSession().catch(handleError);
+          });
+          auth.appendChild(login);
+        }
         dom.locationAdminRoot.appendChild(auth);
         return;
       }
@@ -38265,6 +38286,16 @@
     }
 
     function showNotificationAuth(message, isError) {
+      if (cfg.padlhubAdminProxyBaseUrl) {
+        // There is no second login to offer in bridge mode: report the API answer in the workspace.
+        showNotificationWorkspace();
+        setNotificationResult(
+          dom.notificationResult,
+          message || 'PadlHub Admin API недоступен.',
+          isError === true
+        );
+        return;
+      }
       scenarioPane.suspend();
       notificationState.session = null;
       dom.notificationAuth.classList.remove('phab-admin-hidden');
@@ -38324,6 +38355,8 @@
       notificationState.restoring = true;
       setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
       try {
+        // A stored token is harmless in bridge mode: the ЦУП bridge always uses its own credential and
+        // ignores whatever Authorization the browser carries.
         var storedToken = readStoredNotificationToken();
         if (storedToken) {
           notificationApi.setAccessToken(storedToken);

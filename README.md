@@ -796,11 +796,37 @@ PadlHub Location Admin API. В редакторе станции фото рек
 Этот интерфейс требует API-контракт `recommendationPhotos` из
 [LK2 PR #375](https://github.com/Z6v6e6r/lk2/pull/375). Сначала выпускается API с миграцией и
 минимальными runtime-правами, затем этот SDK. Используются существующие
-`PADLHUB_NOTIFICATION_API_BASE_URL` / `PADLHUB_NOTIFICATION_TENANT_KEY`, операторская PadlHub-сессия
-и права `locations.read/manage/publish`; права сотрудников ЦУПа не заменяют права PadlHub API.
+`PADLHUB_NOTIFICATION_API_BASE_URL` / `PADLHUB_NOTIFICATION_TENANT_KEY` и права
+`locations.read/manage/publish`.
 Файлы сохраняются через `/location-media`, а привязки — через versioned-сохранение выбранного
 канонического UUID станции. Новых Mongo-коллекций, токенов или разрешений этот интерфейс не создаёт.
 Проверка поведения без внешних сервисов: `node --test test/location-recommendation-photos-ui.test.mjs`.
+
+### Блоки «Уведомления» и «Станции» без второй PadlHub-сессии
+
+По умолчанию оба блока, как и раньше, требуют операторскую PadlHub-сессию (код по телефону или
+вставленный admin-токен). Если в окружении ЦУПа задан `PADLHUB_ADMIN_DELEGATION_TOKEN` (тот же
+секрет, что `CUP_ADMIN_DELEGATION_TOKEN` в PadlHub API), панель получает
+`padlhubAdminProxyBaseUrl = /api/ui/padlhub-admin` и работает через серверный мост:
+
+- браузер вызывает только `/api/ui/padlhub-admin/{tenantKey}/...` под обычной сессией ЦУПа
+  (роль `SUPER_ADMIN`); карточка PadlHub-логина скрыта;
+- ЦУП сам подписывает `Authorization: Bearer cupv1.<issuedAtMs>.<hmac>` (HMAC-SHA256 от
+  `cupv1\n{tenantKey}\n{issuedAtMs}` на `PADLHUB_ADMIN_DELEGATION_TOKEN`), ставит
+  `X-App-Platform: cup-admin`, сам генерирует `X-Correlation-ID` и передаёт наверх только явный
+  список путей (`notifications/**`, `locations**`, `location-media`) и только для
+  `PADLHUB_NOTIFICATION_TENANT_KEY`; секрет в браузер и в запрос не попадает;
+- `Idempotency-Key` кампаний и сохранений станции пробрасывается как есть, а команда без него
+  отклоняется до вызова PadlHub; из query пробрасываются только `limit`/`cursor`/`days`, тело
+  загрузки станции ограничено (`PADLHUB_ADMIN_PROXY_MAX_MEDIA_BYTES`, по умолчанию 12 МиБ) и
+  превышение даёт `413 PADLHUB_ADMIN_PROXY_MEDIA_TOO_LARGE`;
+- `/session` реально спрашивает LK2 (capabilities), поэтому выключенный контур, ротация секрета или
+  чужой tenant видны сразу, а не на первом действии оператора;
+- без токена или базового URL мост не объявляется, панель остаётся в прежнем режиме, а маршруты
+  отвечают `503 PADLHUB_ADMIN_PROXY_NOT_CONFIGURED`.
+
+Секрет живёт только в EnvironmentFile сервиса: в HTML-конфиг панели он не попадает.
+Проверка: `npm run test:cup-admin-delegation`.
 
 Пример подключения на Tilda:
 

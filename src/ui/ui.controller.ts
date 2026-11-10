@@ -7,6 +7,20 @@ import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { releaseCapabilities } from '../common/release-capabilities';
 import { residentServicesEnabled } from '../resident-services/resident-services.config';
+import { PADLHUB_ADMIN_PROXY_PREFIX } from '../padlhub-admin-proxy/padlhub-admin-proxy.service';
+
+/**
+ * The panel gets the bridge base only when the ЦУП really can act as the operator: without the
+ * upstream address and the delegation credential it would render a block that can only answer 503.
+ */
+function padlhubAdminProxyEnabled(): boolean {
+  return (
+    String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim().length > 0 &&
+    String(process.env.PADLHUB_ADMIN_DELEGATION_TOKEN ?? '').trim().length > 0 &&
+    // No implicit tenant: the bridge must never guess which organisation it acts for.
+    String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim().length > 0
+  );
+}
 
 type AdminUiQuery = {
   apiBaseUrl?: string;
@@ -423,6 +437,12 @@ export class UiController {
         query.notificationTenantKey?.trim() ||
         String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim() ||
         'local-padel',
+      // The notification and station-card blocks call the ЦУП bridge instead of the PadlHub admin API
+      // directly, so the operator needs no second PadlHub session. Only announced when the bridge is
+      // actually configured; otherwise the panel keeps its operator-login path.
+      ...(padlhubAdminProxyEnabled()
+        ? { padlhubAdminProxyBaseUrl: PADLHUB_ADMIN_PROXY_PREFIX }
+        : {}),
       cookieAuthOnly: Boolean(authContext.user),
       authToken: authContext.user ? undefined : authToken || undefined
     };
