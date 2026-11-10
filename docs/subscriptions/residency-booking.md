@@ -86,3 +86,83 @@ evidence, interval and near-freshness-deadline checks. These do not prove a real
 Viva price, payment, booking or production rollout.
 
 The admin benefit editor preserves every selected action and has an explicit all-stations checkbox. A blank station list keeps the legacy explicit-list meaning; only the checkbox writes `allStations: true` with an empty list. Opening and saving a published residency policy must retain both game actions and its wildcard.
+
+## Live provider refresh
+
+`POST /api/internal/subscriptions/residency-booking-refresh` is an explicit,
+authenticated refresh command. It returns the existing residency context envelope;
+the old `residency-booking-context` and generic `runtime-context` remain read-only.
+The new route requires runtime context, residency context and
+`SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED`, the existing integration token and a verified
+LK bearer. Tenant/client ownership comes exclusively from that bearer. The body
+contains only `clientSubscriptionId`.
+
+Every preview/admission/prewrite request reads Viva again. There is no background
+heartbeat or stale-cache fallback. The GET-only reader checks every page of the
+owned client's subscriptions, its exact linked `/api/v1/transactions/{id}`, and the
+exact all-station/30-day product card. Requests stay on `https://api.vivacrm.ru`,
+reject redirects, bound response size and share a deadline. A refresh has an 8-second
+budget, inside LK's 10-second HTTP timeout. Evidence time is the start of the
+necessary source reads; transaction completion never extends its lifetime.
+
+Eligibility requires exact client/instance/transaction/product links, one product
+line, integer monetary consistency, `PAID`, a zone-bearing payment date, and no
+refund or pending refund. Positive `transaction.toPay` is permitted for a paid
+purchase: it must equal line cost minus discount. The subscription's `cost` is not
+used to infer gross/net semantics. ACTIVE alone cannot grant a benefit. HOLD,
+refund, partial/unknown payment, conflicting identities, unsupported timestamps or
+anything other than the exact PURCHASE/30-day interval cannot return a context.
+The current millisecond contract rejects meaningful sub-millisecond timestamps
+rather than truncate them into a false interval; actual provider acceptance must
+be checked on the purchased instance.
+
+`subscription_residency_provider_observations` is a dedicated provider read model.
+It stores normalized evidenced facts and digests, with owner HMAC, source timestamps
+and purchase-policy binding. It never invents an annual release, phase, home station,
+currency, payment, or free visits. A tenant-scoped all-station context has
+`instance.homeStationId=null`; the residency consumer does not use a home station.
+Known ineligible observations may record a truthful denial; unknown/inconsistent or
+failed source reads do not advance observation freshness. Raw provider bodies and
+unrelated subscriptions are not persisted or returned.
+
+The transaction compares the pre-fetch mapping/publication/fence snapshot, checks
+monotonic observations, and atomically refreshes genuine product evidence,
+mapping revision, fence binding/digest and the owned observation. It uses primary,
+snapshot/majority+journaled writes and bounded retries. An uncertain commit is
+acknowledged only by primary/majority exact semantic readback. Ownership and the
+original purchase-policy binding cannot be reassigned. A binding conflict permits
+one complete source re-fetch. This is identity-scoped coverage, not a complete
+inventory of all Viva customers.
+
+## Refresh rollout and recovery
+
+1. Deploy compatible CUP/LK source with Node-RED residency admission OFF. Keep all
+   existing annual/activation/projector startup writers OFF.
+2. Take the standard managed-subscription backup (now includes the observation
+   collection, including its absence). Check/apply only the two new unique indexes:
+   `node scripts/managed-subscriptions-indexes.mjs --check --residency-only`, then
+   the existing target-attested `--apply --residency-only` operator gate. Application
+   startup never creates these indexes. Do not drop them to roll back a release.
+3. Provision the transport secret on CUP and Node-RED and a stable CUP-only hash
+   pepper through the separately authorized protected configuration procedure.
+   Configure the verified `SUBSCRIPTIONS_RESIDENCY_SYNC_STUDIO_ID` and a narrow
+   `SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS` (60 seconds); context proof
+   still expires within 30 seconds of the earliest source read.
+4. With Node-RED admission still OFF, enable only CUP provider sync for the
+   read-only acceptance (`SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED=true`); keep CUP
+   context flags OFF until this check passes. Check the actual purchased instance
+   and its payment with the reviewed
+   `scripts/residency-provider-check.mjs --check --client-id ... --subscription-id ...`
+   from the pinned immutable runtime directory. Pin `CUP_RESIDENCY_EXPECTED_SOURCE_COMMIT`
+   and `SUBSCRIPTIONS_RESIDENCY_READ_APPROVED_CLIENT_ID`. This operator command is
+   GET/read-only and does not fabricate a bearer or persist an instance.
+5. Enable CUP refresh/context, verify negative and positive owned-client evidence,
+   then enable Node-RED admission LAST. Verify actual game/group quotes against
+   their ordinary server tariff. Real payment/booking acceptance remains separate
+   evidence and must not be claimed from fixtures or health checks.
+
+Stop new admissions at Node-RED, then disable CUP refresh/context. Preserve durable
+booking/replay recovery and stored observations; never restore a database over new
+purchases. Existing successful/PENDING operation replay does not require a fresh
+provider read or enabled admission. Protected configuration values and raw provider
+responses must stay out of Git, PR bodies and logs.

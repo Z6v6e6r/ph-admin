@@ -32,7 +32,7 @@ if (includeBindingPromotionContractIndexes && !includeRuntimeContractIndexes) {
   process.exit(2);
 }
 
-const plan = [
+const basePlan = [
   ['subscription_types', { subscriptionTypeId: 1 }, { unique: true, name: 'subscription_type_id_unique' }],
   ['subscription_types', { codeNorm: 1 }, { unique: true, name: 'subscription_type_code_norm_unique' }],
   ['subscription_types', { 'idempotency.actorId': 1, 'idempotency.key': 1 }, { unique: true, name: 'subscription_type_idempotency_unique' }],
@@ -113,6 +113,14 @@ const plan = [
     ['subscription_test_events', { purchaseId: 1, occurredAt: 1 }, { name: 'subscription_test_event_purchase_time' }]
   ] : [])
 ];
+
+// Explicit maintenance phase; never enabled by application startup or a runtime writer flag.
+const plan = process.argv.includes('--residency-only') ? [
+  ['subscription_residency_provider_observations', { tenantId: 1, clientSubscriptionId: 1 },
+    { unique: true, name: 'residency_observation_provider_identity_unique' }],
+  ['subscription_residency_provider_observations', { subscriptionInstanceId: 1 },
+    { unique: true, name: 'residency_observation_instance_id_unique' }]
+] : basePlan;
 
 if (!uri || !dbName) {
   console.error('SUBSCRIPTIONS_MONGODB_URI (or MONGODB_URI) and SUBSCRIPTIONS_MONGODB_DB are required');

@@ -615,6 +615,108 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
+  /** GET-only, exact owned-client coverage. Never exports an admin token or unrelated subscriptions. */
+  async readResidencySubscriptionEvidence(input: {
+    clientId: string; clientSubscriptionId: string; studioId: string; deadline?: number;
+  }): Promise<{ subscription: Record<string, unknown>; transaction: Record<string, unknown>;
+    instanceObservedAt: string; productObservedAt: string; productEvidenceRef: string }> {
+    const id = (v: string) => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/.test(v);
+    const fail = (): never => { throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_PROVIDER_UNAVAILABLE' }); };
+    if (!['true', '1', 'yes'].includes(String(process.env.SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED ?? '').toLowerCase())
+      || ![input.clientId, input.clientSubscriptionId, input.studioId].every(id)) return fail();
+    const deadline = Math.min(Date.now() + 8000, input.deadline ?? Infinity);
+    const bounded = async <T>(work: () => Promise<T>): Promise<T> => {
+      const remaining = Math.floor(deadline - Date.now());
+      if (!Number.isFinite(remaining) || remaining <= 0) return fail();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { return await Promise.race([work(), new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_PROVIDER_UNAVAILABLE' })), remaining);
+      })]); } finally { if (timer) clearTimeout(timer); }
+    };
+    const token = await bounded(() => this.requireAccessToken());
+    const resolved = await bounded(() => this.getResolvedSettings());
+    try {
+      const base = new URL(resolved.config.baseUrl);
+      if (base.origin !== 'https://api.vivacrm.ru' || base.username || base.password) return fail();
+    } catch { return fail(); }
+    const read = async (path: string): Promise<Record<string, unknown>> => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return fail();
+      const url = new URL(path, 'https://api.vivacrm.ru').toString();
+      const response = await fetch(url, { method: 'GET', redirect: 'error',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(remaining) });
+      if (response.status !== 200 || response.redirected || response.url !== url) return fail();
+      const reader = response.body?.getReader();
+      if (!reader) return fail();
+      const chunks: Uint8Array[] = []; let bytes = 0;
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          bytes += chunk.value.byteLength;
+          if (bytes > 1048576) { await reader.cancel(); return fail(); }
+          chunks.push(chunk.value);
+        }
+        const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!this.isRecord(parsed)) return fail();
+        return parsed;
+      } finally { reader.releaseLock(); }
+    };
+    const productId = '4037a3a3-e551-4f9a-a9db-1410e46b8635';
+    const productQuery = new URLSearchParams({ clientId: input.clientId, studioId: input.studioId });
+    const productStartedAt = new Date().toISOString();
+    const productRead = read(`/api/v1/products/subscriptions/${productId}?${productQuery}`);
+    const instancesRead = async () => {
+      let total: number | undefined; let totalPages: number | undefined;
+      const ids = new Set<string>(); let selected: Record<string, unknown> | undefined;
+      let count = 0;
+      const startedAt = new Date().toISOString();
+      for (let page = 0; page < 25; page += 1) {
+        const payload = await read(`/api/v1/clients/${encodeURIComponent(input.clientId)}/subscriptions?includeFinished=true&size=200&page=${page}`);
+        if (!Array.isArray(payload.content) || payload.number !== page || typeof payload.last !== 'boolean'
+          || !Number.isSafeInteger(payload.totalElements) || Number(payload.totalElements) < 0
+          || !Number.isSafeInteger(payload.totalPages) || Number(payload.totalPages) < 0
+          || payload.numberOfElements !== payload.content.length) return fail();
+        if (page === 0) { total = Number(payload.totalElements); totalPages = Number(payload.totalPages); }
+        if (payload.totalElements !== total || payload.totalPages !== totalPages) return fail();
+        for (const value of payload.content) {
+          if (!this.isRecord(value)) return fail();
+          const aliases = [value.subscriptionId, value.clientSubscriptionId, value.id, value.uuid].filter(v => v != null);
+          if (!aliases.length || aliases.some(v => typeof v !== 'string' || !id(v) || v !== aliases[0])) return fail();
+          const instanceId = aliases[0] as string;
+          if (ids.has(instanceId)) return fail();
+          ids.add(instanceId); count += 1;
+          if (instanceId === input.clientSubscriptionId) selected = value;
+        }
+        if (payload.last) {
+          if (count !== total || (total === 0 ? totalPages !== 0 : page + 1 !== totalPages)) return fail();
+          if (!selected) throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_OWNED_SUBSCRIPTION_NOT_FOUND' });
+          return { subscription: selected, startedAt };
+        }
+        if (!payload.content.length || count >= Number(total)) return fail();
+      }
+      return fail();
+    };
+    // Settle both reads even when one fails; no orphaned requests or unhandled rejection.
+    const [productResult, instancesResult] = await Promise.allSettled([productRead, instancesRead()]);
+    if (productResult.status !== 'fulfilled' || instancesResult.status !== 'fulfilled') return fail();
+    const product = productResult.value, { subscription, startedAt } = instancesResult.value;
+    if (product.id !== productId || product.productType !== 'SUBSCRIPTION' || product.validityDays !== 30
+      || product.hasStudioLimitation !== false || !Array.isArray(product.availableStudios)
+      || product.availableStudios.length !== 0) return fail();
+    const transactionIds = [subscription.transactionId, subscription.transactionUuid,
+      this.isRecord(subscription.transaction) ? subscription.transaction.id : undefined,
+      this.isRecord(subscription.transaction) ? subscription.transaction.uuid : undefined].filter(v => v != null);
+    if (!transactionIds.length || transactionIds.some(v => typeof v !== 'string' || !id(v) || v !== transactionIds[0])) return fail();
+    const transaction = await read(`/api/v1/transactions/${encodeURIComponent(transactionIds[0] as string)}`).catch(() => fail());
+    const productEvidenceRef = 'evidence:residency-product:' + createHash('sha256')
+      .update(JSON.stringify({ productId, validityDays: 30, allStations: true,
+        studioId: input.studioId, observedAt: productStartedAt, raw: product })).digest('hex');
+    return { subscription, transaction, instanceObservedAt: startedAt,
+      productObservedAt: productStartedAt, productEvidenceRef };
+  }
+
   async inspectSubscriptionProduct(input: {
     productId: string;
     clientId: string;

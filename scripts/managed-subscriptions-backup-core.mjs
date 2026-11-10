@@ -25,6 +25,7 @@ export const MANAGED_SUBSCRIPTION_COLLECTIONS = Object.freeze([
   'subscription_policy_publications',
   'subscription_projection_fences',
   'subscription_instances',
+  'subscription_residency_provider_observations',
   'subscription_instance_projector_checkpoints',
   'subscription_runtime_binding_promotions',
   'subscription_entitlement_aggregates',
