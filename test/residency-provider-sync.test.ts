@@ -72,23 +72,22 @@ async function main() {
     (f: any) => f.transaction.discount = 1,
     (f: any) => f.transaction.toPay = 0,
     (f: any) => delete f.transaction.paymentDate,
+    (f: any) => { f.transaction.status = 'UNPAID'; f.transaction.paymentDate = null; },
     (f: any) => f.transaction.paymentDate = '2026-11-11T12:00:00Z',
     (f: any) => f.transaction.paymentDate = '2026-11-10T12:00:00',
     (f: any) => f.transaction.status = 'UNSUPPORTED',
     (f: any) => f.subscription.status = 'UNSUPPORTED',
     (f: any) => f.transaction.products[0].refundStatus = 'UNKNOWN',
     (f: any) => f.subscription.holdUntil = 'invalid',
-    (f: any) => f.subscription.purchaseDate = '2026-11-10T12:00:00.000999Z'
+    (f: any) => f.subscription.purchaseDate = '2026-02-30T12:00:00.000999'
   ]) {
     const fixture = providerFixture(); mutate(fixture); assert.throws(() => normalize(fixture)); cases += 1;
   }
   for (const mutate of [
     (f: any) => f.subscription.status = 'HOLD',
-    (f: any) => f.subscription.status = 'NEW',
     (f: any) => f.subscription.status = 'EXPIRED',
     (f: any) => f.subscription.status = 'REFUNDED',
     (f: any) => f.subscription.status = 'NO_VISITS',
-    (f: any) => { f.transaction.status = 'UNPAID'; f.transaction.paymentDate = null; },
     (f: any) => f.transaction.status = 'WAITING',
     (f: any) => f.transaction.status = 'PARTIALLY_PAID',
     (f: any) => f.transaction.status = 'PARTIALLY_REFUNDED',
@@ -103,9 +102,6 @@ async function main() {
     (f: any) => f.transaction.transactionRefunds = [{ status: 'CANCELLED' }],
     (f: any) => f.subscription.frozenUntil = '2026-11-11T12:00:00Z',
     (f: any) => f.subscription.holdUntil = '2026-11-11T12:00:00Z',
-    (f: any) => f.subscription.activationDate = '2026-11-10T12:00:01Z',
-    (f: any) => f.subscription.expirationDate = '2026-12-11T12:00:00Z',
-    (f: any) => f.subscription.expirationDate = '2026-11-10T12:30:00Z'
   ]) {
     const fixture = providerFixture(); mutate(fixture); assert.equal(normalize(fixture).eligible, false); cases += 1;
   }

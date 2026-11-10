@@ -18,6 +18,7 @@ jobs:
       - run: node --test test/subscriptions-benefit-editor.test.mjs
       - run: npx ts-node test/residency-booking-policy.test.ts
       - run: npx ts-node test/residency-provider-sync.test.ts
+      - run: npx ts-node test/residency-financial-window.test.ts
       - run: npx ts-node test/residency-viva-reader.test.ts
       - run: node --test test/managed-subscriptions-backup.test.mjs test/managed-subscriptions-indexes.test.mjs
       - name: Start isolated MongoDB replica set

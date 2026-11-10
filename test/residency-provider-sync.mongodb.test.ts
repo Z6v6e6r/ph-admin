@@ -41,13 +41,13 @@ async function main() {
     await db.collection('subscription_projection_fences').insertOne(b.fence);
     return repo.binding(actor.tenantId);
   }
-  function observation(b: ResidencyBindingSnapshot, options: { clientId?: string; subscriptionId?: string; at?: string; status?: string } = {}): StoredResidencyObservation {
+  function observation(b: ResidencyBindingSnapshot, options: { clientId?: string; subscriptionId?: string; at?: string; status?: string; paymentDate?: string } = {}): StoredResidencyObservation {
     const at = options.at || stamp(), clientId = options.clientId || actor.providerClientId;
     const subscriptionId = options.subscriptionId || 'subscription:residency-test';
     const fixture = providerFixture(); fixture.subscription.subscriptionId = subscriptionId; fixture.transaction.client.id = clientId;
     fixture.subscription.purchaseDate = purchaseTime; fixture.subscription.activationDate = purchaseTime;
     fixture.subscription.expirationDate = new Date(Date.parse(purchaseTime) + 30 * 86400000).toISOString();
-    fixture.transaction.paymentDate = purchaseTime;
+    fixture.transaction.paymentDate = options.paymentDate || purchaseTime;
     if (options.status) fixture.subscription.status = options.status;
     const facts = normalizeResidencyProviderFacts({ ...fixture, providerClientId: clientId, clientSubscriptionId: subscriptionId,
       observedAt: new Date().toISOString() });
@@ -73,6 +73,22 @@ async function main() {
     await assert.rejects(repo.persist(b, observation(b, { at: first.evidence.instanceObservedAt }))); assert.equal(await mappingRevision(), 3); cases++;
     const foreign = observation(b, { clientId: 'client:foreign' });
     await assert.rejects(repo.persist(b, foreign)); assert.equal(await mappingRevision(), 3); cases++;
+
+    // Sub-ms edits must not silently rebind/extend the same issuance even when the v1 ms timestamp is identical.
+    b = await seed();
+    const paidRaw = purchaseTime.replace('Z', '001Z');
+    const originalPaid = await repo.persist(b, observation(b, { paymentDate: paidRaw }));
+    b = await repo.binding(actor.tenantId);
+    const originalFence = await db.collection('subscription_projection_fences').findOne({});
+    for (const paymentDate of [purchaseTime.replace('Z', '002Z'), paidRaw.replace('Z', '+00:00')]) {
+      const edited = observation(b, { paymentDate });
+      assert.equal(edited.facts.purchasedAt, originalPaid.facts.purchasedAt);
+      await assert.rejects(repo.persist(b, edited), (e: any) => e.getResponse?.().code === 'RESIDENCY_SYNC_IMMUTABLE_PURCHASE_CHANGED');
+      assert.equal(await mappingRevision(), 2);
+      assert.deepEqual(await db.collection('subscription_projection_fences').findOne({}), originalFence);
+      const saved = await db.collection(RESIDENCY_OBSERVATION_COLLECTION).findOne({});
+      assert.equal(saved!.facts.paymentDateRaw, paidRaw); assert.equal(saved!.revision, 1); cases++;
+    }
 
     b = await seed(); const a = observation(b), z = observation(b);
     const race = await Promise.allSettled([repo.persist(b, a), repo.persist(b, z)]);
