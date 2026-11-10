@@ -26,10 +26,11 @@ import { PadlhubAdminProxyService } from './padlhub-admin-proxy.service';
  * credential instead. The route list is the allowlist: nothing outside «Уведомления» and «Станции»
  * is forwarded.
  */
-// Station cards and notification campaigns are global (not station-scoped) catalog operations, so the
-// ЦУП roles that own them are the console-wide ones.
+// Notification campaigns and the public station catalog are console-wide surfaces, and sending pushes
+// is a critical action: the bridge stays least-privilege at SUPER_ADMIN until the owner decides which
+// narrower ЦУП roles may use it.
 @Controller('ui/padlhub-admin/:tenantKey')
-@Roles(Role.SUPER_ADMIN, Role.MANAGER)
+@Roles(Role.SUPER_ADMIN)
 export class PadlhubAdminProxyController {
   constructor(private readonly proxy: PadlhubAdminProxyService) {}
 

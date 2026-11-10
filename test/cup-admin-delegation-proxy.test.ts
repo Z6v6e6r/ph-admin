@@ -91,8 +91,7 @@ async function main(): Promise<void> {
     'ui/padlhub-admin/:tenantKey'
   );
   assert.deepEqual(Reflect.getMetadata(ROLES_KEY, PadlhubAdminProxyController), [
-    Role.SUPER_ADMIN,
-    Role.MANAGER
+    Role.SUPER_ADMIN
   ]);
 
   // Every forwarded path is declared explicitly: the set below is the whole allowlist.

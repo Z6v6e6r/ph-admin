@@ -810,7 +810,7 @@ PadlHub Location Admin API. В редакторе станции фото рек
 `padlhubAdminProxyBaseUrl = /api/ui/padlhub-admin` и работает через серверный мост:
 
 - браузер вызывает только `/api/ui/padlhub-admin/{tenantKey}/...` под обычной сессией ЦУПа
-  (роли `SUPER_ADMIN` или `MANAGER`); карточка PadlHub-логина скрыта;
+  (роль `SUPER_ADMIN`); карточка PadlHub-логина скрыта;
 - ЦУП сам добавляет `Authorization: Bearer $PADLHUB_ADMIN_DELEGATION_TOKEN` и
   `X-App-Platform: cup-admin` и передаёт наверх только явный список путей (`notifications/**`,
   `locations**`, `location-media`) и только для `PADLHUB_NOTIFICATION_TENANT_KEY`;
