@@ -38951,7 +38951,12 @@
         '<div class="phab-subscriptions-benefit-main-grid">' +
         '<label class="phab-subscriptions-field"><span>Включить</span><div class="phab-subscriptions-check"><input type="checkbox" data-benefit-enabled></div></label>' +
         '<label class="phab-subscriptions-field"><span>Категория</span><select class="phab-admin-input" data-benefit-category><option value="GAME">Игра</option><option value="GROUP_TRAINING">Групповая</option><option value="TOURNAMENT">Турнир</option><option value="ADD_ON_PRODUCT">Доппродукт</option></select></label>' +
-        '<label class="phab-subscriptions-field"><span>Действие</span><select class="phab-admin-input" data-benefit-action><option value="CREATE_GAME">Создание игры</option><option value="JOIN_GAME">Запись на игру</option><option value="BOOK_GROUP_TRAINING">Групповая</option><option value="BOOK_TOURNAMENT">Турнир</option><option value="PURCHASE_ADD_ON_PRODUCT">Покупка доппродукта</option></select></label>' +
+        '<fieldset class="phab-subscriptions-field"><legend>Действия</legend>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-action value="CREATE_GAME">Создание игры</label>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-action value="JOIN_GAME">Запись на игру</label>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-action value="BOOK_GROUP_TRAINING">Групповая</label>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-action value="BOOK_TOURNAMENT">Турнир</label>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-action value="PURCHASE_ADD_ON_PRODUCT">Покупка доппродукта</label></fieldset>' +
         '<label class="phab-subscriptions-field"><span>Льгота</span><select class="phab-admin-input" data-benefit-kind><option value="PERCENT_DISCOUNT">Скидка, %</option><option value="FIXED_PRICE">Фикс. цена</option><option value="FIXED_DISCOUNT">Скидка, ₽</option><option value="FREE_ENTITLEMENT">Бесплатно</option><option value="PARTIAL_PRICE_PERCENT_DISCOUNT">Доля цены − скидка %</option><option value="DISABLED">Отключено</option></select></label>' +
         '<label class="phab-subscriptions-field"><span>Значение / скидка %</span><input class="phab-admin-input" type="number" min="0" data-benefit-value></label>' +
         '<label class="phab-subscriptions-field"><span>Доля цены</span><div class="phab-subscriptions-benefit-fraction"><input class="phab-admin-input" type="number" min="1" value="1" aria-label="Числитель" data-benefit-partial-numerator><span>/</span><input class="phab-admin-input" type="number" min="1" value="4" aria-label="Знаменатель" data-benefit-partial-denominator></div></label>' +
@@ -38961,20 +38966,28 @@
         '<div class="phab-subscriptions-benefit-ids-grid">' +
         '<label class="phab-subscriptions-field"><span>Типы событий Viva (ID)</span><textarea class="phab-admin-input" data-benefit-event-types placeholder="ID через запятую"></textarea></label>' +
         '<label class="phab-subscriptions-field"><span>Типы продуктов Viva (ID)</span><textarea class="phab-admin-input" data-benefit-product-types placeholder="Для доппродуктов"></textarea></label>' +
-        '<label class="phab-subscriptions-field"><span>Станции (ID)</span><textarea class="phab-admin-input" data-benefit-stations placeholder="Пусто — все станции"></textarea></label>' +
+        '<label class="phab-subscriptions-check"><input type="checkbox" data-benefit-all-stations>Все станции</label>' +
+        '<label class="phab-subscriptions-field"><span>Выбранные станции (ID)</span><textarea class="phab-admin-input" data-benefit-stations placeholder="ID через запятую"></textarea></label>' +
         '</div>';
       var category = card.querySelector('[data-benefit-category]');
-      var action = card.querySelector('[data-benefit-action]');
+      var actions = card.querySelectorAll('[data-benefit-action]');
       category.value = definition.category;
-      action.value = definition.category === 'GAME' ? 'JOIN_GAME'
+      var defaultAction = definition.category === 'GAME' ? 'JOIN_GAME'
         : definition.category === 'GROUP_TRAINING' ? 'BOOK_GROUP_TRAINING'
           : definition.category === 'TOURNAMENT' ? 'BOOK_TOURNAMENT'
             : 'PURCHASE_ADD_ON_PRODUCT';
       var savedRule = definition.rule || null;
+      var selectedActions = savedRule ? normalizeArray(savedRule.actions) : [defaultAction];
+      Array.prototype.forEach.call(actions, function (input) {
+        input.checked = selectedActions.indexOf(input.value) !== -1;
+      });
+      var allStations = card.querySelector('[data-benefit-all-stations]');
+      var stations = card.querySelector('[data-benefit-stations]');
+      allStations.checked = Boolean(savedRule && savedRule.allStations === true);
+      stations.disabled = allStations.checked;
+      allStations.addEventListener('change', function () { stations.disabled = allStations.checked; });
       if (savedRule) {
         card.querySelector('[data-benefit-enabled]').checked = savedRule.enabled !== false;
-        var savedAction = normalizeArray(savedRule.actions)[0];
-        if (savedAction) action.value = savedAction;
         if (savedRule.kind) card.querySelector('[data-benefit-kind]').value = savedRule.kind;
         var savedValue = savedRule.percentage !== null && savedRule.percentage !== undefined
           ? savedRule.percentage
@@ -39436,23 +39449,27 @@
         .map(function (card, index) {
           var enabled = card.querySelector('[data-benefit-enabled]').checked;
           var category = card.querySelector('[data-benefit-category]').value;
-          var action = card.querySelector('[data-benefit-action]').value;
+          var actions = Array.prototype.slice.call(card.querySelectorAll('[data-benefit-action]:checked'))
+            .map(function (input) { return input.value; });
+          if (enabled && !actions.length) throw new Error('Выберите хотя бы одно действие для включённой льготы.');
+          var allStations = card.querySelector('[data-benefit-all-stations]').checked;
           var kind = card.querySelector('[data-benefit-kind]').value;
           var rawValue = Number(card.querySelector('[data-benefit-value]').value || 0);
           var rule = {
-            ruleId: String(category).toLowerCase() + '-' + String(action).toLowerCase() + '-' + String(index + 1),
+            ruleId: String(category).toLowerCase() + '-' + actions.join('-').toLowerCase() + '-' + String(index + 1),
             enabled: enabled,
             category: category,
-            actions: [action],
+            actions: actions,
             externalEventTypeIds: splitSubscriptionIds(card.querySelector('[data-benefit-event-types]').value),
             productTypeIds: splitSubscriptionIds(card.querySelector('[data-benefit-product-types]').value),
             durationMinutes: splitSubscriptionIds(card.querySelector('[data-benefit-durations]').value)
               .map(function (value) { return Number(value); })
               .filter(function (value) { return value === 60 || value === 90 || value === 120; }),
-            stationIds: splitSubscriptionIds(card.querySelector('[data-benefit-stations]').value),
+            stationIds: allStations ? [] : splitSubscriptionIds(card.querySelector('[data-benefit-stations]').value),
             kind: kind,
             priority: 1000 - index
           };
+          if (allStations) rule.allStations = true;
           if (kind === 'PERCENT_DISCOUNT' || kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT') rule.percentage = rawValue;
           if (kind === 'FIXED_PRICE' || kind === 'FIXED_DISCOUNT') rule.valueMinor = Math.round(rawValue * 100);
           if (kind === 'PARTIAL_PRICE_PERCENT_DISCOUNT') {

@@ -84,3 +84,5 @@ Local evidence: candidate DTO/catalog validation, all-station/zero-usage quotes,
 publication preview/replay, old schema-1 compatibility, stale/foreign/disabled
 evidence, interval and near-freshness-deadline checks. These do not prove a real
 Viva price, payment, booking or production rollout.
+
+The admin benefit editor preserves every selected action and has an explicit all-stations checkbox. A blank station list keeps the legacy explicit-list meaning; only the checkbox writes `allStations: true` with an empty list. Opening and saving a published residency policy must retain both game actions and its wildcard.
