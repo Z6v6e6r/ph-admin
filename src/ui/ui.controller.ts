@@ -16,7 +16,9 @@ import { PADLHUB_ADMIN_PROXY_PREFIX } from '../padlhub-admin-proxy/padlhub-admin
 function padlhubAdminProxyEnabled(): boolean {
   return (
     String(process.env.PADLHUB_NOTIFICATION_API_BASE_URL ?? '').trim().length > 0 &&
-    String(process.env.PADLHUB_ADMIN_DELEGATION_TOKEN ?? '').trim().length > 0
+    String(process.env.PADLHUB_ADMIN_DELEGATION_TOKEN ?? '').trim().length > 0 &&
+    // No implicit tenant: the bridge must never guess which organisation it acts for.
+    String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim().length > 0
   );
 }
 

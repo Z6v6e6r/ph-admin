@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
-import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { NotFoundException, PayloadTooLargeException, ServiceUnavailableException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ROLES_KEY } from '../src/common/rbac/roles.decorator';
 import { Role } from '../src/common/rbac/role.enum';
@@ -154,7 +154,8 @@ async function main(): Promise<void> {
     assert.equal(calls.length, 1);
     assert.equal(
       calls[0].url,
-      'https://padlhub.test/admin/api/v1/local-padel/notifications/capabilities?probe=1'
+      // The probe query is not a forwarded parameter, so it must not reach the upstream call.
+      'https://padlhub.test/admin/api/v1/local-padel/notifications/capabilities'
     );
     const headers = calls[0].init.headers as Record<string, string>;
     // The shared secret never travels: the console sends a short-lived HMAC over tenant + timestamp.
@@ -211,6 +212,55 @@ async function main(): Promise<void> {
     globalThis.fetch = originalFetch;
   }
 
+  // Query strings are filtered: only the parameters the forwarded routes read survive.
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify({ channels: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }) as typeof fetch;
+  try {
+    const queryCall = fakeResponse();
+    await controller.deliveryStats(
+      TENANT,
+      fakeRequest({
+        url: '/api/ui/padlhub-admin/local-padel/notifications/delivery-stats?days=7&tenantKey=other&debug=1'
+      }),
+      queryCall.response
+    );
+    assert.equal(
+      calls[calls.length - 1].url,
+      'https://padlhub.test/admin/api/v1/local-padel/notifications/delivery-stats?days=7'
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // The console refuses an oversized photo itself instead of buffering it in memory.
+  process.env.PADLHUB_ADMIN_PROXY_MAX_MEDIA_BYTES = '1024';
+  const smallService = new PadlhubAdminProxyService();
+  const smallConsole = new PadlhubAdminProxyController(smallService);
+  await assert.rejects(
+    async () =>
+      smallConsole.uploadLocationMedia(
+        TENANT,
+        fakeRequest({
+          url: '/api/ui/padlhub-admin/local-padel/location-media',
+          headers: { 'content-type': 'image/png', 'content-length': '4096' }
+        }),
+        fakeResponse().response,
+        'cup-media-oversized-0001'
+      ),
+    (error: unknown) => error instanceof PayloadTooLargeException
+  );
+  delete process.env.PADLHUB_ADMIN_PROXY_MAX_MEDIA_BYTES;
+
+  // No implicit tenant: a token without PADLHUB_NOTIFICATION_TENANT_KEY leaves the bridge off.
+  const missingTenant = configuredService({ PADLHUB_NOTIFICATION_TENANT_KEY: undefined });
+  assert.equal(missingTenant.enabled, false);
+  process.env.PADLHUB_NOTIFICATION_TENANT_KEY = TENANT;
+
   // Tenant and configuration guards fail closed.
   const { response: wrongTenantResponse } = fakeResponse();
   await assert.rejects(
@@ -227,7 +277,11 @@ async function main(): Promise<void> {
   assert.equal(disabledService.enabled, false);
   await assert.rejects(
     async () =>
-      new PadlhubAdminProxyController(disabledService).session(TENANT),
+      new PadlhubAdminProxyController(disabledService).session(
+        TENANT,
+        fakeRequest({ url: '/api/ui/padlhub-admin/local-padel/session' }),
+        fakeResponse().response
+      ),
     (error: unknown) => error instanceof ServiceUnavailableException
   );
 

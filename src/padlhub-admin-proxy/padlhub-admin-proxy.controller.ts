@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Param,
   Patch,
+  PayloadTooLargeException,
   Post,
   Put,
   Req,
@@ -35,9 +36,20 @@ export class PadlhubAdminProxyController {
   constructor(private readonly proxy: PadlhubAdminProxyService) {}
 
   @Get('session')
-  async session(@Param('tenantKey') tenantKey: string): Promise<{ ok: true }> {
+  async session(
+    @Param('tenantKey') tenantKey: string,
+    @Req() request: Request,
+    @Res() response: Response
+  ): Promise<void> {
     this.assertAvailable(tenantKey);
-    return { ok: true };
+    // Ask LK2 itself: a switched-off contour, a rotated secret or a tenant missing from its allowlist
+    // must surface here instead of on the operator's first campaign.
+    const forwarded = await this.send({ method: 'GET', path: '/notifications/capabilities' });
+    if (forwarded.status !== 200) {
+      writeResponse(response, forwarded);
+      return;
+    }
+    response.status(200).json({ ok: true });
   }
 
   @Get('notifications/capabilities')
@@ -55,7 +67,10 @@ export class PadlhubAdminProxyController {
     @Req() request: Request,
     @Res() response: Response
   ): Promise<void> {
-    return this.forwardJson(request, response, tenantKey, '/notifications/web-push-subscribers', 'GET');
+    return this.forwardJson(request, response, tenantKey, '/notifications/web-push-subscribers', 'GET', false, [
+      'limit',
+      'cursor'
+    ]);
   }
 
   @Get('notifications/delivery-stats')
@@ -64,7 +79,9 @@ export class PadlhubAdminProxyController {
     @Req() request: Request,
     @Res() response: Response
   ): Promise<void> {
-    return this.forwardJson(request, response, tenantKey, '/notifications/delivery-stats', 'GET');
+    return this.forwardJson(request, response, tenantKey, '/notifications/delivery-stats', 'GET', false, [
+      'days'
+    ]);
   }
 
   @Post('notifications/recipients/resolve')
@@ -189,11 +206,11 @@ export class PadlhubAdminProxyController {
   ): Promise<void> {
     this.assertAvailable(tenantKey);
     // Media is a binary body the JSON parser deliberately ignores, so it is still readable as a stream.
-    const body = await readRawBody(request);
+    const body = await readRawBody(request, this.proxy.maxMediaBytes);
     const forwarded = await this.send({
       method: 'POST',
       path: '/location-media',
-      search: searchOf(request),
+      search: searchOf(request, []),
       contentType: String(request.headers['content-type'] ?? 'application/octet-stream'),
       idempotencyKey,
       body,
@@ -207,7 +224,8 @@ export class PadlhubAdminProxyController {
     tenantKey: string,
     path: string,
     method: 'GET' | 'POST' | 'PATCH' | 'PUT',
-    requiresIdempotency = false
+    requiresIdempotency = false,
+    query: readonly string[] = []
   ): Promise<void> {
     this.assertAvailable(tenantKey);
     const idempotencyKey = headerValue(request, 'idempotency-key');
@@ -221,7 +239,7 @@ export class PadlhubAdminProxyController {
     const forwarded = await this.send({
       method,
       path,
-      search: searchOf(request),
+      search: searchOf(request, query),
       ...(request.body === undefined || request.body === null
         ? {}
         : { contentType: 'application/json', body: Buffer.from(JSON.stringify(request.body)) }),
@@ -264,16 +282,42 @@ function headerValue(request: Request, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function searchOf(request: Request): string | undefined {
+// Only the parameters these routes actually read are forwarded: the allowlist covers paths, so a
+// browser-chosen query string must not become a side channel to another upstream filter.
+function searchOf(request: Request, allowed: readonly string[]): string | undefined {
+  if (allowed.length === 0) return undefined;
   const url = String(request.originalUrl ?? request.url ?? '');
   const index = url.indexOf('?');
-  return index >= 0 ? url.slice(index) : undefined;
+  if (index < 0) return undefined;
+  const incoming = new URLSearchParams(url.slice(index + 1));
+  const forwarded = new URLSearchParams();
+  for (const key of allowed) {
+    for (const value of incoming.getAll(key)) forwarded.append(key, value);
+  }
+  const search = forwarded.toString();
+  return search.length > 0 ? `?${search}` : undefined;
 }
 
-async function readRawBody(request: Request): Promise<Buffer> {
+async function readRawBody(request: Request, maxBytes: number): Promise<Buffer> {
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new PayloadTooLargeException({
+      code: 'PADLHUB_ADMIN_PROXY_MEDIA_TOO_LARGE',
+      message: 'Файл слишком большой для загрузки через ЦУП.'
+    });
+  }
   const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+    const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    total += part.length;
+    if (total > maxBytes) {
+      throw new PayloadTooLargeException({
+        code: 'PADLHUB_ADMIN_PROXY_MEDIA_TOO_LARGE',
+        message: 'Файл слишком большой для загрузки через ЦУП.'
+      });
+    }
+    chunks.push(part);
   }
   return Buffer.concat(chunks);
 }

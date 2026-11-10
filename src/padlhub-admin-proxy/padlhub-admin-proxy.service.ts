@@ -36,6 +36,11 @@ export interface ForwardResponse {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 60_000;
+// LK2 caps a station photo at 8 MiB; a little slack covers its own envelope without letting one
+// session push an unbounded body into the console process.
+const DEFAULT_MAX_MEDIA_BYTES = 12 * 1024 * 1024;
+const MIN_MAX_MEDIA_BYTES = 1_024;
+const MAX_MAX_MEDIA_BYTES = 32 * 1024 * 1024;
 
 @Injectable()
 export class PadlhubAdminProxyService {
@@ -44,18 +49,29 @@ export class PadlhubAdminProxyService {
     .trim()
     .replace(/\/+$/, '');
   private readonly token = String(process.env.PADLHUB_ADMIN_DELEGATION_TOKEN ?? '').trim();
-  private readonly tenantKey =
-    String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim() || 'local-padel';
+  private readonly tenantKey = String(process.env.PADLHUB_NOTIFICATION_TENANT_KEY ?? '').trim();
   private readonly timeoutMs = this.resolveTimeout();
 
-  /** Whether the bridge is configured. Without both values the panel keeps its old behaviour. */
+  /**
+   * Whether the bridge is configured. The tenant key must be explicit: defaulting it while the
+   * credential is set would silently point every campaign and station save at another organisation.
+   */
   get enabled(): boolean {
-    return this.baseUrl.length > 0 && this.token.length > 0;
+    return this.baseUrl.length > 0 && this.token.length > 0 && this.tenantKey.length > 0;
   }
 
   /** The single tenant this container may act for; the delegation credential is scoped to it. */
   get allowedTenantKey(): string {
     return this.tenantKey;
+  }
+
+  /** Largest binary body (station photo) accepted before the console refuses it itself. */
+  get maxMediaBytes(): number {
+    const configured = Number(process.env.PADLHUB_ADMIN_PROXY_MAX_MEDIA_BYTES);
+    if (!Number.isFinite(configured) || configured <= 0) {
+      return DEFAULT_MAX_MEDIA_BYTES;
+    }
+    return Math.min(MAX_MAX_MEDIA_BYTES, Math.max(MIN_MAX_MEDIA_BYTES, Math.floor(configured)));
   }
 
   async forward(input: ForwardRequest): Promise<ForwardResponse> {

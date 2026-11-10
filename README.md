@@ -817,7 +817,11 @@ PadlHub Location Admin API. В редакторе станции фото рек
   список путей (`notifications/**`, `locations**`, `location-media`) и только для
   `PADLHUB_NOTIFICATION_TENANT_KEY`; секрет в браузер и в запрос не попадает;
 - `Idempotency-Key` кампаний и сохранений станции пробрасывается как есть, а команда без него
-  отклоняется до вызова PadlHub;
+  отклоняется до вызова PadlHub; из query пробрасываются только `limit`/`cursor`/`days`, тело
+  загрузки станции ограничено (`PADLHUB_ADMIN_PROXY_MAX_MEDIA_BYTES`, по умолчанию 12 МиБ) и
+  превышение даёт `413 PADLHUB_ADMIN_PROXY_MEDIA_TOO_LARGE`;
+- `/session` реально спрашивает LK2 (capabilities), поэтому выключенный контур, ротация секрета или
+  чужой tenant видны сразу, а не на первом действии оператора;
 - без токена или базового URL мост не объявляется, панель остаётся в прежнем режиме, а маршруты
   отвечают `503 PADLHUB_ADMIN_PROXY_NOT_CONFIGURED`.
 
