@@ -36,6 +36,8 @@ try {
   console.log(JSON.stringify({ mode: 'PROVIDER_READ_ONLY', write: false,
     identityDigest: residencyDigest({ clientId: args[2], clientSubscriptionId: args[4] }),
     eligible: facts.eligible, denialReason: facts.denialReason, providerStatus: facts.providerStatus,
+    windowOrigin: facts.windowOrigin, rawProviderPurchaseDate: facts.providerPurchaseDateRaw,
+    rawProviderActivationDate: facts.providerActivationDateRaw, rawProviderExpirationDate: facts.providerExpirationDateRaw,
     paymentStatus: facts.paymentStatus, purchasedAt: facts.purchasedAt, activeFrom: facts.activeFrom, activeTo: facts.activeTo,
     purchaseAmountMinor: facts.purchaseAmountMinor, sourceDigest: facts.sourceDigest,
     publicationId: selected.publication.publicationId, policyDigest: selected.publication.policyDigest,

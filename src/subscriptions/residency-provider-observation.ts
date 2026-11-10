@@ -53,6 +53,40 @@ export function providerInstant(value: unknown): string {
   return new Date(value).toISOString();
 }
 
+/** Parse provider timestamp components without assigning a zone to a naive DTO field. */
+function providerTimestampParts(value: unknown) {
+  if (typeof value !== 'string') residencyFailure('PROVIDER_TIMESTAMP');
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))?$/.exec(value);
+  if (!m) residencyFailure('PROVIDER_TIMESTAMP');
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const fraction = (m[7] || '').padEnd(9, '0');
+  const clock = new Date(0);
+  clock.setUTCFullYear(year, month - 1, day); clock.setUTCHours(hour, minute, second, Number(fraction.slice(0, 3)));
+  if (clock.getUTCFullYear() !== year || clock.getUTCMonth() !== month - 1 || clock.getUTCDate() !== day
+    || hour > 23 || minute > 59 || second > 59
+    || (m[8] && m[8] !== 'Z' && (Number(m[10]) > 14 || Number(m[11]) > 59
+      || (Number(m[10]) === 14 && Number(m[11]) !== 0)))) residencyFailure('PROVIDER_TIMESTAMP');
+  return { raw: value, match: m, clock, fraction };
+}
+
+/** Zoned financial issuance instant: exact ns evidence, floor export and ceil admission bound. */
+export function providerPaymentInstant(value: unknown) {
+  const { raw, match: m, clock, fraction } = providerTimestampParts(value);
+  // RFC3339 -00:00 denotes an unknown local offset, not authoritative UTC.
+  if (!m[8] || m[8] === '-00:00') residencyFailure('PAYMENT_TIMESTAMP_ZONE_REQUIRED');
+  const offset = m[8] === 'Z' ? 0 : (m[9] === '+' ? 1 : -1) * (Number(m[10]) * 60 + Number(m[11]));
+  const floorMs = clock.getTime() - offset * 60000;
+  const remainder = BigInt(fraction.slice(3));
+  return { raw, exactNs: (BigInt(floorMs) * 1000000n + remainder).toString(), floorMs,
+    ceilMs: floorMs + (remainder > 0n ? 1 : 0), canonical: new Date(floorMs).toISOString() };
+}
+
+function rawProviderDate(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  providerTimestampParts(value); // Calendar/shape only. Never invent an offset for the provider field.
+  return value as string;
+}
+
 export interface ResidencyProviderFacts {
   providerClientId: string;
   clientSubscriptionId: string;
@@ -60,6 +94,13 @@ export interface ResidencyProviderFacts {
   transactionId: string;
   providerStatus: string;
   paymentStatus: string;
+  // CUP monetary window; authoritative financial issuance, not Viva counter activation.
+  windowOrigin: 'VIVA_PAID_TRANSACTION_PAYMENT_DATE';
+  acquisitionInstantNs: string;
+  paymentDateRaw: string;
+  providerPurchaseDateRaw: string | null;
+  providerActivationDateRaw: string | null;
+  providerExpirationDateRaw: string | null;
   purchasedAt: string;
   activeFrom: string | null;
   activeTo: string | null;
@@ -70,7 +111,7 @@ export interface ResidencyProviderFacts {
   sourceDigest: string;
 }
 
-/** Exact owned-client response + its exact linked transaction. No release/price/date inference. */
+/** Exact owned-client response + linked transaction. The published CUP PURCHASE profile owns the monetary window. */
 export function normalizeResidencyProviderFacts(input: {
   providerClientId: string; clientSubscriptionId: string;
   subscription: unknown; transaction: unknown; observedAt: string;
@@ -95,13 +136,17 @@ export function normalizeResidencyProviderFacts(input: {
     || !['NEW', 'ACTIVE', 'HOLD', 'EXPIRED', 'REFUNDED', 'NO_VISITS', 'FINISHED'].includes(providerStatus)) {
     residencyFailure('PROVIDER_STATE');
   }
-  const purchasedAt = providerInstant(s.purchaseDate);
-  const activeFrom = s.activationDate == null ? null : providerInstant(s.activationDate);
-  const activeTo = s.expirationDate == null ? null : providerInstant(s.expirationDate);
-  const paymentDate = t.paymentDate == null ? null : providerInstant(t.paymentDate);
+  const issued = providerPaymentInstant(t.paymentDate);
+  const purchasedAt = issued.canonical, paymentDate = issued.canonical;
+  const activeFrom = purchasedAt, activeTo = new Date(issued.floorMs + 30 * 86400000).toISOString();
+  const providerPurchaseDateRaw = rawProviderDate(s.purchaseDate);
+  const providerActivationDateRaw = rawProviderDate(s.activationDate);
+  const providerExpirationDateRaw = rawProviderDate(s.expirationDate);
   const observed = Date.parse(providerInstant(input.observedAt));
-  if ((paymentStatus === 'PAID' && (!paymentDate || Date.parse(paymentDate) > observed))
-    || (paymentStatus === 'UNPAID' && paymentDate)) residencyFailure('PAYMENT_DATE');
+  if (issued.ceilMs > observed || paymentStatus === 'UNPAID') residencyFailure('PAYMENT_DATE');
+  if (t.paymentMethod === 'NO_PAYMENT' && (t.toPay !== 0 || line.discount !== line.cost)) {
+    residencyFailure('NO_PAYMENT_AMOUNT_CONTRADICTION');
+  }
   for (const value of [t.refundSum, s.refundSum]) if (value != null && !money(value)) residencyFailure('REFUND_SHAPE');
   for (const row of [s, t, line]) {
     if (row.refundStatus != null && !['NONE', 'PARTIAL', 'FULL'].includes(row.refundStatus)) residencyFailure('REFUND_SHAPE');
@@ -112,23 +157,18 @@ export function normalizeResidencyProviderFacts(input: {
   const refund = !!t.refundedAt || !!s.refundedAt || (t.refundSum ?? 0) > 0 || (s.refundSum ?? 0) > 0
     || [s, t, line].some(row => row.refunded === true || (row.refundStatus != null && row.refundStatus !== 'NONE'))
     || refunds.some(r => !r || r.status !== 'FAILED');
-  let frozen = false;
-  for (const key of ['holdUntil', 'frozenUntil', 'frozenAt']) {
-    if (s[key] != null) {
-      const value = providerInstant(s[key]);
-      if (key === 'frozenAt' || Date.parse(value) > observed) frozen = true;
-    }
-  }
-  const exactInterval = activeFrom === purchasedAt && activeTo !== null
-    && [30 * 86400000, 30 * 86400000 - 1].includes(Date.parse(activeTo) - Date.parse(purchasedAt));
+  // These timestamps belong to provider hold/counter bookkeeping. Presence is a conservative
+  // denial; no timezone is guessed to turn ambiguous hold evidence into permission.
+  const frozen = ['holdUntil', 'frozenUntil', 'frozenAt'].some(key => rawProviderDate(s[key]) !== null);
   const denialReason = frozen ? 'FROZEN'
     : refund ? 'REFUND_OR_PENDING_REFUND'
-    : paymentStatus !== 'PAID' ? 'NOT_PAID'
-      : providerStatus !== 'ACTIVE' ? 'NOT_ACTIVE'
-        : !exactInterval ? 'PURCHASE_INTERVAL_UNSUPPORTED'
-          : Date.parse(purchasedAt) > observed || Date.parse(activeTo!) <= observed ? 'OUTSIDE_ACTIVE_INTERVAL' : null;
+      : paymentStatus !== 'PAID' ? 'NOT_PAID'
+        : !['NEW', 'ACTIVE'].includes(providerStatus) ? 'NOT_ACTIVE'
+          : observed >= Date.parse(activeTo) ? 'OUTSIDE_ACTIVE_INTERVAL' : null;
   return { providerClientId: input.providerClientId, clientSubscriptionId: input.clientSubscriptionId,
     providerProductId: RESIDENCY_PRODUCT_ID, transactionId, providerStatus, paymentStatus,
+    windowOrigin: 'VIVA_PAID_TRANSACTION_PAYMENT_DATE', acquisitionInstantNs: issued.exactNs,
+    paymentDateRaw: issued.raw, providerPurchaseDateRaw, providerActivationDateRaw, providerExpirationDateRaw,
     purchasedAt, activeFrom, activeTo, paymentDate, purchaseAmountMinor: line.cost - line.discount,
     eligible: denialReason === null, denialReason, sourceDigest: residencyDigest({ subscription: s, transaction: t }) };
 }

@@ -155,6 +155,9 @@ export class ResidencyObservationRepository implements OnModuleDestroy {
           || existing.clientRefHash !== observation.clientRefHash
           || existing.facts.purchasedAt !== observation.facts.purchasedAt
           || existing.facts.transactionId !== observation.facts.transactionId
+          || existing.facts.windowOrigin !== observation.facts.windowOrigin
+          || existing.facts.paymentDateRaw !== observation.facts.paymentDateRaw
+          || existing.facts.acquisitionInstantNs !== observation.facts.acquisitionInstantNs
           || !isDeepStrictEqual(existing.binding, observation.binding))) residencyFailure('IMMUTABLE_PURCHASE_CHANGED');
         const nextMapping: StoredSubscriptionProviderMapping = { ...snapshot.mapping,
           revision: snapshot.mapping.revision + 1, verifiedAt: observation.evidence.productObservedAt,
