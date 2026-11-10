@@ -1404,6 +1404,59 @@ async function scenarioManageScopeAndStationIsolation(): Promise<void> {
   console.log('scenario 14+15: manage scope and station isolation passed');
 }
 
+async function scenarioZavidovoStation(): Promise<void> {
+  const { service, messenger } = createHarness();
+  const zavidovo = { stationId: 'Zavidovo', stationName: 'Завидово', isActive: true };
+  const options = await service.stationOptions(ADMIN);
+  assert.deepEqual(options.items.find((station) => station.stationId === 'Zavidovo'), zavidovo);
+  assert.deepEqual(
+    (await service.stationOptions(SCOPED_READER)).items.map((station) => station.stationId),
+    ['Yasenevo']
+  );
+  const manager = makeUser({
+    stationIds: ['Zavidovo'],
+    permissionStationScopes: { 'qr:read': ['Zavidovo'], 'qr:manage': ['Zavidovo'] }
+  });
+  assert.deepEqual((await service.stationOptions(manager)).items, [zavidovo]);
+  const created = await service.create(
+    createDto({ stationId: 'Zavidovo' }), { idempotencyKey: 'qr-zavidovo-0001' }, manager
+  );
+  assert.equal(created.item.stationId, 'Zavidovo');
+  assert.equal(created.item.stationName, 'Завидово');
+  const global = await service.create(createDto(), { idempotencyKey: 'qr-zavidovo-0002' }, ADMIN);
+  const updated = await service.update(global.item.id, { expectedVersion: 1, stationId: 'Zavidovo' }, ADMIN);
+  assert.equal(updated.stationName, 'Завидово');
+  await expectServiceError(
+    service.create(createDto({ stationId: 'Zavidovo' }), { idempotencyKey: 'qr-zavidovo-0003' }, SCOPED_MANAGER),
+    ForbiddenException, 'QR_STATION_OUT_OF_SCOPE'
+  );
+  await expectServiceError(
+    service.update(updated.id, { expectedVersion: 2, name: 'Чужой QR' }, SCOPED_MANAGER),
+    NotFoundException, 'QR_LINK_NOT_FOUND'
+  );
+  await expectServiceError(
+    service.create(createDto({ stationId: 'Unknown' }), { idempotencyKey: 'qr-zavidovo-0004' }, ADMIN),
+    BadRequestException, 'QR_STATION_NOT_FOUND'
+  );
+  // A configured station keeps its own name and activity status without duplicates.
+  const configured = { ...zavidovo, stationName: 'Завидово из справочника', isActive: false };
+  messenger.stations.push(configured);
+  assert.deepEqual(
+    (await service.stationOptions(ADMIN)).items.filter((station) => station.stationId === 'Zavidovo'),
+    [configured]
+  );
+  const configuredQr = await service.create(
+    createDto({ stationId: 'Zavidovo' }), { idempotencyKey: 'qr-zavidovo-0005' }, ADMIN
+  );
+  assert.equal(configuredQr.item.stationName, configured.stationName);
+  messenger.stations.length = 0;
+  const emptyDirectoryQr = await service.create(
+    createDto({ stationId: 'LegacyStation' }), { idempotencyKey: 'qr-zavidovo-0006' }, ADMIN
+  );
+  assert.equal(emptyDirectoryQr.item.stationName, 'LegacyStation');
+  console.log('Zavidovo station selection, create/update and station scope passed');
+}
+
 async function scenarioAuditTrail(): Promise<void> {
   const harness = createHarness({ clockIso: '2026-01-02T10:00:00+03:00' });
   const created = await harness.service.create(
@@ -1800,6 +1853,7 @@ async function main(): Promise<void> {
   await scenarioStatsFailureStillRedirects();
   await scenarioAdminControllerMetadata();
   await scenarioManageScopeAndStationIsolation();
+  await scenarioZavidovoStation();
   await scenarioAuditTrail();
   await scenarioArchivedCodeNeverReused();
   await scenarioAllowedHostsSetting();

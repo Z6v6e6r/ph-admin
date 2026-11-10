@@ -50,6 +50,9 @@ const MAX_PERIOD_DAYS = 366;
 const DEFAULT_PERIOD_DAYS = 30;
 const CODE_GENERATION_ATTEMPTS = 5;
 const AUDIT_VALUE_LIMIT = 500;
+const QR_ZAVIDOVO_STATION: QrStationOption = {
+  stationId: 'Zavidovo', stationName: 'Завидово', isActive: true
+};
 
 const PREVIEW_BOT_MARKERS = [
   'facebookexternalhit',
@@ -492,7 +495,10 @@ export class QrLinksService {
 
   async stationOptions(user?: RequestUser): Promise<{ items: QrStationOption[] }> {
     const scope = this.readScope(user);
-    const directory = this.messenger.listStationConfigs(user as RequestUser);
+    const directory: QrStationOption[] = this.messenger.listStationConfigs(user as RequestUser);
+    if (!directory.some((station) => station.stationId === QR_ZAVIDOVO_STATION.stationId)) {
+      directory.push({ ...QR_ZAVIDOVO_STATION });
+    }
     const byId = new Map<string, QrStationOption>();
     for (const station of directory) {
       const stationId = String(station.stationId ?? '').trim();
@@ -768,7 +774,8 @@ export class QrLinksService {
       return { stationId: null, stationName: null };
     }
     const directory = this.messenger.listStationConfigs(user as RequestUser);
-    const entry = directory.find((station) => station.stationId === stationId);
+    const entry = directory.find((station) => station.stationId === stationId)
+      ?? (stationId === QR_ZAVIDOVO_STATION.stationId ? QR_ZAVIDOVO_STATION : undefined);
     if (scope !== null) {
       if (!scope.includes(stationId)) {
         throw new ForbiddenException({
