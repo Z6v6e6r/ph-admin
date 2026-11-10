@@ -1,3 +1,4 @@
+import { RESIDENCY_PRODUCT_ID, RESIDENCY_BOOKING_COMPATIBILITY, residencyBookingPolicyBlockers } from './residency-booking-policy';
 import {
   ForbiddenException,
   Injectable,
@@ -59,10 +60,50 @@ export class SubscriptionRuntimeContextService {
   ) {}
 
   async resolve(
+    authorizationHeader: string | undefined, integrationToken: string | undefined, dto: SubscriptionRuntimeContextDto
+  ): Promise<SubscriptionRuntimeContextResult> {
+    return (await this.resolveValidated(authorizationHeader, integrationToken, dto)).context;
+  }
+
+  async resolveResidency(
+    authorizationHeader: string | undefined, integrationToken: string | undefined, dto: SubscriptionRuntimeContextDto
+  ) {
+    if (!this.flag('SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED')) {
+      throw new ServiceUnavailableException({code:'RESIDENCY_BOOKING_CONTEXT_DISABLED'});
+    }
+    const {context, providerProductId, publication, purchasedAt} = await this.resolveValidated(authorizationHeader, integrationToken, dto);
+    const compatibility = publication.runtimeCompatibility;
+    if (providerProductId !== RESIDENCY_PRODUCT_ID || !compatibility
+      || compatibility.adapterId !== RESIDENCY_BOOKING_COMPATIBILITY.adapterId
+      || compatibility.contractVersion !== RESIDENCY_BOOKING_COMPATIBILITY.contractVersion
+      || compatibility.capabilityDigest !== RESIDENCY_BOOKING_COMPATIBILITY.capabilityDigest
+      || residencyBookingPolicyBlockers(context.policy).length) {
+      throw new ServiceUnavailableException({code:'RESIDENCY_BOOKING_POLICY_UNSUPPORTED'});
+    }
+    const now = this.now().getTime();
+    const from = Date.parse(context.instance.activeFrom || '');
+    const to = Date.parse(context.instance.activeTo || '');
+    const purchase=Date.parse(purchasedAt);
+    const expiry=purchase+30*86400000;
+    if (!Number.isFinite(purchase) || from !== purchase || ![expiry,expiry-1].includes(to)
+      || context.instance.state !== 'ACTIVE' || context.instance.frozenUntil
+      || !Number.isFinite(from) || !Number.isFinite(to) || from > now || to <= now
+      || to <= from || to - from > 30 * 86400000) {
+      throw new ForbiddenException({code:'RESIDENCY_BOOKING_NOT_ACTIVE'});
+    }
+    const maxAgeMs=Number(process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS)*1000;
+    const validUntil=Math.min(now+30000,to,Date.parse(context.evidence.mappingVerifiedAt)+maxAgeMs,Date.parse(context.evidence.instanceAsOf)+maxAgeMs);
+    if (validUntil<=now) throw new ServiceUnavailableException({code:'RESIDENCY_BOOKING_EVIDENCE_STALE'});
+    return {schemaVersion:1 as const,contextKind:'RESIDENCY_BOOKING_CONTEXT' as const,
+      providerProductId,purchasedAt,runtimeCompatibility:compatibility,context,
+      observedAt:new Date(now).toISOString(),validUntil:new Date(validUntil).toISOString()};
+  }
+
+  private async resolveValidated(
     authorizationHeader: string | undefined,
     integrationToken: string | undefined,
     dto: SubscriptionRuntimeContextDto
-  ): Promise<SubscriptionRuntimeContextResult> {
+  ): Promise<{ context: SubscriptionRuntimeContextResult; providerProductId: string; publication: StoredSubscriptionPolicyPublication; purchasedAt: string }> {
     this.assertEnabled();
     this.assertIntegrationToken(integrationToken);
     const tenantId = this.requireConfiguredId('SUBSCRIPTIONS_RUNTIME_TENANT_ID');
@@ -196,7 +237,7 @@ export class SubscriptionRuntimeContextService {
       });
     }
 
-    return {
+    const context: SubscriptionRuntimeContextResult = {
       schemaVersion: 1,
       subscriptionInstanceId: instance.subscriptionInstanceId,
       clientSubscriptionId: instance.clientSubscriptionId,
@@ -223,6 +264,7 @@ export class SubscriptionRuntimeContextService {
         instanceAsOf: instance.reconciliation.asOf
       }
     };
+    return {context, providerProductId: instance.providerProductId, publication, purchasedAt: instance.purchasedAt};
   }
 
   protected now(): Date {

@@ -420,6 +420,8 @@ const validateRuntimeBenefitRules = (
       rule?.stationIds,
       'runtimeProjection.benefitRules.stationIds'
     );
+    if (rule.allStations !== undefined) requiredBoolean(rule.allStations,'runtimeProjection.benefitRules.allStations');
+    if (rule.allStations === true && stationIds.length !== 0) fail('SUBSCRIPTION_BENEFIT_STATION_SCOPE_AMBIGUOUS');
     if (!Array.isArray(rule?.durationMinutes)
       || new Set(rule.durationMinutes).size !== rule.durationMinutes.length
       || rule.durationMinutes.some((item) => ![60, 90, 120].includes(item))) {
@@ -431,7 +433,7 @@ const validateRuntimeBenefitRules = (
         || actions.some((action) => !BENEFIT_ACTIONS_BY_CATEGORY[rule.category].includes(action))
         || eventTypeIds.length === 0
         || rule.durationMinutes.length === 0
-        || stationIds.length === 0
+        || (rule.allStations !== true && stationIds.length === 0)
         || (rule.category === 'ADD_ON_PRODUCT' && productTypeIds.length === 0)) {
         fail('SUBSCRIPTION_PUBLICATION_BENEFIT_SELECTOR_INVALID');
       }
@@ -480,7 +482,7 @@ const validateRuntimeBenefitRules = (
       if (!a.enabled || !b.enabled || a.priority !== b.priority || a.category !== b.category) {
         continue;
       }
-      if (arraysIntersect(a.stationIds, b.stationIds)
+      if ((a.allStations === true || b.allStations === true || arraysIntersect(a.stationIds, b.stationIds))
         && arraysIntersect(a.externalEventTypeIds, b.externalEventTypeIds)) {
         fail('SUBSCRIPTION_PUBLICATION_BENEFIT_PRIORITY_AMBIGUOUS');
       }
@@ -530,7 +532,12 @@ const validateRuntimeProjection = (
   } else if (value.bookingWindow.days !== null) {
     fail('SUBSCRIPTION_PUBLICATION_BOOKING_WINDOW_INVALID');
   }
-  positiveInteger(value.dailyUsageLimit, 'runtimeProjection.dailyUsageLimit');
+  const monetaryOnly = value.dailyUsageLimit === 0
+    && ['60','90','120'].every(d => value.usageUnitsByDuration?.[d as '60'] === 0)
+    && Array.isArray(value.benefitRules) && value.benefitRules.some(r => r.enabled)
+    && value.benefitRules.every(r => !r.enabled || (r.kind === 'PERCENT_DISCOUNT'
+      && typeof r.percentage === 'number' && r.percentage >= 0 && r.percentage < 100));
+  if (!monetaryOnly) positiveInteger(value.dailyUsageLimit, 'runtimeProjection.dailyUsageLimit');
   if (value.dailyUsagePolicy !== undefined) {
     const dailyUsageActions = validateUniqueIdArray(
       value.dailyUsagePolicy.actions,
@@ -559,7 +566,7 @@ const validateRuntimeProjection = (
     }
   }
   for (const duration of ['60', '90', '120'] as const) {
-    positiveInteger(
+    (monetaryOnly ? nonNegativeInteger : positiveInteger)(
       value.usageUnitsByDuration?.[duration],
       `runtimeProjection.usageUnitsByDuration.${duration}`
     );

@@ -1,3 +1,5 @@
+import { buildResidencyPolicyCandidate, RESIDENCY_BOOKING_COMPATIBILITY, RESIDENCY_PRODUCT_ID } from '../src/subscriptions/residency-booking-policy';
+import { compileSubscriptionRuntimeProjection } from '../src/subscriptions/subscription-runtime-projection';
 import * as assert from 'node:assert/strict';
 import {
   ForbiddenException,
@@ -19,6 +21,7 @@ const PEPPER = 'runtime-context-pepper-'.repeat(2);
 const NOW = '2026-08-20T10:00:00.000Z';
 const ENV_NAMES = [
   'SUBSCRIPTIONS_RUNTIME_CONTEXT_ENABLED',
+  'SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED',
   'SUBSCRIPTIONS_RUNTIME_CONTEXT_INTEGRATION_TOKEN',
   'SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS',
   'SUBSCRIPTIONS_RUNTIME_TENANT_ID',
@@ -388,6 +391,49 @@ async function main(): Promise<void> {
     service.resolve('Bearer user', TOKEN, { clientSubscriptionId: instance.clientSubscriptionId }),
     (error) => error instanceof ServiceUnavailableException
   );
+
+  const candidate = buildResidencyPolicyCandidate({effectiveAt:instance.purchasedAt,
+    gameEventTypeIds:['viva:direction:4588:type:1613'],groupTrainingEventTypeIds:['viva:direction:6307:type:2349']});
+  const projection = compileSubscriptionRuntimeProjection({...candidate,subscriptionTypeId:instance.subscriptionTypeId,version:1,modelVersion:3,status:'PUBLISHED'} as any);
+  publication={...publicationFixture(),schemaVersion:3,idempotency:{actorId:'admin:fixture',key:'fixture-residency-publication',requestHash:HASH,correlationId:'corr:residency-fixture'},runtimeCompatibility:RESIDENCY_BOOKING_COMPATIBILITY,
+    runtimeProjection:projection,policyDigest:computeSubscriptionRuntimeProjectionDigest(projection)};
+  publications=[publication];
+  storedInstance={...instance,providerProductId:RESIDENCY_PRODUCT_ID,policyDigest:publication.policyDigest,activeTo:'2026-09-19T09:00:00.000Z'};
+  mapping={...mappingFixture(),providerProductId:RESIDENCY_PRODUCT_ID,providerScope:{kind:'TENANT',scopeId:instance.tenantId}};
+  const dto={clientSubscriptionId:instance.clientSubscriptionId};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ServiceUnavailableException);
+  process.env.SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED='true';
+  const resident=await service.resolveResidency('Bearer user',TOKEN,dto);
+  assert.equal(resident.providerProductId,RESIDENCY_PRODUCT_ID);
+  assert.deepEqual(resident.runtimeCompatibility,RESIDENCY_BOOKING_COMPATIBILITY);
+  assert.equal(Date.parse(resident.validUntil)-Date.parse(NOW),30000);
+  assert.equal(resident.context.instance.state,'ACTIVE');
+  assert.equal(resident.purchasedAt,instance.purchasedAt);
+  storedInstance={...storedInstance!,activeFrom:'2026-08-20T09:00:01.000Z'};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ForbiddenException);
+  storedInstance={...storedInstance!,activeFrom:instance.activeFrom,activeTo:'2026-08-21T09:00:00.000Z'};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ForbiddenException);
+  storedInstance={...storedInstance!,activeTo:'2026-09-19T09:00:00.000Z',reconciliation:{...storedInstance!.reconciliation,asOf:'2026-08-20T09:59:01.000Z'}};
+  mapping={...mapping,verifiedAt:'2026-08-20T09:59:01.000Z'};
+  process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS='60';
+  assert.equal((await service.resolveResidency('Bearer user',TOKEN,dto)).validUntil,'2026-08-20T10:00:01.000Z');
+  process.env.SUBSCRIPTIONS_RUNTIME_CONTEXT_MAX_STALENESS_SECONDS='3600';
+  storedInstance={...storedInstance!,reconciliation:instance.reconciliation};
+  mapping={...mapping,verifiedAt:'2026-08-20T09:59:50.000Z'};
+
+  assert.equal(Object.prototype.hasOwnProperty.call(await service.resolve('Bearer user',TOKEN,dto),'providerProductId'),false);
+  for(const state of ['FROZEN','EXPIRED','PENDING_ACTIVATION'] as const) {
+    storedInstance={...storedInstance!,state};
+    await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto));
+  }
+  storedInstance={...storedInstance!,state:'ACTIVE',activeTo:NOW};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ForbiddenException);
+  storedInstance={...storedInstance!,activeTo:'2026-09-19T09:00:00.000Z'};
+  mapping={...mapping,verifiedAt:'2026-08-19T00:00:00.000Z'};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ServiceUnavailableException);
+  mapping={...mapping,verifiedAt:'2026-08-20T09:59:50.000Z'};
+  storedInstance={...storedInstance,reconciliation:{...storedInstance.reconciliation,asOf:'2026-08-19T00:00:00.000Z'}};
+  await assert.rejects(service.resolveResidency('Bearer user',TOKEN,dto),ServiceUnavailableException);
 
   console.log('subscriptions runtime context tests passed');
 }

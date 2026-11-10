@@ -1,10 +1,12 @@
+import { compileSubscriptionRuntimeProjection } from './subscription-runtime-projection';
+import { LK_NODE_RED_RESIDENCY_BOOKING_V1, RESIDENCY_PRODUCT_ID, RESIDENCY_BOOKING_COMPATIBILITY, residencyBookingPolicyBlockers } from './residency-booking-policy';
 import { createHash } from 'node:crypto';
 import { VIVA_ANNUAL_STUDIOS_SNAPSHOT } from './annual-subscription-policy-v2-candidate';
 import { SubscriptionPolicyVersion, SubscriptionRuntimeCompatibility } from './subscriptions.types';
 
 export const LK_NODE_RED_ANNUAL_BOOKING_V1 = 'LK_NODE_RED_ANNUAL_BOOKING_V1' as const;
 
-type PublicationEnforcementAdapterVersion = typeof LK_NODE_RED_ANNUAL_BOOKING_V1;
+type PublicationEnforcementAdapterVersion = typeof LK_NODE_RED_ANNUAL_BOOKING_V1 | typeof LK_NODE_RED_RESIDENCY_BOOKING_V1;
 
 const PITER_PRODUCT_ID = '8bf334ba-3050-4017-b40a-7eef2db1eb16';
 const HUB_PRODUCT_ID = 'db7a5250-7369-4f43-8ac5-9111be24bc74';
@@ -102,7 +104,7 @@ export class SubscriptionPublicationAdapterError extends Error {
  */
 export function requirePublicationEnforcementAdapter(): PublicationEnforcementAdapterVersion {
   const configured = String(process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION ?? '').trim();
-  if (configured === LK_NODE_RED_ANNUAL_BOOKING_V1) return configured;
+  if (configured === LK_NODE_RED_ANNUAL_BOOKING_V1 || configured === LK_NODE_RED_RESIDENCY_BOOKING_V1) return configured;
   throw new SubscriptionPublicationAdapterError(
     configured || null,
     configured ? ['ADAPTER_VERSION_UNKNOWN'] : ['ADAPTER_VERSION_REQUIRED']
@@ -112,6 +114,7 @@ export function requirePublicationEnforcementAdapter(): PublicationEnforcementAd
 export function publicationAdapterRuntimeCompatibility(
   adapterVersion: PublicationEnforcementAdapterVersion
 ): SubscriptionRuntimeCompatibility {
+  if (adapterVersion === LK_NODE_RED_RESIDENCY_BOOKING_V1) return { ...RESIDENCY_BOOKING_COMPATIBILITY };
   if (adapterVersion !== LK_NODE_RED_ANNUAL_BOOKING_V1) {
     throw new SubscriptionPublicationAdapterError(adapterVersion, ['ADAPTER_VERSION_UNKNOWN']);
   }
@@ -126,6 +129,12 @@ export function assertPolicySupportedByPublicationAdapter(
   adapterVersion: PublicationEnforcementAdapterVersion,
   policy: SubscriptionPolicyVersion
 ): void {
+  if (adapterVersion === LK_NODE_RED_RESIDENCY_BOOKING_V1) {
+    const blockers = residencyBookingPolicyBlockers(compileSubscriptionRuntimeProjection({...policy,status:'PUBLISHED'}));
+    if (policy.providerBinding?.externalId !== RESIDENCY_PRODUCT_ID) blockers.push('PROVIDER_PRODUCT_UNSUPPORTED');
+    if (blockers.length) throw new SubscriptionPublicationAdapterError(adapterVersion, blockers);
+    return;
+  }
   const blockers = adapterVersion === LK_NODE_RED_ANNUAL_BOOKING_V1
     ? lkNodeRedAnnualBookingV1Blockers(policy)
     : ['ADAPTER_VERSION_UNKNOWN'];
