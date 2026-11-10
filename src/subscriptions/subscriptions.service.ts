@@ -625,6 +625,7 @@ export class SubscriptionsService implements OnModuleDestroy {
           durationMinutes: [...new Set(rule.durationMinutes === undefined ? [60, 90, 120] : rule.durationMinutes)]
             .sort((a, b) => a - b),
           stationIds: this.uniqueStrings(rule.stationIds),
+          ...(rule.allStations === undefined ? {} : {allStations:rule.allStations}),
           kind: rule.kind,
           valueMinor: rule.valueMinor ?? null,
           percentage: rule.percentage ?? null,
@@ -803,7 +804,10 @@ export class SubscriptionsService implements OnModuleDestroy {
       if (rule.enabled && rule.durationMinutes.length === 0) {
         throw this.domainError('BENEFIT_DURATIONS_REQUIRED', 'Для активной льготы выберите длительности');
       }
-      if (rule.enabled && rule.stationIds.length === 0) {
+      if (rule.allStations === true && rule.stationIds.length !== 0) {
+        throw this.domainError('BENEFIT_STATION_SCOPE_AMBIGUOUS', 'All-stations benefit cannot also list stations');
+      }
+      if (rule.enabled && rule.allStations !== true && rule.stationIds.length === 0) {
         throw this.domainError('BENEFIT_STATIONS_REQUIRED', 'Для активной льготы выберите станции');
       }
       if (rule.enabled) this.validateBenefitValue(rule);
@@ -814,7 +818,7 @@ export class SubscriptionsService implements OnModuleDestroy {
         const b = policy.benefitRules[right];
         if (!a.enabled || !b.enabled || a.priority !== b.priority || a.category !== b.category) continue;
         if (
-          this.intersects(a.stationIds, b.stationIds)
+          (a.allStations === true || b.allStations === true || this.intersects(a.stationIds, b.stationIds))
           && this.intersects(a.externalEventTypeIds, b.externalEventTypeIds)
         ) {
           throw this.domainError('AMBIGUOUS_BENEFIT_PRIORITY', 'Пересекающиеся льготы должны иметь разный приоритет');

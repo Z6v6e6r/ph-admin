@@ -1,0 +1,25 @@
+name: Residency booking contracts
+on:
+  pull_request:
+    paths: ['src/subscriptions/**', 'test/*residency*', 'test/subscriptions*', '.github/workflows/residency-booking.yml']
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.1'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx ts-node test/residency-booking-policy.test.ts
+      - run: npm run test:subscriptions-publication
+      - run: npm run test:subscriptions-runtime-context
+      - run: npm run test:subscriptions-runtime-contracts
+      - run: npm run test:subscriptions-shadow-quote
+      - run: npm run test:subscriptions
+      - run: npx tsc -p tsconfig.build.json --noEmit --incremental false
+      - run: npm run build

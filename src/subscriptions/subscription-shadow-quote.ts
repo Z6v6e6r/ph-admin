@@ -488,7 +488,7 @@ function selectBenefitRule(
     rule.enabled
     && rule.category === target.category
     && rule.actions.includes(action)
-    && rule.stationIds.includes(target.stationId)
+    && (rule.allStations === true || rule.stationIds.includes(target.stationId))
     && rule.externalEventTypeIds.includes(target.externalEventTypeId)
     && rule.durationMinutes.includes(target.durationMinutes)
     && (target.category !== 'ADD_ON_PRODUCT'

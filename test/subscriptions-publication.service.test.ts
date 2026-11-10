@@ -1,3 +1,4 @@
+import { buildResidencyPolicyCandidate, RESIDENCY_BOOKING_COMPATIBILITY, RESIDENCY_PRODUCT_ID, LK_NODE_RED_RESIDENCY_BOOKING_V1 } from '../src/subscriptions/residency-booking-policy';
 import { parseQuarterDescriptor, quarterDescriptorDigest, quarterDictionaryRevision, quarterDictionaryEvidence } from '../src/subscriptions/subscription-create-quarter-contract';
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
@@ -1601,6 +1602,41 @@ async function main(): Promise<void> {
     ServiceUnavailableException
   );
 
+  {
+  process.env.SUBSCRIPTIONS_PUBLICATION_COMMAND_ENABLED = 'true';
+  process.env.SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION = LK_NODE_RED_RESIDENCY_BOOKING_V1;
+  const residency = createService();
+  const candidate = buildResidencyPolicyCandidate({effectiveAt:residency.repository.policy.effectiveAt,
+    gameEventTypeIds:['viva:direction:4588:type:1613'],groupTrainingEventTypeIds:['viva:direction:6307:type:2349']});
+  residency.repository.policy = {...residency.repository.policy,...candidate,
+    providerBinding:{...candidate.providerBinding!,evidenceState:'UNVERIFIED'}} as StoredSubscriptionPolicyVersion;
+  const rp = await residency.service.preview(residency.repository.type.subscriptionTypeId,'1',previewDto(),globalAdmin);
+  assert.deepEqual(rp.runtimeCompatibility,RESIDENCY_BOOKING_COMPATIBILITY);
+  assert.equal(rp.providerProductId,RESIDENCY_PRODUCT_ID);
+  const request = {...previewDto(),expectedPolicyDigest:rp.policyDigest,expectedImpactPreviewRef:rp.impactPreviewRef,approvalReason:'Reviewed residency monetary-only product 30 days, all canonical stations'};
+  const published = await residency.service.publish(residency.repository.type.subscriptionTypeId,'1',request,headers('residency'),globalAdmin);
+  assert.equal(published.item.mapping.providerProductId,RESIDENCY_PRODUCT_ID);
+  assert.equal(published.item.mapping.state,'VERIFIED');
+  assert.equal(published.item.publication.runtimeProjection.lifecycle.validityDays,30);
+  assert.deepEqual(published.item.publication.runtimeProjection.usageUnitsByDuration,{'60':0,'90':0,'120':0});
+  const replay = await residency.service.publish(residency.repository.type.subscriptionTypeId,'1',request,headers('residency'),globalAdmin);
+  assert.equal(replay.replayed,true);
+  assert.equal(residency.repository.publishCalls,1);
+  for (const change of [
+    (p: StoredSubscriptionPolicyVersion) => {p.validityDays=365;},
+    (p: StoredSubscriptionPolicyVersion) => {p.benefitRules[0].kind='FREE_ENTITLEMENT';p.benefitRules[0].percentage=null;},
+    (p: StoredSubscriptionPolicyVersion) => {p.benefitRules[1].percentage=60;},
+    (p: StoredSubscriptionPolicyVersion) => {p.providerBinding!.externalId='other-product';}
+  ]) {
+    const bad = createService();
+    bad.repository.policy = {...residency.repository.policy,status:'DRAFT'};
+    change(bad.repository.policy);
+    await expectException(()=>bad.service.preview(bad.repository.type.subscriptionTypeId,'1',previewDto(),globalAdmin),ServiceUnavailableException);
+    assert.equal(bad.viva.calls,0);
+    assert.equal(bad.repository.publishCalls,0);
+  }
+
+  }
   console.log('subscriptions publication service tests: OK');
 }
 

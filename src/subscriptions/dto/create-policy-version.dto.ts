@@ -101,6 +101,10 @@ export class PartialPriceDto {
 }
 
 export class BenefitRuleDto {
+  @IsOptional()
+  @IsBoolean()
+  allStations?: boolean;
+
   @IsString()
   @MaxLength(120)
   ruleId!: string;

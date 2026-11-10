@@ -427,6 +427,19 @@ export class SubscriptionTrustedShadowController {
     return this.runtimeContext.resolve(authorization, integrationToken, dto);
   }
 
+  @Post('residency-booking-context')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  residencyBookingContext(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: SubscriptionRuntimeContextDto
+  ) {
+    return this.runtimeContext.resolveResidency(authorization, integrationToken, dto);
+  }
+
   @Get('policy-registry')
   @SkipAdminMutationAudit()
   @HttpCode(HttpStatus.OK)

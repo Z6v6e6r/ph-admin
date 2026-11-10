@@ -62,6 +62,8 @@ export interface SubscriptionType {
 }
 
 export interface BenefitRule {
+  /** Explicit wildcard; omitted preserves the legacy stationIds selector. */
+  allStations?: boolean;
   ruleId: string;
   enabled: boolean;
   category: BenefitCategory;
