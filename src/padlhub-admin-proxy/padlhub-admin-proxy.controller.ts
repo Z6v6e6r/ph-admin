@@ -15,7 +15,7 @@ import {
 import { Request, Response } from 'express';
 import { Role } from '../common/rbac/role.enum';
 import { Roles } from '../common/rbac/roles.decorator';
-import { PadlhubAdminProxyService } from './padlhub-admin-proxy.service';
+import { PadlhubAdminProxyService, type ForwardResponse } from './padlhub-admin-proxy.service';
 
 /**
  * The ЦУП side of the notification and station-card blocks.
@@ -196,10 +196,9 @@ export class PadlhubAdminProxyController {
       search: searchOf(request),
       contentType: String(request.headers['content-type'] ?? 'application/octet-stream'),
       idempotencyKey,
-      correlationId: headerValue(request, 'x-correlation-id'),
       body,
     });
-    writeResponse(response, forwarded.status, forwarded.contentType, forwarded.body);
+    writeResponse(response, forwarded);
   }
 
   private async forwardJson(
@@ -227,9 +226,8 @@ export class PadlhubAdminProxyController {
         ? {}
         : { contentType: 'application/json', body: Buffer.from(JSON.stringify(request.body)) }),
       ...(idempotencyKey ? { idempotencyKey } : {}),
-      correlationId: headerValue(request, 'x-correlation-id'),
     });
-    writeResponse(response, forwarded.status, forwarded.contentType, forwarded.body);
+    writeResponse(response, forwarded);
   }
 
   private async send(input: Parameters<PadlhubAdminProxyService['forward']>[0]) {
@@ -280,14 +278,10 @@ async function readRawBody(request: Request): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-function writeResponse(
-  response: Response,
-  status: number,
-  contentType: string,
-  body: Buffer
-): void {
-  response.status(status);
-  response.setHeader('Content-Type', contentType);
+function writeResponse(response: Response, forwarded: ForwardResponse): void {
+  response.status(forwarded.status);
+  response.setHeader('Content-Type', forwarded.contentType);
   response.setHeader('Cache-Control', 'no-store');
-  response.send(body);
+  response.setHeader('X-Correlation-ID', forwarded.correlationId);
+  response.send(forwarded.body);
 }

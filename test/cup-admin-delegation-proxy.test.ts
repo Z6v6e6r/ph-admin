@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
@@ -156,9 +157,22 @@ async function main(): Promise<void> {
       'https://padlhub.test/admin/api/v1/local-padel/notifications/capabilities?probe=1'
     );
     const headers = calls[0].init.headers as Record<string, string>;
-    assert.equal(headers.Authorization, `Bearer ${TOKEN}`);
+    // The shared secret never travels: the console sends a short-lived HMAC over tenant + timestamp.
+    const assertion = /^Bearer cupv1\.(\d{10,16})\.([0-9a-f]{64})$/.exec(
+      headers.Authorization ?? ''
+    );
+    assert.ok(assertion, `unexpected delegation header: ${String(headers.Authorization)}`);
+    const issuedAtMs = Number(assertion[1]);
+    assert.ok(Math.abs(Date.now() - issuedAtMs) < 5_000, 'assertion must be minted for now');
+    assert.equal(
+      assertion[2],
+      createHmac('sha256', TOKEN).update(`cupv1\n${TENANT}\n${assertion[1]}`).digest('hex')
+    );
     assert.equal(headers['X-App-Platform'], 'cup-admin');
-    assert.equal(headers['X-Correlation-ID'], 'correlation-test-0001');
+    // Correlation is generated server-side: a browser value must never reach the LK2 audit trail.
+    assert.notEqual(headers['X-Correlation-ID'], 'correlation-test-0001');
+    assert.match(String(headers['X-Correlation-ID']), /^[0-9a-f-]{36}$/);
+    assert.equal(captured.headers['X-Correlation-ID'], headers['X-Correlation-ID']);
 
     // A campaign carries the operator Idempotency-Key through, and refuses to invent one.
     const campaign = fakeResponse();

@@ -811,9 +811,11 @@ PadlHub Location Admin API. В редакторе станции фото рек
 
 - браузер вызывает только `/api/ui/padlhub-admin/{tenantKey}/...` под обычной сессией ЦУПа
   (роль `SUPER_ADMIN`); карточка PadlHub-логина скрыта;
-- ЦУП сам добавляет `Authorization: Bearer $PADLHUB_ADMIN_DELEGATION_TOKEN` и
-  `X-App-Platform: cup-admin` и передаёт наверх только явный список путей (`notifications/**`,
-  `locations**`, `location-media`) и только для `PADLHUB_NOTIFICATION_TENANT_KEY`;
+- ЦУП сам подписывает `Authorization: Bearer cupv1.<issuedAtMs>.<hmac>` (HMAC-SHA256 от
+  `cupv1\n{tenantKey}\n{issuedAtMs}` на `PADLHUB_ADMIN_DELEGATION_TOKEN`), ставит
+  `X-App-Platform: cup-admin`, сам генерирует `X-Correlation-ID` и передаёт наверх только явный
+  список путей (`notifications/**`, `locations**`, `location-media`) и только для
+  `PADLHUB_NOTIFICATION_TENANT_KEY`; секрет в браузер и в запрос не попадает;
 - `Idempotency-Key` кампаний и сохранений станции пробрасывается как есть, а команда без него
   отклоняется до вызова PadlHub;
 - без токена или базового URL мост не объявляется, панель остаётся в прежнем режиме, а маршруты

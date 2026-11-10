@@ -1,14 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 
 /**
  * Server-side bridge to the PadlHub admin API for the two CUP blocks that used to demand a second
  * PadlHub operator session: «Уведомления» and the public station cards.
  *
- * The ЦУП operator is already authenticated here, so the browser must never hold the PadlHub
- * credential. This service attaches the narrow delegation credential (`PADLHUB_ADMIN_DELEGATION_TOKEN`,
- * accepted by the PadlHub API only for `/admin/api/v1/{tenant}/notifications/**` and
- * `/admin/api/v1/{tenant}/locations**`) and forwards only allowlisted paths.
+ * The ЦУП operator is already authenticated here, so the browser must never hold a PadlHub credential.
+ * This service attaches a short-lived assertion — an HMAC over the tenant key and the current time,
+ * keyed with `PADLHUB_ADMIN_DELEGATION_TOKEN` — which the PadlHub API accepts only for
+ * `/admin/api/v1/{tenant}/notifications/**` and `/admin/api/v1/{tenant}/locations**`, only inside its
+ * replay window. A captured request therefore stops working within seconds and cannot be replayed for
+ * another tenant.
  */
 
 export const PADLHUB_ADMIN_PROXY_PREFIX = '/api/ui/padlhub-admin';
@@ -20,7 +22,6 @@ export interface ForwardRequest {
   readonly search?: string;
   readonly contentType?: string;
   readonly idempotencyKey?: string;
-  readonly correlationId?: string;
   readonly body?: Buffer;
 }
 
@@ -28,6 +29,8 @@ export interface ForwardResponse {
   readonly status: number;
   readonly contentType: string;
   readonly body: Buffer;
+  /** Correlation id generated here, never taken from the browser, and echoed to the client. */
+  readonly correlationId: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -59,8 +62,14 @@ export class PadlhubAdminProxyService {
     if (!this.enabled) {
       throw new Error('PADLHUB_ADMIN_PROXY_NOT_CONFIGURED');
     }
+    // Correlation is a server fact: a browser-supplied value would let a caller blur two operations
+    // together in the LK2 audit trail.
+    const correlationId = randomUUID();
     const url =
-      this.baseUrl + '/admin/api/v1/' + encodeURIComponent(this.tenantKey) + input.path +
+      this.baseUrl +
+      '/admin/api/v1/' +
+      encodeURIComponent(this.tenantKey) +
+      input.path +
       (input.search ? input.search : '');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -70,8 +79,8 @@ export class PadlhubAdminProxyService {
         headers: {
           Accept: 'application/json',
           'X-App-Platform': 'cup-admin',
-          'X-Correlation-ID': input.correlationId?.trim() || randomUUID(),
-          Authorization: `Bearer ${this.token}`,
+          'X-Correlation-ID': correlationId,
+          Authorization: `Bearer ${this.delegationAssertion()}`,
           ...(input.contentType ? { 'Content-Type': input.contentType } : {}),
           ...(input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {}),
         },
@@ -84,16 +93,27 @@ export class PadlhubAdminProxyService {
         status: response.status,
         contentType: response.headers.get('content-type') ?? 'application/json',
         body,
+        correlationId,
       };
     } catch (error) {
-      // Never surface the upstream address or credential; the operator only needs the stable code.
+      // Never log the upstream address, the credential or the payload; the operator only needs the code.
       this.logger.warn(
-        `PadlHub admin proxy call failed: ${error instanceof Error ? error.name : 'unknown'}`
+        `PadlHub admin proxy failed: ${input.method} ${input.path} correlation=${correlationId} error=${
+          error instanceof Error ? error.name : 'unknown'
+        }`
       );
       throw error;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** `cupv1.<issuedAtMs>.<hmacSha256Hex>`, mirrored by the LK2 verifier. */
+  private delegationAssertion(issuedAtMs = Date.now()): string {
+    const mac = createHmac('sha256', this.token)
+      .update(`cupv1\n${this.tenantKey}\n${issuedAtMs}`)
+      .digest('hex');
+    return `cupv1.${issuedAtMs}.${mac}`;
   }
 
   private resolveTimeout(): number {
