@@ -30,6 +30,8 @@ export class RequestMetricsInterceptor implements NestInterceptor {
     '/api/internal/subscriptions/entitlements/readback',
     '/api/internal/subscriptions/entitlements/preflight',
     '/api/internal/subscriptions/runtime-context',
+    '/api/internal/subscriptions/residency-booking-context',
+    '/api/internal/subscriptions/residency-booking-refresh',
     '/api/internal/subscriptions/sale-readiness',
     '/api/internal/subscriptions/sale-bindings/confirm',
     '/api/internal/subscriptions/activate-first-use',
@@ -40,6 +42,8 @@ export class RequestMetricsInterceptor implements NestInterceptor {
     '/internal/subscriptions/entitlements/readback',
     '/internal/subscriptions/entitlements/preflight',
     '/internal/subscriptions/runtime-context',
+    '/internal/subscriptions/residency-booking-context',
+    '/internal/subscriptions/residency-booking-refresh',
     '/internal/subscriptions/sale-readiness',
     '/internal/subscriptions/sale-bindings/confirm',
     '/internal/subscriptions/activate-first-use'

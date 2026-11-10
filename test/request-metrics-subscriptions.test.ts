@@ -173,3 +173,26 @@ test('local tournament command/read metrics never include actor, command or rece
  assert.equal(rows.length,8);assert.doesNotMatch(JSON.stringify(rows),/private|secret|phone|generation|token|operationId/);
  await lastValueFrom(interceptor.intercept(context('/local-operations/private-id',200,'/internal/tournaments/local-operations/private-id','/internal/tournaments'),{handle:()=>of({})}));assert.equal(rows.length,8);
 });
+
+
+test('residency reads and refreshes record bounded routes without provider facts or credentials', async () => {
+  const rows: Recorded[] = [];
+  const interceptor = new RequestMetricsInterceptor({ record: (route: string, _duration: number,
+    status: number, sample: Record<string, unknown>) => rows.push({ route, status, sample }) } as any);
+  for (const base of ['/api/internal/subscriptions', '/internal/subscriptions']) {
+    for (const suffix of ['/residency-booking-context', '/residency-booking-refresh']) {
+      for (const status of [200, 403, 503]) {
+        const result = lastValueFrom(interceptor.intercept(context(suffix, status,
+          `${base}${suffix}?clientSubscriptionId=private-id`, base), {
+          handle: () => status === 200 ? of({ providerClientId: 'private-client', proof: 'private-proof' })
+            : throwError(() => new HttpException({ token: 'secret', transactionId: 'private-transaction' }, status))
+        }));
+        if (status === 200) await result; else await assert.rejects(result);
+        assert.equal(rows.at(-1)?.route, `POST ${base}${suffix}`);
+        assert.equal(rows.at(-1)?.status, status);
+      }
+    }
+  }
+  assert.equal(rows.length, 12);
+  assert.doesNotMatch(JSON.stringify(rows), /private|secret|proof|token|providerClientId|transactionId/);
+});
