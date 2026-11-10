@@ -113,10 +113,13 @@ export class PadlhubAdminProxyService {
       };
     } catch (error) {
       // Never log the upstream address, the credential or the payload; the operator only needs the code.
+      // The message explains the failure (a rejected body shape, a TLS problem) but the upstream
+      // address is masked: operators get a diagnosable line without the internal URL in the log.
+      const reason = error instanceof Error ? error.message.replace(/https?:\/\/\S+/g, '<upstream>') : '';
       this.logger.warn(
         `PadlHub admin proxy failed: ${input.method} ${input.path} correlation=${correlationId} error=${
           error instanceof Error ? error.name : 'unknown'
-        }`
+        }: ${reason}`
       );
       throw error;
     } finally {

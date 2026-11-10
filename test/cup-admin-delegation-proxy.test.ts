@@ -175,6 +175,24 @@ async function main(): Promise<void> {
     assert.match(String(headers['X-Correlation-ID']), /^[0-9a-f-]{36}$/);
     assert.equal(captured.headers['X-Correlation-ID'], headers['X-Correlation-ID']);
 
+    // express leaves `req.body = {}` on a bodyless GET; forwarding it would make Node's fetch throw
+    // TypeError ("GET with body") and the operator would see 502 на обоих блоках.
+    assert.equal(calls[0].init.method, 'GET');
+    assert.equal(calls[0].init.body, undefined);
+
+    const bodylessGet = fakeResponse();
+    await controller.listLocations(
+      TENANT,
+      fakeRequest({
+        url: '/api/ui/padlhub-admin/local-padel/locations',
+        body: {}
+      }),
+      bodylessGet.response
+    );
+    assert.equal(bodylessGet.captured.statusCode, 200);
+    assert.equal(calls[calls.length - 1].init.method, 'GET');
+    assert.equal(calls[calls.length - 1].init.body, undefined);
+
     // A campaign carries the operator Idempotency-Key through, and refuses to invent one.
     const campaign = fakeResponse();
     await controller.createCampaign(
@@ -186,7 +204,7 @@ async function main(): Promise<void> {
       }),
       campaign.response
     );
-    const campaignCall = calls[1];
+    const campaignCall = calls[calls.length - 1];
     const campaignHeaders = campaignCall.init.headers as Record<string, string>;
     assert.equal(campaignHeaders['Idempotency-Key'], 'cup-campaign-key-0001');
     assert.equal(campaignHeaders['Content-Type'], 'application/json');
@@ -197,6 +215,7 @@ async function main(): Promise<void> {
       channels: ['IN_APP']
     });
 
+    const beforeMissingKey = calls.length;
     const missingKey = fakeResponse();
     await controller.createLocation(
       TENANT,
@@ -207,7 +226,11 @@ async function main(): Promise<void> {
       missingKey.response
     );
     assert.equal(missingKey.captured.statusCode, 400);
-    assert.equal(calls.length, 2, 'a command without an idempotency key must not reach PadlHub');
+    assert.equal(
+      calls.length,
+      beforeMissingKey,
+      'a command without an idempotency key must not reach PadlHub'
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

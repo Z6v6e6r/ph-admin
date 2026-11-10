@@ -236,13 +236,16 @@ export class PadlhubAdminProxyController {
       });
       return;
     }
+    // A GET must never carry a body: express leaves `req.body = {}` on a bodyless request, and Node's
+    // fetch turns "GET with body" into a TypeError that the operator sees as 502 «API недоступен».
+    const carriesBody = method !== 'GET' && request.body !== undefined && request.body !== null;
     const forwarded = await this.send({
       method,
       path,
       search: searchOf(request, query),
-      ...(request.body === undefined || request.body === null
-        ? {}
-        : { contentType: 'application/json', body: Buffer.from(JSON.stringify(request.body)) }),
+      ...(carriesBody
+        ? { contentType: 'application/json', body: Buffer.from(JSON.stringify(request.body)) }
+        : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
     writeResponse(response, forwarded);
