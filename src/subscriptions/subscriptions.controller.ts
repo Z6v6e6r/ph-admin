@@ -7,9 +7,11 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Optional,
   Post,
   Query,
   Res,
+  ServiceUnavailableException,
   UseFilters
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -80,6 +82,7 @@ import {
 } from './subscription-policy-registry.service';
 import { SubscriptionsTestRuntimeService } from './subscriptions-test-runtime.service';
 import { SubscriptionsExceptionFilter } from './subscriptions-exception.filter';
+import { ResidencyProviderSyncService } from './residency-provider-sync.service';
 import {
   ReleaseProgram,
   ReleaseProgramPage,
@@ -319,7 +322,8 @@ export class SubscriptionTrustedShadowController {
     private readonly activation: SubscriptionActivationService,
     private readonly saleReadinessService: SubscriptionSaleReadinessService,
     private readonly saleBindingService: SubscriptionSaleBindingService,
-    private readonly quoteJournal: SubscriptionShadowQuoteJournalService
+    private readonly quoteJournal: SubscriptionShadowQuoteJournalService,
+    @Optional() private readonly residencySync?: ResidencyProviderSyncService
   ) {}
 
   @Post('shadow-quote')
@@ -438,6 +442,20 @@ export class SubscriptionTrustedShadowController {
     @Body() dto: SubscriptionRuntimeContextDto
   ) {
     return this.runtimeContext.resolveResidency(authorization, integrationToken, dto);
+  }
+
+  @Post('residency-booking-refresh')
+  @SkipAdminMutationAudit()
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
+  residencyBookingRefresh(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-subscriptions-integration-token') integrationToken: string | undefined,
+    @Body() dto: SubscriptionRuntimeContextDto
+  ) {
+    if (!this.residencySync) throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_DISABLED' });
+    return this.residencySync.refresh(authorization, integrationToken, dto);
   }
 
   @Get('policy-registry')

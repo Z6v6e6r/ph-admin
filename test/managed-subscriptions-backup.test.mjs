@@ -107,13 +107,14 @@ test('archive is root-only shaped, checksummed and contains no connection secret
     source: SOURCE,
     adapter: fakeAdapter({
       subscription_types: [{ _id: 'type-1', title: 'Synthetic' }],
-      subscription_policy_versions: [{ _id: 'policy-1', token: 'not-a-real-token' }]
+      subscription_policy_versions: [{ _id: 'policy-1', token: 'not-a-real-token' }],
+      subscription_residency_provider_observations: [{ subscriptionInstanceId: 'residency_instance:synthetic', sourceKind: 'VIVA_OWNED_SUBSCRIPTION_READ' }]
     }),
     serialize: JSON.stringify,
     now: new Date('2026-08-22T01:02:03.000Z'),
     requireRootOwner: false
   });
-  assert.equal(result.totalDocuments, 2);
+  assert.equal(result.totalDocuments, 3);
   assert.equal(result.collections.length, MANAGED_SUBSCRIPTION_COLLECTIONS.length);
   assert.match(result.archiveSha256, /^[a-f0-9]{64}$/);
   assert.equal((await lstat(result.archivePath)).mode & 0o777, 0o600);
@@ -124,9 +125,10 @@ test('archive is root-only shaped, checksummed and contains no connection secret
   assert.equal(archive.status, 0);
   const manifest = JSON.parse(archive.stdout);
   assert.equal(manifest.schema, 'phab-production-managed-subscriptions-backup-v4');
-  assert.equal(manifest.totalDocuments, 2);
+  assert.equal(manifest.totalDocuments, 3);
   assert.equal(manifest.collections.length, MANAGED_SUBSCRIPTION_COLLECTIONS.length);
-  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.length, 14);
+  assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.length, 15);
+  assert.equal(manifest.collections.find(item => item.name === 'subscription_residency_provider_observations').count, 1);
   assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_instance_projector_checkpoints'), true);
   assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_projection_fences'), true);
   assert.equal(MANAGED_SUBSCRIPTION_COLLECTIONS.includes('subscription_runtime_binding_promotions'), true);

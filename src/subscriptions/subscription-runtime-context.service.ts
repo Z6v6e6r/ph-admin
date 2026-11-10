@@ -52,6 +52,12 @@ export interface SubscriptionRuntimeContextResult {
   };
 }
 
+export interface SubscriptionRuntimeIdentity {
+  tenantId: string;
+  providerClientId: string;
+  clientRefHash: string;
+}
+
 @Injectable()
 export class SubscriptionRuntimeContextService {
   constructor(
@@ -63,6 +69,15 @@ export class SubscriptionRuntimeContextService {
     authorizationHeader: string | undefined, integrationToken: string | undefined, dto: SubscriptionRuntimeContextDto
   ): Promise<SubscriptionRuntimeContextResult> {
     return (await this.resolveValidated(authorizationHeader, integrationToken, dto)).context;
+  }
+
+  /** Internal identity boundary for the separately named, explicitly mutating refresh route. */
+  async authorizeResidencyRefresh(authorizationHeader?: string, integrationToken?: string): Promise<SubscriptionRuntimeIdentity> {
+    this.assertEnabled();
+    if (!this.flag('SUBSCRIPTIONS_RESIDENCY_SYNC_ENABLED') || !this.flag('SUBSCRIPTIONS_RESIDENCY_BOOKING_CONTEXT_ENABLED')) {
+      throw new ServiceUnavailableException({ code: 'RESIDENCY_SYNC_DISABLED' });
+    }
+    return this.verifiedIdentity(authorizationHeader, integrationToken);
   }
 
   async resolveResidency(
@@ -105,6 +120,26 @@ export class SubscriptionRuntimeContextService {
     dto: SubscriptionRuntimeContextDto
   ): Promise<{ context: SubscriptionRuntimeContextResult; providerProductId: string; publication: StoredSubscriptionPolicyPublication; purchasedAt: string }> {
     this.assertEnabled();
+    const { tenantId, providerClientId, clientRefHash } = await this.verifiedIdentity(authorizationHeader, integrationToken);
+
+    await this.repository.connectReadOnly();
+    const instance = await this.repository.runtimeInstanceByProviderIdentity({
+      tenantId,
+      providerClientId,
+      clientSubscriptionId: dto.clientSubscriptionId
+    });
+    if (!instance || instance.clientRefHash !== clientRefHash) {
+      throw new NotFoundException({
+        code: 'SUBSCRIPTION_RUNTIME_CONTEXT_NOT_FOUND',
+        message: 'Current subscription runtime context was not found'
+      });
+    }
+    validateStoredSubscriptionInstance(instance);
+
+    return this.validateInstance(instance);
+  }
+
+  private async verifiedIdentity(authorizationHeader?: string, integrationToken?: string): Promise<SubscriptionRuntimeIdentity> {
     this.assertIntegrationToken(integrationToken);
     const tenantId = this.requireConfiguredId('SUBSCRIPTIONS_RUNTIME_TENANT_ID');
     const pepper = String(process.env.SUBSCRIPTIONS_RUNTIME_HASH_PEPPER ?? '');
@@ -130,21 +165,13 @@ export class SubscriptionRuntimeContextService {
       });
     }
     const clientRefHash = computeSubscriptionClientRefHash({ pepper, tenantId, providerClientId });
+    return { tenantId, providerClientId, clientRefHash };
+  }
 
-    await this.repository.connectReadOnly();
-    const instance = await this.repository.runtimeInstanceByProviderIdentity({
-      tenantId,
-      providerClientId,
-      clientSubscriptionId: dto.clientSubscriptionId
-    });
-    if (!instance || instance.clientRefHash !== clientRefHash) {
-      throw new NotFoundException({
-        code: 'SUBSCRIPTION_RUNTIME_CONTEXT_NOT_FOUND',
-        message: 'Current subscription runtime context was not found'
-      });
-    }
-    validateStoredSubscriptionInstance(instance);
-
+  private async validateInstance(instance: StoredSubscriptionInstance): Promise<{
+    context: SubscriptionRuntimeContextResult; providerProductId: string;
+    publication: StoredSubscriptionPolicyPublication; purchasedAt: string;
+  }> {
     const mapping = await this.repository.runtimeProviderMappingById(instance.mappingId);
     let publications: StoredSubscriptionPolicyPublication[];
     try {

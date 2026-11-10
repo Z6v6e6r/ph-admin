@@ -1,7 +1,7 @@
 name: Residency booking contracts
 on:
   pull_request:
-    paths: ['client-sdk/phab-admin-panel.js', 'src/subscriptions/**', 'test/*residency*', 'test/subscriptions*', '.github/workflows/residency-booking.yml']
+    paths: ['client-sdk/phab-admin-panel.js', 'src/subscriptions/**', 'src/common/observability/request-metrics.interceptor.ts', 'test/request-metrics-subscriptions.test.ts', 'src/integrations/viva/**', 'test/*residency*', 'test/subscriptions*', 'scripts/residency-*', 'scripts/managed-subscriptions-*', '.github/workflows/residency-booking.yml']
 permissions:
   contents: read
 jobs:
@@ -17,6 +17,33 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node --test test/subscriptions-benefit-editor.test.mjs
       - run: npx ts-node test/residency-booking-policy.test.ts
+      - run: npx ts-node test/residency-provider-sync.test.ts
+      - run: npx ts-node test/residency-financial-window.test.ts
+      - run: npx ts-node test/residency-viva-reader.test.ts
+      - run: node --test test/managed-subscriptions-backup.test.mjs test/managed-subscriptions-indexes.test.mjs
+      - name: Start isolated MongoDB replica set
+        run: |
+          docker run -d --name residency-test -p 127.0.0.1:27017:27017 mongo:7 mongod --replSet residency_test --bind_ip_all
+          for attempt in $(seq 1 30); do
+            if docker exec residency-test mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec residency-test mongosh --quiet --eval 'rs.initiate({_id:"residency_test",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for attempt in $(seq 1 30); do
+            if docker exec residency-test mongosh --quiet --eval 'if(!db.hello().isWritablePrimary)quit(1)' >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: npx ts-node test/residency-provider-sync.mongodb.test.ts
+        env:
+          RESIDENCY_TEST_MONGO_URI: mongodb://127.0.0.1:27017/?replicaSet=residency_test
+      - run: node --test test/residency-index-maintenance.test.mjs
+        env:
+          RESIDENCY_TEST_MONGO_URI: mongodb://127.0.0.1:27017/?replicaSet=residency_test
+      - name: Stop isolated MongoDB
+        if: always()
+        run: docker rm -f residency-test || true
+      - run: npm run test:subscriptions-dev-metrics
       - run: npm run test:subscriptions-publication
       - run: npm run test:subscriptions-runtime-context
       - run: npm run test:subscriptions-runtime-contracts
