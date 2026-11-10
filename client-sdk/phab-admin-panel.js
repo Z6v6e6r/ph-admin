@@ -38355,8 +38355,9 @@
       notificationState.restoring = true;
       setNotificationResult(dom.notificationAuthStatus, 'Проверяем существующую сессию…', false);
       try {
-        // In bridge mode a pasted admin token is stale by definition: the console authorizes the block.
-        var storedToken = cfg.padlhubAdminProxyBaseUrl ? '' : readStoredNotificationToken();
+        // A stored token is harmless in bridge mode: the ЦУП bridge always uses its own credential and
+        // ignores whatever Authorization the browser carries.
+        var storedToken = readStoredNotificationToken();
         if (storedToken) {
           notificationApi.setAccessToken(storedToken);
           notificationState.session = { accessToken: storedToken };
