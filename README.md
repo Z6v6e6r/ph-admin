@@ -796,11 +796,31 @@ PadlHub Location Admin API. В редакторе станции фото рек
 Этот интерфейс требует API-контракт `recommendationPhotos` из
 [LK2 PR #375](https://github.com/Z6v6e6r/lk2/pull/375). Сначала выпускается API с миграцией и
 минимальными runtime-правами, затем этот SDK. Используются существующие
-`PADLHUB_NOTIFICATION_API_BASE_URL` / `PADLHUB_NOTIFICATION_TENANT_KEY`, операторская PadlHub-сессия
-и права `locations.read/manage/publish`; права сотрудников ЦУПа не заменяют права PadlHub API.
+`PADLHUB_NOTIFICATION_API_BASE_URL` / `PADLHUB_NOTIFICATION_TENANT_KEY` и права
+`locations.read/manage/publish`.
 Файлы сохраняются через `/location-media`, а привязки — через versioned-сохранение выбранного
 канонического UUID станции. Новых Mongo-коллекций, токенов или разрешений этот интерфейс не создаёт.
 Проверка поведения без внешних сервисов: `node --test test/location-recommendation-photos-ui.test.mjs`.
+
+### Блоки «Уведомления» и «Станции» без второй PadlHub-сессии
+
+По умолчанию оба блока, как и раньше, требуют операторскую PadlHub-сессию (код по телефону или
+вставленный admin-токен). Если в окружении ЦУПа задан `PADLHUB_ADMIN_DELEGATION_TOKEN` (тот же
+секрет, что `CUP_ADMIN_DELEGATION_TOKEN` в PadlHub API), панель получает
+`padlhubAdminProxyBaseUrl = /api/ui/padlhub-admin` и работает через серверный мост:
+
+- браузер вызывает только `/api/ui/padlhub-admin/{tenantKey}/...` под обычной сессией ЦУПа
+  (роли `SUPER_ADMIN` или `MANAGER`); карточка PadlHub-логина скрыта;
+- ЦУП сам добавляет `Authorization: Bearer $PADLHUB_ADMIN_DELEGATION_TOKEN` и
+  `X-App-Platform: cup-admin` и передаёт наверх только явный список путей (`notifications/**`,
+  `locations**`, `location-media`) и только для `PADLHUB_NOTIFICATION_TENANT_KEY`;
+- `Idempotency-Key` кампаний и сохранений станции пробрасывается как есть, а команда без него
+  отклоняется до вызова PadlHub;
+- без токена или базового URL мост не объявляется, панель остаётся в прежнем режиме, а маршруты
+  отвечают `503 PADLHUB_ADMIN_PROXY_NOT_CONFIGURED`.
+
+Секрет живёт только в EnvironmentFile сервиса: в HTML-конфиг панели он не попадает.
+Проверка: `npm run test:cup-admin-delegation`.
 
 Пример подключения на Tilda:
 
