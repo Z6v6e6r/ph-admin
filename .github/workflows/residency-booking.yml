@@ -1,7 +1,7 @@
 name: Residency booking contracts
 on:
   pull_request:
-    paths: ['src/subscriptions/**', 'test/*residency*', 'test/subscriptions*', '.github/workflows/residency-booking.yml']
+    paths: ['client-sdk/phab-admin-panel.js', 'src/subscriptions/**', 'test/*residency*', 'test/subscriptions*', '.github/workflows/residency-booking.yml']
 permissions:
   contents: read
 jobs:
@@ -15,6 +15,7 @@ jobs:
           node-version: '22.13.1'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test test/subscriptions-benefit-editor.test.mjs
       - run: npx ts-node test/residency-booking-policy.test.ts
       - run: npm run test:subscriptions-publication
       - run: npm run test:subscriptions-runtime-context
