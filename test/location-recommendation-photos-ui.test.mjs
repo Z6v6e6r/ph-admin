@@ -83,6 +83,9 @@ function setup(overrides = {}) {
     handleError: (error) => { throw error; },
     notificationState: { session: { accessToken: 'synthetic-access-token' } },
     notificationApi: { uploadLocationMedia: async () => ({ id: assetId(1) }) },
+    // The served upload path re-encodes the file first; byte preparation has its own test
+    // (cup-station-photo-upload.test.mjs), so this suite passes the fixture through unchanged.
+    prepareLocationPhotoFile: async (file) => file,
     ...overrides
   });
   for (const name of ['LOCATION_WEEKDAYS', 'LOCATION_RECOMMENDATION_EVENT_TYPES']) {
@@ -127,6 +130,15 @@ const binding = (number, eventType = 'GAME', isActive = false) => ({
   assetId: assetId(number), eventType, isActive, sortOrder: number - 1
 });
 const file = (number) => ({ name: `synthetic-${number}.webp`, type: 'image/webp', size: 100 });
+
+// The served upload path prepares the bytes first, so the deferred media call starts one tick later.
+async function waitForUploadStart(started) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (started()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail('the media upload did not start');
+}
 
 test('editable station profiles preserve and deep-copy photo bindings; old responses stay editable', () => {
   const { context } = setup();
@@ -233,6 +245,7 @@ test('a stale upload response cannot attach to a different selected station', as
   let complete;
   const { context } = setup({ notificationApi: { uploadLocationMedia: () => new Promise((resolve) => { complete = resolve; }) } });
   const pending = context.uploadLocationRecommendationPhotos('GAME', [file(1)], editorFor(context));
+  await waitForUploadStart(() => Boolean(complete));
   assert.equal(context.locationAdminState.uploading, true);
   context.locationAdminState.selectedId = stationId(2);
   context.locationAdminState.selectionRevision++;
@@ -252,6 +265,7 @@ test('a stale rejected upload stops before starting another file', async () => {
     return new Promise((_resolve, fail) => { reject = fail; });
   } } });
   const pending = context.uploadLocationRecommendationPhotos('GAME', [file(1), file(2)], editorFor(context));
+  await waitForUploadStart(() => Boolean(reject));
   context.locationAdminState.selectionRevision++;
   context.locationAdminState.profile = context.editableLocationProfile({ title: 'Other', slug: 'other' });
   reject(new Error('Synthetic stale rejection'));
@@ -264,6 +278,7 @@ test('a stale response cannot clear a newer upload operation', async () => {
   let complete;
   const { context } = setup({ notificationApi: { uploadLocationMedia: () => new Promise((resolve) => { complete = resolve; }) } });
   const pending = context.uploadLocationRecommendationPhotos('GAME', [file(1)], editorFor(context));
+  await waitForUploadStart(() => Boolean(complete));
   context.locationAdminState.photoUploadOperation = 'newer-synthetic-operation';
   complete({ id: assetId(1) });
   await pending;
