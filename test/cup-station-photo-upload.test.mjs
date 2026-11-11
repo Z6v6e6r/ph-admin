@@ -7,6 +7,10 @@ const panel = readFileSync(new URL('../client-sdk/phab-admin-panel.js', import.m
 const apiSnippet = readFileSync(new URL('../deploy/server-147/nginx-api-snippet.conf', import.meta.url), 'utf8');
 const containerNginx = readFileSync(new URL('../deploy/nginx/ph-ab.conf', import.meta.url), 'utf8');
 const serverReadme = readFileSync(new URL('../deploy/server-147/README.md', import.meta.url), 'utf8');
+const lk2Proxy = readFileSync(
+  new URL('../deploy/server-147/nginx-lk2-api-proxy.conf', import.meta.url),
+  'utf8'
+);
 const proxyService = readFileSync(
   new URL('../src/padlhub-admin-proxy/padlhub-admin-proxy.service.ts', import.meta.url),
   'utf8'
@@ -334,6 +338,16 @@ test('both station upload flows send the prepared file', () => {
   );
 });
 
+test('the LK2 same-origin proxy exposes the public media route the panel renders', () => {
+  for (const path of ['/admin/api/v1/', '/user/api/v1/', '/public/api/v1/']) {
+    const block = blockAt(lk2Proxy, lk2Proxy.indexOf('location ^~ ' + path));
+    assert.ok(block.includes('proxy_pass https://lk2.padlhub.su;'), path + ' reaches the LK2 host');
+    assert.ok(block.includes('proxy_set_header Host lk2.padlhub.su;'), path + ' keeps the upstream host');
+  }
+  // Station profiles keep relative /public/api/v1/... URLs, so the console origin must serve them.
+  assert.ok(lk2Proxy.includes('relative media URLs'), 'the media path is explained as part of the contract');
+  assert.ok(serverReadme.includes('/public/api/v1/'), 'the deploy runbook documents the media proxy');
+});
 test('a 413 without a JSON body explains what the operator can do', () => {
   assert.match(panel, /response\.status === 413/);
   assert.ok(panel.includes('/\\/location-media(?:[?#]|$)/'), 'the media route is matched exactly');
