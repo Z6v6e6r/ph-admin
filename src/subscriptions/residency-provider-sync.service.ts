@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { VivaAdminService } from '../integrations/viva/viva-admin.service';
-import { RESIDENCY_PRODUCT_ID, RESIDENCY_BOOKING_COMPATIBILITY, residencyBookingPolicyBlockers } from './residency-booking-policy';
+import { RESIDENCY_PRODUCT_ID, residencyBookingCompatibilityMatches } from './residency-booking-policy';
 import { SubscriptionRuntimeContextService, SubscriptionRuntimeIdentity } from './subscription-runtime-context.service';
 import { SubscriptionRuntimeContextDto } from './dto/subscription-runtime-context.dto';
 import { ResidencyObservationRepository } from './residency-observation.repository';
@@ -36,9 +36,7 @@ export class ResidencyProviderSyncService {
       if (resolution.kind !== 'MATCH') residencyFailure('SALE_PERIOD');
       const publication = resolution.publication;
       if (publication.mappingId !== snapshot.mapping.mappingId || publication.state === 'DISABLED_FOR_NEW_OPERATIONS'
-        || residencyBookingPolicyBlockers(publication.runtimeProjection).length
-        || !publication.runtimeCompatibility || Object.entries(RESIDENCY_BOOKING_COMPATIBILITY)
-          .some(([key, value]) => (publication.runtimeCompatibility as any)[key] !== value)) residencyFailure('POLICY_UNSUPPORTED');
+        || !residencyBookingCompatibilityMatches(publication.runtimeProjection, publication.runtimeCompatibility)) residencyFailure('POLICY_UNSUPPORTED');
       const earliest = Math.min(Date.parse(source.instanceObservedAt), Date.parse(source.productObservedAt));
       if (!Number.isFinite(earliest) || earliest > this.now().getTime() || this.now().getTime() - earliest >= 30000) residencyFailure('OBSERVATION_EXPIRED');
       const binding = { subscriptionTypeId: publication.subscriptionTypeId, policyVersion: publication.policyVersion,
