@@ -83,6 +83,11 @@ export function providerPaymentInstant(value: unknown) {
 
 function rawProviderDate(value: unknown): string | null {
   if (value === undefined || value === null) return null;
+  // Viva counters can expose a LocalDate. Keep it verbatim, never as a UTC instant.
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    providerTimestampParts(value + 'T00:00:00'); // Calendar validation only; no zone assigned.
+    return value;
+  }
   providerTimestampParts(value); // Calendar/shape only. Never invent an offset for the provider field.
   return value as string;
 }
