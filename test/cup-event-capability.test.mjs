@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 const implementation = await import('../scripts/cup-event-capability.mjs').catch(error => {
   if (error.code === 'ERR_MODULE_NOT_FOUND') return {};
@@ -16,6 +17,88 @@ const plan = () => ({
   runtimeSource: '38e80af9f5d855cf9ba28b616f4b651f7c658fa5',
   dropInPath: '/etc/systemd/system/phab-api-p32-2be5b1f.service.d/85-exhibition-event-capability.conf',
   flags: { PHAB_COMMUNITY_POLICIES_ENABLED: 'true', PHAB_COMMUNITY_POLICY_TYPES_ENABLED: 'EVENT' }
+});
+
+// Exercise the actual native boundary functions without touching real systemd paths.
+function nativeFunction(name, transport = {}) {
+  const source = fs.readFileSync(new URL('../scripts/cup-event-capability-remote.mjs', import.meta.url), 'utf8');
+  const body = source.match(new RegExp(`function ${name}\\([^]*?\\n}`))?.[0];
+  assert(body, `native function ${name} is missing`);
+  return vm.runInNewContext(`(${body})`, { assert, path, RUNTIME: '/opt/ph-admin-releases/cup-38e80af',
+    UNIT: plan().unit, DROP_IN: plan().dropInPath, digest: value => implementation.bodySha256(JSON.stringify(value)), ...transport });
+}
+
+test('native unit parsing preserves every ordered EnvironmentFiles row and refuses duplicate scalars', () => {
+  const parse = nativeFunction('fields');
+  const env = Array.from({ length: 7 }, (_, i) => `/etc/synthetic-${i}.env (ignore_errors=no)`);
+  const result = parse(['MainPID=100', ...env.map(v => `EnvironmentFiles=${v}`), 'DropInPaths='].join('\n'));
+  assert.deepEqual(JSON.parse(JSON.stringify(result.EnvironmentFiles)), env);
+  assert.throws(() => parse('MainPID=100\nMainPID=101'), /CUP_EVENT_UNIT_SHAPE/);
+});
+
+function configFixture() {
+  const directory = path.dirname(plan().dropInPath), versions = {}, reads = [];
+  const u = { WorkingDirectory: '/opt/ph-admin-releases/cup-38e80af', FragmentPath: `/etc/systemd/system/${plan().unit}`,
+    DropInPaths: `${directory}/10-base.conf`, EnvironmentFiles: ['/etc/synthetic.env (ignore_errors=no)'] };
+  const identity = nativeFunction('configIdentity', { fs: {
+    realpathSync: file => file, readdirSync: () => ['10-base.conf'],
+    lstatSync: () => ({ isDirectory: () => true, uid: 0, gid: 0, mode: 0o755 })
+  }, metadata(file, hash = false) {
+    reads.push({ file, hash });
+    assert(!(hash && file.endsWith('.env')), 'environment contents were read');
+    return { version: versions[file] ?? 'initial' };
+  } });
+  return { u, versions, reads, fingerprint: () => identity(u) };
+}
+
+test('native config custody includes effective external drop-in membership and bytes', () => {
+  const f = configFixture(), before = f.fingerprint(), external = `/run/systemd/system/${plan().unit}.d/95-other-owner.conf`;
+  f.u.DropInPaths += ` ${external}`;
+  const added = f.fingerprint();
+  assert.notEqual(added, before, 'an effective external drop-in escaped custody');
+  assert(f.reads.some(row => row.file === external && row.hash));
+  f.versions[external] = 'foreign-changed';
+  assert.notEqual(f.fingerprint(), added, 'loaded foreign bytes escaped custody');
+  const changed = f.fingerprint();
+  f.u.DropInPaths += ` ${plan().dropInPath}`;
+  assert.equal(f.fingerprint(), changed, 'only the owned delta must be excluded');
+});
+
+test('all seven ordered environment-file metadata records remain in native custody without content reads', () => {
+  const f = configFixture(), files = Array.from({ length: 7 }, (_, i) => `/etc/synthetic-${i}.env`);
+  f.u.EnvironmentFiles = files.map(file => `${file} (ignore_errors=no)`);
+  const before = f.fingerprint();
+  assert(files.every(file => f.reads.some(row => row.file === file && !row.hash)));
+  f.versions[files[0]] = 'changed-first-not-last';
+  assert.notEqual(f.fingerprint(), before);
+  const changed = f.fingerprint();
+  f.u.EnvironmentFiles.reverse();
+  assert.notEqual(f.fingerprint(), changed, 'environment precedence order escaped custody');
+});
+
+test('actual native foreign-drop-in fingerprints block pre-restart and recovery drift', async t => {
+  for (const transition of ['before-restart', 'recovery']) {
+    const f = operationFixture(t), c = configFixture();
+    const external = `/run/systemd/system/${plan().unit}.d/95-other-owner.conf`;
+    c.u.DropInPaths += ` ${external}`;
+    f.plan.before.configFingerprint = f.state.configFingerprint = c.fingerprint();
+    f.io.snapshot = async () => ({ ...structuredClone(f.state), configFingerprint: c.fingerprint() });
+    f.io.assertRestorable = async () => {
+      assert.equal(c.fingerprint(), f.plan.before.configFingerprint, 'CUP_EVENT_FOREIGN_CONFIG');
+      return { ownPresent: f.state.own !== null };
+    };
+    if (transition === 'before-restart') {
+      f.io.reload = async () => { f.calls.push('reload'); c.versions[external] = 'foreign'; };
+      await assert.rejects(implementation.applyEventCapability(f.plan, f.io), /CUP_EVENT_RECONCILE_REQUIRED/);
+      assert(!f.calls.includes('restart'));
+    } else {
+      await implementation.applyEventCapability(f.plan, f.io);
+      f.calls.length = 0; c.u.DropInPaths = '';
+      await assert.rejects(implementation.recoverEventCapability(f.plan, f.io), /CUP_EVENT_FOREIGN_CONFIG/);
+      assert(!f.calls.includes('restart') && !f.calls.includes('reload'));
+    }
+    assert(!f.calls.includes('remove-owned') && fs.existsSync(f.file));
+  }
 });
 
 test('the exact current CUP target renders only the two selected existing flags', () => {

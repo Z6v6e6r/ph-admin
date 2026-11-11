@@ -48,8 +48,13 @@ function fields(raw) {
   const out = {};
   for (const line of raw.trim().split('\n')) {
     const at = line.indexOf('=');
-    assert(at > 0 && !Object.hasOwn(out, line.slice(0, at)), 'CUP_EVENT_UNIT_SHAPE');
-    out[line.slice(0, at)] = line.slice(at + 1);
+    assert(at > 0, 'CUP_EVENT_UNIT_SHAPE');
+    const key = line.slice(0, at), value = line.slice(at + 1);
+    if (key === 'EnvironmentFiles') (out[key] ??= []).push(value);
+    else {
+      assert(!Object.hasOwn(out, key), 'CUP_EVENT_UNIT_SHAPE');
+      out[key] = value;
+    }
   }
   return out;
 }
@@ -106,13 +111,27 @@ function configIdentity(u) {
   assert(ds.isDirectory() && ds.uid === 0 && ds.gid === 0 && !(ds.mode & 0o2022), 'CUP_EVENT_DROP_IN_PARENT');
   const files = fs.readdirSync(directory).filter(name => name.endsWith('.conf')).map(name => path.join(directory, name)).filter(file => file !== DROP_IN).sort();
   const dropIns = files.map(file => ({ file, metadata: metadata(file, true) }));
-  const envPaths = [...u.EnvironmentFiles.matchAll(/(\/[^\s]+) \(ignore_errors=(?:yes|no)\)/g)].map(match => match[1]);
+  assert(typeof u.DropInPaths === 'string', 'CUP_EVENT_LOADED_DROP_INS');
+  const loadedPaths = u.DropInPaths.trim().split(/\s+/).filter(Boolean).filter(file => file !== DROP_IN);
+  assert(new Set(loadedPaths).size === loadedPaths.length, 'CUP_EVENT_LOADED_DROP_INS');
+  const loadedDropIns = loadedPaths.map(file => {
+    assert(path.isAbsolute(file) && path.normalize(file) === file && file.endsWith('.conf'), 'CUP_EVENT_LOADED_DROP_INS');
+    const value = metadata(file, true);
+    assert(value, 'CUP_EVENT_LOADED_DROP_IN_MISSING');
+    return { file, metadata: value };
+  });
+  assert(Array.isArray(u.EnvironmentFiles), 'CUP_EVENT_ENV_METADATA_UNAVAILABLE');
+  const envPaths = u.EnvironmentFiles.map(row => {
+    const match = row.match(/^(\/[^\s]+) \(ignore_errors=(?:yes|no)\)$/);
+    assert(match, 'CUP_EVENT_ENV_METADATA_UNAVAILABLE');
+    return match[1];
+  });
   assert(envPaths.length > 0, 'CUP_EVENT_ENV_METADATA_UNAVAILABLE');
   const envMetadata = envPaths.map(file => ({ file, metadata: metadata(file), realPath: fs.realpathSync(file), target: metadata(fs.realpathSync(file)) }));
   const appEnv = `${RUNTIME}/.env`, appMeta = metadata(appEnv);
   envMetadata.push({ file: appEnv, metadata: appMeta, realPath: appMeta ? fs.realpathSync(appEnv) : null,
     target: appMeta ? metadata(fs.realpathSync(appEnv)) : null });
-  return digest({ fragment: metadata(u.FragmentPath, true), dropIns, envMetadata, workingDirectory: u.WorkingDirectory, environmentFiles: u.EnvironmentFiles });
+  return digest({ fragment: metadata(u.FragmentPath, true), dropIns, loadedDropIns, envMetadata, workingDirectory: u.WorkingDirectory, environmentFiles: u.EnvironmentFiles });
 }
 
 function runtimeIdentity() {

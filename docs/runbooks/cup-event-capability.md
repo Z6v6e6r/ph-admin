@@ -19,7 +19,12 @@ Source/security approval of the community writer does not approve this executor 
   operationally to `community_1794221739126_корпспорт-падлхаб-2026`.
 
 No real `.env` contents are read, edited or copied. Existing configuration is pinned by unit/drop-in hashes and
-configuration-file metadata. Process-environment values stay inside the adapter; only the two non-secret flags
+configuration-file metadata. All effective loaded drop-in files, including foreign `/run` or vendor paths,
+remain in custody. Loaded
+membership/order and file identities/bytes are pinned, excluding only the exact owned delta. Every repeated
+`EnvironmentFiles` record is retained in systemd precedence order; duplicate scalar properties are rejected.
+Environment-file contents are never read, and metadata for every listed file and its symlink target is pinned.
+Process-environment values stay inside the adapter; only the two non-secret flags
 and a digest of all other initial values are returned. Only INVOCATION_ID, JOURNAL_STREAM and SYSTEMD_EXEC_PID
 are excluded as known volatile initial fields. Effective application capabilities are verified separately via
 an authenticated server-rendered admin page: absence from the initial process environment alone is insufficient.
