@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { CreatePolicyVersionDto } from './dto/create-policy-version.dto';
-import type { SubscriptionRuntimeProjectionSnapshot } from './subscriptions.types';
+import type { SubscriptionRuntimeCompatibility, SubscriptionRuntimeProjectionSnapshot } from './subscriptions.types';
 
 export const RESIDENCY_PRODUCT_ID = '4037a3a3-e551-4f9a-a9db-1410e46b8635';
 export const LK_NODE_RED_RESIDENCY_BOOKING_V1 = 'LK_NODE_RED_RESIDENCY_BOOKING_V1' as const;
+export const LK_NODE_RED_RESIDENCY_BOOKING_V2 = 'LK_NODE_RED_RESIDENCY_BOOKING_V2' as const;
 // Keep this manifest identical to the Node-RED consumer. Dictionary selectors are
 // pinned separately by the publication's policyDigest and dictionaryRevision.
 export const RESIDENCY_BOOKING_CAPABILITY_MANIFEST = Object.freeze({
@@ -18,6 +19,17 @@ export const RESIDENCY_BOOKING_COMPATIBILITY = Object.freeze({
   adapterId: RESIDENCY_BOOKING_CAPABILITY_MANIFEST.adapterId,
   contractVersion: 1,
   capabilityDigest: `sha256:${createHash('sha256').update(JSON.stringify(RESIDENCY_BOOKING_CAPABILITY_MANIFEST)).digest('hex')}`
+});
+
+// V1 remains immutable: existing publications attest only games and group training.
+export const RESIDENCY_TOURNAMENT_CAPABILITY_MANIFEST = Object.freeze({
+  ...RESIDENCY_BOOKING_CAPABILITY_MANIFEST, contractVersion: 2,
+  actions: ['CREATE_GAME', 'JOIN_GAME', 'BOOK_GROUP_TRAINING', 'BOOK_TOURNAMENT'],
+  tournamentDiscountPercent: 50
+});
+export const RESIDENCY_TOURNAMENT_COMPATIBILITY = Object.freeze({
+  adapterId: RESIDENCY_TOURNAMENT_CAPABILITY_MANIFEST.adapterId, contractVersion: 2,
+  capabilityDigest: `sha256:${createHash('sha256').update(JSON.stringify(RESIDENCY_TOURNAMENT_CAPABILITY_MANIFEST)).digest('hex')}`
 });
 
 const equal = (a: readonly unknown[], b: readonly unknown[]): boolean =>
@@ -45,7 +57,10 @@ export function residencyBookingPolicyBlockers(p: SubscriptionRuntimeProjectionS
   const rules = p.benefitRules.filter(r => r.enabled);
   const game = rules.find(r => r.category === 'GAME');
   const training = rules.find(r => r.category === 'GROUP_TRAINING');
-  if (rules.length !== 2 || !game || !training
+  const tournament = rules.find(r => r.category === 'TOURNAMENT');
+  if (rules.length !== (tournament ? 3 : 2) || !game || !training
+    || (tournament && (!equal(tournament.actions, ['BOOK_TOURNAMENT']) || tournament.percentage !== 50
+      || tournament.allStations !== true || tournament.stationIds.length !== 0))
     || !equal(game.actions, ['CREATE_GAME', 'JOIN_GAME']) || !equal(training.actions, ['BOOK_GROUP_TRAINING'])
     || game.allStations !== true || training.allStations !== true || game.stationIds.length !== 0 || training.stationIds.length !== 0
     || rules.some(r => r.kind !== 'PERCENT_DISCOUNT' || r.valueMinor !== null || r.partialPrice !== null
@@ -54,17 +69,25 @@ export function residencyBookingPolicyBlockers(p: SubscriptionRuntimeProjectionS
   return errors;
 }
 
+/** Bind each capability digest to its exact monetary profile, never widen V1. */
+export function residencyBookingCompatibilityMatches(p: SubscriptionRuntimeProjectionSnapshot, actual?: SubscriptionRuntimeCompatibility): boolean {
+  if (!actual || residencyBookingPolicyBlockers(p).length) return false;
+  const expected = p.benefitRules.some(r => r.enabled && r.category === 'TOURNAMENT')
+    ? RESIDENCY_TOURNAMENT_COMPATIBILITY : RESIDENCY_BOOKING_COMPATIBILITY;
+  return Object.entries(expected).every(([key,value]) => actual[key as keyof SubscriptionRuntimeCompatibility] === value);
+}
+
 /** Check-only DTO factory: never creates a type, mapping, publication or instance. */
 export function buildResidencyPolicyCandidate(input: {
-  effectiveAt: string; gameEventTypeIds: string[]; groupTrainingEventTypeIds: string[];
+  effectiveAt: string; gameEventTypeIds: string[]; groupTrainingEventTypeIds: string[]; tournamentEventTypeIds?: string[];
 }): CreatePolicyVersionDto {
   const ids = (values: string[]) => {
     if (!values.length || values.some(v => !/^[A-Za-z0-9][A-Za-z0-9._:-]{2,159}$/.test(v))) throw new Error('CANONICAL_DICTIONARY_REQUIRED');
     return [...new Set(values)].sort();
   };
-  const rule = (category: 'GAME' | 'GROUP_TRAINING', percentage: number, events: string[]) => ({
+  const rule = (category: 'GAME' | 'GROUP_TRAINING' | 'TOURNAMENT', percentage: number, events: string[]) => ({
     ruleId: `residency:${category.toLowerCase()}`, enabled: true, category,
-    actions: category === 'GAME' ? ['CREATE_GAME', 'JOIN_GAME'] as Array<'CREATE_GAME' | 'JOIN_GAME'> : ['BOOK_GROUP_TRAINING'] as Array<'BOOK_GROUP_TRAINING'>,
+    actions: category === 'GAME' ? ['CREATE_GAME', 'JOIN_GAME'] as Array<'CREATE_GAME' | 'JOIN_GAME'> : category === 'TOURNAMENT' ? ['BOOK_TOURNAMENT'] as Array<'BOOK_TOURNAMENT'> : ['BOOK_GROUP_TRAINING'] as Array<'BOOK_GROUP_TRAINING'>,
     externalEventTypeIds: ids(events), productTypeIds: [], durationMinutes: [60, 90, 120] as Array<60 | 90 | 120>,
     stationIds: [], allStations: true, kind: 'PERCENT_DISCOUNT' as const, percentage,
     valueMinor: null, partialPrice: null, priority: 100
@@ -79,7 +102,8 @@ export function buildResidencyPolicyCandidate(input: {
     bookingWindow: {enabled:false,days:null}, usageUnitsByDuration: {'60':0,'90':0,'120':0},
     stationAccessRules: [{ruleId:'residency:all-stations',enabled:true,priority:100,
       selector:{kind:'ALL_STATIONS',stationIds:[]},surcharge:{kind:'NONE',amountMinor:0}}],
-    benefitRules: [rule('GAME',30,input.gameEventTypeIds),rule('GROUP_TRAINING',50,input.groupTrainingEventTypeIds)],
+    benefitRules: [rule('GAME',30,input.gameEventTypeIds),rule('GROUP_TRAINING',50,input.groupTrainingEventTypeIds),
+      ...(input.tournamentEventTypeIds ? [rule('TOURNAMENT',50,input.tournamentEventTypeIds)] : [])],
     providerBinding: {provider:'VIVA',externalId:RESIDENCY_PRODUCT_ID,referenceKind:'PRODUCT_CANDIDATE'},
     capabilities: {
       lifecycle: {activationMode:'PURCHASE',activationWindowDays:0,fixedActivationAt:null,fixedActivationTimeZone:'Europe/Moscow',gracePeriodDays:0,allowBookingsAfterExpiry:false,

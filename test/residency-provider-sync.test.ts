@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { normalizeResidencyProviderFacts, providerInstant, withinResidencyDeadline } from '../src/subscriptions/residency-provider-observation';
-import { RESIDENCY_PRODUCT_ID, buildResidencyPolicyCandidate, RESIDENCY_BOOKING_COMPATIBILITY } from '../src/subscriptions/residency-booking-policy';
+import { RESIDENCY_PRODUCT_ID, buildResidencyPolicyCandidate, RESIDENCY_BOOKING_COMPATIBILITY, RESIDENCY_TOURNAMENT_COMPATIBILITY } from '../src/subscriptions/residency-booking-policy';
 import { compileSubscriptionRuntimeProjection } from '../src/subscriptions/subscription-runtime-projection';
 import { SubscriptionsService } from '../src/subscriptions/subscriptions.service';
 import { computeSubscriptionRuntimeProjectionDigest } from '../src/subscriptions/subscription-runtime-contracts';
@@ -28,9 +28,10 @@ export function providerFixture() {
 export const normalize = (fixture = providerFixture()) => normalizeResidencyProviderFacts({
   ...fixture, providerClientId: actor.providerClientId, clientSubscriptionId: 'subscription:residency-test', observedAt: NOW
 });
-export function bindingFixture() {
+export function bindingFixture(tournaments=false) {
   const dto = buildResidencyPolicyCandidate({ effectiveAt: '2026-11-09T00:00:00.000Z',
-    gameEventTypeIds: ['viva:direction:4588:type:1613'], groupTrainingEventTypeIds: ['viva:direction:2468:type:605'] });
+    gameEventTypeIds: ['viva:direction:4588:type:1613'], groupTrainingEventTypeIds: ['viva:direction:2468:type:605'],
+    ...(tournaments?{tournamentEventTypeIds:['viva:direction:5280:type:1013']}: {}) });
   const service = Object.create(SubscriptionsService.prototype) as any;
   const policy = service.normalizePolicy(dto);
   const projection = compileSubscriptionRuntimeProjection({ ...policy, subscriptionTypeId: 'type:residency-test', version: 2, status: 'PUBLISHED' });
@@ -38,7 +39,7 @@ export function bindingFixture() {
     policyVersion: 2, policyDigest: computeSubscriptionRuntimeProjectionDigest(projection), mappingId: 'mapping:residency-test',
     dictionaryRevision: 'dictionary:residency-test', runtimeProjection: projection, state: 'PUBLISHED', effectiveAt: dto.effectiveAt,
     publishedAt: dto.effectiveAt, publishedBy: 'admin:test', supersededAt: null, supersededBy: null,
-    impactPreviewRef: 'impact:residency-test', approvalAuditRef: 'audit:residency-test', runtimeCompatibility: RESIDENCY_BOOKING_COMPATIBILITY,
+    impactPreviewRef: 'impact:residency-test', approvalAuditRef: 'audit:residency-test', runtimeCompatibility: tournaments?RESIDENCY_TOURNAMENT_COMPATIBILITY:RESIDENCY_BOOKING_COMPATIBILITY,
     idempotency: { actorId: 'admin:test', key: 'test-key', requestHash: 'a'.repeat(64), correlationId: 'corr:test' } };
   const mapping: any = { schemaVersion: 1, mappingId: publication.mappingId, tenantId: actor.tenantId, provider: 'VIVA', providerProductId: RESIDENCY_PRODUCT_ID,
     providerScope: { kind: 'TENANT', scopeId: actor.tenantId }, subscriptionTypeId: publication.subscriptionTypeId, state: 'VERIFIED',
@@ -165,6 +166,34 @@ async function main() {
     assert.equal(result.contextKind, 'RESIDENCY_BOOKING_CONTEXT'); assert.equal(result.context.instance.homeStationId, null);
     assert.equal(result.observedAt, '2026-11-10T12:59:59.000Z'); assert.equal(result.validUntil, '2026-11-10T13:00:29.000Z');
     assert.equal(writes, 1); assert.equal(fetches, 1); assert.equal(authCalls, 1); cases += 1;
+    // Real refresh path: selected publication, owned financial evidence and output proof.
+    const tournamentSnapshot=bindingFixture(true);let tournamentWrites=0;
+    const tournamentRepository:any={binding:async()=>tournamentSnapshot,persist:async(_:any,o:any)=>{tournamentWrites++;return o;}};
+    const tournamentViva:any={readResidencySubscriptionEvidence:async(input:any)=>{assert.equal(input.clientId,actor.providerClientId);return providerFixture();}};
+    const tournamentService=new Service(identity,tournamentRepository,tournamentViva);
+    const tournamentResult=await tournamentService.refresh('Bearer test','test-token',{clientSubscriptionId:'subscription:residency-test'});
+    assert.deepEqual(tournamentResult.runtimeCompatibility,RESIDENCY_TOURNAMENT_COMPATIBILITY);
+    assert.equal(tournamentResult.context.policy.benefitRules.find(r=>r.category==='TOURNAMENT')!.percentage,50);
+    assert.equal(tournamentResult.context.evidence.publicationId,tournamentSnapshot.publications[0].publicationId);
+    assert.equal(tournamentWrites,1);cases++;
+    tournamentSnapshot.publications[0].runtimeCompatibility=RESIDENCY_BOOKING_COMPATIBILITY;
+    await assert.rejects(tournamentService.refresh('Bearer test','test-token',{clientSubscriptionId:'subscription:residency-test'}));
+    assert.equal(tournamentWrites,1);cases++;
+    tournamentSnapshot.publications[0].runtimeCompatibility=RESIDENCY_TOURNAMENT_COMPATIBILITY;
+    tournamentViva.readResidencySubscriptionEvidence=async()=>{const f=providerFixture();f.subscription.clientId='client:foreign';return f;};
+    await assert.rejects(tournamentService.refresh('Bearer test','test-token',{clientSubscriptionId:'subscription:residency-test'}));
+    assert.equal(tournamentWrites,1);cases++;
+    // A later V2 publication cannot silently upgrade a purchase in the V1 sale period.
+    const history=bindingFixture();const old=history.publications[0],later=structuredClone(tournamentSnapshot.publications[0]);
+    later.policyVersion=old.policyVersion+1;later.runtimeProjection.policyVersion=later.policyVersion;
+    later.publicationId='publication:residency-later';later.effectiveAt=NOW;later.publishedAt=NOW;
+    later.policyDigest=computeSubscriptionRuntimeProjectionDigest(later.runtimeProjection);
+    old.state='SUPERSEDED';old.supersededAt=later.publishedAt;old.supersededBy=later.publicationId;
+    history.publications.push(later);tournamentRepository.binding=async()=>history;
+    tournamentViva.readResidencySubscriptionEvidence=async()=>providerFixture();
+    const pinned=await tournamentService.refresh('Bearer test','test-token',{clientSubscriptionId:'subscription:residency-test'});
+    assert.deepEqual(pinned.runtimeCompatibility,RESIDENCY_BOOKING_COMPATIBILITY);
+    assert.equal(pinned.context.evidence.publicationId,old.publicationId);assert.equal(tournamentWrites,2);cases++;
     identity.authorizeResidencyRefresh = async () => { throw new Error('auth denied'); };
     await assert.rejects(service.refresh('bad', 'bad', { clientSubscriptionId: 'subscription:residency-test' }));
     assert.equal(fetches, 1); assert.equal(writes, 1); cases += 1;

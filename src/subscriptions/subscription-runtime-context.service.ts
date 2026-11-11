@@ -1,4 +1,4 @@
-import { RESIDENCY_PRODUCT_ID, RESIDENCY_BOOKING_COMPATIBILITY, residencyBookingPolicyBlockers } from './residency-booking-policy';
+import { RESIDENCY_PRODUCT_ID, residencyBookingCompatibilityMatches } from './residency-booking-policy';
 import {
   ForbiddenException,
   Injectable,
@@ -89,10 +89,7 @@ export class SubscriptionRuntimeContextService {
     const {context, providerProductId, publication, purchasedAt} = await this.resolveValidated(authorizationHeader, integrationToken, dto);
     const compatibility = publication.runtimeCompatibility;
     if (providerProductId !== RESIDENCY_PRODUCT_ID || !compatibility
-      || compatibility.adapterId !== RESIDENCY_BOOKING_COMPATIBILITY.adapterId
-      || compatibility.contractVersion !== RESIDENCY_BOOKING_COMPATIBILITY.contractVersion
-      || compatibility.capabilityDigest !== RESIDENCY_BOOKING_COMPATIBILITY.capabilityDigest
-      || residencyBookingPolicyBlockers(context.policy).length) {
+      || !residencyBookingCompatibilityMatches(context.policy, compatibility)) {
       throw new ServiceUnavailableException({code:'RESIDENCY_BOOKING_POLICY_UNSUPPORTED'});
     }
     const now = this.now().getTime();

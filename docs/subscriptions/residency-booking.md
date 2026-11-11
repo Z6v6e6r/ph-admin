@@ -4,9 +4,10 @@ Owner: CUP subscription domain. Audience: authenticated holders of Viva product
 `4037a3a3-e551-4f9a-a9db-1410e46b8635` and the LK1 paid booking owner.
 This change prepares source support; it creates no live type, mapping or publication.
 
-The product grants 30% off games and 50% off group training, at all stations,
-for 30 days. It grants no free visits or free game minutes. Tournament benefits
-and automatic renewal are outside this profile. The activation profile is PURCHASE:
+The product grants 30% off games and 50% off group training and tournaments, at
+all stations, for 30 days. It grants no free visits or free game minutes. Automatic
+renewal is outside this profile. Legacy capability v1 remains games/training only;
+tournament admission requires the explicit v2 publication described below. The activation profile is PURCHASE:
 the CUP monetary window starts at the confirmed financial issuance instant and
 ends 30 days later, independently of Viva visit-counter activation. Frozen,
 future and expired financial windows fail closed. The live-refresh authority and
@@ -15,11 +16,13 @@ its previously projected instance checks.
 
 `buildResidencyPolicyCandidate` creates a check-only `CreatePolicyVersionDto`.
 The caller supplies the effective instant and reviewed canonical game/training
-event IDs. It never guesses a dictionary, reads Viva or writes a database. Use
+event IDs, plus `tournamentEventTypeIds` for the v2 tournament profile. It never guesses a dictionary, reads Viva or writes a database. Use
 the existing catalog API to create type `{code:"residency",title:"Резидентство"}`
 and its draft policy under an authorized global catalog actor. Then use the
 existing digest/impact-bound preview and atomic publication command, with
-`SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION=LK_NODE_RED_RESIDENCY_BOOKING_V1`.
+`SUBSCRIPTIONS_PUBLICATION_ENFORCEMENT_ADAPTER_VERSION=LK_NODE_RED_RESIDENCY_BOOKING_V1`
+for the legacy two-rule policy, or `LK_NODE_RED_RESIDENCY_BOOKING_V2` for the explicit
+three-rule tournament policy. Each adapter rejects the other policy shape.
 Exact Viva inspection, immutable dictionary evidence, audit, CAS, idempotency,
 transaction and provider mapping gates are retained.
 
@@ -30,7 +33,7 @@ explicit `stationIds` behavior. True requires an empty `stationIds` array and
 matches every server-resolved station, including stations added later. The
 normalizer preserves the field, the runtime digest binds it, and wildcard rules
 participate in overlap detection. Station access rules still apply independently.
-The residency profile requires wildcard scope on both monetary benefits and
+The residency profile requires wildcard scope on every monetary benefit and
 `ALL_STATIONS` access without surcharge. Unknown event types remain outside the
 reviewed canonical event dictionary.
 
@@ -45,6 +48,28 @@ publication. Keep the existing publication command disabled throughout that
 rollout. Do not route residency through the annual/free-entitlement adapter or
 old generic managed JOIN. The new capability digest attests the monetary profile;
 policy/dictionary digests additionally pin the exact event selectors.
+
+## Tournament capability v2
+
+V1's immutable manifest/digest and two enabled rules are preserved. V2 adds exactly
+one `PERCENT_DISCOUNT` rule: `TOURNAMENT`, `BOOK_TOURNAMENT`, 50%, all stations,
+reviewed canonical external event types and durations 60/90/120. Its contract version
+is 2 and capability digest is
+`sha256:63be8d476b73583c8b80f55cf7016abe571a2b8159dbb7e8db2f07010f614104`.
+Refresh and read-context accept only exact profile/digest pairs. Generic envelope
+schema, identity checks, provider financial evidence and sale-period publication
+selection remain unchanged. A newer publication does not override an instance's
+pinned publication or policy version.
+
+Deploy compatible CUP readers and all four paired LK function validators before an
+explicitly authorized v2 publication. Verify refresh authentication independently;
+this source change neither reads/replaces real integration credentials nor fixes a
+live 401 configuration. Existing v1 instances require a separately approved binding
+transition; they do not gain tournament rights from a latest-policy lookup. Keep v2
+readers while v2 publications exist; stop new admission/publication before recovery
+rather than rolling back to a reader that cannot validate existing operations.
+Already created paid-carrier checkout operations require separate provider/payment
+reconciliation and are not repriced by this patch.
 
 ## Authenticated read contract
 
