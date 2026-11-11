@@ -30,6 +30,12 @@ type VivaRawRecord = Record<string, unknown>;
 // but existing exercises retain their original closed category.
 const CORPORATE_TOURNAMENT_DIRECTION_ID = '6078';
 const CLOSED_EXERCISE_TYPE_ID = '840';
+const CORPORATE_EXERCISE_TYPE_ID = '2349';
+const CORPORATE_TOURNAMENT_DIRECTION_NAMES = new Set([
+  'вск турнир',
+  'предприниматели-патриоты турнир',
+  'пулково турнир'
+]);
 
 const VIVA_TOURNAMENT_DATE_FAN_IN_STUDIO_IDS_BY_WIDGET: Readonly<
   Record<string, readonly string[]>
@@ -574,8 +580,8 @@ export class VivaTournamentsService {
     query.set('dateTo', dateTo);
     studioIds.forEach((studioId) => query.append('studioIds', studioId));
     if (includeExerciseTypeIds) {
-      // Discover closed-only dates too; individual exercises are still filtered below.
-      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID])
+      // Discover closed and corporate dates too; filter individual exercises below.
+      new Set([...this.exerciseTypeIds, CLOSED_EXERCISE_TYPE_ID, CORPORATE_EXERCISE_TYPE_ID])
         .forEach((typeId) => query.append('exerciseTypeIds', typeId));
     }
 
@@ -740,7 +746,12 @@ export class VivaTournamentsService {
     const isClosedCorporateTournament =
       exerciseType.id === CLOSED_EXERCISE_TYPE_ID
       && this.readString(direction?.id) === CORPORATE_TOURNAMENT_DIRECTION_ID;
-    if (!isClosedCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
+    const corporateDirectionName = (this.readDisplayName(direction) ?? '')
+      .trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+    const isCorporateTournament =
+      exerciseType.id === CORPORATE_EXERCISE_TYPE_ID
+      && CORPORATE_TOURNAMENT_DIRECTION_NAMES.has(corporateDirectionName);
+    if (!isClosedCorporateTournament && !isCorporateTournament && !this.isTournamentExercise(name, exerciseType)) {
       return null;
     }
 
@@ -849,7 +860,7 @@ export class VivaTournamentsService {
       id,
       source: 'VIVA',
       exerciseId,
-      ...(isClosedCorporateTournament ? { isPublic: false } : {}),
+      ...(isClosedCorporateTournament || isCorporateTournament ? { isPublic: false } : {}),
       name:
         name ||
         [exerciseType.name, studioId ? studioNames.get(studioId) : undefined]

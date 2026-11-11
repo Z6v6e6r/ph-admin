@@ -72,7 +72,7 @@ async function main(): Promise<void> {
       'discover the closed-only day even when the ordinary tournament date query is nonempty');
     const dates = requests.filter((url) => url.pathname.endsWith('/exercises/dates'));
     assert.equal(dates.length, 1, 'extend the existing date query without another request');
-    assert.deepEqual(dates[0].searchParams.getAll('exerciseTypeIds'), ['839', '1013', '840']);
+    assert.deepEqual(dates[0].searchParams.getAll('exerciseTypeIds'), ['839', '1013', '840', '2349']);
 
     requests.length = 0;
     const day = await service.listTournaments({ date: corporateDate, includePast: true });
