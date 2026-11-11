@@ -2635,6 +2635,12 @@
       }
       .phab-admin-tournament-community-publish{
         display:flex;
+        flex-direction:column;
+        gap:8px;
+        min-width:0;
+      }
+      .phab-admin-tournament-community-list{
+        display:flex;
         gap:10px;
         overflow-x:auto;
         padding:2px 0 8px;
@@ -27807,11 +27813,39 @@
         };
       }
 
+      var searchInput = document.createElement('input');
+      searchInput.type = 'search';
+      searchInput.className = 'phab-admin-input';
+      searchInput.placeholder = 'Поиск сообщества...';
+      searchInput.setAttribute('aria-label', 'Поиск сообщества для публикации турнира');
+      root.appendChild(searchInput);
+
+      var list = document.createElement('div');
+      list.className = 'phab-admin-tournament-community-list';
+      root.appendChild(list);
+
+      var noMatches = document.createElement('div');
+      noMatches.className = 'phab-admin-empty';
+      noMatches.textContent = 'Сообщества не найдены.';
+      noMatches.setAttribute('role', 'status');
+      noMatches.setAttribute('aria-live', 'polite');
+      noMatches.style.display = 'none';
+      root.appendChild(noMatches);
+
+      function normalizeSearch(value) {
+        return String(value || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+      }
+
+      var searchableCards = [];
       availableCommunities.forEach(function (community) {
         var communityId = String(community.id || '').trim();
         var card = document.createElement('label');
         card.className = 'phab-admin-tournament-community-card';
-        root.appendChild(card);
+        list.appendChild(card);
+        searchableCards.push({
+          element: card,
+          text: normalizeSearch([community.name, community.slug, communityId].join(' '))
+        });
 
         var checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -27844,6 +27878,18 @@
 
         checkbox.addEventListener('change', syncCard);
         syncCard();
+      });
+
+      searchInput.addEventListener('input', function () {
+        var query = normalizeSearch(searchInput.value);
+        var visibleCount = 0;
+        searchableCards.forEach(function (item) {
+          var matches = item.text.indexOf(query) !== -1;
+          item.element.style.display = matches ? '' : 'none';
+          if (matches) visibleCount += 1;
+        });
+        noMatches.style.display = visibleCount > 0 ? 'none' : '';
+        list.scrollLeft = 0;
       });
 
       root.appendChild(hiddenInput);
