@@ -58,6 +58,33 @@ async function main() {
   const refreshed = facts(activated, '2026-11-13T12:00:00.000Z');
   assert.equal(refreshed.eligible, true); assert.equal(refreshed.purchasedAt, granted.purchasedAt);
   assert.equal(refreshed.activeTo, granted.activeTo); assert.equal(refreshed.providerActivationDateRaw, activated.subscription.activationDate); cases++;
+  const localDates = issuedFixture(); Object.assign(localDates.subscription, { status: 'ACTIVE',
+    activationDate: '2026-11-12T12:00:00.654321', expirationDate: '2026-12-12' });
+  const activatedLocalDate = facts(localDates, '2026-11-13T12:00:00.000Z');
+  assert.equal(activatedLocalDate.eligible, true);
+  assert.equal(activatedLocalDate.providerExpirationDateRaw, '2026-12-12');
+  assert.equal(activatedLocalDate.providerActivationDateRaw, localDates.subscription.activationDate);
+  assert.equal(activatedLocalDate.activeFrom, granted.activeFrom);
+  assert.equal(activatedLocalDate.activeTo, granted.activeTo);
+  assert.equal(activatedLocalDate.acquisitionInstantNs, granted.acquisitionInstantNs); cases++;
+  for (const field of ['purchaseDate', 'activationDate', 'expirationDate'] as const) {
+    const f = issuedFixture(); f.subscription[field] = '2024-02-29';
+    const normalized = facts(f);
+    const rawField = field === 'purchaseDate' ? 'providerPurchaseDateRaw'
+      : field === 'activationDate' ? 'providerActivationDateRaw' : 'providerExpirationDateRaw';
+    assert.equal(normalized[rawField], '2024-02-29');
+    assert.equal(normalized.activeTo, granted.activeTo); cases++;
+    for (const invalid of ['2026-02-29', '2026-02-30', '2026-13-01', '2026-00-01', '2026-11-00',
+      '2026-1-01', '2026-12-12Z', '2026-12-12 ', '2026-12-12+03:00']) {
+      f.subscription[field] = invalid; assert.throws(() => facts(f)); cases++;
+    }
+  }
+  // LocalDate support is evidence-only: financial issuance and observation remain instants.
+  const dateOnlyPayment = issuedFixture(); dateOnlyPayment.transaction.paymentDate = '2026-11-10';
+  assert.throws(() => facts(dateOnlyPayment)); cases++;
+  assert.throws(() => facts(issuedFixture(), '2026-11-13')); cases++;
+  const heldLocalDate = issuedFixture(); heldLocalDate.subscription.holdUntil = '2026-11-13';
+  assert.equal(facts(heldLocalDate).eligible, false); cases++;
   const unpaid = issuedFixture(); unpaid.transaction.status = 'WAITING';
   assert.equal(facts(unpaid).eligible, false); // zero total never substitutes for PAID.
   unpaid.transaction.status = 'UNPAID'; assert.throws(() => facts(unpaid)); cases++;

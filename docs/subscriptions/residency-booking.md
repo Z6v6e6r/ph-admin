@@ -124,7 +124,12 @@ present hold/freeze date conservatively denies even if its timezone is ambiguous
 
 The read model labels this window `VIVA_PAID_TRANSACTION_PAYMENT_DATE`. Raw Viva
 status and purchase/activation/expiration dates remain separate provider evidence;
-naive provider dates are never assigned an invented timezone. In the existing v1
+naive provider dates are never assigned an invented timezone. Calendar-only
+`YYYY-MM-DD` values in provider evidence are also preserved verbatim
+after calendar validation. They do not replace the zoned financial issuance instant,
+alter the 30-day window, or establish an activation/expiration instant. A date-only
+hold still denies admission. Financial payment and observation dates must remain
+timestamps. In the existing v1
 envelope `purchasedAt` means this financial issuance instant and `instance.state`
 means the active CUP monetary policy window; neither asserts Viva counter
 activation. No provider record is modified. The all-station PURCHASE/30-day
