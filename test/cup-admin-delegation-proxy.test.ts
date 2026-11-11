@@ -115,6 +115,7 @@ async function main(): Promise<void> {
     '0:session',
     '0:notifications/capabilities',
     '0:notifications/web-push-subscribers',
+    '0:notifications/native-push-subscribers',
     '0:notifications/delivery-stats',
     '1:notifications/recipients/resolve',
     '1:notifications/campaigns',
@@ -192,6 +193,20 @@ async function main(): Promise<void> {
     assert.equal(bodylessGet.captured.statusCode, 200);
     assert.equal(calls[calls.length - 1].init.method, 'GET');
     assert.equal(calls[calls.length - 1].init.body, undefined);
+
+    const native = fakeResponse();
+    await controller.nativeSubscribers(TENANT, fakeRequest({
+      url: '/api/ui/padlhub-admin/local-padel/notifications/native-push-subscribers?platform=IOS&limit=20&cursor=next-page&appId=foreign&environment=PRODUCTION', body: {}
+    }), native.response);
+    assert.equal(native.captured.statusCode, 200);
+    const nativeCall = calls[calls.length - 1];
+    assert.equal(nativeCall.url, 'https://padlhub.test/admin/api/v1/local-padel/notifications/native-push-subscribers?platform=IOS&limit=20&cursor=next-page');
+    assert.equal(nativeCall.init.method, 'GET');
+    assert.equal(nativeCall.init.body, undefined);
+    assert.equal(native.captured.headers['Cache-Control'], 'no-store');
+    const callsBeforeDenied = calls.length;
+    await assert.rejects(() => controller.nativeSubscribers('other-tenant', fakeRequest({}), fakeResponse().response), NotFoundException);
+    assert.equal(calls.length, callsBeforeDenied);
 
     // A campaign carries the operator Idempotency-Key through, and refuses to invent one.
     const campaign = fakeResponse();

@@ -9457,6 +9457,11 @@
         if (cursor) query += '&cursor=' + encodeURIComponent(String(cursor));
         return adminRequest('/notifications/web-push-subscribers' + query, 'GET', null, '', true);
       },
+      listNativePushSubscribers: function (platform, limit, cursor) {
+        var query = '?platform=' + encodeURIComponent(platform) + '&limit=' + encodeURIComponent(String(limit));
+        if (cursor) query += '&cursor=' + encodeURIComponent(String(cursor));
+        return adminRequest('/notifications/native-push-subscribers' + query, 'GET', null, '', true);
+      },
       getDeliveryStats: function (days) {
         return adminRequest(
           '/notifications/delivery-stats?days=' + encodeURIComponent(String(days)),
@@ -10269,6 +10274,15 @@
       '<div class="phab-admin-notifications-result" aria-live="polite" data-notification-subscribers-status>Список ещё не загружен.</div>' +
       '<div class="phab-admin-notifications-subscribers" data-notification-subscribers-list></div>' +
       '</details>' +
+      ['ANDROID', 'IOS'].map(function (platform) {
+        var label = platform === 'ANDROID' ? 'Android' : 'iOS';
+        return '<details class="phab-admin-notifications-token" data-notification-native-subscribers="' + platform + '"><summary>У кого подключён ' + label + ' Push</summary>' +
+          '<p class="phab-admin-notifications-meta">Аккаунты с активными подключениями в приложении ' + label + '. Нажмите на строку, чтобы добавить получателя по PadlHub ID. Возможность отправки проверяется отдельно в способах отправки.</p>' +
+          '<div class="phab-admin-notifications-actions"><button class="phab-admin-btn-secondary" type="button" data-native-subscribers-load>Показать список</button>' +
+          '<button class="phab-admin-btn-secondary phab-admin-hidden" type="button" data-native-subscribers-more>Показать ещё</button></div>' +
+          '<div class="phab-admin-notifications-result" aria-live="polite" data-native-subscribers-status>Список ещё не загружен.</div>' +
+          '<div class="phab-admin-notifications-subscribers" data-native-subscribers-list></div></details>';
+      }).join('') +
       '<details class="phab-admin-notifications-token"><summary>Доставка пушей</summary>' +
       '<p class="phab-admin-notifications-meta">Что случилось с отправленным: сколько шлюз принял, что отклонено и с каким кодом. У Web Push нет отчётов от провайдера, поэтому источник — собственные записи: «принято» значит, что пуш-сервис взял сообщение, а не что человек его увидел.</p>' +
       '<div class="phab-admin-notifications-actions">' +
@@ -10338,6 +10352,17 @@
     var notificationPhonesInput = notificationNode('[data-notification-phones]');
     var notificationUserIdsInput = notificationNode('[data-notification-user-ids]');
     var notificationUserIdWarning = notificationNode('[data-notification-user-id-warning]');
+    var notificationNativeSubscribers = {};
+    ['ANDROID', 'IOS'].forEach(function (platform) {
+      var block = notificationNode('[data-notification-native-subscribers="' + platform + '"]');
+      notificationNativeSubscribers[platform] = {
+        list: block.querySelector('[data-native-subscribers-list]'),
+        status: block.querySelector('[data-native-subscribers-status]'),
+        load: block.querySelector('[data-native-subscribers-load]'),
+        more: block.querySelector('[data-native-subscribers-more]'),
+        cursor: '', loading: false, count: 0
+      };
+    });
     var notificationSubscribersList = notificationNode('[data-notification-subscribers-list]');
     var notificationSubscribersStatus = notificationNode('[data-notification-subscribers-status]');
     var notificationSubscribersLoad = notificationNode('[data-notification-subscribers-load]');
@@ -14122,6 +14147,7 @@
       notificationPhonesInput: notificationPhonesInput,
       notificationUserIdsInput: notificationUserIdsInput,
       notificationUserIdWarning: notificationUserIdWarning,
+      notificationNativeSubscribers: notificationNativeSubscribers,
       notificationSubscribersList: notificationSubscribersList,
       notificationSubscribersStatus: notificationSubscribersStatus,
       notificationSubscribersLoad: notificationSubscribersLoad,
@@ -38881,7 +38907,8 @@
 
     // Appending to the existing text keeps whatever the operator typed and reuses the normal input
     // path, so the preview is invalidated exactly as if the id had been typed by hand.
-    function addNotificationRecipient(userId) {
+    function addNotificationRecipient(userId, statusNode) {
+      statusNode = statusNode || dom.notificationSubscribersStatus;
       if (!userId) return;
       var current = String(dom.notificationUserIdsInput.value || '');
       var existing = current
@@ -38889,12 +38916,12 @@
         .map(function (entry) { return entry.trim().toLowerCase(); })
         .filter(Boolean);
       if (existing.indexOf(userId.toLowerCase()) >= 0) {
-        setNotificationResult(dom.notificationSubscribersStatus, 'Этот получатель уже добавлен.', false);
+        setNotificationResult(statusNode, 'Этот получатель уже добавлен.', false);
         return;
       }
       dom.notificationUserIdsInput.value = current.trim() ? current.replace(/\s+$/, '') + '\n' + userId : userId;
       dom.notificationUserIdsInput.dispatchEvent(new window.Event('input', { bubbles: true }));
-      setNotificationResult(dom.notificationSubscribersStatus, 'Получатель добавлен в список получателей.', false);
+      setNotificationResult(statusNode, 'Получатель добавлен в список получателей.', false);
     }
 
     async function loadNotificationSubscribers(options) {
@@ -38923,6 +38950,53 @@
         );
       } finally {
         notificationState.subscriberLoading = false;
+      }
+    }
+
+    async function loadNotificationNativeSubscribers(platform, append) {
+      var view = dom.notificationNativeSubscribers[platform];
+      if (!notificationApi || !view || view.loading || (append && !view.cursor)) return;
+      view.loading = true;
+      view.load.disabled = true;
+      view.more.disabled = true;
+      setNotificationResult(view.status, 'Загружаем список…', false);
+      try {
+        var page = await notificationApi.listNativePushSubscribers(platform, 20, append ? view.cursor : '');
+        var items = Array.isArray(page && page.items) ? page.items : [];
+        if (!append) {
+          view.list.textContent = '';
+          view.count = 0;
+        }
+        items.forEach(function (subscriber) {
+          var row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'phab-admin-btn-secondary';
+          row.style.display = 'block';
+          row.style.width = '100%';
+          row.style.marginBottom = '6px';
+          row.textContent = String(subscriber.displayName || 'Получатель') + ' · ' +
+            String(subscriber.phoneMasked || 'без телефона') + ' · ' +
+            String(subscriber.userId || '').slice(0, 8) + ' · устройств ' +
+            String(subscriber.endpointCount || 0) + notificationConfirmationSuffix(subscriber.lastConfirmedAt);
+          row.setAttribute('data-notification-native-subscriber', String(subscriber.userId || ''));
+          row.addEventListener('click', function () {
+            addNotificationRecipient(String(subscriber.userId || ''), view.status);
+          });
+          view.list.appendChild(row);
+        });
+        view.count += items.length;
+        view.cursor = String((page && page.nextCursor) || '');
+        view.more.classList.toggle('phab-admin-hidden', !view.cursor);
+        setNotificationResult(view.status, view.count ? 'Найдено: ' + view.count :
+          'Активных подключений ' + (platform === 'ANDROID' ? 'Android' : 'iOS') + ' Push не найдено.', false);
+      } catch (error) {
+        if (notificationSessionExpired(error)) return;
+        setNotificationResult(view.status,
+          error && error.message ? error.message : 'Не удалось загрузить список подключений.', true);
+      } finally {
+        view.loading = false;
+        view.load.disabled = false;
+        view.more.disabled = false;
       }
     }
 
@@ -41758,6 +41832,15 @@
       });
       dom.notificationTokenLoginBtn.addEventListener('click', function () {
         submitNotificationTokenLogin().catch(handleError);
+      });
+      ['ANDROID', 'IOS'].forEach(function (platform) {
+        var view = dom.notificationNativeSubscribers[platform];
+        view.load.addEventListener('click', function () {
+          loadNotificationNativeSubscribers(platform, false).catch(handleError);
+        });
+        view.more.addEventListener('click', function () {
+          loadNotificationNativeSubscribers(platform, true).catch(handleError);
+        });
       });
       dom.notificationSubscribersLoad.addEventListener('click', function () {
         loadNotificationSubscribers().catch(handleError);

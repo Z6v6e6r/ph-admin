@@ -73,6 +73,17 @@ export class PadlhubAdminProxyController {
     ]);
   }
 
+  @Get('notifications/native-push-subscribers')
+  nativeSubscribers(
+    @Param('tenantKey') tenantKey: string,
+    @Req() request: Request,
+    @Res() response: Response
+  ): Promise<void> {
+    return this.forwardJson(request, response, tenantKey, '/notifications/native-push-subscribers', 'GET', false, [
+      'platform', 'limit', 'cursor'
+    ]);
+  }
+
   @Get('notifications/delivery-stats')
   deliveryStats(
     @Param('tenantKey') tenantKey: string,
