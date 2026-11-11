@@ -8,10 +8,10 @@ Source/security approval of the community writer does not approve this executor 
 
 - Host `lk-primary-147` / `3170594-cd19972`.
 - Unit `phab-api-p32-2be5b1f.service`; existing release flock `/run/lock/phab-api-release.lock`.
-- Preserve the currently selected immutable runtime `cup-38e80af`, source
-  `38e80af9f5d855cf9ba28b616f4b651f7c658fa5`, tree `7b1a9e9f5536914d130b41bbb7c9c4f74b0ea4a0`.
-- Verify its manifest `66745502e235dbb65fd524def0380df8314cd7dedfa025445e3fc98fe61d2ef4`, every listed runtime file,
-  the actual packaged executable and the source process. Do not deploy or restore the superseded cup-26e3589.
+- Preserve the currently selected immutable runtime `cup-419b7778`, source
+  `419b777880d699d10681c3dd97077964a1669e73`, tree `cf4d86ea537031eab928278e3dbea92d7615b3a6`.
+- Verify its manifest `62bdf040a8f5bc5119c3d2dfa9aa6115ae544ade07d43ef9579c88bd05c2ae1c`, every listed runtime file,
+  the actual packaged executable and the source process. Do not deploy or restore superseded cup-26e3589 or cup-38e80af.
 - Create only `/etc/systemd/system/phab-api-p32-2be5b1f.service.d/85-exhibition-event-capability.conf`.
   It contains only `PHAB_COMMUNITY_POLICIES_ENABLED=true` and `PHAB_COMMUNITY_POLICY_TYPES_ENABLED=EVENT`.
 - EVENT capability becomes available to staff who already have the required role/permission/scope.
@@ -53,7 +53,9 @@ real restart or authenticated browser response. No application source/dependency
 3. Under the existing exclusive release flock, run `inspect`. It performs read-only runtime/configuration,
    protected-service, anonymous-denial and public-health checks. Capture its actual snapshot, never a fixture.
 4. Build a fresh mode0600 `plan.json` in that stage with the exact host/unit/runtime/drop-in/flags, `before` snapshot,
-   `scriptHashes` for exactly the two scripts, a fresh random `nonce`, and `browserProofSha256` bound before the wait.
+   `scriptHashes` for exactly the two scripts and a fresh random `nonce`. For automatic browser acceptance,
+   bind `browserProofSha256` before the wait. For explicitly owner-run browser acceptance use only
+   `acceptanceMode: "owner-manual"` and omit `browserProofSha256`; no other acceptance mode is supported.
    Set `startupBehavior` to `preserve-existing-not-write-free`: this operation preserves the current background
    configuration and does **not** claim zero startup/database/provider activity. Unknown or changed startup scope,
    source/config precedence or callback custody is a stop condition, not a reason to toggle maintenance/worker flags.
@@ -73,7 +75,7 @@ The adapter independently verifies root/Linux/host and the actual ancestor-owned
 a caller flag cannot supply lock ownership. It rejects arbitrary targets, pre-existing config, symlinks,
 unknown runtime, changed script hashes and stale process/config preimages.
 
-## Apply, observe, and verify the actual browser
+## Apply and observe; keep owner acceptance separate
 
 Only after admitted exact-target approval, execute `apply STAGE/plan.json` under the same flock.
 The operation writes a durable private intent and pre-publication inode receipt; exclusively publishes the
@@ -82,7 +84,13 @@ restart; then restarts only CUP. It verifies a new active PID/start tick, stable
 unchanged immutable runtime, all other initial environment values and protected team/Node-RED identity.
 Public health must be 200 and anonymous exact-community access must remain 401/403.
 
-The same process holds the release flock through at least120 seconds of observation and the post-browser check.
+The same process holds the release flock through at least120 seconds of server observation in either mode.
+When the owner explicitly takes browser acceptance, the operation does not run a browser probe or require a
+fabricated proof file. Its receipt is `SERVER_PASS`, `browserAcceptance: "OWNER_PENDING"` and a null browser-proof
+hash, never full `PASS`. All runtime/config/protected-service/negative-auth/health checks and guarded recovery
+remain unchanged. This is server configuration evidence, not browser, form, game or client acceptance.
+
+In automatic browser mode, the process additionally holds the lock through the post-browser check below.
 The parent reads `applied.json` to know when to use the existing Yandex HttpOnly-cookie session. Do not extract
 cookies, bearer tokens, storage or passwords. Use same-origin GETs with credentials:'same-origin' to verify:
 

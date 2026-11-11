@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
 export const UNIT = 'phab-api-p32-2be5b1f.service';
-export const RUNTIME_SOURCE = '38e80af9f5d855cf9ba28b616f4b651f7c658fa5';
+export const RUNTIME_SOURCE = '419b777880d699d10681c3dd97077964a1669e73';
 export const DROP_IN = `/etc/systemd/system/${UNIT}.d/85-exhibition-event-capability.conf`;
 export const FLAGS = Object.freeze({
   PHAB_COMMUNITY_POLICIES_ENABLED: 'true',
@@ -79,7 +79,10 @@ export async function recoverEventCapability(plan, io, { restartAttempted = true
 
 export async function runVerifiedOperation(plan, io) {
   eventDropIn(plan);
-  assert(/^[a-f0-9-]{36}$/.test(plan.nonce) && /^[a-f0-9]{64}$/.test(plan.browserProofSha256), 'CUP_EVENT_PROOF_PLAN');
+  const ownerManual = plan.acceptanceMode === 'owner-manual';
+  assert(plan.acceptanceMode === undefined || ownerManual, 'CUP_EVENT_ACCEPTANCE_MODE');
+  assert(/^[a-f0-9-]{36}$/.test(plan.nonce) && (ownerManual
+    ? plan.browserProofSha256 === undefined : /^[a-f0-9]{64}$/.test(plan.browserProofSha256)), 'CUP_EVENT_PROOF_PLAN');
   await io.assertLock();
   assert.deepEqual(await io.snapshot(), plan.before, 'CUP_EVENT_PREIMAGE');
   await io.assertFreshRun();
@@ -96,10 +99,13 @@ export async function runVerifiedOperation(plan, io) {
       samples++;
       assert(samples <= 10 && io.monotonic() - start < 300000, 'CUP_EVENT_OBSERVATION_DEADLINE');
     } while (io.monotonic() - start < 120000);
-    const proof = await io.readBrowserProof();
-    assert.equal(bodySha256(proof), plan.browserProofSha256, 'CUP_EVENT_BROWSER_PROOF');
-    const receipt = { status: 'PASS', pid: applied.pid, restarts: applied.restarts,
-      source: RUNTIME_SOURCE, nonce: plan.nonce, samples, browserProofSha256: plan.browserProofSha256,
+    if (!ownerManual) {
+      const proof = await io.readBrowserProof();
+      assert.equal(bodySha256(proof), plan.browserProofSha256, 'CUP_EVENT_BROWSER_PROOF');
+    }
+    const receipt = { status: ownerManual ? 'SERVER_PASS' : 'PASS', pid: applied.pid, restarts: applied.restarts,
+      source: RUNTIME_SOURCE, nonce: plan.nonce, samples, browserProofSha256: ownerManual ? null : plan.browserProofSha256,
+      browserAcceptance: ownerManual ? 'OWNER_PENDING' : 'VERIFIED',
       observedMs: io.monotonic() - start, after: applied.after };
     await io.record('complete.json', receipt);
     return receipt;

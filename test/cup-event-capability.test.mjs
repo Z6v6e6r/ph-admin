@@ -14,7 +14,7 @@ const implementation = await import('../scripts/cup-event-capability.mjs').catch
 
 const plan = () => ({
   host: '3170594-cd19972', unit: 'phab-api-p32-2be5b1f.service',
-  runtimeSource: '38e80af9f5d855cf9ba28b616f4b651f7c658fa5',
+  runtimeSource: '419b777880d699d10681c3dd97077964a1669e73',
   dropInPath: '/etc/systemd/system/phab-api-p32-2be5b1f.service.d/85-exhibition-event-capability.conf',
   flags: { PHAB_COMMUNITY_POLICIES_ENABLED: 'true', PHAB_COMMUNITY_POLICY_TYPES_ENABLED: 'EVENT' }
 });
@@ -24,7 +24,7 @@ function nativeFunction(name, transport = {}) {
   const source = fs.readFileSync(new URL('../scripts/cup-event-capability-remote.mjs', import.meta.url), 'utf8');
   const body = source.match(new RegExp(`function ${name}\\([^]*?\\n}`))?.[0];
   assert(body, `native function ${name} is missing`);
-  return vm.runInNewContext(`(${body})`, { assert, path, RUNTIME: '/opt/ph-admin-releases/cup-38e80af',
+  return vm.runInNewContext(`(${body})`, { assert, path, RUNTIME: '/opt/ph-admin-releases/cup-419b7778',
     UNIT: plan().unit, DROP_IN: plan().dropInPath, digest: value => implementation.bodySha256(JSON.stringify(value)), ...transport });
 }
 
@@ -38,7 +38,7 @@ test('native unit parsing preserves every ordered EnvironmentFiles row and refus
 
 function configFixture() {
   const directory = path.dirname(plan().dropInPath), versions = {}, reads = [];
-  const u = { WorkingDirectory: '/opt/ph-admin-releases/cup-38e80af', FragmentPath: `/etc/systemd/system/${plan().unit}`,
+  const u = { WorkingDirectory: '/opt/ph-admin-releases/cup-419b7778', FragmentPath: `/etc/systemd/system/${plan().unit}`,
     DropInPaths: `${directory}/10-base.conf`, EnvironmentFiles: ['/etc/synthetic.env (ignore_errors=no)'] };
   const identity = nativeFunction('configIdentity', { fs: {
     realpathSync: file => file, readdirSync: () => ['10-base.conf'],
@@ -101,6 +101,45 @@ test('actual native foreign-drop-in fingerprints block pre-restart and recovery 
   }
 });
 
+test('explicit owner-manual acceptance preserves server observation without fabricating a browser pass', async t => {
+  const f = operationFixture(t); let clock = 0, browserReads = 0;
+  Object.assign(f.plan, { nonce: '12345678-1234-4234-8234-123456789012', acceptanceMode: 'owner-manual' });
+  Object.assign(f.io, { assertFreshRun() {}, record(name, value) {
+    fs.writeFileSync(path.join(path.dirname(f.file), name), JSON.stringify(value), { flag: 'wx' });
+  }, monotonic: () => clock, sleep: async ms => { clock += ms; }, readBrowserProof() { browserReads++; throw Error('not authorized'); } });
+  const result = await implementation.runVerifiedOperation(f.plan, f.io);
+  assert.equal(result.status, 'SERVER_PASS');
+  assert.equal(result.browserAcceptance, 'OWNER_PENDING');
+  assert.equal(result.browserProofSha256, null);
+  assert(clock >= 120000);
+  assert.equal(browserReads, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(f.file), 'complete.json'))).status, 'SERVER_PASS');
+});
+
+test('owner-manual acceptance rejects ambiguous modes and fabricated browser proof plans before writes', async t => {
+  for (const delta of [{ acceptanceMode: 'skip' }, { acceptanceMode: 'owner-manual', browserProofSha256: '0'.repeat(64) }]) {
+    const f = operationFixture(t);
+    Object.assign(f.plan, { nonce: '12345678-1234-4234-8234-123456789012' }, delta);
+    await assert.rejects(implementation.runVerifiedOperation(f.plan, f.io), /CUP_EVENT_(ACCEPTANCE_MODE|PROOF_PLAN)/);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('owner-manual acceptance still recovers server observation failures', async t => {
+  const f = operationFixture(t); let clock = 0, first = true;
+  Object.assign(f.plan, { nonce: '12345678-1234-4234-8234-123456789012', acceptanceMode: 'owner-manual' });
+  Object.assign(f.io, { assertFreshRun() {}, record(name, value) {
+    fs.writeFileSync(path.join(path.dirname(f.file), name), JSON.stringify(value), { flag: 'wx' });
+  }, monotonic: () => clock, sleep: async ms => {
+    clock += ms;
+    if (first) { first = false; f.state.flags.PHAB_COMMUNITY_POLICIES_ENABLED = 'false'; }
+  } });
+  await assert.rejects(implementation.runVerifiedOperation(f.plan, f.io), /CUP_EVENT_OBSERVATION_FAILED_RECOVERED/);
+  assert(!fs.existsSync(path.join(path.dirname(f.file), 'complete.json')));
+  assert.equal(f.state.own, null);
+  assert.deepEqual(f.state.flags, f.plan.before.flags);
+});
+
 test('the exact current CUP target renders only the two selected existing flags', () => {
   assert.equal(typeof implementation.eventDropIn, 'function', 'the config-only procedure is missing');
   assert.equal(implementation.eventDropIn(plan()), '[Service]\nEnvironment=PHAB_COMMUNITY_POLICIES_ENABLED=true\nEnvironment=PHAB_COMMUNITY_POLICY_TYPES_ENABLED=EVENT\n');
@@ -110,6 +149,7 @@ test('mixed targets and additional flags are rejected, not normalized', () => {
   for (const change of [
     { host: 'other' }, { unit: 'padlhub-jump-live.service' },
     { runtimeSource: '26e3589210da20bf7226302fe94b0e1234bcd2a9' },
+    { runtimeSource: '38e80af9f5d855cf9ba28b616f4b651f7c658fa5' },
     { dropInPath: '/etc/other.conf' },
     { flags: { ...plan().flags, OTHER_FLAG: 'true' } },
     { flags: { ...plan().flags, PHAB_COMMUNITY_POLICY_TYPES_ENABLED: 'EVENT,LEAGUE' } }
@@ -234,7 +274,7 @@ test('runtime inventory reads only pinned ordinary artifacts, never environment 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cup-runtime-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'main.js'), 'synthetic artifact');
-  const manifest = { sourceCommit: plan().runtimeSource, sourceTree: '7b1a9e9f5536914d130b41bbb7c9c4f74b0ea4a0',
+  const manifest = { sourceCommit: plan().runtimeSource, sourceTree: 'cf4d86ea537031eab928278e3dbea92d7615b3a6',
     configurationIncluded: false, databaseChanges: false,
     files: [{ path: 'main.js', sha256: implementation.bodySha256('synthetic artifact') }] };
   assert.equal(native.verifyRuntimeInventory(root, manifest).fileCount, 1);

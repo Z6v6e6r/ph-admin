@@ -18,7 +18,7 @@ export function assertNativeBoundary(boundary = { platform: process.platform, ui
 
 export function verifyRuntimeInventory(root, manifest) {
   assert.equal(manifest.sourceCommit, RUNTIME_SOURCE, 'CUP_EVENT_RUNTIME_SOURCE');
-  assert.equal(manifest.sourceTree, '7b1a9e9f5536914d130b41bbb7c9c4f74b0ea4a0', 'CUP_EVENT_RUNTIME_TREE');
+  assert.equal(manifest.sourceTree, 'cf4d86ea537031eab928278e3dbea92d7615b3a6', 'CUP_EVENT_RUNTIME_TREE');
   assert.equal(manifest.configurationIncluded, false, 'CUP_EVENT_RUNTIME_CONFIGURATION');
   assert.equal(manifest.databaseChanges, false, 'CUP_EVENT_RUNTIME_DATABASE');
   assert(Array.isArray(manifest.files) && manifest.files.length > 0, 'CUP_EVENT_RUNTIME_INVENTORY');
@@ -37,8 +37,8 @@ export function verifyRuntimeInventory(root, manifest) {
 }
 
 export const RELEASE_LOCK = '/run/lock/phab-api-release.lock';
-const RUNTIME = '/opt/ph-admin-releases/cup-38e80af';
-const MANIFEST_SHA = '66745502e235dbb65fd524def0380df8314cd7dedfa025445e3fc98fe61d2ef4';
+const RUNTIME = '/opt/ph-admin-releases/cup-419b7778';
+const MANIFEST_SHA = '62bdf040a8f5bc5119c3d2dfa9aa6115ae544ade07d43ef9579c88bd05c2ae1c';
 const command = (file, args, timeout = 10000) => execFileSync(file, args, {
   encoding: 'utf8', timeout, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe']
 });
