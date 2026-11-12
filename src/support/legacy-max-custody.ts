@@ -1,3 +1,4 @@
+import { assertMaxGeneration, assertMaxGenerationControl } from './max-generation';
 import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -40,7 +41,8 @@ export function legacyMaxHeld(row: SupportOutboxCommand): boolean {
 }
 
 export class LegacyMaxCustodyStore {
-  constructor(private readonly collection: Collection<SupportOutboxCommand>) {}
+  constructor(private readonly collection: Collection<SupportOutboxCommand>,
+    private readonly generationControl?: Collection<Document>) {}
   private read(id: string, connector: SupportOutboxCommand['connector']) {
     return this.collection.findOne({ id, connector }, options);
   }
@@ -48,6 +50,8 @@ export class LegacyMaxCustodyStore {
     previous?: SupportOutboxCommand): Promise<SupportOutboxCommand> {
     if (!isMaxConnector(next.connector) || !next.id || !Number.isSafeInteger(next.attempts)
       || next.attempts < 0 || ['leaseToken', 'lastReceipt', 'terminalReason'].some(key => key in next)) throw conflict();
+    await assertMaxGenerationControl(this.generationControl);
+    assertMaxGeneration(next);
     const copy: SupportOutboxCommand = JSON.parse(JSON.stringify(next));
     if (operation === 'enqueue') {
       if (copy.status !== Status.PENDING || copy.attempts !== 0 || legacyMaxHeld(copy)) throw conflict();
@@ -69,6 +73,7 @@ export class LegacyMaxCustodyStore {
     const raw = await this.read(copy.id, copy.connector).catch(() => null);
     if (!raw) throw unknown();
     const current = command(raw);
+    assertMaxGeneration(current);
     if (legacyMaxHeld(current)) {
       const marker = current.meta?.legacyMaxRestartCustody as { reason?: string } | undefined;
       if (operation === 'hold' && marker?.reason === 'DELIVERY_UNKNOWN'

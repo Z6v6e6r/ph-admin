@@ -1,3 +1,4 @@
+import { admitMaxGeneration, maxGeneration, maxGenerationAdmitted, maxOriginAdmitted, MaxOrigin } from './max-generation';
 import { supportClientReplyBinding } from './support-persistence.service';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
@@ -143,6 +144,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   );
   private readonly persistenceSyncIntervalMs = this.resolvePersistenceSyncIntervalMs();
   private readonly outboxMaxAttempts = this.resolveOutboxMaxAttempts();
+  private readonly maxGenerationConfiguration = maxGeneration();
   private readonly dialogsExportMaxRangeDays = this.resolveDialogsExportMaxRangeDays();
   private readonly dialogsExportMaxDialogs = this.resolveDialogsExportMaxDialogs();
   private readonly dialogsExportMaxMessages = this.resolveDialogsExportMaxMessages();
@@ -441,6 +443,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
         dialog.lastReplyConnector ||
         dialog.lastInboundConnector ||
         dialog.connectors[0];
+      // Timer signatures are process-local. Never manufacture a fresh generation from a replayed waiting cycle.
+      if (connector && isMaxConnector(connector) && maxGeneration()) continue;
       if (!connector) {
         continue;
       }
@@ -534,8 +538,28 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return Math.min(Math.max(1, Math.floor(rawValue)), 500000);
   }
 
+  async admitNewMaxUpdate(connector: SupportConnectorRoute, id: unknown, at: unknown) {
+    const config = maxGeneration();
+    const origin = { kind: 'INBOUND_AUTO_REPLY', id, at };
+    if (!config || !isMaxConnector(connector) || !maxOriginAdmitted(origin, config)) {
+      throw new ConflictException({ code: 'MAX_INGRESS_NOT_ADMITTED' });
+    }
+    const admissionId = await this.persistence.admitMaxGenerationIngress(connector, origin);
+    return { admissionId, connector, generation: config.generation, after: config.after };
+  }
+
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    if (isMaxConnector(normalizedDto.connector as SupportConnectorRoute) && maxGeneration()
+      && !maxOriginAdmitted({ kind: 'INBOUND_AUTO_REPLY', id: normalizedDto.externalMessageId ?? '', at: normalizedDto.timestamp })) {
+      throw new ConflictException({ code: 'MAX_INGRESS_NOT_ADMITTED' });
+    }
+    if (isMaxConnector(normalizedDto.connector as SupportConnectorRoute) && maxGeneration()) {
+      const origin: MaxOrigin = { kind: 'INBOUND_AUTO_REPLY', id: normalizedDto.externalMessageId!, at: normalizedDto.timestamp! };
+      const ticket = normalizedDto.meta?.maxIngressAdmission
+        ?? await this.persistence.admitMaxGenerationIngress(normalizedDto.connector as SupportConnectorRoute, origin);
+      await this.persistence.consumeMaxGenerationIngress(normalizedDto.connector as SupportConnectorRoute, origin, ticket);
+    }
     supportDiagnostics.observe(dto, 'max_ingress', { connector: normalizedDto.connector,
       targetSource: 'inbound', targetPresent: Boolean(normalizedDto.externalChatId || normalizedDto.externalUserId),
       targetType: normalizedDto.externalChatId ? 'chat' : normalizedDto.externalUserId ? 'user' : 'UNKNOWN',
@@ -1091,7 +1115,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
     outbox = this.createOutboxCommand(dialog, message, connector);
     if (outbox) {
-      outbox = await this.acceptOutbox(outbox);
+      outbox = await this.acceptOutbox(outbox, { kind: 'STAFF_REPLY', id: message.id, at: createdAt });
     }
 
     if (dto.quickReplyRuleId) {
@@ -1194,7 +1218,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return commands.map((command) => this.outbox.get(command.id) ?? command);
   }
 
-  private async acceptOutbox(command: SupportOutboxCommand): Promise<SupportOutboxCommand> {
+  private async acceptOutbox(command: SupportOutboxCommand, origin?: MaxOrigin): Promise<SupportOutboxCommand> {
+    if (isMaxConnector(command.connector)) command = admitMaxGeneration(command, origin);
     if (isMaxConnector(command.connector) && maxOutboxMode() === 'legacy') {
       const durable = await this.persistence.persistOutboxCommand(command, 'enqueue');
       this.outbox.set(durable.id, durable);
@@ -1207,7 +1232,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private async pullLegacyMax(connector: SupportConnectorRoute, limit: number, leaseSec: number): Promise<SupportOutboxCommand[]> {
     const now = Date.now(), commands: SupportOutboxCommand[] = [];
-    const rows = Array.from(this.outbox.values()).filter(row => row.connector === connector && !legacyMaxHeld(row)
+    const rows = Array.from(this.outbox.values()).filter(row => row.connector === connector && !legacyMaxHeld(row) && maxGenerationAdmitted(row)
       && (row.status === SupportOutboxStatus.PENDING || (row.status === SupportOutboxStatus.LEASED && this.toTimestamp(row.leasedUntil) <= now)))
       .sort((a, b) => this.toTimestamp(a.createdAt) - this.toTimestamp(b.createdAt));
     for (const row of rows) {
@@ -2536,6 +2561,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
   ): Promise<SupportOutboxCommand | undefined> {
 
+    const maxOrigin: MaxOrigin = { kind: 'INBOUND_AUTO_REPLY', id: clientMessage.externalMessageId ?? '', at: clientMessage.createdAt };
+    if (isMaxConnector(connector) && maxGeneration() && (rule.mode !== QuickReplyMode.AUTO_REPLY || !maxOriginAdmitted(maxOrigin))) return undefined;
     const createdAt = new Date().toISOString();
     const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
     const serviceMessage: SupportMessage = {
@@ -2565,7 +2592,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     dialog.updatedAt = createdAt;
     let outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
     if (outbox) {
-      outbox = await this.acceptOutbox(outbox);
+      outbox = await this.acceptOutbox(outbox, maxOrigin);
     }
 
     this.quickReplies.registerUsage(

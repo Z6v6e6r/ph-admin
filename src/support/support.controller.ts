@@ -1,3 +1,4 @@
+import { maxGeneration } from './max-generation';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { maxOutboxMode } from '../common/release-capabilities';
 import {
@@ -66,7 +67,7 @@ export class SupportController {
     @Headers('x-integration-token') token: string | undefined,
     @Body() dto: IngestSupportEventDto
   ): Promise<SupportIngestEventResult> {
-    this.assertIntegrationToken(token);
+    this.assertIntegrationToken(token, Boolean(maxGeneration()));
     return this.supportService.ingestEvent(dto);
   }
 
@@ -292,6 +293,15 @@ export class SupportController {
       throw new UnauthorizedException('User context is missing');
     }
     return this.supportService.getRuntimeDiagnostics(user);
+  }
+
+  @Post('max/ingress/admit')
+  admitNewMaxUpdate(
+    @Headers('x-integration-token') token: string | undefined,
+    @Body() body: { connector?: SupportConnectorRoute; id?: unknown; at?: unknown } = {}
+  ) {
+    this.assertIntegrationToken(token, true);
+    return this.supportService.admitNewMaxUpdate(body.connector as SupportConnectorRoute, body.id, body.at);
   }
 
   @Get('outbox/pull')

@@ -1,3 +1,4 @@
+import { admitMaxIngress, consumeMaxIngress, MaxOrigin, maxGenerationCollectionName } from './max-generation';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash } from 'node:crypto';
 import { LegacyMaxCustodyStore, LegacyMaxImportManifest, LegacyMaxTransition, validateLegacyMaxSnapshot } from './legacy-max-custody';
@@ -935,7 +936,16 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
   private legacyMaxStore(connector: SupportConnectorRoute) {
     const owner = this.getBackendState(this.resolveBackendKeyForConnector(connector));
     if (!owner?.db) throw missingMaxStore();
-    return { owner, collection: this.collection<SupportOutboxCommand>(owner, 'outbox') };
+    return { owner, collection: this.collection<SupportOutboxCommand>(owner, 'outbox'),
+      generationControl: owner.db.collection<Document>(maxGenerationCollectionName(owner.config.collections.outbox)) };
+  }
+
+  async admitMaxGenerationIngress(connector: SupportConnectorRoute, origin: MaxOrigin): Promise<string | undefined> {
+    return admitMaxIngress(this.legacyMaxStore(connector).generationControl, connector, origin);
+  }
+
+  async consumeMaxGenerationIngress(connector: SupportConnectorRoute, origin: MaxOrigin, ticket: unknown): Promise<void> {
+    return consumeMaxIngress(this.legacyMaxStore(connector).generationControl, connector, origin, ticket);
   }
 
   /** Source/operator API only: no HTTP import route, startup import or automatic provider dispatch. */
@@ -965,7 +975,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     if (isMaxConnector(command.connector) && maxOutboxMode() === 'legacy') {
       const snapshot = structuredClone(command);
       if (operation) return this.trackedLegacyMax(() =>
-        new LegacyMaxCustodyStore(this.legacyMaxStore(snapshot.connector).collection).transition(snapshot, operation, previous));
+        new LegacyMaxCustodyStore(this.legacyMaxStore(snapshot.connector).collection,
+          this.legacyMaxStore(snapshot.connector).generationControl).transition(snapshot, operation, previous));
       // Old reconciliation callers may move client/dialog metadata, never restore stale delivery state.
       void this.trackedLegacyMax(() => new LegacyMaxCustodyStore(this.legacyMaxStore(snapshot.connector).collection)
         .metadata(snapshot)).catch(() => this.logger.error('LEGACY_MAX_METADATA_WRITE_UNKNOWN'));
