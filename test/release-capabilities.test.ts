@@ -30,7 +30,11 @@ async function main() {
       let stored: any = { ...structuredClone(seed), _id: 'synthetic-mongo-id' };
       const persistence = new SupportPersistenceService() as any;
       persistence.backendConfigs = [{ key: 'max' }];
-      persistence.backendStates.set('max', { config: { key: 'max' }, db: {} });
+      persistence.backendStates.set('max', { config: { key: 'max', collections: { outbox: 'synthetic_outbox' } },
+        db: { collection: (name: string) => {
+          assert.equal(name, 'synthetic_outbox_generation_control');
+          return { findOne: async () => null };
+        } } });
       persistence.resolveTargetBackendForConnector = () => assert.fail('Legacy MAX must not fall back to another queue');
       persistence.deleteFromOtherBackends = () => assert.fail('Legacy MAX must not clean another queue');
       persistence.collection = () => ({

@@ -92,7 +92,9 @@ async function main() {
       const held = await coll.findOne({ id: expired.id });
       assert.equal(held!.status, Status.FAILED); assert.equal(legacyMaxHeld(held as unknown as Command), true);
       const unknownAcceptance: Command = { ...command, id: randomUUID() };
-      await db.admin().command({ configureFailPoint: 'failCommand', mode: { times: 1 },
+      // The first find checks the independent generation control. Fail only the subsequent
+      // command readback after Mongo accepted enqueue, preserving the intended custody case.
+      await db.admin().command({ configureFailPoint: 'failCommand', mode: { skip: 1 },
         data: { failCommands: ['find'], errorCode: 50 } });
       try {
         await assert.rejects(service.acceptOutbox(unknownAcceptance), (error: any) => error.getStatus() === 503);

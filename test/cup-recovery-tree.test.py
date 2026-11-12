@@ -188,5 +188,48 @@ class RecoveryTests(unittest.TestCase):
             r.prepare(**args)
 
 
+class GenerationRecoveryTests(RecoveryTests):
+    def setUp(self):
+        super().setUp()
+        self.old = {name: (None if value is None else ('old:' + name).encode())
+                    for name, value in r.GENERATION_PREIMAGES.items()}
+        self.new = {name: ('new:' + name).encode() for name in self.old}
+        for name, body in self.old.items():
+            if body is not None:
+                self.write(name, body)
+        fixture_preimages = {name: None if body is None else r.digest(body) for name, body in self.old.items()}
+        generation_patch = patch.object(r, 'GENERATION_PREIMAGES', fixture_preimages)
+        generation_patch.start()
+        self.addCleanup(generation_patch.stop)
+        self.manifest.update(schema='PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V2',
+                             derivedSourceTree=r.GENERATION_DERIVED, patchSha256=r.GENERATION_PATCH,
+                             generationFenceSupported=True, generationActivationProven=False,
+                             delta=[{'path': name, 'bytes': len(body), 'sha256': r.digest(body),
+                                     'expectedPreviousSha256': fixture_preimages[name]} for name, body in self.new.items()])
+
+    def test_generation_scope_profile_and_new_module_absence(self):
+        for values in [{'generationFenceSupported': False}, {'generationFenceSupported': 1},
+                       {'generationActivationProven': True}, {'generationActivationProven': 0},
+                       {'derivedSourceTree': r.DERIVED}, {'patchSha256': r.PATCH},
+                       {'schema': 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1',
+                        'derivedSourceTree': r.DERIVED, 'patchSha256': r.PATCH}]:
+            with self.subTest(values=values), patch.dict(self.manifest, values), self.assertRaises(ValueError):
+                r.prepare(**self.inputs())
+        self.write('dist/support/max-generation.js', b'occupied module')
+        with self.assertRaisesRegex(ValueError, 'ALREADY_EXISTS'):
+            r.prepare(**self.inputs())
+        self.assertFalse(self.out.exists())
+
+    def test_generation_receipt_binds_the_new_profile_without_live_claims(self):
+        receipt = r.prepare(**self.inputs())
+        self.assertEqual(receipt['schema'], 'PHAB_CUP_LOCAL_CUSTODY_RECOVERY_TREE_V2')
+        self.assertEqual(receipt['derivedSourceTree'], r.GENERATION_DERIVED)
+        self.assertEqual(receipt['patchSha256'], r.GENERATION_PATCH)
+        self.assertTrue(receipt['generationFenceSupported'])
+        self.assertFalse(receipt['generationActivationProven'])
+        self.assertFalse(receipt['firstRestartCustodyProven'])
+        self.assertFalse(receipt['installationAuthorized'])
+
+
 if __name__ == '__main__':
     unittest.main()

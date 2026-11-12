@@ -1,3 +1,4 @@
+import { assertMaxGenerationAccess } from './max-generation';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { maxOutboxMode } from '../common/release-capabilities';
 import {
@@ -48,9 +49,11 @@ export class SupportController {
     @Query('connector') connector?: SupportConnectorRoute,
     @Query('externalUserId') externalUserId?: string,
     @Query('externalChatId') externalChatId?: string,
-    @Query('username') username?: string
+    @Query('username') username?: string,
+    @Headers('x-max-generation-token') generationToken?: string
   ) {
     this.assertIntegrationToken(token);
+    if (connector && isMaxConnector(connector)) assertMaxGenerationAccess(generationToken);
     return this.supportService.resolveClient({
       phone,
       email,
@@ -64,10 +67,11 @@ export class SupportController {
   @Post('dialogs/events')
   async ingestEvent(
     @Headers('x-integration-token') token: string | undefined,
-    @Body() dto: IngestSupportEventDto
+    @Body() dto: IngestSupportEventDto,
+    @Headers('x-max-generation-token') generationToken?: string
   ): Promise<SupportIngestEventResult> {
     this.assertIntegrationToken(token);
-    return this.supportService.ingestEvent(dto);
+    return this.supportService.ingestEvent(dto, generationToken);
   }
 
   @Get('connectors')
@@ -294,6 +298,17 @@ export class SupportController {
     return this.supportService.getRuntimeDiagnostics(user);
   }
 
+  @Post('max/ingress/admit')
+  admitNewMaxUpdate(
+    @Headers('x-integration-token') token: string | undefined,
+    @Body() body: { connector?: SupportConnectorRoute; id?: unknown; at?: unknown } = {},
+    @Headers('x-max-generation-token') generationToken?: string
+  ) {
+    this.assertIntegrationToken(token);
+    assertMaxGenerationAccess(generationToken);
+    return this.supportService.admitNewMaxUpdate(body.connector as SupportConnectorRoute, body.id, body.at);
+  }
+
   @Get('outbox/pull')
   async pullOutbox(
     @Headers('x-integration-token') token: string | undefined,
@@ -301,9 +316,11 @@ export class SupportController {
     connector: SupportConnectorRoute,
     @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
     @Query('leaseSec', new ParseIntPipe({ optional: true })) leaseSec?: number,
-    @Query('receiptProtocol') receiptProtocol?: string
+    @Query('receiptProtocol') receiptProtocol?: string,
+    @Headers('x-max-generation-token') generationToken?: string
   ): Promise<{ commands: SupportOutboxCommand[] }> {
     this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && isMaxConnector(connector));
+    if (isMaxConnector(connector)) assertMaxGenerationAccess(generationToken);
     return {
       commands: await this.supportService.pullOutbox(connector, limit ?? 20, leaseSec ?? 30, receiptProtocol)
     };
@@ -313,20 +330,22 @@ export class SupportController {
   ackOutbox(
     @Headers('x-integration-token') token: string | undefined,
     @Param('id') id: string,
-    @Body() body: MaxReceipt = {}
+    @Body() body: MaxReceipt = {},
+    @Headers('x-max-generation-token') generationToken?: string
   ): Promise<SupportOutboxCommand> {
     this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
-    return this.supportService.ackOutbox(id, body);
+    return this.supportService.ackOutbox(id, body, generationToken);
   }
 
   @Post('outbox/:id/fail')
   failOutbox(
     @Headers('x-integration-token') token: string | undefined,
     @Param('id') id: string,
-    @Body() body: MaxReceipt & { error?: string; requeue?: boolean } = {}
+    @Body() body: MaxReceipt & { error?: string; requeue?: boolean } = {},
+    @Headers('x-max-generation-token') generationToken?: string
   ): Promise<SupportOutboxCommand> {
     this.assertIntegrationToken(token, maxOutboxMode() === 'receipt-v1' && body?.leaseToken !== undefined);
-    return this.supportService.failOutbox(id, body?.error, body?.requeue !== false, body);
+    return this.supportService.failOutbox(id, body?.error, body?.requeue !== false, body, generationToken);
   }
 
   private assertIntegrationToken(token?: string, requireConfigured = false): void {

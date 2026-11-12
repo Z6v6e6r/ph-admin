@@ -84,7 +84,7 @@ try {
 // Additional recovery for the installed83 runtime. The historical8a tournament-only
 // artifact above remains distinct; it cannot represent MAX restart custody compatibility.
 const custodyBaseline = '83b1c17bc4c5edaec65387b25b5695e48337c3cf';
-const custodyFiles = ['legacy-max-custody', 'support-persistence.service', 'support.service'];
+const custodyFiles = ['legacy-max-custody', 'max-generation', 'support-persistence.service', 'support.service', 'support.controller'];
 const custodySourcePaths = custodyFiles.map(name => `src/support/${name}.ts`).sort();
 const custodyPatch = path.join(source, 'deploy/recovery/legacy-max-custody-83.patch');
 const custodyRoot = path.join(scratch, 'custody-recovery');
@@ -107,9 +107,7 @@ try {
   assert.ok([...before.keys()].every(name => after.some(row => row.path === name)), 'Recovery removed compiled files');
   const changedCompiled = after.filter(row => JSON.stringify(row) !== JSON.stringify(before.get(row.path)));
   const allowed = new Set(custodyFiles.flatMap(name => ['js', 'd.ts', 'js.map'].map(ext => `support/${name}.${ext}`)));
-  // The unchanged controller infers the updated asynchronous reply return type.
-  allowed.add('support/support.controller.d.ts');
-  assert.ok(changedCompiled.length >= 3 && changedCompiled.length <= 10);
+  assert.ok(changedCompiled.length >= 5 && changedCompiled.length <= 15);
   assert.ok(changedCompiled.every(row => allowed.has(row.path)), 'Recovery compiled closure expanded');
   custodyDelta = changedCompiled.filter(row => row.path.endsWith('.js'));
   assert.deepEqual(custodyDelta.map(row => row.path).sort(), custodyFiles.map(name => `support/${name}.js`).sort());
@@ -121,10 +119,11 @@ try {
   }
   run(process.execPath, [path.join(source, 'test/cup-recovery-legacy-max.test.mjs'), mongoUri], source, { CUP_RECOVERY_ROOT: custodyRoot });
   fs.writeFileSync(path.join(output, 'legacy-max-recovery-manifest.json'), JSON.stringify({
-    schema: 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1', sourceCommit, sourceTree,
+    schema: 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V2', sourceCommit, sourceTree,
     baselineCommit: custodyBaseline, derivedSourceTree, patchSha256: hash(fs.readFileSync(custodyPatch)),
     nodeVersion: process.version, maxOutboxMode: 'legacy', persistenceSyncIntervalMs: 0,
     automaticHydrationAllowed: false, firstRestartCustodyProven: false,
+    generationFenceSupported: true, generationActivationProven: false,
     delta: custodyDelta.map(row => ({ ...row, path: 'dist/' + row.path,
       expectedPreviousSha256: before.get(row.path)?.sha256 ?? null }))
   }, null, 2) + '\n');
