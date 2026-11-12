@@ -65,6 +65,19 @@ export class CommunitiesController {
     return this.communitiesService.getResultsExport(id, query, user);
   }
 
+  // Contact data of the exhibition questionnaire is private. Only owner-level
+  // roles receive it, the response is uncacheable, and the read is audited.
+  @Header('Cache-Control', 'private, no-store')
+  @Roles(Role.SUPER_ADMIN, Role.MANAGER)
+  @Get(':id/event-registrations')
+  eventRegistrations(
+    @Param('id') id: string,
+    @CurrentUser() user?: RequestUser
+  ) {
+    if (!user) throw new UnauthorizedException('User context is missing');
+    return this.communitiesService.getEventRegistrationsExport(id, user);
+  }
+
   @Patch(':id')
   update(
     @Param('id') id: string,

@@ -28,6 +28,7 @@ import {
   CommunityStatus,
   CommunityVisibility
 } from './communities.types';
+import { EventRegistrationsExportSource } from './event-registrations-export';
 
 type MongoCommunityDocument = Document & {
   _id?: unknown;
@@ -256,6 +257,29 @@ export class CommunitiesPersistenceService implements OnModuleDestroy {
   async findCommunityById(id: string): Promise<Community | null> {
     const match = await this.findDocumentWithSourceById(id);
     return match ? this.toCommunity(match.document) : null;
+  }
+
+  async readEventRegistrationsSource(id: string): Promise<EventRegistrationsExportSource | null> {
+    const match = await this.findDocumentWithSourceById(id);
+    if (!match || match.document.archived === true) return null;
+    const document = match.document;
+    const name = this.pickString(document.name) ?? this.pickString(document.title);
+    if (!name) return null;
+    const settings = document.typeSettings && typeof document.typeSettings === 'object'
+      ? document.typeSettings as CommunityTypeSettings
+      : {};
+    // Private questionnaire fields are read only here, for the guarded
+    // operator export; they are never added to the normalized Community card.
+    return {
+      communityId: id,
+      communityName: name,
+      communityType: communityType(document.communityType),
+      typeSettings: settings,
+      typeSettingsRevision: this.pickCountNumber(document.typeSettingsRevision) ?? undefined,
+      typeSettingsEffectiveAt: this.pickString(document.typeSettingsEffectiveAt) ?? undefined,
+      eventEntries: document.eventEntries,
+      stationId: this.pickString(settings.stationId ?? document.stationId) ?? undefined
+    };
   }
 
   async readCommunityRatingExportSource(id: string): Promise<(CommunityResultsExportSource & {community: Community}) | null> {
