@@ -20,7 +20,7 @@ async function main() {
   const row = (id: string): SupportOutboxCommand => ({ id, connector: Route.MAX_BOT, dialogId: 'fixture', clientId: 'fixture',
     text: 'SYNTHETIC PRIVATE BODY', createdAt: at, status: Status.PENDING, attempts: 0 });
   try {
-    process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy'; process.env.SUPPORT_INTEGRATION_TOKEN = 'synthetic-integration-token'; process.env.SUPPORT_MAX_GENERATION = generation;
+    process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy'; process.env.SUPPORT_MAX_GENERATION_TOKEN = 'synthetic-integration-token'; process.env.SUPPORT_MAX_GENERATION = generation;
     process.env.SUPPORT_MAX_GENERATION_AFTER = after;
     await client.connect(); const db = client.db(dbName);
     const commands = db.collection<SupportOutboxCommand>('outbox'), control = db.collection<Document>('control');

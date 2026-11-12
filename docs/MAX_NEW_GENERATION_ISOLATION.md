@@ -13,7 +13,7 @@ Two public, server-only operation settings identify an immutable epoch:
 - `SUPPORT_MAX_GENERATION`: UUID operation ID, not an authentication token.
 - `SUPPORT_MAX_GENERATION_AFTER`: canonical UTC ISO timestamp chosen at a future fenced cutover.
 
-A partial/invalid pair, non-legacy MAX mode or absent configured integration token rejects startup. The existing ingress route also requires configured authentication while the epoch is active. Provisioning is an explicit separately reviewed data operation, never startup behavior. The configured MAX outbox namespace owns `<outbox>_generation_control` and its built-in unique `_id` index. Its singleton is:
+A partial/invalid pair, non-legacy MAX mode or absent dedicated `SUPPORT_MAX_GENERATION_TOKEN` rejects startup. MAX ingress, parsed MAX pull, known-MAX ACK/fail and explicit MAX identity lookup require `x-max-generation-token` while the epoch is active. Non-MAX shared integration authentication is unchanged. Provisioning is an explicit separately reviewed data operation, never startup behavior. The configured MAX outbox namespace owns `<outbox>_generation_control` and its built-in unique `_id` index. Its singleton is:
 
 ```json
 {"_id":"max-new-only-v1","schema":1,"generation":"<operation UUID>","after":"<fenced UTC epoch>","state":"CLOSED"}
@@ -27,7 +27,7 @@ Only fresh server-created staff replies and AUTO_REPLY intents with an original 
 
 ## Incoming MAX admission
 
-`POST /api/support/max/ingress/admit` requires the existing **configured** `x-integration-token`, one canonical MAX connector, event ID and original canonical provider time. It inserts one hashed event key into the control collection with majority+journal acknowledgment before any Node-RED business handler. The response contains only an opaque admission ID and epoch. Duplicate, failed or unknown admission never retries with a new ID.
+`POST /api/support/max/ingress/admit` requires the dedicated **configured** `x-max-generation-token`; the historical shared `x-integration-token` contract is unchanged, one canonical MAX connector, event ID and original canonical provider time. It inserts one hashed event key into the control collection with majority+journal acknowledgment before any Node-RED business handler. The response contains only an opaque admission ID and epoch. Duplicate, failed or unknown admission never retries with a new ID.
 
 `ingestEvent` consumes this admission by CAS before identity/history/auto-response side effects. A duplicate or uncertain handler execution stays held across restart. Direct backend integrations without a pre-admission ticket use the same insert/consume sequence. This is at-most-once processing admission, not lossless delivery: handler failure/unknown persistence needs explicit reconciliation, and the ledger deliberately contains no message/recipient payload.
 
@@ -40,7 +40,7 @@ The paired LK preparation must gate **all** receiver/webhook/link-in paths befor
 3. Bind the complete retained union, private artifacts, runtime identity and target fingerprints. All commands present before the fresh epoch remain old, including arrivals during the earlier pause. Preserve old SENT/FAILED and ambiguous lease evidence. No migration into the new generation.
 4. Prepare a clean pushed source release, exact installed83 preimage/recovery manifests and closed singleton. Complete source/runtime claim tests for old Map, old durable/residual rows, late writes, missing config, duplicates, lost ACK, expired claims, restart and rollback. Merely swapping collection names or calling `fail(false)` is insufficient.
 5. Verify both actual bot graphs: fresh provider timestamp/ID gate -> durable pre-admit HTTP round trip -> business handler. It must dominate every direct sender and callback. Keep transport nodes paused throughout these checks. Test only fake transport; do not call real pull/provider to prove the gate.
-6. Verify durable readback and zero old admissions/claims, matching epoch in Node-RED/backend/control, configured integration token, fresh receiver-source compatibility, and absence of an older writer. Only then prepare a **separate** reviewed unpause action.
+6. Verify durable readback and zero old admissions/claims, matching epoch in Node-RED/backend/control, configured dedicated MAX token, fresh receiver-source compatibility, and absence of an older writer. Only then prepare a **separate** reviewed unpause action.
 
 The present source PR is not first-restart acceptance. Until these receipts exist, live isolation and unpause readiness remain **HOLD**. The user authorized queue isolation and preparation; source merge, the shared backend maintenance window and its reviewed deployment/restart remain distinct transitions requiring exact authority.
 

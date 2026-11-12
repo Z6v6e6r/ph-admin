@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import * as assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { admitMaxGeneration, admitMaxIngress, consumeMaxIngress, assertMaxGenerationControl, maxGeneration,
+import { admitMaxGeneration, admitMaxIngress, consumeMaxIngress, assertMaxGenerationAccess, assertMaxGenerationControl, maxGeneration,
   maxGenerationAdmitted, maxOriginAdmitted, MAX_GENERATION_CONTROL_ID } from '../src/support/max-generation';
 import { LegacyMaxCustodyStore } from '../src/support/legacy-max-custody';
 import { SupportController } from '../src/support/support.controller';
@@ -19,7 +19,7 @@ async function main() {
     createdAt: at, status: Status.PENDING, attempts: 0 });
   try {
     delete process.env.SUPPORT_MAX_GENERATION; delete process.env.SUPPORT_MAX_GENERATION_AFTER;
-    process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy'; process.env.SUPPORT_INTEGRATION_TOKEN = 'synthetic-integration-token';
+    process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy'; process.env.SUPPORT_MAX_GENERATION_TOKEN = 'synthetic-integration-token';
     assert.equal(maxGeneration(), undefined);
     for (const env of [{ SUPPORT_MAX_GENERATION: generation }, { SUPPORT_MAX_GENERATION_AFTER: after },
       { SUPPORT_MAX_GENERATION: '', SUPPORT_MAX_GENERATION_AFTER: after },
@@ -102,16 +102,52 @@ async function main() {
     await assert.rejects(store.transition({ ...old, status: Status.SENT }, 'ack', old));
     await assert.rejects(store.transition({ ...old, status: Status.PENDING }, 'fail', old));
     const controller = new SupportController({ admitNewMaxUpdate() { assert.fail('unauthenticated admission'); } } as any);
-    delete process.env.SUPPORT_INTEGRATION_TOKEN;
+    delete process.env.SUPPORT_MAX_GENERATION_TOKEN;
     assert.throws(() => maxGeneration(), 'active generation requires configured auth');
     await assert.rejects(controller.ingestEvent(undefined, { connector: Route.MAX_BOT, externalMessageId: 'synthetic', timestamp: at }));
     assert.throws(() => controller.admitNewMaxUpdate(undefined, {}));
-    process.env.SUPPORT_INTEGRATION_TOKEN = 'synthetic-integration-token';
-    assert.throws(() => controller.admitNewMaxUpdate('invalid', {}));
+    process.env.SUPPORT_MAX_GENERATION_TOKEN = 'synthetic-integration-token';
+    assert.throws(() => assertMaxGenerationAccess(undefined));
+    assert.throws(() => assertMaxGenerationAccess('invalid'));
+    assert.doesNotThrow(() => assertMaxGenerationAccess('synthetic-integration-token'));
+    assert.throws(() => controller.admitNewMaxUpdate(undefined, {}, 'invalid'));
     const persistence: any = { isEnabled: () => false, persistOutboxCommand: (...args: any[]) => store.transition(args[0], args[1], args[2]) };
     const service: any = new SupportService(persistence, { listEntries: () => [] } as any, {} as any);
     service.outbox.set(old.id, old);
     assert.deepEqual(await service.pullOutbox(Route.MAX_BOT), [], 'hydrated legacy rows produce no leases/writes');
+    delete process.env.SUPPORT_INTEGRATION_TOKEN; // The new MAX scope must not enable shared auth.
+    const http = new SupportController(service);
+    for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
+      const scopedOld = { ...old, id: `old-${connector}`, connector };
+      service.outbox.set(scopedOld.id, scopedOld);
+      for (const badToken of [undefined, 'invalid']) {
+        await assert.rejects(http.pullOutbox(undefined, connector, 1, 60, undefined, badToken), (e: any) => e.getStatus() === 403);
+        await assert.rejects(http.ackOutbox(undefined, scopedOld.id, {}, badToken), (e: any) => e.getStatus() === 403);
+        await assert.rejects(http.failOutbox(undefined, scopedOld.id, { requeue: false }, badToken), (e: any) => e.getStatus() === 403);
+        await assert.rejects(http.resolveClient(undefined, undefined, undefined, connector, undefined, undefined, undefined, badToken), (e: any) => e.getStatus() === 403);
+      }
+      assert.deepEqual((await http.pullOutbox(undefined, connector, 1, 60, undefined, 'synthetic-integration-token')).commands, []);
+      await assert.rejects(http.ackOutbox(undefined, scopedOld.id, {}, 'synthetic-integration-token'), (e: any) => e.getStatus() === 409);
+    }
+    await assert.rejects(http.ackOutbox(undefined, 'unknown-id'), (e: any) => e.getStatus() === 404);
+    let resolved = Route.MAX_BOT;
+    service.normalizeIncomingEvent = () => ({ connector: resolved, externalMessageId: `auth-${resolved}`, timestamp: at });
+    for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
+      resolved = connector;
+      // A body claiming nonMAX cannot bypass authentication after normalization selects MAX.
+      await assert.rejects(http.ingestEvent(undefined, { connector: Route.EMAIL }), (e: any) => e.getStatus() === 403);
+    }
+    let nonMaxWrites = 0;
+    const nonMax: any = new SupportService({ isEnabled: () => false, persistOutboxCommand() { nonMaxWrites++; } } as any,
+      {} as any, {} as any);
+    nonMax.outbox.set('email', { ...old, id: 'email', connector: Route.EMAIL });
+    const nonMaxHttp = new SupportController(nonMax);
+    assert.equal((await nonMaxHttp.ackOutbox(undefined, 'email')).status, Status.SENT);
+    assert.equal(nonMaxWrites, 1, 'no MAX credential required by nonMAX ACK');
+    nonMax.normalizeIncomingEvent = () => ({ connector: Route.EMAIL });
+    const reachedNonMaxBusiness = new Error('synthetic-nonMAX-business');
+    nonMax.loadIngestIdentityOwner = async () => { throw reachedNonMaxBusiness; };
+    await assert.rejects(nonMaxHttp.ingestEvent(undefined, { connector: Route.EMAIL }), e => e === reachedNonMaxBusiness);
     // Exercise the actual sweep, whose rules are AUTO_REPLY too; restart must not reclassify it as ingress.
     for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) for (let restart = 0; restart < 2; restart++) {
       const timed: any = new SupportService(persistence, { listEntries: () => [] } as any,

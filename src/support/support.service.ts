@@ -1,4 +1,4 @@
-import { admitMaxGeneration, maxGeneration, maxGenerationAdmitted, maxOriginAdmitted, MaxOrigin } from './max-generation';
+import { admitMaxGeneration, assertMaxGenerationAccess, maxGeneration, maxGenerationAdmitted, maxOriginAdmitted, MaxOrigin } from './max-generation';
 import { supportClientReplyBinding } from './support-persistence.service';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
@@ -548,8 +548,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return { admissionId, connector, generation: config.generation, after: config.after };
   }
 
-  async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
+  async ingestEvent(dto: IngestSupportEventDto, generationToken?: string): Promise<SupportIngestEventResult> {
     const normalizedDto = this.normalizeIncomingEvent(dto);
+    if (isMaxConnector(normalizedDto.connector as SupportConnectorRoute)) assertMaxGenerationAccess(generationToken);
     if (isMaxConnector(normalizedDto.connector as SupportConnectorRoute) && maxGeneration()
       && !maxOriginAdmitted({ kind: 'INBOUND_AUTO_REPLY', id: normalizedDto.externalMessageId ?? '', at: normalizedDto.timestamp })) {
       throw new ConflictException({ code: 'MAX_INGRESS_NOT_ADMITTED' });
@@ -1294,11 +1295,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     }
   }
 
-  async ackOutbox(id: string, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+  async ackOutbox(id: string, receipt: MaxReceipt = {}, generationToken?: string): Promise<SupportOutboxCommand> {
     if (maxOutboxMode() === 'legacy' && containsMaxReceiptFields(receipt)) {
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
+    if (known && isMaxConnector(known.connector)) assertMaxGenerationAccess(generationToken);
     if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
       this.observeMaxReceipt(command);
@@ -1323,11 +1325,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return updated;
   }
 
-  async failOutbox(id: string, error?: string, requeue = true, receipt: MaxReceipt = {}): Promise<SupportOutboxCommand> {
+  async failOutbox(id: string, error?: string, requeue = true, receipt: MaxReceipt = {}, generationToken?: string): Promise<SupportOutboxCommand> {
     if (maxOutboxMode() === 'legacy' && containsMaxReceiptFields(receipt)) {
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
+    if (known && isMaxConnector(known.connector)) assertMaxGenerationAccess(generationToken);
     if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
       this.observeMaxReceipt(command);

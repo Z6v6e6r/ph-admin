@@ -1,6 +1,6 @@
 import { Collection, Document } from 'mongodb';
 import { createHash } from 'node:crypto';
-import { ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { ConflictException } from '@nestjs/common';
 import { maxOutboxMode } from '../common/release-capabilities';
 import { SupportOutboxCommand } from './support.types';
@@ -25,7 +25,7 @@ export function maxGeneration(environment: NodeJS.ProcessEnv = process.env): Max
   const after = environment.SUPPORT_MAX_GENERATION_AFTER;
   if (generation === undefined && after === undefined) return undefined;
   if (!generation || !/^[a-f0-9-]{36}$/.test(generation) || !canonical(after)
-    || maxOutboxMode(environment) !== 'legacy' || !String(environment.SUPPORT_INTEGRATION_TOKEN ?? '').trim()) throw new Error('MAX_GENERATION_CONFIG_INVALID');
+    || maxOutboxMode(environment) !== 'legacy' || !String(environment.SUPPORT_MAX_GENERATION_TOKEN ?? '').trim()) throw new Error('MAX_GENERATION_CONFIG_INVALID');
   return { generation, after };
 }
 
@@ -114,4 +114,11 @@ export async function consumeMaxIngress(control: Collection<Document>, connector
     { returnDocument: 'after', includeResultMetadata: false, writeConcern: { w: 'majority', j: true }, timeoutMS: 5000 });
   } catch { throw new ServiceUnavailableException({ code: 'MAX_INGRESS_CONSUME_UNKNOWN' }); }
   if (!row) throw reject();
+}
+
+/** Independent MAX credential: activating it never changes another connector's shared auth. */
+export function assertMaxGenerationAccess(token: unknown): void {
+  if (!maxGeneration()) return;
+  const expected = String(process.env.SUPPORT_MAX_GENERATION_TOKEN ?? '').trim();
+  if (typeof token !== 'string' || token !== expected) throw new ForbiddenException({ code: 'MAX_GENERATION_AUTH_REQUIRED' });
 }
