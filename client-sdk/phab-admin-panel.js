@@ -7847,6 +7847,204 @@
     return communityTemplateLoads[base];
   }
 
+  function formatEventRegistrationPhone(value) {
+    var digits = String(value || '');
+    return /^\d{11}$/.test(digits)
+      ? '+7 ' + digits.slice(1, 4) + ' ' + digits.slice(4, 7) + '-' + digits.slice(7, 9) + '-' +
+        digits.slice(9, 11)
+      : '';
+  }
+
+  function formatEventRegistrationDateMoscow(value) {
+    var timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return '';
+    return new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Moscow'
+    }).format(new Date(timestamp)) + ' МСК';
+  }
+
+  function escapeEventRegistrationsCsvCell(value) {
+    var text = value == null ? '' : String(value);
+    // Spreadsheet formulas must never execute from operator-supplied contact data.
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+
+  function buildEventRegistrationsCsv(payload) {
+    var rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
+    var header = [
+      'ФИО',
+      'Компания',
+      'Телефон',
+      'Email',
+      'Дата регистрации (МСК)',
+      'Оповещать о результатах'
+    ];
+    var lines = [header.map(escapeEventRegistrationsCsvCell).join(';')];
+    rows.forEach(function (row) {
+      lines.push([
+        row.fullName,
+        row.company,
+        formatEventRegistrationPhone(row.phone),
+        row.email,
+        formatEventRegistrationDateMoscow(row.registeredAt),
+        row.receivesResultsPush ? 'да' : 'нет'
+      ].map(escapeEventRegistrationsCsvCell).join(';'));
+    });
+    return '\ufeff' + lines.join('\r\n') + '\r\n';
+  }
+
+  function buildEventRegistrationsFileName(community) {
+    var base = String((community && (community.slug || community.id)) || 'community')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return 'ankety-' + (base || 'community') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+  }
+
+  function createCommunityEventRegistrationsDialog(community, loadRows) {
+    var opener = document.activeElement;
+    var dialog = document.createElement('dialog');
+    dialog.className = 'phab-community-event-registrations';
+    dialog.setAttribute('aria-label', 'Анкеты участников сообщества');
+    dialog.innerHTML = '<style>' +
+      '.phab-community-event-registrations{box-sizing:border-box;width:min(960px,calc(100vw - 24px));max-height:90vh;overflow:auto;border:1px solid #eadce5;border-radius:20px;padding:24px;color:#330020;background:#fff;font-family:inherit}' +
+      '.phab-community-event-registrations::backdrop{background:#21001588}' +
+      '.phab-community-event-registrations header{display:flex;align-items:start;justify-content:space-between;gap:16px}' +
+      '.phab-community-event-registrations h2{margin:0;font-size:22px}' +
+      '.phab-community-event-registrations p{font-size:14px;line-height:1.5}' +
+      '.phab-community-event-registrations [hidden]{display:none!important}' +
+      '.phab-community-event-registrations .phab-ankety-wrap{overflow:auto;border:1px solid #eadce5;border-radius:12px}' +
+      '.phab-community-event-registrations table{width:100%;border-collapse:collapse;font-size:13px}' +
+      '.phab-community-event-registrations th,.phab-community-event-registrations td{padding:8px 10px;border-bottom:1px solid #f2e6ec;text-align:left;white-space:nowrap}' +
+      '.phab-community-event-registrations th{position:sticky;top:0;background:#fdf6fa;font-weight:600}' +
+      '.phab-community-event-registrations footer{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}' +
+      '.phab-community-event-registrations button{cursor:pointer;min-width:44px;min-height:44px}' +
+      '.phab-community-event-registrations button:disabled{opacity:.5;cursor:default}' +
+      '.phab-community-event-registrations [data-status][data-tone="error"]{color:#a4163c}' +
+      '@media(max-width:480px){.phab-community-event-registrations{padding:16px}}' +
+      '</style>' +
+      '<header><h2>Анкеты участников</h2>' +
+      '<button type="button" class="phab-admin-modal-close" aria-label="Закрыть анкеты">×</button></header>' +
+      '<p data-community></p>' +
+      '<p>Контактные данные анкеты не публикуются в сообществе. Выгрузка доступна только владельцу и управляющему, каждое открытие выгрузки фиксируется в журнале действий ЦУП.</p>' +
+      '<p role="status" aria-live="polite" data-status>Загружаем анкеты…</p>' +
+      '<div class="phab-ankety-wrap" data-table-wrap hidden><table><thead><tr>' +
+      '<th scope="col">ФИО</th><th scope="col">Компания</th><th scope="col">Телефон</th>' +
+      '<th scope="col">Email</th><th scope="col">Дата регистрации (МСК)</th>' +
+      '<th scope="col">Оповещать о результатах</th>' +
+      '</tr></thead><tbody data-rows></tbody></table></div>' +
+      '<footer><button class="phab-admin-btn-secondary" type="button" data-close>Закрыть</button>' +
+      '<button class="phab-admin-btn" type="button" data-download disabled>Скачать CSV</button></footer>';
+    document.body.appendChild(dialog);
+
+    var status = dialog.querySelector('[data-status]');
+    var tableWrap = dialog.querySelector('[data-table-wrap]');
+    var rowsBody = dialog.querySelector('[data-rows]');
+    var download = dialog.querySelector('[data-download]');
+    var payload = null;
+    var closed = false;
+
+    dialog.querySelector('[data-community]').textContent = String(community.name || 'Сообщество');
+
+    function close() {
+      if (closed) return;
+      closed = true;
+      payload = null;
+      dialog.close();
+      dialog.remove();
+      if (opener && opener.isConnected) opener.focus();
+    }
+
+    function appendCell(row, value) {
+      var cell = document.createElement('td');
+      cell.textContent = value == null ? '' : String(value);
+      row.appendChild(cell);
+    }
+
+    function renderRows(result) {
+      payload = result;
+      var rows = Array.isArray(result && result.rows) ? result.rows : [];
+      rowsBody.textContent = '';
+      if (rows.length === 0) {
+        tableWrap.hidden = true;
+        download.disabled = true;
+        status.removeAttribute('data-tone');
+        status.textContent = 'Анкет пока нет.';
+        return;
+      }
+      rows.forEach(function (entry) {
+        var row = document.createElement('tr');
+        appendCell(row, entry.fullName);
+        appendCell(row, entry.company);
+        appendCell(row, formatEventRegistrationPhone(entry.phone));
+        appendCell(row, entry.email);
+        appendCell(row, formatEventRegistrationDateMoscow(entry.registeredAt));
+        appendCell(row, entry.receivesResultsPush ? 'да' : 'нет');
+        rowsBody.appendChild(row);
+      });
+      tableWrap.hidden = false;
+      download.disabled = false;
+      status.removeAttribute('data-tone');
+      status.textContent = 'Анкет: ' + String(rows.length) + '.';
+    }
+
+    function fail(error) {
+      payload = null;
+      tableWrap.hidden = true;
+      download.disabled = true;
+      status.setAttribute('data-tone', 'error');
+      status.textContent =
+        error && error.status === 403
+          ? 'Нет доступа к анкетам участников. Обратитесь к владельцу сообщества.'
+          : error && error.status === 503
+            ? 'Выгрузка недоступна: журнал аудита или данные анкет не подключены. Обратитесь к администратору.'
+            : 'Не удалось загрузить анкеты. Закройте окно и попробуйте снова.';
+    }
+
+    download.addEventListener('click', function () {
+      if (!payload) return;
+      var blob = new Blob([buildEventRegistrationsCsv(payload)], {
+        type: 'text/csv;charset=utf-8'
+      });
+      var url = window.URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = buildEventRegistrationsFileName(community);
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(function () {
+        window.URL.revokeObjectURL(url);
+        if (link.parentNode) link.parentNode.removeChild(link);
+      }, 0);
+      status.removeAttribute('data-tone');
+      status.textContent = 'Файл сформирован.';
+    });
+
+    dialog.querySelector('.phab-admin-modal-close').addEventListener('click', close);
+    dialog.querySelector('[data-close]').addEventListener('click', close);
+    dialog.addEventListener('cancel', function (event) {
+      event.preventDefault();
+      close();
+    });
+
+    dialog.showModal();
+    Promise.resolve()
+      .then(loadRows)
+      .then(function (result) {
+        if (!closed) renderRows(result);
+      })
+      .catch(function (error) {
+        if (!closed) fail(error);
+      });
+
+    return { close: close };
+  }
+
   function createCommunityResultsExportDialog(community, loadRanking, loadTemplates) {
     var opener = document.activeElement;
     var dialog = document.createElement('dialog');
@@ -9036,6 +9234,9 @@
         if (query.to) params.set('to', String(query.to));
         if (query.details === 'templates-v1') params.set('details', query.details);
         return request('/communities/' + encodeURIComponent(communityId) + '/results-export?' + params.toString(), 'GET');
+      },
+      exportCommunityEventRegistrations: function (communityId) {
+        return request('/communities/' + encodeURIComponent(communityId) + '/event-registrations', 'GET');
       },
       updateCommunity: function (communityId, payload) {
         return request('/communities/' + encodeURIComponent(communityId), 'PATCH', payload);
@@ -29503,6 +29704,14 @@
       }, function () {return loadCommunityResultsTemplates(cfg.apiBaseUrl);});
     }
 
+    var communityEventRegistrationsDialog = null;
+    function openCommunityEventRegistrations(community) {
+      if (communityEventRegistrationsDialog) communityEventRegistrationsDialog.close();
+      communityEventRegistrationsDialog = createCommunityEventRegistrationsDialog(community, function () {
+        return api.exportCommunityEventRegistrations(community.id);
+      });
+    }
+
     function getSelectedCommunity() {
       if (!state.selectedCommunityId) {
         return null;
@@ -34587,6 +34796,15 @@
           function () { openCommunityResultsExport(community); }
         )
       );
+      if (String(community.communityType || '') === 'EVENT' && hasAnyRole(cfg, ['SUPER_ADMIN', 'MANAGER'])) {
+        dom.communityActions.appendChild(
+          createCommunityActionButton(
+            'Выгрузить анкеты',
+            'phab-admin-community-main-action',
+            function () { openCommunityEventRegistrations(community); }
+          )
+        );
+      }
       dom.communityActions.appendChild(
         createCommunityActionButton(
           model.status.key === 'HIDDEN' ? 'Показать' : 'Скрыть',
@@ -43107,6 +43325,7 @@
     function destroy() {
       trafficPane.setActive(false);
       if (communityResultsExportDialog) communityResultsExportDialog.close();
+      if (communityEventRegistrationsDialog) communityEventRegistrationsDialog.close();
       if (pollTimer) {
         window.clearInterval(pollTimer);
       }

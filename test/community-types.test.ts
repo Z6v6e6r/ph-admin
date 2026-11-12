@@ -68,7 +68,7 @@ async function main() {
   conflict = false;
 
   persistence.isEnabled = () => true;
-  const service = new CommunitiesService({} as any, persistence);
+  const service = new CommunitiesService({} as any, persistence, {} as any);
   const request = { communityType: 'FRIENDS' as const, typeSettings: {}, expectedTypeSettingsRevision: 2 };
   const user: any = { id: 'synthetic-admin', roles: [Role.SUPPORT], stationIds: [] };
   await assert.rejects(() => service.update('community-a', request, user), /ACCESS_DENIED/);

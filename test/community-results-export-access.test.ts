@@ -15,7 +15,7 @@ async function main() {
     findCommunityById: async () => ({id:'synthetic-community', name:'Тест', stationId:'station-b'}),
     readCommunityRatingExportSource: async () => { reads++; throw new Error('Unexpected read'); }
   };
-  const service = new CommunitiesService({} as any, persistence as any);
+  const service = new CommunitiesService({} as any, persistence as any, {} as any);
   const controller = new CommunitiesController(service);
   assert.throws(() => controller.resultsExport('synthetic-community', {period:'week'}), /User context/);
   await assert.rejects(() => service.getResultsExport('synthetic-community', {period:'week'}, user), /RESULTS_EXPORT_ACCESS_DENIED/);

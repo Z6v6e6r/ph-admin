@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { getStationScopeForPermission, hasAdminPermission } from '../common/rbac/permissions';
 import { releaseCapabilities } from '../common/release-capabilities';
 import {
@@ -11,6 +12,8 @@ import {
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
 import { buildCommunityResultsExport, resolveCommunityResultsWindow } from './community-results-export';
+import { buildEventRegistrationsExport } from './event-registrations-export';
+import { AuthPersistenceService } from '../auth/auth-persistence.service';
 import {
   CommunitiesCreateFeedItemMutation,
   CommunitiesDeleteFeedItemResult,
@@ -103,7 +106,8 @@ const PUBLIC_COMMUNITY_FEED_LIMIT_MAX = 24;
 export class CommunitiesService {
   constructor(
     private readonly lkPadelHubClient: LkPadelHubClientService,
-    private readonly communitiesPersistence: CommunitiesPersistenceService
+    private readonly communitiesPersistence: CommunitiesPersistenceService,
+    private readonly authPersistence: AuthPersistenceService
   ) {}
 
   async findAll(): Promise<Community[]> {
@@ -208,6 +212,52 @@ export class CommunitiesService {
     if (!source) throw new ServiceUnavailableException('RESULTS_EXPORT_RATING_NOT_READY');
     assertAccess(source.community);
     return buildCommunityResultsExport(id, source, window);
+  }
+
+  async getEventRegistrationsExport(id: string, user: RequestUser) {
+    // Contact-questionnaire export stays with owner-level staff only; support and
+    // station roles keep their existing community access without contact data.
+    const allowed = [Role.SUPER_ADMIN, Role.MANAGER];
+    if (!user.roles.some((role) => allowed.includes(role))) {
+      throw new ForbiddenException('EVENT_REGISTRATIONS_ACCESS_DENIED');
+    }
+    if (!this.communitiesPersistence.isEnabled()) {
+      throw new ServiceUnavailableException('EVENT_REGISTRATIONS_SOURCE_UNAVAILABLE');
+    }
+    // Without an audit store the read would return personal data with no record
+    // of who received it, so the export stays unavailable instead.
+    if (!this.authPersistence.isEnabled()) {
+      throw new ServiceUnavailableException('EVENT_REGISTRATIONS_AUDIT_UNAVAILABLE');
+    }
+    const source = await this.communitiesPersistence.readEventRegistrationsSource(id);
+    if (!source) {
+      throw new NotFoundException('Community not found');
+    }
+    const scope = getStationScopeForPermission(user, 'settings:read');
+    if (scope !== null && (!source.stationId || !scope.includes(source.stationId))) {
+      throw new ForbiddenException('EVENT_REGISTRATIONS_ACCESS_DENIED');
+    }
+    const result = buildEventRegistrationsExport(source, new Date().toISOString());
+    // The generic audit interceptor records mutations only; a read of personal
+    // data is audited explicitly and the record never contains the rows.
+    try {
+      await this.authPersistence.appendAudit({
+        id: `audit-${randomUUID()}`,
+        at: new Date().toISOString(),
+        action: `GET /communities/${id}/event-registrations`,
+        actor: { id: user.id, login: user.login, title: user.title },
+        targetType: 'RESOURCE',
+        targetId: id,
+        metadata: {
+          rows: result.count,
+          typeSettingsRevision: result.typeSettingsRevision,
+          communityType: 'EVENT'
+        }
+      });
+    } catch {
+      throw new ServiceUnavailableException('EVENT_REGISTRATIONS_AUDIT_UNAVAILABLE');
+    }
+    return result;
   }
 
   async update(id: string, mutation: CommunitiesUpdateMutation, user?: RequestUser): Promise<Community> {

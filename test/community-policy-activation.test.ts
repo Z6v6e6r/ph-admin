@@ -13,7 +13,7 @@ async function main() {
   let current: any = { id: 'synthetic', communityType: 'FRIENDS', stationId: 'station-a' };
   const persistence = { isEnabled: () => true, findCommunityById: async () => current,
     updateCommunity: async (_id: string, mutation: unknown) => { writes++; return { ...current, ...mutation as any }; } };
-  const service = new CommunitiesService({} as any, persistence as any);
+  const service = new CommunitiesService({} as any, persistence as any, {} as any);
   const admin: any = { id: 'synthetic-admin', roles: [Role.SUPER_ADMIN], stationIds: [] };
   const request = (type: any) => ({ communityType: type, typeSettings: {}, expectedTypeSettingsRevision: 0 });
   try {

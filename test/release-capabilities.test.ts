@@ -76,7 +76,7 @@ async function main() {
     const communities = new CommunitiesService({} as any, {
       isEnabled: () => true,
       updateCommunity: async (_id: string, mutation: unknown) => { writes++; return mutation; }
-    } as any);
+    } as any, {} as any);
     const user = { id: 'synthetic-admin', roles: [Role.SUPER_ADMIN], stationIds: [] } as any;
     await assert.rejects(() => communities.update('synthetic', { communityType: 'EVENT' } as any, user),
       (error: any) => error.getStatus() === 503 && error.getResponse().code === 'COMMUNITY_POLICY_ACTIVATION_DISABLED');
