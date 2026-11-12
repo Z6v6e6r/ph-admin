@@ -12,10 +12,11 @@ The inventory contains sorted `{path, bytes, sha256, mode}` rows and excludes on
 the two historical root release metadata files. This extended inventory is distinct
 from the older installed inventory, which did not include mode.
 
-The helper accepts only `PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1`, baseline83,
-the reviewed derived source tree and patch, and exactly three support JS paths.
-Two old executable hashes must match; the added module must be absent, including
-dangling symlinks. It rejects duplicate JSON/tar entries, escaping paths, links,
+The helper accepts separately pinned `PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1` and `PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V2` profiles, baseline83,
+the reviewed per-profile derived source tree and patch. V1 permits exactly three
+support JS paths: two old hashes must match and its added module must be absent.
+V2 permits exactly five paths: three old hashes must match and both added modules
+must be absent, including dangling symlinks. It rejects duplicate JSON/tar entries, escaping paths, links,
 special files, environment files, writable or special file modes, missing files,
 and size/hash mismatches. Node, dependencies, SDK and every other runtime file
 retain their content and mode. The original baseline is checked again after copy.
@@ -44,3 +45,5 @@ and failure handling, not an installed runtime identity. The existing Linux runt
 workflow separately builds and tests the real compiled recovery behavior with its
 owned disposable Mongo fixture. First-restart ingress/sender custody, held import,
 physical target identity and a reviewed live executor remain separate prerequisites.
+
+V2 has exactly five executable modules: legacy custody, generation, persistence, service and controller. It pins a separate derived tree/patch and controller preimage, and requires both new module paths absent. V1 remains limited to its original exact three files/pins. V2 preparation attests only local byte compatibility; its receipt explicitly leaves generation activation and first-restart custody false. Neither profile authorizes installation or an older writer rollback after a generation fence exists.

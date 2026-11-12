@@ -4,7 +4,7 @@
 
 This source change provides a fail-closed new-only boundary for both MAX connectors in legacy custody mode. It does not deploy, mutate an operational queue, choose a live epoch, query MAX updates, restart a service or remove any pause. Existing receipts-v1 and non-MAX behavior remain unchanged when configuration is absent.
 
-**The current installed83 process cannot safely receive this feature by an unreviewed restart.** Follow `docs/LEGACY_MAX_RESTART_CUSTODY.md` and `docs/LEGACY_MAX_SNAPSHOT_NORMALIZATION.md`: retain old Map and complete independently enumerated Mongo namespaces before the first restart. The source release and an installed83-compatible recovery path must both enforce the generation barrier; the previous three-file recovery manifest alone does not cover these new modules/controller.
+**The current installed83 process cannot safely receive this feature by an unreviewed restart.** Follow `docs/LEGACY_MAX_RESTART_CUSTODY.md` and `docs/LEGACY_MAX_SNAPSHOT_NORMALIZATION.md`: retain old Map and complete independently enumerated Mongo namespaces before the first restart. The source release and an installed83-compatible recovery path must both enforce the generation barrier; the V2 five-module recovery manifest is required; a historical three-file V1 recovery does not cover these new modules/controller.
 
 ## Protocol
 

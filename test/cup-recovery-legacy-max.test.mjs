@@ -127,7 +127,40 @@ try {
   assert.deepEqual(calls.map(row => row[0]), ['pull', 'receipt', 'receipt']);
   assert.deepEqual(calls[0], ['pull', Route.MAX_BOT, 2, 45]);
   assert.equal(calls[1][2], 'ack'); assert.equal(calls[2][2], 'fail');
-  console.log('Derived83 compiled custody: both MAX connectors, concurrent CAS, lost ACK/readback, held import/replay/conflict, sync0 restart, no resend, new commands, non-MAX and receipt-v1 delegation PASS');
+  // Exercise the actual compiled V2 closure, not a source-only policy substitute.
+  const { admitMaxGeneration, admitMaxIngress, consumeMaxIngress, MAX_GENERATION_CONTROL_ID,
+    maxGenerationCollectionName } = require(resolve(root, 'dist/support/max-generation.js'));
+  const epoch = { generation: randomUUID(), after: new Date(Date.now() - 60000).toISOString() };
+  Object.assign(process.env, { SUPPORT_MAX_OUTBOX_MODE: 'legacy', SUPPORT_MAX_GENERATION: epoch.generation,
+    SUPPORT_MAX_GENERATION_AFTER: epoch.after, SUPPORT_MAX_GENERATION_TOKEN: 'synthetic-generation-token' });
+  const control = client.db(dbName).collection(maxGenerationCollectionName('support_outbox'));
+  await control.insertOne({ _id: MAX_GENERATION_CONTROL_ID, schema: 1, ...epoch, state: 'OPEN' });
+  persistence = new SupportPersistenceService(); await persistence.onModuleInit();
+  for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
+    const old = seed(connector); await coll.insertOne(old);
+    const origin = { kind: 'STAFF_REPLY', id: randomUUID(), at: new Date(Date.now() - 1000).toISOString() };
+    const fresh = await persistence.persistOutboxCommand(admitMaxGeneration(seed(connector), origin), 'enqueue');
+    service = new SupportService(persistence, {}, {});
+    service.outbox.set(old.id, old); service.outbox.set(fresh.id, fresh);
+    const commands = await service.pullOutbox(connector);
+    assert.deepEqual(commands.map(row => row.id), [fresh.id]);
+    assert.equal((await coll.findOne({ id: old.id })).status, Status.PENDING, 'old durable row stays untouched');
+    const expired = { ...commands[0], leasedUntil: new Date(0).toISOString() };
+    await coll.updateOne({ id: fresh.id }, { $set: { leasedUntil: expired.leasedUntil } });
+    service.outbox.set(expired.id, expired);
+    assert.deepEqual(await service.pullOutbox(connector), []);
+    assert.ok(legacyMaxHeld(strip(await coll.findOne({ id: fresh.id }))), 'expired fresh claim stays unknown, never transport retry');
+    const ticket = await admitMaxIngress(control, connector, origin);
+    await consumeMaxIngress(control, connector, origin, ticket);
+    await assert.rejects(consumeMaxIngress(control, connector, origin, ticket));
+    await assert.rejects(admitMaxIngress(control, connector, origin));
+    service.onModuleDestroy(); service = undefined;
+  }
+  await control.updateOne({ _id: MAX_GENERATION_CONTROL_ID }, { $set: { state: 'CLOSED' } });
+  const closedOrigin = { kind: 'STAFF_REPLY', id: randomUUID(), at: new Date(Date.now() - 1000).toISOString() };
+  await assert.rejects(persistence.persistOutboxCommand(admitMaxGeneration(seed(Route.MAX_BOT), closedOrigin), 'enqueue'));
+  await persistence.onModuleDestroy(); persistence = undefined;
+  console.log('Derived83 compiled custody: both MAX connectors, concurrent CAS, lost ACK/readback, held import/replay/conflict, sync0 restart, no resend, new commands, non-MAX/receipt-v1 delegation, V2 generation/expiry/closed-control/duplicate-ingress PASS');
 } finally {
   service?.onModuleDestroy();
   if (persistence) await persistence.onModuleDestroy();

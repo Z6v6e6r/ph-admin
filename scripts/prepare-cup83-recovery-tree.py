@@ -15,6 +15,23 @@ PREIMAGES = {
     'dist/support/support-persistence.service.js': '8cb4aec8e0c2f36d394b695090fbaa0e5e67a2c3796d0691429fa86aa6acc905',
     'dist/support/support.service.js': '6bd4f367f163459384810823e271c3598ecf4a43de8f10a5ae22c45d79405c87',
 }
+GENERATION_DERIVED = '535b0aa48b9c0dce580b7ced0a3975e45217bd63'
+GENERATION_PATCH = '9fc22681581824a3225e0ebc9b31a363470a6788e6d8f01eea99fe990f99030e'
+GENERATION_PREIMAGES = {
+    **PREIMAGES,
+    'dist/support/max-generation.js': None,
+    'dist/support/support.controller.js': '29597c96e045463d6dbc9b545c83b645f88455eac7a3b820d04ad98c9663d863',
+}
+
+
+def recovery_profile(schema):
+    if schema == 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1':
+        return DERIVED, PATCH, PREIMAGES
+    if schema == 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V2':
+        return GENERATION_DERIVED, GENERATION_PATCH, GENERATION_PREIMAGES
+    raise ValueError('RECOVERY_PROFILE_MISMATCH')
+
+
 METADATA = {'release-manifest.json', 'release-attestation.json'}
 
 
@@ -85,18 +102,20 @@ def inventory(root):
 def overlay(manifest_bytes, archive_bytes, manifest_hash, archive_hash):
     m = document(manifest_bytes, manifest_hash)
     require(digest(archive_bytes) == archive_hash, 'ARCHIVE_HASH_MISMATCH')
-    require(m['schema'] == 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V1'
-            and m['baselineCommit'] == BASELINE and m['derivedSourceTree'] == DERIVED
-            and m['patchSha256'] == PATCH and m['nodeVersion'] == 'v22.13.1', 'RECOVERY_PROFILE_MISMATCH')
+    derived, patch, preimages = recovery_profile(m['schema'])
+    require(m['baselineCommit'] == BASELINE and m['derivedSourceTree'] == derived
+            and m['patchSha256'] == patch and m['nodeVersion'] == 'v22.13.1', 'RECOVERY_PROFILE_MISMATCH')
+    if m['schema'] == 'PHAB_CUP_LEGACY_MAX_SAFE_RECOVERY_V2':
+        require(m.get('generationFenceSupported') is True and m.get('generationActivationProven') is False, 'GENERATION_SCOPE_MISMATCH')
     require(m['maxOutboxMode'] == 'legacy' and type(m['persistenceSyncIntervalMs']) is int
             and m['persistenceSyncIntervalMs'] == 0 and m['automaticHydrationAllowed'] is False
             and m['firstRestartCustodyProven'] is False, 'RECOVERY_SCOPE_MISMATCH')
     rows = m['delta']
-    require(isinstance(rows, list) and len(rows) == 3, 'DELTA_SIZE')
+    require(isinstance(rows, list) and len(rows) == len(preimages), 'DELTA_SIZE')
     expected = {safe_path(row['path']): row for row in rows}
-    require(set(expected) == set(PREIMAGES), 'DELTA_PATH_SET')
+    require(set(expected) == set(preimages), 'DELTA_PATH_SET')
     for name, row in expected.items():
-        require(row['expectedPreviousSha256'] == PREIMAGES[name], 'PREIMAGE_CONTRACT')
+        require(row['expectedPreviousSha256'] == preimages[name], 'PREIMAGE_CONTRACT')
         require(type(row['bytes']) is int and 0 < row['bytes'] <= 1_000_000, 'DELTA_BYTES')
     files, seen = {}, set()
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode='r:gz') as archive:
@@ -134,7 +153,8 @@ def prepare(baseline, output, baseline_inventory_bytes, baseline_inventory_hash,
     manifest, files = overlay(manifest_bytes, archive_bytes, manifest_hash, archive_hash)
     by_path = {row['path']: row for row in before}
     require('runtime/node' in by_path, 'RETAINED_NODE_REQUIRED')
-    for name, old_hash in PREIMAGES.items():
+    derived, patch, preimages = recovery_profile(manifest['schema'])
+    for name, old_hash in preimages.items():
         if old_hash is None:
             require(not os.path.lexists(baseline / name), 'NEW_FILE_ALREADY_EXISTS')
         else:
@@ -161,13 +181,16 @@ def prepare(baseline, output, baseline_inventory_bytes, baseline_inventory_hash,
                          'mode': by_path.get(name, {}).get('mode', 0o644)}
     require(after == sorted(planned.values(), key=lambda row: row['path']), 'RECOVERY_INVENTORY_MISMATCH')
     require(inventory(baseline) == before, 'BASELINE_CHANGED_DURING_COPY')
-    receipt = {'schema': 'PHAB_CUP_LOCAL_CUSTODY_RECOVERY_TREE_V1', 'kind': 'baseline83-with-custody-overlay',
-               'baselineCommit': BASELINE, 'derivedSourceTree': DERIVED, 'patchSha256': PATCH,
+    receipt = {'schema': ('PHAB_CUP_LOCAL_CUSTODY_RECOVERY_TREE_V2' if manifest['schema'].endswith('_V2') else 'PHAB_CUP_LOCAL_CUSTODY_RECOVERY_TREE_V1'),
+               'kind': 'baseline83-with-custody-overlay', 'recoverySchema': manifest['schema'],
+               'baselineCommit': BASELINE, 'derivedSourceTree': derived, 'patchSha256': patch,
                'publisherSourceCommit': manifest['sourceCommit'], 'publisherSourceTree': manifest['sourceTree'],
                'manifestSha256': manifest_hash, 'archiveSha256': archive_hash,
                'baselineInventorySha256': baseline_inventory_hash, 'runtimeInventory': after,
                'runtimeInventorySha256': digest(encoded(after)), 'retainedNodeSha256': by_path['runtime/node']['sha256'],
                'firstRestartCustodyProven': False, 'installationAuthorized': False, 'evidence': 'LOCAL'}
+    if manifest['schema'].endswith('_V2'):
+        receipt.update(generationFenceSupported=True, generationActivationProven=False)
     # The historical installed manifests would describe the wrong executable tree.
     # Replace them with explicitly local provenance only after all validations pass.
     for name in sorted(METADATA):
