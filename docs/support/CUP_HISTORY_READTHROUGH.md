@@ -54,6 +54,12 @@ The Mongo test requires an explicitly supplied disposable loopback fixture;
 it creates and removes only randomly named test databases. CI runs both new
 history tests in the existing isolated Mongo job.
 
+The exact legacy recovery patch and its derived-tree/patch-digest pins are
+refreshed for the same three support modules. The baseline and preimage hashes,
+source-equality check, compiled-closure allowlist and recovery tests remain
+unchanged. Local rehearsal verifies the derived modules match the candidate
+byte for byte and that both custody and history tests pass on that recovery.
+
 Release requires approval for the exact CUP source and server target. A
 live authenticated history GET changes read markers, so it is not a read-only
 production diagnostic. After release, verify a selected authorized conversation
