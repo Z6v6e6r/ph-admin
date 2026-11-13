@@ -117,3 +117,10 @@ concurrent ownership, stale/duplicate receipts, lost ACK, finite retries,
 prospective-only commands, raw-byte unchanged archive/hold fixtures in every
 status (including null markers), authority outage/no fallback and health auth.
 The real local DB is synthetic; passing it does not attest production delivery.
+
+
+The Linux runtime builder also regenerates the pre-v1 legacy recovery dependency
+closure against exact83: five source/executable modules, no other executable
+changes, full source and compiled equality. This artifact remains ineligible for
+legacy rollback after v1 writes. The historical three-file offline tree helper
+keeps its old pins and rejects the new artifact; no executor is broadened.
