@@ -24,7 +24,7 @@ async function main() {
   assert.equal(maxFailure({status:null,code:'local_deferred'},now).category,'LOCAL_DEFERRED');
   for (const status of [undefined, 400, 429, 503]) assert.notEqual(maxFailure({status,code:'local_deferred'},now).category,'LOCAL_DEFERRED');
   assert.equal(maxFailure({status:503,code:'unclassified'},now).category,'DELIVERY_UNKNOWN');
-  const seed = (connector: Route) => ({ id:randomUUID(),connector,dialogId:'synthetic',clientId:'synthetic',text:'synthetic',createdAt:new Date(now).toISOString(),
+  const seed = (connector: Route) => ({ meta:{maxOutboxProtocol:'max-lease-v1'},id:randomUUID(),connector,dialogId:'synthetic',clientId:'synthetic',text:'synthetic',createdAt:new Date(now).toISOString(),
     status:Status.LEASED,attempts:5,leaseToken:randomUUID(),leasedUntil:new Date(now+60000).toISOString() });
   for (const connector of [Route.MAX_BOT,Route.MAX_ACADEMY_BOT]) {
     let row: any = seed(connector), writes = 0;

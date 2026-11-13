@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     assert.equal(writes, 1, 'An exhausted request must not issue another Mongo operation');
 
     const token = randomUUID();
-    const command = { id: 'synthetic', connector, status: Status.LEASED, attempts: 1,
+    const command = { meta: { maxOutboxProtocol: 'max-lease-v1' }, id: 'synthetic', connector, status: Status.LEASED, attempts: 1,
       leaseToken: token, leasedUntil: new Date(Date.now() + 60_000).toISOString() };
     let reads = 0;
     const receiptTimeouts: number[] = [];
@@ -58,8 +58,8 @@ async function main(): Promise<void> {
       updateMany: async () => { cleanupWrites++; },
       findOneAndUpdate: async () => { claims++; if (claims === 1) return command; throw new MongoOperationTimeoutError('partial claim'); }
     } as any);
-    await assert.rejects(() => partial.pull(connector, 2, 60), MongoOperationTimeoutError);
-    assert.equal(claims, 2);
+    assert.equal((await partial.pull(connector, 2, 60)).length, 1);
+    assert.equal(claims, 1, 'One atomic claim per response avoids hidden partial batches');
     assert.equal(cleanupWrites, 2, 'A partial claim failure does not requeue possibly leased commands');
   }
   const persistence = Object.create(SupportPersistenceService.prototype) as SupportPersistenceService;

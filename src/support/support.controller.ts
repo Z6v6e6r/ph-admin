@@ -294,6 +294,15 @@ export class SupportController {
     return this.supportService.getRuntimeDiagnostics(user);
   }
 
+  @Get('outbox/health')
+  getMaxOutboxHealth(
+    @Headers('x-integration-token') token: string | undefined,
+    @Query('connector', new ParseEnumPipe(SupportConnectorRoute)) connector: SupportConnectorRoute
+  ) {
+    this.assertIntegrationToken(token, true);
+    return this.supportService.getMaxOutboxHealth(connector);
+  }
+
   @Get('outbox/pull')
   async pullOutbox(
     @Headers('x-integration-token') token: string | undefined,
