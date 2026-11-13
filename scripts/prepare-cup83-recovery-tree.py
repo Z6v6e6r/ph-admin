@@ -8,8 +8,8 @@ import stat
 import tarfile
 
 BASELINE = '83b1c17bc4c5edaec65387b25b5695e48337c3cf'
-DERIVED = 'e34e7802fd6cc82eb72530afe4a28eeb2fa27010'
-PATCH = '14acb6b3212283c26c008ebd6d6de455d90a023f806cf942a76e3f2b79fee9be'
+DERIVED = '7aeec85145f187bca2928e3e7eb3568bdac214e8'
+PATCH = 'ce6a49b471737ef0f2816d5c4558badbe526638d13931d0e441f6f80f092a4da'
 PREIMAGES = {
     'dist/support/legacy-max-custody.js': None,
     'dist/support/support-persistence.service.js': '8cb4aec8e0c2f36d394b695090fbaa0e5e67a2c3796d0691429fa86aa6acc905',

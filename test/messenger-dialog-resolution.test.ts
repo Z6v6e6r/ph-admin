@@ -78,7 +78,7 @@ function createSupportServiceStub() {
       calls.listDialogs += 1;
       return [];
     },
-    listDialogsWindow() {
+    async listDialogsWindowWithReadThrough() {
       calls.listDialogsWindow += 1;
       return [];
     },

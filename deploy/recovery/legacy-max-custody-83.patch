@@ -171,7 +171,7 @@ index 0000000000000000000000000000000000000000..181223501fbdbf085af9c0c6544639ae
 +  return structuredClone(snapshot.commands);
 +}
 diff --git a/src/support/support-persistence.service.ts b/src/support/support-persistence.service.ts
-index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd80914343c13cdab 100644
+index 8629aaa95d48fb82b6520e5be51948037e24790f..b72455ddf8b25706b289ddcd8549274e3f44b328 100644
 --- a/src/support/support-persistence.service.ts
 +++ b/src/support/support-persistence.service.ts
 @@ -1,4 +1,6 @@
@@ -181,7 +181,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
  import { performance } from 'node:perf_hooks';
  import { maxOutboxMode } from '../common/release-capabilities';
  import { ConflictException } from '@nestjs/common';
-@@ -40,6 +42,29 @@ export interface SupportReplyContext {
+@@ -40,6 +42,40 @@ export interface SupportReplyContext {
    firstInboundId?: string;
  }
 
@@ -208,10 +208,21 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
 +  includeService: boolean;
 +}
 +
++export type SupportDialogSummaryClient = Pick<SupportClientProfile, 'id' | 'displayName' | 'primaryPhone' | 'emails'>;
++export interface SupportDialogListContext { dialog: SupportDialog; client: SupportDialogSummaryClient | null }
++export interface SupportDialogListOptions {
++  limit: number;
++  scope: Document;
++  routes: Array<{ route: SupportConnectorRoute; aliases: string[] }>;
++  allowedRoutes: SupportConnectorRoute[];
++  connector?: SupportConnectorRoute;
++  phone?: string;
++}
++
  export interface SupportPersistedState {
    clients: SupportClientProfile[];
    dialogs: SupportDialog[];
-@@ -164,6 +189,7 @@ export interface SupportClientLookupQuery {
+@@ -164,6 +200,7 @@ export interface SupportClientLookupQuery {
  export interface SupportServiceMessagesLookupOptions {
    limit?: number;
    before?: string;
@@ -219,7 +230,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
  }
 
  @Injectable()
-@@ -196,6 +222,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -196,6 +233,9 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
 
    private readonly backendConfigs = this.buildBackendConfigs();
    private readonly backendStates = new Map<SupportPersistenceBackendKey, SupportPersistenceBackendState>();
@@ -229,7 +240,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
 
    async onModuleInit(): Promise<void> {
      for (const config of this.backendConfigs) {
-@@ -260,6 +289,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -260,6 +300,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
    }
 
    async onModuleDestroy(): Promise<void> {
@@ -238,7 +249,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
      await Promise.all(
        Array.from(this.backendStates.values()).map((state) => this.safeCloseBackend(state))
      );
-@@ -453,6 +484,112 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -453,6 +495,207 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
      }
    }
 
@@ -275,6 +286,101 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
 +    } catch {
 +      throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
 +    }
++  }
++
++  /** Bounded ranked prefix only; no history, hydration, reconciliation or writes. */
++  async findDialogListIds(options: SupportDialogListOptions, deadline: number): Promise<string[]> {
++    try {
++      const limit = Math.floor(options.limit);
++      if (limit < 1 || limit > 5000) throw new Error('Dialog list budget exceeded');
++      const backends = this.historyBackends();
++      const phoneClients = new Set<string>();
++      if (options.phone) {
++        for (const backend of backends) {
++          const clients = await this.collection<SupportClientProfile>(backend, 'clients').find(
++            { $or: [{ phones: options.phone }, { primaryPhone: options.phone }] },
++            { projection: { _id: 0, id: 1 }, limit: 301, ...this.historyReadOptions(deadline) }).toArray();
++          if (clients.length > 300) throw new Error('Phone lookup budget exceeded');
++          clients.forEach(client => phoneClients.add(client.id));
++        }
++        if (phoneClients.size > 300) throw new Error('Phone lookup budget exceeded');
++      }
++      const text = (field: unknown): Document => ({ $trim: { input: { $convert: { input: field, to: 'string', onError: '', onNull: '' } } } });
++      const array = (field: string): Document => ({ $cond: [{ $isArray: field }, field, []] });
++      const date = (field: string): Document => ({ $convert: { input: field, to: 'date', onError: new Date(0), onNull: new Date(0) } });
++      const rawConnectors = { $concatArrays: [
++        ['$lastInboundConnector', '$lastReplyConnector'], array('$channels'),
++        ['$lastInboundChannel', '$lastOutboundChannel', '$lastChannel'], array('$connectors')
++      ] };
++      const canonical = { $filter: { input: { $map: { input: rawConnectors, as: 'route', in: {
++        $switch: { branches: options.routes.map(entry => ({
++          case: { $in: [{ $toUpper: text('$$route') }, entry.aliases] }, then: entry.route
++        })), default: null }
++      } } }, as: 'route', cond: { $ne: ['$$route', null] } } };
++      const filters: Document[] = [options.scope, { archived: { $ne: true } }];
++      if (options.phone) filters.push({ $or: [{ clientId: { $in: [...phoneClients] } },
++        { currentPhone: options.phone }, { phones: options.phone }, { primaryPhone: options.phone }, { phoneNumbers: options.phone }] });
++      const ranked = new Map<string, number>();
++      for (const backend of backends) {
++        const rows = await this.collection<SupportDialog>(backend, 'dialogs').aggregate<SupportDialog & { __listRank: Date }>([
++          { $match: { $and: filters } },
++          { $set: { __listRoutes: canonical } },
++          { $set: { __listRoutes: { $cond: [{ $eq: [{ $size: '$__listRoutes' }, 0] }, [SupportConnectorRoute.LK_WEB_MESSENGER], '$__listRoutes'] } } },
++          { $set: { __listAllowed: { $filter: { input: '$__listRoutes', as: 'route', cond: { $in: ['$$route', options.allowedRoutes] } } } } },
++          { $match: { '__listAllowed.0': { $exists: true }, ...(options.connector ? { __listAllowed: options.connector } : {}) } },
++          { $set: { __listPreferred: options.connector ?? { $arrayElemAt: ['$__listAllowed', 0] },
++            __listRank: { $cond: [{ $gt: [date('$lastRankingMessageAt'), new Date(0)] }, date('$lastRankingMessageAt'),
++              { $cond: [{ $and: [
++                { $ne: [text({ $ifNull: ['$lastMessageSenderRole', '$lastMessageAuthorType'] }), ''] },
++                { $not: [{ $in: [{ $toUpper: text({ $ifNull: ['$lastMessageSenderRole', '$lastMessageAuthorType'] }) }, ['SYSTEM', 'BOT', 'SERVICE']] }] }
++              ] }, date('$lastMessageAt'), new Date(0)] }] } } },
++          { $match: { __listRank: { $gt: new Date(0) }, $or: [{ isResolved: { $ne: true } },
++            { $expr: { $gt: [{ $size: array('$pendingClientMessageIds') }, 0] } },
++            { __listPreferred: { $ne: SupportConnectorRoute.PROMO_WEB_MESSENGER } }] } },
++          { $sort: { __listRank: -1, id: 1 } }, { $limit: limit }, { $project: { _id: 0, id: 1, __listRank: 1 } }
++        ], this.historyReadOptions(deadline)).toArray();
++        for (const row of rows) ranked.set(row.id, Math.max(ranked.get(row.id) ?? 0, row.__listRank.getTime()));
++      }
++      return [...ranked].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
++    } catch { throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_UNAVAILABLE' }); }
++  }
++
++  async loadDialogListContexts(ids: string[], deadline: number,
++    projectDialog: (dialog: SupportDialog) => unknown): Promise<SupportDialogListContext[]> {
++    try {
++      const unique = [...new Set(ids)];
++      if (unique.length > 20000) throw new Error('Dialog context budget exceeded');
++      if (!unique.length) return [];
++      const backends = this.historyBackends(), dialogs = new Map<string, SupportDialog>();
++      for (const backend of backends) {
++        const copies = await this.collection<SupportDialog>(backend, 'dialogs').find({ id: { $in: unique } },
++          { projection: { _id: 0 }, limit: unique.length + 1, ...this.historyReadOptions(deadline) }).toArray();
++        if (copies.length > unique.length) throw new Error('Duplicate dialog records');
++        for (const copy of copies) {
++          const previous = dialogs.get(copy.id);
++          if (previous && supportDialogHistoryBinding(previous) !== supportDialogHistoryBinding(copy)) throw new Error('Dialog authority disagrees');
++          // A ranked prefix is safe only if every physical copy has the same
++          // normalized list projection. Choosing the freshest divergent copy
++          // here could invalidate the prefix selected by another store.
++          if (previous && !isDeepStrictEqual(projectDialog(previous), projectDialog(copy))) throw new Error('Dialog list projection disagrees');
++          if (!previous || this.resolveDialogTimestamp(copy) >= this.resolveDialogTimestamp(previous)) dialogs.set(copy.id, copy);
++        }
++      }
++      const clientIds = [...new Set([...dialogs.values()].map(dialog => dialog.clientId))];
++      const clients = new Map<string, { value: SupportDialogSummaryClient; timestamp: number }>();
++      for (const backend of backends) {
++        const copies = await this.collection<SupportClientProfile>(backend, 'clients').find({ id: { $in: clientIds } },
++          { projection: { _id: 0, id: 1, displayName: 1, primaryPhone: 1, emails: 1, updatedAt: 1, createdAt: 1 }, limit: clientIds.length + 1,
++            ...this.historyReadOptions(deadline) }).toArray();
++        if (copies.length > clientIds.length) throw new Error('Duplicate client records');
++        for (const copy of copies) {
++          const client = { id: copy.id, displayName: copy.displayName, primaryPhone: copy.primaryPhone, emails: copy.emails ?? [] };
++          const timestamp = this.resolveClientTimestamp(copy);
++          if (!clients.has(copy.id) || timestamp >= clients.get(copy.id)!.timestamp) clients.set(copy.id, { value: client, timestamp });
++        }
++      }
++      return [...dialogs.values()].map(dialog => ({ dialog, client: clients.get(dialog.clientId)?.value ?? null }));
++    } catch { throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_UNAVAILABLE' }); }
 +  }
 +
 +  async findHistoryMessages(
@@ -351,7 +457,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
    async findDialogIdsByPhone(
      normalizedPhone: string,
      options: SupportDialogPhoneLookupOptions = {}
-@@ -843,7 +980,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -843,7 +1086,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
        return [];
      }
 
@@ -360,7 +466,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
      if (activeBackends.length === 0) {
        return [];
      }
-@@ -859,7 +996,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -859,7 +1102,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
            {
              projection: { _id: 0 },
              sort: { createdAt: -1 },
@@ -370,7 +476,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
            }
          )
          .toArray();
-@@ -910,7 +1048,61 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
+@@ -910,7 +1154,61 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy
      }, 'persistResponseMetric');
    }
 
@@ -434,20 +540,29 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..7ebf6dc27b3aec9cdf8526ebd8091434
        outboxRef: supportDiagnostics.ref('outbox', command.id), leaseAttempt: command.attempts, outcome: 'outcome_unknown' });
      this.fireAndForget(async () => {
 diff --git a/src/support/support.service.ts b/src/support/support.service.ts
-index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f7a95f935 100644
+index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..5cbc1ac8747d838cfb51d827911a5a908c21804f 100644
 --- a/src/support/support.service.ts
 +++ b/src/support/support.service.ts
-@@ -1,6 +1,8 @@
+@@ -1,6 +1,9 @@
 -import { supportClientReplyBinding } from './support-persistence.service';
 +import { supportClientReplyBinding, supportDialogHistoryBinding } from './support-persistence.service';
 +import { performance } from 'node:perf_hooks';
++import { isDeepStrictEqual } from 'node:util';
  import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
  import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 +import { legacyMaxHeld } from './legacy-max-custody';
  import { supportDiagnostics } from './support-diagnostics';
  import {
    BadRequestException,
-@@ -313,6 +315,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -38,6 +41,7 @@ import {
+ } from './support-station-mappings';
+ import {
+   SupportClientLookupQuery,
++  SupportDialogSummaryClient,
+   SupportPersistenceRuntimeDiagnostics,
+   SupportPersistenceService
+ } from './support-persistence.service';
+@@ -313,6 +317,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
      persistence: SupportPersistenceRuntimeDiagnostics;
      connectors: ReturnType<SupportConnectorRegistry['listEntries']>;
@@ -455,7 +570,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
    }> {
      this.ensureStaff(user);
      const dialogs = Array.from(this.dialogs.values());
-@@ -325,6 +328,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -325,6 +330,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        0
      );
      const persistence = await this.persistence.getRuntimeDiagnostics();
@@ -469,7 +584,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      return {
        timestamp: new Date().toISOString(),
        inMemory: {
-@@ -346,7 +356,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -346,7 +358,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
          lastError: this.lastPersistenceSyncError
        },
        persistence,
@@ -479,7 +594,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      };
    }
 
-@@ -412,11 +423,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -412,11 +425,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        return;
      }
      this.noReplyQuickReplyTimer = setInterval(() => {
@@ -493,7 +608,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      for (const dialog of this.dialogs.values()) {
        if (dialog.status !== SupportDialogStatus.OPEN || !this.canReplyToDialog(dialog)) {
          continue;
-@@ -462,7 +473,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -462,7 +475,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
          this.noReplyQuickReplySignatures.add(signature);
        }
 
@@ -502,7 +617,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
          dialog,
          this.getLatestClientMessage(dialog.id) ?? staffMessage,
          connector,
-@@ -697,8 +708,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -697,8 +710,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        ) {
          outbox = this.createOutboxCommand(dialog, message, normalizedDto.connector);
          if (outbox) {
@@ -512,7 +627,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
            dialog.lastReplyConnector = normalizedDto.connector;
          }
        }
-@@ -708,7 +718,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -708,7 +720,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
          this.canReplyToDialog(dialog) &&
          this.isActionableClientMessage(message)
        ) {
@@ -521,7 +636,167 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
            dialog,
            message,
            normalizedDto.connector
-@@ -926,6 +936,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -832,6 +844,116 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+     return this.collectDialogSummaries(user, filters, normalizedTargetCount);
+   }
+
++  async listDialogsWindowWithReadThrough(
++    user: RequestUser, filters: SupportDialogFilters = {}, targetCount = 0, phone?: string
++  ): Promise<SupportDialogSummary[]> {
++    this.ensureStaff(user);
++    if (!this.hasDialogPermission(user, 'dialogs:read')) throw new ForbiddenException('Dialog read permission required');
++    if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) return [];
++    const limit = this.resolveDialogWindowTargetCount(targetCount);
++    if (!limit) return [];
++    if (limit > 5000) throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_BUDGET_EXCEEDED' });
++    if (!this.persistence.isEnabled()) {
++      const rows = phone ? this.listAccessibleDialogs(user, filters).filter(dialog => this.dialogMatchesPhone(dialog, phone)) : [];
++      return phone ? rows.map(dialog => this.toDialogSummary(dialog, filters.connector, user)) : this.listDialogsWindow(user, filters, limit);
++    }
++    const deadline = performance.now() + 5000;
++    const routes = Object.values(SupportConnectorRoute).map(route => ({ route, aliases: [route,
++      ...(this.connectorRegistry.listEntries().find(entry => entry.route === route)?.aliases ?? [])]
++      .map(alias => alias.trim().toUpperCase()) }));
++    const allowedRoutes = routes.map(entry => entry.route).filter(route => this.isConnectorAllowedForUser(user, route));
++    if (!allowedRoutes.length) return [];
++    const stationScope = getStationScopeForPermission(user, 'dialogs:read');
++    if (stationScope !== null && !stationScope.length) return [];
++    const predicates: Record<string, unknown>[] = [];
++    if (filters.stationId) predicates.push({ stationId: filters.stationId });
++    if (stationScope !== null) {
++      const tokens = new Set(stationScope.flatMap(id => [id, this.normalizeStationId(id) ?? id,
++        ...this.resolveStationAccessAliases(id, id)]).map(id => id.toLowerCase()));
++      const names = this.stationMappings.filter(mapping => [mapping.key, mapping.stationId, mapping.stationName]
++        .some(value => tokens.has(value.toLowerCase()))).map(mapping => mapping.stationName.toLowerCase());
++      this.stationMappings.filter(mapping => names.includes(mapping.stationName.toLowerCase()))
++        .forEach(mapping => [mapping.key, mapping.stationId, mapping.stationName].forEach(value => tokens.add(value.toLowerCase())));
++      const lower = (value: unknown) => ({ $toLower: { $trim: { input: { $convert: { input: value, to: 'string', onError: '', onNull: '' } } } } });
++      predicates.push({ stationId: { $ne: SUPPORT_UNASSIGNED_STATION_ID }, $expr: { $or: [
++        { $in: [lower('$stationId'), [...tokens]] }, { $in: [lower('$stationName'), names] },
++        { $gt: [{ $size: { $setIntersection: [{ $map: {
++          input: { $cond: [{ $isArray: '$accessStationIds' }, '$accessStationIds', []] }, as: 'id', in: lower('$$id')
++        } }, [...tokens]] } }, 0] }
++      ] } });
++    }
++    const cachedPrefix: SupportDialogSummary[] = [];
++    for (const raw of this.dialogs.values()) {
++      const dialog = this.normalizeDialogForList(raw), client = this.clients.get(dialog.clientId);
++      if (!this.matchesDialogListFilters(dialog, user, filters)) continue;
++      if (phone && !this.dialogMatchesPhone(dialog, phone) &&
++        ![client?.primaryPhone, ...(client?.phones ?? [])].some(value => this.normalizePhone(value) === phone)) continue;
++      this.insertDialogSummaryByCompatibleRank(cachedPrefix,
++        this.toDialogSummary(dialog, filters.connector, user, client ?? null, true), limit);
++    }
++    const initialCache = new Map(cachedPrefix.map(summary => [summary.dialogId,
++      supportDialogHistoryBinding(this.normalizeDialogForList(this.dialogs.get(summary.dialogId)!))]));
++    const ids = await this.persistence.findDialogListIds({ limit, scope: predicates.length ? { $and: predicates } : {},
++      routes, allowedRoutes, connector: filters.connector, phone }, deadline);
++    const selectedIds = [...new Set([...ids, ...initialCache.keys()])];
++    const projectDialog = (raw: SupportDialog) => {
++      const dialog = this.normalizeDialogForList(raw);
++      return { summary: this.toDialogSummary(dialog, filters.connector, user, null, true),
++        pendingClientMessageIds: [...dialog.pendingClientMessageIds].sort() };
++    };
++    const contexts = await this.persistence.loadDialogListContexts(selectedIds, deadline, projectDialog);
++    const first = new Map(contexts.map(context => [context.dialog.id, context]));
++    // A second bounded exact-ID read catches station/owner changes during client lookup.
++    const latest = await this.persistence.loadDialogListContexts(selectedIds, deadline, projectDialog);
++    const persisted = new Map(latest.map(context => [context.dialog.id, context]));
++    for (const [id, context] of first) {
++      const current = persisted.get(id);
++      if (!current || supportDialogHistoryBinding(current.dialog) !== supportDialogHistoryBinding(context.dialog)
++        || !isDeepStrictEqual(projectDialog(current.dialog), projectDialog(context.dialog))) {
++        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
++      }
++    }
++    const selected = new Set(ids);
++    const summaries = new Map<string, SupportDialogSummary>();
++    const add = (raw: SupportDialog, client: SupportDialogSummaryClient | null, checkPhone: boolean) => {
++      const dialog = this.normalizeDialogForList(raw);
++      if (!this.matchesDialogListFilters(dialog, user, filters)) return;
++      if (checkPhone && phone && !this.dialogMatchesPhone(dialog, phone) &&
++        !(client?.primaryPhone && this.normalizePhone(client.primaryPhone) === phone)) return;
++      const summary = this.toDialogSummary(dialog, filters.connector, user, client, true);
++      if (this.shouldIncludeCompatibleDialog(summary)) summaries.set(dialog.id, summary);
++    };
++    for (const context of latest) {
++      // Phone selection has already matched an exact persisted client phone or dialog phone.
++      if (selected.has(context.dialog.id)) add(context.dialog, context.client, false);
++    }
++    for (const id of initialCache.keys()) {
++      const raw = this.dialogs.get(id);
++      if (!raw) continue;
++      const dialog = this.normalizeDialogForList(raw), stored = persisted.get(id);
++      if (!this.matchesDialogListFilters(dialog, user, filters)) continue;
++      if (initialCache.has(id) && supportDialogHistoryBinding(dialog) !== initialCache.get(id)) {
++        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
++      }
++      if (stored) {
++        if (stored.dialog.clientId !== dialog.clientId) throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
++        if (!this.matchesDialogListFilters(this.normalizeDialogForList(stored.dialog), user, filters)) continue;
++        if (this.toTimestamp(raw.updatedAt) < this.toTimestamp(stored.dialog.updatedAt)) continue;
++      }
++      add(raw, stored?.client ?? this.clients.get(raw.clientId) ?? null, true);
++    }
++    return [...summaries.values()].sort((a, b) => this.compareCompatibleSupportDialogRank(a, b)).slice(0, limit);
++  }
++
++  private normalizeDialogForList(raw: SupportDialog): SupportDialog {
++    const dialog = structuredClone(raw), legacy = dialog as unknown as Record<string, unknown>;
++    dialog.lastMessageText ??= this.readStringValue(legacy.lastMessagePreview);
++    const author = this.readStringValue(dialog.lastMessageSenderRole ?? legacy.lastMessageAuthorType);
++    if (author) dialog.lastMessageSenderRole = this.normalizeLoadedSenderRole(author,
++      this.normalizeLoadedDirection(legacy.lastMessageDirection, author));
++    return this.normalizeLoadedDialog(dialog, false);
++  }
++
+   getDialogSummary(dialogId: string, user: RequestUser): SupportDialogSummary {
+     const dialog = this.getDialogOrThrow(dialogId);
+     this.ensureDialogAccess(dialog, user);
+@@ -877,7 +999,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+   async listDialogsByPhone(
+     phone: string,
+     user: RequestUser,
+-    filters: SupportDialogFilters = {}
++    filters: SupportDialogFilters = {},
++    targetCount = 200
+   ): Promise<SupportDialogSummary[]> {
+     this.ensureStaff(user);
+     if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) {
+@@ -888,28 +1011,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+       return [];
+     }
+
+-    let dialogs: SupportDialog[] = [];
+     if (this.persistence.isEnabled()) {
+-      try {
+-        const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
+-          connector: filters.connector,
+-          stationId: filters.stationId,
+-          limit: 200
+-        });
+-        dialogs = candidateIds
+-          .map((dialogId) => this.dialogs.get(dialogId))
+-          .filter((dialog): dialog is SupportDialog => Boolean(dialog))
+-          .filter((dialog) => this.canAccessDialog(dialog, user));
+-      } catch (error) {
+-        this.logger.error(`Support dialog phone lookup failed: ${String(error)}`);
+-      }
++      return this.listDialogsWindowWithReadThrough(user, filters, targetCount, normalizedPhone);
+     }
+
+-    if (dialogs.length === 0) {
+-      dialogs = this.listAccessibleDialogs(user, filters).filter((dialog) =>
+-        this.dialogMatchesPhone(dialog, normalizedPhone)
+-      );
+-    }
++    const dialogs = this.listAccessibleDialogs(user, filters).filter(dialog =>
++      this.dialogMatchesPhone(dialog, normalizedPhone)
++    );
+
+     const byId = new Map<string, SupportDialog>();
+     for (const dialog of dialogs) {
+@@ -926,6 +1034,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      user: RequestUser,
      options: SupportMessagesListOptions = {}
    ): Promise<SupportMessage[]> {
@@ -531,7 +806,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      const dialog = this.getDialogOrThrow(dialogId);
      this.ensureDialogAccess(dialog, user);
      if (this.isStaff(user)) {
-@@ -964,6 +977,79 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -964,6 +1075,79 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      return merged.length <= limit ? merged : merged.slice(merged.length - limit);
    }
 
@@ -611,7 +886,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
    async listServiceMessages(
      dialogId: string,
      user: RequestUser,
-@@ -1017,11 +1103,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1017,11 +1201,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      return this.replyToDialog(dialogId, dto, user);
    }
 
@@ -625,7 +900,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      const dialog = this.getDialogOrThrow(dialogId);
      this.ensureDialogAccess(dialog, user);
      this.ensureStaff(user);
-@@ -1082,8 +1168,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1082,8 +1266,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
      outbox = this.createOutboxCommand(dialog, message, connector);
      if (outbox) {
@@ -635,7 +910,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      }
 
      if (dto.quickReplyRuleId) {
-@@ -1151,6 +1236,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1151,6 +1334,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      if (isMaxConnector(connector) && receiptProtocol !== undefined) {
        throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
      }
@@ -643,7 +918,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      const now = Date.now();
      this.sweepOutboxAttemptLimit(connector, now);
      const leasedUntil = new Date(now + Math.max(5, leaseSec) * 1000).toISOString();
-@@ -1185,6 +1271,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1185,6 +1369,43 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      return commands.map((command) => this.outbox.get(command.id) ?? command);
    }
 
@@ -687,7 +962,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
    private sweepOutboxAttemptLimit(
      connector: SupportConnectorRoute,
      now: number
-@@ -1240,6 +1363,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1240,6 +1461,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: undefined
      };
@@ -699,7 +974,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
-@@ -1264,6 +1392,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1264,6 +1490,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: String(error ?? '').trim() || undefined
      };
@@ -713,7 +988,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      return updated;
-@@ -2426,11 +2561,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2426,11 +2659,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
    }
 
@@ -727,7 +1002,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      const context = this.buildQuickReplyMatchContext(
        dialog,
        connector,
-@@ -2454,7 +2589,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2454,7 +2687,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      );
    }
 
@@ -736,7 +1011,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      dialog: SupportDialog,
      clientMessage: SupportMessage,
      connector: SupportConnectorRoute,
-@@ -2476,7 +2611,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2476,7 +2709,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        isFirstClientMessage?: boolean;
        noClientReplyMinutes?: number;
      }
@@ -745,7 +1020,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
 
      const createdAt = new Date().toISOString();
      const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
-@@ -2505,10 +2640,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2505,10 +2738,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      this.appendMessage(dialog, serviceMessage);
      dialog.lastReplyConnector = connector;
      dialog.updatedAt = createdAt;
@@ -758,7 +1033,52 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
      }
 
      this.quickReplies.registerUsage(
-@@ -5267,7 +5401,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3121,10 +3353,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+   private toDialogSummary(
+     dialog: SupportDialog,
+     connector?: SupportConnectorRoute,
+-    user?: RequestUser
++    user?: RequestUser,
++    responseClient?: SupportDialogSummaryClient | null,
++    persistedPreview = false
+   ): SupportDialogSummary {
+     this.syncDialogMarkers(dialog);
+-    const client = this.clients.get(dialog.clientId);
++    const client = responseClient === undefined ? this.clients.get(dialog.clientId) : responseClient ?? undefined;
+     const currentDialogStationId = this.normalizeStationId(dialog.stationId);
+     const currentDialogStationName = this.resolveStationName(
+       dialog.stationName,
+@@ -3137,7 +3371,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+     const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
+     const dialogSettings = this.normalizeDialogSettings(dialog.settings);
+
+-    if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
++    if (!persistedPreview && (lastMessageText === undefined || lastMessageSenderRole === undefined)) {
+       const dialogMessages = this.messages.get(dialog.id) ?? [];
+       const lastMessage =
+         dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
+@@ -3321,7 +3555,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+     };
+   }
+
+-  private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
++  private normalizeLoadedDialog(dialog: SupportDialog, trackUnreadRebuild = true): SupportDialog {
+     const rawDialog = dialog as unknown as Record<string, unknown>;
+     const legacyChannels = this.readStringArray(rawDialog['channels']);
+     const legacyPrimaryPhone = this.normalizePhone(this.readStringValue(rawDialog['primaryPhone']));
+@@ -3364,9 +3598,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+     );
+     const shouldRebuildUnreadCount =
+       !hasStoredUnreadCount || !Number.isFinite(parsedUnreadCount);
+-    if (shouldRebuildUnreadCount) {
++    if (trackUnreadRebuild && shouldRebuildUnreadCount) {
+       this.dialogsNeedingUnreadRebuild.add(dialog.id);
+-    } else {
++    } else if (trackUnreadRebuild) {
+       this.dialogsNeedingUnreadRebuild.delete(dialog.id);
+     }
+     const resolvedUnreadCount = shouldRebuildUnreadCount
+@@ -5267,7 +5501,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
    private async findRelatedDialogsForHistory(
      dialog: SupportDialog,
@@ -768,7 +1088,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
    ): Promise<SupportDialog[]> {
      const related = new Map<string, SupportDialog>();
      related.set(dialog.id, dialog);
-@@ -5283,7 +5418,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5283,7 +5518,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        return [dialog];
      }
 
@@ -777,7 +1097,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
        for (const phone of phones) {
          try {
            const candidateIds = await this.persistence.findDialogIdsByPhone(phone, {
-@@ -5341,14 +5476,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5341,14 +5576,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      user: RequestUser,
      beforeTs: number,
      limit: number,
@@ -796,7 +1116,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
          })
        )
      );
-@@ -5365,13 +5502,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5365,13 +5602,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        limit: number;
        before?: string;
        beforeTs: number;
@@ -813,7 +1133,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
          });
          if (persisted.length > 0) {
            const filteredPersisted = persisted.filter((message) =>
-@@ -5382,6 +5521,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5382,6 +5621,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
              : filteredPersisted.slice(filteredPersisted.length - options.limit);
          }
        } catch (error) {
@@ -823,3 +1143,21 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..6e3cee80b08b5316ee39fb6b0c84fa8f
          this.logger.error(`Support service messages lookup failed: ${String(error)}`);
        }
      }
+@@ -5508,7 +5750,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+   }
+
+   private buildSummaryClientDisplayName(
+-    client: SupportClientProfile | undefined,
++    client: SupportDialogSummaryClient | undefined,
+     dialog: SupportDialog
+   ): string | undefined {
+     return this.selectDialogTitleCandidate(
+@@ -5520,7 +5762,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+   }
+
+   private buildSummaryDialogSubject(
+-    client: SupportClientProfile | undefined,
++    client: SupportDialogSummaryClient | undefined,
+     dialog: SupportDialog
+   ): string | undefined {
+     return this.selectDialogTitleCandidate(

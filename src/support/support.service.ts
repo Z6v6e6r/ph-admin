@@ -1,5 +1,6 @@
 import { supportClientReplyBinding, supportDialogHistoryBinding } from './support-persistence.service';
 import { performance } from 'node:perf_hooks';
+import { isDeepStrictEqual } from 'node:util';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { legacyMaxHeld } from './legacy-max-custody';
@@ -40,6 +41,7 @@ import {
 } from './support-station-mappings';
 import {
   SupportClientLookupQuery,
+  SupportDialogSummaryClient,
   SupportPersistenceRuntimeDiagnostics,
   SupportPersistenceService
 } from './support-persistence.service';
@@ -842,6 +844,116 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     return this.collectDialogSummaries(user, filters, normalizedTargetCount);
   }
 
+  async listDialogsWindowWithReadThrough(
+    user: RequestUser, filters: SupportDialogFilters = {}, targetCount = 0, phone?: string
+  ): Promise<SupportDialogSummary[]> {
+    this.ensureStaff(user);
+    if (!this.hasDialogPermission(user, 'dialogs:read')) throw new ForbiddenException('Dialog read permission required');
+    if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) return [];
+    const limit = this.resolveDialogWindowTargetCount(targetCount);
+    if (!limit) return [];
+    if (limit > 5000) throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_BUDGET_EXCEEDED' });
+    if (!this.persistence.isEnabled()) {
+      const rows = phone ? this.listAccessibleDialogs(user, filters).filter(dialog => this.dialogMatchesPhone(dialog, phone)) : [];
+      return phone ? rows.map(dialog => this.toDialogSummary(dialog, filters.connector, user)) : this.listDialogsWindow(user, filters, limit);
+    }
+    const deadline = performance.now() + 5000;
+    const routes = Object.values(SupportConnectorRoute).map(route => ({ route, aliases: [route,
+      ...(this.connectorRegistry.listEntries().find(entry => entry.route === route)?.aliases ?? [])]
+      .map(alias => alias.trim().toUpperCase()) }));
+    const allowedRoutes = routes.map(entry => entry.route).filter(route => this.isConnectorAllowedForUser(user, route));
+    if (!allowedRoutes.length) return [];
+    const stationScope = getStationScopeForPermission(user, 'dialogs:read');
+    if (stationScope !== null && !stationScope.length) return [];
+    const predicates: Record<string, unknown>[] = [];
+    if (filters.stationId) predicates.push({ stationId: filters.stationId });
+    if (stationScope !== null) {
+      const tokens = new Set(stationScope.flatMap(id => [id, this.normalizeStationId(id) ?? id,
+        ...this.resolveStationAccessAliases(id, id)]).map(id => id.toLowerCase()));
+      const names = this.stationMappings.filter(mapping => [mapping.key, mapping.stationId, mapping.stationName]
+        .some(value => tokens.has(value.toLowerCase()))).map(mapping => mapping.stationName.toLowerCase());
+      this.stationMappings.filter(mapping => names.includes(mapping.stationName.toLowerCase()))
+        .forEach(mapping => [mapping.key, mapping.stationId, mapping.stationName].forEach(value => tokens.add(value.toLowerCase())));
+      const lower = (value: unknown) => ({ $toLower: { $trim: { input: { $convert: { input: value, to: 'string', onError: '', onNull: '' } } } } });
+      predicates.push({ stationId: { $ne: SUPPORT_UNASSIGNED_STATION_ID }, $expr: { $or: [
+        { $in: [lower('$stationId'), [...tokens]] }, { $in: [lower('$stationName'), names] },
+        { $gt: [{ $size: { $setIntersection: [{ $map: {
+          input: { $cond: [{ $isArray: '$accessStationIds' }, '$accessStationIds', []] }, as: 'id', in: lower('$$id')
+        } }, [...tokens]] } }, 0] }
+      ] } });
+    }
+    const cachedPrefix: SupportDialogSummary[] = [];
+    for (const raw of this.dialogs.values()) {
+      const dialog = this.normalizeDialogForList(raw), client = this.clients.get(dialog.clientId);
+      if (!this.matchesDialogListFilters(dialog, user, filters)) continue;
+      if (phone && !this.dialogMatchesPhone(dialog, phone) &&
+        ![client?.primaryPhone, ...(client?.phones ?? [])].some(value => this.normalizePhone(value) === phone)) continue;
+      this.insertDialogSummaryByCompatibleRank(cachedPrefix,
+        this.toDialogSummary(dialog, filters.connector, user, client ?? null, true), limit);
+    }
+    const initialCache = new Map(cachedPrefix.map(summary => [summary.dialogId,
+      supportDialogHistoryBinding(this.normalizeDialogForList(this.dialogs.get(summary.dialogId)!))]));
+    const ids = await this.persistence.findDialogListIds({ limit, scope: predicates.length ? { $and: predicates } : {},
+      routes, allowedRoutes, connector: filters.connector, phone }, deadline);
+    const selectedIds = [...new Set([...ids, ...initialCache.keys()])];
+    const projectDialog = (raw: SupportDialog) => {
+      const dialog = this.normalizeDialogForList(raw);
+      return { summary: this.toDialogSummary(dialog, filters.connector, user, null, true),
+        pendingClientMessageIds: [...dialog.pendingClientMessageIds].sort() };
+    };
+    const contexts = await this.persistence.loadDialogListContexts(selectedIds, deadline, projectDialog);
+    const first = new Map(contexts.map(context => [context.dialog.id, context]));
+    // A second bounded exact-ID read catches station/owner changes during client lookup.
+    const latest = await this.persistence.loadDialogListContexts(selectedIds, deadline, projectDialog);
+    const persisted = new Map(latest.map(context => [context.dialog.id, context]));
+    for (const [id, context] of first) {
+      const current = persisted.get(id);
+      if (!current || supportDialogHistoryBinding(current.dialog) !== supportDialogHistoryBinding(context.dialog)
+        || !isDeepStrictEqual(projectDialog(current.dialog), projectDialog(context.dialog))) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
+      }
+    }
+    const selected = new Set(ids);
+    const summaries = new Map<string, SupportDialogSummary>();
+    const add = (raw: SupportDialog, client: SupportDialogSummaryClient | null, checkPhone: boolean) => {
+      const dialog = this.normalizeDialogForList(raw);
+      if (!this.matchesDialogListFilters(dialog, user, filters)) return;
+      if (checkPhone && phone && !this.dialogMatchesPhone(dialog, phone) &&
+        !(client?.primaryPhone && this.normalizePhone(client.primaryPhone) === phone)) return;
+      const summary = this.toDialogSummary(dialog, filters.connector, user, client, true);
+      if (this.shouldIncludeCompatibleDialog(summary)) summaries.set(dialog.id, summary);
+    };
+    for (const context of latest) {
+      // Phone selection has already matched an exact persisted client phone or dialog phone.
+      if (selected.has(context.dialog.id)) add(context.dialog, context.client, false);
+    }
+    for (const id of initialCache.keys()) {
+      const raw = this.dialogs.get(id);
+      if (!raw) continue;
+      const dialog = this.normalizeDialogForList(raw), stored = persisted.get(id);
+      if (!this.matchesDialogListFilters(dialog, user, filters)) continue;
+      if (initialCache.has(id) && supportDialogHistoryBinding(dialog) !== initialCache.get(id)) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
+      }
+      if (stored) {
+        if (stored.dialog.clientId !== dialog.clientId) throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_CONTEXT_CHANGED' });
+        if (!this.matchesDialogListFilters(this.normalizeDialogForList(stored.dialog), user, filters)) continue;
+        if (this.toTimestamp(raw.updatedAt) < this.toTimestamp(stored.dialog.updatedAt)) continue;
+      }
+      add(raw, stored?.client ?? this.clients.get(raw.clientId) ?? null, true);
+    }
+    return [...summaries.values()].sort((a, b) => this.compareCompatibleSupportDialogRank(a, b)).slice(0, limit);
+  }
+
+  private normalizeDialogForList(raw: SupportDialog): SupportDialog {
+    const dialog = structuredClone(raw), legacy = dialog as unknown as Record<string, unknown>;
+    dialog.lastMessageText ??= this.readStringValue(legacy.lastMessagePreview);
+    const author = this.readStringValue(dialog.lastMessageSenderRole ?? legacy.lastMessageAuthorType);
+    if (author) dialog.lastMessageSenderRole = this.normalizeLoadedSenderRole(author,
+      this.normalizeLoadedDirection(legacy.lastMessageDirection, author));
+    return this.normalizeLoadedDialog(dialog, false);
+  }
+
   getDialogSummary(dialogId: string, user: RequestUser): SupportDialogSummary {
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
@@ -887,7 +999,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   async listDialogsByPhone(
     phone: string,
     user: RequestUser,
-    filters: SupportDialogFilters = {}
+    filters: SupportDialogFilters = {},
+    targetCount = 200
   ): Promise<SupportDialogSummary[]> {
     this.ensureStaff(user);
     if (filters.connector && !this.isConnectorAllowedForUser(user, filters.connector)) {
@@ -898,28 +1011,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return [];
     }
 
-    let dialogs: SupportDialog[] = [];
     if (this.persistence.isEnabled()) {
-      try {
-        const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
-          connector: filters.connector,
-          stationId: filters.stationId,
-          limit: 200
-        });
-        dialogs = candidateIds
-          .map((dialogId) => this.dialogs.get(dialogId))
-          .filter((dialog): dialog is SupportDialog => Boolean(dialog))
-          .filter((dialog) => this.canAccessDialog(dialog, user));
-      } catch (error) {
-        this.logger.error(`Support dialog phone lookup failed: ${String(error)}`);
-      }
+      return this.listDialogsWindowWithReadThrough(user, filters, targetCount, normalizedPhone);
     }
 
-    if (dialogs.length === 0) {
-      dialogs = this.listAccessibleDialogs(user, filters).filter((dialog) =>
-        this.dialogMatchesPhone(dialog, normalizedPhone)
-      );
-    }
+    const dialogs = this.listAccessibleDialogs(user, filters).filter(dialog =>
+      this.dialogMatchesPhone(dialog, normalizedPhone)
+    );
 
     const byId = new Map<string, SupportDialog>();
     for (const dialog of dialogs) {
@@ -3255,10 +3353,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   private toDialogSummary(
     dialog: SupportDialog,
     connector?: SupportConnectorRoute,
-    user?: RequestUser
+    user?: RequestUser,
+    responseClient?: SupportDialogSummaryClient | null,
+    persistedPreview = false
   ): SupportDialogSummary {
     this.syncDialogMarkers(dialog);
-    const client = this.clients.get(dialog.clientId);
+    const client = responseClient === undefined ? this.clients.get(dialog.clientId) : responseClient ?? undefined;
     const currentDialogStationId = this.normalizeStationId(dialog.stationId);
     const currentDialogStationName = this.resolveStationName(
       dialog.stationName,
@@ -3271,7 +3371,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
     const dialogSettings = this.normalizeDialogSettings(dialog.settings);
 
-    if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
+    if (!persistedPreview && (lastMessageText === undefined || lastMessageSenderRole === undefined)) {
       const dialogMessages = this.messages.get(dialog.id) ?? [];
       const lastMessage =
         dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
@@ -3455,7 +3555,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     };
   }
 
-  private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
+  private normalizeLoadedDialog(dialog: SupportDialog, trackUnreadRebuild = true): SupportDialog {
     const rawDialog = dialog as unknown as Record<string, unknown>;
     const legacyChannels = this.readStringArray(rawDialog['channels']);
     const legacyPrimaryPhone = this.normalizePhone(this.readStringValue(rawDialog['primaryPhone']));
@@ -3498,9 +3598,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
     const shouldRebuildUnreadCount =
       !hasStoredUnreadCount || !Number.isFinite(parsedUnreadCount);
-    if (shouldRebuildUnreadCount) {
+    if (trackUnreadRebuild && shouldRebuildUnreadCount) {
       this.dialogsNeedingUnreadRebuild.add(dialog.id);
-    } else {
+    } else if (trackUnreadRebuild) {
       this.dialogsNeedingUnreadRebuild.delete(dialog.id);
     }
     const resolvedUnreadCount = shouldRebuildUnreadCount
@@ -5650,7 +5750,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private buildSummaryClientDisplayName(
-    client: SupportClientProfile | undefined,
+    client: SupportDialogSummaryClient | undefined,
     dialog: SupportDialog
   ): string | undefined {
     return this.selectDialogTitleCandidate(
@@ -5662,7 +5762,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   private buildSummaryDialogSubject(
-    client: SupportClientProfile | undefined,
+    client: SupportDialogSummaryClient | undefined,
     dialog: SupportDialog
   ): string | undefined {
     return this.selectDialogTitleCandidate(
