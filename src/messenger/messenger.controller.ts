@@ -801,8 +801,8 @@ export class MessengerController {
       ? await this.supportService.listDialogsByPhone(normalizedPhone, user, {
           connector: supportConnectorFilter,
           stationId: query.stationId
-        })
-      : this.supportService.listDialogsWindow(user, {
+        }, targetCount)
+      : await this.supportService.listDialogsWindowWithReadThrough(user, {
           connector: supportConnectorFilter,
           stationId: query.stationId
         }, targetCount);

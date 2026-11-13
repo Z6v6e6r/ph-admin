@@ -65,6 +65,17 @@ export interface SupportHistoryPageOptions {
   includeService: boolean;
 }
 
+export type SupportDialogSummaryClient = Pick<SupportClientProfile, 'id' | 'displayName' | 'primaryPhone' | 'emails'>;
+export interface SupportDialogListContext { dialog: SupportDialog; client: SupportDialogSummaryClient | null }
+export interface SupportDialogListOptions {
+  limit: number;
+  scope: Document;
+  routes: Array<{ route: SupportConnectorRoute; aliases: string[] }>;
+  allowedRoutes: SupportConnectorRoute[];
+  connector?: SupportConnectorRoute;
+  phone?: string;
+}
+
 export interface SupportPersistedState {
   clients: SupportClientProfile[];
   dialogs: SupportDialog[];
@@ -517,6 +528,101 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     } catch {
       throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
     }
+  }
+
+  /** Bounded ranked prefix only; no history, hydration, reconciliation or writes. */
+  async findDialogListIds(options: SupportDialogListOptions, deadline: number): Promise<string[]> {
+    try {
+      const limit = Math.floor(options.limit);
+      if (limit < 1 || limit > 5000) throw new Error('Dialog list budget exceeded');
+      const backends = this.historyBackends();
+      const phoneClients = new Set<string>();
+      if (options.phone) {
+        for (const backend of backends) {
+          const clients = await this.collection<SupportClientProfile>(backend, 'clients').find(
+            { $or: [{ phones: options.phone }, { primaryPhone: options.phone }] },
+            { projection: { _id: 0, id: 1 }, limit: 301, ...this.historyReadOptions(deadline) }).toArray();
+          if (clients.length > 300) throw new Error('Phone lookup budget exceeded');
+          clients.forEach(client => phoneClients.add(client.id));
+        }
+        if (phoneClients.size > 300) throw new Error('Phone lookup budget exceeded');
+      }
+      const text = (field: unknown): Document => ({ $trim: { input: { $convert: { input: field, to: 'string', onError: '', onNull: '' } } } });
+      const array = (field: string): Document => ({ $cond: [{ $isArray: field }, field, []] });
+      const date = (field: string): Document => ({ $convert: { input: field, to: 'date', onError: new Date(0), onNull: new Date(0) } });
+      const rawConnectors = { $concatArrays: [
+        ['$lastInboundConnector', '$lastReplyConnector'], array('$channels'),
+        ['$lastInboundChannel', '$lastOutboundChannel', '$lastChannel'], array('$connectors')
+      ] };
+      const canonical = { $filter: { input: { $map: { input: rawConnectors, as: 'route', in: {
+        $switch: { branches: options.routes.map(entry => ({
+          case: { $in: [{ $toUpper: text('$$route') }, entry.aliases] }, then: entry.route
+        })), default: null }
+      } } }, as: 'route', cond: { $ne: ['$$route', null] } } };
+      const filters: Document[] = [options.scope, { archived: { $ne: true } }];
+      if (options.phone) filters.push({ $or: [{ clientId: { $in: [...phoneClients] } },
+        { currentPhone: options.phone }, { phones: options.phone }, { primaryPhone: options.phone }, { phoneNumbers: options.phone }] });
+      const ranked = new Map<string, number>();
+      for (const backend of backends) {
+        const rows = await this.collection<SupportDialog>(backend, 'dialogs').aggregate<SupportDialog & { __listRank: Date }>([
+          { $match: { $and: filters } },
+          { $set: { __listRoutes: canonical } },
+          { $set: { __listRoutes: { $cond: [{ $eq: [{ $size: '$__listRoutes' }, 0] }, [SupportConnectorRoute.LK_WEB_MESSENGER], '$__listRoutes'] } } },
+          { $set: { __listAllowed: { $filter: { input: '$__listRoutes', as: 'route', cond: { $in: ['$$route', options.allowedRoutes] } } } } },
+          { $match: { '__listAllowed.0': { $exists: true }, ...(options.connector ? { __listAllowed: options.connector } : {}) } },
+          { $set: { __listPreferred: options.connector ?? { $arrayElemAt: ['$__listAllowed', 0] },
+            __listRank: { $cond: [{ $gt: [date('$lastRankingMessageAt'), new Date(0)] }, date('$lastRankingMessageAt'),
+              { $cond: [{ $and: [
+                { $ne: [text({ $ifNull: ['$lastMessageSenderRole', '$lastMessageAuthorType'] }), ''] },
+                { $not: [{ $in: [{ $toUpper: text({ $ifNull: ['$lastMessageSenderRole', '$lastMessageAuthorType'] }) }, ['SYSTEM', 'BOT', 'SERVICE']] }] }
+              ] }, date('$lastMessageAt'), new Date(0)] }] } } },
+          { $match: { __listRank: { $gt: new Date(0) }, $or: [{ isResolved: { $ne: true } },
+            { $expr: { $gt: [{ $size: array('$pendingClientMessageIds') }, 0] } },
+            { __listPreferred: { $ne: SupportConnectorRoute.PROMO_WEB_MESSENGER } }] } },
+          { $sort: { __listRank: -1, id: 1 } }, { $limit: limit }, { $project: { _id: 0, id: 1, __listRank: 1 } }
+        ], this.historyReadOptions(deadline)).toArray();
+        for (const row of rows) ranked.set(row.id, Math.max(ranked.get(row.id) ?? 0, row.__listRank.getTime()));
+      }
+      return [...ranked].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+    } catch { throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_UNAVAILABLE' }); }
+  }
+
+  async loadDialogListContexts(ids: string[], deadline: number,
+    projectDialog: (dialog: SupportDialog) => unknown): Promise<SupportDialogListContext[]> {
+    try {
+      const unique = [...new Set(ids)];
+      if (unique.length > 20000) throw new Error('Dialog context budget exceeded');
+      if (!unique.length) return [];
+      const backends = this.historyBackends(), dialogs = new Map<string, SupportDialog>();
+      for (const backend of backends) {
+        const copies = await this.collection<SupportDialog>(backend, 'dialogs').find({ id: { $in: unique } },
+          { projection: { _id: 0 }, limit: unique.length + 1, ...this.historyReadOptions(deadline) }).toArray();
+        if (copies.length > unique.length) throw new Error('Duplicate dialog records');
+        for (const copy of copies) {
+          const previous = dialogs.get(copy.id);
+          if (previous && supportDialogHistoryBinding(previous) !== supportDialogHistoryBinding(copy)) throw new Error('Dialog authority disagrees');
+          // A ranked prefix is safe only if every physical copy has the same
+          // normalized list projection. Choosing the freshest divergent copy
+          // here could invalidate the prefix selected by another store.
+          if (previous && !isDeepStrictEqual(projectDialog(previous), projectDialog(copy))) throw new Error('Dialog list projection disagrees');
+          if (!previous || this.resolveDialogTimestamp(copy) >= this.resolveDialogTimestamp(previous)) dialogs.set(copy.id, copy);
+        }
+      }
+      const clientIds = [...new Set([...dialogs.values()].map(dialog => dialog.clientId))];
+      const clients = new Map<string, { value: SupportDialogSummaryClient; timestamp: number }>();
+      for (const backend of backends) {
+        const copies = await this.collection<SupportClientProfile>(backend, 'clients').find({ id: { $in: clientIds } },
+          { projection: { _id: 0, id: 1, displayName: 1, primaryPhone: 1, emails: 1, updatedAt: 1, createdAt: 1 }, limit: clientIds.length + 1,
+            ...this.historyReadOptions(deadline) }).toArray();
+        if (copies.length > clientIds.length) throw new Error('Duplicate client records');
+        for (const copy of copies) {
+          const client = { id: copy.id, displayName: copy.displayName, primaryPhone: copy.primaryPhone, emails: copy.emails ?? [] };
+          const timestamp = this.resolveClientTimestamp(copy);
+          if (!clients.has(copy.id) || timestamp >= clients.get(copy.id)!.timestamp) clients.set(copy.id, { value: client, timestamp });
+        }
+      }
+      return [...dialogs.values()].map(dialog => ({ dialog, client: clients.get(dialog.clientId)?.value ?? null }));
+    } catch { throw new ServiceUnavailableException({ code: 'SUPPORT_DIALOG_LIST_UNAVAILABLE' }); }
   }
 
   async findHistoryMessages(
