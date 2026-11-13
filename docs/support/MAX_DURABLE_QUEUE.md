@@ -124,3 +124,26 @@ closure against exact83: five source/executable modules, no other executable
 changes, full source and compiled equality. This artifact remains ineligible for
 legacy rollback after v1 writes. The historical three-file offline tree helper
 keeps its old pins and rejects the new artifact; no executor is broadened.
+
+
+## Dedicated queue integration credential
+
+Queue endpoints prefer SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN, falling back to
+SUPPORT_INTEGRATION_TOKEN only when the dedicated setting is absent. An explicit
+empty dedicated server setting fails closed. Health, MAX claim and any receipt
+with own leaseToken/failure/retryAfterSeconds fields require this queue credential;
+malformed receipts go exclusively to MAX authority and cannot mutate a TG Map.
+A unique dedicated credential presented with a non-receipt body is rejected
+before legacy auth. Historical single-key deployments keep their non-MAX contract.
+Clients/resolve and dialogs/events retain the existing ingress token policy.
+
+For server147 the approved shared key is one protected server-only EnvironmentFile
+read by CUP and the Node-RED adapter bootstrap. No token enters source, flow JSON,
+editor export or deployment reports. Save exact unit/env/package preimages before
+installation. The adapter's fixed-path private-file parser is bounded and refuses
+symlinks, hardlinks, nonregular files, writable parents and conflicting env values.
+
+Restart acceptance is a natural newly accepted v1 PENDING row while consumers are
+paused: stop/start CUP, verify that same typed postimage with a fresh empty Map and
+sync0, then activate consumers and observe its token-fenced SENT receipt. No real
+synthetic customer message is authorized by this check. The archive remains exact.

@@ -1459,7 +1459,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
       this.observeMaxReceipt(command);
       return command;
@@ -1488,7 +1489,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
       this.observeMaxReceipt(command);
       return command;

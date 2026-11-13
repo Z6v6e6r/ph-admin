@@ -826,7 +826,7 @@ index 8629aaa95d48fb82b6520e5be51948037e24790f..2d6b4360dbbb1a250579a4bbc423529a
      { projection: { _id: 1 }, timeoutMS: MAX_OUTBOX_TIMEOUT_MS }));
    }
 diff --git a/src/support/support.service.ts b/src/support/support.service.ts
-index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc21abe8520 100644
+index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..91d791f2b55c011023c563c493a1e6408598be8f 100644
 --- a/src/support/support.service.ts
 +++ b/src/support/support.service.ts
 @@ -1,6 +1,9 @@
@@ -1258,7 +1258,17 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
    private sweepOutboxAttemptLimit(
      connector: SupportConnectorRoute,
      now: number
-@@ -1240,6 +1471,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1228,7 +1459,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+     }
+     const known = this.outbox.get(id);
+-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
++    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
++      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
+       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
+       this.observeMaxReceipt(command);
+       return command;
+@@ -1240,6 +1472,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: undefined
      };
@@ -1270,7 +1280,17 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      supportDiagnostics.observe(updated, 'max_ack', { connector: updated.connector, code: 'OUTCOME_UNKNOWN',
-@@ -1264,6 +1500,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1252,7 +1489,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
+     }
+     const known = this.outbox.get(id);
+-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
++    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
++      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
+       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
+       this.observeMaxReceipt(command);
+       return command;
+@@ -1264,6 +1502,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        leasedUntil: undefined,
        lastError: String(error ?? '').trim() || undefined
      };
@@ -1284,7 +1304,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      this.outbox.set(updated.id, updated);
      this.persistence.persistOutboxCommand(updated);
      return updated;
-@@ -2426,11 +2669,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2426,11 +2671,11 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
    }
 
@@ -1298,7 +1318,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      const context = this.buildQuickReplyMatchContext(
        dialog,
        connector,
-@@ -2454,7 +2697,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2454,7 +2699,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      );
    }
 
@@ -1307,7 +1327,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      dialog: SupportDialog,
      clientMessage: SupportMessage,
      connector: SupportConnectorRoute,
-@@ -2476,7 +2719,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2476,7 +2721,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        isFirstClientMessage?: boolean;
        noClientReplyMinutes?: number;
      }
@@ -1316,7 +1336,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
 
      const createdAt = new Date().toISOString();
      const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
-@@ -2505,10 +2748,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2505,10 +2750,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      this.appendMessage(dialog, serviceMessage);
      dialog.lastReplyConnector = connector;
      dialog.updatedAt = createdAt;
@@ -1329,7 +1349,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      }
 
      this.quickReplies.registerUsage(
-@@ -3121,10 +3363,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3121,10 +3365,12 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    private toDialogSummary(
      dialog: SupportDialog,
      connector?: SupportConnectorRoute,
@@ -1344,7 +1364,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      const currentDialogStationId = this.normalizeStationId(dialog.stationId);
      const currentDialogStationName = this.resolveStationName(
        dialog.stationName,
-@@ -3137,7 +3381,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3137,7 +3383,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      const canWriteForUser = user ? this.isDialogWritableForUser(dialog, user) : true;
      const dialogSettings = this.normalizeDialogSettings(dialog.settings);
 
@@ -1353,7 +1373,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
        const dialogMessages = this.messages.get(dialog.id) ?? [];
        const lastMessage =
          dialogMessages.length > 0 ? dialogMessages[dialogMessages.length - 1] : undefined;
-@@ -3321,7 +3565,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3321,7 +3567,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      };
    }
 
@@ -1362,7 +1382,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      const rawDialog = dialog as unknown as Record<string, unknown>;
      const legacyChannels = this.readStringArray(rawDialog['channels']);
      const legacyPrimaryPhone = this.normalizePhone(this.readStringValue(rawDialog['primaryPhone']));
-@@ -3364,9 +3608,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3364,9 +3610,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      );
      const shouldRebuildUnreadCount =
        !hasStoredUnreadCount || !Number.isFinite(parsedUnreadCount);
@@ -1374,7 +1394,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
        this.dialogsNeedingUnreadRebuild.delete(dialog.id);
      }
      const resolvedUnreadCount = shouldRebuildUnreadCount
-@@ -5267,7 +5511,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5267,7 +5513,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
    private async findRelatedDialogsForHistory(
      dialog: SupportDialog,
@@ -1384,7 +1404,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
    ): Promise<SupportDialog[]> {
      const related = new Map<string, SupportDialog>();
      related.set(dialog.id, dialog);
-@@ -5283,7 +5528,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5283,7 +5530,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        return [dialog];
      }
 
@@ -1393,7 +1413,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
        for (const phone of phones) {
          try {
            const candidateIds = await this.persistence.findDialogIdsByPhone(phone, {
-@@ -5341,14 +5586,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5341,14 +5588,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
      user: RequestUser,
      beforeTs: number,
      limit: number,
@@ -1412,7 +1432,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
          })
        )
      );
-@@ -5365,13 +5612,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5365,13 +5614,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
        limit: number;
        before?: string;
        beforeTs: number;
@@ -1429,7 +1449,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
          });
          if (persisted.length > 0) {
            const filteredPersisted = persisted.filter((message) =>
-@@ -5382,6 +5631,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5382,6 +5633,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
              : filteredPersisted.slice(filteredPersisted.length - options.limit);
          }
        } catch (error) {
@@ -1439,7 +1459,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
          this.logger.error(`Support service messages lookup failed: ${String(error)}`);
        }
      }
-@@ -5508,7 +5760,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5508,7 +5762,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    }
 
    private buildSummaryClientDisplayName(
@@ -1448,7 +1468,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..7ffa31f348a678b4ceef2b9443571dc2
      dialog: SupportDialog
    ): string | undefined {
      return this.selectDialogTitleCandidate(
-@@ -5520,7 +5772,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5520,7 +5774,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
    }
 
    private buildSummaryDialogSubject(

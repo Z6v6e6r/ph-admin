@@ -93,6 +93,30 @@ async function main() {
     }
     assert.deepEqual(await new MaxOutboxStore(col).health(Route.MAX_BOT), { protocol: MAX_RECEIPT_PROTOCOL, connector: Route.MAX_BOT,
       pending: 0, leased: 0, sent: 0, failed: 0, due: 0, expiredLeases: 0, needsReview: 0, oldestPendingAgeMs: null });
+    // Dedicated queue auth + malformed receipts must not mutate physical TG or archived BSON.
+    const envBefore = {dedicated:process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN, ingress:process.env.SUPPORT_INTEGRATION_TOKEN};
+    process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN='synthetic-queue';
+    process.env.SUPPORT_INTEGRATION_TOKEN='synthetic-ingress';
+    try {
+      const tg={...seed(randomUUID(),Route.TG_BOT),status:Status.LEASED,attempts:1};await col.insertOne(tg);
+      const apiService=service(), api=new SupportController(apiService);
+      (apiService as any).outbox.set(tg.id,tg);
+      const tgRaw=await col.findOne({id:tg.id},{raw:true}) as unknown as Buffer;
+      const protectedRows=[...fixtures,tg];
+      const protectedRaw=new Map<string,Buffer>();for(const row of protectedRows)protectedRaw.set(row.id,await col.findOne({id:row.id},{raw:true}) as unknown as Buffer);
+      for(const row of protectedRows)for(const receipt of [{leaseToken:randomUUID()},{leaseToken:null},{leaseToken:undefined},{failure:{status:429}},{retryAfterSeconds:1},{},{error:'synthetic',requeue:true}]) {
+        await rejected(async()=>api.ackOutbox('synthetic-queue',row.id,receipt));
+        await rejected(async()=>api.failOutbox('synthetic-queue',row.id,receipt));
+      }
+      await assert.rejects(async()=>api.pullOutbox('synthetic-ingress',Route.MAX_BOT,1,120,MAX_RECEIPT_PROTOCOL),(e:any)=>e.getStatus()===403);
+      await assert.rejects(async()=>api.pullOutbox('synthetic-queue',Route.TG_BOT),(e:any)=>e.getStatus()===403);
+      assert.deepEqual((apiService as any).outbox.get(tg.id),tg);
+      assert((await col.findOne({id:tg.id},{raw:true}) as unknown as Buffer).equals(tgRaw));
+      for(const row of protectedRows)assert((await col.findOne({id:row.id},{raw:true}) as unknown as Buffer).equals(protectedRaw.get(row.id)!));
+    } finally {
+      if(envBefore.dedicated===undefined)delete process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN;else process.env.SUPPORT_MAX_OUTBOX_INTEGRATION_TOKEN=envBefore.dedicated;
+      if(envBefore.ingress===undefined)delete process.env.SUPPORT_INTEGRATION_TOKEN;else process.env.SUPPORT_INTEGRATION_TOKEN=envBefore.ingress;
+    }
     // API acceptance waits for the database and does not install a Map fallback.
     let release!: () => void; const gate = new Promise<void>(r => { release = r; }); let done = false;
     const waiting = service({ enqueueMaxOutbox: async (c: Command) => { await gate; return c; } } as any);
