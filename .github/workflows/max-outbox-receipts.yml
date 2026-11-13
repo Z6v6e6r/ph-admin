@@ -42,6 +42,8 @@ jobs:
           npx ts-node test/support-diagnostics.test.ts
           npx ts-node test/legacy-max-restart-custody.test.ts
           npx ts-node test/support-web-history-custody.test.ts
+          npx ts-node test/support-history-readthrough.test.ts
+          npx ts-node test/support-history-readthrough.mongodb.test.ts mongodb://127.0.0.1:27017
           npx ts-node test/support-cold-reply.mongodb.test.ts mongodb://127.0.0.1:27017
           npx ts-node test/messenger-dialog-resolution.test.ts
           npx ts-node test/max-outbox-local-defer.test.ts mongodb://127.0.0.1:27017

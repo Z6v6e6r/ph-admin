@@ -1,4 +1,5 @@
-import { supportClientReplyBinding } from './support-persistence.service';
+import { supportClientReplyBinding, supportDialogHistoryBinding } from './support-persistence.service';
+import { performance } from 'node:perf_hooks';
 import { maxOutboxMode, containsMaxReceiptFields } from '../common/release-capabilities';
 import { MaxReceipt, isMaxConnector } from './max-outbox-store';
 import { legacyMaxHeld } from './legacy-max-custody';
@@ -935,6 +936,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     user: RequestUser,
     options: SupportMessagesListOptions = {}
   ): Promise<SupportMessage[]> {
+    if (this.persistence.isEnabled()) {
+      return this.listPersistedDialogMessages(dialogId, user, options);
+    }
     const dialog = this.getDialogOrThrow(dialogId);
     this.ensureDialogAccess(dialog, user);
     if (this.isStaff(user)) {
@@ -971,6 +975,79 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     );
 
     return merged.length <= limit ? merged : merged.slice(merged.length - limit);
+  }
+
+  private async listPersistedDialogMessages(
+    dialogId: string, user: RequestUser, options: SupportMessagesListOptions
+  ): Promise<SupportMessage[]> {
+    this.ensureStaff(user);
+    const deadline = performance.now() + 5000;
+    const stored = await this.persistence.loadHistoryDialog(dialogId, deadline);
+    const cached = this.dialogs.get(dialogId);
+    if (!stored && !cached) throw new NotFoundException(`Support dialog ${dialogId} not found`);
+    const dialog = this.normalizeLoadedDialog(stored ?? cached!);
+    this.ensureDialogAccess(dialog, user);
+    const binding = supportDialogHistoryBinding(dialog);
+    const initialCacheBinding = cached ? supportDialogHistoryBinding(this.normalizeLoadedDialog(cached)) : null;
+    const checkCache = () => {
+      const current = this.dialogs.get(dialogId);
+      if (!current) return;
+      this.ensureDialogAccess(current, user);
+      if (current.clientId !== dialog.clientId ||
+        supportDialogHistoryBinding(this.normalizeLoadedDialog(current)) !== (initialCacheBinding ?? binding)) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_CONTEXT_CHANGED' });
+      }
+    };
+    checkCache();
+
+    const includeService = options.includeService === true;
+    const beforeTs = this.toTimestamp(options.before);
+    const limit = this.resolveMessagesLimit(options.limit);
+    // Preserve already-cached related history. Do not load any additional
+    // phone-neighbour dialogs, clients or partial pages into the shared cache.
+    const related = cached ? await this.findRelatedDialogsForHistory(dialog, user, false) : [dialog];
+    const persisted = stored ? await this.persistence.findHistoryMessages(stored, {
+      connectors: this.getAccessibleDialogConnectors(dialog, user),
+      connectorAliases: this.connectorRegistry.listEntries().filter(entry =>
+        this.getAccessibleDialogConnectors(dialog, user).includes(entry.route)).flatMap(entry => entry.aliases),
+      limit, before: options.before, includeService
+    }, deadline) : [];
+    const normalized = persisted.map(message => this.normalizeLoadedMessage(
+      message as unknown as Record<string, unknown>)).filter((message): message is SupportMessage => Boolean(message));
+    const serviceMessages = includeService
+      ? await this.collectServiceDialogMessages(related, user, beforeTs, limit, options.before, deadline) : [];
+
+    // An awaited read may race a station reassignment, permission change or
+    // cache update. Reauthorize before returning any content or marking it read.
+    if (stored) {
+      const latest = await this.persistence.loadHistoryDialog(dialogId, deadline);
+      if (!latest) throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_CONTEXT_CHANGED' });
+      const latestDialog = this.normalizeLoadedDialog(latest);
+      this.ensureDialogAccess(latestDialog, user);
+      if (supportDialogHistoryBinding(latestDialog) !== binding) {
+        throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_CONTEXT_CHANGED' });
+      }
+    }
+    checkCache();
+    related.forEach(candidate => this.ensureDialogAccess(this.dialogs.get(candidate.id) ?? candidate, user));
+    const regular = this.collectRegularDialogMessages(related, user, beforeTs, includeService);
+    const messages = this.deduplicateMessagesById([...regular, ...normalized, ...serviceMessages])
+      .filter(message => message.dialogId === dialogId || related.some(candidate => candidate.id === message.dialogId))
+      .filter(message => this.isConnectorAllowedForUser(user, message.connector))
+      .filter(message => includeService || !this.isSystemDialogMessage(message) || this.isQuickReplyAutoResponseMessage(message))
+      .filter(message => beforeTs <= 0 || this.toTimestamp(message.createdAt) < beforeTs);
+    if (stored) {
+      const marked = await this.persistence.markHistoryRead(stored, deadline);
+      checkCache();
+      const current = this.dialogs.get(dialogId);
+      if (marked && current && current.unreadCount === stored.unreadCount &&
+        current.updatedAt === stored.updatedAt && current.lastMessageAt === stored.lastMessageAt &&
+        JSON.stringify(current.pendingClientMessageIds ?? []) === JSON.stringify(stored.pendingClientMessageIds ?? [])) {
+        current.unreadCount = 0;
+        current.hasUnreadMessages = false;
+      }
+    }
+    return messages.length <= limit ? messages : messages.slice(-limit);
   }
 
   async listServiceMessages(
@@ -5324,7 +5401,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private async findRelatedDialogsForHistory(
     dialog: SupportDialog,
-    user: RequestUser
+    user: RequestUser,
+    includePersistence = true
   ): Promise<SupportDialog[]> {
     const related = new Map<string, SupportDialog>();
     related.set(dialog.id, dialog);
@@ -5340,7 +5418,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       return [dialog];
     }
 
-    if (this.persistence.isEnabled()) {
+    if (includePersistence && this.persistence.isEnabled()) {
       for (const phone of phones) {
         try {
           const candidateIds = await this.persistence.findDialogIdsByPhone(phone, {
@@ -5398,14 +5476,16 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     user: RequestUser,
     beforeTs: number,
     limit: number,
-    before?: string
+    before?: string,
+    deadline?: number
   ): Promise<SupportMessage[]> {
     const perDialog = await Promise.all(
       dialogs.map((dialog) =>
         this.listServiceMessagesForDialog(dialog, user, {
           limit,
           before,
-          beforeTs
+          beforeTs,
+          deadline
         })
       )
     );
@@ -5422,13 +5502,15 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       limit: number;
       before?: string;
       beforeTs: number;
+      deadline?: number;
     }
   ): Promise<SupportMessage[]> {
     if (this.persistence.isEnabled()) {
       try {
         const persisted = await this.persistence.findServiceMessages(dialog.id, {
           limit: options.limit,
-          before: options.before
+          before: options.before,
+          deadline: options.deadline
         });
         if (persisted.length > 0) {
           const filteredPersisted = persisted.filter((message) =>
@@ -5439,6 +5521,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
             : filteredPersisted.slice(filteredPersisted.length - options.limit);
         }
       } catch (error) {
+        if (options.deadline !== undefined) {
+          throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
+        }
         this.logger.error(`Support service messages lookup failed: ${String(error)}`);
       }
     }
