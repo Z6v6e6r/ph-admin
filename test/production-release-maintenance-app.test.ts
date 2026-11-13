@@ -5,6 +5,7 @@ import { ModulesContainer } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import { createApplication } from '../src/bootstrap';
 import { AuthPersistenceService } from '../src/auth/auth-persistence.service';
+import { SupportPersistenceService } from '../src/support/support-persistence.service';
 import { AdminUserRecord } from '../src/auth/auth.types';
 import { Role } from '../src/common/rbac/role.enum';
 
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
   Logger.overrideLogger(false);
   const previousEnvironment = { ...process.env };
   const originalInit = AuthPersistenceService.prototype.onModuleInit;
+  const originalSupportInit = SupportPersistenceService.prototype.onModuleInit;
   const user: AdminUserRecord = {
     id: 'maintenance-fixture-admin', login: 'maintenance_fixture', password: 'not-used-for-login',
     roles: [Role.SUPER_ADMIN], roleIds: [Role.SUPER_ADMIN], stationIds: [], connectorRoutes: [], active: true
@@ -26,7 +28,8 @@ async function main(): Promise<void> {
   process.env.ADMIN_AUTH_REQUIRE_STAFF_TOKEN = 'true';
   process.env.ADMIN_AUTH_SECRET = syntheticSecret;
   process.env.ADMIN_AUTH_USERS_JSON = JSON.stringify([user]);
-  delete process.env.MONGODB_URI;
+  for (const key of ['MONGODB_URI', 'GAMES_MONGODB_URI', 'SUPPORT_MONGODB_URI',
+    'SUPPORT_MAX_MONGODB_URI', 'SUPPORT_WEB_MONGODB_URI']) delete process.env[key];
   for (const key of [
     'QUICK_REPLIES_NO_REPLY_SWEEP_ENABLED', 'PADLHUB_PLAYER_LEVEL_PROJECTION_ENABLED',
     'SUBSCRIPTIONS_ACTIVATION_DEADLINE_WORKER_ENABLED', 'TOURNAMENTS_VIVA_STATUS_SYNC_RUN_ON_STARTUP',
@@ -123,9 +126,14 @@ async function main(): Promise<void> {
     await assert.rejects(async () => { app = await createApplication(); }, /RELEASE_MAINTENANCE_AUTH_NOT_READY/);
     process.env.ADMIN_AUTH_SECRET = syntheticSecret;
     process.env.PHAB_RELEASE_MAINTENANCE_ENABLED = 'false';
-    // This route/CORS fixture has no Mongo authority; exercise the explicit receipt mode.
-    // Legacy production startup correctly requires its durable MAX authority.
+    // Both real MAX modes must reject normal production boot without authority.
+    // The route/CORS-only fixture then substitutes the support initialization hook
+    // explicitly; receipt-v1 is never used as a missing-database bypass.
     process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
+    await assert.rejects(createApplication(), /MAX_OUTBOX_AUTHORITY_NOT_READY/);
+    process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy';
+    await assert.rejects(createApplication(), /MAX_OUTBOX_LEGACY_AUTHORITY_NOT_READY/);
+    SupportPersistenceService.prototype.onModuleInit = async function () {};
     app = await createApplication();
     assert.ok([...app.get(ModulesContainer).values()].some((module) => module.metatype.name === 'TournamentsModule'));
     await app.listen(0, '127.0.0.1');
@@ -136,6 +144,7 @@ async function main(): Promise<void> {
   } finally {
     if (app) await app.close();
     AuthPersistenceService.prototype.onModuleInit = originalInit;
+    SupportPersistenceService.prototype.onModuleInit = originalSupportInit;
     for (const key of Object.keys(process.env)) if (!(key in previousEnvironment)) delete process.env[key];
     Object.assign(process.env, previousEnvironment);
   }
