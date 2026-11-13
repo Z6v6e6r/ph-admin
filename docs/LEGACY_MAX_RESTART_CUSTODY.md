@@ -87,7 +87,7 @@ prove that first production restart.
 ## Recovery artifact for the installed83 runtime
 
 `scripts/prepare-cup-runtime-release.mjs` also builds a distinct recovery overlay
-from `83b1c17bc4c5edaec65387b25b5695e48337c3cf` and the exact three-module
+from `83b1c17bc4c5edaec65387b25b5695e48337c3cf` and the exact five-module
 `deploy/recovery/legacy-max-custody-83.patch`. The output is
 `legacy-max-recovery-manifest.json` plus `legacy-max-recovery-runtime-delta.tgz`,
 covered by the artifact's `SHA256SUMS`. Its schema is
@@ -96,11 +96,11 @@ artifact remains separate and does not establish MAX custody compatibility.
 
 The manifest distinguishes the publishing source from the derived recovery
 tree. The builder compares baseline and patched compilation, permits exactly
-three executable JS changes, and requires those three JS files to equal the
+five executable JS changes, and requires those five JS files to equal the
 candidate's compiled custody modules. An inferred controller declaration may
 change locally; declarations/maps are not included in the executable overlay.
 No dependency, SDK, configuration or other baseline runtime file is replaced.
-The two existing JS files require exact previous hashes. The new
+The four existing JS files require exact previous hashes. The new
 `dist/support/legacy-max-custody.js` has `expectedPreviousSha256: null`, which
 means **the destination must be absent**, never an unchecked replacement.
 
@@ -114,8 +114,23 @@ This overlay only establishes a recovery writer that respects custody. It
 does not prove the first restart, old-writer drain, target mapping or a live
 rollback. It requires legacy mode, sync interval zero and no full hydration.
 An executor must explicitly support this schema, preserve the approved queue
-mapping, attest the exact installed83 preimages and apply all three files as
+mapping, attest the exact installed83 preimages and apply all five files as
 one recovery runtime. The historical executor's receipt-v1-only index check
 does not detect `meta.legacyMaxRestartCustody`; do not use that check to admit
 an old writer after held import. No automatic deployment consumes this new
 artifact.
+
+
+The prospective durable-queue source expands that closed recovery dependency set
+with `max-outbox-store` and `max-outbox-policy`; source and compiled equality are
+still required for every module. Derived83 tests also prove tag-only downgrade
+refusal, missing authority refusal and raw-byte unchanged archive/null-marker
+fixtures. This remains a legacy/sync0 pre-v1 recovery artifact. After any v1 tag
+exists, use a compatible v1 full runtime or pause/repair forward, not this legacy
+profile.
+
+The separately pinned `prepare-cup83-recovery-tree.py` helper still accepts only
+its historical three-file profile, patch and derived tree. It deliberately rejects
+this newer five-file artifact; this PR does not widen that offline helper's
+admission or implement a live recovery executor. Do not substitute arbitrary
+current hashes to bypass its profile check.

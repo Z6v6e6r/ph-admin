@@ -53,6 +53,8 @@ jobs:
           npx ts-node test/max-outbox-release-compat.mongodb.test.ts mongodb://127.0.0.1:27017
       - run: npm run test:support-outbox-max-attempts
       - run: npm run test:support-max-receipts -- mongodb://127.0.0.1:27017
+      - name: Durable acceptance, restart recovery and immutable archive fence
+        run: npm run test:support-max-durable -- mongodb://127.0.0.1:27017
       - name: Remove owned Mongo fixture
         if: always()
         run: docker rm --force --volumes phab-max-receipts-mongo

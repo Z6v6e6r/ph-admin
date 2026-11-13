@@ -16,6 +16,7 @@ const { MongoClient } = require('mongodb');
 const { LegacyMaxCustodyStore, legacyMaxHeld } = require(resolve(root, 'dist/support/legacy-max-custody.js'));
 const { SupportPersistenceService } = require(resolve(root, 'dist/support/support-persistence.service.js'));
 const { SupportService } = require(resolve(root, 'dist/support/support.service.js'));
+const { MaxOutboxStore } = require(resolve(root, 'dist/support/max-outbox-store.js'));
 const { SupportConnectorRoute: Route, SupportOutboxStatus: Status } = require(resolve(root, 'dist/support/support.types.js'));
 const dbName = 'cup_recovery_custody_' + randomUUID().replaceAll('-', '');
 const client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
@@ -28,7 +29,7 @@ for (const key of ['SUPPORT_MAX_MONGODB_URI', 'SUPPORT_MAX_MONGODB_DB', 'SUPPORT
 globalThis.fetch = () => { throw Error('PROVIDER_CALL_PROHIBITED'); };
 await client.connect();
 let persistence, service;
-const strip = ({ _id, ...row }) => row;
+const strip = row => { const result = { ...row }; delete result._id; return result; };
 const seed = connector => ({ id: randomUUID(), connector, dialogId: 'synthetic-dialog',
   clientId: 'synthetic-client', text: 'synthetic', targetExternalChatId: 'synthetic-target',
   createdAt: new Date().toISOString(), status: Status.PENDING, attempts: 0 });
@@ -127,6 +128,46 @@ try {
   assert.deepEqual(calls.map(row => row[0]), ['pull', 'receipt', 'receipt']);
   assert.deepEqual(calls[0], ['pull', Route.MAX_BOT, 2, 45]);
   assert.equal(calls[1][2], 'ack'); assert.equal(calls[2][2], 'fail');
+  // The actual derived83 binary must refuse legacy startup on a prospective tag
+  // alone, before the first v1 claim can add token/receipt fields.
+  const tagged = { ...seed(Route.MAX_BOT), meta: { maxOutboxProtocol: 'max-lease-v1' } };
+  await coll.insertOne(tagged);
+  const taggedBefore = await coll.findOne({ id: tagged.id }, { raw: true });
+  process.env.SUPPORT_MAX_OUTBOX_MODE = 'legacy';
+  persistence = new SupportPersistenceService();
+  await assert.rejects(persistence.onModuleInit(), /MAX_OUTBOX_RECEIPT_STATE_REQUIRES_V1/);
+  await persistence.onModuleDestroy(); persistence = undefined;
+  assert((await coll.findOne({ id: tagged.id }, { raw: true })).equals(taggedBefore));
+  await coll.deleteOne({ id: tagged.id });
+  process.env.SUPPORT_MAX_OUTBOX_MODE = 'receipt-v1';
+  const missingAuthority = Object.assign(Object.create(SupportPersistenceService.prototype), {
+    backendConfigs: [{ key: 'synthetic-max' }], backendStates: new Map(), resolveBackendKeyForConnector: () => 'synthetic-max'
+  });
+  await assert.rejects(missingAuthority.onModuleInit(), /MAX_OUTBOX_AUTHORITY_NOT_READY/);
+  // Exercise the changed store/policy dependency closure, including permanent
+  // archive/hold presence, using real BSON and a fresh compiled store instance.
+  await coll.deleteMany({});
+  const archive = [];
+  for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
+    for (const marker of ['legacyMaxRestartCustody', 'legacyMaxArchive']) {
+      for (const status of Object.values(Status)) archive.push({ ...seed(connector), status, attempts: 999,
+        leasedUntil: new Date(0).toISOString(), leaseToken: randomUUID(),
+        meta: { maxOutboxProtocol: 'max-lease-v1', [marker]: null } });
+    }
+  }
+  await coll.insertMany(archive);
+  const archivedBytes = new Map(await Promise.all(archive.map(async r => [r.id, await coll.findOne({ id: r.id }, { raw: true })])));
+  for (const connector of [Route.MAX_BOT, Route.MAX_ACADEMY_BOT]) {
+    const store = new MaxOutboxStore(coll), fresh = seed(connector);
+    await store.enqueue(fresh);
+    const [claim] = await new MaxOutboxStore(coll).pull(connector, 10, 120);
+    assert.equal(claim.id, fresh.id);
+    assert.equal((await store.receipt(claim.id, 'ack', { leaseToken: claim.leaseToken })).status, Status.SENT);
+  }
+  for (const row of archive) {
+    await assert.rejects(new MaxOutboxStore(coll).receipt(row.id, 'ack', { leaseToken: row.leaseToken }));
+    assert((await coll.findOne({ id: row.id }, { raw: true })).equals(archivedBytes.get(row.id)));
+  }
   console.log('Derived83 compiled custody: both MAX connectors, concurrent CAS, lost ACK/readback, held import/replay/conflict, sync0 restart, no resend, new commands, non-MAX and receipt-v1 delegation PASS');
 } finally {
   service?.onModuleDestroy();

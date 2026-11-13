@@ -128,7 +128,8 @@
     "test:advertising-card-assets": "ts-node test/advertising-card-assets-and-insights.test.ts",
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts",
-    "test:support-max-receipts": "ts-node test/max-outbox-operation-timeout.test.ts && ts-node test/max-outbox-receipts.test.ts"
+    "test:support-max-durable": "ts-node test/max-outbox-durable.test.ts",
+    "test:support-max-receipts": "ts-node test/max-outbox-integration-auth.test.ts && ts-node test/max-outbox-operation-timeout.test.ts && ts-node test/max-outbox-receipts.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.2",

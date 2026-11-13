@@ -1375,9 +1375,19 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       this.outbox.set(durable.id, durable);
       return durable;
     }
+    if (isMaxConnector(command.connector) && maxOutboxMode() === 'receipt-v1') {
+      return this.persistence.enqueueMaxOutbox(command);
+    }
     this.outbox.set(command.id, command);
     this.persistence.persistOutboxCommand(command);
     return command;
+  }
+
+  getMaxOutboxHealth(connector: SupportConnectorRoute) {
+    if (!isMaxConnector(connector) || maxOutboxMode() !== 'receipt-v1') {
+      throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_REQUIRED' });
+    }
+    return this.persistence.getMaxOutboxHealth(connector);
   }
 
   private async pullLegacyMax(connector: SupportConnectorRoute, limit: number, leaseSec: number): Promise<SupportOutboxCommand[]> {
@@ -1449,7 +1459,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'ack', receipt);
       this.observeMaxReceipt(command);
       return command;
@@ -1478,7 +1489,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       throw new ConflictException({ code: 'MAX_OUTBOX_RECEIPT_MODE_DISABLED' });
     }
     const known = this.outbox.get(id);
-    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
+    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
+      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
       const command = await this.persistence.acceptMaxReceipt(id, 'fail', receipt);
       this.observeMaxReceipt(command);
       return command;
