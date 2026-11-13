@@ -32,6 +32,16 @@ class InMemorySupportPersistence {
     return structuredClone(this.state);
   }
 
+  async loadHistoryDialog(id: string) {
+    return structuredClone(this.state.dialogs.find(dialog => dialog.id === id) ?? null);
+  }
+
+  async findHistoryMessages(dialog: SupportDialog) {
+    return structuredClone(this.state.messages.filter(message => message.dialogId === dialog.id));
+  }
+
+  async markHistoryRead() { return true; }
+
   persistClient(): void {}
 
   persistDialog(): void {}

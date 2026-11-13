@@ -29,6 +29,9 @@ function fixture() {
   };
   const persistence: any = {
     isEnabled: () => true, loadState: async () => structuredClone(state),
+    loadHistoryDialog: async (id: string) => structuredClone(state.dialogs.find((row: any) => row.id === id) ?? null),
+    findHistoryMessages: async (dialog: any) => structuredClone(state.messages.filter((row: any) => row.dialogId === dialog.id)),
+    markHistoryRead: async () => true,
     persistDialog: (row: any) => upsert('dialogs', row),
     persistMessage: (row: any) => { events.push('message'); upsert('messages', row); },
     persistOutboxCommand: (row: any) => { events.push('outbox'); upsert('outbox', row); },
@@ -38,7 +41,7 @@ function fixture() {
     pullMaxOutbox: () => assert.fail('No MAX claim'),
   };
   const create = async () => {
-    const service = new SupportService(persistence, { resolveRoute: (route: unknown) => Object.values(Route).includes(route as Route) ? route : undefined } as any, {} as any);
+    const service = new SupportService(persistence, { resolveRoute: (route: unknown) => Object.values(Route).includes(route as Route) ? route : undefined, listEntries: () => [] } as any, {} as any);
     await service.hydrateFromPersistence(); return service;
   };
   return { state, events, create };

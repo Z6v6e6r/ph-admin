@@ -42,6 +42,29 @@ export interface SupportReplyContext {
   firstInboundId?: string;
 }
 
+// Only fields that determine ownership or read authority. Unread counters and
+// previews may legitimately differ while asynchronous projections catch up.
+const HISTORY_BINDING_FIELDS = ['id', 'clientId', 'stationId', 'stationName', 'dialogScope', 'archived',
+  'accessStationIds', 'writeStationIds', 'readOnlyStationIds', 'connectors',
+  'lastInboundConnector', 'lastReplyConnector', 'lastInboundChannel', 'lastOutboundChannel',
+  'channels', 'lastChannel', 'lastConnector', 'connector'] as const;
+
+export function supportDialogHistoryBinding(dialog: SupportDialog): string {
+  const raw = dialog as unknown as Record<string, unknown>;
+  return JSON.stringify(HISTORY_BINDING_FIELDS.map(key => {
+    const value = raw[key];
+    return [key, Array.isArray(value) ? [...value].sort() : value ?? null];
+  }));
+}
+
+export interface SupportHistoryPageOptions {
+  connectors: SupportConnectorRoute[];
+  connectorAliases?: string[];
+  limit: number;
+  before?: string;
+  includeService: boolean;
+}
+
 export interface SupportPersistedState {
   clients: SupportClientProfile[];
   dialogs: SupportDialog[];
@@ -166,6 +189,7 @@ export interface SupportClientLookupQuery {
 export interface SupportServiceMessagesLookupOptions {
   limit?: number;
   before?: string;
+  deadline?: number;
 }
 
 @Injectable()
@@ -457,6 +481,112 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
     } catch {
       // Never leak Mongo commands, contact fields, connection strings or provider payloads.
       throw new ServiceUnavailableException({ code: 'SUPPORT_REPLY_CONTEXT_UNAVAILABLE' });
+    }
+  }
+
+  private historyBackends(): SupportPersistenceBackendState[] {
+    const backends = this.getActiveBackends();
+    if (!backends.length || this.backendConfigs.some(config => config.uri &&
+      !backends.some(backend => backend.config.key === config.key))) {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
+    }
+    return backends;
+  }
+
+  private historyReadOptions(deadline: number) {
+    const timeoutMS = Math.ceil(deadline - performance.now());
+    if (timeoutMS <= 0) throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
+    return { timeoutMS };
+  }
+
+  /** Exact-ID read only: never hydrate, reconcile clients or consult the outbox. */
+  async loadHistoryDialog(dialogId: string, deadline = performance.now() + 5000): Promise<SupportDialog | null> {
+    try {
+      let selected: SupportDialog | null = null;
+      for (const backend of this.historyBackends()) {
+        const copy = await this.collection<SupportDialog>(backend, 'dialogs').findOne(
+          { id: dialogId }, { projection: { _id: 0 }, ...this.historyReadOptions(deadline) });
+        if (!copy) continue;
+        if (copy.id !== dialogId || (selected &&
+          supportDialogHistoryBinding(copy) !== supportDialogHistoryBinding(selected))) {
+          throw new Error('History dialog ownership disagrees');
+        }
+        if (!selected || this.resolveDialogTimestamp(copy) >= this.resolveDialogTimestamp(selected)) selected = copy;
+      }
+      return selected;
+    } catch {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
+    }
+  }
+
+  async findHistoryMessages(
+    dialog: SupportDialog, options: SupportHistoryPageOptions, deadline = performance.now() + 5000
+  ): Promise<SupportMessage[]> {
+    try {
+      const limit = Math.max(1, Math.min(500, Math.floor(Number.isFinite(options.limit) ? options.limit : 100)));
+      const query: Document = { dialogId: dialog.id, deleted: { $ne: true },
+        $expr: { $in: [{ $toUpper: { $ifNull: ['$connector', { $ifNull: ['$channel', 'WEB'] }] } },
+          [...new Set([...options.connectors, ...(options.connectorAliases ?? [])])]] },
+        $and: [{ $or: [{ clientId: dialog.clientId }, { clientId: { $exists: false } }] }] };
+      if (!options.includeService) {
+        query.$and.push({ $or: [
+          { direction: { $ne: 'SYSTEM' }, senderRole: { $ne: 'SYSTEM' }, authorType: { $ne: 'SYSTEM' }, kind: { $ne: 'SYSTEM' } },
+          { senderName: { $regex: 'автоответ', $options: 'i' } }
+        ] });
+      }
+      const dateFilter: Document = { $ne: null };
+      const before = this.parseTimestamp(options.before);
+      if (before > 0) dateFilter.$lt = new Date(before);
+      const byId = new Map<string, TimestampedEntity<SupportMessage>>();
+      for (const backend of this.historyBackends()) {
+        // Conversion is confined to one indexed dialogId. It supports both the
+        // legacy numeric createdTs and canonical ISO/BSON createdAt formats.
+        const page = await this.collection<SupportMessage>(backend, 'messages').aggregate<SupportMessage>([
+          { $match: query },
+          { $addFields: { __historyCreatedAt: { $convert: {
+            input: { $ifNull: ['$createdAt', '$createdTs'] }, to: 'date', onError: null, onNull: null
+          } } } },
+          { $match: { __historyCreatedAt: dateFilter } },
+          { $sort: { __historyCreatedAt: -1, id: -1 } },
+          { $limit: limit },
+          { $set: { createdAt: { $dateToString: { date: '$__historyCreatedAt',
+            format: '%Y-%m-%dT%H:%M:%S.%LZ', timezone: 'UTC' } } } },
+          { $project: { _id: 0, __historyCreatedAt: 0 } }
+        ], this.historyReadOptions(deadline)).toArray();
+        for (const message of page) {
+          if (message.dialogId !== dialog.id || (message.clientId && message.clientId !== dialog.clientId)) {
+            throw new Error('History message ownership disagrees');
+          }
+          this.upsertByTimestamp(byId, message.id, message, this.resolveMessageTimestamp(message));
+        }
+      }
+      return [...byId.values()].map(item => item.entity);
+    } catch {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
+    }
+  }
+
+  /** Preserve incoming messages, ownership, resolution and SLA on a racing read. */
+  async markHistoryRead(dialog: SupportDialog, deadline = performance.now() + 5000): Promise<boolean> {
+    try {
+      const backends = this.historyBackends();
+      const ownerKey = this.resolveBackendKeyForConnector(this.extractDialogPrimaryConnector(dialog));
+      const raw = dialog as unknown as Record<string, unknown>;
+      const filter: Document = {};
+      for (const key of [...HISTORY_BINDING_FIELDS, 'unreadCount', 'updatedAt', 'lastMessageAt', 'pendingClientMessageIds']) {
+        filter[key] = raw[key] === undefined ? { $exists: false } : raw[key];
+      }
+      // A historical dialog can still live in its old store. Prefer current
+      // routing, then try the exact observed snapshot elsewhere without moving it.
+      const ordered = [...backends].sort((a, b) => Number(b.config.key === ownerKey) - Number(a.config.key === ownerKey));
+      for (const backend of ordered) {
+        const result = await this.collection<SupportDialog>(backend, 'dialogs').updateOne(filter,
+          { $set: { unreadCount: 0, hasUnreadMessages: false } }, this.historyReadOptions(deadline));
+        if (result.matchedCount > 0) return true;
+      }
+      return false;
+    } catch {
+      throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
     }
   }
 
@@ -850,7 +980,7 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
       return [];
     }
 
-    const activeBackends = this.getActiveBackends();
+    const activeBackends = options.deadline === undefined ? this.getActiveBackends() : this.historyBackends();
     if (activeBackends.length === 0) {
       return [];
     }
@@ -866,7 +996,8 @@ export class SupportPersistenceService implements OnModuleInit, OnModuleDestroy 
           {
             projection: { _id: 0 },
             sort: { createdAt: -1 },
-            limit
+            limit,
+            ...(options.deadline === undefined ? {} : this.historyReadOptions(options.deadline))
           }
         )
         .toArray();
