@@ -140,6 +140,32 @@ opt-in location patch: `deploy/server-147/nginx-qr-links-location.conf`, with an
 optional edge rate limit in `nginx-qr-links-rate-limit-http.conf`. See
 `docs/qr-links-admin.md` for the full enable/verify/rollback procedure.
 
+### Same-origin LK2 API and media proxy
+
+The ЦУП panel is served from `https://padlhub.su` and keeps using that origin for the PadlHub APIs,
+so the operator browser never depends on CORS or on direct reachability of the LK2 beta host. Station
+profiles store media URLs as relative paths (`/public/api/v1/<tenant>/location-media/<assetId>`), so
+the `/public/api/v1/` location is part of the same contract as `/admin/api/v1/` and `/user/api/v1/`.
+When only the admin/user proxies are present, an uploaded photo is stored correctly (`READY`,
+`image/webp`, correct dimensions), renders in LK on its own origin, but every console gallery and
+recommendation-card thumbnail requests `https://padlhub.su/public/api/...`, receives `404` and stays
+broken. The blocks are kept in `deploy/server-147/nginx-lk2-api-proxy.conf`.
+
+Check the active routing and the media path end-to-end:
+
+```bash
+sudo nginx -T | grep -nE "location \^~ /(admin|user|public)/api/v1/"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  https://padlhub.su/public/api/v1/local-padel/location-media/<assetId>
+# 302 to the signed S3 object; following it must answer 200 image/webp
+curl -sSL -o /tmp/asset.webp -w "%{http_code} %{content_type}\n" \
+  https://padlhub.su/public/api/v1/local-padel/location-media/<assetId>
+```
+
+A `404` with the ЦУП JSON body means the `/public/api/v1/` location is missing; `502`/`504` means the
+proxy cannot reach `https://lk2.padlhub.su`. Rollback: restore the preimage of the site file
+(`nginx -t && systemctl reload nginx`).
+
 ## 4) Checks
 
 ```bash
