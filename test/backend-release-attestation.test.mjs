@@ -10,6 +10,7 @@ import {
   DEV_RELEASE_TARGET,
   canonicalGitHubRepository,
   createDeterministicTarGzip,
+  findRuntimeEmails,
   isSensitiveRuntimePath,
   parseReleaseArguments,
   releaseIdentity,
@@ -191,6 +192,55 @@ test('tar.gz bytes are deterministic for identical content and source epoch', as
     const second = await createDeterministicTarGzip(content, 'ph-admin-backend-deadbeef', 1_800_000_000);
     assert.deepEqual(first, second);
     assert.equal(first[9], 255, 'gzip OS byte must be platform-neutral');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('email detection retains global regex prefix and overlap semantics', () => {
+  const original = text => text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [];
+  const cases = [
+    '', 'plain text', '@@', 'it@example.com', 'foo@bar.com123',
+    'it@example.com@padelhub.local', 'a@@b.com', 'a@b.com.c',
+    'a@b.com..a@c.org', '"one+tag@sub.example.test",other@example.test',
+    'one@localhost two@example.c three@example.co four@example.com/path'
+  ];
+  let seed = 115;
+  const alphabet = 'abXY09._%+-@! "';
+  for (let i = 0; i < 500; i++) {
+    let text = '';
+    for (let j = 0; j < 120; j++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      text += alphabet[seed % alphabet.length];
+    }
+    cases.push(text);
+  }
+  for (const text of cases) assert.deepEqual(findRuntimeEmails(text), original(text));
+});
+
+test('large embedded graphics are scanned promptly without skipping PII checks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'backend-release-graphics-scan-'));
+  try {
+    await mkdir(join(root, 'dist'));
+    const graphic = await readFile(new URL('../assets/community-results-templates/img/header-start.svg', import.meta.url));
+    await writeFile(join(root, 'dist/header.svg'), graphic);
+    const assetPath = join(root, 'dist/community-results-assets.json');
+    const payload = JSON.stringify({ image: 'data:image/png;base64,' + 'A'.repeat(3_000_000) });
+    await writeFile(assetPath, payload);
+    const scannerUrl = new URL('../scripts/build-backend-release-attestation.mjs', import.meta.url).href;
+    const probe = `import {scanRuntimeArtifact} from ${JSON.stringify(scannerUrl)};
+      try {console.log(JSON.stringify(await scanRuntimeArtifact(process.argv[1])));}
+      catch (error) {console.log(error.code); process.exitCode = 2;}`;
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', probe, root], {
+      encoding: 'utf8', timeout: 10_000
+    });
+    assert.equal(JSON.parse(output).textFilesScanned, 2);
+    for (const email of ['private.person@example.test', 'private.person@example.test123']) {
+      await writeFile(assetPath, payload + '\n' + email);
+      assert.throws(() => execFileSync(process.execPath, ['--input-type=module', '-e', probe, root], {
+        encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe']
+      }), error => error.status === 2 && error.stdout.trim() === 'BACKEND_RELEASE_PII_MATCH');
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

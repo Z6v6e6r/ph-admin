@@ -1,26 +1,44 @@
 {
-  "sourceArchive": "ПадлхАБ_Лига_ВНД_шаблоны_результатов.zip",
-  "sourceArchiveSha256": "1b53b703951414b5cc4996338eb9ae35a2bae6cf6cdf961e09bdcee6b9310cca",
+  "sourceArchive": "Шаблоны рейтинг.fig",
+  "sourceArchiveSha256": "76b296a64b8eee42ebed585330946eca2327e3226347a2f6ac39be75646ea168",
+  "sourceFrames": {
+    "start": "1:13",
+    "rokot": "1:185",
+    "smash": "1:357"
+  },
+  "sourceFrameSize": {
+    "width": 720,
+    "height": 900
+  },
+  "outputSize": {
+    "width": 1080,
+    "height": 1350
+  },
+  "notes": "720×900 source geometry from supplied local Figma archive. Fixed header uses supplied final reference artwork to preserve Figma image adjustments; sample subtitle removed. Crown/star paths extracted from Figma. Dynamic text uses existing PadlHub fonts. No sample player data is shipped. Dynamic first-place score uses existing RF Dewi Ultrabold; exact Black font binary was not supplied.",
   "files": {
-    "fonts/RFDewiExpanded-Black.ttf": {
-      "sha256": "0e1a5c76340ffb4071bf738f38dc0003a8c7fe08a10adb4d54bfa40eb2550cd6",
-      "bytes": 84188
+    "fonts/InterDisplay-Medium.woff2": {
+      "sha256": "f1227907684853882ad00d7f97ce9f64bc17b89a2a291a7d4ec84fccfa442934",
+      "bytes": 113476
     },
-    "fonts/RFDewiExpanded-Bold.ttf": {
-      "sha256": "b83e2c6d91ef691da891de119a6a4f784e6af40e674b961cb55bfb4db3a5aa8d",
-      "bytes": 84760
+    "fonts/InterDisplay-SemiBold.woff2": {
+      "sha256": "d9f63a82b826fb0117c92715c3a52a2d2247bc321bc39341420bf52d91e8277a",
+      "bytes": 113772
     },
-    "fonts/RFDewiExpanded-Regular.ttf": {
-      "sha256": "587671a624dfa2a74c4adbb9f89fe37914794e3599168b151006176d4c418160",
-      "bytes": 85596
+    "fonts/RFDewi-Bold.woff": {
+      "sha256": "fba1df2c86a6e72b63f61ca4d02f94506fd272f6b5780baaa45046f0e45e78c4",
+      "bytes": 39652
     },
-    "fonts/RFDewiExpanded-Semibold.ttf": {
-      "sha256": "d06e7dbc94b490432f47929dce60c6b56d081dfea34733b5169b6238aa5865d1",
-      "bytes": 85372
+    "fonts/RFDewi-Regular.woff": {
+      "sha256": "b307668b5a99b738c8dd898dd263128f5aa5b7ca187695ddbe0e849a6a4190de",
+      "bytes": 39884
     },
-    "fonts/SourceCodePro-Bold.ttf": {
-      "sha256": "402e3a7661938b6606272ff8e126d761b25f2df5881833c59fa620adf1a82350",
-      "bytes": 133464
+    "fonts/RFDewi-Semibold.woff": {
+      "sha256": "eb5c9bbf623ebe960156f182c9d420f144a4a01d94d38af6f93b66681ce416b5",
+      "bytes": 39576
+    },
+    "fonts/RFDewi-Ultrabold.ttf": {
+      "sha256": "658c22b70cb80a9f2ba828d653e970a8676c694e428694fa29194336d4c93219",
+      "bytes": 84072
     },
     "fonts/SourceCodePro-Medium.ttf": {
       "sha256": "8cc8e75930153db545db04bc5bfec6181f6d15329181358aa993ddabf077c23a",
@@ -30,81 +48,65 @@
       "sha256": "1bd0bb61d974f62f9cc208a162fd3a7a13f95ba0b56b88b870730bf3ae1ba358",
       "bytes": 133596
     },
-    "fonts/SourceCodePro-SemiBold.ttf": {
-      "sha256": "2859dc9b573c7190cdc705e49831b9ad9c5e1b571897f765505ea88317ca8893",
-      "bytes": 133348
+    "html/figma_rokot.html": {
+      "sha256": "bf1b89cc97fb08a1858ac1e57d22a8050946ab53d1c550c322ae52e6c882f0ac",
+      "bytes": 5083
     },
-    "html/01_klassika_rokot.html": {
-      "sha256": "31fef2fb54126dbe5209f78788812bd0b18050c06069ad9e8c659a6658cc50e4",
-      "bytes": 12399
+    "html/figma_smash.html": {
+      "sha256": "f29317fda513df4c172208fbeb8c9d42677029ee27c752bd5a49b7935227d579",
+      "bytes": 5083
     },
-    "html/01_klassika_smash.html": {
-      "sha256": "27df2ee156f6488d2018cd74885384cf5bd9e4ef2e0d92eee687ec8dd56a3aef",
-      "bytes": 12395
+    "html/figma_start.html": {
+      "sha256": "0e6b219b416af6d30ecd8b1f195d8455c816eff34e3ea8707f521e3501f40b5e",
+      "bytes": 5083
     },
-    "html/01_klassika_start.html": {
-      "sha256": "0bfa9a3de74f1a9142ff2260375233604612ed6bcbc7a066c002839f2c0c3cf7",
-      "bytes": 12396
+    "img/crown.svg": {
+      "sha256": "5723f6b62f88c6b71506476cb9ab77132b7ba8027d02ca0621c0b9d0b7adbad0",
+      "bytes": 807
     },
-    "html/02_temnaya_arena_rokot.html": {
-      "sha256": "fff861d0a17f0ef9177b8b4a20e55b048e1f8349cffeee650ef8dbd89ef1fbb3",
-      "bytes": 10485
+    "img/header-rokot.svg": {
+      "sha256": "0b65ff9ba8c140b80ee264d9c0495e359c20ee10c85e2199c559415cf9f7c328",
+      "bytes": 1603641
     },
-    "html/02_temnaya_arena_smash.html": {
-      "sha256": "d47d1e9bccec6440039b0054b37e0421a0b68283625a7e455ccfa2c3064a04a1",
-      "bytes": 10481
+    "img/header-smash.svg": {
+      "sha256": "71b64b19b035c761fa2fe61108d549c22cebf95ab696c06deaeb104c0d65a5e5",
+      "bytes": 1649305
     },
-    "html/02_temnaya_arena_start.html": {
-      "sha256": "6b7e33c5192241e69d2dc85b250db3689d42a2cb33380f6b9b06c9bfe22ef5e3",
-      "bytes": 10482
+    "img/header-start.svg": {
+      "sha256": "fb5e2e972242f0e8888ad5fa2ed114e4c274cdbf260e8a9eec790763ebd625c8",
+      "bytes": 1552604
     },
-    "html/03_podium_rokot.html": {
-      "sha256": "d2d5c304577c6d55d20ac7c5493a41ff7d9236dab79564a8db876060a44954de",
-      "bytes": 12378
+    "img/star-purple.svg": {
+      "sha256": "33d507cac6e88937078ea387c21343909fe49ded971751b5b8d888942c81cdc3",
+      "bytes": 996
     },
-    "html/03_podium_smash.html": {
-      "sha256": "4e63a9fd4ac6f8fc97e883adf46a98d77eee40903dcd4a2006efa6e5cfa7cfa0",
-      "bytes": 12374
+    "img/star.svg": {
+      "sha256": "820fada118699f672f16ba1212e3f7d7c01562ec1266b0fc48c8362124440e3d",
+      "bytes": 996
+    }
+  },
+  "fontSource": {
+    "repository": "Z6v6e6r/lk",
+    "commit": "e91ff32f",
+    "note": "Existing RF Dewi, Inter Display and Source Code Pro assets; no new font download.",
+    "subtitleSemibold": {
+      "repository": "Z6v6e6r/lk2",
+      "file": "apps/web/src/assets/recommendation-cards/InterDisplay-SemiBold.woff2",
+      "commit": "da9ede3eaf4db9c66a5a231614f450fb2e1053ff"
+    }
+  },
+  "referenceImages": {
+    "start": {
+      "sha256": "4fe995ab78ff49222e34b9c796e9451a5ee700a7277d54fad76d4c2f972bf796",
+      "extraction": "Header only; sample location/dates erased to transparency over exact Figma gradient. No sample player rows retained."
     },
-    "html/03_podium_start.html": {
-      "sha256": "653c3c4f03f4700156c627f281a120abe43902dac9f22a4f0f107055d2f4e2d7",
-      "bytes": 12375
+    "rokot": {
+      "sha256": "34330c379096c345eb3c78e90540b8aa61ec3f1e064a79d97bd8d2afbf52a414",
+      "extraction": "Header only; sample location/dates erased to transparency over exact Figma gradient. No sample player rows retained."
     },
-    "html/04_tablo_rokot.html": {
-      "sha256": "083c5a822b2df8fa2d057b95701771191e6737bb3bda30cfd6943ed13c14d55e",
-      "bytes": 10849
-    },
-    "html/04_tablo_smash.html": {
-      "sha256": "776b9432cfb11fec3d8f0935e24ef9341ebf2a9f3ff7cbc21235fa07099c29d4",
-      "bytes": 10845
-    },
-    "html/04_tablo_start.html": {
-      "sha256": "545770212228ccb564652a095cbe540fc6b8ca822d3aed18b233cf35cbf421f4",
-      "bytes": 10846
-    },
-    "html/05_oblozhka_rokot.html": {
-      "sha256": "ca35835425ab9795928f637ca0940d07e325600c74696e3ce2b73d603c03ee8b",
-      "bytes": 12016
-    },
-    "html/05_oblozhka_smash.html": {
-      "sha256": "535e631b30a73a07a10e4d8aa00457037c10e6b0480cf94b3bd7a2bf229ee684",
-      "bytes": 12012
-    },
-    "html/05_oblozhka_start.html": {
-      "sha256": "1f7b02473df37b49760ef29079d8e78d9269b5ad7a8a2a83d0a4f7ac4f3787dc",
-      "bytes": 12013
-    },
-    "img/logo_black.svg": {
-      "sha256": "33ae49d61f34097e00957d98b11192207195abbad88abaa2ada39005d4b3db49",
-      "bytes": 7228
-    },
-    "img/logo_mono_white.svg": {
-      "sha256": "edee1e7efb1f84a96fcdd7f30c9ea2daa2636f597892c1528d4a4876beabcea6",
-      "bytes": 7228
-    },
-    "img/logo_white.svg": {
-      "sha256": "f3ce71b0b0be0ec63ea2d3d33e0654ea6e16def1edba534caacdaaf3707ec741",
-      "bytes": 7228
+    "smash": {
+      "sha256": "8c15ea5947d037ac51e15cc070ca506d648f838f5c9794f50df391617f3e88ad",
+      "extraction": "Header only; sample location/dates erased to transparency over exact Figma gradient. No sample player rows retained."
     }
   }
 }
