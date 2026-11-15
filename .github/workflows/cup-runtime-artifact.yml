@@ -34,15 +34,15 @@ jobs:
         with:
           node-version: 22.13.1
           cache: npm
+      - run: npm ci --ignore-scripts
       - name: Verify runtime workflow identity regressions
         run: node --test test/cup-runtime-artifact-workflow.test.mjs
       - name: Verify offline recovery tree failures
         run: PYTHONDONTWRITEBYTECODE=1 python3 test/cup-recovery-tree.test.py -v
       - name: Verify exact recovery source and compiled closure boundaries
-        run: node --test test/cup-recovery-closure.test.mjs
+        run: node --test test/cup-recovery-closure.test.mjs test/support-media-recovery-closure.test.mjs
       - name: Verify admin notification scenario compatibility
         run: node --test test/cup-notification-scenarios.test.mjs
-      - run: npm ci --ignore-scripts
       - name: Start owned disposable Mongo for recovery proof
         run: |
           docker run --detach --name cup-runtime-rehearsal-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all

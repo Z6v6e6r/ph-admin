@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+export const HISTORICAL_CUSTODY_SOURCE = 'db68db3d808b7782595665a66f776f254914668e';
 
 export const CUSTODY_FILES = Object.freeze(['legacy-max-custody', 'max-outbox-policy', 'max-outbox-store',
   'support-persistence.service', 'support.service']);
+
+/** Historical83 has no media reader. Its exact five-module overlay stays pinned, never widened. */
+export function verifyHistoricalCustodySources(source, derived, changed) {
+  assert.deepEqual([...changed].sort(), CUSTODY_FILES.map(name => `src/support/${name}.ts`).sort(), 'Custody source closure expanded');
+  for (const name of changed) {
+    const expected = execFileSync('git', ['show', `${HISTORICAL_CUSTODY_SOURCE}:${name}`], { cwd: source });
+    assert.ok(fs.readFileSync(path.join(derived, name)).equals(expected), 'Historical custody source drift');
+  }
+}
 
 export function verifyCustodySources(source, derived, changed) {
   const expected = CUSTODY_FILES.map(name => `src/support/${name}.ts`).sort();

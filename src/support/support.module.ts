@@ -9,11 +9,16 @@ import { WebSupportConnectorAdapter } from './connectors/web-support.connector';
 import { SupportController } from './support.controller';
 import { SupportPersistenceService } from './support-persistence.service';
 import { SupportService } from './support.service';
+import { SupportMediaService } from './support-media.service';
+import { SupportMediaInterceptor } from './support-media.interceptor';
+import { SupportMediaController } from './support-media.controller';
 
 @Module({
   imports: [QuickRepliesModule],
-  controllers: [SupportController],
+  controllers: [SupportController, SupportMediaController],
   providers: [
+    { provide: SupportMediaService, useFactory: () => new SupportMediaService() },
+    SupportMediaInterceptor,
     SupportService,
     SupportPersistenceService,
     SupportConnectorRegistry,
@@ -23,6 +28,6 @@ import { SupportService } from './support.service';
     WebAcademySupportConnectorAdapter,
     WebPromoSupportConnectorAdapter
   ],
-  exports: [SupportService]
+  exports: [SupportService, SupportMediaService, SupportMediaInterceptor]
 })
 export class SupportModule {}

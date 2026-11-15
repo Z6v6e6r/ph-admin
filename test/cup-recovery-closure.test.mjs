@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { CUSTODY_FILES, verifyCustodySources, verifyCustodyCompilation } from '../scripts/lib/cup-max-recovery-closure.mjs';
+import { CUSTODY_FILES, verifyHistoricalCustodySources, verifyCustodyCompilation } from '../scripts/lib/cup-max-recovery-closure.mjs';
 
-test('actual baseline83 patch produces exactly the current five source modules; drift and sixth file refuse', () => {
+test('historical baseline83 overlay stays pinned to its reviewed five modules; media reader is a separate recovery', () => {
   const source = path.resolve(import.meta.dirname, '..');
   const derived = fs.mkdtempSync(path.join(os.tmpdir(), 'cup-closure-'));
   const baseline = '83b1c17bc4c5edaec65387b25b5695e48337c3cf';
@@ -22,11 +22,11 @@ test('actual baseline83 patch produces exactly the current five source modules; 
     git('add', 'src/support');
     git('apply', '--index', path.join(source, 'deploy/recovery/legacy-max-custody-83.patch'));
     const changed = CUSTODY_FILES.map(name => `src/support/${name}.ts`);
-    verifyCustodySources(source, derived, changed);
-    assert.throws(() => verifyCustodySources(source, derived, [...changed, 'src/foreign.ts']), /source closure/);
-    assert.throws(() => verifyCustodySources(source, derived, changed.slice(1)), /source closure/);
+    verifyHistoricalCustodySources(source, derived, changed);
+    assert.throws(() => verifyHistoricalCustodySources(source, derived, [...changed, 'src/foreign.ts']), /source closure/);
+    assert.throws(() => verifyHistoricalCustodySources(source, derived, changed.slice(1)), /source closure/);
     fs.appendFileSync(path.join(derived, changed[0]), '\n// synthetic detached change\n');
-    assert.throws(() => verifyCustodySources(source, derived, changed), /source drift/);
+    assert.throws(() => verifyHistoricalCustodySources(source, derived, changed), /source drift/);
   } finally { fs.rmSync(derived, { recursive: true, force: true }); }
 });
 

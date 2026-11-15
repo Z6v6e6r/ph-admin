@@ -15,8 +15,10 @@ import {
   Post,
   Query,
   ServiceUnavailableException,
-  UnauthorizedException
+  UnauthorizedException,
+  UseInterceptors
 } from '@nestjs/common';
+import { SupportMediaInterceptor } from './support-media.interceptor';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequestUser } from '../common/rbac/request-user.interface';
 import { Role } from '../common/rbac/role.enum';
@@ -38,6 +40,7 @@ import {
 } from './support.types';
 
 @Controller('support')
+@UseInterceptors(SupportMediaInterceptor)
 export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
@@ -65,9 +68,11 @@ export class SupportController {
   @Post('dialogs/events')
   async ingestEvent(
     @Headers('x-integration-token') token: string | undefined,
-    @Body() dto: IngestSupportEventDto
+    @Body() dto: IngestSupportEventDto,
+    @Headers('x-support-media-token') mediaToken?: string
   ): Promise<SupportIngestEventResult> {
     this.assertIntegrationToken(token);
+    if (dto.attachments?.length) this.supportService.authorizeMediaIngest(dto, mediaToken ?? token);
     return this.supportService.ingestEvent(dto);
   }
 

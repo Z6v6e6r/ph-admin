@@ -1,7 +1,7 @@
 name: MAX outbox receipts
 on:
   pull_request:
-    paths: ['src/support/**', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'scripts/lib/cup83-*.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/cup83-*.test.mjs', 'test/cup83-inventory-budget-child.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-web-history-custody.test.ts', 'test/support-dialog-list-readthrough*.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
+    paths: ['src/support/**', 'src/messenger/**', 'client-sdk/**', 'test/support-media.test.ts', 'test/support-photo-reply.test.ts', 'scripts/lib/cup-legacy-max-snapshot.mjs', 'scripts/lib/cup83-*.mjs', 'test/cup-legacy-max-snapshot.test.mjs', 'test/cup83-*.test.mjs', 'test/cup83-inventory-budget-child.mjs', 'test/*outbox*', 'test/legacy-max-restart-custody.test.ts', 'test/support-web-history-custody.test.ts', 'test/support-dialog-list-readthrough*.ts', 'test/support-cold-reply.test.ts', 'test/support-client-resolve.test.ts', 'test/support-contact-identity-isolation.test.ts', 'test/support-diagnostics.test.ts', 'package*.json', 'tsconfig*.json', '.github/workflows/max-outbox-receipts.yml']
   push:
     branches: ['codex/max-retry-receipts']
 permissions:
@@ -16,6 +16,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run test:support-photos
       - name: Start isolated Mongo with physical timeout failpoints
         run: |
           docker run --detach --name phab-max-receipts-mongo --publish 127.0.0.1:27017:27017 mongo:7.0 --bind_ip_all --setParameter enableTestCommands=1
