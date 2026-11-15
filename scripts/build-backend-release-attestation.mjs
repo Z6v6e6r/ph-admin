@@ -290,6 +290,28 @@ async function regularFiles(root) {
   return files;
 }
 
+// Start at literal @ signs instead of retrying an unanchored local-part match
+// at every byte of an embedded image/font. Preserve the original global
+// regex's prefix matches and non-overlapping consumption.
+export function findRuntimeEmails(text) {
+  const matches = [];
+  let offset = 0;
+  let consumedUntil = 0;
+  for (let at = text.indexOf('@', offset); at !== -1; at = text.indexOf('@', offset)) {
+    let start = at;
+    let end = at + 1;
+    while (start > consumedUntil && /[A-Za-z0-9._%+-]/.test(text[start - 1])) start--;
+    while (end < text.length && /[A-Za-z0-9.-]/.test(text[end])) end++;
+    const match = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(text.slice(start, end));
+    if (match) {
+      matches.push(match[0]);
+      consumedUntil = start + match[0].length;
+    }
+    offset = Math.max(at + 1, consumedUntil);
+  }
+  return matches;
+}
+
 export async function scanRuntimeArtifact(root) {
   const files = await regularFiles(root);
   let textFilesScanned = 0;
@@ -327,7 +349,7 @@ export async function scanRuntimeArtifact(root) {
     }
     const identifiers = firstPartyCode ? [
       ...(text.match(/\+7[0-9]{10}/g) ?? []),
-      ...(text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? [])
+      ...findRuntimeEmails(text)
     ] : [];
     if (identifiers.some((value) => !ALLOWED_SYNTHETIC_IDENTIFIERS.has(value))) {
       fail('BACKEND_RELEASE_PII_MATCH', `Unexpected PII-like content found in ${relative(root, path)}`);
