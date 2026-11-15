@@ -117,19 +117,21 @@ try {
   await call('Page.navigate',{url:base});
   await waitUntil(() => evaluate("!!document.querySelector('#open')"),'fixture loaded');
   await evaluate("document.querySelector('#open').focus();document.querySelector('#open').click()");
-  assert.equal(await evaluate('document.activeElement.name'),'template');
+  assert.equal(await evaluate('document.activeElement.name'),'division');
+  assert.equal(await evaluate("document.querySelector('[name=template],input[type=file]')"),null);
+  await evaluate("document.querySelector('[name=division]').value='start'");
   for (const period of ['month','week','all']) {
     await generate(period); await statusIncludes('Готово.');
     assert.equal(await evaluate('window.lastOptions.period'),period);
     assert.equal(await evaluate("document.querySelector('[data-download]').disabled"),false);
   }
   await evaluate("document.querySelector('[data-download]').click()");
-  const pngPath=join(dir,'community-results-all.png');
+  const pngPath=join(dir,'community-results-all-figma-start-p01.png');
   await waitUntil(() => existsSync(pngPath),'PNG download');
   const png=readFileSync(pngPath);
   assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
   assert.equal(png.readUInt32BE(16),1080);
-  assert.equal(png.readUInt32BE(20),1080);
+  assert.equal(png.readUInt32BE(20),1350);
   const date=new Date(now+3*3600000).toISOString().slice(0,10);
   await evaluate(`var form=document.querySelector('form');form.elements.period.value='custom';form.elements.period.dispatchEvent(new Event('change',{bubbles:true}));form.elements.from.value='${date}';form.elements.to.value='${date}';form.requestSubmit()`);
   await statusIncludes('Готово.');
@@ -142,15 +144,6 @@ try {
   await evaluate("document.querySelector('[name=places]').value='1';document.querySelector('[name=places]').dispatchEvent(new Event('input',{bubbles:true}))");
   await new Promise(resolve => setTimeout(resolve,400));
   assert.equal(await evaluate("document.querySelector('canvas').hidden"),true);
-  await generate('week'); await statusIncludes('Готово.');
-  await evaluate("document.querySelector('[name=template]').value='custom';document.querySelector('[name=template]').dispatchEvent(new Event('change',{bubbles:true}))");
-  const {root}=await call('DOM.getDocument');
-  const {nodeId}=await call('DOM.querySelector',{nodeId:root.nodeId,selector:'input[type=file]'});
-  const backgroundPath=join(dir,'background.png');
-  const backgroundData=await evaluate("(() => {var canvas=document.createElement('canvas');canvas.width=1080;canvas.height=1080;var ctx=canvas.getContext('2d');ctx.fillStyle='#246458';ctx.fillRect(0,0,1080,1080);return canvas.toDataURL('image/png').split(',')[1]})()");
-  writeFileSync(backgroundPath,Buffer.from(backgroundData,'base64'));
-  await call('DOM.setFileInputFiles',{nodeId,files:[backgroundPath]});
-  await statusIncludes('Фон загружен');
   await generate('week'); await statusIncludes('Готово.');
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   assert.equal(await evaluate("window.matchMedia('(max-width:480px)').matches"),true);
@@ -167,7 +160,7 @@ try {
   assert.equal(await evaluate('document.activeElement.id'),'open');
   await evaluate("document.querySelector('#open').click();window.controller.close()");
   assert.equal(await evaluate("document.querySelector('dialog')"),null);
-  await evaluate("document.querySelector('#open').click();var f=document.querySelector('form');f.elements.template.value='01_klassika';f.elements.template.dispatchEvent(new Event('change',{bubbles:true}))");
+  await evaluate("document.querySelector('#open').click();var f=document.querySelector('form')");
   assert.equal(await evaluate('f.elements.division.value'),'','do not silently label another community as the Start division');
   assert.equal(await evaluate('f.checkValidity()'),false);
   await evaluate("f.elements.division.value='start';f.elements.places.value=23;window.fixtureMode='many';f.requestSubmit()");
@@ -179,7 +172,7 @@ try {
   await evaluate("document.querySelector('[data-next-page]').click()");
   assert.equal(await evaluate("document.querySelector('[data-page-label]').textContent"),'Страница 2 из 3');
   await evaluate("document.querySelector('[data-download]').click()");
-  const templatePath=join(dir,'community-results-month-01_klassika-start-p02.png');
+  const templatePath=join(dir,'community-results-month-figma-start-p02.png');
   await waitUntil(()=>existsSync(templatePath),'template PNG download');
   const templatePng=readFileSync(templatePath);
   assert.equal(templatePng.readUInt32BE(16),1080);assert.equal(templatePng.readUInt32BE(20),1350);
@@ -193,7 +186,7 @@ try {
   await evaluate('window.controller.close()');
   assert.deepEqual(browserErrors,[]);
   assert.ok(requests.every(url=>url.startsWith(base)||url.startsWith('blob:')||url.startsWith('data:')),'fixture must never contact a live service');
-  console.log('Browser LOCAL: all periods, legacy PNG/upload, 1080x1350 template PNG download, 23-row pagination, stale/empty/error, mobile390, Escape/focus passed.');
+  console.log('Browser LOCAL: all periods, only the supplied Figma layout, 1080x1350 PNG download, 23-row pagination, stale/empty/error, mobile390, Escape/focus passed.');
   console.log('Screenshot: '+screenshotPath);
 } finally {
   if (socket) socket.close();

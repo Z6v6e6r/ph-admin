@@ -31,12 +31,12 @@ try{
  await call('Page.enable');await call('Runtime.enable');await call('Network.enable');await call('Page.navigate',{url:base});
  await until(()=>evaluate('!!window.PHABCommunityResultsTemplates'),'renderer');
  assert.equal(await evaluate('typeof window.PHABCommunityResultsTemplates.render'),'function','PNG rendering must be implemented');
- await evaluate(`(async()=>{window.assets=await(await fetch('/assets.json')).json();window.rows=Array.from({length:23},(_,i)=>({rank:i+1,name:i===0?'Тестовый Оченьдлинныйфамильный Игрок':'Тестовый игрок '+(i+1),score:123.456-i,statistics:{tournamentsPlayed:4,tournamentsWon:2}}));window.pages=PHABCommunityResultsTemplates.paginate(rows);window.baseInput={communityName:'ЛИГА Терехово «Время на друзей» D',periodLabel:'01.10.2026 — 16.10.2026',dataAsOf:'2026-10-16T10:00:00Z',page:0,pageCount:3};window.overview=document.createElement('canvas');overview.width=1800;overview.height=1350;})()`);
- const designs=['01_klassika','02_temnaya_arena','03_podium','04_tablo','05_oblozhka'];
+ await evaluate(`(async()=>{window.assets=await(await fetch('/assets.json')).json();window.rows=Array.from({length:23},(_,i)=>({rank:i+1,name:i===0?'Тестовый Оченьдлинныйфамильный Игрок':'Тестовый игрок '+(i+1),score:123.456-i,statistics:{tournamentsPlayed:4,tournamentsWon:2}}));window.pages=PHABCommunityResultsTemplates.paginate(rows);window.baseInput={communityName:'ЛИГА Терехово «Время на друзей» D',periodLabel:'01.10.2026 — 16.10.2026',dataAsOf:'2026-10-16T10:00:00Z',page:0,pageCount:3};window.overview=document.createElement('canvas');overview.width=1080;overview.height=1350;})()`);
+ const designs=['figma'];
  const divisions=['start','rokot','smash'];
  const records=[];
  for(const [index,design] of designs.entries())for(const division of divisions){
-  const output=await evaluate(`(async()=>{var input={...baseInput,design:${JSON.stringify(design)},division:${JSON.stringify(division)},rows:pages[0]};var prepared=PHABCommunityResultsTemplates.prepare(input,assets);var doc=new DOMParser().parseFromString(prepared.html,'text/html');var ranks=Array.from(doc.querySelectorAll('[data-export-rank]'),e=>Number(e.dataset.exportRank)).sort((a,b)=>a-b);var text=doc.body.textContent;var canvas=await PHABCommunityResultsTemplates.render(input,assets);overview.getContext('2d').drawImage(canvas,${index}*360,${divisions.indexOf(division)}*450,360,450);return {ranks,text,width:canvas.width,height:canvas.height,png:canvas.toDataURL('image/png').split(',')[1]};})()`);
+  const output=await evaluate(`(async()=>{var input={...baseInput,design:${JSON.stringify(design)},division:${JSON.stringify(division)},rows:pages[0]};var prepared=PHABCommunityResultsTemplates.prepare(input,assets);var doc=new DOMParser().parseFromString(prepared.html,'text/html');var ranks=Array.from(doc.querySelectorAll('[data-export-rank]'),e=>Number(e.dataset.exportRank)).sort((a,b)=>a-b);var text=doc.body.textContent;var canvas=await PHABCommunityResultsTemplates.render(input,assets);overview.getContext('2d').drawImage(canvas,${divisions.indexOf(division)}*360,0,360,450);return {ranks,text,width:canvas.width,height:canvas.height,png:canvas.toDataURL('image/png').split(',')[1]};})()`);
   assert.deepEqual(output.ranks,[1,2,3,4,5,6,7,8,9,10],design+' '+division);
   assert.doesNotMatch(output.text,/Константин|Александр|Венцеслав|\[N\]|\[ДД|\[ЛОКАЦИЯ\]|▲|▼|СЛЕДУЮЩИЙ ТУР/);
   assert.match(output.text,/Тестовый/);
@@ -46,21 +46,30 @@ try{
   const png=Buffer.from(output.png,'base64');assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
   const path=join(scratch,'vnd-'+design+'-'+division+'.png');writeFileSync(path,png);records.push({design,division,path,bytes:png.length});
  }
- const edge=await evaluate(`(()=>{var result=[];for(var size of [1,2,3,10,11,23,50]){var all=Array.from({length:size},(_,i)=>({...rows[0],rank:i+1,statistics:undefined}));var chunks=PHABCommunityResultsTemplates.paginate(all);for(var i=0;i<chunks.length;i++){var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'03_podium',division:'smash',rows:chunks[i],page:i,pageCount:chunks.length},assets);var d=new DOMParser().parseFromString(p.html,'text/html');var ranks=Array.from(d.querySelectorAll('[data-export-rank]'),e=>Number(e.dataset.exportRank)).sort((a,b)=>a-b);result.push({size,page:i,ranks,text:d.body.textContent});}}return result;})()`);
+ const edge=await evaluate(`(()=>{var result=[];for(var size of [1,2,3,10,11,23,50]){var all=Array.from({length:size},(_,i)=>({...rows[0],rank:i+1,statistics:undefined}));var chunks=PHABCommunityResultsTemplates.paginate(all);for(var i=0;i<chunks.length;i++){var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'figma',division:'smash',rows:chunks[i],page:i,pageCount:chunks.length},assets);var d=new DOMParser().parseFromString(p.html,'text/html');var ranks=Array.from(d.querySelectorAll('[data-export-rank]'),e=>Number(e.dataset.exportRank)).sort((a,b)=>a-b);result.push({size,page:i,ranks,text:d.body.textContent});}}return result;})()`);
  for(const record of edge){
   const start=record.page*10+1;
   const count=Math.min(10,record.size-start+1);
   assert.deepEqual(record.ranks,Array.from({length:count},(_,i)=>start+i));
   assert.doesNotMatch(record.text,/Константин|▲|▼|ТУРН|ПОБ|\[N\]|СЛЕДУЮЩИЙ ТУР/);
-  const heading=record.text.match(/(\d+[–-]\d+) МЕСТО/);
-  if(count>3)assert.equal(heading?.[1],(start+3)+'–'+(start+count-1),'lower podium heading must reflect this page, not static sample ranks');
-  else assert.equal(heading,null,'no lower-range heading when only podium cards exist');
+  assert.doesNotMatch(record.text,/@никнэйм/,'unavailable nicknames are never invented');
  }
+ const fit=await evaluate(`(()=>{
+   var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'figma',division:'start',communityName:'Очень длинное название сообщества '.repeat(12),rows:[{rank:1,name:'Игрок',score:1234567.123,statistics:{tournamentsPlayed:400,tournamentsWon:200}}]},assets);
+   var host=document.createElement('div'),shadow=host.attachShadow({mode:'open'});shadow.innerHTML='<style>'+p.fontsCss+'</style>'+p.html;document.body.appendChild(host);
+   try{var score=shadow.querySelector('[data-export-score]'),pill=shadow.querySelector('[data-score-pill]'),stat=shadow.querySelector('[data-stat="tournamentsWon"]'),period=shadow.querySelector('[data-period]'),subtitle=shadow.querySelector('[data-subtitle]');var sr=score.getBoundingClientRect(),pr=pill.getBoundingClientRect();return {text:score.textContent,inside:sr.left>=pr.left&&sr.right<=pr.right,noOverlap:pr.left>=stat.getBoundingClientRect().right,periodInside:period.getBoundingClientRect().right<=subtitle.getBoundingClientRect().right};}finally{host.remove();}
+ })()`);
+ assert.equal(fit.text,'1 234 567,123');assert.equal(fit.inside,true);assert.equal(fit.noOverlap,true);assert.equal(fit.periodInside,true);
+ assert.equal(await evaluate(`(()=>{try{PHABCommunityResultsTemplates.prepare({...baseInput,design:'figma',division:'start',rows:[{rank:1,name:'Игрок',score:1.23456789e200}]},assets);return false;}catch{return true;}})()`),true,'impossible-to-fit scores fail rather than silently clipping');
  assert.equal(await evaluate(`(()=>{try{PHABCommunityResultsTemplates.prepare({...baseInput,design:'../../private',division:'start',rows:pages[0]},assets);return false;}catch{return true;}})()`),true);
- const injected=await evaluate(`(()=>{var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'01_klassika',division:'start',rows:[{rank:1,name:'<img src=x onerror=alert(1)>',score:1}]},assets);var d=new DOMParser().parseFromString(p.html,'text/html');return {injected:d.querySelectorAll('img[src=x]').length,text:d.body.textContent};})()`);
+ const injected=await evaluate(`(()=>{var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'figma',division:'start',rows:[{rank:1,name:'<img src=x onerror=alert(1)>',score:1}]},assets);var d=new DOMParser().parseFromString(p.html,'text/html');return {injected:d.querySelectorAll('img[src=x]').length,text:d.body.textContent};})()`);
  assert.equal(injected.injected,0);assert.match(injected.text,/<img src=x/);
- const literal=await evaluate(`(()=>{var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'01_klassika',division:'start',rows:[{rank:1,name:'Обновлено [N] Лига ВНД',score:1}]},assets);return new DOMParser().parseFromString(p.html,'text/html').querySelector('[data-export-rank] > div:nth-child(2)').textContent;})()`);
+ const literal=await evaluate(`(()=>{var p=PHABCommunityResultsTemplates.prepare({...baseInput,design:'figma',division:'start',rows:[{rank:1,name:'Обновлено [N] Лига ВНД',score:1}]},assets);return new DOMParser().parseFromString(p.html,'text/html').querySelector('[data-name]').textContent;})()`);
  assert.equal(literal,'Обновлено [N] Лига ВНД','player text must not be interpreted as a template placeholder');
+ for(const division of divisions){
+  const png=await evaluate(`(async()=>{var sample=['Константин П.','Александр В.','Венцеслав А.','Мария К.','Василий М.','Дмитрий Ф.','Александр В.','Венцеслав А.','Мария К.','Василий М.'].map((name,i)=>({rank:i+1,name,score:[52,44,41,36,35,29,44,41,36,35][i],statistics:{tournamentsPlayed:[4,3,3,2,1,1,3,3,2,1][i],tournamentsWon:[0,1,1,2,3,3,1,1,2,3][i]}}));var c=await PHABCommunityResultsTemplates.render({...baseInput,communityName:'ПадлхАБ Терехово',periodLabel:'20/10 — 27/10',design:'figma',division:${JSON.stringify(division)},rows:sample},assets);overview.getContext('2d').drawImage(c,${divisions.indexOf(division)}*360,0,360,450);return c.toDataURL('image/png').split(',')[1];})()`);
+  writeFileSync(join(scratch,'preview-'+division+'.png'),Buffer.from(png,'base64'));
+ }
  writeFileSync(join(scratch,'vnd-templates-overview.png'),Buffer.from(await evaluate("overview.toDataURL('image/png').split(',')[1]"),'base64'));
  assert.deepEqual(errors,[]);
  assert.ok(requests.every(url=>url.startsWith(base)||url.startsWith('data:')||url.startsWith('blob:')),'no hosted design editor/CDN/provider access');

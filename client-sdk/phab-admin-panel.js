@@ -7839,7 +7839,7 @@
           if (!response.ok) throw new Error('Не удалось загрузить оформление шаблонов.');
           var assets = await response.json();
           var renderer = window.PHABCommunityResultsTemplates;
-          if (!renderer || typeof renderer.render !== 'function' || assets.version !== 'vnd-results-templates-v1') throw new Error('Версия шаблонов недоступна.');
+          if (!renderer || typeof renderer.render !== 'function' || assets.version !== 'vnd-results-figma-v2') throw new Error('Версия шаблонов недоступна.');
           return {renderer: renderer, assets: assets};
         } finally {clearTimeout(timer);}
       }).catch(function (error) {delete communityTemplateLoads[base]; throw error;});
@@ -8068,22 +8068,20 @@
       '.phab-community-results-export button:disabled{opacity:.5;cursor:default}' +
       '@media(max-width:480px){.phab-community-results-export{padding:16px}.phab-community-results-export .phab-results-fields{grid-template-columns:1fr}}' +
       '</style><header><h2>Выгрузить результаты</h2><button type="button" class="phab-admin-modal-close" aria-label="Закрыть выгрузку">×</button></header>' +
-      '<p data-community></p><form><label>Дизайн<select name="template"><option value="light">Светлый</option><option value="dark">Тёмный</option><option value="custom">Загрузить свой фон</option><option value="01_klassika">Классика · 1080×1350</option><option value="02_temnaya_arena">Тёмная арена · 1080×1350</option><option value="03_podium">Подиум · 1080×1350</option><option value="04_tablo">Табло · 1080×1350</option><option value="05_oblozhka">Обложка · 1080×1350</option></select></label>' +
-      '<label data-division hidden>Оформление дивизиона<select name="division"><option value="">Выберите дивизион</option><option value="start">Старт · D</option><option value="rokot">Рокот · D+/C</option><option value="smash">Смэш · C/C+</option></select><small>Подпись и цвет макета, не фильтр игроков. Выбирайте оформление своего сообщества.</small></label>' +
-      '<label data-upload hidden>Фон PNG, JPEG или WebP (до 10 МБ)<input name="background" type="file" accept="image/png,image/jpeg,image/webp"></label>' +
+      '<p data-community></p><form><p>Макет результатов Лиги «Время на друзей»</p>' +
+      '<label>Дивизион<select name="division" required><option value="">Выберите дивизион</option><option value="start">Старт · D</option><option value="rokot">Рокот · D+/C</option><option value="smash">Смэш · C/C+</option></select><small>Оформление своего сообщества; состав игроков не меняется.</small></label>' +
       '<div class="phab-results-fields"><label>Количество мест<input name="places" type="number" min="1" max="50" step="1" value="10" required></label>' +
       '<label>Период<select name="period"><option value="month">Текущий месяц</option><option value="week">Текущая неделя</option><option value="all">Всё время</option><option value="custom">Дата от — до</option></select></label></div>' +
       '<div class="phab-results-fields" data-dates hidden><label>Дата от<input name="from" type="date"></label><label>Дата до<input name="to" type="date"></label></div>' +
-      '<p>Календарные периоды — по Москве, неделя с понедельника. Обе даты диапазона включаются. Фон остаётся в браузере.</p>' +
+      '<p>Календарные периоды — по Москве, неделя с понедельника. Обе даты диапазона включаются.</p>' +
       '<p role="status" aria-live="polite" data-status>Выберите параметры и сформируйте изображение.</p>' +
       '<canvas hidden aria-label="Предпросмотр результатов"></canvas>' +
       '<nav data-pages hidden aria-label="Страницы выгрузки"><button type="button" data-prev-page aria-label="Предыдущая страница">←</button> <span data-page-label aria-live="polite"></span> <button type="button" data-next-page aria-label="Следующая страница">→</button></nav>' +
-      '<small>Брендированные макеты: до 10 мест на изображение. PNG скачивается для выбранной страницы. Победы — первые места в турнирах по каноническому рейтингу. Недоступные сведения о турах и перемещениях не показываются.</small>' +
+      '<small>Макет лиги: до 10 мест на изображение. PNG скачивается для выбранной страницы. Победы — первые места в турнирах по каноническому рейтингу. Недоступные сведения о турах и перемещениях не показываются.</small>' +
       '<footer><button class="phab-admin-btn" type="submit">Сформировать</button><button class="phab-admin-btn-secondary" type="button" data-download disabled>Скачать PNG</button></footer></form>';
     document.body.appendChild(dialog);
     dialog.querySelector('[data-community]').textContent = String(community.name || 'Сообщество');
     var form = dialog.querySelector('form');
-    var template = form.elements.template;
     var period = form.elements.period;
     var canvas = dialog.querySelector('canvas');
     var status = dialog.querySelector('[data-status]');
@@ -8091,13 +8089,9 @@
     var submit = form.querySelector('[type="submit"]');
     var revision = 0;
     var closed = false;
-    var background = null;
-    var pendingImage = null;
-    var objectUrl = null;
     var pageCanvases = [];
     var pageIndex = 0;
     var pagesNav = dialog.querySelector('[data-pages]');
-    function isPreset() {return /^(01_klassika|02_temnaya_arena|03_podium|04_tablo|05_oblozhka)$/.test(template.value);}
     function showPage() {
       var page = pageCanvases[pageIndex];
       if (!page) return;
@@ -8114,8 +8108,6 @@
       if (closed) return;
       closed = true;
       revision++;
-      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
-      if (pendingImage) pendingImage.src = '';
       pageCanvases = [];
       dialog.close();
       dialog.remove();
@@ -8130,49 +8122,12 @@
       pagesNav.hidden = true;
       submit.disabled = false;
       status.textContent = 'Параметры изменены. Сформируйте изображение.';
-      dialog.querySelector('[data-upload]').hidden = template.value !== 'custom';
-      dialog.querySelector('[data-division]').hidden = !isPreset();
-      form.elements.division.required = isPreset();
       dialog.querySelector('[data-dates]').hidden = period.value !== 'custom';
       form.elements.from.required = period.value === 'custom';
       form.elements.to.required = period.value === 'custom';
     }
     form.addEventListener('input', invalidate);
     form.addEventListener('change', invalidate);
-    form.elements.background.addEventListener('change', function () {
-      background = null;
-      if (pendingImage) pendingImage.src = '';
-      if (objectUrl) window.URL.revokeObjectURL(objectUrl);
-      objectUrl = null;
-      var file = form.elements.background.files[0];
-      if (!file) return;
-      if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 10 * 1024 * 1024) {
-        status.textContent = 'Выберите PNG, JPEG или WebP размером до 10 МБ.';
-        return;
-      }
-      var image = new Image();
-      pendingImage = image;
-      objectUrl = window.URL.createObjectURL(file);
-      image.onload = function () {
-        if (closed || pendingImage !== image) return;
-        if (image.naturalWidth * image.naturalHeight > 16000000) {
-          status.textContent = 'Фон слишком большой: максимум 16 мегапикселей.';
-          return;
-        }
-        background = image;
-        status.textContent = 'Фон загружен. Сформируйте изображение.';
-      };
-      image.onerror = function () {
-        if (!closed && pendingImage === image) status.textContent = 'Не удалось прочитать изображение фона.';
-      };
-      image.src = objectUrl;
-    });
-    function fitText(ctx, text, x, y, maxWidth, size) {
-      text = String(text);
-      ctx.font = '700 ' + size + 'px sans-serif';
-      while (ctx.measureText(text).width > maxWidth && text.length > 1) text = text.slice(0, -2) + '…';
-      ctx.fillText(text, x, y);
-    }
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
       var current = ++revision;
@@ -8182,19 +8137,17 @@
       pageCanvases = [];
       try {
         var options = communityResultsExportOptions(period.value, form.elements.from.value, form.elements.to.value, form.elements.places.value);
-        var preset = isPreset();
-        var chosenTemplate = template.value;
+        var chosenTemplate = 'figma';
         var division = form.elements.division.value;
-        if (preset && ['start', 'rokot', 'smash'].indexOf(division) < 0) throw new Error('Выберите оформление дивизиона.');
-        if (preset) options.details = 'templates-v1';
-        if (template.value === 'custom' && !background) throw new Error('Сначала загрузите фон.');
+        if (['start', 'rokot', 'smash'].indexOf(division) < 0) throw new Error('Выберите оформление дивизиона.');
+        options.details = 'templates-v1';
         submit.disabled = true;
         status.textContent = 'Загружаем результаты…';
         var payload = await loadRanking(options);
         if (closed || current !== revision) return;
         var rows = communityResultsExportRows(payload, community.id, options);
         if (!rows.length) throw new Error('За выбранный период результатов нет.');
-        if (preset) {
+        {
           if (!loadTemplates) throw new Error('Шаблоны не подключены.');
           status.textContent = 'Отрисовываем шаблон…';
           var library = await loadTemplates();
@@ -8219,54 +8172,9 @@
           pagesNav.hidden = chunks.length < 2;
           canvas.hidden = false;
           download.disabled = false;
-          status.textContent = 'Готово. Показано мест: ' + rows.length + '. Страниц PNG: ' + chunks.length + '.';
+          status.textContent = 'Готово. Показано мест: ' + rows.length + '. Страниц PNG: ' + chunks.length + '. Данные на ' + new Date(payload.dataAsOf).toLocaleString('ru-RU', {timeZone: 'Europe/Moscow'}) + ' (Москва).';
           return;
         }
-        canvas.width = 1080;
-        canvas.height = Math.max(1080, 430 + rows.length * 84);
-        var ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Браузер не поддерживает создание изображения.');
-        var dark = template.value === 'dark' || template.value === 'custom';
-        ctx.fillStyle = dark ? '#250019' : '#fff5fa';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        if (template.value === 'custom') {
-          var scale = Math.max(canvas.width / background.naturalWidth, canvas.height / background.naturalHeight);
-          var width = background.naturalWidth * scale;
-          var height = background.naturalHeight * scale;
-          ctx.drawImage(background, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-          ctx.fillStyle = '#16000fc9';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        ctx.fillStyle = dark ? '#83e5cb' : '#007f6a';
-        fitText(ctx, 'ПАДЛХАБ · РЕЗУЛЬТАТЫ', 64, 90, 950, 26);
-        ctx.fillStyle = dark ? '#ffffff' : '#330020';
-        fitText(ctx, community.name || 'Сообщество', 64, 160, 950, 42);
-        var labels = { month: 'Текущий месяц', week: 'Текущая неделя', all: 'Всё время' };
-        var periodLabel = options.period === 'custom' ? options.from + ' — ' + options.to : labels[options.period];
-        fitText(ctx, periodLabel + ' · Москва', 64, 215, 950, 26);
-        ctx.font = '22px sans-serif';
-        ctx.fillText('МЕСТО', 64, 288);
-        ctx.fillText('ИГРОК', 186, 288);
-        ctx.textAlign = 'right';
-        ctx.fillText('ОЧКИ', 1016, 288);
-        ctx.textAlign = 'left';
-        rows.forEach(function (row, index) {
-          var y = 310 + index * 84;
-          ctx.fillStyle = dark ? '#ffffff18' : '#3300200b';
-          ctx.fillRect(48, y, 984, 72);
-          ctx.fillStyle = dark ? '#ffffff' : '#330020';
-          fitText(ctx, row.rank, 72, y + 47, 94, 30);
-          fitText(ctx, row.name, 186, y + 47, 620, 30);
-          ctx.textAlign = 'right';
-          fitText(ctx, row.score.toLocaleString('ru-RU'), 1008, y + 47, 170, 30);
-          ctx.textAlign = 'left';
-        });
-        ctx.fillStyle = dark ? '#ffffffaa' : '#33002099';
-        var dataAsOf = new Date(payload.dataAsOf).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-        fitText(ctx, 'Данные на ' + dataAsOf + ' · Москва', 64, canvas.height - 38, 950, 20);
-        canvas.hidden = false;
-        download.disabled = false;
-        status.textContent = 'Готово. Показано мест: ' + rows.length + '. Данные на ' + dataAsOf + ' (Москва).';
       } catch (error) {
         if (!closed && current === revision) status.textContent = error.message || 'Не удалось сформировать результаты.';
       } finally {
@@ -8275,7 +8183,7 @@
     });
     download.addEventListener('click', function () {
       var current = revision;
-      var fileName = 'community-results-' + period.value + (isPreset() ? '-' + template.value + '-' + form.elements.division.value + '-p' + String(pageIndex + 1).padStart(2, '0') : '') + '.png';
+      var fileName = 'community-results-' + period.value + '-figma-' + form.elements.division.value + '-p' + String(pageIndex + 1).padStart(2, '0') + '.png';
       canvas.toBlob(function (blob) {
         if (closed || current !== revision) return;
         if (!blob) { status.textContent = 'Не удалось создать PNG. Повторите попытку.'; return; }
@@ -8298,7 +8206,7 @@
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
     });
     dialog.showModal();
-    template.focus();
+    form.elements.division.focus();
     return { close: close };
   }
 
