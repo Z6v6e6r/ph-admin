@@ -121,6 +121,9 @@ sharp/libvips допускаются только при совпадении ex
 reviewed SHA-256; отсутствие или изменение файла блокирует artifact. После production
 install выполняется локальный 2px JPEG encode probe. Type declarations dependencies
 в runtime не копируются; сканирование всех включённых файлов остаётся обязательным.
+Optional WASM fallback, который дополнительно устанавливает npm11.1, исключён из
+Linux x64 runtime; encode probe выполняется уже на окончательном filtered stage,
+чтобы WASM не мог скрыть неисправность native binding. Допуска остальных binary нет.
 
 Зависимости AWS SDK, smithy handler и sharp совпадают с текущими версиями media
 инфраструктуры LK2. `npm audit` при добавлении показал 13 уже существующих baseline

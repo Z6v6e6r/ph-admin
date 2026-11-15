@@ -23,6 +23,10 @@ test('dependency declarations are omitted from runtime; executable JS remains sc
   assert.equal(shouldExcludeRuntimePath('node_modules/@aws-sdk/client-s3/dist-types/index.d.ts'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/sharp/dist/index.d.cts'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/sharp/dist/index.cjs'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-wasm32'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-wasm32/lib/sharp.node.wasm'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.5.node'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/unexpected/other.node'), false);
 });
 test('native media allowlist rejects forged bytes even under the exact reviewed path and package binding', async () => {
   const root = await mkdtemp(join(tmpdir(), 'backend-media-native-negative-'));

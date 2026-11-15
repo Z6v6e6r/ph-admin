@@ -228,6 +228,9 @@ async function assertPrivateOutput(output, sourceRoot) {
 export function shouldExcludeRuntimePath(runtimePath) {
   const segments = String(runtimePath).split('/');
   const filename = segments.at(-1) ?? '';
+  // This release targets native Linux x64. npm11.1 also installs the optional browser/WASM
+  // fallback; it is not part of this runtime. Native-load proof runs on the filtered stage.
+  if (segments[0] === 'node_modules' && segments[1] === '@img' && segments[2] === 'sharp-wasm32') return true;
   if (segments.includes('.cache')
     || ['.jekyll-metadata', '.DS_Store', 'npm-debug.log', 'yarn-error.log'].includes(filename)) {
     return true;
@@ -553,11 +556,6 @@ export async function buildBackendReleaseAttestation({
       || lockSha256 !== sha256(await readFile(join(snapshot, 'package-lock.json')))) {
       fail('BACKEND_RELEASE_PACKAGE_DRIFT', 'Build changed package metadata');
     }
-    if (JSON.parse(lockBody).packages?.['node_modules/sharp']?.version === '0.35.5') {
-      // Exercise the production-only dependency tree after reinstall, without starting CUP,
-      // opening a database or contacting S3/MAX. A hash match alone is not a native-load proof.
-      command('node', ['-e', "const sharp=require('sharp'); sharp({create:{width:2,height:2,channels:3,background:'#123abc'}}).jpeg().toBuffer().then(b=>{if(b[0]!==255||b[1]!==216)process.exit(1)}).catch(()=>process.exit(1))"], snapshot);
-    }
     for (const required of ['dist/main.js', 'client-sdk', 'node_modules', 'package.json', 'package-lock.json']) {
       if (!await lstat(join(snapshot, required)).catch(() => null)) {
         fail('BACKEND_RELEASE_RUNTIME_FILE_MISSING', `Required runtime file is absent: ${required}`);
@@ -575,6 +573,11 @@ export async function buildBackendReleaseAttestation({
       Buffer.from(left.path, 'utf8'), Buffer.from(right.path, 'utf8')
     ));
     const artifactScan = await scanRuntimeArtifact(releaseRoot);
+    if (JSON.parse(lockBody).packages?.['node_modules/sharp']?.version === '0.35.5') {
+      // Test the actual filtered production stage, after byte verification. No WASM fallback
+      // can mask a broken native binding; no CUP startup, database or provider call occurs.
+      command('node', ['-e', "const sharp=require('sharp'); sharp({create:{width:2,height:2,channels:3,background:'#123abc'}}).jpeg().toBuffer().then(b=>{if(b[0]!==255||b[1]!==216)process.exit(1)}).catch(()=>process.exit(1))"], releaseRoot);
+    }
     const nodeVersion = command('node', ['--version'], snapshot);
     const npmVersion = command('npm', ['--version'], snapshot);
     if (nodeVersion !== target.nodeVersion || npmVersion !== target.npmVersion) {
