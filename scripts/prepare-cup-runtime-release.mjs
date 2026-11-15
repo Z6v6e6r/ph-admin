@@ -6,7 +6,7 @@ import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { verifyHistoricalCustodySources, verifyCustodyCompilation } from './lib/cup-max-recovery-closure.mjs';
-import { verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations } from './lib/cup-media-recovery-closure.mjs';
+import { verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash } from './lib/cup-media-recovery-closure.mjs';
 
 assert.equal(process.platform, 'linux', 'Release builds require Linux');
 assert.equal(process.arch, 'x64', 'Release builds require x64');
@@ -162,7 +162,8 @@ try {
     'dist', 'client-sdk', 'node_modules', 'package.json', 'package-lock.json']);
 } finally { run('git', ['worktree', 'remove', '--force', mediaRoot]); }
 run('npm', ['run', 'build']);
-for (const row of mediaDelta) assert.equal(hash(fs.readFileSync(path.join(source, 'dist', row.path))), row.sha256, 'Candidate/media recovery compiled closure mismatch');
+for (const row of mediaDelta) verifyMediaRecoveryCandidateHash(row.path,
+  hash(fs.readFileSync(path.join(source, 'dist', row.path))), row.sha256);
 const runtime = path.join(scratch, 'runtime'); fs.mkdirSync(runtime);
 for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(source, name), path.join(runtime, name));
 run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], runtime);
