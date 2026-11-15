@@ -112,6 +112,13 @@ MAX receipts/durable/restart/custody tests на owned isolated Mongo, `npm run b
 CI строит candidate/recovery на Linux Node22 и проверяет source/compiled parity,
 compiled media-reader restart и MAX custody. Не требуется реальный provider call.
 
+Общий deterministic backend packager повторно устанавливает production dependencies
+через `npm ci` без scripts, сохраняя package/lock bytes. Два Linux x64 native файла
+sharp/libvips допускаются только при совпадении exact path, version, locked SRI и
+reviewed SHA-256; отсутствие или изменение файла блокирует artifact. После production
+install выполняется локальный 2px JPEG encode probe. Type declarations dependencies
+в runtime не копируются; сканирование всех включённых файлов остаётся обязательным.
+
 Зависимости AWS SDK, smithy handler и sharp совпадают с текущими версиями media
 инфраструктуры LK2. `npm audit` при добавлении показал 13 уже существующих baseline
 advisories; версии этих пакетов не изменились. Автоматический dependency upgrade не выполнялся.

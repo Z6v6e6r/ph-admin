@@ -64,6 +64,20 @@ const ALLOWED_RUNTIME_BINARY_PATHS = new Set([
   'dist/client-sdk/branding/favicon-512.png',
   'dist/client-sdk/branding/tournament-sleeve.png'
 ]);
+// Exact Linux x64 prebuilt bytes from the locked npm tarballs (SRI verified independently).
+// New versions/platforms require an explicit review; no node_modules-wide binary exemption.
+export const SUPPORT_MEDIA_NATIVE_BINARIES = Object.freeze({
+  'node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.5.node': {
+    packagePath: 'node_modules/@img/sharp-linux-x64', version: '0.35.5',
+    integrity: 'sha512-SxFtLTeJInhAA9Q836kux2vZNeOBQEx658qvbboZScr0wIARym3IcGmW7KpVD5sbVg0Ojy+udFQdayYIZyoNog==',
+    sha256: 'cf896cc1b7f3ae9c3e8eb3d7b2b198b8de2824ff7d0681d684bab5a825def335'
+  },
+  'node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.7': {
+    packagePath: 'node_modules/@img/sharp-libvips-linux-x64', version: '1.3.4',
+    integrity: 'sha512-GJ//SSXbnwSDes02umB3nDJLFcQzw8a18V8fyhqr6tV515tOEMdImjjxj1AoafMRz56F3PHgftnj1QEKSU1zkw==',
+    sha256: '4aa73553408c3964071728f4a231a8e86918e39bc49f1fbae75355f7ea933ea9'
+  }
+});
 
 export class BackendReleaseAttestationError extends Error {
   constructor(code, message) {
@@ -221,7 +235,8 @@ export function shouldExcludeRuntimePath(runtimePath) {
   const packageRootLength = segments[1]?.startsWith('@') ? 3 : 2;
   const dependencyPath = segments.slice(packageRootLength);
   if (segments[0] === 'node_modules'
-    && (dependencyPath.some((segment) => /^(?:test|tests|__tests__|fixtures?)$/i.test(segment))
+    && (/\.d\.(?:ts|cts|mts)(?:\.map)?$/i.test(filename)
+      || dependencyPath.some((segment) => /^(?:test|tests|__tests__|fixtures?)$/i.test(segment))
       || /(?:^|[-_.])(?:test|tests|spec|spect)(?:[-_.][A-Za-z0-9_-]+)*(?:\.[A-Za-z0-9_-]+)+$/i.test(filename))) {
     return true;
   }
@@ -292,13 +307,23 @@ async function regularFiles(root) {
 
 export async function scanRuntimeArtifact(root) {
   const files = await regularFiles(root);
+  const lock = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8').catch(() => '{}'));
   let textFilesScanned = 0;
   let binaryFilesSkipped = 0;
+  const nativeMediaBinariesVerified = [];
   for (const path of files) {
     const body = await readFile(path);
     const runtimePath = relative(root, path).split(sep).join('/');
     if (isSensitiveRuntimePath(runtimePath)) {
       fail('BACKEND_RELEASE_SENSITIVE_PATH', `Sensitive runtime path is forbidden: ${runtimePath}`);
+    }
+    const native = SUPPORT_MEDIA_NATIVE_BINARIES[runtimePath];
+    if (native) {
+      const dependency = lock.packages?.[native.packagePath];
+      if (dependency?.version !== native.version || dependency?.integrity !== native.integrity || sha256(body) !== native.sha256) {
+        fail('BACKEND_RELEASE_MEDIA_NATIVE_MISMATCH', `Locked native media dependency differs: ${runtimePath}`);
+      }
+      nativeMediaBinariesVerified.push(runtimePath); binaryFilesSkipped += 1; continue;
     }
     if (body.includes(0)) {
       if (!ALLOWED_RUNTIME_BINARY_PATHS.has(runtimePath)) {
@@ -332,6 +357,10 @@ export async function scanRuntimeArtifact(root) {
     if (identifiers.some((value) => !ALLOWED_SYNTHETIC_IDENTIFIERS.has(value))) {
       fail('BACKEND_RELEASE_PII_MATCH', `Unexpected PII-like content found in ${relative(root, path)}`);
     }
+  }
+  if (lock.packages?.['node_modules/sharp']?.version === '0.35.5'
+    && nativeMediaBinariesVerified.length !== Object.keys(SUPPORT_MEDIA_NATIVE_BINARIES).length) {
+    fail('BACKEND_RELEASE_MEDIA_NATIVE_MISSING', 'Required Linux media runtime dependencies are missing');
   }
   return {
     regularFiles: files.length,
@@ -517,10 +546,17 @@ export async function buildBackendReleaseAttestation({
     const lockSha256 = sha256(lockBody);
     command('npm', ['ci', '--include=optional', '--no-audit', '--no-fund'], snapshot);
     command('npm', ['run', 'build'], snapshot);
-    command('npm', ['prune', '--omit=dev', '--no-audit', '--no-fund'], snapshot);
+    // prune can rewrite cross-platform optional dependency metadata. Reinstall the locked
+    // production closure without scripts; the trusted lockfile remains byte-for-byte intact.
+    command('npm', ['ci', '--omit=dev', '--include=optional', '--ignore-scripts', '--no-audit', '--no-fund'], snapshot);
     if (packageBefore !== sha256(await readFile(join(snapshot, 'package.json')))
       || lockSha256 !== sha256(await readFile(join(snapshot, 'package-lock.json')))) {
       fail('BACKEND_RELEASE_PACKAGE_DRIFT', 'Build changed package metadata');
+    }
+    if (JSON.parse(lockBody).packages?.['node_modules/sharp']?.version === '0.35.5') {
+      // Exercise the production-only dependency tree after reinstall, without starting CUP,
+      // opening a database or contacting S3/MAX. A hash match alone is not a native-load proof.
+      command('node', ['-e', "const sharp=require('sharp'); sharp({create:{width:2,height:2,channels:3,background:'#123abc'}}).jpeg().toBuffer().then(b=>{if(b[0]!==255||b[1]!==216)process.exit(1)}).catch(()=>process.exit(1))"], snapshot);
     }
     for (const required of ['dist/main.js', 'client-sdk', 'node_modules', 'package.json', 'package-lock.json']) {
       if (!await lstat(join(snapshot, required)).catch(() => null)) {
