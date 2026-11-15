@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CUSTODY_FILES } from './cup-max-recovery-closure.mjs';
 import ts from 'typescript';
+import { createHash } from 'node:crypto';
 
 export const MEDIA_RECOVERY_TS = Object.freeze([
   ...CUSTODY_FILES.map(n => `src/support/${n}.ts`),
@@ -18,6 +19,21 @@ export const MEDIA_RECOVERY_SOURCES = Object.freeze([
 ]);
 const modules = MEDIA_RECOVERY_SOURCES.filter(p => p.startsWith('src/')).map(p => p.slice(4, -3));
 const sdk = ['phab-admin-panel.js', 'client-sdk/phab-admin-panel.js'];
+// The media recovery deliberately retains its reviewed historical SDK. Main also
+// contains the independently released FPR artwork UI; neither arbitrary SDK drift
+// nor server-module differences qualify for this exact compatibility pair.
+export const MEDIA_RECOVERY_SDK_SHA256 = 'e67b6151067caffe5ee111c444ebe01d01e20274b681ee6b6ee566ff3f6609bb';
+export const MEDIA_FPR_CANDIDATE_SDK_SHA256 = '3eec0814027643f0c26e15ad68d2f0e9d530eb5688b37ce2b39562eecbed9a65';
+const digest = body => createHash('sha256').update(body).digest('hex');
+
+export function verifyMediaRecoveryCandidateHash(name, candidateSha256, recoverySha256) {
+  if (sdk.includes(name)) {
+    assert.equal(recoverySha256, MEDIA_RECOVERY_SDK_SHA256, 'Media recovery SDK drift');
+    assert.ok([MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256].includes(candidateSha256), 'Unreviewed candidate SDK drift');
+    return;
+  }
+  assert.equal(candidateSha256, recoverySha256, 'Candidate/media recovery compiled closure mismatch');
+}
 
 function canonicalDeclaration(body) {
   const file = ts.createSourceFile('declaration.d.ts', body, ts.ScriptTarget.Latest, true);
@@ -52,7 +68,11 @@ export function restoreEquivalentRecoveryDeclarations(before, derivedDist) {
 
 export function verifyMediaRecoverySources(source, derived, changed) {
   assert.deepEqual([...changed].sort(), [...MEDIA_RECOVERY_SOURCES].sort(), 'Media recovery source closure expanded or incomplete');
-  for (const name of changed) assert.ok(fs.readFileSync(path.join(source, name)).equals(fs.readFileSync(path.join(derived, name))), 'Media recovery source drift');
+  for (const name of changed) {
+    const candidate = fs.readFileSync(path.join(source, name)), recovery = fs.readFileSync(path.join(derived, name));
+    if (name === 'client-sdk/phab-admin-panel.js') verifyMediaRecoveryCandidateHash(name, digest(candidate), digest(recovery));
+    else assert.ok(candidate.equals(recovery), 'Media recovery source drift');
+  }
 }
 export function verifyMediaRecoveryCompilation(beforeRows, after) {
   const before = new Map(beforeRows.map(r => [r.path, r]));

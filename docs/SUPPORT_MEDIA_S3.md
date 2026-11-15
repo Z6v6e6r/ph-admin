@@ -93,6 +93,12 @@ POST остаётся accepted при отказе display grant; raw refs в re
 обязаны совпадать. Изменение порядка inferred type unions допускается только после
 AST equivalence; unrelated declaration bytes затем восстанавливаются из baseline.
 
+SDK recovery сохраняет проверенную версию фото из `40e13d9`, вместе с историческим
+интерфейсом результатов ФПР. Candidate содержит отдельно выпущенный Figma-интерфейс.
+Эта единственная пара SDK закреплена двумя SHA-256; произвольный SDK, изменение
+recovery SDK или расхождение серверных executable файлов блокируют сборку.
+Возврат на исторический интерфейс ФПР при recovery — явное ограничение отката.
+
 Исторический пятифайловый MAX overlay остаётся pinned к reviewed source `db68…` и
 помечен `supportMediaReader:false`. После первого нового фото он и старый3cc не являются
 совместимым rollback target. Не применять новый full runtime старым delta-only installer.

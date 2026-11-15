@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations } from '../scripts/lib/cup-media-recovery-closure.mjs';
-test('actual zero-context recovery patch derives exactly the current19 reviewed source files from pinned83', t => {
+import { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations, verifyMediaRecoveryCandidateHash, MEDIA_RECOVERY_SDK_SHA256, MEDIA_FPR_CANDIDATE_SDK_SHA256 } from '../scripts/lib/cup-media-recovery-closure.mjs';
+test('actual recovery patch derives exactly19 reviewed sources with the pinned historical photo SDK', t => {
   const root = path.resolve(import.meta.dirname, '..'), derived = fs.mkdtempSync(path.join(os.tmpdir(), 'media-recovery-source-'));
   t.after(() => fs.rmSync(derived, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: derived, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -21,6 +21,16 @@ test('actual zero-context recovery patch derives exactly the current19 reviewed 
   git('apply', '--index', '--unidiff-zero', path.join(root, 'deploy/recovery/support-media-custody-83.patch'));
   verifyMediaRecoverySources(root, derived, MEDIA_RECOVERY_SOURCES);
   assert.throws(() => verifyMediaRecoverySources(root, derived, [...MEDIA_RECOVERY_SOURCES, 'src/foreign.ts']), /closure/);
+});
+test('SDK compatibility permits only the exact reviewed FPR pair; backend parity remains exact', () => {
+  for (const name of ['phab-admin-panel.js', 'client-sdk/phab-admin-panel.js']) {
+    verifyMediaRecoveryCandidateHash(name, MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
+    verifyMediaRecoveryCandidateHash(name, MEDIA_RECOVERY_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256);
+    assert.throws(() => verifyMediaRecoveryCandidateHash(name, '0'.repeat(64), MEDIA_RECOVERY_SDK_SHA256), /candidate SDK drift/);
+    assert.throws(() => verifyMediaRecoveryCandidateHash(name, MEDIA_FPR_CANDIDATE_SDK_SHA256, '0'.repeat(64)), /recovery SDK drift/);
+  }
+  assert.throws(() => verifyMediaRecoveryCandidateHash('support/support.service.js', MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256), /compiled closure mismatch/);
+  assert.throws(() => verifyMediaRecoveryCandidateHash('unrelated.js', MEDIA_FPR_CANDIDATE_SDK_SHA256, MEDIA_RECOVERY_SDK_SHA256), /compiled closure mismatch/);
 });
 test('media-aware recovery requires the explicit reader, custody and SDK closure and forbids unrelated changes', () => {
   const row = (path, sha256) => ({ path, bytes: 1, sha256 });
