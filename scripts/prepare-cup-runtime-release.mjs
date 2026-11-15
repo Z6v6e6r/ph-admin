@@ -5,7 +5,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { verifyCustodySources, verifyCustodyCompilation } from './lib/cup-max-recovery-closure.mjs';
+import { verifyHistoricalCustodySources, verifyCustodyCompilation } from './lib/cup-max-recovery-closure.mjs';
+import { verifyMediaRecoverySources, verifyMediaRecoveryCompilation, restoreEquivalentRecoveryDeclarations } from './lib/cup-media-recovery-closure.mjs';
 
 assert.equal(process.platform, 'linux', 'Release builds require Linux');
 assert.equal(process.arch, 'x64', 'Release builds require x64');
@@ -98,7 +99,7 @@ try {
   run('git', ['apply', '--index', custodyPatch], custodyRoot);
   const changed = execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: custodyRoot, encoding: 'utf8' }).trim().split('\n').sort();
   // A future source change must explicitly review/regenerate this exact recovery closure.
-  verifyCustodySources(source, custodyRoot, changed);
+  verifyHistoricalCustodySources(source, custodyRoot, changed);
   const derivedSourceTree = execFileSync('git', ['write-tree'], { cwd: custodyRoot, encoding: 'utf8' }).trim();
   run('npm', ['run', 'build'], custodyRoot);
   const after = inventory(path.join(custodyRoot, 'dist'));
@@ -115,6 +116,7 @@ try {
     baselineCommit: custodyBaseline, derivedSourceTree, patchSha256: hash(fs.readFileSync(custodyPatch)),
     nodeVersion: process.version, maxOutboxMode: 'legacy', persistenceSyncIntervalMs: 0,
     automaticHydrationAllowed: false, firstRestartCustodyProven: false,
+    supportMediaReader: false,
     delta: custodyDelta.map(row => ({ ...row, path: 'dist/' + row.path,
       expectedPreviousSha256: before.get(row.path)?.sha256 ?? null }))
   }, null, 2) + '\n');
@@ -122,8 +124,45 @@ try {
 } finally {
   run('git', ['worktree', 'remove', '--force', custodyRoot]);
 }
+// A separate full83-derived runtime carries the media reader AND its locked native/storage
+// dependencies. The five-module historical overlay cannot restore photos after activation.
+const mediaRoot = path.join(scratch, 'media-recovery');
+const mediaPatch = path.join(source, 'deploy/recovery/support-media-custody-83.patch');
+let mediaDelta;
+run('git', ['worktree', 'add', '--detach', mediaRoot, custodyBaseline]);
+try {
+  run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], mediaRoot);
+  run('npm', ['run', 'build'], mediaRoot);
+  const before = inventory(path.join(mediaRoot, 'dist'));
+  const declarations = new Map(before.filter(r => r.path.endsWith('.d.ts'))
+    .map(r => [r.path, fs.readFileSync(path.join(mediaRoot, 'dist', r.path))]));
+  run('git', ['apply', '--index', '--unidiff-zero', mediaPatch], mediaRoot);
+  const changed = execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: mediaRoot, encoding: 'utf8' }).trim().split('\n');
+  verifyMediaRecoverySources(source, mediaRoot, changed);
+  const derivedSourceTree = execFileSync('git', ['write-tree'], { cwd: mediaRoot, encoding: 'utf8' }).trim();
+  run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], mediaRoot);
+  run('npm', ['run', 'build'], mediaRoot);
+  const preservedDeclarationPaths = restoreEquivalentRecoveryDeclarations(declarations, path.join(mediaRoot, 'dist'));
+  mediaDelta = verifyMediaRecoveryCompilation(before, inventory(path.join(mediaRoot, 'dist')));
+  run(process.execPath, [path.join(source, 'test/support-media-recovery.test.mjs')], source, { SUPPORT_MEDIA_RECOVERY_ROOT: mediaRoot });
+  run(process.execPath, [path.join(source, 'test/cup-recovery-legacy-max.test.mjs'), mongoUri], source, { CUP_RECOVERY_ROOT: mediaRoot });
+  const payload = path.join(scratch, 'media-recovery-runtime'); fs.mkdirSync(payload);
+  for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(mediaRoot, name), path.join(payload, name));
+  run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], payload);
+  for (const name of ['dist', 'client-sdk']) fs.cpSync(path.join(mediaRoot, name), path.join(payload, name), { recursive: true });
+  stripShims(payload);
+  fs.writeFileSync(path.join(output, 'media-recovery-manifest.json'), JSON.stringify({
+    schema: 'PHAB_CUP_MEDIA_SAFE_RECOVERY_V1', sourceCommit, sourceTree, baselineCommit: custodyBaseline,
+    derivedSourceTree, patchSha256: hash(fs.readFileSync(mediaPatch)), nodeVersion: process.version,
+    supportMediaReader: true, requiresPreservedMediaConfiguration: true, configurationIncluded: false,
+    automaticHydrationAllowed: false, firstRestartCustodyProven: false, files: inventory(payload),
+    preservedDeclarationPaths
+  }, null, 2) + '\n');
+  run('tar', ['-czf', path.join(output, 'media-recovery-runtime.tgz'), '-C', payload,
+    'dist', 'client-sdk', 'node_modules', 'package.json', 'package-lock.json']);
+} finally { run('git', ['worktree', 'remove', '--force', mediaRoot]); }
 run('npm', ['run', 'build']);
-for (const row of custodyDelta) assert.equal(hash(fs.readFileSync(path.join(source, 'dist', row.path))), row.sha256, 'Candidate/recovery compiled custody mismatch');
+for (const row of mediaDelta) assert.equal(hash(fs.readFileSync(path.join(source, 'dist', row.path))), row.sha256, 'Candidate/media recovery compiled closure mismatch');
 const runtime = path.join(scratch, 'runtime'); fs.mkdirSync(runtime);
 for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(source, name), path.join(runtime, name));
 run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], runtime);

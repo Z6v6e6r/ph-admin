@@ -15933,6 +15933,7 @@
       messagesLoading: false,
       messagesLoadingThreadId: null,
       messagesCacheByThreadId: Object.create(null),
+      messagesCacheAtByThreadId: Object.create(null),
       pendingMessageAttachments: [],
       messagesFetchPromisesByThreadId: Object.create(null),
       vivaLookupPromisesByDialogId: Object.create(null),
@@ -18783,17 +18784,32 @@
       state.imagePreviewDownloading = false;
     }
 
-    function openImagePreviewModal(attachment) {
+    function refreshPhotoAttachment(attachment, threadId, messageId) {
+      var url;
+      try { url = new URL(attachment.url); } catch (_) { return Promise.resolve(attachment); }
+      if (!url.searchParams.has('X-Amz-Signature')) return Promise.resolve(attachment);
+      return fetchDialogMessages(threadId, { includeService: shouldIncludeServiceMessages(), forceRefresh: true })
+        .then(function (messages) {
+          var message = messages.find(function (m) { return m.id === messageId; });
+          var fresh = normalizeMessageAttachments(message && message.attachments).find(function (a) { return a.id === attachment.id; });
+          if (!fresh) throw new Error('Фото отсутствует в доступной истории');
+          return fresh;
+        });
+    }
+
+    function openImagePreviewModal(attachment, context) {
       var normalized = normalizeMessageAttachments([attachment]);
       if (normalized.length === 0) {
         return;
       }
       var current = normalized[0];
       state.imagePreviewAttachment = current;
+      state.imagePreviewContext = context;
       state.imagePreviewDownloading = false;
       dom.imagePreviewTitle.textContent = current.name || 'Фото в диалоге';
       dom.imagePreviewSubtitle.textContent = resolveImageAttachmentDownloadName(current);
       dom.imagePreviewImage.src = current.url;
+      dom.imagePreviewImage.referrerPolicy = 'no-referrer';
       dom.imagePreviewImage.alt = current.name || 'Фото в диалоге';
       dom.imagePreviewSaveBtn.disabled = false;
       dom.imagePreviewSaveBtn.textContent = 'Сохранить';
@@ -18834,13 +18850,19 @@
       var fileName = resolveImageAttachmentDownloadName(attachment);
 
       try {
+        var previewContext = state.imagePreviewContext;
+        if (previewContext) {
+          attachment = await refreshPhotoAttachment(attachment, previewContext.threadId, previewContext.messageId);
+          url = attachment.url;
+          state.imagePreviewAttachment = attachment;
+        }
         if (/^(data|blob):/i.test(url)) {
           triggerAttachmentDownload(url, fileName);
           return;
         }
 
         try {
-          var response = await window.fetch(url, { credentials: 'omit' });
+          var response = await window.fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
           if (!response || !response.ok) {
             throw new Error('download_failed');
           }
@@ -22049,7 +22071,8 @@
             String(message && message.senderRole || ''),
             String(message && message.senderName || ''),
             String(message && message.connector || ''),
-            String(message && message.kind || '')
+            String(message && message.kind || ''),
+            normalizeMessageAttachments(message && message.attachments).map(function (a) { return [a.id, a.url]; })
           ];
         })
       );
@@ -22397,6 +22420,7 @@
       state.includeServiceMessages = resolveIncludeServiceMessages(nextValue);
       saveStoredIncludeServiceMessages(state.includeServiceMessages);
       state.messagesCacheByThreadId = Object.create(null);
+      state.messagesCacheAtByThreadId = Object.create(null);
       state.messagesFetchPromisesByThreadId = Object.create(null);
       var dialogsResult = applyDialogs(state.allDialogs, {
         forceRender: true,
@@ -22537,6 +22561,7 @@
         return null;
       }
       var cacheKey = buildMessagesCacheKey(threadId, options);
+      if (Date.now() - Number(state.messagesCacheAtByThreadId[cacheKey] || 0) >= 120000) return null;
       return state.messagesCacheByThreadId[cacheKey] || null;
     }
 
@@ -22582,6 +22607,7 @@
         .then(function (payload) {
           var normalized = normalizeLegacyMessages(payload || []);
           state.messagesCacheByThreadId[cacheKey] = normalized.slice();
+          state.messagesCacheAtByThreadId[cacheKey] = Date.now();
           return normalized;
         })
         .finally(function () {
@@ -23023,7 +23049,11 @@
           link.setAttribute('aria-label', 'Открыть фото');
           link.addEventListener('click', function (event) {
             event.preventDefault();
-            openImagePreviewModal(attachment);
+            var context = { threadId: state.selectedThreadId, messageId: message.id };
+            refreshPhotoAttachment(attachment, context.threadId, context.messageId)
+              .then(function (fresh) {
+                if (context.threadId === state.selectedThreadId) openImagePreviewModal(fresh, context);
+              }).catch(function () { image.alt = 'Не удалось открыть фото. Обновите переписку.'; });
           });
 
           var image = document.createElement('img');
@@ -23031,6 +23061,22 @@
           image.src = attachment.url;
           image.alt = attachment.name || 'Фото';
           image.loading = 'lazy';
+          image.referrerPolicy = 'no-referrer';
+          image.addEventListener('error', function () {
+            // Refresh display grants only. Never repeat a reply or enqueue a message.
+            var url;
+            try { url = new URL(attachment.url); } catch (_) { return; }
+            if (!url.searchParams.has('X-Amz-Signature') || image.dataset.refreshed) return;
+            image.dataset.refreshed = '1';
+            var threadId = state.selectedThreadId;
+            fetchDialogMessages(threadId, { includeService: shouldIncludeServiceMessages(), forceRefresh: true })
+              .then(function (messages) {
+                if (threadId !== state.selectedThreadId) return;
+                var current = messages.find(function (m) { return m.id === message.id; });
+                var fresh = normalizeMessageAttachments(current && current.attachments).find(function (a) { return a.id === attachment.id; });
+                if (fresh && fresh.url !== image.src) { attachment.url = fresh.url; link.href = fresh.url; image.src = fresh.url; }
+              }).catch(function () { image.alt = 'Не удалось загрузить фото. Откройте переписку ещё раз.'; });
+          });
           link.appendChild(image);
 
           attachmentsWrap.appendChild(link);

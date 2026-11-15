@@ -1,6 +1,7 @@
 import {
   OnApplicationBootstrap,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -24,6 +25,7 @@ import {
   QuickReplyTriggerType
 } from '../quick-replies/quick-replies.types';
 import { parseSupportStationMappings } from '../support/support-station-mappings';
+import { SupportMediaService } from '../support/support-media.service';
 import { AiConnectorService } from './ai/ai-connector.service';
 import { MessengerPersistenceService } from './messenger-persistence.service';
 import { CreateAccessRuleDto } from './dto/create-access-rule.dto';
@@ -98,7 +100,8 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   constructor(
     private readonly aiConnector: AiConnectorService,
     private readonly quickReplies: QuickRepliesService,
-    private readonly persistence: MessengerPersistenceService
+    private readonly persistence: MessengerPersistenceService,
+    private readonly media: SupportMediaService = new SupportMediaService()
   ) {
     this.bootstrapSettingsDefaults();
   }
@@ -339,6 +342,24 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
       .filter((message) => (beforeTs > 0 ? this.toTimestamp(message.createdAt) < beforeTs : true));
 
     return filtered.length <= limit ? filtered : filtered.slice(filtered.length - limit);
+  }
+
+  async sendMessageWithMedia(threadId: string, dto: CreateMessageDto, user: RequestUser): Promise<ChatMessage> {
+    if (!dto.attachments?.length) return this.sendMessage(threadId, dto, user);
+    const thread = this.getThreadOrThrow(threadId);
+    this.ensureThreadAccess(thread, user);
+    if (thread.status === ThreadStatus.CLOSED || (this.isStaff(user) &&
+      !this.hasStaffAccess(user, thread.stationId, thread.connector, 'write'))) {
+      throw new ForbiddenException('Thread is unavailable for reply');
+    }
+    const binding = JSON.stringify([thread.id, thread.clientId, thread.stationId, thread.connector]);
+    const attachments = await this.media.prepare(dto.attachments, 'legacy:' + binding);
+    const current = this.getThreadOrThrow(threadId);
+    if (JSON.stringify([current.id, current.clientId, current.stationId, current.connector]) !== binding) {
+      throw new ConflictException('Thread changed during photo upload');
+    }
+    // The synchronous writer repeats access and closed-thread checks after storage completes.
+    return this.sendMessage(threadId, { ...dto, attachments }, user);
   }
 
   sendMessage(
@@ -2364,7 +2385,9 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
         url,
         name: this.readStringValue(source['name']),
         mimeType: this.readStringValue(source['mimeType']),
-        size: Number.isFinite(rawSize) && rawSize >= 0 ? Math.floor(rawSize) : undefined
+        size: Number.isFinite(rawSize) && rawSize >= 0 ? Math.floor(rawSize) : undefined,
+        ...(typeof source['mediaRef'] === 'string' ? { mediaRef: source['mediaRef'] } : {}),
+        ...(typeof source['mediaScope'] === 'string' ? { mediaScope: source['mediaScope'] } : {})
       });
 
       if (attachments.length >= 10) {
@@ -2378,6 +2401,7 @@ export class MessengerService implements OnModuleInit, OnApplicationBootstrap, O
   private isSupportedAttachmentUrl(url: string): boolean {
     const normalizedUrl = String(url || '').trim();
     return (
+      /^cup-media:v1:[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(normalizedUrl) ||
       /^https?:\/\/\S+$/i.test(normalizedUrl) ||
       /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\r\n]+$/i.test(normalizedUrl)
     );

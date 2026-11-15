@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const root = process.env.SUPPORT_MEDIA_RECOVERY_ROOT;
+assert(root && path.isAbsolute(root), 'Set an owned built recovery tree');
+const require = createRequire(path.join(root, 'package.json'));
+const { SupportMediaService } = require('./dist/support/support-media.service.js');
+const sharp = require('sharp');
+const bytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#123abc' } }).jpeg().toBuffer();
+let objects = 0, signs = 0;
+const store = { put: async () => { objects++; return 'synthetic-immutable-version'; },
+  deliveryUrl: async (_key, version) => { assert.equal(version, 'synthetic-immutable-version'); signs++; return `https://synthetic.invalid/image.jpg?renewed=${signs}`; } };
+const options = { enabled: true, secret: 'synthetic-recovery-secret-over-thirty-two-bytes', store };
+const before = new SupportMediaService(options);
+const attachments = await before.prepare([{ id: 'synthetic-photo', type: 'IMAGE', url: 'data:image/jpeg;base64,' + bytes.toString('base64') }], 'synthetic-client-and-dialog');
+const record = JSON.stringify({ message: { id: 'synthetic-message', attachments }, outbox: { id: 'synthetic-command', attachments } });
+const afterRestart = new SupportMediaService(options);
+const read = await afterRestart.present(JSON.parse(record));
+assert(read.message.attachments[0].url.startsWith('https://'));
+assert(read.outbox.attachments[0].url.startsWith('https://'));
+assert.equal(objects, 1, 'Recovery reads cannot upload or dispatch anything');
+assert.equal(signs, 2); assert(!JSON.stringify(read).includes('cup-media:v1:'));
+const { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources } = await import('../scripts/lib/cup-media-recovery-closure.mjs');
+const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+verifyMediaRecoverySources(source, root, MEDIA_RECOVERY_SOURCES);
+console.log('compiled media-aware recovery: photo refs survive restart and renew for history/outbox, zero provider calls PASS');

@@ -16,8 +16,51 @@ import {
   releaseIdentity,
   scanRuntimeArtifact,
   shouldExcludeRuntimePath,
+  SUPPORT_MEDIA_NATIVE_BINARIES,
   validateReleaseTarget
 } from '../scripts/build-backend-release-attestation.mjs';
+
+test('dependency declarations are omitted from runtime; executable JS remains scanned', () => {
+  assert.equal(shouldExcludeRuntimePath('node_modules/@aws-sdk/client-s3/dist-types/index.d.ts'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/sharp/dist/index.d.cts'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/sharp/dist/index.cjs'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-wasm32'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-wasm32/lib/sharp.node.wasm'), true);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.5.node'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/@img/unexpected/other.node'), false);
+});
+test('native media allowlist rejects forged bytes even under the exact reviewed path and package binding', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'backend-media-native-negative-'));
+  try {
+    const [file, pin] = Object.entries(SUPPORT_MEDIA_NATIVE_BINARIES)[0];
+    await mkdir(join(root, pin.packagePath, 'lib'), { recursive: true });
+    await writeFile(join(root, 'package-lock.json'), JSON.stringify({ packages: { [pin.packagePath]: { version: pin.version, integrity: pin.integrity } } }));
+    for (const body of [Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1]), Buffer.from('replaced-with-text')]) {
+      await writeFile(join(root, file), body);
+      await assert.rejects(scanRuntimeArtifact(root), errorCode('BACKEND_RELEASE_MEDIA_NATIVE_MISMATCH'));
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('actual installed Linux media bytes match locked pins; mutation and missing native dependency refuse',
+  { skip: process.platform !== 'linux' || process.arch !== 'x64' }, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'backend-media-native-positive-'));
+    try {
+      const lock = JSON.parse(await readFile(new URL('../package-lock.json', import.meta.url)));
+      await writeFile(join(root, 'package-lock.json'), JSON.stringify(lock));
+      for (const [file, pin] of Object.entries(SUPPORT_MEDIA_NATIVE_BINARIES)) {
+        await mkdir(join(root, pin.packagePath, 'lib'), { recursive: true });
+        await writeFile(join(root, file), await readFile(new URL('../' + file, import.meta.url)));
+      }
+      const scan = await scanRuntimeArtifact(root);
+      assert.equal(scan.binaryFilesSkipped, 2);
+      assert.equal('nativeMediaBinariesVerified' in scan, false, 'Keep the strict DEV attestation schema unchanged');
+      const [file] = Object.keys(SUPPORT_MEDIA_NATIVE_BINARIES), body = await readFile(join(root, file));
+      const changed = Buffer.from(body); changed[changed.length - 1] ^= 1; await writeFile(join(root, file), changed);
+      await assert.rejects(scanRuntimeArtifact(root), errorCode('BACKEND_RELEASE_MEDIA_NATIVE_MISMATCH'));
+      await rm(join(root, file));
+      await assert.rejects(scanRuntimeArtifact(root), errorCode('BACKEND_RELEASE_MEDIA_NATIVE_MISSING'));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 
 const target = () => ({
   schema: 'ph-admin-backend-release-target-v1',
@@ -157,7 +200,7 @@ test('runtime pruning keeps dependency implementation and removes only proven no
   assert.equal(shouldExcludeRuntimePath('node_modules/exceljs/lib/doc/workbook.js'), false);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/docs/guide.md'), false);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/examples/example.js'), false);
-  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/types/index.d.ts'), false);
+  assert.equal(shouldExcludeRuntimePath('node_modules/pkg/types/index.d.ts'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/test/fixture.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/@scope/pkg/__tests__/fixture.js'), true);
   assert.equal(shouldExcludeRuntimePath('node_modules/pkg/test.js'), true);
