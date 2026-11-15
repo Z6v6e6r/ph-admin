@@ -547,6 +547,13 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
   }
 
   async ingestEvent(dto: IngestSupportEventDto): Promise<SupportIngestEventResult> {
+    // References belong to storage/read paths only. A raw ingress must never persist a forged
+    // reference that later prevents reading the whole history page, even with media disabled.
+    if (Array.isArray(dto.attachments) && dto.attachments.some(a => a &&
+        (/^cup-media:/i.test(String(a.url ?? '').trim()) ||
+          Object.prototype.hasOwnProperty.call(a, 'mediaRef') || Object.prototype.hasOwnProperty.call(a, 'mediaScope')))) {
+      throw new BadRequestException({ code: 'SUPPORT_MEDIA_INPUT_INVALID', message: 'Прикрепите фото заново с устройства.' });
+    }
     const normalizedDto = this.normalizeIncomingEvent(dto);
     if (dto.attachments?.length && this.media.managedIngestEnabled &&
         (this.isMaxConnector(normalizedDto.connector) || this.isLkConnector(normalizedDto.connector))) {

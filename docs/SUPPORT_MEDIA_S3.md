@@ -41,6 +41,9 @@ MAX/LK ingest дополнительно требует `x-support-media-token` 
 тем же resolver, что и business ingestion. Общая legacy ingress policy не меняется.
 Неверный auth не может вызвать download/PUT/business writes. Non-MAX/non-LK ingress
 и disabled-feature provider photos сохраняют прежний контракт.
+Raw ingress всегда отвергает `cup-media:` URL и наличие internal ref/scope полей
+до любых writes, независимо от connector/feature flag. Нельзя сохранить forged ref,
+который впоследствии блокировал бы чтение страницы истории.
 
 ## Конфигурация
 

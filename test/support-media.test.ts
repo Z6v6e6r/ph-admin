@@ -11,6 +11,7 @@ import { abortable } from '../src/support/support-media-download';
 import { SupportController } from '../src/support/support.controller';
 import { SupportConnectorRoute } from '../src/support/support.types';
 import { authorizeSupportMedia } from '../src/support/support-media-auth';
+import { SupportService } from '../src/support/support.service';
 
 const secret = 'synthetic-signing-key-that-never-leaves-this-test';
 const memory = new Map<string, Buffer>(); let puts = 0, grants = 0;
@@ -23,6 +24,23 @@ const service = (options: Record<string, unknown> = {}) => new SupportMediaServi
 async function main() {
   const jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#126abc' } }).jpeg().toBuffer();
   const inline = { id: 'synthetic-photo', type: Type.IMAGE, url: 'data:image/jpeg;base64,' + jpeg.toString('base64'), name: 'synthetic.jpg' };
+  for (const enabled of [false, true]) for (const connector of [SupportConnectorRoute.MAX_BOT, SupportConnectorRoute.LK_WEB_MESSENGER, SupportConnectorRoute.EMAIL]) {
+    let normalizations = 0, uploads = 0, writes = 0;
+    const ingress = new SupportService({ persistMessage: () => writes++ } as any,
+      { resolveRoute: () => { normalizations++; throw Error('synthetic normalization reached'); } } as any, {} as any,
+      { managedIngestEnabled: enabled, prepare: async () => { uploads++; throw Error('No upload allowed'); } } as any);
+    for (const attachment of [{ ...inline, url: ' cup-media:v1:forged.reference ' },
+      { ...inline, mediaRef: '' }, { ...inline, mediaScope: '' }]) {
+      await assert.rejects(ingress.ingestEvent({ connector, attachments: [attachment] } as any),
+        (error: any) => error.getStatus?.() === 400 && error.getResponse().code === 'SUPPORT_MEDIA_INPUT_INVALID');
+    }
+    assert.equal(normalizations + uploads + writes, 0, 'Raw references are refused before every side effect, independently of media mode/connector');
+    for (const attachment of [inline, { ...inline, url: 'https://i.oneme.ru/synthetic-photo' }]) {
+      await assert.rejects(ingress.ingestEvent({ connector, attachments: [attachment] }), /synthetic normalization reached/);
+    }
+    await assert.rejects(ingress.ingestEvent({ connector, text: 'ordinary text' }), /synthetic normalization reached/);
+    assert.equal(normalizations, 3, 'Existing raw image/text input continues into the unchanged business path');
+  }
   const media = service();
   const attachments = await media.prepare([inline, { ...inline, id: 'second' }], 'synthetic-owner');
   assert.equal(attachments.length, 2); assert.equal(attachments[0].mimeType, 'image/jpeg');
