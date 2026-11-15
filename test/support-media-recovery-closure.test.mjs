@@ -10,10 +10,11 @@ test('actual zero-context recovery patch derives exactly the current19 reviewed 
   t.after(() => fs.rmSync(derived, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: derived, stdio: ['pipe', 'pipe', 'pipe'] });
   git('init', '--quiet');
+  const baseline = '83b1c17bc4c5edaec65387b25b5695e48337c3cf';
+  const baselineFiles = new Set(execFileSync('git', ['ls-tree', '-r', '--name-only', baseline], { cwd: root, encoding: 'utf8' }).trim().split('\n'));
   for (const file of MEDIA_RECOVERY_SOURCES) {
-    let body;
-    try { body = execFileSync('git', ['show', `83b1c17bc4c5edaec65387b25b5695e48337c3cf:${file}`], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 }); }
-    catch { continue; } // New reader modules do not exist in the immutable baseline.
+    if (!baselineFiles.has(file)) continue; // Only verified new reader modules may be absent.
+    const body = execFileSync('git', ['show', `${baseline}:${file}`], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 });
     fs.mkdirSync(path.dirname(path.join(derived, file)), { recursive: true }); fs.writeFileSync(path.join(derived, file), body);
   }
   git('add', '.');
