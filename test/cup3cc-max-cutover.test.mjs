@@ -134,3 +134,22 @@ test('shows why a tracked cleanup/accept continuation gap must block activation 
     // The external post-fence DB/Map gate sees this open row and refuses stop.
   } finally { f.clean(); }
 });
+
+// Exact3cc defaults an absent env mode to legacy. Never write to the live env.
+test('accepts the verified unset default legacy mode without changing environment', () => {
+  const f = fixture('delete process.env.SUPPORT_MAX_OUTBOX_MODE');
+  try {
+    assert.equal(f.call().terminalForOldProcess, true);
+    assert.equal(vm.runInContext("Object.hasOwn(process.env, 'SUPPORT_MAX_OUTBOX_MODE')", f.context), false);
+  } finally { f.clean(); }
+});
+for (const value of ['', ' legacy ', 'receipt-v1', 'unknown']) {
+  test(`refuses an unverified configured mode ${JSON.stringify(value)} before custody writes`, () => {
+    const f = fixture(`process.env.SUPPORT_MAX_OUTBOX_MODE = ${JSON.stringify(value)}`);
+    try {
+      assert.throws(f.call, /RUNTIME_MODE/);
+      assert.equal(vm.runInContext('service.persistence.legacyMaxClosing', f.context), false);
+      for (const dir of f.dirs) assert.deepEqual(fs.readdirSync(dir), []);
+    } finally { f.clean(); }
+  });
+}

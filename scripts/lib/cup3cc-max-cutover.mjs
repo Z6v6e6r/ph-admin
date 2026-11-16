@@ -30,7 +30,7 @@ export function captureAndFenceCup3ccMax(expected, supportPrototype, persistence
     need(typeof fn === 'function' && /^[a-f0-9]{64}$/.test(expectedHash)
       && hash(Function.prototype.toString.call(fn)) === expectedHash, 'LIVE_FUNCTION_IDENTITY');
   }
-  need(process.env.SUPPORT_MAX_OUTBOX_MODE === 'legacy'
+  need((process.env.SUPPORT_MAX_OUTBOX_MODE === undefined || process.env.SUPPORT_MAX_OUTBOX_MODE === 'legacy')
     && process.env.SUPPORT_PERSISTENCE_SYNC_INTERVAL_MS === '0'
     && String(process.env.NODE_ENV).trim().toLowerCase() === 'production', 'RUNTIME_MODE');
   need(data(service, 'persistenceSyncIntervalMs').value === 0
