@@ -127,6 +127,41 @@ backend/config поверх новых media references. Не менять ар�
 ЦУП → Node-RED media bridge/controlled sender+worker binding → LK1/SDK → разрешённый
 provider/UI E2E и restart. До этого source/local/CI не объявляются production delivery.
 
+### Первый выход из CUP3cc с legacy очередью
+
+`scripts/lib/cup3cc-max-cutover.mjs` — ограниченный source-first operational primitive
+для уже загруженного `3cc47088`, не автоматический deploy. Он сохраняет пять Maps
+поддержки двумя private/fsynced копиями и устанавливает существующий terminal
+`legacyMaxClosing`. Это live mutation; запуск требует отдельно разрешённой выкладки
+и владельца окна. Прототипы/три функции, PID/start/timeOrigin/Node, legacy/sync0,
+отсутствие таймеров, unheld MAX PENDING/LEASED0 и tracked writes/failures0 проверяются
+до изменения. Метод не запускает hydrate/import, не меняет held/archive и не посылает
+сообщения. Само добавление файла в репозиторий ничего в приложении не включает.
+
+Перед вызовом custodian обязан проверить полное immutable inventory старого runtime
+и exact loaded script bytes, владение Inspector/release lock, paused+idle receiver,
+известные producer/edge fences и сохранённый журнал текущих запросов. Прототипы должны
+происходить из уже загруженных проверенных модулей: нельзя загрузить другой класс и
+объявить его текущим. Файлы custody хранят персональные данные только на сервере,
+root-owned0700/0600, вне Git и model output. Исходный snapshot и intent записываются
+до closing; потеря ACK или ошибка любой записи означает UNKNOWN, без повторного вызова.
+
+Это fence принятия MAX-команд, **не HTTP drain и не отсутствие business writes**.
+Все legacy MAX enqueue проходят через tracked write; closing отклоняет их до durable
+action и Map acceptance. Поздний handler всё ещё может сохранить сообщение/диалог
+перед отказом enqueue. Проверять cohort STAFF и delivery-eligible SYSTEM, auto-replies
+и notifications; не переотправлять UNKNOWN автоматически. Флаг terminal для старого
+процесса, не сбрасывается для «пробного продолжения».
+
+После fence обязательны повторные Map/Set и majority DB проверки всех физических
+outbox stores: удаление tracked promise может предшествовать Map continuation. Только
+после стабильных нулей и сохранения истории допускается stop. После PID/cgroup0 нужен
+ещё один majority open0 и cohort/history postcheck **до запуска candidate**. Любой open
+row, неизвестный commit, late continuation или orphan блокирует activation: сохранять
+custody, producers paused, без parking/replay/старого sync0 hydration. Primitive receipt
+намеренно содержит `activationAdmitted:false`. Совместимый full media recovery и его
+ключи должны быть готовы до terminal fence; сам primitive recovery не выполняет.
+
 ## Проверки
 
 `npm run test:support-photos`, support identity/history/cold-reply compatibility,
