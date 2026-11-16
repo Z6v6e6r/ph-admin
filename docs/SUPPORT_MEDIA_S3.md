@@ -165,6 +165,30 @@ custody, producers paused, без parking/replay/старого sync0 hydration.
 намеренно содержит `activationAdmitted:false`. Совместимый full media recovery и его
 ключи должны быть готовы до terminal fence; сам primitive recovery не выполняет.
 
+### Отдельное terminal containment при четырёх исторических ошибках
+
+`scripts/lib/cup3cc-max-containment.mjs` — отдельный fence-only контракт для exact3cc
+с ровно четырьмя накопленными, не атрибутированными failures. Он не ослабляет
+`captureAndFenceCup3ccMax` и не обнуляет счётчик. Actual и expected должны быть ровно4;
+другое значение, tracked write или unheld Map PENDING/LEASED блокирует операцию.
+Все прежние source/process/prototype/mode/timer guards сохраняются. Две private
+custody copies и intent записываются до единственной business mutation:
+`legacyMaxClosing:false→true`. Счётчик4 остаётся в snapshot/intent/receipt как
+`unresolvedHistoricalFailures`; `failureRetirementProven` и `activationAdmitted`
+всегда false. Частичный результат или потеря ACK запрещают повтор и unfence.
+
+Выполнение требует отдельного разрешения на terminal шаг и ограниченную паузу,
+paused+idle receiver, закрытые producers/edge и покрытие прямого порта3000.
+Четыре ошибки нельзя объявить benign, resolved или четырьмя потерянными сообщениями.
+До stop обязательны closed-aware fresh custody, late-handler Map/Set checks,
+полный primary-majority scan всех физических outbox stores и STAFF/delivery-eligible
+SYSTEM/auto-reply/notification cohort, включая rejected enqueue вне RAM.
+Неизвестный orphan не получает автоматическую команду или подтверждение доставки.
+History/authority differences проверяются отдельно на candidate/recovery readers;
+более свежая DB authority не перезаписывается RAM snapshot. После PID/cgroup0
+повторяются outbox/history/cohort/held/unknown/archive-absence проверки до candidate.
+Ни этот source, ни успешный fence receipt не выполняют stop/start или admission.
+
 ## Проверки
 
 `npm run test:support-photos`, support identity/history/cold-reply compatibility,
