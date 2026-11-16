@@ -1,5 +1,5 @@
 // One terminal containment operation for the pinned CUP3cc instance.
-// Four historical failures remain unresolved; this never admits a restart.
+// Historical failures remain unresolved; this never admits a restart.
 // Separate from the zero-failure cutover contract, which stays unchanged.
 export function captureAndContainCup3ccMax(expected, supportPrototype, persistencePrototype, directories) {
   const need = (value, code) => { if (!value) throw Error(code); };
@@ -45,7 +45,23 @@ export function captureAndContainCup3ccMax(expected, supportPrototype, persisten
   const writes = data(persistence, 'legacyMaxWrites').value;
   need(Object.getOwnPropertyDescriptor(Set.prototype, 'size').get.call(writes) === 0, 'MAX_WRITES_NOT_DRAINED');
   const failures = data(persistence, 'legacyMaxWriteFailures').value;
-  need(expected.unresolvedHistoricalFailures === 4 && failures === 4, 'HISTORICAL_FAILURE_COUNT_DRIFT');
+  const policyDescriptor = Object.getOwnPropertyDescriptor(expected, 'containmentPolicy');
+  need(!policyDescriptor || Object.hasOwn(policyDescriptor, 'value'), 'CONTAINMENT_POLICY');
+  const policy = policyDescriptor?.value;
+  const pinnedCountPolicy = policy === 'CUP3CC_UNRESOLVED_COUNT_PINNED_V2';
+  need(policy === undefined || pinnedCountPolicy, 'CONTAINMENT_POLICY');
+  const evidence = Object.getOwnPropertyDescriptor(expected, 'unresolvedCountEvidenceSha256');
+  if (pinnedCountPolicy) need(evidence && Object.hasOwn(evidence, 'value')
+    && typeof evidence.value === 'string' && /^[a-f0-9]{64}$/.test(evidence.value), 'UNRESOLVED_COUNT_EVIDENCE');
+  const countBinding = pinnedCountPolicy ? { containmentPolicy: policy,
+    unresolvedCountEvidenceSha256: evidence.value } : {};
+  const failureDescriptor = Object.getOwnPropertyDescriptor(expected, 'unresolvedHistoricalFailures');
+  need(!failureDescriptor || Object.hasOwn(failureDescriptor, 'value'), 'HISTORICAL_FAILURE_COUNT_DRIFT');
+  const expectedFailures = failureDescriptor?.value;
+  need(pinnedCountPolicy
+    ? Number.isSafeInteger(expectedFailures) && expectedFailures > 0 && failures === expectedFailures
+    : expectedFailures === 4 && failures === 4, 'HISTORICAL_FAILURE_COUNT_DRIFT');
+  const version = pinnedCountPolicy ? 'V2' : 'V1';
   const outbox = data(service, 'outbox').value;
   const counts = Object.create(null);
   for (const [, row] of Map.prototype.entries.call(outbox)) {
@@ -85,7 +101,7 @@ export function captureAndContainCup3ccMax(expected, supportPrototype, persisten
       rows[key].push([id, clone(value, [key, id])]);
     }
   }
-  const snapshot = Buffer.from(JSON.stringify({ schema: 'CUP3CC_MAX_CONTAINMENT_CUSTODY_V1',
+  const snapshot = Buffer.from(JSON.stringify({ schema: 'CUP3CC_MAX_CONTAINMENT_CUSTODY_' + version, ...countBinding,
     identity: expected, rows, undefinedPaths, unresolvedHistoricalFailures: failures,
     failureRetirementProven: false, activationAdmitted: false, replayAllowed: false }) + '\n');
   need(snapshot.length <= 32 * 1024 * 1024, 'SNAPSHOT_BYTE_LIMIT');
@@ -119,7 +135,7 @@ export function captureAndContainCup3ccMax(expected, supportPrototype, persisten
       fs.fsyncSync(openDirs.find(x => x.directory === directory).fd);
     };
     const snapshotSha256 = hash(snapshot);
-    const intent = Buffer.from(JSON.stringify({ schema: 'CUP3CC_MAX_CONTAINMENT_INTENT_V1', identity: expected,
+    const intent = Buffer.from(JSON.stringify({ schema: 'CUP3CC_MAX_CONTAINMENT_INTENT_' + version, ...countBinding, identity: expected,
       snapshotSha256, at: new Date().toISOString(), terminalForOldProcess: true,
       containmentOnly: true, unresolvedHistoricalFailures: failures, failureRetirementProven: false,
       maxAcceptedQueueOnly: true, httpDrainProven: false, replayAllowed: false }) + '\n');
@@ -130,7 +146,7 @@ export function captureAndContainCup3ccMax(expected, supportPrototype, persisten
     // fence. Existing trackedLegacyMax rejects all later actions before DB access.
     persistence.legacyMaxClosing = true;
     need(data(persistence, 'legacyMaxClosing').value === true, 'FENCE_NOT_SET');
-    const receipt = { schema: 'CUP3CC_MAX_CONTAINED_V1', at: new Date().toISOString(),
+    const receipt = { schema: 'CUP3CC_MAX_CONTAINED_' + version, ...countBinding, at: new Date().toISOString(),
       snapshotSha256, counts, pendingWrites: 0, writeFailures: failures, terminalForOldProcess: true,
       containmentOnly: true, unresolvedHistoricalFailures: failures, failureRetirementProven: false,
       producerDrainProven: false, historyPreservationProven: false, cohortCoverageProven: false,

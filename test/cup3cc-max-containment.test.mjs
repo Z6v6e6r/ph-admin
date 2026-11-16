@@ -149,3 +149,82 @@ test('late MAX acceptance is rejected while a pre-fence continuation still block
     assert.equal(vm.runInContext("service.outbox.has('late')", f.context), false);
   } finally { f.clean(); }
 });
+
+
+test('explicit V2 pins six unresolved failures without clearing or retiring them', () => {
+  const f = fixture("expected.containmentPolicy='CUP3CC_UNRESOLVED_COUNT_PINNED_V2';expected.unresolvedCountEvidenceSha256='6'.repeat(64);expected.unresolvedHistoricalFailures=6;service.persistence.legacyMaxWriteFailures=6");
+  try {
+    const result = f.call();
+    assert.equal(result.schema, 'CUP3CC_MAX_CONTAINED_V2');
+    assert.equal(result.unresolvedHistoricalFailures, 6);
+    assert.equal(result.unresolvedCountEvidenceSha256, '6'.repeat(64));
+    assert.equal(result.containmentPolicy, 'CUP3CC_UNRESOLVED_COUNT_PINNED_V2');
+    assert.equal(vm.runInContext('service.persistence.legacyMaxWriteFailures', f.context), 6);
+    for (const key of ['activationAdmitted', 'failureRetirementProven', 'producerDrainProven',
+      'httpDrainProven', 'historyPreservationProven', 'cohortCoverageProven', 'replayAllowed']) assert.equal(result[key], false);
+    for (const name of ['pre-containment-map.json', 'containment-intent.json', 'containment-receipt.json']) {
+      assert.deepEqual(fs.readFileSync(path.join(f.dirs[0], name)), fs.readFileSync(path.join(f.dirs[1], name)));
+      const row = JSON.parse(fs.readFileSync(path.join(f.dirs[0], name)));
+      assert.ok(row.schema.endsWith('_V2'));
+      assert.equal(row.unresolvedCountEvidenceSha256, '6'.repeat(64));
+      assert.equal(row.containmentPolicy, 'CUP3CC_UNRESOLVED_COUNT_PINNED_V2');
+      assert.equal(row.unresolvedHistoricalFailures, 6);
+    }
+    assert.throws(f.call, /ALREADY_CLOSING/);
+  } finally { f.clean(); }
+});
+for (const [name, mutation, error] of [
+  ['missing evidence binding', 'delete expected.unresolvedCountEvidenceSha256', /UNRESOLVED_COUNT_EVIDENCE/],
+  ['malformed evidence binding', "expected.unresolvedCountEvidenceSha256='not-a-hash'", /UNRESOLVED_COUNT_EVIDENCE/],
+  ['missing expected count', 'delete expected.unresolvedHistoricalFailures', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['policy getter', "Object.defineProperty(expected,'containmentPolicy',{get(){throw Error('GETTER_EXECUTED')}})", /CONTAINMENT_POLICY/],
+  ['evidence getter', "Object.defineProperty(expected,'unresolvedCountEvidenceSha256',{get(){throw Error('GETTER_EXECUTED')}})", /UNRESOLVED_COUNT_EVIDENCE/],
+  ['count getter', "Object.defineProperty(expected,'unresolvedHistoricalFailures',{get(){throw Error('GETTER_EXECUTED')}})", /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['count drift', 'expected.unresolvedHistoricalFailures=6;service.persistence.legacyMaxWriteFailures=7', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['zero', 'expected.unresolvedHistoricalFailures=0;service.persistence.legacyMaxWriteFailures=0', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['negative', 'expected.unresolvedHistoricalFailures=-1;service.persistence.legacyMaxWriteFailures=-1', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['fraction', 'expected.unresolvedHistoricalFailures=1.5;service.persistence.legacyMaxWriteFailures=1.5', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['unsafe integer', 'expected.unresolvedHistoricalFailures=Number.MAX_SAFE_INTEGER+1;service.persistence.legacyMaxWriteFailures=expected.unresolvedHistoricalFailures', /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['string', "expected.unresolvedHistoricalFailures='6';service.persistence.legacyMaxWriteFailures=6", /HISTORICAL_FAILURE_COUNT_DRIFT/],
+  ['unknown policy', "expected.containmentPolicy='unrecognized'", /CONTAINMENT_POLICY/],
+  ['tracked write', 'service.persistence.legacyMaxWrites.add(Promise.resolve())', /MAX_WRITES_NOT_DRAINED/],
+  ['open command', "service.outbox.set('open',{connector:'MAX_BOT',status:'PENDING'})", /MAX_OPEN_COMMAND/]
+]) test('explicit V2 refuses ' + name + ' before custody or closing', () => {
+  const f = fixture("expected.containmentPolicy='CUP3CC_UNRESOLVED_COUNT_PINNED_V2';expected.unresolvedCountEvidenceSha256='6'.repeat(64);" + mutation);
+  try {
+    assert.throws(f.call, error);
+    assert.equal(vm.runInContext('service.persistence.legacyMaxClosing', f.context), false);
+    for (const directory of f.dirs) assert.deepEqual(fs.readdirSync(directory), []);
+  } finally { f.clean(); }
+});
+
+test('six unresolved failures without V2 policy remain ineligible', () => {
+  const f = fixture('expected.unresolvedHistoricalFailures=6;service.persistence.legacyMaxWriteFailures=6');
+  try {
+    assert.throws(f.call, /HISTORICAL_FAILURE_COUNT_DRIFT/);
+    assert.equal(vm.runInContext('service.persistence.legacyMaxClosing', f.context), false);
+    for (const directory of f.dirs) assert.deepEqual(fs.readdirSync(directory), []);
+  } finally { f.clean(); }
+});
+
+for (const [name, schema, occurrence, fenced] of [
+  ['second intent', 'CUP3CC_MAX_CONTAINMENT_INTENT_V2', 2, false],
+  ['first receipt', 'CUP3CC_MAX_CONTAINED_V2', 1, true],
+  ['second receipt', 'CUP3CC_MAX_CONTAINED_V2', 2, true]
+]) test('V2 ' + name + ' failure preserves custody and forbids replay', () => {
+  let writes = 0;
+  const f = fixture("expected.containmentPolicy='CUP3CC_UNRESOLVED_COUNT_PINNED_V2';expected.unresolvedCountEvidenceSha256='6'.repeat(64);expected.unresolvedHistoricalFailures=6;service.persistence.legacyMaxWriteFailures=6", view => {
+    view.writeFileSync = (fd, body, ...rest) => {
+      if (String(body).includes(schema) && ++writes === occurrence) throw Error('V2_IO_FAILURE');
+      return fs.writeFileSync(fd, body, ...rest);
+    };
+  });
+  try {
+    assert.throws(f.call, /V2_IO_FAILURE/);
+    assert.equal(vm.runInContext('service.persistence.legacyMaxClosing', f.context), fenced);
+    assert.equal(vm.runInContext('service.persistence.legacyMaxWriteFailures', f.context), 6);
+    for (const directory of f.dirs) assert.ok(fs.statSync(path.join(directory, 'pre-containment-map.json')).size > 0);
+    if (name === 'second receipt') assert.equal(JSON.parse(fs.readFileSync(path.join(f.dirs[0], 'containment-receipt.json'))).activationAdmitted, false);
+    assert.throws(f.call, fenced ? /ALREADY_CLOSING/ : /EXISTING_ATTEMPT/);
+  } finally { f.clean(); }
+});

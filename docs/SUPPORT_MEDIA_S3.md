@@ -189,6 +189,24 @@ History/authority differences проверяются отдельно на candi
 повторяются outbox/history/cohort/held/unknown/archive-absence проверки до candidate.
 Ни этот source, ни успешный fence receipt не выполняют stop/start или admission.
 
+### Явный V2-контракт при изменившемся счётчике
+
+Прежний вызов без `containmentPolicy` по-прежнему допускает только exact4.
+Отдельный opt-in `containmentPolicy: 'CUP3CC_UNRESOLVED_COUNT_PINNED_V2'`
+требует положительный safe integer `unresolvedHistoricalFailures` и точное
+совпадение с текущим счётчиком. Обязательный `unresolvedCountEvidenceSha256`
+связывает план с отдельно сохранённым закрытым count evidence; policy и этот SHA
+попадают в обе custody-копии, intent и receipt. Custodian обязан проверять сам
+evidence и его immutable plan binding: helper не подменяет эту проверку.
+Неизвестная policy, отсутствующий/невалидный SHA, zero или drift отклоняются
+до custody и closing. Snapshot, intent и receipt используют отдельную schema V2.
+Счётчик не меняется; все admission/drain/history/cohort/failure-retirement флаги
+остаются false. Контракт не разрешает stop, start или replay. Нельзя подставлять
+новое число после отказа и повторять тот же attempt: результат UNKNOWN сохраняют
+для разбора. Конкретный count pin должен быть получен после закрытия admission
+и завершения producers, а terminal шаг требует нового точного согласия при
+изменившихся условиях и всех прежних независимых pre/postchecks.
+
 ## Проверки
 
 `npm run test:support-photos`, support identity/history/cold-reply compatibility,
