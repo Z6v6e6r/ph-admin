@@ -4314,7 +4314,7 @@ index 0000000000000000000000000000000000000000..3799c277af46e954f0cbcf0b2f46f87b
 +}
 diff --git a/src/support/support-media-store.ts b/src/support/support-media-store.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..de86c9095c4aed9349d9ec192233d77e7c0f9dac
+index 0000000000000000000000000000000000000000..e2e44f34fbcc82ab59e0a820d810fe9486d72d8b
 --- /dev/null
 +++ b/src/support/support-media-store.ts
 @@ -0,0 +1,46 @@
@@ -4346,7 +4346,7 @@ index 0000000000000000000000000000000000000000..de86c9095c4aed9349d9ec192233d77e
 +      if (!result.VersionId || result.VersionId === 'null') throw new Error('SUPPORT_MEDIA_VERSIONING_REQUIRED');
 +      return result.VersionId;
 +    } catch (error) {
-+      // A lost PUT response may have committed the content-addressed object. Resolve by HEAD;
++      // A lost PUT response may have committed this upload's unique object. Resolve by HEAD;
 +      // never overwrite it or retry the write with another key.
 +      const result = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
 +        { abortSignal: signal }).catch(() => undefined);
@@ -4441,7 +4441,7 @@ index 0000000000000000000000000000000000000000..cf61ec01d48acc50f13b98d7225f8590
 +}
 diff --git a/src/support/support-media.service.ts b/src/support/support-media.service.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ec2ad6ddb845952ae5ab31af6d245c29c09d614
+index 0000000000000000000000000000000000000000..d8d5e4ab9bd530e6cd2db5b65ffa626c45c1ff73
 --- /dev/null
 +++ b/src/support/support-media.service.ts
 @@ -0,0 +1,190 @@
@@ -4584,7 +4584,7 @@ index 0000000000000000000000000000000000000000..5ec2ad6ddb845952ae5ab31af6d245c2
 +          .catch(() => invalid('SUPPORT_MEDIA_FORMAT_INVALID'));
 +        outputTotal += normalized.length;
 +        if (normalized.length > MEDIA_OUTPUT_BYTES || outputTotal > MEDIA_TOTAL_BYTES || controller.signal.aborted) return invalid('SUPPORT_MEDIA_TOO_LARGE');
-+        const binding: Binding = { scope: this.mac('owner\0' + owner),
++        const binding: Binding = { scope: this.mac('owner\0' + owner + '\0upload\0' + randomUUID()),
 +          sha: createHash('sha256').update(normalized).digest('hex'), version: '', bytes: normalized.length };
 +        binding.version = await this.store!.put(this.objectKey(binding), normalized, binding.sha, controller.signal);
 +        if (!binding.version || binding.version === 'null') throw new Error('SUPPORT_MEDIA_VERSIONING_REQUIRED');

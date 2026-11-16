@@ -1,4 +1,5 @@
 import * as assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 const sharp: typeof import('sharp').default = require('sharp');
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -16,8 +17,12 @@ import { SupportService } from '../src/support/support.service';
 const secret = 'synthetic-signing-key-that-never-leaves-this-test';
 const memory = new Map<string, Buffer>(); let puts = 0, grants = 0;
 const store: SupportMediaObjectStore = {
-  put: async (key, body) => { puts++; memory.set(key, Buffer.from(body)); return 'synthetic-object-version'; },
+  put: async (key, body) => {
+    assert(!memory.has(key), 'A provider ignoring If-None-Match must never receive a reused object key');
+    puts++; memory.set(key, Buffer.from(body)); return 'synthetic-object-version';
+  },
   deliveryUrl: async (key, version) => { assert.equal(version, 'synthetic-object-version'); grants++;
+    assert(memory.has(key), 'History must still refer to an existing current object');
     return `https://synthetic-storage.invalid/${key}?X-Amz-Signature=synthetic-${grants}`; }
 };
 const service = (options: Record<string, unknown> = {}) => new SupportMediaService({ enabled: true, secret, store, ...options });
@@ -45,7 +50,8 @@ async function main() {
   const attachments = await media.prepare([inline, { ...inline, id: 'second' }], 'synthetic-owner');
   assert.equal(attachments.length, 2); assert.equal(attachments[0].mimeType, 'image/jpeg');
   assert(attachments[0].url.startsWith('cup-media:v1:')); assert(!attachments[0].url.includes('base64,'));
-  assert.equal(attachments[0].mediaScope, attachments[1].mediaScope);
+  assert.notEqual(attachments[0].mediaScope, attachments[1].mediaScope,
+    'Identical photos in one message need independent current objects');
   const persisted = { message: { id: 'message', text: '', attachments }, meta: { attachments: [{ url: 'leave-user-metadata-alone' }] } };
   const before = JSON.stringify(persisted);
   const presented = await media.present(persisted);
@@ -56,6 +62,19 @@ async function main() {
   const renewed = await restarted.present(persisted);
   assert.notEqual(renewed.message.attachments[0].url, presented.message.attachments[0].url);
   assert.equal(JSON.stringify(persisted), before, 'Restart/read refresh does not rewrite durable references');
+  const repeated = await restarted.prepare([inline], 'synthetic-owner');
+  assert(!attachments.some(a => a.mediaScope === repeated[0].mediaScope),
+    'The same photo sent again after restart must not make an earlier version noncurrent');
+  await restarted.present(persisted);
+  // The stored four-field v1 reference stays compatible with the original deterministic scope.
+  const binding = JSON.parse(Buffer.from(attachments[0].mediaRef!.slice('cup-media:v1:'.length).split('.')[0], 'base64url').toString());
+  const oldScope = createHmac('sha256', secret).update('owner\0legacy-owner').digest('hex');
+  const oldBinding = { ...binding, scope: oldScope };
+  const oldBody = Buffer.from(JSON.stringify(oldBinding)).toString('base64url');
+  const oldRef = 'cup-media:v1:' + oldBody + '.' + createHmac('sha256', secret).update('attachment\0' + oldBody).digest('hex');
+  memory.set(`cup-support/v1/${oldScope}/${binding.sha}.jpg`, Buffer.from(memory.values().next().value!));
+  const oldRead = await restarted.present({ attachments: [{ ...attachments[0], mediaRef: oldRef, mediaScope: oldScope, url: oldRef }] });
+  assert(oldRead.attachments[0].url.includes(oldScope), 'Existing v1 history remains readable without rewriting refs');
   await assert.rejects(media.present({ attachments: [{ ...attachments[0], mediaScope: 'a'.repeat(64) }] }), /Bad Request/);
   const ref = attachments[0].mediaRef!;
   await assert.rejects(media.present({ attachments: [{ ...attachments[0], mediaRef: ref.slice(0, -1) + (ref.endsWith('0') ? '1' : '0') }] }));
@@ -87,6 +106,17 @@ async function main() {
   assert.equal(signed.searchParams.get('versionId'), 'synthetic-version');
   (s3 as any).client = { send: async () => ({ Metadata: { sha256: 'synthetic-hash' }, ContentLength: 1, ContentType: 'image/jpeg' }) };
   await assert.rejects(s3.put('synthetic-key', Buffer.from('a'), 'synthetic-hash', new AbortController().signal), /VERSIONING_REQUIRED/);
+  const lostAckCalls: string[] = [];
+  (s3 as any).client = { send: async (command: any) => {
+    assert.equal(command.input.Key, 'synthetic-one-attempt-key');
+    lostAckCalls.push(command.constructor.name);
+    if (command.constructor.name === 'PutObjectCommand') throw Error('synthetic lost PUT ACK');
+    return { VersionId: 'synthetic-committed-version', Metadata: { sha256: 'synthetic-hash' },
+      ContentLength: 1, ContentType: 'image/jpeg' };
+  } };
+  assert.equal(await s3.put('synthetic-one-attempt-key', Buffer.from('a'), 'synthetic-hash', new AbortController().signal),
+    'synthetic-committed-version');
+  assert.deepEqual(lostAckCalls, ['PutObjectCommand', 'HeadObjectCommand'], 'A lost ACK never repeats PUT or changes key');
   await assert.rejects(service({ store: { ...store, put: async () => '' } }).prepare([inline], 'owner'), /Service Unavailable/);
   const timeout = new AbortController();
   const dns = abortable(new Promise<never>(() => {}), timeout.signal); timeout.abort();

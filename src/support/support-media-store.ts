@@ -26,7 +26,7 @@ export class S3SupportMediaStore implements SupportMediaObjectStore {
       if (!result.VersionId || result.VersionId === 'null') throw new Error('SUPPORT_MEDIA_VERSIONING_REQUIRED');
       return result.VersionId;
     } catch (error) {
-      // A lost PUT response may have committed the content-addressed object. Resolve by HEAD;
+      // A lost PUT response may have committed this upload's unique object. Resolve by HEAD;
       // never overwrite it or retry the write with another key.
       const result = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
         { abortSignal: signal }).catch(() => undefined);
