@@ -127,7 +127,7 @@ export class PlayerRatingRepository {
     nextState: PlayerRatingStateDocument;
     expectedLastEventId: string;
     compatibility: Document;
-    outbox: PlayerRatingProjectionOutboxDocument;
+    outbox?: PlayerRatingProjectionOutboxDocument;
     padlHubOutbox?: PadlHubPlayerLevelProjectionOutboxDocument;
   }): Promise<'ok' | 'conflict'> {
     const client = this.requireClient();
@@ -136,6 +136,7 @@ export class PlayerRatingRepository {
     let result: 'ok' | 'conflict' = 'conflict';
     try {
       await session.withTransaction(async () => {
+        result = 'conflict';
         const current = await this.states().findOne(
           { playerKey: input.nextState.playerKey },
           { session, projection: { lastEventId: 1 } }
@@ -154,7 +155,7 @@ export class PlayerRatingRepository {
           { $set: input.compatibility },
           { upsert: true, session }
         );
-        await this.outbox().insertOne(input.outbox, { session });
+        if (input.outbox) await this.outbox().insertOne(input.outbox, { session });
         if (input.padlHubOutbox) {
           await this.upsertPadlHubProjection(input.padlHubOutbox, session);
         }
@@ -163,6 +164,29 @@ export class PlayerRatingRepository {
     } finally {
       await session.endSession();
     }
+    return result;
+  }
+
+  async runAtomicInitialAssignment(input: {
+    event: PlayerRatingEventDocument; nextState: PlayerRatingStateDocument;
+    compatibility: Document; padlHubOutbox?: PadlHubPlayerLevelProjectionOutboxDocument;
+  }): Promise<'ok' | 'conflict'> {
+    const session = this.requireClient().startSession(); let result: 'ok' | 'conflict' = 'conflict';
+    try {
+      await session.withTransaction(async () => {
+        result = 'conflict';
+        const id = input.nextState.clientId;
+        const identity = { $or: [{ clientId: id }, { playerKey: 'client:' + id }, { 'identityAliases.clientIds': id }, { 'identityAliases.playerKeys': 'client:' + id }, ...(input.nextState.phoneNorm ? [{ phoneNorm: input.nextState.phoneNorm }, { 'identityAliases.phoneNorms': input.nextState.phoneNorm }, { playerKey: 'phone:' + input.nextState.phoneNorm }, { 'identityAliases.playerKeys': 'phone:' + input.nextState.phoneNorm }] : [])] };
+        const options = { session, maxTimeMS: 5000 };
+        if (await this.states().findOne(identity, options) || await this.compatibility().findOne(identity, options)
+          || await this.events().findOne({ $or: [{ 'player.clientId': id }, { 'player.key': 'client:' + id }, ...(input.nextState.phoneNorm ? [{ 'player.phoneNorm': input.nextState.phoneNorm }, { 'player.key': 'phone:' + input.nextState.phoneNorm }] : [])] }, options)) return;
+        await this.events().insertOne(input.event, options);
+        await this.states().insertOne(input.nextState, options);
+        await this.compatibility().insertOne(input.compatibility, options);
+        if (input.padlHubOutbox) await this.upsertPadlHubProjection(input.padlHubOutbox, session);
+        result = 'ok';
+      }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, readPreference: 'primary' });
+    } finally { await session.endSession(); }
     return result;
   }
 

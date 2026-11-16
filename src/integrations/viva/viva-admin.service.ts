@@ -243,7 +243,6 @@ interface VivaAdminSettingsRecord {
   updatedBy?: string;
 }
 
-const DEFAULT_VIVA_LEVEL_NUMERIC_FIELD_ID = 'eabfe27b-3f72-4496-9185-1a2ec6e6465e';
 const TOURNAMENT_CHECKOUT_REUSE_MIN_REMAINING_MS = 15_000;
 
 @Injectable()
@@ -270,9 +269,6 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     String(process.env.VIVA_ADMIN_CLIENT_ID ?? '').trim() || 'React-auth-dev';
   private readonly envUsername = String(process.env.VIVA_ADMIN_USERNAME ?? '').trim();
   private readonly envPassword = String(process.env.VIVA_ADMIN_PASSWORD ?? '').trim();
-  private readonly levelNumericFieldId =
-    String(process.env.VIVA_LEVEL_NUMERIC_FIELD_ID ?? '').trim()
-    || DEFAULT_VIVA_LEVEL_NUMERIC_FIELD_ID;
   private readonly cacheTtlMs = this.readPositiveNumberEnv(
     'VIVA_ADMIN_CACHE_TTL_MS',
     10 * 60 * 1000
@@ -425,40 +421,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getClientRating(clientId?: string): Promise<VivaAdminClientRatingSnapshot> {
-    const normalizedClientId = this.normalizeOptional(clientId);
-    if (!normalizedClientId) {
-      throw new BadRequestException('Viva client id is required');
-    }
-
-    const token = await this.requireAccessToken();
-    const resolved = await this.getResolvedSettings();
-    const payload = await this.fetchAdminJson(
-      `/api/v1/clients/${encodeURIComponent(normalizedClientId)}`,
-      token,
-      resolved.config.baseUrl
-    );
-    const client = this.unwrapRecord(payload);
-    if (!client) {
-      throw new Error(`Viva CRM client ${normalizedClientId} response is empty`);
-    }
-
-    const levelNumericField = this.extractClientCustomField(
-      client,
-      this.levelNumericFieldId
-    );
-    const rawLevelNumeric = levelNumericField.values[0];
-
-    return {
-      clientId: this.extractClientId(client) ?? normalizedClientId,
-      phone: this.extractClientPhone(client),
-      displayName: this.extractClientName(client),
-      vivaCabinetUrl:
-        `https://cabinet.vivacrm.ru/clients/${encodeURIComponent(normalizedClientId)}`,
-      levelNumeric: this.parsePlayerRatingNumeric(rawLevelNumeric),
-      fields: {
-        levelNumeric: levelNumericField
-      }
-    };
+    throw new BadRequestException('Viva level integration retired; use CUP player ratings');
   }
 
   /**
@@ -466,7 +429,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
    * server-side Viva Admin credential and the existing client read route; it never
    * accepts a client-supplied provider identifier and never writes Viva state.
    */
-  async getClientProfile(clientId?: string): Promise<VivaAdminClientProfile | null> {
+  async getClientProfile(clientId?: string, requireExactIdentity = false): Promise<VivaAdminClientProfile | null> {
     const normalizedClientId = this.normalizeOptional(clientId);
     if (!normalizedClientId) {
       return null;
@@ -483,6 +446,8 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     if (!client) {
       return null;
     }
+
+    if (requireExactIdentity && this.extractClientId(client) !== normalizedClientId) throw new BadRequestException('Client identity could not be verified');
 
     return {
       clientId: this.extractClientId(client) ?? normalizedClientId,
@@ -496,36 +461,7 @@ export class VivaAdminService implements OnModuleInit, OnModuleDestroy {
     clientId: string | undefined,
     input: VivaAdminClientRatingUpdateInput
   ): Promise<VivaAdminClientRatingUpdateResult> {
-    const normalizedClientId = this.normalizeOptional(clientId);
-    if (!normalizedClientId) {
-      throw new BadRequestException('Viva client id is required');
-    }
-
-    const levelNumeric = this.normalizePlayerRatingNumeric(input?.levelNumeric);
-    if (levelNumeric === undefined) {
-      throw new BadRequestException('Viva numeric level must be between 1 and 7');
-    }
-    const levelNumericText = this.formatPlayerRatingNumeric(levelNumeric);
-
-    const token = await this.requireAccessToken();
-    const resolved = await this.getResolvedSettings();
-    const levelNumericResult = await this.updateClientCustomField({
-      clientId: normalizedClientId,
-      field: 'LEVEL_NUMERIC',
-      fieldId: this.levelNumericFieldId,
-      value: levelNumericText,
-      token,
-      baseUrl: resolved.config.baseUrl
-    });
-
-    this.cache.clear();
-    return {
-      clientId: normalizedClientId,
-      ok: levelNumericResult.ok,
-      fields: {
-        levelNumeric: levelNumericResult
-      }
-    };
+    throw new BadRequestException('Viva level integration retired; use CUP player ratings');
   }
 
   async listExerciseBookings(exerciseId?: string): Promise<Record<string, unknown>[]> {

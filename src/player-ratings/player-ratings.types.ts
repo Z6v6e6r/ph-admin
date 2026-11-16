@@ -5,8 +5,9 @@ export const PLAYER_RATING_MAX = 7;
 export const PLAYER_RATING_PRECISION = 5;
 
 export type PlayerRatingGrade = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
-export type PlayerRatingProjectionStatus = 'PENDING' | 'SYNCED' | 'FAILED_RETRYABLE';
+export type PlayerRatingProjectionStatus = 'PENDING' | 'SYNCED' | 'FAILED_RETRYABLE' | 'NOT_REQUIRED';
 export type PlayerRatingEventType =
+  | 'RATING_INITIAL_ASSIGNED'
   | 'RATING_INITIAL_IMPORTED'
   | 'RATING_BOOTSTRAPPED_FROM_VIVA'
   | 'RATING_MANUALLY_CHANGED';
@@ -122,7 +123,7 @@ export interface PlayerRatingEventDocument {
   source: PlayerRatingSource;
   actor: PlayerRatingActor;
   projectionIntent: {
-    viva: 'REQUIRED_DURING_MIGRATION';
+    viva: 'REQUIRED_DURING_MIGRATION' | 'NONE_CUP_ONLY';
   };
   stateSnapshot?: PlayerRatingStateDocument;
 }
