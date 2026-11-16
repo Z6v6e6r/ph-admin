@@ -137,7 +137,7 @@ export class SupportMediaService {
           .catch(() => invalid('SUPPORT_MEDIA_FORMAT_INVALID'));
         outputTotal += normalized.length;
         if (normalized.length > MEDIA_OUTPUT_BYTES || outputTotal > MEDIA_TOTAL_BYTES || controller.signal.aborted) return invalid('SUPPORT_MEDIA_TOO_LARGE');
-        const binding: Binding = { scope: this.mac('owner\0' + owner),
+        const binding: Binding = { scope: this.mac('owner\0' + owner + '\0upload\0' + randomUUID()),
           sha: createHash('sha256').update(normalized).digest('hex'), version: '', bytes: normalized.length };
         binding.version = await this.store!.put(this.objectKey(binding), normalized, binding.sha, controller.signal);
         if (!binding.version || binding.version === 'null') throw new Error('SUPPORT_MEDIA_VERSIONING_REQUIRED');

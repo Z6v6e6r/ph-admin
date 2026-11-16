@@ -10,8 +10,12 @@ const { SupportMediaService } = require('./dist/support/support-media.service.js
 const sharp = require('sharp');
 const bytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#123abc' } }).jpeg().toBuffer();
 let objects = 0, signs = 0;
-const store = { put: async () => { objects++; return 'synthetic-immutable-version'; },
-  deliveryUrl: async (_key, version) => { assert.equal(version, 'synthetic-immutable-version'); signs++; return `https://synthetic.invalid/image.jpg?renewed=${signs}`; } };
+const keys = new Set();
+const store = { put: async key => {
+  assert(!keys.has(key), 'Recovery must not reuse keys when the provider ignores conditional writes');
+  keys.add(key); objects++; return 'synthetic-immutable-version';
+},
+  deliveryUrl: async (key, version) => { assert(keys.has(key)); assert.equal(version, 'synthetic-immutable-version'); signs++; return `https://synthetic.invalid/image.jpg?renewed=${signs}`; } };
 const options = { enabled: true, secret: 'synthetic-recovery-secret-over-thirty-two-bytes', store };
 const before = new SupportMediaService(options);
 const attachments = await before.prepare([{ id: 'synthetic-photo', type: 'IMAGE', url: 'data:image/jpeg;base64,' + bytes.toString('base64') }], 'synthetic-client-and-dialog');
@@ -22,6 +26,12 @@ assert(read.message.attachments[0].url.startsWith('https://'));
 assert(read.outbox.attachments[0].url.startsWith('https://'));
 assert.equal(objects, 1, 'Recovery reads cannot upload or dispatch anything');
 assert.equal(signs, 2); assert(!JSON.stringify(read).includes('cup-media:v1:'));
+const input = { type: 'IMAGE', url: 'data:image/jpeg;base64,' + bytes.toString('base64') };
+await afterRestart.prepare([{ ...input, id: 'repeat-one' }, { ...input, id: 'repeat-two' }], 'synthetic-client-and-dialog');
+await new SupportMediaService(options).prepare([{ ...input, id: 'repeat-after-restart' }], 'synthetic-client-and-dialog');
+assert.equal(keys.size, 4, 'Each identical upload has its own current object, including after restart');
+await afterRestart.present(JSON.parse(record));
+assert.equal(objects, 4, 'Reading the original history after repeated uploads creates no new object');
 const { MEDIA_RECOVERY_SOURCES, verifyMediaRecoverySources } = await import('../scripts/lib/cup-media-recovery-closure.mjs');
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 verifyMediaRecoverySources(source, root, MEDIA_RECOVERY_SOURCES);

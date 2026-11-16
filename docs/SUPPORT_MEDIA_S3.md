@@ -13,10 +13,21 @@ normalized total. Два concurrent prepare, 20 s общий media budget и 5 s
 Браузер ЛК1 применяет более строгие 1 MiB/file и 2 MiB total.
 
 `cup-support/v1/<scopeHMAC>/<contentSHA256>.jpg` — отдельный private prefix существующего
-S3. Conditional PUT `If-None-Match:*`, одна попытка записи. Потерянный ACK сверяется
-через HEAD (metadata SHA, bytes, JPEG type, непустая immutable VersionId).
+S3. Для каждой фотографии создаётся новый scope: HMAC от owner и отдельного
+`crypto.randomUUID()` с разделителем `\0upload\0`. Даже одинаковые фото в одном
+сообщении или повтор после перезапуска получают разные ключи. Дедупликации объектов нет.
+Приложение выполняет один PUT для каждого нового key; `If-None-Match:*` остаётся
+дополнительной защитой. В synthetic проверке Timeweb 16 ноября 2026 повторный PUT
+вернул200 вместо412: сохранность истории не должна зависеть от соблюдения этого условия.
+Потерянный ACK сверяется только через HEAD того же key (metadata SHA, bytes, JPEG type,
+непустая VersionId), без повторного PUT или нового key в этой операции.
 Отсутствующая или `null` version отклоняется. Ссылки всегда подписываются для точной
 версии. Ключ и scope не принимаются от браузера; HMAC signing key сохраняется при откате.
+Четырёхполевой v1 reference и его reader не меняются: ранее сохранённые deterministic
+scopes продолжают читаться. Обычные загрузки приложения не перезаписывают прежние keys,
+поэтому не переводят их versions в noncurrent. Существующая lifecycle-политика для
+noncurrent versions не меняется; overwrite/delete другим владельцем доступа всё ещё
+может сделать старую version noncurrent. Эта схема не восстанавливает уже удалённые versions.
 
 Mongo получает только небольшой `mediaRef`/`mediaScope`, name, size, MIME и ID.
 Для MAX inbound исходный provider `url` сохраняется, чтобы не нарушить строгий
@@ -62,8 +73,10 @@ Raw ingress всегда отвергает `cup-media:` URL и наличие i
 
 Не выводить значения в логи/PR. Prefix permissions: PUT и metadata HEAD своего prefix,
 versioned GET; без list всего bucket, delete, ACL, lifecycle и versioning writes.
-Реальная bucket versioning/conditional-write совместимость должна быть проверена
-read-only и затем отдельно разрешённой synthetic записью до activation. Этот код
+Реальная приватность, versioning и чтение точной version должны быть проверены
+read-only и затем отдельно разрешённой synthetic записью до activation. Для провайдера,
+игнорирующего conditional writes, отдельно проверить разные keys одинаковых фото и
+чтение первого ref после повторных загрузок. Этот код
 не включает versioning и не расширяет права автоматически.
 
 MAX remote download: exact hostname, TLS, public IPv4 DNS pin, abortable DNS,
