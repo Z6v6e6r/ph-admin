@@ -135,8 +135,11 @@ provider/UI E2E и restart. До этого source/local/CI не объявля�
 `legacyMaxClosing`. Это live mutation; запуск требует отдельно разрешённой выкладки
 и владельца окна. Прототипы/три функции, PID/start/timeOrigin/Node, legacy/sync0,
 отсутствие таймеров, unheld MAX PENDING/LEASED0 и tracked writes/failures0 проверяются
-до изменения. Метод не запускает hydrate/import, не меняет held/archive и не посылает
-сообщения. Само добавление файла в репозиторий ничего в приложении не включает.
+до изменения. Для закреплённого3cc допустим только отсутствующий env mode (штатный
+`maxOutboxMode()` возвращает legacy) либо точное `legacy`. Другие строки, включая
+пустую и whitespace, отклоняются; окружение процесса не изменяется. Это не снимает
+требование failures0 и не разрешает сброс накопленных ошибок. Метод не запускает
+hydrate/import, не меняет held/archive и не посылает сообщения. Само добавление файла в репозиторий ничего в приложении не включает.
 
 Перед вызовом custodian обязан проверить полное immutable inventory старого runtime
 и exact loaded script bytes, владение Inspector/release lock, paused+idle receiver,
