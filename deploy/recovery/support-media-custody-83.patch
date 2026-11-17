@@ -5109,7 +5109,7 @@ index 924cbe4fce37b946aa4bba83c064b813e35b7e73..9851f7a22271811ee5b1a5bdc2f638fc
 -  exports: [SupportService]
 +  exports: [SupportService, SupportMediaService, SupportMediaInterceptor]
 diff --git a/src/support/support.service.ts b/src/support/support.service.ts
-index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b447925b17b 100644
+index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..20432e4995e8bf1f52fb6987d8a6e6bad6eeb8f9 100644
 --- a/src/support/support.service.ts
 +++ b/src/support/support.service.ts
 @@ -1 +1,3 @@
@@ -5128,9 +5128,15 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 -    private readonly quickReplies: QuickRepliesService
 +    private readonly quickReplies: QuickRepliesService,
 +    private readonly media: SupportMediaService = new SupportMediaService()
-@@ -315,0 +323 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -195,0 +203 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
++    const persistedClientIds = new Set(state.clients.map(client => client.id));
+@@ -225 +233,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-        message as unknown as Record<string, unknown>
++        message as unknown as Record<string, unknown>,
++        persistedClientIds.has(normalizedMessage.clientId)
+@@ -315,0 +325 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    legacyMaxCustody: { states: Record<string, number>; held: number; pendingWrites: number; writeFailures: number };
-@@ -327,0 +336,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -327,0 +338,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    const legacyMaxStates: Record<string, number> = { PENDING: 0, LEASED: 0, SENT: 0, FAILED: 0 };
 +    let held = 0;
 +    for (const command of this.outbox.values()) if (isMaxConnector(command.connector)) {
@@ -5138,27 +5144,27 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +      legacyMaxStates[state] = (legacyMaxStates[state] ?? 0) + 1;
 +      if (legacyMaxHeld(command)) held++;
 +    }
-@@ -349 +364,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -349 +366,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      connectors: this.connectorRegistry.listEntries()
 +      connectors: this.connectorRegistry.listEntries(),
 +      legacyMaxCustody: { states: legacyMaxStates, held, ...this.persistence.legacyMaxCustodyDiagnostics() }
-@@ -415 +431 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -415 +433 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      this.sweepNoReplyQuickReplies();
 +      void this.sweepNoReplyQuickReplies().catch(() => this.logger.error('SUPPORT_QUICK_REPLY_WRITE_UNKNOWN'));
-@@ -419 +435 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -419 +437 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  private sweepNoReplyQuickReplies(): void {
 +  private async sweepNoReplyQuickReplies(): Promise<void> {
-@@ -465 +481 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -465 +483 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      this.sendQuickReplyAutoResponse(
 +      await this.sendQuickReplyAutoResponse(
-@@ -526,0 +543,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -526,0 +545,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +  authorizeMediaIngest(dto: IngestSupportEventDto, token?: string): void {
 +    if (!this.media.managedIngestEnabled) return;
 +    const connector = this.resolveIncomingConnector(dto);
 +    if (this.isMaxConnector(connector) || this.isLkConnector(connector)) authorizeSupportMedia(token);
 +  }
 +
-@@ -527,0 +550,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -527,0 +552,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    // References belong to storage/read paths only. A raw ingress must never persist a forged
 +    // reference that later prevents reading the whole history page, even with media disabled.
 +    if (Array.isArray(dto.attachments) && dto.attachments.some(a => a &&
@@ -5166,21 +5172,26 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +          Object.prototype.hasOwnProperty.call(a, 'mediaRef') || Object.prototype.hasOwnProperty.call(a, 'mediaScope')))) {
 +      throw new BadRequestException({ code: 'SUPPORT_MEDIA_INPUT_INVALID', message: 'Прикрепите фото заново с устройства.' });
 +    }
-@@ -528,0 +558,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -528,0 +560,6 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    if (dto.attachments?.length && this.media.managedIngestEnabled &&
 +        (this.isMaxConnector(normalizedDto.connector) || this.isLkConnector(normalizedDto.connector))) {
 +      normalizedDto.attachments = await this.media.prepare(dto.attachments,
 +        JSON.stringify([normalizedDto.connector, normalizedDto.externalUserId, normalizedDto.externalChatId]),
 +        this.isMaxConnector(normalizedDto.connector));
 +    }
-@@ -700,2 +735 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -583 +620,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-      ownedContact ? identityOwner.id : undefined
++      // A validated channel owner outranks incidental phone/email matches for
++      // every event, including text. Never merge historical profiles on send.
++      identityOwner?.id
+@@ -700,2 +739 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -          this.outbox.set(outbox.id, outbox);
 -          this.persistence.persistOutboxCommand(outbox);
 +          outbox = await this.acceptOutbox(outbox);
-@@ -711 +745 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -711 +749 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -        const autoReplyOutbox = this.trySendQuickReplyAutoResponse(
 +        const autoReplyOutbox = await this.trySendQuickReplyAutoResponse(
-@@ -834,0 +869,110 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -834,0 +873,110 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +  async listDialogsWindowWithReadThrough(
 +    user: RequestUser, filters: SupportDialogFilters = {}, targetCount = 0, phone?: string
 +  ): Promise<SupportDialogSummary[]> {
@@ -5291,13 +5302,13 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +    return this.normalizeLoadedDialog(dialog, false);
 +  }
 +
-@@ -880 +1024,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -880 +1028,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    filters: SupportDialogFilters = {}
 +    filters: SupportDialogFilters = {},
 +    targetCount = 200
-@@ -891 +1035,0 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -891 +1039,0 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    let dialogs: SupportDialog[] = [];
-@@ -893,13 +1037 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -893,13 +1041 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      try {
 -        const candidateIds = await this.persistence.findDialogIdsByPhone(normalizedPhone, {
 -          connector: filters.connector,
@@ -5312,7 +5323,7 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 -        this.logger.error(`Support dialog phone lookup failed: ${String(error)}`);
 -      }
 +      return this.listDialogsWindowWithReadThrough(user, filters, targetCount, normalizedPhone);
-@@ -908,5 +1040,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -908,5 +1044,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (dialogs.length === 0) {
 -      dialogs = this.listAccessibleDialogs(user, filters).filter((dialog) =>
 -        this.dialogMatchesPhone(dialog, normalizedPhone)
@@ -5321,11 +5332,11 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +    const dialogs = this.listAccessibleDialogs(user, filters).filter(dialog =>
 +      this.dialogMatchesPhone(dialog, normalizedPhone)
 +    );
-@@ -928,0 +1059,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -928,0 +1063,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    if (this.persistence.isEnabled()) {
 +      return this.listPersistedDialogMessages(dialogId, user, options);
 +    }
-@@ -966,0 +1100,73 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -966,0 +1104,73 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +  private async listPersistedDialogMessages(
 +    dialogId: string, user: RequestUser, options: SupportMessagesListOptions
 +  ): Promise<SupportMessage[]> {
@@ -5399,17 +5410,17 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +    return messages.length <= limit ? messages : messages.slice(-limit);
 +  }
 +
-@@ -995 +1201,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -995 +1205,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      // No await is allowed between choosing current objects and the existing synchronous send.
 +      // Photo replies perform another bounded binding read after materialization; text keeps the
 +      // existing synchronous path between choosing the cached objects and appending the reply.
-@@ -1020 +1227 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1020 +1231 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  replyToDialog(
 +  async replyToDialog(
-@@ -1024 +1231 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1024 +1235 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  ): { dialog: SupportDialog; message: SupportMessage; outbox?: SupportOutboxCommand } {
 +  ): Promise<{ dialog: SupportDialog; message: SupportMessage; outbox?: SupportOutboxCommand }> {
-@@ -1042 +1249,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1042 +1253,22 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    const attachments = this.normalizeMessageAttachments(dto.attachments);
 +    const binding = supportClientReplyBinding(this.clients.get(dialog.clientId)!);
 +    const dialogBinding = supportDialogHistoryBinding(dialog);
@@ -5433,13 +5444,13 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +    }
 +    this.resolveAllowedReplyConnector(dialog, user, connector);
 +    this.ensureReplyRecipient(this.clients.get(dialog.clientId), connector);
-@@ -1085,2 +1313 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1085,2 +1317 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      this.outbox.set(outbox.id, outbox);
 -      this.persistence.persistOutboxCommand(outbox);
 +      outbox = await this.acceptOutbox(outbox);
-@@ -1153,0 +1381 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1153,0 +1385 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    if (isMaxConnector(connector)) return this.pullLegacyMax(connector, limit, leaseSec);
-@@ -1187,0 +1416,47 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1187,0 +1420,47 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +  private async acceptOutbox(command: SupportOutboxCommand): Promise<SupportOutboxCommand> {
 +    if (isMaxConnector(command.connector) && maxOutboxMode() === 'legacy') {
 +      const durable = await this.persistence.persistOutboxCommand(command, 'enqueue');
@@ -5487,21 +5498,21 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +    return commands;
 +  }
 +
-@@ -1231 +1506,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1231 +1510,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
 +    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
 +      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
-@@ -1242,0 +1519,5 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1242,0 +1523,5 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    if (isMaxConnector(command.connector)) {
 +      const durable = await this.persistence.persistOutboxCommand(updated, 'ack', command);
 +      this.outbox.set(durable.id, durable);
 +      return durable;
 +    }
-@@ -1255 +1536,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1255 +1540,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (maxOutboxMode() === 'receipt-v1' && (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id))) {
 +    if (maxOutboxMode() === 'receipt-v1' && (containsMaxReceiptFields(receipt)
 +      || (known ? isMaxConnector(known.connector) : await this.persistence.hasMaxOutbox(id)))) {
-@@ -1266,0 +1549,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -1266,0 +1553,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +    if (isMaxConnector(command.connector)) {
 +      // The legacy failure body carries no attempt token or classified provider evidence.
 +      // Even requeue=true cannot prove that the original provider send did not succeed.
@@ -5509,19 +5520,28 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +      this.outbox.set(durable.id, durable);
 +      return durable;
 +    }
-@@ -2429 +2718 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2078 +2371 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-    ownedContactClientId?: string
++    identityOwnerClientId?: string
+@@ -2121 +2414 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-    if (ownedContactClientId) {
++    if (identityOwnerClientId) {
+@@ -2123 +2416 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-      matchingIds.add(ownedContactClientId);
++      matchingIds.add(identityOwnerClientId);
+@@ -2429 +2722 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  private trySendQuickReplyAutoResponse(
 +  private async trySendQuickReplyAutoResponse(
-@@ -2433 +2722 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2433 +2726 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  ): SupportOutboxCommand | undefined {
 +  ): Promise<SupportOutboxCommand | undefined> {
-@@ -2457 +2746 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2457 +2750 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  private sendQuickReplyAutoResponse(
 +  private async sendQuickReplyAutoResponse(
-@@ -2479 +2768 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2479 +2772 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  ): SupportOutboxCommand | undefined {
 +  ): Promise<SupportOutboxCommand | undefined> {
-@@ -2482 +2771,23 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2482 +2775,23 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    const attachments = this.normalizeMessageAttachments(rule.responseAttachments);
 +    let attachments = this.normalizeMessageAttachments(rule.responseAttachments);
 +    if (attachments.length && this.isMaxConnector(connector) && this.media.managedIngestEnabled) {
@@ -5546,68 +5566,102 @@ index 99dea30d05008822f2a79fb4d3a39d7f635bf0c0..ed0d1da5a8743e847beaa16c10857b44
 +        return undefined;
 +      }
 +    }
-@@ -2508 +2819 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2508 +2823 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    const outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
 +    let outbox = this.createOutboxCommand(dialog, serviceMessage, connector);
-@@ -2510,2 +2821 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -2510,2 +2825 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      this.outbox.set(outbox.id, outbox);
 -      this.persistence.persistOutboxCommand(outbox);
 +      outbox = await this.acceptOutbox(outbox);
-@@ -3124 +3434,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3124 +3438,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    user?: RequestUser
 +    user?: RequestUser,
 +    responseClient?: SupportDialogSummaryClient | null,
 +    persistedPreview = false
-@@ -3127 +3439 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3127 +3443 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    const client = this.clients.get(dialog.clientId);
 +    const client = responseClient === undefined ? this.clients.get(dialog.clientId) : responseClient ?? undefined;
-@@ -3140 +3452 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3140 +3456 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (lastMessageText === undefined || lastMessageSenderRole === undefined) {
 +    if (!persistedPreview && (lastMessageText === undefined || lastMessageSenderRole === undefined)) {
-@@ -3324 +3636 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3324 +3640 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -  private normalizeLoadedDialog(dialog: SupportDialog): SupportDialog {
 +  private normalizeLoadedDialog(dialog: SupportDialog, trackUnreadRebuild = true): SupportDialog {
-@@ -3367 +3679 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3367 +3683 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (shouldRebuildUnreadCount) {
 +    if (trackUnreadRebuild && shouldRebuildUnreadCount) {
-@@ -3369 +3681 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3369 +3685 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    } else {
 +    } else if (trackUnreadRebuild) {
-@@ -5161 +5473,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -3608 +3924,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-    rawMessage: Record<string, unknown>
++    rawMessage: Record<string, unknown>,
++    hasPersistedProfile: boolean
+@@ -3654,4 +3971,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-      current.authStatus =
+-        current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
+-          ? SupportClientAuthStatus.VERIFIED
+-          : SupportClientAuthStatus.UNVERIFIED;
++      // Stored profiles own their current authentication and channel bindings.
++      // Message snapshots describe history, including bindings later removed by
++      // a repair. Hydration must not re-grant them or expand contact ownership.
+@@ -3659,11 +3975,10 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+-      current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
+-      current.phones = this.mergeStrings(
+-        current.phones,
+-        [snapshotPhone, message.phone].filter(Boolean) as string[]
+-      );
+-      current.emails = this.mergeStrings(
+-        current.emails,
+-        [snapshotEmail, message.email].filter(Boolean) as string[]
+-      );
+-      if (identity) {
+-        current.identities = this.upsertIdentity(current.identities, identity);
++      if (!hasPersistedProfile) {
++        // Preserve the legacy reconstruction path for orphaned history only.
++        current.authStatus =
++          current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
++            ? SupportClientAuthStatus.VERIFIED
++            : SupportClientAuthStatus.UNVERIFIED;
++        current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
++        current.phones = this.mergeStrings(current.phones, [snapshotPhone, message.phone].filter(Boolean) as string[]);
++        current.emails = this.mergeStrings(current.emails, [snapshotEmail, message.email].filter(Boolean) as string[]);
++        if (identity) current.identities = this.upsertIdentity(current.identities, identity);
+@@ -5161 +5476,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -      size
 +      size,
 +      ...(typeof source['mediaRef'] === 'string' ? { mediaRef: source['mediaRef'] } : {}),
 +      ...(typeof source['mediaScope'] === 'string' ? { mediaScope: source['mediaScope'] } : {})
-@@ -5171,0 +5486 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5171,0 +5489 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +      if (/^cup-media:v1:[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(normalizedUrl)) return true;
-@@ -5270 +5585,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5270 +5588,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    user: RequestUser
 +    user: RequestUser,
 +    includePersistence = true
-@@ -5286 +5602 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5286 +5605 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    if (this.persistence.isEnabled()) {
 +    if (includePersistence && this.persistence.isEnabled()) {
-@@ -5344 +5660,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5344 +5663,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    before?: string
 +    before?: string,
 +    deadline?: number
-@@ -5351 +5668,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5351 +5671,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -          beforeTs
 +          beforeTs,
 +          deadline
-@@ -5367,0 +5686 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5367,0 +5689 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +      deadline?: number;
-@@ -5374 +5693,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5374 +5696,2 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -          before: options.before
 +          before: options.before,
 +          deadline: options.deadline
-@@ -5384,0 +5705,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5384,0 +5708,3 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 +        if (options.deadline !== undefined) {
 +          throw new ServiceUnavailableException({ code: 'SUPPORT_HISTORY_UNAVAILABLE' });
 +        }
-@@ -5511 +5834 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5511 +5837 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    client: SupportClientProfile | undefined,
 +    client: SupportDialogSummaryClient | undefined,
-@@ -5523 +5846 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
+@@ -5523 +5849 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 -    client: SupportClientProfile | undefined,
 +    client: SupportDialogSummaryClient | undefined,

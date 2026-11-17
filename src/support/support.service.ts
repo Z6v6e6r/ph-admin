@@ -200,6 +200,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     const startedAt = process.hrtime.bigint();
     const memoryBefore = this.captureMemoryUsageSnapshot();
     const state = await this.persistence.loadState();
+    const persistedClientIds = new Set(state.clients.map(client => client.id));
     this.clients.clear();
     this.dialogs.clear();
     this.messages.clear();
@@ -229,7 +230,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
       this.ensureClientAndDialogFromMessage(
         normalizedMessage,
-        message as unknown as Record<string, unknown>
+        message as unknown as Record<string, unknown>,
+        persistedClientIds.has(normalizedMessage.clientId)
       );
 
       const existing = this.messages.get(normalizedMessage.dialogId) ?? [];
@@ -615,7 +617,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       normalizedPhone,
       normalizedEmail,
       createdAt,
-      ownedContact ? identityOwner.id : undefined
+      // A validated channel owner outranks incidental phone/email matches for
+      // every event, including text. Never merge historical profiles on send.
+      identityOwner?.id
     );
 
     const selectedStationId = this.normalizeStationId(normalizedDto.selectedStationId);
@@ -2364,7 +2368,7 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
     normalizedPhone: string | undefined,
     normalizedEmail: string | undefined,
     createdAt: string,
-    ownedContactClientId?: string
+    identityOwnerClientId?: string
   ): SupportClientProfile {
     const resolvedDisplayName = this.resolveIncomingDisplayName(dto);
     const matchingIds = new Set<string>();
@@ -2407,9 +2411,9 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       }
     );
 
-    if (ownedContactClientId) {
+    if (identityOwnerClientId) {
       matchingIds.clear();
-      matchingIds.add(ownedContactClientId);
+      matchingIds.add(identityOwnerClientId);
     }
 
     let client: SupportClientProfile;
@@ -3917,7 +3921,8 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
 
   private ensureClientAndDialogFromMessage(
     message: SupportMessage,
-    rawMessage: Record<string, unknown>
+    rawMessage: Record<string, unknown>,
+    hasPersistedProfile: boolean
   ): void {
     const rawClientSnapshot = this.readRecord(rawMessage['clientSnapshot']);
     const snapshotDisplayName = this.readStringValue(rawClientSnapshot?.['displayName']);
@@ -3963,22 +3968,20 @@ export class SupportService implements OnModuleInit, OnApplicationBootstrap, OnM
       };
       this.clients.set(client.id, client);
     } else {
-      current.authStatus =
-        current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
-          ? SupportClientAuthStatus.VERIFIED
-          : SupportClientAuthStatus.UNVERIFIED;
+      // Stored profiles own their current authentication and channel bindings.
+      // Message snapshots describe history, including bindings later removed by
+      // a repair. Hydration must not re-grant them or expand contact ownership.
       current.displayName = current.displayName ?? snapshotDisplayName ?? message.senderName;
-      current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
-      current.phones = this.mergeStrings(
-        current.phones,
-        [snapshotPhone, message.phone].filter(Boolean) as string[]
-      );
-      current.emails = this.mergeStrings(
-        current.emails,
-        [snapshotEmail, message.email].filter(Boolean) as string[]
-      );
-      if (identity) {
-        current.identities = this.upsertIdentity(current.identities, identity);
+      if (!hasPersistedProfile) {
+        // Preserve the legacy reconstruction path for orphaned history only.
+        current.authStatus =
+          current.authStatus === SupportClientAuthStatus.VERIFIED || authStatus === SupportClientAuthStatus.VERIFIED
+            ? SupportClientAuthStatus.VERIFIED
+            : SupportClientAuthStatus.UNVERIFIED;
+        current.primaryPhone = current.primaryPhone ?? snapshotPhone ?? message.phone;
+        current.phones = this.mergeStrings(current.phones, [snapshotPhone, message.phone].filter(Boolean) as string[]);
+        current.emails = this.mergeStrings(current.emails, [snapshotEmail, message.email].filter(Boolean) as string[]);
+        if (identity) current.identities = this.upsertIdentity(current.identities, identity);
       }
       current.currentStationId = current.currentStationId ?? message.stationId;
       current.currentStationName = current.currentStationName ?? message.stationName;

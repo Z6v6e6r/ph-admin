@@ -2,11 +2,12 @@ import * as assert from 'node:assert/strict';
 import { SupportConnectorRegistry } from '../src/support/connectors/support-connector.registry';
 import { SupportClientLookupQuery, SupportPersistedState, SupportPersistenceService } from '../src/support/support-persistence.service';
 import { SupportService } from '../src/support/support.service';
-import { SupportClientAuthStatus, SupportConnectorRoute, SupportMessageKind } from '../src/support/support.types';
+import { SupportClientAuthStatus, SupportConnectorRoute, SupportMessageKind, SupportOutboxStatus } from '../src/support/support.types';
 
 class Persistence {
   state: SupportPersistedState = { clients: [], dialogs: [], messages: [], responseMetrics: [], outbox: [] };
   lookupUnavailable = false;
+  writes: Array<{ kind: string; id: string }> = [];
   isEnabled() { return true; }
   async loadState() { return structuredClone(this.state); }
   async findClients(query: SupportClientLookupQuery) {
@@ -34,9 +35,10 @@ class Persistence {
   persistServiceMessage() {}
   persistResponseMetric(row: SupportPersistedState['responseMetrics'][number]) { this.upsert('responseMetrics', row); }
   persistOutboxCommand(row: SupportPersistedState['outbox'][number]) { this.upsert('outbox', row); }
-  deleteClient(id: string) { this.state.clients = this.state.clients.filter(row => row.id !== id); }
+  deleteClient(id: string) { this.writes.push({ kind: 'deleteClient', id }); this.state.clients = this.state.clients.filter(row => row.id !== id); }
   deleteDialog(id: string) { this.state.dialogs = this.state.dialogs.filter(row => row.id !== id); }
   private upsert<K extends keyof SupportPersistedState>(key: K, row: SupportPersistedState[K][number]) {
+    this.writes.push({ kind: key, id: row.id });
     const list = this.state[key] as Array<{ id: string }>;
     const index = list.findIndex(item => item.id === row.id);
     const copy = structuredClone(row);
@@ -94,6 +96,91 @@ async function main() {
     assert.equal(persistence.state.clients.length, 2);
 
     const seeded = structuredClone(persistence.state);
+    for (const connector of [SupportConnectorRoute.LK_WEB_MESSENGER, SupportConnectorRoute.MAX_BOT]) {
+      for (const hydration of [false, true]) {
+        const repairedPersistence = new Persistence();
+        repairedPersistence.state = structuredClone(seeded);
+        const owner = repairedPersistence.state.clients.find(client => client.id === a.client.id)!;
+        const old = { ...structuredClone(owner), id: 'old-detached-profile', identities: [],
+          createdAt: '2000-01-01T00:00:00.000Z' };
+        repairedPersistence.state.clients.unshift(old);
+        const oldDialog = { ...structuredClone(seeded.dialogs.find(dialog => dialog.clientId === a.client.id)!),
+          id: 'old-dialog', clientId: old.id, stationId: 'old-station' };
+        repairedPersistence.state.dialogs.push(oldDialog);
+        const oldMessage = { ...structuredClone(seeded.messages.find(message => message.clientId === a.client.id)!),
+          id: 'old-message', clientId: old.id, dialogId: oldDialog.id, stationId: oldDialog.stationId };
+        repairedPersistence.state.messages.push(oldMessage);
+        const archived = { id: 'archived-command', clientId: owner.id, dialogId: oldDialog.id,
+          connector: SupportConnectorRoute.MAX_BOT, status: SupportOutboxStatus.FAILED,
+          terminalReason: 'OWNER_ARCHIVED_WITHOUT_SEND', attempts: 0,
+          createdAt: '2000-01-01T00:00:00.000Z', updatedAt: '2000-01-01T00:00:00.000Z'
+        } as SupportPersistedState['outbox'][number];
+        repairedPersistence.state.outbox.push(archived);
+        const repaired = service(repairedPersistence);
+        try {
+          const cache = repaired as unknown as { clients: Map<string, typeof owner>;
+            cacheClientFromPersistence(client: typeof owner): Promise<unknown> };
+          if (hydration) {
+            await repaired.hydrateFromPersistence();
+            assert.deepEqual(cache.clients.get(old.id)?.identities, [],
+              'Historical message must not recreate a detached identity');
+          } else {
+            // A partial warm cache with only the older same-phone profile used to
+            // steal the persisted owner when normal TEXT went through mergeClients.
+            await cache.cacheClientFromPersistence(old);
+          }
+          const history = structuredClone(repairedPersistence.state.messages);
+          repairedPersistence.writes = [];
+          const identity = owner.identities.find(item => item.connector === connector)!;
+          const followup = await repaired.ingestEvent({ connector,
+            externalUserId: identity.externalUserId, externalChatId: identity.externalChatId,
+            phone: aPhone, text: 'Synthetic follow-up after repair', kind: SupportMessageKind.TEXT });
+          assert.equal(followup.client.id, owner.id);
+          assert.equal(repairedPersistence.state.clients.length, seeded.clients.length + 1);
+          assert.deepEqual(repairedPersistence.state.clients.find(item => item.id === old.id), old);
+          for (const message of history) {
+            assert.deepEqual(repairedPersistence.state.messages.find(item => item.id === message.id), message);
+            assert.ok(!repairedPersistence.writes.some(write => write.kind === 'messages' && write.id === message.id));
+          }
+          assert.deepEqual(repairedPersistence.state.dialogs.find(item => item.id === oldDialog.id), oldDialog);
+          assert.deepEqual(repairedPersistence.state.outbox.find(item => item.id === archived.id), archived);
+          assert.ok(!repairedPersistence.writes.some(write => write.kind === 'deleteClient' || write.kind === 'outbox'));
+        } finally { repaired.onModuleDestroy(); }
+      }
+    }
+
+    const revokedPersistence = new Persistence();
+    revokedPersistence.state = structuredClone(seeded);
+    const revoked = revokedPersistence.state.clients.find(client => client.id === a.client.id)!;
+    revoked.authStatus = SupportClientAuthStatus.UNVERIFIED;
+    revoked.primaryPhone = undefined;
+    revoked.phones = [];
+    revoked.emails = [];
+    revoked.identities = [];
+    const rehydrated = service(revokedPersistence);
+    try {
+      await rehydrated.hydrateFromPersistence();
+      const loaded = (rehydrated as unknown as { clients: Map<string, typeof revoked> }).clients.get(revoked.id)!;
+      assert.equal(loaded.authStatus, SupportClientAuthStatus.UNVERIFIED);
+      assert.equal(loaded.primaryPhone, undefined);
+      assert.deepEqual(loaded.phones, []);
+      assert.deepEqual(loaded.emails, []);
+      assert.deepEqual(loaded.identities, []);
+    } finally { rehydrated.onModuleDestroy(); }
+
+    const orphanPersistence = new Persistence();
+    const orphanMessage = structuredClone(seeded.messages.find(message => message.clientId === a.client.id)!);
+    orphanPersistence.state.messages = [orphanMessage, { ...orphanMessage, id: 'orphan-second-message',
+      connector: SupportConnectorRoute.MAX_BOT, externalUserId: 'orphan-max', externalChatId: 'orphan-max-chat' }];
+    const orphanService = service(orphanPersistence);
+    try {
+      await orphanService.hydrateFromPersistence();
+      const orphan = (orphanService as unknown as { clients: Map<string, typeof revoked> }).clients.get(a.client.id)!;
+      assert.ok(orphan.identities.some(identity => identity.externalUserId === orphanMessage.externalUserId));
+      assert.ok(orphan.identities.some(identity => identity.externalUserId === 'orphan-max'),
+        'Multiple orphan snapshots retain their existing reconstruction behavior');
+    } finally { orphanService.onModuleDestroy(); }
+
     for (const cachedId of [a.client.id, b.client.id]) {
       const partialPersistence = new Persistence();
       partialPersistence.state = structuredClone(seeded);
